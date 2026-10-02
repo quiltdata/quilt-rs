@@ -457,6 +457,7 @@ mod tests {
     use crate::io::remote::RemoteObjectStream;
     use crate::io::remote::mocks::MockRemote;
     use crate::workflow::WorkflowInfo;
+    use quilt_uri::fixtures;
     use test_log::test;
 
     /// Reports no session on `exists` and panics on everything else — the gate
@@ -526,9 +527,7 @@ mod tests {
     /// call, so it must hand the typed error on unchanged.
     #[test(tokio::test)]
     async fn the_gate_propagates_an_absent_session_untouched() -> Res<()> {
-        use std::str::FromStr;
-
-        let host = Host::from_str("nightly.quilttest.com").unwrap();
+        let host = fixtures::host();
         let remote = SignedOutRemote { host: host.clone() };
         let uri: S3Uri = "s3://any/.quilt/workflows/config.yml".parse()?;
 

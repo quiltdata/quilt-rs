@@ -1,4 +1,5 @@
 use super::*;
+use quilt_uri::fixtures;
 
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -129,7 +130,7 @@ fn classify_sync_already_up_to_date_is_ok() {
 
 #[test]
 fn classify_sync_login_required() {
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
         host.clone(),
     ))));
@@ -423,7 +424,7 @@ async fn a_running_tick_advertises_the_next_tick_not_the_one_it_is_serving() -> 
 #[tokio::test]
 async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -515,7 +516,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
 #[tokio::test]
 async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -594,7 +595,7 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
 #[tokio::test]
 async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -690,7 +691,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
 #[tokio::test]
 async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -794,7 +795,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
 #[tokio::test]
 async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -898,7 +899,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
 #[tokio::test]
 async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -990,7 +991,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
 #[tokio::test]
 async fn dry_run_login_required_is_classified() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -1053,7 +1054,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
 #[tokio::test]
 async fn behind_blocked_pauses() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -1139,7 +1140,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
 #[tokio::test]
 async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -1282,7 +1283,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
 #[tokio::test]
 async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -1375,8 +1376,8 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
 /// property under test is not about installation.
 #[test]
 fn login_episode_counts_per_deployment_not_per_package() {
-    let host: Host = "catalog.dev".parse().unwrap();
-    let other: Host = "elsewhere.dev".parse().unwrap();
+    let host = fixtures::one_host();
+    let other = fixtures::another_host();
 
     let mut blocked = BTreeMap::new();
     assert_eq!(
@@ -1403,7 +1404,7 @@ fn login_episode_counts_per_deployment_not_per_package() {
 /// unknown must never be taken for a known host.
 #[test]
 fn an_unattributed_login_failure_does_not_join_a_hosts_episode() {
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let mut blocked = BTreeMap::new();
     blocked.insert(("acme", "first").into(), Some(host));
 
@@ -1546,7 +1547,7 @@ fn publishing_switched_off_counts_down_to_nothing() {
 // so a prompt keyed on it would fire when no working file is at risk.
 
 fn behind_clean_lineage() -> quilt::lineage::PackageLineage {
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ("acme", "demo").into(),
@@ -2109,7 +2110,7 @@ async fn a_tick_with_nothing_to_transfer_never_sets_the_activity() -> Result<(),
         bucket: "bucket".to_string(),
         namespace: ("acme", "demo").into(),
         hash: "h0".to_string(),
-        origin: Some("catalog.dev".parse().unwrap()),
+        origin: Some(fixtures::host()),
     };
     let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
     let mut model = MockQuiltModel::new();

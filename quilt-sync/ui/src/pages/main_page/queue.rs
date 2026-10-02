@@ -715,8 +715,8 @@ mod tests {
     fn a_latest_package_never_reaches_the_queue() {
         // The queue is what needs a decision. Everything else is the list's job.
         let items = derive_queue(
-            &[pkg("a/b", PackageState::Latest, Some("h.io"))],
-            &[host("h.io", true)],
+            &[pkg("a/b", PackageState::Latest, Some("quilt.test"))],
+            &[host("quilt.test", true)],
             &[],
         );
         assert_eq!(items, [] as [QueueItem; 0]);
@@ -729,11 +729,11 @@ mod tests {
         // problems that need individual decisions.
         let items = derive_queue(
             &[
-                pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
-                pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
-                pkg("b/three", PackageState::Behind, Some("custom.registry.io")),
+                pkg("a/one", PackageState::Unknown, Some("quilt.test")),
+                pkg("a/two", PackageState::Unknown, Some("quilt.test")),
+                pkg("b/three", PackageState::Behind, Some("quilt.test")),
             ],
-            &[host("custom.registry.io", false)],
+            &[host("quilt.test", false)],
             &[],
         );
 
@@ -743,10 +743,10 @@ mod tests {
                 action,
                 members,
             } => {
-                assert_eq!(text, "Signed out from custom.registry.io");
+                assert_eq!(text, "Signed out from quilt.test");
                 assert_eq!(members.len(), 2, "the two Unknown ones, not the Behind one");
                 assert!(
-                    matches!(action, CauseAction::SignIn { host } if host == "custom.registry.io"),
+                    matches!(action, CauseAction::SignIn { host } if host == "quilt.test"),
                     "a wrong host wired into [Sign in] must fail this: {action:?}"
                 );
             }
@@ -764,8 +764,8 @@ mod tests {
         // Unknown is also serde's catch-all, so it means "we could not tell" — of
         // which a logout is one cause among several.
         let items = derive_queue(
-            &[pkg("a/one", PackageState::Unknown, Some("h.io"))],
-            &[host("h.io", true)],
+            &[pkg("a/one", PackageState::Unknown, Some("quilt.test"))],
+            &[host("quilt.test", true)],
             &[],
         );
         assert!(
@@ -791,7 +791,7 @@ mod tests {
                     PackageState::RoleDenied {
                         role: Some("analyst".into()),
                     },
-                    "h.io",
+                    "quilt.test",
                     "team-bucket",
                 ),
                 pkg_in_bucket(
@@ -799,7 +799,7 @@ mod tests {
                     PackageState::RoleDenied {
                         role: Some("analyst".into()),
                     },
-                    "h.io",
+                    "quilt.test",
                     "team-bucket",
                 ),
                 pkg_in_bucket(
@@ -807,11 +807,11 @@ mod tests {
                     PackageState::RoleDenied {
                         role: Some("analyst".into()),
                     },
-                    "h.io",
+                    "quilt.test",
                     "other-bucket",
                 ),
             ],
-            &[host("h.io", true)],
+            &[host("quilt.test", true)],
             &[],
         );
         let causes: Vec<_> = items
@@ -827,7 +827,7 @@ mod tests {
             // reads it: the trailing slot is a fixed sentence pointing at the
             // Accounts card, so nothing else in the row can carry it.
             assert!(
-                text.contains("on h.io"),
+                text.contains("on quilt.test"),
                 "a denial has to name the host it is on: {text}"
             );
         }
@@ -844,9 +844,9 @@ mod tests {
                 PackageState::PullConflict {
                     files: vec!["f.csv".into()],
                 },
-                Some("h.io"),
+                Some("quilt.test"),
             )],
-            &[host("h.io", false)],
+            &[host("quilt.test", false)],
             &[],
         );
         assert_eq!(items.len(), 1);
@@ -861,8 +861,8 @@ mod tests {
         // CauseRow renders "1 package" singular deliberately: a cause affecting one
         // package is still worth stating once rather than twice.
         let items = derive_queue(
-            &[pkg("a/one", PackageState::Unknown, Some("h.io"))],
-            &[host("h.io", false)],
+            &[pkg("a/one", PackageState::Unknown, Some("quilt.test"))],
+            &[host("quilt.test", false)],
             &[],
         );
         assert!(matches!(&items[0], QueueItem::Cause { members, .. } if members.len() == 1));
@@ -874,17 +874,20 @@ mod tests {
         // precedence order. Danger before Attention before Neutral.
         let items = derive_queue(
             &[
-                pkg("a/behind", PackageState::Behind, Some("h.io")),
+                pkg("a/behind", PackageState::Behind, Some("one.quilt.test")),
                 pkg(
                     "a/conflict",
                     PackageState::PullConflict {
                         files: vec!["f".into()],
                     },
-                    Some("h.io"),
+                    Some("one.quilt.test"),
                 ),
-                pkg("a/out", PackageState::Unknown, Some("gone.io")),
+                pkg("a/out", PackageState::Unknown, Some("another.quilt.test")),
             ],
-            &[host("h.io", true), host("gone.io", false)],
+            &[
+                host("one.quilt.test", true),
+                host("another.quilt.test", false),
+            ],
             &[],
         );
         let shape: Vec<String> = items
@@ -902,7 +905,7 @@ mod tests {
         // Task 1's `host: None`. Without this it would group under a host named "".
         let items = derive_queue(
             &[pkg("local/thing", PackageState::Unpublished, None)],
-            &[host("h.io", false)],
+            &[host("quilt.test", false)],
             &[],
         );
         assert!(matches!(&items[0], QueueItem::Package { .. }));
@@ -922,18 +925,25 @@ mod tests {
         // last and sorts first, so it makes the two orders disagree.
         let items = derive_queue(
             &[
-                pkg("a/one", PackageState::Unknown, Some("gone.io")),
+                pkg("a/one", PackageState::Unknown, Some("another.quilt.test")),
                 pkg_in_bucket(
                     "b/two",
                     PackageState::RoleDenied {
                         role: Some("analyst".into()),
                     },
-                    "h.io",
+                    "one.quilt.test",
                     "team-bucket",
                 ),
             ],
-            &[host("gone.io", false), host("h.io", true)],
-            &[pkg("c/three", PackageState::Latest, Some("dark.io"))],
+            &[
+                host("another.quilt.test", false),
+                host("one.quilt.test", true),
+            ],
+            &[pkg(
+                "c/three",
+                PackageState::Latest,
+                Some("third.quilt.test"),
+            )],
         );
         let causes: Vec<&str> = items
             .iter()
@@ -945,9 +955,9 @@ mod tests {
         assert_eq!(
             causes,
             vec![
-                "No access as analyst on h.io in s3://team-bucket",
-                "Signed out from gone.io",
-                "Couldn't check for new revisions on dark.io",
+                "No access as analyst on one.quilt.test in s3://team-bucket",
+                "Signed out from another.quilt.test",
+                "Couldn't check for new revisions on third.quilt.test",
             ],
             "§5's rank orders these; alphabetically they are the other way round"
         );
@@ -967,9 +977,9 @@ mod tests {
                 PackageState::RoleDenied {
                     role: Some("analyst".into()),
                 },
-                Some("h.io"),
+                Some("quilt.test"),
             )],
-            &[host("h.io", true)],
+            &[host("quilt.test", true)],
             &[],
         );
         assert_eq!(items.len(), 1, "not dropped, and not folded into a cause");
@@ -1087,23 +1097,29 @@ mod tests {
 
     fn all_latest(n: usize) -> Vec<MainPagePackageData> {
         (0..n)
-            .map(|i| pkg(&format!("pkg/{i}"), PackageState::Latest, Some("h.io")))
+            .map(|i| {
+                pkg(
+                    &format!("pkg/{i}"),
+                    PackageState::Latest,
+                    Some("one.quilt.test"),
+                )
+            })
             .collect()
     }
 
     fn one_signed_in() -> Vec<AccountHostData> {
-        vec![host("h.io", true)]
+        vec![host("one.quilt.test", true)]
     }
 
     fn two_signed_out() -> Vec<MainPagePackageData> {
         vec![
-            pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
-            pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
+            pkg("a/one", PackageState::Unknown, Some("another.quilt.test")),
+            pkg("a/two", PackageState::Unknown, Some("another.quilt.test")),
         ]
     }
 
     fn one_signed_out() -> Vec<AccountHostData> {
-        vec![host("custom.registry.io", false)]
+        vec![host("another.quilt.test", false)]
     }
 
     fn one_role_denied() -> Vec<MainPagePackageData> {
@@ -1112,20 +1128,20 @@ mod tests {
             PackageState::RoleDenied {
                 role: Some("analyst".to_string()),
             },
-            "custom.registry.io",
+            "another.quilt.test",
             "team-bucket",
         )]
     }
 
     fn one_behind() -> Vec<MainPagePackageData> {
-        vec![pkg("a/one", PackageState::Behind, Some("h.io"))]
+        vec![pkg("a/one", PackageState::Behind, Some("one.quilt.test"))]
     }
 
     /// `Unknown` on a signed-in host: R3's other half, so it is its own row
     /// rather than swept into a signed-out cause — and `render` gives it no
     /// action, unlike `one_behind`.
     fn one_unknown_signed_in() -> Vec<MainPagePackageData> {
-        vec![pkg("a/one", PackageState::Unknown, Some("h.io"))]
+        vec![pkg("a/one", PackageState::Unknown, Some("one.quilt.test"))]
     }
 
     #[wasm_bindgen_test]
@@ -1212,7 +1228,11 @@ mod tests {
         // whether everything is Latest, so the region must not say so. Showing
         // the all-clear later but still too early would be the same error.
         let el = mount_region(
-            Signal::stored(vec![pkg("a/one", PackageState::Latest, Some("h.io"))]),
+            Signal::stored(vec![pkg(
+                "a/one",
+                PackageState::Latest,
+                Some("one.quilt.test"),
+            )]),
             one_signed_in(),
             Signal::stored(true),
         );
@@ -1266,7 +1286,11 @@ mod tests {
     #[wasm_bindgen_test]
     fn a_check_that_answered_with_nothing_holds_no_line_open() {
         let el = mount_region_of(
-            Signal::stored(vec![pkg("a/one", PackageState::Latest, Some("h.io"))]),
+            Signal::stored(vec![pkg(
+                "a/one",
+                PackageState::Latest,
+                Some("one.quilt.test"),
+            )]),
             one_signed_in(),
             Signal::stored(false),
             Signal::stored(2),
@@ -1296,7 +1320,11 @@ mod tests {
             "held open while nothing is known"
         );
 
-        packages.set(vec![pkg("a/one", PackageState::Diverged, Some("h.io"))]);
+        packages.set(vec![pkg(
+            "a/one",
+            PackageState::Diverged,
+            Some("one.quilt.test"),
+        )]);
         leptos::task::tick().await;
 
         assert!(placeholder(&el).is_none(), "the card, not the placeholder");
@@ -1313,7 +1341,11 @@ mod tests {
         // Holding them back until the slowest package answers would make the region
         // as slow as its worst row, which is the spinner §7 rejected.
         let el = mount_region(
-            Signal::stored(vec![pkg("a/one", PackageState::Diverged, Some("h.io"))]),
+            Signal::stored(vec![pkg(
+                "a/one",
+                PackageState::Diverged,
+                Some("one.quilt.test"),
+            )]),
             one_signed_in(),
             Signal::stored(true),
         );
@@ -1330,7 +1362,11 @@ mod tests {
     async fn the_all_clear_arrives_only_when_nothing_is_outstanding() {
         let in_flight = RwSignal::new(true);
         let el = mount_region(
-            Signal::stored(vec![pkg("a/one", PackageState::Latest, Some("h.io"))]),
+            Signal::stored(vec![pkg(
+                "a/one",
+                PackageState::Latest,
+                Some("one.quilt.test"),
+            )]),
             one_signed_in(),
             in_flight.into(),
         );
@@ -1367,11 +1403,14 @@ mod tests {
         // `items.len()` (which would read 2, not 3).
         let el = mount_region(
             Signal::stored(vec![
-                pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
-                pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
-                pkg("c/three", PackageState::Behind, Some("h.io")),
+                pkg("a/one", PackageState::Unknown, Some("another.quilt.test")),
+                pkg("a/two", PackageState::Unknown, Some("another.quilt.test")),
+                pkg("c/three", PackageState::Behind, Some("one.quilt.test")),
             ]),
-            vec![host("custom.registry.io", false), host("h.io", true)],
+            vec![
+                host("another.quilt.test", false),
+                host("one.quilt.test", true),
+            ],
             Signal::stored(false),
         );
         let text = el.text_content().unwrap();
@@ -1417,8 +1456,8 @@ mod tests {
         // `cause_trailing` builds from `sign_in_href` directly rather than
         // through this match — that one HAS a host.
         assert_eq!(
-            sign_in_href("custom.registry.io"),
-            "/login?host=custom.registry.io&back=%2F"
+            sign_in_href("quilt.test"),
+            "/login?host=quilt.test&back=%2F"
         );
     }
 
@@ -1508,7 +1547,7 @@ mod tests {
         );
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Signed out from custom.registry.io"),
+            text.contains("Signed out from another.quilt.test"),
             "got: {text}"
         );
         assert!(text.contains("2 packages"), "got: {text}");
@@ -1602,7 +1641,7 @@ mod tests {
         let packages = RwSignal::new(vec![pkg(
             "user/plate-07",
             PackageState::Latest,
-            Some("h.io"),
+            Some("one.quilt.test"),
         )]);
         let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
         assert!(
@@ -1613,7 +1652,7 @@ mod tests {
         packages.set(vec![pkg(
             "user/plate-07",
             PackageState::PendingChanges { files: 1 },
-            Some("h.io"),
+            Some("one.quilt.test"),
         )]);
         leptos::task::tick().await;
 
@@ -1631,9 +1670,9 @@ mod tests {
         // one page load — and rebuilding the expander signals each time would close a
         // group under the user's hands.
         let packages = RwSignal::new(vec![
-            pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
-            pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
-            pkg("b/three", PackageState::Latest, Some("custom.registry.io")),
+            pkg("a/one", PackageState::Unknown, Some("another.quilt.test")),
+            pkg("a/two", PackageState::Unknown, Some("another.quilt.test")),
+            pkg("b/three", PackageState::Latest, Some("another.quilt.test")),
         ]);
         let el = mount_region(packages.into(), one_signed_out(), Signal::stored(false));
         click(&expander(&el));
@@ -1672,8 +1711,8 @@ mod tests {
         // The test marks the nodes and finds them again by name, because the
         // rendered text is the same either way.
         let packages = RwSignal::new(vec![
-            pkg("a/one", PackageState::Behind, Some("h.io")),
-            pkg("b/two", PackageState::Unpublished, Some("h.io")),
+            pkg("a/one", PackageState::Behind, Some("one.quilt.test")),
+            pkg("b/two", PackageState::Unpublished, Some("one.quilt.test")),
         ]);
         let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
         row_of(&el, "a/one")
@@ -1691,7 +1730,7 @@ mod tests {
                 PackageState::PullConflict {
                     files: vec!["x.csv".to_string()],
                 },
-                Some("h.io"),
+                Some("one.quilt.test"),
             ));
         });
         leptos::task::tick().await;
@@ -1721,7 +1760,11 @@ mod tests {
         // row keyed on its namespace alone would still be saying "has a newer
         // revision" over a package that has since conflicted — with the
         // `Get latest` link that goes with it.
-        let packages = RwSignal::new(vec![pkg("a/one", PackageState::Behind, Some("h.io"))]);
+        let packages = RwSignal::new(vec![pkg(
+            "a/one",
+            PackageState::Behind,
+            Some("one.quilt.test"),
+        )]);
         let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
         assert!(
             el.text_content().unwrap().contains("has a newer revision"),
@@ -1751,7 +1794,7 @@ mod tests {
         let packages = RwSignal::new(vec![pkg(
             "a/one",
             PackageState::Unknown,
-            Some("custom.registry.io"),
+            Some("another.quilt.test"),
         )]);
         let el = mount_region(packages.into(), one_signed_out(), Signal::stored(false));
         click(&expander(&el));
@@ -1766,7 +1809,7 @@ mod tests {
             p.push(pkg(
                 "a/two",
                 PackageState::Unknown,
-                Some("custom.registry.io"),
+                Some("another.quilt.test"),
             ));
         });
         leptos::task::tick().await;
@@ -1788,8 +1831,8 @@ mod tests {
         // R6's half, which must survive R4: a refetch constructs a new `QueueRegion`,
         // and the expansion the user opened was about a set that no longer exists.
         let packages = RwSignal::new(vec![
-            pkg("a/one", PackageState::Unknown, Some("custom.registry.io")),
-            pkg("a/two", PackageState::Unknown, Some("custom.registry.io")),
+            pkg("a/one", PackageState::Unknown, Some("another.quilt.test")),
+            pkg("a/two", PackageState::Unknown, Some("another.quilt.test")),
         ]);
         let show = RwSignal::new(true);
         let hosts = one_signed_out();
@@ -1834,10 +1877,10 @@ mod tests {
         // show that.
         let items = derive_queue(
             &[],
-            &[host("open.quiltdata.com", true)],
+            &[host("quilt.test", true)],
             &[
-                pkg("a/one", PackageState::Latest, Some("open.quiltdata.com")),
-                pkg("a/two", PackageState::Behind, Some("open.quiltdata.com")),
+                pkg("a/one", PackageState::Latest, Some("quilt.test")),
+                pkg("a/two", PackageState::Behind, Some("quilt.test")),
             ],
         );
 
@@ -1848,10 +1891,7 @@ mod tests {
                 action,
                 members,
             } => {
-                assert_eq!(
-                    text,
-                    "Couldn't check for new revisions on open.quiltdata.com"
-                );
+                assert_eq!(text, "Couldn't check for new revisions on quilt.test");
                 assert_eq!(members.len(), 2, "the count CauseRow renders is these");
                 assert!(matches!(action, CauseAction::TryAgain), "got {action:?}");
             }
@@ -1868,8 +1908,8 @@ mod tests {
             &[],
             &[],
             &[
-                pkg("a/one", PackageState::Latest, Some("one.example.com")),
-                pkg("b/two", PackageState::Latest, Some("two.example.com")),
+                pkg("a/one", PackageState::Latest, Some("one.quilt.test")),
+                pkg("b/two", PackageState::Latest, Some("another.quilt.test")),
             ],
         );
 
@@ -1883,8 +1923,8 @@ mod tests {
                 }
             })
             .collect();
-        assert!(texts.iter().any(|t| t.ends_with("one.example.com")));
-        assert!(texts.iter().any(|t| t.ends_with("two.example.com")));
+        assert!(texts.iter().any(|t| t.ends_with("one.quilt.test")));
+        assert!(texts.iter().any(|t| t.ends_with("another.quilt.test")));
     }
 
     #[wasm_bindgen_test]
@@ -1912,7 +1952,7 @@ mod tests {
             &[pkg(
                 "z/failed",
                 PackageState::Latest,
-                Some("open.quiltdata.com"),
+                Some("one.quilt.test"),
             )],
         );
 
@@ -1926,8 +1966,8 @@ mod tests {
         assert_eq!(
             texts,
             vec![
-                "Signed out from custom.registry.io",
-                "Couldn't check for new revisions on open.quiltdata.com",
+                "Signed out from another.quilt.test",
+                "Couldn't check for new revisions on one.quilt.test",
             ],
             "a rank swap must fail this"
         );
@@ -1941,18 +1981,14 @@ mod tests {
         // app could not read.
         let el = mount_region_unchecked(
             Signal::stored(Vec::new()),
-            vec![host("open.quiltdata.com", true)],
-            vec![pkg(
-                "a/one",
-                PackageState::Latest,
-                Some("open.quiltdata.com"),
-            )],
+            vec![host("quilt.test", true)],
+            vec![pkg("a/one", PackageState::Latest, Some("quilt.test"))],
             Callback::new(|_| ()),
         );
 
         let text = el.text_content().unwrap_or_default();
         assert!(
-            text.contains("Couldn't check for new revisions on open.quiltdata.com"),
+            text.contains("Couldn't check for new revisions on quilt.test"),
             "the region must speak rather than vanish; got {text:?}"
         );
         assert!(
@@ -1970,10 +2006,10 @@ mod tests {
         let asked: RwSignal<Vec<Vec<String>>> = RwSignal::new(Vec::new());
         let el = mount_region_unchecked(
             Signal::stored(Vec::new()),
-            vec![host("open.quiltdata.com", true)],
+            vec![host("quilt.test", true)],
             vec![
-                pkg("a/one", PackageState::Latest, Some("open.quiltdata.com")),
-                pkg("a/two", PackageState::Latest, Some("open.quiltdata.com")),
+                pkg("a/one", PackageState::Latest, Some("quilt.test")),
+                pkg("a/two", PackageState::Latest, Some("quilt.test")),
             ],
             Callback::new(move |names: Vec<Namespace>| {
                 asked.update(|log| log.push(names.iter().map(ToString::to_string).collect()));
@@ -2010,19 +2046,19 @@ mod tests {
         // that ignored these states entirely would not pass by luck.
         let items = derive_queue(
             &[
-                pkg("a/unread", PackageState::Unknown, Some("h.io")),
-                pkg("a/paused", PackageState::Paused, Some("h.io")),
+                pkg("a/unread", PackageState::Unknown, Some("quilt.test")),
+                pkg("a/paused", PackageState::Paused, Some("quilt.test")),
                 pkg(
                     "a/conflict",
                     PackageState::PullConflict {
                         files: vec!["x.csv".to_string()],
                     },
-                    Some("h.io"),
+                    Some("quilt.test"),
                 ),
             ],
             // Signed IN, or the unread one joins a signed-out cause instead of
             // being the row this test compares against.
-            &[host("h.io", true)],
+            &[host("quilt.test", true)],
             &[],
         );
 

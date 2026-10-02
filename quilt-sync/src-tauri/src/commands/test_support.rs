@@ -2,6 +2,7 @@
 
 use crate::Error;
 use crate::quilt;
+use quilt_uri::fixtures;
 
 /// The error S3 returns when the active role cannot reach a bucket.
 /// Distinct from a broken session: the credentials were vended fine.
@@ -13,9 +14,9 @@ pub(crate) fn access_denied_error() -> Error {
 
 /// The same denial, carrying the deployment it was refused on. The hostless
 /// one above is the case where no roles lookup is possible at all.
-pub(crate) fn access_denied_error_on(host: &str) -> Error {
+pub(crate) fn access_denied_error_on(host: quilt_uri::Host) -> Error {
     Error::Quilt(quilt::Error::S3(quilt::S3Error {
-        host: Some(host.parse().expect("a host")),
+        host: Some(host),
         kind: quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
     }))
 }
@@ -49,7 +50,7 @@ pub(crate) fn make_installed_package(
 /// Helper: create a `ManifestUri` with origin for a given namespace.
 pub(crate) fn make_manifest_uri(namespace: &str) -> quilt_uri::ManifestUri {
     quilt_uri::ManifestUri {
-        origin: Some("test.quilt.dev".parse().unwrap()),
+        origin: Some(fixtures::host()),
         bucket: "test".to_string(),
         namespace: namespace.try_into().unwrap(),
         hash: "abcdef".to_string(),

@@ -42,6 +42,8 @@ libc = "0.2"
 # the in-memory mock remote. Kept out of the normal dependency above so the
 # mock never leaks into release builds.
 quilt-rs = { path = "../quilt-rs", version = "0.42.0-dev", features = ["testing"] }
+# Shared test fixtures, such as the fake catalog host.
+quilt-uri = { path = "../quilt-uri", version = "0.4.1", features = ["test-support"] }
 test-log.workspace = true
 
 # pkg-url overridden: workspace tags as `quilt-cli/v<version>`, not

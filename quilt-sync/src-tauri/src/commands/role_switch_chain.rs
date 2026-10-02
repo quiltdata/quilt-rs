@@ -84,8 +84,8 @@ use crate::autopull::tick::run_once;
 use crate::model::MockQuiltModel;
 use crate::quilt;
 use crate::telemetry::Telemetry;
+use quilt_uri::fixtures;
 
-const HOST: &str = "test.quilt.dev";
 const OPEN: &str = "open";
 const LOCKED: &str = "locked";
 const READ_ONLY: &str = "ReadOnly";
@@ -218,7 +218,7 @@ fn bucket_for(namespace: &Namespace) -> &'static str {
 
 fn manifest_uri_for(namespace: &Namespace) -> ManifestUri {
     ManifestUri {
-        origin: Some(HOST.parse().expect("host")),
+        origin: Some(fixtures::host()),
         bucket: bucket_for(namespace).to_string(),
         namespace: namespace.clone(),
         hash: "abcdef".to_string(),
@@ -352,7 +352,15 @@ async fn switch_to(
     watcher: &Watcher,
     role: &str,
 ) -> Result<(), Error> {
-    switch_role_command(model, roles, watcher, &Telemetry::default(), HOST, role).await?;
+    switch_role_command(
+        model,
+        roles,
+        watcher,
+        &Telemetry::default(),
+        "quilt.test",
+        role,
+    )
+    .await?;
     Ok(())
 }
 
@@ -392,7 +400,7 @@ async fn a_switch_reaches_s3_and_unmarks_the_rows_the_new_role_can_read() {
 
     assert_eq!(
         stack.cache_clears_since(before_switch),
-        vec![HOST.to_string()],
+        vec!["quilt.test".to_string()],
         "the switch must drop the host's cached S3 clients, or they keep signing as the old role"
     );
 
@@ -456,7 +464,7 @@ async fn a_switch_made_in_the_catalog_reaches_s3_when_settings_reads_the_role() 
     let before_settings = stack.cache_clears().len();
 
     // They open Settings, which reads the role afresh — the observation.
-    let data = get_roles_command(&model, &roles, HOST)
+    let data = get_roles_command(&model, &roles, "quilt.test")
         .await
         .expect("roles");
     assert_eq!(
@@ -465,7 +473,7 @@ async fn a_switch_made_in_the_catalog_reaches_s3_when_settings_reads_the_role() 
     );
     assert_eq!(
         stack.cache_clears_since(before_settings),
-        vec![HOST.to_string()],
+        vec!["quilt.test".to_string()],
         "observing the switch must also drop the clients still signing as the old role"
     );
 
@@ -524,7 +532,7 @@ async fn the_mark_names_the_role_the_user_switched_to() {
     );
     assert_eq!(
         locked.role_switch_host.as_deref(),
-        Some(HOST),
+        Some("quilt.test"),
         "another role is still held, so the affordance stays"
     );
 }

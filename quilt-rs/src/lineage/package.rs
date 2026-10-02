@@ -263,6 +263,7 @@ impl From<ManifestUri> for PackageLineage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     #[test]
     fn test_default_is_local() {
@@ -299,7 +300,7 @@ mod tests {
                 hash: String::new(),
                 bucket: String::new(),
                 namespace: ("foo", "bar").into(),
-                origin: Some("catalog.dev".parse().unwrap()),
+                origin: Some(fixtures::host()),
             }),
             latest_hash: "abc".to_string(),
             ..PackageLineage::default()
@@ -314,7 +315,7 @@ mod tests {
                 hash: String::new(),
                 bucket: "test-bucket".to_string(),
                 namespace: ("foo", "bar").into(),
-                origin: Some("catalog.dev".parse().unwrap()),
+                origin: Some(fixtures::host()),
             }),
             latest_hash: "abc".to_string(),
             ..PackageLineage::default()

@@ -82,7 +82,7 @@ const REMOTE: &str = r#"{
     "bucket": "bucket",
     "namespace": "test/history",
     "hash": "published-rev",
-    "origin": "test.quilt.dev"
+    "origin": "quilt.test"
 }"#;
 
 /// `ManifestUri` spells the catalog host `origin`; leaving it out is the

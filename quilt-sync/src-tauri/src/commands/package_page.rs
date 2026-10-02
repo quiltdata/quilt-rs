@@ -920,8 +920,8 @@ async fn download_backlog_from_model(
 
 #[cfg(test)]
 mod tests {
+    use quilt_uri::fixtures;
     use std::collections::BTreeMap;
-    use std::str::FromStr;
 
     use super::*;
     use crate::commands::RoleCache;
@@ -939,6 +939,15 @@ mod tests {
         status: Result<quilt::lineage::InstalledPackageStatus, Error>,
     ) -> crate::model::MockQuiltModel {
         mock_one_package_reading_records(status, None)
+    }
+
+    /// [`mock_one_package`], with the package on `origin` instead of the
+    /// default host.
+    fn mock_one_package_on(
+        origin: quilt_uri::Host,
+        status: Result<quilt::lineage::InstalledPackageStatus, Error>,
+    ) -> crate::model::MockQuiltModel {
+        mock_one_package_with(Some(origin), status, None)
     }
 
     /// The manifest's rows at `paths`, each 7 bytes.
@@ -964,6 +973,15 @@ mod tests {
         status: Result<quilt::lineage::InstalledPackageStatus, Error>,
         reads: Option<usize>,
     ) -> crate::model::MockQuiltModel {
+        mock_one_package_with(None, status, reads)
+    }
+
+    /// The shared body: `origin` overrides the default host when given.
+    fn mock_one_package_with(
+        origin: Option<quilt_uri::Host>,
+        status: Result<quilt::lineage::InstalledPackageStatus, Error>,
+        reads: Option<usize>,
+    ) -> crate::model::MockQuiltModel {
         let mut model = crate::model::mocks::create();
         let rows = model
             .expect_get_installed_package_records()
@@ -981,9 +999,13 @@ mod tests {
             .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
         model
             .expect_get_installed_package_lineage()
-            .returning(|pkg| {
+            .returning(move |pkg| {
+                let mut uri = make_manifest_uri(&pkg.namespace.to_string());
+                if let Some(origin) = &origin {
+                    uri.origin = Some(origin.clone());
+                }
                 Ok(quilt::lineage::PackageLineage::from_remote(
-                    make_manifest_uri(&pkg.namespace.to_string()),
+                    uri,
                     "abcdef".to_string(),
                 ))
             });
@@ -1835,7 +1857,7 @@ mod tests {
     }
 
     const PUBLISHED_URL: &str =
-        "https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash";
+        "https://quilt.test/b/test/packages/team/dataset/tree/published-hash";
 
     #[test]
     fn revision_history_wire_form_is_verbatim() {
@@ -1865,7 +1887,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&data).unwrap(),
-            r#"{"rows":[{"hash":"published-hash","message":"Sent","obtainedAt":1758500000000.0,"published":true,"catalogUrl":"https://test.quilt.dev/b/test/packages/team/dataset/tree/published-hash","kept":[],"frees":1200000},{"hash":"local-hash","message":null,"obtainedAt":1758400000000.0,"published":false,"catalogUrl":null,"kept":["current","notPushed"],"frees":null}],"removableFrees":1200000}"#,
+            r#"{"rows":[{"hash":"published-hash","message":"Sent","obtainedAt":1758500000000.0,"published":true,"catalogUrl":"https://quilt.test/b/test/packages/team/dataset/tree/published-hash","kept":[],"frees":1200000},{"hash":"local-hash","message":null,"obtainedAt":1758400000000.0,"published":false,"catalogUrl":null,"kept":["current","notPushed"],"frees":null}],"removableFrees":1200000}"#,
         );
     }
 
@@ -2419,7 +2441,10 @@ mod tests {
     /// role and the payload carries what to switch to.
     #[tokio::test]
     async fn a_denial_names_its_role_and_carries_the_alternatives() {
-        let mut m = mock_one_package(Err(access_denied_error_on("demo.quiltdata.com")));
+        let mut m = mock_one_package_on(
+            fixtures::one_host(),
+            Err(access_denied_error_on(fixtures::another_host())),
+        );
         with_role(
             &mut m,
             RoleInfo {
@@ -2441,7 +2466,10 @@ mod tests {
             },
         );
         let switch = header.role_switch.expect("another role is held");
-        assert_eq!(switch.host, "demo.quiltdata.com");
+        assert_eq!(
+            switch.host, "another.quilt.test",
+            "the switch is offered on the host that refused, not the package's origin"
+        );
         assert_eq!(
             switch.alternatives,
             vec!["admin".to_string()],
@@ -2453,7 +2481,10 @@ mod tests {
     /// `access-marking`'s rule for the roster, applied here.
     #[tokio::test]
     async fn a_single_role_reader_is_offered_no_switch() {
-        let mut m = mock_one_package(Err(access_denied_error_on("demo.quiltdata.com")));
+        let mut m = mock_one_package_on(
+            fixtures::one_host(),
+            Err(access_denied_error_on(fixtures::another_host())),
+        );
         with_role(
             &mut m,
             RoleInfo {
@@ -2483,7 +2514,10 @@ mod tests {
     /// already knows, and offers no switch.
     #[tokio::test]
     async fn a_failed_roles_lookup_leaves_the_denial_standing() {
-        let mut m = mock_one_package(Err(access_denied_error_on("demo.quiltdata.com")));
+        let mut m = mock_one_package_on(
+            fixtures::one_host(),
+            Err(access_denied_error_on(fixtures::another_host())),
+        );
         m.expect_refresh_roles()
             .times(1)
             .returning(|_| Err(Error::General("role query unavailable".to_string())));
@@ -2519,36 +2553,32 @@ mod tests {
         assert!(page.header.role_switch.is_none());
     }
 
-    fn host() -> quilt_uri::Host {
-        quilt_uri::Host::from_str("demo.quiltdata.com").unwrap()
-    }
-
     /// Narrowest arm first, or it is unreachable: `is_session_absent` is
     /// `is_invalid_credentials` OR `LoginError::NoSession`, so a general arm
     /// written above the specific one swallows it — silently, since both compile.
     #[test]
     fn a_rejected_credential_is_not_reported_as_a_missing_session() {
         let err = quilt::Error::S3(quilt::S3Error {
-            host: Some(host()),
+            host: Some(fixtures::host()),
             kind: quilt::S3ErrorKind::InvalidCredentials("rejected".to_string()),
         });
 
         assert_eq!(
             blocked_state(&Error::Quilt(err)),
             Some(PackageStateDto::SignInExpired {
-                host: Some("demo.quiltdata.com".to_string()),
+                host: Some("quilt.test".to_string()),
             }),
         );
     }
 
     #[test]
     fn an_absent_session_names_the_deployment_it_is_absent_for() {
-        let err = quilt::Error::Login(quilt::LoginError::NoSession(Some(host())));
+        let err = quilt::Error::Login(quilt::LoginError::NoSession(Some(fixtures::host())));
 
         assert_eq!(
             blocked_state(&Error::Quilt(err)),
             Some(PackageStateDto::NoSession {
-                host: Some("demo.quiltdata.com".to_string()),
+                host: Some("quilt.test".to_string()),
             }),
         );
     }
@@ -2560,7 +2590,7 @@ mod tests {
     #[test]
     fn a_refused_role_is_a_denial_and_not_a_session_failure() {
         let err = quilt::Error::S3(quilt::S3Error {
-            host: Some(host()),
+            host: Some(fixtures::host()),
             kind: quilt::S3ErrorKind::AccessDenied("denied".to_string()),
         });
 

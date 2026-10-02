@@ -195,7 +195,7 @@ mod tests {
     const PLAIN: &str = "/installed-package?namespace=team%2Fdataset&filter=unmodified";
 
     fn mismatch_query() -> String {
-        format!("&mismatch={REQUESTED}&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fopen.quilt.bio")
+        format!("&mismatch={REQUESTED}&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fquilt.test")
     }
 
     /// The page's fixture at `INSTALLED`, in `state`, with `message`.
@@ -354,7 +354,7 @@ mod tests {
                 RevisionMismatch {
                     hash: REQUESTED.to_string(),
                     bucket: "quilt-lab".to_string(),
-                    catalog: Some("https://open.quilt.bio".to_string()),
+                    catalog: Some("https://quilt.test".to_string()),
                 },
                 "team/dataset".to_string(),
             )),
@@ -534,7 +534,7 @@ mod tests {
         let latest =
             format!("{OPENS}. You have the latest version installed, and that's what's shown.");
         let unchecked = format!("{OPENS}, and the remote can't be checked right now.");
-        let host = Some("open.quilt.bio".to_string());
+        let host = Some("quilt.test".to_string());
 
         for (state, line) in [
             (PackageState::Behind, &behind),

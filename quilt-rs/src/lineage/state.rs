@@ -152,7 +152,9 @@ impl PackageLineage {
 mod tests {
     use super::*;
 
+    use quilt_uri::Host;
     use quilt_uri::ManifestUri;
+    use quilt_uri::fixtures;
 
     fn resolve(
         upstream: UpstreamState,
@@ -305,9 +307,9 @@ mod tests {
         }
     }
 
-    fn manifest_uri(origin: Option<&str>) -> ManifestUri {
+    fn manifest_uri(origin: Option<Host>) -> ManifestUri {
         ManifestUri {
-            origin: origin.map(|host| host.parse().expect("a valid host")),
+            origin,
             bucket: "acme-research".to_string(),
             namespace: ("team", "one").into(),
             hash: "abcdef".to_string(),
@@ -326,8 +328,11 @@ mod tests {
         // A remote WITH a catalog host, and a package with no remote at all, are
         // both fine.
         assert!(
-            !PackageLineage::from_remote(manifest_uri(Some("example.com")), "abcdef".to_string())
-                .misconfigured_remote()
+            !PackageLineage::from_remote(
+                manifest_uri(Some(fixtures::host())),
+                "abcdef".to_string()
+            )
+            .misconfigured_remote()
         );
         assert!(!PackageLineage::default().misconfigured_remote());
     }
@@ -356,7 +361,7 @@ mod tests {
         );
 
         let configured =
-            PackageLineage::from_remote(manifest_uri(Some("example.com")), "abcdef".to_string());
+            PackageLineage::from_remote(manifest_uri(Some(fixtures::host())), "abcdef".to_string());
         assert_eq!(PackageStateReport::without_remote(&configured), None);
     }
 }

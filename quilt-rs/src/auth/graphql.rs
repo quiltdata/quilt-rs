@@ -296,13 +296,19 @@ mod tests {
     use crate::Error;
     use crate::auth::test_utils::ACCESS_TOKEN;
     use crate::auth::test_utils::GraphQlTestHttpClient;
-    use crate::auth::test_utils::get_host;
     use crate::auth::test_utils::get_registry_host;
+    use quilt_uri::fixtures;
 
     #[test(tokio::test)]
     async fn query_me_returns_active_and_available_roles() -> Res {
         let client = GraphQlTestHttpClient::default();
-        let me = query_me(&client, &get_registry_host(), &get_host(), ACCESS_TOKEN).await?;
+        let me = query_me(
+            &client,
+            &get_registry_host(),
+            &fixtures::host(),
+            ACCESS_TOKEN,
+        )
+        .await?;
 
         assert_eq!(me.role.name, "ReadWrite");
         assert_eq!(
@@ -318,9 +324,14 @@ mod tests {
             me_is_null: true,
             ..GraphQlTestHttpClient::default()
         };
-        let err = query_me(&client, &get_registry_host(), &get_host(), ACCESS_TOKEN)
-            .await
-            .unwrap_err();
+        let err = query_me(
+            &client,
+            &get_registry_host(),
+            &fixtures::host(),
+            ACCESS_TOKEN,
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             matches!(err, Error::Role(RoleError::NotAuthenticated(_))),
@@ -334,9 +345,14 @@ mod tests {
             top_level_error: Some("field 'me' is deprecated".to_string()),
             ..GraphQlTestHttpClient::default()
         };
-        let err = query_me(&client, &get_registry_host(), &get_host(), ACCESS_TOKEN)
-            .await
-            .unwrap_err();
+        let err = query_me(
+            &client,
+            &get_registry_host(),
+            &fixtures::host(),
+            ACCESS_TOKEN,
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             matches!(&err, Error::Role(RoleError::GraphQl(m)) if m.contains("deprecated")),
