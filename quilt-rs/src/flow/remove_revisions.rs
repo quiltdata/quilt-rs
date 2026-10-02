@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 
 use tracing::debug;
 use tracing::info;
+use tracing::warn;
 
 use super::HistoryEntry;
 use super::gc::format_bytes;
@@ -198,7 +199,18 @@ impl std::fmt::Display for RemovalReport {
 /// The caller holds `namespace`'s lock and has checked that none of `hashes`
 /// is protected. This try-locks every other package; if one is busy, the
 /// manifests still go, every object they alone used is kept, and the report
-/// names the package. An unreadable manifest anywhere deletes nothing.
+/// names the package. A package created or first installed after those
+/// locks are taken is not protected, as in gc: only the user starts one.
+///
+/// A manifest that can't be read while some object might still be free stops
+/// it before anything is deleted, as in gc. The read stops early only once
+/// every candidate object is proven in use, and then no object is deleted, so
+/// a manifest it never reached can't be one that names a deleted object.
+///
+/// The objects go after the manifests, best effort: one that can't be deleted
+/// is logged and left, and the next gc frees it. The revisions are gone by
+/// then, so failing the removal would only leave the caller asking for them
+/// again.
 pub async fn remove_revisions(
     paths: &DomainPaths,
     storage: &(impl Storage + Sync),
@@ -244,7 +256,10 @@ pub async fn remove_revisions(
             continue;
         }
         debug!("🗑️ Removing object {name}");
-        storage.remove_file(paths.objects_dir().join(&name)).await?;
+        if let Err(err) = storage.remove_file(paths.objects_dir().join(&name)).await {
+            warn!("Could not remove object {name}, left for gc: {err}");
+            continue;
+        }
         report.objects += 1;
         report.bytes += len;
     }
@@ -424,6 +439,35 @@ mod tests {
         .await?;
 
         assert_eq!(report.kept_for, None);
+        Ok(())
+    }
+
+    /// The revisions are gone once their manifests are; an object that won't
+    /// go is left for gc rather than failing a removal that already happened.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn an_object_that_wont_go_is_left_for_gc() -> Res {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (paths, _dir) = fixture()?;
+        let objects = paths.objects_dir();
+        std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o555))?;
+
+        let result = remove_revisions(
+            &paths,
+            &LocalStorage::new(),
+            &DomainLineage::default(),
+            &PLATE.into(),
+            &set(&["r2", "r3"]),
+        )
+        .await;
+        std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o755))?;
+
+        let report = result?;
+        assert_eq!(report.revisions, 2);
+        assert_eq!(report.objects, 0);
+        assert!(!installed(&paths, PLATE, "r2"));
+        assert!(exists(&paths, "y"), "left for gc");
         Ok(())
     }
 

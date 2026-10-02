@@ -275,7 +275,16 @@ impl Remover {
     }
 
     /// Start removing what `ask` names and return, as the verb's action does.
-    fn start(self, ask: Ask) {
+    ///
+    /// Refused, with the dialog's banner, when a sync or a page command took
+    /// the package after the dialog opened: the lock would refuse it anyway.
+    fn start(self, ask: Ask) -> Result<(), String> {
+        if untrack(|| self.blocked()) {
+            return Err(format!(
+                "{} is busy \u{2014} try again in a moment",
+                ask.namespace
+            ));
+        }
         let Self {
             w,
             remove,
@@ -286,9 +295,6 @@ impl Remover {
         let Ask {
             namespace, hashes, ..
         } = ask;
-        if w.removal.running.get_untracked().is_some() {
-            return;
-        }
         w.removal
             .running
             .set(Some((namespace.clone(), hashes.clone())));
@@ -310,18 +316,19 @@ impl Remover {
             if let Some(activities) = activities {
                 activities.set(ActivityKind::RemoveRevisions, Vec::new());
             }
-            match answer {
-                Ok(_) => w.reload.notify(),
-                Err(detail) => {
-                    w.outcome.try_set(Some(Outcome {
-                        namespace,
-                        variant: BannerVariant::Critical,
-                        lead: "Could not remove old revisions.".to_string(),
-                        detail: Some(detail),
-                    }));
-                }
+            if let Err(detail) = answer {
+                w.outcome.try_set(Some(Outcome {
+                    namespace,
+                    variant: BannerVariant::Critical,
+                    lead: "Could not remove old revisions.".to_string(),
+                    detail: Some(detail),
+                }));
             }
+            // A refusal re-reads too: part of a removal may have landed, and a
+            // list still offering what is gone would refuse every retry.
+            w.reload.notify();
         });
+        Ok(())
     }
 }
 
@@ -514,8 +521,7 @@ pub(super) fn dialog(remover: Remover) -> impl IntoView {
                             move || {
                                 let ask = ask.clone();
                                 async move {
-                                    remover.start(ask);
-                                    Ok(())
+                                    remover.start(ask)
                                 }
                             },
                         )

@@ -651,6 +651,36 @@ mod tests {
         assert!(button_named(&surface, "Remove \u{201c}Old\u{201d}").disabled());
     }
 
+    /// A page command that starts while the dialog is open: Remove refuses in
+    /// the dialog rather than asking a lock that will say no.
+    #[wasm_bindgen_test]
+    async fn a_command_started_under_the_dialog_refuses_remove() {
+        REMOVED.with(|r| r.borrow_mut().clear());
+        let w = Wiring::new();
+        let el = removal_pane(removable, removes_ok, w, crate::kit::Activities::new());
+        let surface = opened(&el).await;
+
+        button_named(&surface, "Remove \u{201c}Old\u{201d}").click();
+        leptos::task::tick().await;
+        w.busy.set(true);
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        crate::test_support::button_saying(&dialog, "Remove").click();
+        settle().await;
+
+        assert!(REMOVED.with(|r| r.borrow().is_empty()), "nothing was asked");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("team/dataset is busy"),
+            "markup was {}",
+            dialog.inner_html()
+        );
+    }
+
     #[wasm_bindgen_test]
     async fn a_page_command_disables_removal() {
         let w = Wiring::new();
