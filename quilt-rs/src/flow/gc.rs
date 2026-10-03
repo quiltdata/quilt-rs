@@ -71,8 +71,10 @@ impl std::fmt::Display for GcReport {
     }
 }
 
-/// Decimal units, as Finder counts them, with one decimal past bytes.
-pub(crate) fn format_bytes(bytes: u64) -> String {
+/// Decimal units, as Finder counts them, with one decimal past bytes: the
+/// size every report sentence says, as in "freed 630.2 kB".
+#[must_use]
+pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["kB", "MB", "GB", "TB", "PB"];
     if bytes < 1000 {
         return format!("{bytes} B");
