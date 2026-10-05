@@ -9,6 +9,7 @@ on:
     paths:
       - 'quilt-sync/ui/**'
       - 'quilt-uri/**'
+      - 'Cargo.toml'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
       - 'justfile'

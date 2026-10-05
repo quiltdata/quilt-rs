@@ -61,7 +61,7 @@ The gallery's verbs mean what they mean in Vite:
 - `just gallery dev` (or plain `just gallery`) serves a debug build: fast to
   rebuild, full names in panics, but a large wasm.
 - `just gallery build` writes the release site to `ui/dist-pages`.
-- `just gallery preview` serves what `build` writes, at
+- `just gallery preview` serves a release build as Pages does, at
   `http://127.0.0.1:8787/quilt-rs/`. Builds are slower; use it for a final look.
 
 `main` publishes `build`'s output to GitHub Pages as the kit's design record.

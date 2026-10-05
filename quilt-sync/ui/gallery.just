@@ -16,7 +16,7 @@ dev *args: stubs
 build public_url=public_url: stubs
     trunk build --release=true gallery.html --public-url "{{public_url}}" --dist dist-pages
 
-# Serve what `build` writes, rebuilding on save, at http://127.0.0.1:8787/quilt-rs/
+# Serve a release build as Pages does, rebuilding on save, at http://127.0.0.1:8787/quilt-rs/
 preview *args: stubs
     TRUNK_SERVE_PORT="${TRUNK_SERVE_PORT:-8787}" trunk serve --release=true gallery.html --public-url "{{public_url}}" --dist dist-pages {{args}}
 
