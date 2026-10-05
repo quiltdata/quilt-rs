@@ -17,6 +17,7 @@ on:
       - 'quilt-uri/**'
       - 'Cargo.lock'
       - 'rust-toolchain.toml'
+      - 'justfile'
       - '.github/workflows/deploy-gallery.yaml'
 
 # Least privilege for the whole run; the build job needs only to read the code.
@@ -54,6 +55,9 @@ jobs:
       - name: Install trunk
         uses: taiki-e/install-action@trunk
 
+      - name: Install just
+        uses: taiki-e/install-action@just
+
       # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml, as
       # in test-quilt-sync-frontend.yaml: a skew breaks styling silently.
       - name: Install stylance
@@ -62,14 +66,11 @@ jobs:
           tool: stylance-cli@0.8.4
 
       # A project site lives under `/<repo>/`, so every URL Trunk writes takes
-      # that prefix. Trunk 0.21 reads a bare `--release` followed by another
-      # argument as taking a value, hence `--release=true`.
+      # that prefix. `just gallery build` writes the release site to
+      # quilt-sync/ui/dist-pages; `just gallery preview` serves the same files
+      # locally.
       - name: Build
-        run: >-
-          trunk build --release=true gallery.html
-          --public-url "/${{ github.event.repository.name }}/"
-          --dist dist-pages
-        working-directory: ./quilt-sync/ui
+        run: just gallery build "/${{ github.event.repository.name }}/"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
