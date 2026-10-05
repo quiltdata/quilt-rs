@@ -39,8 +39,8 @@ targets. CI checks all three, so a clean `just lint` leaves nothing for it to
 reject. `just fmt` is the half that writes, over the same file set.
 
 QuiltSync's frontend is a Rust-to-WebAssembly crate built by Trunk, so `just
-gallery` (the component gallery in a browser) and `just start` (the desktop app)
-need the frontend toolchain as well:
+gallery` (the component gallery in a browser) and `just app dev` (the desktop
+app) need the frontend toolchain as well:
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -48,7 +48,7 @@ cargo install trunk stylance-cli       # the page bundler and the CSS-module com
 # Node.js and npm, for the JSON editor bundle Trunk's pre-build hook installs
 ```
 
-`just start` additionally needs `cargo install tauri-cli` and Tauri's platform
+`just app dev` additionally needs `cargo install tauri-cli` and Tauri's platform
 dependencies, listed at <https://tauri.app/start/prerequisites/>.
 
 The two can run at the same time. They build into separate directories, `ui/dist`
@@ -92,7 +92,7 @@ default and both need AWS credentials in the environment.
 Without credentials, deselect them by name:
 
 ```bash
-just test-no-aws            # the recipe; wraps the line below
+just test                   # the recipe; wraps the line below
 cargo nextest run --profile no-aws
 cargo test -- --skip live_  # same effect without nextest
 ```
@@ -103,9 +103,10 @@ not defined`. The `no-aws` profile belongs to nextest.
 
 CI splits the same line: one step runs the `no-aws` selection everywhere, and a
 second step runs `live_*` with credentials, skipped when the pull request comes
-from a fork. GitHub withholds secrets from fork pull requests — a platform
-rule, not a project choice — so the split is what lets an outside contributor
-get a CI signal at all.
+from a fork. `just test live` runs that second selection locally. GitHub
+withholds secrets from fork pull requests — a platform rule, not a project
+choice — so the split is what lets an outside contributor get a CI signal at
+all.
 
 **The naming convention is load-bearing.** A test that touches the fixtures but
 is not named `live_*` lands in the credential-free step, and fails there on
