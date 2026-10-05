@@ -299,10 +299,7 @@ mod tests {
         assert!(!warrants_paused_banner("pendingCommit"));
     }
 
-    // NOTE: `#[wasm_bindgen_test]`, not `#[test]` — the wasm runner never
-    // collects a plain `#[test]` (the ones above compile but do not run).
     use super::{PackageStatusEvent, is_new_observation};
-    use wasm_bindgen_test::wasm_bindgen_test;
 
     fn ev(fingerprint: &str) -> PackageStatusEvent {
         PackageStatusEvent {
@@ -313,19 +310,19 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn first_event_is_a_new_observation() {
         // Nothing acted on yet — the first event always refetches.
         assert!(is_new_observation(None, &ev("up_to_date;")));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn same_fingerprint_holds_still() {
         // A no-op tick re-reports the same observation — the page must not act.
         assert!(!is_new_observation(Some("up_to_date;"), &ev("up_to_date;")));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn changed_fingerprint_is_a_new_observation() {
         // A real change (a modified path enters the digest) → refetch.
         assert!(is_new_observation(

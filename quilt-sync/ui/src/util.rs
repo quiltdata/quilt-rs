@@ -494,16 +494,12 @@ mod incoming_tests {
     use super::incoming_files;
     use super::success_notification;
 
-    // `#[wasm_bindgen_test]`, not `#[test]`: this crate's only runner is the
-    // wasm one, which executes nothing else. These need no DOM.
-    use wasm_bindgen_test::wasm_bindgen_test;
-
-    #[wasm_bindgen_test]
+    #[test]
     fn a_revision_that_adds_nothing_says_nothing() {
         assert_eq!(incoming_files(&[], 3), None);
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn one_file_is_named_in_the_singular() {
         assert_eq!(
             incoming_files(&["qc/summary.csv".to_owned()], 3).unwrap(),
@@ -511,7 +507,7 @@ mod incoming_tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_long_list_names_some_and_counts_the_rest() {
         let added: Vec<String> = ["a", "b", "c", "d"]
             .iter()
@@ -531,12 +527,12 @@ mod incoming_tests {
     /// A reported pull returns an empty success message, and the slot must hold
     /// nothing at all: `Layout` raises a full-screen dismiss overlay whenever
     /// the slot is occupied, so `Some("")` would dim the app behind a blank.
-    #[wasm_bindgen_test]
+    #[test]
     fn an_empty_success_message_leaves_the_slot_empty() {
         assert!(success_notification(String::new()).is_none());
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_message_that_says_something_still_reaches_the_slot() {
         match success_notification("Successfully pulled package acme/demo".to_owned()) {
             Some(Notification::Success(msg)) => {
