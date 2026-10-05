@@ -26,6 +26,14 @@ ui-stubs:
 gallery *args: ui-stubs
     cd quilt-sync/ui && TRUNK_SERVE_PORT="${TRUNK_SERVE_PORT:-8787}" trunk serve gallery.html --dist dist-gallery {{args}}
 
+# Use `just gallery` while iterating: it rebuilds fast and keeps full names in
+# panics, at about 110 MB of wasm. Use this one for a final look before pushing:
+# about 3 MB, like the shipped app, but each build takes about a minute.
+#
+# Serve the gallery as a release build (`just gallery` with Trunk's `--release`)
+gallery-release *args:
+    TRUNK_BUILD_RELEASE=true {{just_executable()}} gallery {{args}}
+
 # Run test coverage for all packages
 coverage:
     cargo tarpaulin --out html
