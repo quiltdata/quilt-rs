@@ -3,6 +3,7 @@
 // the lint in production; allow it only under `cfg(test)`.
 #![cfg_attr(test, allow(clippy::items_after_statements))]
 
+use quilt_rs::logging::{LOG_ENV, directives};
 use std::io;
 use tracing::log;
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
@@ -54,46 +55,107 @@ fn to_std(result: Result<Std, Error>) -> Std {
     }
 }
 
+/// Logs go to stderr, so stdout carries only the command's result.
 fn init_logging(verbose: bool) {
-    let rust_log = std::env::var(EnvFilter::DEFAULT_ENV).ok();
-    let filter = build_filter(rust_log.as_deref(), verbose);
+    let quilt_log = std::env::var(LOG_ENV).ok();
 
     tracing_subscriber::fmt()
-        .with_env_filter(filter)
+        .with_env_filter(build_filter(quilt_log.as_deref(), verbose))
         .with_writer(io::stderr)
         .init();
 }
 
-fn build_filter(env_value: Option<&str>, verbose: bool) -> EnvFilter {
-    let default_level = if verbose {
-        LevelFilter::INFO
-    } else {
-        LevelFilter::WARN
-    };
-    let builder = EnvFilter::builder().with_default_directive(default_level.into());
+/// The filter for `QUILT_LOG`'s value and `-v`. Reads no environment, so the
+/// rule is tested without touching the test process's.
+///
+/// A directive that does not parse is dropped, and when none is left the
+/// filter falls back to WARN.
+fn build_filter(quilt_log: Option<&str>, verbose: bool) -> EnvFilter {
+    EnvFilter::builder()
+        .with_default_directive(LevelFilter::WARN.into())
+        .parse_lossy(filter_directives(quilt_log, verbose))
+}
 
-    match env_value {
-        Some(value) => builder.parse_lossy(value),
-        None => builder.parse_lossy(""),
-    }
+/// `-v`, then `QUILT_LOG`, then WARN for everything. `-v` is `info` under the
+/// shared rule, and a flag beats the variable. An empty `QUILT_LOG` counts as
+/// unset.
+fn filter_directives(quilt_log: Option<&str>, verbose: bool) -> String {
+    let chosen = if verbose {
+        directives("info")
+    } else {
+        quilt_log.and_then(directives)
+    };
+    chosen.unwrap_or_else(|| "warn".to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn build_filter_uses_info_default_when_verbose_without_rust_log() {
-        let filter = build_filter(None, true);
-
-        assert_eq!(filter.max_level_hint(), Some(LevelFilter::INFO));
+    fn ours_at(level: &str) -> String {
+        format!("quilt={level},quilt_rs={level},quilt_uri={level},quilt_sync={level},warn")
     }
 
     #[test]
-    fn build_filter_lets_rust_log_override_verbose_default() {
-        let filter = build_filter(Some("warn"), true);
+    fn without_quilt_log_or_verbose_everything_is_at_warn() {
+        assert_eq!(filter_directives(None, false), "warn");
+    }
 
-        assert_eq!(filter.max_level_hint(), Some(LevelFilter::WARN));
+    #[test]
+    fn verbose_puts_our_crates_at_info() {
+        assert_eq!(filter_directives(None, true), ours_at("info"));
+    }
+
+    #[test]
+    fn quilt_log_sets_the_filter_through_the_shared_rule() {
+        assert_eq!(filter_directives(Some("debug"), false), ours_at("debug"));
+        assert_eq!(filter_directives(Some("error"), false), "error");
+        assert_eq!(
+            filter_directives(Some("quilt_rs=trace,aws_smithy_runtime=debug"), false),
+            "quilt_rs=trace,aws_smithy_runtime=debug"
+        );
+    }
+
+    #[test]
+    fn an_empty_quilt_log_counts_as_unset() {
+        assert_eq!(filter_directives(Some(""), false), "warn");
+        assert_eq!(filter_directives(Some("  "), true), ours_at("info"));
+    }
+
+    /// The regression this guards: under `RUST_LOG`, any usable value made
+    /// `-v` a no-op. A flag is the more local statement, so it wins.
+    #[test]
+    fn verbose_beats_quilt_log() {
+        assert_eq!(filter_directives(Some("trace"), true), ours_at("info"));
+        assert_eq!(filter_directives(Some("off"), true), ours_at("info"));
+    }
+
+    /// What the built filter admits, not only the string it was built from.
+    #[test]
+    fn a_bare_level_keeps_dependencies_at_warn() {
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(build_filter(Some("debug"), false))
+            .with_writer(io::sink)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(tracing::enabled!(target: "quilt_rs::flow", tracing::Level::DEBUG));
+            assert!(tracing::enabled!(target: "quilt", tracing::Level::DEBUG));
+            assert!(!tracing::enabled!(target: "quilt_rs", tracing::Level::TRACE));
+            assert!(!tracing::enabled!(target: "hyper", tracing::Level::DEBUG));
+            assert!(tracing::enabled!(target: "hyper", tracing::Level::WARN));
+        });
+    }
+
+    #[test]
+    fn unparseable_directives_fall_back_to_warn() {
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(build_filter(Some("quilt_rs=loud"), false))
+            .with_writer(io::sink)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(tracing::enabled!(target: "quilt_rs", tracing::Level::WARN));
+            assert!(!tracing::enabled!(target: "quilt_rs", tracing::Level::INFO));
+        });
     }
 
     /// The regression this guards: a pre-dispatch failure used to print as a

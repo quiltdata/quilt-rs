@@ -218,7 +218,8 @@ pub struct Args {
     )]
     domain: Option<PathBuf>,
 
-    /// Enable INFO-level logging; use `RUST_LOG` for finer-grained filtering.
+    /// Show INFO-level logs from quilt on stderr. Beats `QUILT_LOG`, which
+    /// takes a level (`debug`) or tracing directives (`quilt_rs=trace`).
     #[arg(short, long, global = true)]
     pub(crate) verbose: bool,
 

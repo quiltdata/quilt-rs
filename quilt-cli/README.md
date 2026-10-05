@@ -140,9 +140,22 @@ or after the command, so `quilt --domain <path> list` and
 - `--json` — shorthand for `--format json`, so `quilt list --json | jq` and
   `quilt --json list | jq` both work. It also wins over `QUILT_FORMAT`, but
   cannot be combined with `--format`.
-- `--verbose` (`-v`) — show INFO-level logs on stderr; set `RUST_LOG` for
-  target-specific filtering. Commands keep stdout reserved for command output
-  by default.
+- `--verbose` (`-v`) — show quilt's INFO-level logs on stderr. It wins over
+  `QUILT_LOG`. Commands keep stdout reserved for command output.
+
+### Logs
+
+Logs go to stderr; by default only warnings and errors. Set `QUILT_LOG` to see
+more:
+
+- A level — `trace`, `debug`, `info`, `warn`, `error` or `off`. `QUILT_LOG=debug`
+  shows quilt's own debug lines and keeps its dependencies (the HTTP stack, the
+  AWS SDK) at warnings; `error` and `off` apply to everything.
+- [`tracing` directives](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives),
+  used as given, for example `QUILT_LOG=quilt_rs=trace,aws_smithy_runtime=debug`.
+
+An empty `QUILT_LOG` counts as unset, and `-v` wins over it. `--format` never
+changes logs.
 
 `--home <path>` is deprecated, use `quilt home <path>`. It goes before the
 command, prints a warning, then sets the home the same way before the command

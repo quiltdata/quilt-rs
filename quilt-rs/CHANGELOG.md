@@ -23,6 +23,8 @@
 
 ### Added
 
+- `logging::directives` turns a `QUILT_LOG` value into `tracing` directives: a level such as `debug` puts quilt's crates at that level and dependencies at `warn`, and other values are kept as given
+
 - `flow::format_bytes` formats a size the way the report sentences do, for example `630.2 kB` (<https://github.com/quiltdata/quilt-rs/pull/1051>)
 
 ## [v0.42.0] - 2026-10-02
