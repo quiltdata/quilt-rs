@@ -1,5 +1,9 @@
 # Simple justfile for quilt-rs workspace
 
+# List the recipes, so a bare `just` starts nothing heavy
+default:
+    @{{ just_executable() }} --list
+
 # The desktop app: `dev`
 mod app "quilt-sync/app.just"
 
