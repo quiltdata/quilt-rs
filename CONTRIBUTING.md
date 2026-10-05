@@ -56,6 +56,11 @@ for the app and `ui/dist-gallery` for the gallery, because Trunk writes every
 target it is given to `<dist>/index.html` and a shared directory would leave
 whichever rebuilt last owning the page both of them serve.
 
+`just gallery` is a debug build: it rebuilds fast and keeps full names in
+panics, but its wasm is large. `just gallery-release` serves the same gallery
+as a release build, as small as the shipped app's, but each build is slower.
+Use it for a final look before pushing.
+
 A bare cargo command covers the workspace's default members (`quilt-rs`,
 `quilt-cli`, `quilt-sync`), not `quilt-uri` or `quilt-sync-ui`. Add
 `--workspace` for every member, as `just test` does, or `-p` for one:
