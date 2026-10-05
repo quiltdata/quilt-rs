@@ -6,9 +6,13 @@
   <title>QuiltSync design system — gallery</title>
 
   <!--
-    Debug harness. Its own Trunk target so it mounts `Gallery`, never `App` —
-    `App` invokes on mount and the Tauri bridge has no `catch`, so in a plain
-    browser it traps the wasm module. Run: `just gallery`.
+    Debug harness and design record. Its own Trunk target so it mounts
+    `Gallery`, never `App` — `App` invokes on mount and the Tauri bridge has no
+    `catch`, so in a plain browser it traps the wasm module. Run: `just gallery`.
+
+    Deployed to GitHub Pages as the kit's design record (deploy-gallery.yaml),
+    never as the app. It is served under a subpath: Trunk prefixes the URLs it
+    writes with `--public-url`, and the kit's image paths are relative.
 
     No fonts are linked: the system stack lives in tokens.css. v1's index.html
     pulls 1.2 MB of Roboto; none of it is wanted here.

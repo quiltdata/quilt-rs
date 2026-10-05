@@ -1,0 +1,93 @@
+name: Deploy Gallery
+
+# Publishes the component gallery (`quilt-sync/ui/gallery.html`) to GitHub Pages
+# as the kit's design record. It is never the app: the site renders component
+# stories from fixture data, with no backend behind it.
+#
+# Needs Settings → Pages → Source: GitHub Actions; until then the deploy job
+# fails and nothing is published.
+
+on:
+  workflow_dispatch:
+  push:
+    # Only `main` — see test-quilt-rs.yaml.
+    branches: [main]
+    paths:
+      - 'quilt-sync/ui/**'
+      - 'quilt-uri/**'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/deploy-gallery.yaml'
+
+# Least privilege for the whole run; the build job needs only to read the code.
+permissions:
+  contents: read
+
+concurrency:
+  # One deploy at a time. A newer push queues behind the running deploy rather
+  # than cancelling it: a deploy cut off halfway can leave Pages mid-update.
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build gallery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # The same toolchain and caches as test-quilt-sync-frontend.yaml.
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust-dev
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: 'quilt-sync/ui/package-lock.json'
+
+      - name: Install trunk
+        uses: taiki-e/install-action@trunk
+
+      # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml, as
+      # in test-quilt-sync-frontend.yaml: a skew breaks styling silently.
+      - name: Install stylance
+        uses: taiki-e/install-action@v2
+        with:
+          tool: stylance-cli@0.8.4
+
+      # A project site lives under `/<repo>/`, so every URL Trunk writes takes
+      # that prefix. Trunk 0.21 reads a bare `--release` followed by another
+      # argument as taking a value, hence `--release=true`.
+      - name: Build
+        run: >-
+          trunk build --release=true gallery.html
+          --public-url "/${{ github.event.repository.name }}/"
+          --dist dist-pages
+        working-directory: ./quilt-sync/ui
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: quilt-sync/ui/dist-pages
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

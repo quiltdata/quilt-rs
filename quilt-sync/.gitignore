@@ -10,6 +10,7 @@
 # tauri::generate_context!(), and src-tauri/build.rs creates it.
 ui/dist/
 ui/dist-gallery/
+ui/dist-pages/
 
 # Bundled by esbuild during trunk build (see ui/Trunk.toml hook)
 ui/assets/js/json-editor.js

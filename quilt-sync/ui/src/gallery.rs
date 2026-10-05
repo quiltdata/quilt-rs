@@ -1,4 +1,8 @@
-//! Component gallery — a debug harness, never shipped and never linked to.
+//! Component gallery — a debug harness and the kit's design record.
+//!
+//! Deployed to GitHub Pages as that design record (`deploy-gallery.yaml`),
+//! never as the app: the site renders component stories from fixture data, with
+//! no backend behind it. Its header says so, for a reader who lands on it cold.
 //!
 //! Its own Trunk target (`gallery.html`), mounting `Gallery` and never `App`. A
 //! deliberate separation, not just a style choice: `App` mounts the real router
@@ -523,6 +527,11 @@ fn Gallery() -> impl IntoView {
             </nav>
             <main class="g-main">
                 <header class="g-head">
+                    // The page is public on GitHub Pages, so it says what it is: a
+                    // reader landing here from a search must not take it for the app.
+                    <p class="g-head__record">
+                        "Component gallery — the design record of QuiltSync, not the app."
+                    </p>
                     <h1>"QuiltSync design system"</h1>
                     <p>
                         "Every cell is one state. Tab through them — the focus ring is

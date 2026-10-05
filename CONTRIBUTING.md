@@ -56,6 +56,13 @@ for the app and `ui/dist-gallery` for the gallery, because Trunk writes every
 target it is given to `<dist>/index.html` and a shared directory would leave
 whichever rebuilt last owning the page both of them serve.
 
+The gallery is also published to the repository's GitHub Pages site as the
+kit's design record, never as the app. `.github/workflows/deploy-gallery.yaml`
+rebuilds it on each push to `main` that touches the frontend, and can be run by
+hand. The site lives under the repository's subpath, so a story must not load
+an asset by an absolute path such as `/assets/...`; a relative path works both
+there and in the app.
+
 A bare cargo command covers the workspace's default members (`quilt-rs`,
 `quilt-cli`, `quilt-sync`), not `quilt-uri` or `quilt-sync-ui`. Add
 `--workspace` for every member, as `just test` does, or `-p` for one:
