@@ -417,7 +417,11 @@ fn PackageListRow(
 /// Tauri host.
 /// The class a run of rows carries, for the feed's list as well as this one — it has
 /// no stylesheet of its own and the rule is the page's.
-pub(super) fn rows_class() -> &'static str {
+///
+/// Public, with [`strip_class`] and [`list_region_class`], for the gallery's
+/// whole-page scenes: they draw fixture rows rather than this page, but in the
+/// page's own layout, so a change to it shows there too.
+pub fn rows_class() -> &'static str {
     style::rows
 }
 
@@ -425,6 +429,16 @@ pub(super) fn rows_class() -> &'static str {
 /// packages an expanded cause reveals.
 pub(super) fn list_class() -> &'static str {
     style::list
+}
+
+/// The state strip's two-card row.
+pub fn strip_class() -> &'static str {
+    style::strip
+}
+
+/// Region 4: the list toolbar, then the card that scrolls under it.
+pub fn list_region_class() -> &'static str {
+    style::list_region
 }
 
 /// Keyed on the namespace. Filtering drops rows out of the middle of the list,

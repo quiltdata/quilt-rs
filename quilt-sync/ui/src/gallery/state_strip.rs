@@ -20,6 +20,7 @@ use crate::kit::StateLabel;
 use crate::kit::StateTone;
 use crate::kit::ToggleRow;
 use crate::kit::ZeroLine;
+use quilt_sync_ui::pages::strip_class;
 
 fn in_secs(secs: f64) -> Signal<Option<f64>> {
     let at = js_sys::Date::now() + secs * 1000.0;
@@ -57,7 +58,7 @@ pub fn StripErrorScene() -> impl IntoView {
                   together: it is the one arrangement where the strip says nothing useful \
                   and still costs the queue its space."
         >
-            <div class="g-strip">
+            <div class=strip_class()>
                 <Card title="Autosync">
                     <LoadFailure
                         words="Could not load autosync."
@@ -83,9 +84,10 @@ pub fn StateStripRegion() -> impl IntoView {
     let out_role = RwSignal::new("analyst".to_string());
 
     view! {
-        // No breakpoint and no media query: `flex-wrap` alone drops the second card
-        // under the first when the window cannot hold both.
-        <div class="g-strip">
+        // The page's own strip class. No breakpoint and no media query: `flex-wrap`
+        // alone drops the second card under the first when the window cannot hold
+        // both.
+        <div class=strip_class()>
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
@@ -182,7 +184,7 @@ fn PausedWithReason() -> impl IntoView {
                   `clear_paused`. Adding a paused row to the queue would count the same \
                   packages twice, including in the header count."
         >
-            <div class="g-strip">
+            <div class=strip_class()>
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
@@ -235,7 +237,7 @@ fn PausedStale() -> impl IntoView {
                   reachable, so the scene has no button to leave it: a button here would \
                   make a backend defect look like a feature."
         >
-            <div class="g-strip">
+            <div class=strip_class()>
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
