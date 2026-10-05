@@ -47,6 +47,9 @@ pub use main_page::MainPageSkeleton;
 // queue rows. Re-exported one function rather than opening the page's module: a
 // second copy of the map in the gallery is a copy that drifts.
 pub use main_page::queue::action_href;
+// The page's layout classes, so the gallery's whole-page scenes lay their fixture
+// rows out by the page's own rules rather than a copy of them.
+pub use main_page::{list_region_class, rows_class, strip_class};
 pub use merge::Merge;
 pub use not_found::NotFound;
 pub use remote_package::RemotePackage;

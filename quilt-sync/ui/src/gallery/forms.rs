@@ -499,9 +499,8 @@ pub fn DialogScene() -> impl IntoView {
             <div class="g-inline">
                 <Button on_click=move |_| bucket_open.set(true)>"Change bucket"</Button>
                 <Button on_click=move |_| show_open.set(true)>"Show remote"</Button>
-                <Button variant=ButtonVariant::Primary on_click=move |_| create_open.set(true)>
-                    "Create package"
-                </Button>
+                // Default, as the page's list toolbar draws its opener.
+                <Button on_click=move |_| create_open.set(true)>"Create package"</Button>
             </div>
             <FormDialog
                 open=bucket_open

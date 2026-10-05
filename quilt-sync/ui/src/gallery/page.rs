@@ -39,24 +39,23 @@ use crate::kit::ZeroLineSkeleton;
 use crate::kit::icons;
 use crate::pages;
 
+/// The bar a settled page draws. The app's own is
+/// `components::appbar::appbar_actions` over the same `refresh_button`; its
+/// Settings navigates, and this gallery has no router, so Settings here is a
+/// button that does nothing.
 fn appbar_actions() -> AnyView {
-    view! {
-        <Button leading_visual=icons::sync() on_click=|_| ()>
-            "Refresh"
-        </Button>
-        <Button leading_visual=icons::gear() on_click=|_| ()>
-            "Settings"
-        </Button>
-    }
-    .into_any()
+    actions(false)
 }
 
 /// The bar a loading page draws: Refresh spinning, because the page's first read
-/// is out. The app's own is `components::appbar::appbar_actions` over the same
-/// `refresh_button`; its Settings navigates, and this gallery has no router.
+/// is out.
 fn loading_actions() -> AnyView {
+    actions(true)
+}
+
+fn actions(busy: bool) -> AnyView {
     view! {
-        {quilt_sync_ui::components::appbar::refresh_button(|| (), Signal::stored(true))}
+        {quilt_sync_ui::components::appbar::refresh_button(|| (), Signal::stored(busy))}
         <Button leading_visual=icons::gear() on_click=|_| ()>
             "Settings"
         </Button>
@@ -132,8 +131,8 @@ pub fn PageScene() -> impl IntoView {
             note="The two chrome buttons on the brand background, with nothing else on \
                   the bar. Buttons with an icon and a label; the bar removes their frame \
                   (see PageLayout), like v1's link buttons. Hover and focus them here: the \
-                  focus ring uses the bar's text colour. The glyphs are defined twice, here \
-                  and in main_page.rs, because there is no shared kit/icons.rs."
+                  focus ring uses the bar's text colour. Refresh is the app's own \
+                  refresh_button, and both glyphs come from kit/icons.rs."
         >
             <div class="g-window g-window--bar">
                 <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>

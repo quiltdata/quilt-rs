@@ -21,6 +21,8 @@ use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::StateTone;
+use quilt_sync_ui::pages::list_region_class;
+use quilt_sync_ui::pages::rows_class;
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;
@@ -349,49 +351,49 @@ pub fn PackagesRegion(
     let view_mode = RwSignal::new("Packages".to_string());
     let query = RwSignal::new(String::new());
     let group = RwSignal::new("Bucket".to_string());
-    let sort = RwSignal::new("Recently changed".to_string());
+    let sort = RwSignal::new("Changed".to_string());
 
     view! {
-        // No title: the SegmentedControl names the view, and a card headed `Packages` above a
-        // Packages / Recent files switch says it twice. One wrapper child, so the
-        // card's between-children hairline does not double the rows' own.
-        <Card>
-            <div>
-                <ListToolbar>
-                    <SegmentedControl
-                        aria_label="List view"
-                        name=view_name
-                        options=vec!["Packages".into(), "Recent files".into()]
-                        selected=view_mode
-                    />
-                    <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
-                    <Select
-                        naming=Naming::Prefix("Group".to_string())
-                        options=vec![
-                            "Bucket".to_string(),
-                            "Prefix".to_string(),
-                            "None".to_string(),
-                        ]
-                        selected=group
-                    />
-                    <Select
-                        naming=Naming::Prefix("Sort".to_string())
-                        options=vec!["Recently changed".to_string(), "Name".to_string()]
-                        selected=sort
-                    />
-                    <Button variant=ButtonVariant::Primary on_click=|_| ()>
-                        "Create package"
-                    </Button>
-                </ListToolbar>
+        // The page's region 4: the toolbar, then the card that scrolls under it,
+        // laid out by the page's own class. The toolbar sits on the card, not in
+        // it. No title on the card: the SegmentedControl names the view, and a
+        // card headed `Packages` above a Packages / Recent files switch says it
+        // twice.
+        <div class=list_region_class()>
+            <ListToolbar>
+                <SegmentedControl
+                    aria_label="List view"
+                    name=view_name
+                    options=vec!["Packages".into(), "Recent files".into()]
+                    selected=view_mode
+                />
+                <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
+                <Select
+                    naming=Naming::Prefix("Group".to_string())
+                    options=vec![
+                        "Bucket".to_string(),
+                        "Prefix".to_string(),
+                        "None".to_string(),
+                    ]
+                    selected=group
+                />
+                <Select
+                    naming=Naming::Prefix("Sort".to_string())
+                    options=vec!["Changed".to_string(), "Name".to_string()]
+                    selected=sort
+                />
+                // Default, as the page draws it: the accent is the fresh
+                // install's Blankslate action, not a toolbar's.
+                <Button on_click=|_| ()>"Create package"</Button>
+            </ListToolbar>
+            // Headings and lists are the card's direct children, as on the page:
+            // `Card` rules between them, and the list rules between its rows.
+            <Card label="Packages">
                 {move || {
                     let rows = fixtures();
                     let axis = group.get();
                     if axis == "None" {
-                        return rows
-                            .into_iter()
-                            .map(|entry| row(entry, provisional))
-                            .collect_view()
-                            .into_any();
+                        return list(rows, provisional);
                     }
                     let bucket_axis = axis == "Bucket";
                     // One path for both axes, differing only in the key. Grouping by
@@ -421,19 +423,33 @@ pub fn PackagesRegion(
                                 .collect();
                             view! {
                                 {header(group_key, group_rows.len(), bucket_axis)}
-                                {group_rows
-                                    .into_iter()
-                                    .map(|entry| row(entry, provisional))
-                                    .collect_view()}
+                                {list(group_rows, provisional)}
                             }
                                 .into_any()
                         })
                         .collect_view()
                         .into_any()
                 }}
-            </div>
-        </Card>
+            </Card>
+        </div>
     }
+}
+
+/// One group's rows as the page lists them: a `ul` with the page's rows class,
+/// which rules between its items.
+fn list(
+    rows: Vec<(&'static str, &'static str, &'static str, StateTone, f64)>,
+    provisional: bool,
+) -> AnyView {
+    view! {
+        <ul class=rows_class() role="list">
+            {rows
+                .into_iter()
+                .map(|entry| view! { <li>{row(entry, provisional)}</li> })
+                .collect_view()}
+        </ul>
+    }
+    .into_any()
 }
 
 #[component]
