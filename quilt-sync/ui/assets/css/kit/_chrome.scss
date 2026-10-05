@@ -86,6 +86,7 @@ body {
 
 .g-head h1 { font-size: var(--q-text-title); margin: 0 0 4px; font-weight: 600; }
 .g-head p { margin: 0 0 12px; font-size: var(--q-text-body); color: var(--q-fgColor-muted); max-width: 60ch; }
+.g-head .g-head__record { margin: 0 0 var(--q-space-2); font-size: 12px; }
 
 .g-section { margin-bottom: var(--q-space-8); }
 /* Sentence case at the lead size: Card titles are 14px uppercase, and a gallery

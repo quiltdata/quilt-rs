@@ -4,35 +4,12 @@
 start: ui-stubs
     cd quilt-sync && cargo tauri dev
 
-# Trunk refuses to start until the generated files in its watch-ignore list exist,
-# so a fresh checkout fails before the pre-build hooks that write them ever run.
-# Empty stubs get it past that check; the hooks then overwrite them.
+# The component gallery: `dev`, `build` and `preview`
+mod gallery "quilt-sync/ui/gallery.just"
+
+# In the module because a module recipe cannot depend on a root one.
 [private]
-ui-stubs:
-    cd quilt-sync/ui && mkdir -p assets/js && touch assets/js/json-editor.js assets/css/kit/_modules.scss assets/css/kit/_normalize.scss
-
-# Serve the component gallery (the kit's design record, never the app); `--open`
-# opens a browser tab.
-# Needs the frontend toolchain, see CONTRIBUTING.md.
-#
-# `--dist` is load-bearing. Trunk writes whatever target it is given to
-# `<dist>/index.html`, and `just start` points Tauri at `ui/dist`, so sharing one
-# directory means whichever of the two rebuilt last owns the page both of them serve.
-# With its own directory the gallery and the app run side by side.
-#
-# Extra arguments go to `trunk serve`: `just gallery --open`, `just gallery --address 0.0.0.0`.
-# The port defaults through Trunk's env var rather than `--port`, so `just gallery --port 9000`
-# overrides it instead of passing the flag twice.
-gallery *args: ui-stubs
-    cd quilt-sync/ui && TRUNK_SERVE_PORT="${TRUNK_SERVE_PORT:-8787}" trunk serve gallery.html --dist dist-gallery {{args}}
-
-# Use `just gallery` while iterating: it rebuilds fast and keeps full names in
-# panics, but its wasm is large. Use this one for a final look before pushing:
-# its wasm is as small as the shipped app's, but each build is slower.
-#
-# Serve the gallery as a release build (`just gallery` with Trunk's `--release`)
-gallery-release *args:
-    TRUNK_BUILD_RELEASE=true {{just_executable()}} gallery {{args}}
+ui-stubs: gallery::stubs
 
 # Run test coverage for all packages
 coverage:

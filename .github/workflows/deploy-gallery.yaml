@@ -1,0 +1,83 @@
+name: Deploy Gallery
+
+# The kit's design record, never the app: stories from fixture data, no backend.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'quilt-sync/ui/**'
+      - 'quilt-uri/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'justfile'
+      - '.github/workflows/deploy-gallery.yaml'
+
+permissions:
+  contents: read
+
+concurrency:
+  # Queue, never cancel: a deploy cut off halfway can leave Pages mid-update.
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build gallery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust-dev
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: 'quilt-sync/ui/package-lock.json'
+
+      - name: Install trunk
+        uses: taiki-e/install-action@trunk
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      # Matches the `stylance` crate in quilt-sync/ui/Cargo.toml: a skew breaks
+      # styling silently.
+      - name: Install stylance
+        uses: taiki-e/install-action@v2
+        with:
+          tool: stylance-cli@0.8.4
+
+      # A project site lives under `/<repo>/`.
+      - name: Build
+        run: just gallery build "/${{ github.event.repository.name }}/"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: quilt-sync/ui/dist-pages
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

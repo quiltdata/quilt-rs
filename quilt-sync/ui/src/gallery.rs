@@ -1,4 +1,5 @@
-//! Component gallery — a debug harness, never shipped and never linked to.
+//! Component gallery — a debug harness, and the kit's design record on GitHub
+//! Pages (`deploy-gallery.yaml`). Never the app.
 //!
 //! Its own Trunk target (`gallery.html`), mounting `Gallery` and never `App`. A
 //! deliberate separation, not just a style choice: `App` mounts the real router
@@ -15,7 +16,7 @@
 //! Run it with `just gallery` and iterate in Chrome or Firefox for
 //! speed — then check **GNOME Web (Epiphany)**, which is `WebKitGTK`, before
 //! committing a layout. Chrome is not the webview that ships on Linux.
-//! `just gallery-release` serves a release build, as small as the shipped
+//! `just gallery preview` serves the release build, as small as the shipped
 //! app's, for a final look; its builds are slower.
 //!
 //! # Render states, not components
@@ -525,6 +526,11 @@ fn Gallery() -> impl IntoView {
             </nav>
             <main class="g-main">
                 <header class="g-head">
+                    // Public on Pages: a reader landing from a search must not
+                    // take it for the app.
+                    <p class="g-head__record">
+                        "Component gallery — the design record of QuiltSync, not the app."
+                    </p>
                     <h1>"QuiltSync design system"</h1>
                     <p>
                         "Every cell is one state. Tab through them — the focus ring is

@@ -23,8 +23,10 @@ pub fn Appbar(
             <div class=style::bar>
                 <a class=style::logo href="/" prop:replace=replace>
                     // The only logo asset with an alpha channel, so it has no
-                    // opaque square on the brand background.
-                    <img src="/assets/img/quilt.png" alt="QuiltSync home" />
+                    // opaque square on the brand background. Relative, so it
+                    // resolves under the Pages subpath; app routes are one level
+                    // deep, so it resolves there too.
+                    <img src="assets/img/quilt.png" alt="QuiltSync home" />
                 </a>
                 <ActivityLine />
                 {actions.map(|actions| view! { <span class=style::actions>{actions}</span> })}

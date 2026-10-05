@@ -56,10 +56,17 @@ for the app and `ui/dist-gallery` for the gallery, because Trunk writes every
 target it is given to `<dist>/index.html` and a shared directory would leave
 whichever rebuilt last owning the page both of them serve.
 
-`just gallery` is a debug build: it rebuilds fast and keeps full names in
-panics, but its wasm is large. `just gallery-release` serves the same gallery
-as a release build, as small as the shipped app's, but each build is slower.
-Use it for a final look before pushing.
+The gallery's verbs mean what they mean in Vite:
+
+- `just gallery dev` (or plain `just gallery`) serves a debug build: fast to
+  rebuild, full names in panics, but a large wasm.
+- `just gallery build` writes the release site to `ui/dist-pages`.
+- `just gallery preview` serves a release build as Pages does, at
+  `http://127.0.0.1:8787/quilt-rs/`. Builds are slower; use it for a final look.
+
+`main` publishes `build`'s output to GitHub Pages as the kit's design record.
+The site lives under `/quilt-rs/`, so a story must not load an asset by an
+absolute path such as `/assets/...`.
 
 A bare cargo command covers the workspace's default members (`quilt-rs`,
 `quilt-cli`, `quilt-sync`), not `quilt-uri` or `quilt-sync-ui`. Add
