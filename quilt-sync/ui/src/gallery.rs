@@ -15,8 +15,8 @@
 //! Run it with `just gallery` and iterate in Chrome or Firefox for
 //! speed — then check **GNOME Web (Epiphany)**, which is `WebKitGTK`, before
 //! committing a layout. Chrome is not the webview that ships on Linux.
-//! `just gallery-release` serves a release build, about 3 MB like the shipped
-//! app, for a final look; its builds are slower.
+//! `just gallery-release` serves a release build, as small as the shipped
+//! app's, for a final look; its builds are slower.
 //!
 //! # Render states, not components
 //!

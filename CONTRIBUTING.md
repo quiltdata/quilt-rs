@@ -57,9 +57,9 @@ target it is given to `<dist>/index.html` and a shared directory would leave
 whichever rebuilt last owning the page both of them serve.
 
 `just gallery` is a debug build: it rebuilds fast and keeps full names in
-panics, but its wasm is over 100 MB. `just gallery-release` serves the same
-gallery as a release build, about 3 MB like the shipped app, at about a minute
-per build. Use it for a final look before pushing.
+panics, but its wasm is large. `just gallery-release` serves the same gallery
+as a release build, as small as the shipped app's, but each build is slower.
+Use it for a final look before pushing.
 
 A bare cargo command covers the workspace's default members (`quilt-rs`,
 `quilt-cli`, `quilt-sync`), not `quilt-uri` or `quilt-sync-ui`. Add
