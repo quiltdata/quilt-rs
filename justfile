@@ -4,13 +4,10 @@
 start: ui-stubs
     cd quilt-sync && cargo tauri dev
 
-# Its recipes are in quilt-sync/ui/gallery.just; `just gallery` alone runs `dev`.
-#
-# The component gallery: `dev`, `build` and `preview` (`just --list gallery`)
+# The component gallery: `dev`, `build` and `preview`
 mod gallery "quilt-sync/ui/gallery.just"
 
-# Write the empty files Trunk needs before its first build. The command lives in
-# the gallery module (`stubs`), since a module recipe cannot depend on this file's.
+# In the module because a module recipe cannot depend on a root one.
 [private]
 ui-stubs: gallery::stubs
 

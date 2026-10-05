@@ -56,26 +56,17 @@ for the app and `ui/dist-gallery` for the gallery, because Trunk writes every
 target it is given to `<dist>/index.html` and a shared directory would leave
 whichever rebuilt last owning the page both of them serve.
 
-The gallery's recipes are a `just` module, `just gallery <verb>`, with verbs
-that mean what they mean in Vite (`just --list gallery` lists them):
+The gallery's verbs mean what they mean in Vite:
 
-- `just gallery dev`, or plain `just gallery`, serves a debug build and rebuilds
-  on save. It rebuilds fast and keeps full names in panics, but its wasm is
-  large.
-- `just gallery build` writes the release site to `ui/dist-pages` and exits.
-  Its URLs take the `/quilt-rs/` prefix the Pages site lives under; pass another
-  as `just gallery build /other/`.
-- `just gallery preview` serves exactly what `build` writes, under
-  `http://127.0.0.1:8787/quilt-rs/`, and rebuilds on save. Its wasm is as small
-  as the shipped app's, but each build is slower. Use it for a final look before
-  pushing.
+- `just gallery dev` (or plain `just gallery`) serves a debug build: fast to
+  rebuild, full names in panics, but a large wasm.
+- `just gallery build` writes the release site to `ui/dist-pages`.
+- `just gallery preview` serves what `build` writes, at
+  `http://127.0.0.1:8787/quilt-rs/`. Builds are slower; use it for a final look.
 
-The gallery is also published to the repository's GitHub Pages site as the
-kit's design record, never as the app. `.github/workflows/deploy-gallery.yaml`
-runs `just gallery build` on each push to `main` that touches the frontend, and
-can be run by hand. The site lives under the repository's subpath, so a story
-must not load an asset by an absolute path such as `/assets/...`; a relative
-path works both there and in the app.
+`main` publishes `build`'s output to GitHub Pages as the kit's design record.
+The site lives under `/quilt-rs/`, so a story must not load an asset by an
+absolute path such as `/assets/...`.
 
 A bare cargo command covers the workspace's default members (`quilt-rs`,
 `quilt-cli`, `quilt-sync`), not `quilt-uri` or `quilt-sync-ui`. Add
