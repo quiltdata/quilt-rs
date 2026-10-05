@@ -27,7 +27,7 @@
 
 - `QUILT_DOMAIN` sets the domain when `--domain` is not given, so one `export` points every command in a shell at the same domain. `--domain` still wins, and an empty `QUILT_DOMAIN` counts as unset (<https://github.com/quiltdata/quilt-rs/pull/1059>)
 
-- `--format text|json` and `QUILT_FORMAT` pick the format of a command's result, so `export QUILT_FORMAT=json` makes every command print JSON; `--json` still works (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- `--format text|json` and `QUILT_FORMAT` pick the format of a command's result, so `export QUILT_FORMAT=json` makes every command print JSON; `--json` still works (<https://github.com/quiltdata/quilt-rs/pull/1062>)
 
 ### Changed
 
