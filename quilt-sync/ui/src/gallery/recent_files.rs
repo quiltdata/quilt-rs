@@ -251,7 +251,7 @@ fn Groups() -> impl IntoView {
             </Cell>
             <Cell wide=true label="long title truncates, count survives">
                 <GroupHeading
-                    title="s3://quilt-enterprise-eu-west-1-vir-biotechnology-in-progress"
+                    title="s3://data-catalog-eu-west-1-acme-biotechnology-in-progress"
                     count=14
                 />
             </Cell>

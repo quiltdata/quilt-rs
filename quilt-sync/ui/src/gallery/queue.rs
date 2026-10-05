@@ -249,8 +249,8 @@ fn CauseRowStory() -> impl IntoView {
             </Cell>
             <Cell wide=true label="narrow · long cause — wraps, keeps the glyph at the top">
                 <CauseRow
-                    text="No access as analyst on quilt-enterprise-eu-west-1.example.com, \
-                          in s3://quilt-enterprise-eu-west-1-in-progress"
+                    text="No access as analyst on data-catalog-eu-west-1.example.com, \
+                          in s3://acme-research-eu-west-1-in-progress"
                     count=14
                     expanded=long
                     trailing=view! { "Change your role in Accounts, above." }.into_any()

@@ -82,7 +82,7 @@ pub fn HostRowStories() -> impl IntoView {
             <Cell wide=true label="long hostname truncates">
                 <Card title="Accounts">
                     <HostRow
-                        host="quilt-enterprise-eu-west-1.internal.vir-biotechnology.example.com"
+                        host="data-catalog-eu-west-1.research.acme-biotechnology.example.com"
                         role=multi
                         roles=roles()
                         on_sign_in=|_| ()

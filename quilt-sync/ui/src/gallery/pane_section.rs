@@ -30,7 +30,7 @@ pub fn PaneSectionStories() -> impl IntoView {
         >
             <Cell wide=true label="labelled">
                 <PaneSection label="Revision">
-                    <RevisionRow message="Add Ernest thread" at=ago(2.0 * HOUR) />
+                    <RevisionRow message="Add kickoff thread" at=ago(2.0 * HOUR) />
                 </PaneSection>
             </Cell>
             <Cell wide=true label="no label — the pane names it">
@@ -45,11 +45,11 @@ pub fn PaneSectionStories() -> impl IntoView {
                 <Card>
                     <PaneSection>
                         <PaneSection nested=true label="Yours">
-                            <RevisionRow message="Fix the Ernest thread link" at=ago(0.4 * HOUR) />
+                            <RevisionRow message="Fix the kickoff thread link" at=ago(0.4 * HOUR) />
                         </PaneSection>
                         <PaneSection nested=true label="Published">
                             <RevisionRow
-                                message="Add Caihong folder-upload note"
+                                message="Add intake folder-upload note"
                                 at=ago(2.0 * HOUR)
                             />
                         </PaneSection>

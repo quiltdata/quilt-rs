@@ -13,7 +13,7 @@ pub fn SelectStories() -> impl IntoView {
     let group = RwSignal::new("Bucket".to_string());
     let sort = RwSignal::new("Changed".to_string());
     let role = RwSignal::new("analyst".to_string());
-    let long = RwSignal::new("s3://vir-quilt-res-3-in-progress".to_string());
+    let long = RwSignal::new("s3://acme-research-lab-in-progress".to_string());
     let one = RwSignal::new("analyst".to_string());
     let off = RwSignal::new("Bucket".to_string());
     let workflow = RwSignal::new("Default".to_string());
@@ -57,7 +57,7 @@ pub fn SelectStories() -> impl IntoView {
                 <Select
                     naming=Naming::Prefix("Bucket".to_string())
                     options=vec![
-                        "s3://vir-quilt-res-3-in-progress".to_string(),
+                        "s3://acme-research-lab-in-progress".to_string(),
                         "s3://quilt-example".to_string(),
                     ]
                     selected=long

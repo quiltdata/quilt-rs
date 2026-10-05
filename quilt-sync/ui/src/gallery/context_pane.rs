@@ -96,7 +96,7 @@ fn revisions() -> Vec<(&'static str, f64, Option<CatalogLink>)> {
 /// pane's answer draw from.
 fn held() -> Vec<(&'static str, f64, Option<&'static str>)> {
     vec![
-        ("Add Caihong folder-upload note", ago(2.0 * HOUR), None),
+        ("Add intake folder-upload note", ago(2.0 * HOUR), None),
         (
             "Re-run plate 7 with the corrected layout",
             ago(3.0 * DAY),
@@ -377,7 +377,7 @@ fn pane(
 ) -> AnyView {
     let sections = view! {
         <PaneSection label="Revision">
-            <RevisionRow message="Add Caihong folder-upload note" at=ago(2.0 * HOUR) />
+            <RevisionRow message="Add intake folder-upload note" at=ago(2.0 * HOUR) />
             <span style="color:var(--q-fgColor-muted); font-size:var(--q-text-body)">
                 {BUCKET}
             </span>
@@ -481,7 +481,7 @@ fn resolve(exit: &str, resolve: ResolveData) -> AnyView {
 
 fn compared() -> ResolveData {
     ResolveData::Compared {
-        published_message: Some("Add Caihong folder-upload note".to_string()),
+        published_message: Some("Add intake folder-upload note".to_string()),
         differing: MARKED.iter().map(|&key| key.to_string()).collect(),
         unpublished: 2,
         uncommitted: 1,
@@ -586,7 +586,7 @@ pub fn ContextPaneScene() -> impl IntoView {
                     data=crate::commands::PackageContextData {
                         revision: crate::commands::CurrentRevisionData {
                             hash: "b5e013".to_string(),
-                            message: Some("Add Caihong folder-upload note".to_string()),
+                            message: Some("Add intake folder-upload note".to_string()),
                             obtained_at: ago(2.0 * HOUR),
                         },
                         bucket: Some("quilt-lab-plates".to_string()),

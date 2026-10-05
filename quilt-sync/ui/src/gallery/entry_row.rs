@@ -48,9 +48,9 @@ fn states(ticked: RwSignal<bool>, fresh: RwSignal<bool>, opened: RwSignal<String
         <Story title="EntryRow" note=STATES>
             <Cell full=true label="downloaded — no box but a muted check, since the file is here; a click opens it">
                 <EntryRow
-                    name="notes/ernest-thread.md"
+                    name="notes/kickoff-thread.md"
                     size="12 KB"
-                    action=open("notes/ernest-thread.md", opened)
+                    action=open("notes/kickoff-thread.md", opened)
                     actions=menu()
                     have_mark=true
                 />
@@ -66,11 +66,11 @@ fn states(ticked: RwSignal<bool>, fresh: RwSignal<bool>, opened: RwSignal<String
             </Cell>
             <Cell full=true label="changed — here, so a click opens it">
                 <EntryRow
-                    name="notes/caihong-upload.md"
+                    name="notes/intake-upload.md"
                     state="Changed"
                     tone=StateTone::Attention
                     size="8 KB"
-                    action=open("notes/caihong-upload.md", opened)
+                    action=open("notes/intake-upload.md", opened)
                     actions=menu()
                     have_mark=true
                 />
@@ -152,10 +152,10 @@ fn edges(long: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
             <Cell full=true label="the two revisions disagree — no word, and hover it">
                 <Provider value=DiffersId("resolve-differing-entry-row")>
                     <EntryRow
-                        name="notes/ernest-thread.md"
+                        name="notes/kickoff-thread.md"
                         size="12 KB"
                         differs=true
-                        action=open("notes/ernest-thread.md", opened)
+                        action=open("notes/kickoff-thread.md", opened)
                         actions=menu()
                         have_mark=true
                     />
@@ -173,9 +173,9 @@ fn edges(long: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
             </Cell>
             <Cell full=true label="no menu — an empty list draws none rather than an empty one">
                 <EntryRow
-                    name="notes/ernest-thread.md"
+                    name="notes/kickoff-thread.md"
                     size="12 KB"
-                    action=open("notes/ernest-thread.md", opened)
+                    action=open("notes/kickoff-thread.md", opened)
                     have_mark=true
                 />
             </Cell>
