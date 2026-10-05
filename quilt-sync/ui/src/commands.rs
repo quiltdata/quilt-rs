@@ -1816,7 +1816,6 @@ mod tests {
         KeptReason, PackageContextData, PackageItemData, PackageSize, PullOutcome, ResolveData,
         RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
-    use wasm_bindgen_test::*;
 
     /// Anchored identically in the backend's `files_data_wire_form_is_verbatim`.
     #[test]
@@ -2164,7 +2163,7 @@ mod tests {
     /// (`quilt_sync::commands::main_page::get_main_page_packages_from_model_serializes_the_wire_shape`)
     /// pins for one row. If the two drift, a light-phase row silently fails to
     /// deserialize at the Tauri boundary.
-    #[wasm_bindgen_test]
+    #[test]
     fn main_page_packages_data_wire_form_is_verbatim() {
         let data = serde_json::from_str::<super::MainPagePackagesData>(
             r#"{"packages":[{"namespace":"team/latest","state":{"kind":"latest"},"changedAt":null,"bucket":"test","host":"quilt.test","provisional":true,"roleSwitchHost":null}]}"#,
@@ -2185,7 +2184,7 @@ mod tests {
     /// (`#[serde(rename_all = "camelCase")]`, both plain `Serialize`) produce.
     /// If the two drift, the feed silently fails to deserialize at the Tauri
     /// boundary.
-    #[wasm_bindgen_test]
+    #[test]
     fn main_page_recent_files_data_wire_form_is_verbatim() {
         let data = serde_json::from_str::<super::MainPageRecentFilesData>(
             r#"{"files":[{"path":"a/one.csv","namespace":"user/alpha","changedAt":1000.0}]}"#,
@@ -2264,7 +2263,7 @@ mod tests {
     /// `quilt_sync::commands::main_page::the_watcher_payload_serializes_the_wire_shape`
     /// pins. Character-for-character: a literal the backend does not emit looks like
     /// a guard and proves nothing (plan 2's Fix 2).
-    #[wasm_bindgen_test]
+    #[test]
     fn main_page_watcher_data_wire_form_is_verbatim() {
         let data = serde_json::from_str::<super::MainPageWatcherData>(
             r#"{"pull":{"enabled":true,"activity":"paused","deadline":null,"intervalMs":30000.0},"publish":{"enabled":true,"activity":"paused","deadline":null,"intervalMs":300000.0},"paused":[{"namespace":"team/plate-07","reason":{"kind":"pull_conflict","files":["a.csv","b.csv"]}}]}"#,
@@ -2285,7 +2284,7 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn an_armed_toggle_arrives_with_its_deadline() {
         let data = serde_json::from_str::<super::MainPageWatcherData>(
             r#"{"pull":{"enabled":true,"activity":"armed","deadline":1754500030000.0,"intervalMs":30000.0},"publish":{"enabled":false,"activity":"idle","deadline":null,"intervalMs":300000.0},"paused":[]}"#,
@@ -2296,7 +2295,7 @@ mod tests {
         assert_eq!(data.publish.activity, super::ToggleActivityData::Idle);
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_conflict_arrives_as_a_list_with_its_commas_intact() {
         // The conflict's files arrive as a list, so a file name containing ", "
         // stays one path.
@@ -2313,7 +2312,7 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_reason_this_build_has_never_heard_of_degrades_instead_of_failing_the_payload() {
         // A reason added to the backend without an arm here would otherwise fail the
         // WHOLE payload and the card would vanish. Same treatment
@@ -2331,7 +2330,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn the_three_named_fields_arrive_separately() {
         for (json, expected) in [
             (
@@ -2361,7 +2360,7 @@ mod tests {
     /// The mirror must deserialize the exact JSON the backend's
     /// `the_accounts_payload_serializes_the_wire_shape` pins. Character-for-character:
     /// a literal the backend does not emit looks like a guard and proves nothing.
-    #[wasm_bindgen_test]
+    #[test]
     fn main_page_accounts_data_wire_form_is_verbatim() {
         let data = serde_json::from_str::<super::MainPageAccountsData>(
             r#"{"hosts":[{"host":"one.quilt.test","signedIn":true,"currentRole":null,"roles":[],"provisional":true},{"host":"another.quilt.test","signedIn":false,"currentRole":null,"roles":[],"provisional":false}]}"#,
@@ -2381,7 +2380,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_settled_account_arrives_with_its_role_and_alternatives() {
         let host = serde_json::from_str::<super::AccountHostData>(
             r#"{"host":"quilt.test","signedIn":true,"currentRole":"analyst","roles":["analyst","admin"],"provisional":false}"#,
@@ -2392,7 +2391,7 @@ mod tests {
         assert!(!host.provisional);
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_nameless_role_is_null_not_an_empty_string() {
         // R5's wire form. `HostRow` maps this to "Role unavailable"; an empty string
         // would be indistinguishable from a role literally named "".

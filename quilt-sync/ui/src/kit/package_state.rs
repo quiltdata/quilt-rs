@@ -369,7 +369,6 @@ fn action(state: &PackageState) -> Option<PackageAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wasm_bindgen_test::*;
 
     /// The one verb `action` never returns. Whether a switch can be offered
     /// depends on the roles the reader holds, which is payload the state does
@@ -382,14 +381,14 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn behind_is_quiet_on_a_list_row_and_inviting_on_a_queue_row() {
         let s = PackageState::Behind;
         assert_eq!(render(&s, Site::ListRow).words, "Not the latest");
         assert_eq!(render(&s, Site::QueueRow).words, "has a newer revision");
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn role_denied_states_the_cause_once_on_a_queue_row() {
         let s = PackageState::RoleDenied {
             role: Some("analyst".to_string()),
@@ -401,7 +400,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_denial_whose_role_could_not_be_named_still_has_words() {
         // The role query can fail while the denial is certain — the bucket said no.
         // The queue names the role when it can and says what the list says when it
@@ -412,7 +411,7 @@ mod tests {
         assert_eq!(rendered.action, None);
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_missing_session_names_its_deployment_in_the_header() {
         let s = PackageState::NoSession {
             host: Some("quilt.test".to_string()),
@@ -429,7 +428,7 @@ mod tests {
 
     /// A bare bucket on ambient AWS credentials has no deployment to sign in to,
     /// so the words cannot name one — and the remedy is the credentials file.
-    #[wasm_bindgen_test]
+    #[test]
     fn a_missing_session_without_a_host_says_so_without_naming_one() {
         let s = PackageState::NoSession { host: None };
         assert_eq!(render(&s, Site::PageHeader).words, "Signed out");
@@ -439,7 +438,7 @@ mod tests {
     /// button would open nothing — the app cannot edit the credentials file that
     /// is the actual remedy, and naming a remedy it cannot carry out is what
     /// `RoleDenied` already avoids by offering nothing.
-    #[wasm_bindgen_test]
+    #[test]
     fn a_session_state_with_no_deployment_offers_no_sign_in() {
         for s in [
             PackageState::NoSession { host: None },
@@ -463,7 +462,7 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn an_expired_sign_in_is_its_own_state_with_the_same_remedy() {
         let expired = PackageState::SignInExpired {
             host: Some("quilt.test".to_string()),
@@ -485,7 +484,7 @@ mod tests {
 
     /// A session that never existed and one that lapsed are both failures rather
     /// than outstanding steps, which is the side of the split `RoleDenied` is on.
-    #[wasm_bindgen_test]
+    #[test]
     fn both_session_states_are_danger() {
         for s in [
             PackageState::NoSession { host: None },
@@ -583,7 +582,7 @@ mod tests {
         ]
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn the_queue_words_every_state_as_a_clause_about_the_package() {
         for (state, clause, tone, action) in queue_mapping() {
             let rendered = render(&state, Site::QueueRow);
@@ -593,7 +592,7 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_queue_clause_never_opens_with_a_capital() {
         for (state, ..) in queue_mapping() {
             let words = render(&state, Site::QueueRow).words;
@@ -606,7 +605,7 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_shared_cause_names_the_role_and_still_reads_as_a_heading() {
         // A cause is stated once above the packages it holds, with the host and the
         // bucket appended by the page — so it is a heading, and a clause about a
@@ -622,7 +621,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_stopped_sync_and_an_unreadable_state_still_make_different_claims() {
         // Merging these two arms is the change this catches. One says syncing
         // stopped for a package whose state was read; the other says the state
@@ -633,13 +632,13 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_count_is_interpolated_from_the_data() {
         let s = PackageState::PendingChanges { files: 2 };
         assert_eq!(render(&s, Site::ListRow).words, "2 files changed");
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn pull_conflict_counts_the_paths_it_was_given() {
         let s = PackageState::PullConflict {
             files: vec!["a.csv".to_string(), "b.csv".to_string()],
@@ -647,13 +646,13 @@ mod tests {
         assert_eq!(render(&s, Site::ListRow).words, "conflicts in 2 files");
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn diverged_offers_resolve_and_never_merge() {
         let r = render(&PackageState::Diverged, Site::QueueRow);
         assert_eq!(r.action, Some(PackageAction::Resolve));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn pull_conflict_offers_publish_not_resolve() {
         let r = render(
             &PackageState::PullConflict { files: vec![] },
@@ -666,7 +665,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn latest_is_the_only_success_tone() {
         assert_eq!(
             render(&PackageState::Latest, Site::ListRow).tone,
@@ -675,7 +674,7 @@ mod tests {
         assert_eq!(render(&PackageState::Latest, Site::ListRow).action, None);
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn unknown_renders_fixed_words_and_never_the_backend_message() {
         let r = render(&PackageState::Unknown, Site::ListRow);
         assert_eq!(r.tone, StateTone::Danger);
@@ -683,7 +682,7 @@ mod tests {
         assert_eq!(r.action, None, "the app has no operation that fixes this");
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_pause_deserialises_to_itself_and_not_to_unknown() {
         // The one failure mode a missing arm here would NOT produce: an error.
         // `#[serde(other)]` catches every unnamed kind, so a state the backend
@@ -697,7 +696,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_role_denial_deserialises_to_itself_and_not_to_unknown() {
         // The wire kind that had never been deserialised ANYWHERE: `role_denied`
         // gained a producer in plan 2 and no reader ever parsed one, and
@@ -715,7 +714,7 @@ mod tests {
         assert_eq!(render(&parsed, Site::ListRow).words, "No access");
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn an_unrecognised_kind_deserialises_to_unknown_rather_than_failing() {
         let parsed: PackageState =
             serde_json::from_str(r#"{"kind":"something_added_next_year"}"#).unwrap();
@@ -784,7 +783,7 @@ mod tests {
     /// second divergence added without thought breaks it, and so does someone
     /// deleting the one divergence and leaving the site behind as a synonym for
     /// `ListRow`.
-    #[wasm_bindgen_test]
+    #[test]
     fn the_page_header_borrows_the_list_except_for_behind() {
         let all = every_state();
 
@@ -802,7 +801,7 @@ mod tests {
 
     /// Tone and action are properties of the state alone, so the header must not
     /// have quietly acquired its own — only the words are site-dependent.
-    #[wasm_bindgen_test]
+    #[test]
     fn the_page_header_changes_words_only() {
         let behind_header = render(&PackageState::Behind, Site::PageHeader);
         let behind_list = render(&PackageState::Behind, Site::ListRow);
@@ -810,7 +809,7 @@ mod tests {
         assert_eq!(behind_header.action, behind_list.action);
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn no_label_uses_a_banned_word() {
         const BANNED: &[&str] = &[
             "commit", "push", "pull", "remote", "behind", "ahead", "diverged", "dirty",
@@ -835,7 +834,7 @@ mod tests {
         clippy::too_many_lines,
         reason = "a table of expected outputs; its length is data, not branching"
     )]
-    #[wasm_bindgen_test]
+    #[test]
     fn renders_the_list_rows_mapping_state_by_state() {
         // The queue site has a table of its own — `queue_mapping`, which covers every
         // state — and the cause site has `a_shared_cause_names_the_role_and_still_
