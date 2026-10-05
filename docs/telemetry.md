@@ -70,7 +70,7 @@ of the quit. A `kill`, a signal or an aborting panic never reach it.
 sinks:
 
 ```bash
-QUILTSYNC_LOG=quilt_sync=trace,quilt_rs=trace just start
+QUILTSYNC_LOG=quilt_sync=trace,quilt_rs=trace just app dev
 ```
 
 It replaces rather than merges, so a narrow override is genuinely narrow —
@@ -178,7 +178,7 @@ A debug build dry-runs both off-machine sinks to the terminal, which is the
 whole verification loop for anything about *what* is reported:
 
 ```bash
-just start
+just app dev
 # analytics:
 #   telemetry(dry-run) package_pulled {"host":"example.quiltdata.com","distinct_id":"…"}
 # faults:
