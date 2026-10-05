@@ -8,6 +8,7 @@ use clap::CommandFactory;
 use clap::FromArgMatches;
 use clap::Parser;
 use clap::Subcommand;
+use clap::builder::TypedValueParser as _;
 use tracing::log;
 
 use quilt_rs::flow::UserMeta;
@@ -192,7 +193,15 @@ pub struct Args {
     home: Option<PathBuf>,
 
     /// Path to local domain
-    #[arg(short, long, global = true, env = DOMAIN_ENV)]
+    // Accepts an empty value so `try_parse_with_env` can tell an empty
+    // variable (unset) from an empty flag (an error).
+    #[arg(
+        short,
+        long,
+        global = true,
+        env = DOMAIN_ENV,
+        value_parser = clap::builder::OsStringValueParser::new().map(PathBuf::from),
+    )]
     domain: Option<PathBuf>,
 
     /// Enable INFO-level logging; use `RUST_LOG` for finer-grained filtering.
@@ -209,19 +218,33 @@ impl Args {
     /// falling back to `QUILT_DOMAIN` when the flag is absent.
     ///
     /// An empty `QUILT_DOMAIN` counts as unset, so the domain falls back to
-    /// the default. Clap alone would hand the empty value to the path parser,
-    /// which rejects it. An empty `--domain ""` stays an error.
+    /// the default. An empty `--domain ""` stays a usage error: it usually
+    /// means an unset shell variable.
     pub fn try_parse_with_env<I, T>(argv: I) -> Result<Self, clap::Error>
     where
         I: IntoIterator<Item = T>,
         T: Into<std::ffi::OsString> + Clone,
     {
         let mut command = Self::command();
-        if std::env::var_os(DOMAIN_ENV).is_some_and(|value| value.is_empty()) {
-            command = command.mut_arg("domain", |arg| arg.env(None));
-        }
         let mut matches = command.try_get_matches_from_mut(argv)?;
-        Self::from_arg_matches_mut(&mut matches).map_err(|err| err.format(&mut command))
+        let source = matches.value_source("domain");
+        let mut parsed =
+            Self::from_arg_matches_mut(&mut matches).map_err(|err| err.format(&mut command))?;
+        if parsed
+            .domain
+            .as_ref()
+            .is_some_and(|domain| domain.as_os_str().is_empty())
+        {
+            if source == Some(clap::parser::ValueSource::EnvVariable) {
+                parsed.domain = None;
+            } else {
+                return Err(command.error(
+                    clap::error::ErrorKind::InvalidValue,
+                    "a value is required for '--domain <DOMAIN>' but none was supplied",
+                ));
+            }
+        }
+        Ok(parsed)
     }
 }
 
@@ -1288,10 +1311,14 @@ mod tests {
         }
     }
 
+    /// The hint shows whatever the variable holds, an empty value included.
     #[test]
     fn help_names_the_domain_env() {
-        let help = Args::command().render_help().to_string();
-        assert!(help.contains("[env: QUILT_DOMAIN"), "{help}");
+        for value in [None, Some(""), Some("/tmp/quilt-env-domain")] {
+            // `--help` is a parse "error" whose message is the help text.
+            let help = parse_domain_under_env(&["quilt", "--help"], value).unwrap_err();
+            assert!(help.contains("[env: QUILT_DOMAIN"), "{value:?}: {help}");
+        }
     }
 
     #[test]
