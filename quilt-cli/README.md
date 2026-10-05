@@ -119,9 +119,9 @@ Run `quilt <command> --help` for arguments.
 
 ## Global flags
 
-`--domain`, `--json` and `--verbose` are global: each goes before or after the
-command, so `quilt --domain <path> list` and `quilt list --domain <path>` both
-work.
+`--domain`, `--format`, `--json` and `--verbose` are global: each goes before
+or after the command, so `quilt --domain <path> list` and
+`quilt list --domain <path>` both work.
 
 - `--domain <path>` (`-d`) — local domain directory (stores credentials and
   package metadata). Defaults to the platform local-data directory under
@@ -131,9 +131,15 @@ work.
   Without the flag, `quilt` reads the domain from `QUILT_DOMAIN`, so
   `export QUILT_DOMAIN=<path>` points every command in a shell at one domain.
   The flag wins over the variable, and an empty `QUILT_DOMAIN` counts as unset.
-- `--json` — print a machine-readable form instead of human-readable text.
-  Every command accepts it, so `quilt list --json | jq` and
-  `quilt --json list | jq` both work.
+- `--format text|json` — format of the command's result: human-readable
+  `text` (the default) or machine-readable `json`. Every command accepts it.
+  Without the flag, `quilt` reads the format from `QUILT_FORMAT`, so
+  `export QUILT_FORMAT=json` makes every command in a shell print JSON. The
+  flag wins over the variable, and an empty `QUILT_FORMAT` counts as unset.
+  Logs and warnings on stderr are never affected.
+- `--json` — shorthand for `--format json`, so `quilt list --json | jq` and
+  `quilt --json list | jq` both work. It also wins over `QUILT_FORMAT`, but
+  cannot be combined with `--format`.
 - `--verbose` (`-v`) — show INFO-level logs on stderr; set `RUST_LOG` for
   target-specific filtering. Commands keep stdout reserved for command output
   by default.
