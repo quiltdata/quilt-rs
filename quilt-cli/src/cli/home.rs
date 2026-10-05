@@ -148,6 +148,7 @@ mod tests {
             home: None,
             domain: Some(domain.to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Home { dir, overwrite },
         }

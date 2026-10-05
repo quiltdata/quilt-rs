@@ -50,6 +50,20 @@ const DOMAIN_DIR_NAMESPACE: &str = "com.quiltdata.quilt-sync";
 /// The environment variable `--domain` falls back to.
 const DOMAIN_ENV: &str = "QUILT_DOMAIN";
 
+/// The environment variable `--format` falls back to.
+const FORMAT_ENV: &str = "QUILT_FORMAT";
+
+/// The values `--format` accepts. The empty one is hidden from `--help`: it is
+/// accepted only so `try_parse_with_env` can tell an empty variable (unset)
+/// from an empty flag (an error).
+fn format_value_parser() -> impl clap::builder::TypedValueParser<Value = String> {
+    clap::builder::PossibleValuesParser::new([
+        clap::builder::PossibleValue::new("text"),
+        clap::builder::PossibleValue::new("json"),
+        clap::builder::PossibleValue::new("").hide(true),
+    ])
+}
+
 /// Resolve the commit command's `(--workflow, --no-workflow)` flag pair into a
 /// [`WorkflowIntent`] at the clap boundary.
 ///
@@ -208,18 +222,33 @@ pub struct Args {
     #[arg(short, long, global = true)]
     pub(crate) verbose: bool,
 
-    /// Print machine-readable JSON instead of human-readable text.
+    /// Format of the command's result: `text` (the default) or `json`.
+    /// Logs and warnings on stderr are never affected.
+    #[arg(
+        long,
+        global = true,
+        env = FORMAT_ENV,
+        value_name = "FORMAT",
+        value_parser = format_value_parser(),
+    )]
+    format: Option<String>,
+
+    /// Shorthand for `--format json`.
+    // Not clap's `conflicts_with`: that counts a `QUILT_FORMAT` value as given,
+    // and misses the pair split across the command. `try_parse_with_env`
+    // checks the conflict instead.
     #[arg(long, global = true)]
-    pub(crate) json: bool,
+    json: bool,
 }
 
 impl Args {
     /// Parses `argv` as [`Parser::try_parse_from`] does, with `--domain`
-    /// falling back to `QUILT_DOMAIN` when the flag is absent.
+    /// falling back to `QUILT_DOMAIN` and `--format` to `QUILT_FORMAT` when
+    /// the flag is absent.
     ///
-    /// An empty `QUILT_DOMAIN` counts as unset, so the domain falls back to
-    /// the default. An empty `--domain ""` stays a usage error: it usually
-    /// means an unset shell variable.
+    /// An empty variable counts as unset, so the setting falls back to its
+    /// default. An empty flag, `--domain ""` or `--format ""`, stays a usage
+    /// error: it usually means an unset shell variable.
     pub fn try_parse_with_env<I, T>(argv: I) -> Result<Self, clap::Error>
     where
         I: IntoIterator<Item = T>,
@@ -227,7 +256,8 @@ impl Args {
     {
         let mut command = Self::command();
         let mut matches = command.try_get_matches_from_mut(argv)?;
-        let source = matches.value_source("domain");
+        let domain_source = matches.value_source("domain");
+        let format_source = matches.value_source("format");
         let mut parsed =
             Self::from_arg_matches_mut(&mut matches).map_err(|err| err.format(&mut command))?;
         if parsed
@@ -235,16 +265,49 @@ impl Args {
             .as_ref()
             .is_some_and(|domain| domain.as_os_str().is_empty())
         {
-            if source == Some(clap::parser::ValueSource::EnvVariable) {
-                parsed.domain = None;
-            } else {
-                return Err(command.error(
-                    clap::error::ErrorKind::InvalidValue,
-                    "a value is required for '--domain <DOMAIN>' but none was supplied",
-                ));
-            }
+            parsed.domain = None;
+            reject_empty_flag(&mut command, domain_source, "--domain <DOMAIN>")?;
+        }
+        if parsed.format.as_deref() == Some("") {
+            parsed.format = None;
+            reject_empty_flag(&mut command, format_source, "--format <FORMAT>")?;
+        }
+        // Only the flag conflicts: a flag beats `QUILT_FORMAT`, and `--json`
+        // is a flag.
+        if parsed.json && format_source == Some(clap::parser::ValueSource::CommandLine) {
+            return Err(command.error(
+                clap::error::ErrorKind::ArgumentConflict,
+                "the argument '--json' cannot be used with '--format <FORMAT>'",
+            ));
         }
         Ok(parsed)
+    }
+
+    /// The format of the command's result: `--json` or `--format`, then
+    /// `QUILT_FORMAT`, then text.
+    pub fn format(&self) -> Format {
+        if self.json || self.format.as_deref() == Some("json") {
+            Format::Json
+        } else {
+            Format::Text
+        }
+    }
+}
+
+/// An empty value read from the environment counts as unset. An empty flag
+/// stays a usage error: it usually means an unset shell variable.
+fn reject_empty_flag(
+    command: &mut clap::Command,
+    source: Option<clap::parser::ValueSource>,
+    flag: &str,
+) -> Result<(), clap::Error> {
+    if source == Some(clap::parser::ValueSource::EnvVariable) {
+        Ok(())
+    } else {
+        Err(command.error(
+            clap::error::ErrorKind::InvalidValue,
+            format!("a value is required for '{flag}' but none was supplied"),
+        ))
     }
 }
 
@@ -1206,45 +1269,74 @@ mod tests {
         ));
     }
 
-    /// Parses `argv` with `QUILT_DOMAIN` set to `value` (or removed, for
-    /// `None`) and returns the domain it resolves to, or the parse error.
+    /// What a child parse resolved to: the domain and the result's format, or
+    /// the parse error's message.
+    #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+    struct Parsed {
+        domain: Result<PathBuf, String>,
+        json: bool,
+    }
+
+    /// Parses `argv` with each named variable set to its value (or removed,
+    /// for `None`) and returns what it resolves to, or the parse error.
     ///
-    /// Clap reads the variable from the process environment, and setting it
-    /// here would race the other tests. So the parse runs in a child: this
-    /// test binary re-run on `domain_env_child` alone, with the variable set
+    /// Clap reads the variables from the process environment, and setting
+    /// them here would race the other tests. So the parse runs in a child:
+    /// this test binary re-run on `env_child` alone, with the variables set
     /// only in the child's environment.
-    fn parse_domain_under_env(argv: &[&str], value: Option<&str>) -> Result<PathBuf, String> {
+    fn parse_under_env(argv: &[&str], vars: &[(&str, Option<&str>)]) -> Result<Parsed, String> {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap());
         child
-            .args(["cli::tests::domain_env_child", "--exact", "--nocapture"])
-            .env(DOMAIN_ENV_CHILD_ARGV, argv.join("\u{1f}"));
-        match value {
-            Some(value) => child.env(DOMAIN_ENV, value),
-            None => child.env_remove(DOMAIN_ENV),
-        };
+            .args(["cli::tests::env_child", "--exact", "--nocapture"])
+            .env(ENV_CHILD_ARGV, argv.join("\u{1f}"));
+        for env in [DOMAIN_ENV, FORMAT_ENV] {
+            match vars.iter().find(|(name, _)| *name == env) {
+                Some((_, Some(value))) => child.env(env, value),
+                _ => child.env_remove(env),
+            };
+        }
         let output = child.output().expect("spawn the parser");
         let stdout = String::from_utf8_lossy(&output.stdout);
         let line = stdout
             .lines()
-            .find_map(|line| line.strip_prefix(DOMAIN_ENV_CHILD_MARKER))
+            .find_map(|line| line.strip_prefix(ENV_CHILD_MARKER))
             .unwrap_or_else(|| panic!("the child printed no result: {stdout}"));
-        serde_json::from_str::<Result<PathBuf, String>>(line).expect("the child's result")
+        serde_json::from_str::<Result<Parsed, String>>(line).expect("the child's result")
     }
 
-    const DOMAIN_ENV_CHILD_ARGV: &str = "QUILT_TEST_DOMAIN_ENV_ARGV";
-    const DOMAIN_ENV_CHILD_MARKER: &str = "domain-env-result:";
+    /// `parse_under_env` with `QUILT_DOMAIN` alone, returning the domain.
+    fn parse_domain_under_env(argv: &[&str], value: Option<&str>) -> Result<PathBuf, String> {
+        parse_under_env(argv, &[(DOMAIN_ENV, value)]).and_then(|parsed| parsed.domain)
+    }
 
-    /// The child half of `parse_domain_under_env`; a no-op when run directly.
+    /// `parse_under_env` with `QUILT_FORMAT` alone, returning the format.
+    fn parse_format_under_env(argv: &[&str], value: Option<&str>) -> Result<Format, String> {
+        parse_under_env(argv, &[(FORMAT_ENV, value)]).map(|parsed| {
+            if parsed.json {
+                Format::Json
+            } else {
+                Format::Text
+            }
+        })
+    }
+
+    const ENV_CHILD_ARGV: &str = "QUILT_TEST_ENV_ARGV";
+    const ENV_CHILD_MARKER: &str = "env-child-result:";
+
+    /// The child half of `parse_under_env`; a no-op when run directly.
     #[test]
-    fn domain_env_child() {
-        let Ok(argv) = std::env::var(DOMAIN_ENV_CHILD_ARGV) else {
+    fn env_child() {
+        let Ok(argv) = std::env::var(ENV_CHILD_ARGV) else {
             return;
         };
         let result = Args::try_parse_with_env(argv.split('\u{1f}'))
             .map_err(|err| err.to_string())
-            .and_then(|args| get_domain_dir(args.domain).map_err(|err| err.to_string()));
+            .map(|args| Parsed {
+                json: args.format() == Format::Json,
+                domain: get_domain_dir(args.domain).map_err(|err| err.to_string()),
+            });
         println!(
-            "{DOMAIN_ENV_CHILD_MARKER}{}",
+            "{ENV_CHILD_MARKER}{}",
             serde_json::to_string(&result).unwrap()
         );
     }
@@ -1318,6 +1410,171 @@ mod tests {
             // `--help` is a parse "error" whose message is the help text.
             let help = parse_domain_under_env(&["quilt", "--help"], value).unwrap_err();
             assert!(help.contains("[env: QUILT_DOMAIN"), "{value:?}: {help}");
+        }
+    }
+
+    /// The example the change was agreed on, line by line.
+    #[test]
+    fn format_example() {
+        assert_eq!(
+            parse_format_under_env(&["quilt", "list"], Some("json")),
+            Ok(Format::Json)
+        );
+        assert_eq!(
+            parse_format_under_env(&["quilt", "list", "--format", "text"], Some("json")),
+            Ok(Format::Text)
+        );
+        assert_eq!(
+            parse_format_under_env(&["quilt", "list", "--json"], None),
+            Ok(Format::Json)
+        );
+        let conflict =
+            parse_format_under_env(&["quilt", "list", "--json", "--format", "text"], None);
+        assert!(
+            conflict
+                .as_ref()
+                .is_err_and(|err| err.contains("cannot be used with")),
+            "{conflict:?}"
+        );
+    }
+
+    #[test]
+    fn format_defaults_to_text() {
+        assert_eq!(
+            parse_format_under_env(&["quilt", "list"], None),
+            Ok(Format::Text)
+        );
+    }
+
+    #[test]
+    fn format_env_is_used_without_the_flag() {
+        for (value, format) in [("json", Format::Json), ("text", Format::Text)] {
+            assert_eq!(
+                parse_format_under_env(&["quilt", "list"], Some(value)),
+                Ok(format)
+            );
+            // Global, like the flag: the variable reaches every command.
+            assert_eq!(
+                parse_format_under_env(&["quilt", "status", "-n", "demo/sales"], Some(value)),
+                Ok(format)
+            );
+        }
+    }
+
+    #[test]
+    fn format_flag_beats_format_env() {
+        for (argv, env, format) in [
+            (["quilt", "--format", "json", "list"], "text", Format::Json),
+            (["quilt", "list", "--format", "json"], "text", Format::Json),
+            (["quilt", "--format", "text", "list"], "json", Format::Text),
+            (["quilt", "list", "--format", "text"], "json", Format::Text),
+        ] {
+            assert_eq!(
+                parse_format_under_env(&argv, Some(env)),
+                Ok(format),
+                "{argv:?} with {env}"
+            );
+        }
+    }
+
+    /// `--json` is shorthand for `--format json`, on either side of the verb.
+    #[test]
+    fn json_flag_still_parses_before_and_after_the_command() {
+        for argv in [["quilt", "--json", "list"], ["quilt", "list", "--json"]] {
+            assert_eq!(
+                parse_format_under_env(&argv, None),
+                Ok(Format::Json),
+                "{argv:?}"
+            );
+        }
+    }
+
+    /// A flag beats the variable, and `--json` is a flag: it is no conflict
+    /// with `QUILT_FORMAT=text`, only with `--format`.
+    #[test]
+    fn json_flag_beats_format_env() {
+        for argv in [["quilt", "--json", "list"], ["quilt", "list", "--json"]] {
+            assert_eq!(
+                parse_format_under_env(&argv, Some("text")),
+                Ok(Format::Json),
+                "{argv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn json_flag_with_format_flag_is_an_error() {
+        for argv in [
+            ["quilt", "list", "--json", "--format", "text"],
+            ["quilt", "--format", "text", "list", "--json"],
+            ["quilt", "list", "--json", "--format", "json"],
+        ] {
+            let result = parse_format_under_env(&argv, None);
+            assert!(
+                result
+                    .as_ref()
+                    .is_err_and(|err| err.contains("cannot be used with")),
+                "{argv:?}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_format_env_falls_back_to_text() {
+        assert_eq!(
+            parse_format_under_env(&["quilt", "list"], Some("")),
+            Ok(Format::Text)
+        );
+        // An empty variable leaves the flags in charge.
+        assert_eq!(
+            parse_format_under_env(&["quilt", "list", "--format", "json"], Some("")),
+            Ok(Format::Json)
+        );
+        assert_eq!(
+            parse_format_under_env(&["quilt", "list", "--json"], Some("")),
+            Ok(Format::Json)
+        );
+    }
+
+    /// As with `--domain ""`, only an empty variable means unset.
+    #[test]
+    fn empty_format_flag_is_an_error() {
+        for value in [None, Some(""), Some("json")] {
+            let result = parse_format_under_env(&["quilt", "list", "--format", ""], value);
+            assert!(
+                result
+                    .as_ref()
+                    .is_err_and(|err| err.contains("a value is required for '--format")),
+                "{value:?}: {result:?}"
+            );
+        }
+    }
+
+    /// An unknown value is an error, never a quiet fall back to text.
+    #[test]
+    fn unknown_format_is_an_error() {
+        for (argv, value) in [
+            (&["quilt", "list"][..], Some("yaml")),
+            (&["quilt", "list", "--json"][..], Some("yaml")),
+            (&["quilt", "list", "--format", "yaml"][..], None),
+        ] {
+            let result = parse_format_under_env(argv, value);
+            assert!(
+                result
+                    .as_ref()
+                    .is_err_and(|err| err.contains("invalid value 'yaml' for '--format")),
+                "{argv:?} with {value:?}: {result:?}"
+            );
+        }
+    }
+
+    /// The hint shows whatever the variable holds, an empty value included.
+    #[test]
+    fn help_names_the_format_env() {
+        for value in [None, Some(""), Some("json")] {
+            let help = parse_format_under_env(&["quilt", "--help"], value).unwrap_err();
+            assert!(help.contains("[env: QUILT_FORMAT"), "{value:?}: {help}");
+            assert!(help.contains("result"), "{value:?}: {help}");
         }
     }
 
@@ -1437,6 +1694,7 @@ mod tests {
                 home: None,
                 domain: Some(domain.path().to_path_buf()),
                 verbose: false,
+                format: None,
                 json: false,
                 command,
             };
@@ -1464,6 +1722,7 @@ mod tests {
             home: Some(home.path().to_path_buf()),
             domain: Some(domain.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Login {
                 code: None,
@@ -1485,6 +1744,7 @@ mod tests {
             home: None,
             domain: Some(domain_temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::List { fetch: false },
         };
@@ -1549,6 +1809,7 @@ mod tests {
             home,
             domain,
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Install {
                 namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
@@ -1581,6 +1842,7 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             domain: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Commit {
                 message: pkg::MESSAGE.to_string(),
@@ -1616,6 +1878,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Commit {
                 message: "Any message".to_string(),
@@ -1648,6 +1911,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Push {
                 pkg: PackageRef {
@@ -1678,6 +1942,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Push {
                 pkg: PackageRef {
@@ -1711,6 +1976,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Push {
                 pkg: PackageRef {
@@ -1743,6 +2009,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
@@ -1795,6 +2062,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
@@ -1879,6 +2147,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
@@ -2036,6 +2305,7 @@ mod tests {
             domain: Some(root.clone()),
             home: Some(root.clone()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
@@ -2115,6 +2385,7 @@ mod tests {
                 domain: Some(root.to_path_buf()),
                 home: Some(root.to_path_buf()),
                 verbose: false,
+                format: None,
                 json: false,
                 command: Commands::Pull {
                     pkg: PackageRef {
@@ -2244,6 +2515,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
@@ -2306,6 +2578,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
@@ -2346,6 +2619,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Pull {
                 pkg: PackageRef {
@@ -2374,6 +2648,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Uninstall {
                 pkg: PackageRef {
@@ -2405,6 +2680,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Uninstall {
                 pkg: PackageRef {
@@ -2438,6 +2714,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::List { fetch: false },
         };
@@ -2459,6 +2736,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::List { fetch: false },
         };
@@ -2490,6 +2768,7 @@ mod tests {
             domain: Some(dir.clone()),
             home: Some(dir.clone()),
             verbose: false,
+            format: None,
             json: true,
             command,
         };
@@ -2582,6 +2861,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: true,
             command: Commands::Status {
                 pkg: PackageRef {
@@ -2615,6 +2895,7 @@ mod tests {
             domain,
             home,
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Install {
                 namespace: None,
@@ -2652,6 +2933,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Browse { uri },
         };
@@ -2677,6 +2959,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            format: None,
             json: false,
             command: Commands::Browse {
                 uri: pkg::URI.to_string(),

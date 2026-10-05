@@ -11,7 +11,6 @@ mod cli;
 
 use cli::Args;
 use cli::Error;
-use cli::Format;
 use cli::Std;
 use cli::print;
 
@@ -19,7 +18,7 @@ use cli::print;
 async fn main() {
     let args = Args::try_parse_with_env(std::env::args_os()).unwrap_or_else(|err| err.exit());
     init_logging(args.verbose);
-    let format = format_from_args(&args);
+    let format = args.format();
     cli::notice_lock_waits(|line| eprintln!("{line}"));
 
     // An error raised before dispatch — an unreadable domain, a rejected flag
@@ -41,16 +40,6 @@ async fn main() {
 
     if failed {
         std::process::exit(1);
-    }
-}
-
-/// Which format a run uses, decided once from the global `--json` flag before
-/// `args` is consumed by [`cli::init`].
-fn format_from_args(args: &Args) -> Format {
-    if args.json {
-        Format::Json
-    } else {
-        Format::Text
     }
 }
 
@@ -92,7 +81,6 @@ fn build_filter(env_value: Option<&str>, verbose: bool) -> EnvFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
 
     #[test]
     fn build_filter_uses_info_default_when_verbose_without_rust_log() {
@@ -106,15 +94,6 @@ mod tests {
         let filter = build_filter(Some("warn"), true);
 
         assert_eq!(filter.max_level_hint(), Some(LevelFilter::WARN));
-    }
-
-    #[test]
-    fn format_from_args_is_json_only_when_flag_is_set() {
-        let json = Args::parse_from(["quilt", "--json", "list"]);
-        assert_eq!(format_from_args(&json), Format::Json);
-
-        let text = Args::parse_from(["quilt", "list"]);
-        assert_eq!(format_from_args(&text), Format::Text);
     }
 
     /// The regression this guards: a pre-dispatch failure used to print as a

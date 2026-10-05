@@ -1,8 +1,8 @@
 use crate::cli::Error;
 use std::io::Write;
 
-/// How a command's result is rendered. Decided once from the global `--json`
-/// flag and handed to [`print`].
+/// How a command's result is rendered. Decided once from the global
+/// `--format` / `--json` flags or `QUILT_FORMAT` and handed to [`print`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     Text,
