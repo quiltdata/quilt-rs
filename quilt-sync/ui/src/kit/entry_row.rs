@@ -374,7 +374,7 @@ mod tests {
         let el = mount(move || {
             view! {
                 <EntryRow
-                    name="notes/ernest-thread.md"
+                    name="notes/kickoff-thread.md"
                     size="12 KB"
                     action=EntryAction::Open(Callback::new(move |()| {
                         opened.update(|n| *n += 1);
@@ -388,7 +388,7 @@ mod tests {
             .query_selector("button")
             .unwrap()
             .expect("name is a button");
-        assert_eq!(name.text_content().unwrap(), "notes/ernest-thread.md");
+        assert_eq!(name.text_content().unwrap(), "notes/kickoff-thread.md");
         click(&name);
         assert_eq!(opened.get_untracked(), 1, "the name button opened the file");
 
@@ -462,7 +462,7 @@ mod tests {
         let el = mount(move || {
             view! {
                 <EntryRow
-                    name="notes/ernest-thread.md"
+                    name="notes/kickoff-thread.md"
                     size="12 KB"
                     action=EntryAction::Open(Callback::new(move |()| {
                         opened.update(|n| *n += 1);
@@ -541,7 +541,7 @@ mod tests {
         let here = mount(|| {
             view! {
                 <EntryRow
-                    name="notes/ernest-thread.md"
+                    name="notes/kickoff-thread.md"
                     size="12 KB"
                     action=EntryAction::Open(Callback::new(|()| ()))
                     have_mark=true
@@ -576,7 +576,7 @@ mod tests {
         let blank = mount(|| {
             view! {
                 <EntryRow
-                    name="notes/ernest-thread.md"
+                    name="notes/kickoff-thread.md"
                     size="12 KB"
                     action=EntryAction::Open(Callback::new(|()| ()))
                 />

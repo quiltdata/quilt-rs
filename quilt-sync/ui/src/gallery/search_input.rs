@@ -10,7 +10,7 @@ use crate::kit::SearchInput;
 pub fn SearchInputStories() -> impl IntoView {
     let empty = RwSignal::new(String::new());
     let typed = RwSignal::new("plate-07".to_string());
-    let long = RwSignal::new("vir-quilt-res-3/plate-screening-2026-08-cohort-b".to_string());
+    let long = RwSignal::new("acme-research-lab/plate-screening-2026-08-cohort-b".to_string());
 
     view! {
         <Story

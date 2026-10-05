@@ -1909,14 +1909,14 @@ mod tests {
     #[test]
     fn resolve_compared_wire_form_is_verbatim() {
         let resolve = serde_json::from_str::<ResolveData>(
-            r#"{"kind":"compared","publishedMessage":"Add Caihong folder-upload note","differing":["plate/a.csv","plate/b.csv"],"unpublished":2,"uncommitted":1}"#,
+            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"unpublished":2,"uncommitted":1}"#,
         )
         .unwrap();
 
         assert_eq!(
             resolve,
             ResolveData::Compared {
-                published_message: Some("Add Caihong folder-upload note".to_string()),
+                published_message: Some("Add intake folder-upload note".to_string()),
                 differing: vec!["plate/a.csv".to_string(), "plate/b.csv".to_string()],
                 unpublished: 2,
                 uncommitted: 1,

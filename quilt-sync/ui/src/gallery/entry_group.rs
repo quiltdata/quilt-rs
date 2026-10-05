@@ -18,8 +18,8 @@ use crate::kit::GroupSelection;
 /// check, not a box — the point of the cell is the heading, not the selection.
 fn notes() -> AnyView {
     view! {
-        <EntryRow name="ernest-thread.md" size="12 KB" have_mark=true />
-        <EntryRow name="caihong-upload.md" size="8 KB" have_mark=true />
+        <EntryRow name="kickoff-thread.md" size="12 KB" have_mark=true />
+        <EntryRow name="intake-upload.md" size="8 KB" have_mark=true />
         <EntryRow name="plate-notes.md" size="4 KB" have_mark=true />
         <EntryRow name="handoff.md" size="31 KB" have_mark=true />
         <EntryRow name="requirements.md" size="33 KB" have_mark=true />
@@ -56,8 +56,8 @@ fn marked_group(open: RwSignal<bool>) -> AnyView {
 fn settled_group(open: RwSignal<bool>) -> AnyView {
     view! {
         <EntryGroup name="notes/" count=Signal::derive(|| 3) open=open have_mark=true>
-            <EntryRow name="ernest-thread.md" size="12 KB" have_mark=true />
-            <EntryRow name="caihong-upload.md" size="8 KB" have_mark=true />
+            <EntryRow name="kickoff-thread.md" size="12 KB" have_mark=true />
+            <EntryRow name="intake-upload.md" size="8 KB" have_mark=true />
             <EntryRow name="plate-notes.md" size="4 KB" have_mark=true />
         </EntryGroup>
     }

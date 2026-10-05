@@ -73,7 +73,7 @@ fn Plain() -> impl IntoView {
             </Cell>
             <Cell label="primary · long label">
                 <Button on_click=|_| () variant=ButtonVariant::Primary>
-                    "Publish your changes to s3://vir-quilt-res-3-in-progress"
+                    "Publish your changes to s3://acme-research-lab-in-progress"
                 </Button>
             </Cell>
 

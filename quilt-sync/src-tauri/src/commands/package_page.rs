@@ -1337,7 +1337,7 @@ mod tests {
 
     fn comparison(differing: &[&str], unpublished: usize) -> quilt::flow::ResolveComparison {
         quilt::flow::ResolveComparison {
-            published_message: Some("Add Caihong folder-upload note".to_string()),
+            published_message: Some("Add intake folder-upload note".to_string()),
             differing: differing.iter().map(PathBuf::from).collect(),
             unpublished,
         }
@@ -1353,7 +1353,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&data).unwrap(),
-            r#"{"kind":"compared","publishedMessage":"Add Caihong folder-upload note","differing":["plate/a.csv","plate/b.csv"],"unpublished":2,"uncommitted":1}"#,
+            r#"{"kind":"compared","publishedMessage":"Add intake folder-upload note","differing":["plate/a.csv","plate/b.csv"],"unpublished":2,"uncommitted":1}"#,
         );
     }
 
