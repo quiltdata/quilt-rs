@@ -41,37 +41,7 @@ fmt:
 # ends the run early.
 #
 # Run everything CI checks, live AWS tests included; use before a push
-ci: ci-preflight lint ci-static test::no-aws test::live ci-doctests test::frontend ci-release-build
-
-# Without this, a missing tool or credentials would surface only after the
-# earlier steps, or as a failure deep inside another tool's output.
-[private]
-ci-preflight:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    missing=()
-    need() { command -v "$1" >/dev/null || missing+=("$1 ($2)"); }
-    need cargo-nextest "cargo install cargo-nextest --locked"
-    need rumdl "cargo install rumdl"
-    need cargo-deny "cargo install cargo-deny --locked"
-    need trunk "cargo install trunk"
-    need stylance "cargo install stylance-cli"
-    need npm "install Node.js"
-    need wasm-bindgen-test-runner "cargo install wasm-bindgen-cli, at the wasm-bindgen version in Cargo.lock"
-    # The runner drives Firefox through geckodriver; it finds Firefox itself.
-    [ -n "${GECKODRIVER:-}" ] || need geckodriver "install geckodriver and Firefox"
-    if (( ${#missing[@]} )); then
-        printf 'just ci: missing tools:\n' >&2
-        printf '  %s\n' "${missing[@]}" >&2
-        exit 1
-    fi
-    # A presence check only: an expired session still fails in the live tests.
-    if [ -z "${AWS_ACCESS_KEY_ID:-}${AWS_PROFILE:-}" ] \
-        && [ ! -f "${AWS_SHARED_CREDENTIALS_FILE:-$HOME/.aws/credentials}" ] \
-        && [ ! -f "${AWS_CONFIG_FILE:-$HOME/.aws/config}" ]; then
-        echo 'just ci: no AWS credentials found; the live_* tests need them' >&2
-        exit 1
-    fi
+ci: lint ci-static test::no-aws test::live ci-doctests test::frontend ci-release-build
 
 # `--all-features` is the cargo-deny action's default
 [private]

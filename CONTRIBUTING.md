@@ -39,8 +39,9 @@ targets. CI checks all three, so a clean `just lint` leaves nothing for it to
 reject. `just fmt` is the half that writes, over the same file set.
 
 `just ci` runs everything the CI workflows check, in one command, for use just
-before you push. It includes the live AWS tests, so it needs AWS credentials,
-and it stops at the start if a tool it needs is missing, naming the tool.
+before you push. It includes the live AWS tests, so it needs AWS credentials;
+without AWS access, run the individual recipes instead (`just lint`, `just test`,
+`just test frontend`).
 
 QuiltSync's frontend is a Rust-to-WebAssembly crate built by Trunk, so `just
 gallery` (the component gallery in a browser) and `just app dev` (the desktop
