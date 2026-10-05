@@ -473,21 +473,21 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn thirty_seconds_reads_as_seconds_and_five_minutes_as_minutes() {
         assert_eq!(human_interval(30_000.0), "30s");
         assert_eq!(human_interval(300_000.0), "5 min");
         assert_eq!(human_interval(90_000.0), "90s");
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn nothing_counting_down_wakes_for_nothing() {
         // No deadline means no moment worth waking for. An idle or paused toggle
         // must not schedule a poll.
         assert_eq!(delay_until(None, 1_000.0), None);
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_future_deadline_waits_for_it() {
         assert_eq!(
             delay_until(Some(31_000.0), 1_000.0),
@@ -495,7 +495,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_deadline_about_to_arrive_waits_the_imminent_floor() {
         // Still ahead, but not worth a wake of its own: the refetch would race the
         // watcher's tick to the lock and read the same deadline back.
@@ -508,7 +508,7 @@ mod tests {
         assert_eq!(delay_until(Some(60_500.0), 60_000.0), Some(REFETCH_FLOOR));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_deadline_already_past_waits_the_due_floor_not_the_imminent_one() {
         // A deadline already past is not one about to arrive. `next_pull_at` is
         // armed before the loop sleeps, so it stays in the past for the whole of
@@ -531,14 +531,14 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_nonsense_deadline_waits_the_floor_rather_than_panicking() {
         // `Duration::from_secs_f64` panics on a negative or NaN argument, and a
         // panic in wasm takes the whole page.
         assert_eq!(delay_until(Some(f64::NAN), 1_000.0), Some(REFETCH_FLOOR));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_deadline_too_far_out_waits_the_ceiling_rather_than_throwing() {
         // Two panics live above the floor: `Duration::from_secs_f64` panics on a
         // non-finite argument, and `set_timeout_with_handle` converts the delay to

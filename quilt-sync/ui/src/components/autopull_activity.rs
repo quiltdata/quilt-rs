@@ -167,7 +167,6 @@ mod tests {
 
     mod feed {
         use super::*;
-        use wasm_bindgen_test::*;
 
         fn shown(feed: Feed) -> Vec<Activity> {
             untrack(|| feed.activities.get())
@@ -175,7 +174,7 @@ mod tests {
 
         /// A hydration read issued before an event and landing after it carries
         /// an answer the backend gave before that event, so it must not win.
-        #[wasm_bindgen_test]
+        #[test]
         fn a_hydration_older_than_an_event_is_dropped() {
             let feed = Feed::new(kit::Activities::new());
             let stamp = feed.bump(); // a hydration read is issued
@@ -188,7 +187,7 @@ mod tests {
             assert_eq!(shown(feed), vec![autopull("Publishing team/pkg\u{2026}")]);
         }
 
-        #[wasm_bindgen_test]
+        #[test]
         fn a_hydration_that_is_still_the_newest_word_is_adopted() {
             let feed = Feed::new(kit::Activities::new());
             let stamp = feed.bump();

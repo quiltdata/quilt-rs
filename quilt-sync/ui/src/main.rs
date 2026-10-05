@@ -475,20 +475,20 @@ mod tests {
         assert!(!draws_v2(&el), "markup was {}", el.inner_html());
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn flag_on_renders_v2() {
         let settings = settings_stub(true);
         assert!(design_preview(Ok(&settings)));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn flag_off_renders_v1() {
         let settings = settings_stub(false);
         assert!(!design_preview(Ok(&settings)));
     }
 
     /// A failed read is v1: the generation that has always worked.
-    #[wasm_bindgen_test]
+    #[test]
     fn a_failed_settings_read_is_v1() {
         assert!(!design_preview(Err("nope")));
     }

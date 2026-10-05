@@ -535,7 +535,7 @@ mod tests {
         assert_eq!(fired.get_untracked(), 2, "one refetch, and exactly one");
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn the_sign_in_link_carries_the_host_and_the_way_back() {
         // R6. `pages/login.rs` reads `host` and `back` from the query string, so a
         // link missing either lands the user on a login page that cannot come back.
@@ -623,7 +623,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn the_words_name_the_role_each_row_settled_on() {
         assert_eq!(
             role_clause(&answered_host("one.quilt.test", Some("ReadOnly"))),
@@ -699,7 +699,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_card_where_nothing_could_answer_stays_silent() {
         let hosts = vec![waiting_host("quilt.test")];
         let watch = RoleWatch::new(&hosts);

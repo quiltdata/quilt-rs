@@ -711,7 +711,7 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_latest_package_never_reaches_the_queue() {
         // The queue is what needs a decision. Everything else is the list's job.
         let items = derive_queue(
@@ -722,7 +722,7 @@ mod tests {
         assert_eq!(items, [] as [QueueItem; 0]);
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn signed_out_packages_collapse_into_one_cause_naming_the_host() {
         // R3. Unknown state AND a host the accounts payload says is signed out.
         // Without the grouping, a signed-out host with 11 packages buries the three
@@ -758,7 +758,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn an_unknown_package_on_a_signed_in_host_is_not_signed_out() {
         // R3's other half, and the one that would tell a signed-in user to sign in.
         // Unknown is also serde's catch-all, so it means "we could not tell" — of
@@ -779,7 +779,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn role_denied_groups_by_bucket_not_by_host() {
         // R2. One host can hold both readable and unreadable buckets, so grouping
         // this by host would put packages the user CAN read inside a group saying
@@ -833,7 +833,7 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_pause_outranks_a_signed_out_host() {
         // R4. The backend already resolved this into the state, so a conflicted
         // package on a signed-out host arrives as PullConflict, never Unknown, and
@@ -856,7 +856,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_cause_of_one_is_still_a_cause() {
         // CauseRow renders "1 package" singular deliberately: a cause affecting one
         // package is still worth stating once rather than twice.
@@ -868,7 +868,7 @@ mod tests {
         assert!(matches!(&items[0], QueueItem::Cause { members, .. } if members.len() == 1));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn causes_come_before_packages_and_packages_follow_the_lattice() {
         // Section 5's order: shared causes first, then per-package rows in
         // precedence order. Danger before Attention before Neutral.
@@ -900,7 +900,7 @@ mod tests {
         assert_eq!(shape, vec!["cause", "a/conflict", "a/behind"]);
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_local_only_package_is_never_grouped_by_host() {
         // Task 1's `host: None`. Without this it would group under a host named "".
         let items = derive_queue(
@@ -911,7 +911,7 @@ mod tests {
         assert!(matches!(&items[0], QueueItem::Package { .. }));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn cause_rank_decides_the_order_and_not_the_causes_own_text() {
         // A payload with more than one kind of cause, to check that the cause
         // rank, not the cause text, decides the order.
@@ -963,7 +963,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_role_denied_package_with_no_bucket_is_its_own_row() {
         // M5 / ruling F12: a cause keyed on a bucket cannot name one that is
         // absent, so a `RoleDenied` package with `bucket: None` must fall
@@ -1424,7 +1424,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn action_href_names_the_right_page_and_carries_the_namespace() {
         use PackageAction::{ChooseS3Bucket, GetLatest, Publish, Resolve, SignIn, SwitchRole};
         // Every verb, guarded by an exhaustive match: a verb added to the
@@ -1869,7 +1869,7 @@ mod tests {
             "a new region collapses every group"
         );
     }
-    #[wasm_bindgen_test]
+    #[test]
     fn a_failed_check_becomes_one_cause_grouped_by_host() {
         // Grouped by host, like the signed-out cause, so the sentence and its
         // remedy cover the same packages. The cached states differ on purpose:
@@ -1899,7 +1899,7 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn failed_checks_on_two_hosts_are_two_causes() {
         // One remedy per host, because [Try again] re-checks the packages its own
         // cause names — a single cause over two hosts would offer one control for
@@ -1927,7 +1927,7 @@ mod tests {
         assert!(texts.iter().any(|t| t.ends_with("another.quilt.test")));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_failed_check_with_no_host_is_left_to_its_row() {
         // A cause keyed on a host cannot name one that is absent — the ruling
         // `role_denied_groups` already follows for a missing bucket. "Unchecked"
@@ -1941,7 +1941,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn the_unchecked_cause_sorts_after_signed_out() {
         // Signed-out is the attributable half of error and carries a specific
         // remedy; a failed check is weaker information. The page says what it
@@ -2035,7 +2035,7 @@ mod tests {
             "exactly the cause's own members, once"
         );
     }
-    #[wasm_bindgen_test]
+    #[test]
     fn an_unexplained_pause_gets_its_own_row_below_a_conflict() {
         // A pause is not shared by a host or a bucket, so it is not grouped and
         // gets a per-package row. Its precedence puts it below a conflict, which
@@ -2111,7 +2111,7 @@ mod tests {
     /// Only `Other` survives the map. Every other reason resolved into a state of
     /// its own before the row was built, so its message would explain a state the
     /// row is not in.
-    #[wasm_bindgen_test]
+    #[test]
     fn only_a_reason_with_no_state_of_its_own_keeps_its_message() {
         let paused = vec![
             PausedPackageData {

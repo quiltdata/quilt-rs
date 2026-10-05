@@ -76,7 +76,6 @@ pub fn RelativeTime(
 
 #[cfg(test)]
 mod tests {
-    use wasm_bindgen_test::*;
 
     use super::phrase;
 
@@ -85,7 +84,7 @@ mod tests {
     const HOUR: f64 = 60.0 * MINUTE;
     const DAY: f64 = 24.0 * HOUR;
 
-    #[wasm_bindgen_test]
+    #[test]
     fn each_bucket_starts_where_its_neighbour_ends() {
         let cases = [
             (44.0 * SECOND, "just now"),
@@ -113,14 +112,14 @@ mod tests {
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn negative_elapsed_is_clamped_to_now() {
         assert_eq!(phrase(-5.0 * MINUTE), "just now");
     }
 
     /// The row's time column is sized against this: no phrase for any age up to
     /// fifty years is longer than `11 months ago`.
-    #[wasm_bindgen_test]
+    #[test]
     fn no_phrase_is_wider_than_eleven_months_ago() {
         let widest = "11 months ago".chars().count();
         let mut days = 0.0;

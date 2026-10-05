@@ -345,7 +345,7 @@ mod tests {
     /// The case that forces this is a dismissal: one read in flight is enough,
     /// because its snapshot was taken by the backend before the dismissal ran,
     /// so adopting it puts the toast back.
-    #[wasm_bindgen_test]
+    #[test]
     fn a_snapshot_older_than_a_local_write_is_dropped() {
         let store = store_of(BTreeMap::from([(1, toast(ToastKind::Info, None, "one"))]));
         let stamp = store.bump(); // a read is issued
@@ -364,7 +364,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_snapshot_that_is_still_the_newest_word_is_adopted() {
         let store = store_of(BTreeMap::new());
         let stamp = store.bump();
@@ -375,7 +375,7 @@ mod tests {
     /// The backend evicts past its capacity bound and emits only the arrival,
     /// so a merging client would keep what the backend dropped and outgrow the
     /// same bound. Replacing is what keeps the two in step.
-    #[wasm_bindgen_test]
+    #[test]
     fn a_snapshot_replaces_rather_than_merges() {
         let store = store_of(BTreeMap::from([
             (1, toast(ToastKind::Info, None, "evicted")),
@@ -407,7 +407,7 @@ mod tests {
     /// The other half of the wire contract, pinned from this side. The backend
     /// names the same event, and a rename on either side breaks live delivery
     /// silently — hydration keeps working, which is what hides it.
-    #[wasm_bindgen_test]
+    #[test]
     fn the_event_name_is_the_one_the_backend_emits() {
         assert_eq!(commands::TOAST_EVENT, "toast");
     }

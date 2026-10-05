@@ -362,7 +362,7 @@ mod tests {
     /// This is the case the clamp used to swallow: left-aligning a `[⋯]` near the
     /// window's edge pinned the surface to the window, which is why the menu
     /// overhung its own button by 45px at a 1280 viewport.
-    #[wasm_bindgen_test]
+    #[test]
     fn end_alignment_puts_the_right_edges_together() {
         // A `[⋯]` at 1203..1227 in a 1280 viewport, 200px of menu.
         let left = horizontal(Align::End, 1203.0, 1227.0, 200.0, 1280.0);
@@ -370,7 +370,7 @@ mod tests {
         assert!(left > MARGIN, "and it must not have hit the clamp");
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn start_alignment_puts_the_left_edges_together() {
         let left = horizontal(Align::Start, 40.0, 72.0, 200.0, 1280.0);
         assert_eq!(left, 40.0);
@@ -378,7 +378,7 @@ mod tests {
 
     /// The clamp still exists for the case it was written for: a surface that
     /// genuinely cannot fit beside its trigger.
-    #[wasm_bindgen_test]
+    #[test]
     fn a_surface_that_cannot_fit_is_pulled_inside_the_viewport() {
         // Start-aligned against a trigger hard against the right edge.
         let left = horizontal(Align::Start, 1200.0, 1232.0, 200.0, 1280.0);
@@ -392,7 +392,7 @@ mod tests {
 
     /// Wider than the viewport: it starts on screen rather than off the left of
     /// it, which is what putting `max` last buys.
-    #[wasm_bindgen_test]
+    #[test]
     fn a_surface_wider_than_the_viewport_still_starts_on_screen() {
         let left = horizontal(Align::End, 300.0, 340.0, 900.0, 400.0);
         assert_eq!(left, MARGIN);

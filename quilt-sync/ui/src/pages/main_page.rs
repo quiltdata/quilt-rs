@@ -1464,7 +1464,7 @@ mod tests {
             .collect()
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn the_store_holds_one_row_per_package_and_starts_them_all_provisional() {
         let store = PackageStore::seed(&[
             pkg("a/one", PackageState::Latest),
@@ -1481,7 +1481,7 @@ mod tests {
         assert_eq!(store.outstanding.get_untracked(), 2, "one call per package");
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_settled_row_leaves_the_store_still_in_flight_until_the_last_one_answers() {
         // The zero line may not appear while any answer is outstanding (R3), and
         // `provisional` cannot carry that: a failed refresh stays provisional forever.
@@ -1497,7 +1497,7 @@ mod tests {
         assert!(!store.in_flight());
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn a_conflict_is_settled_on_arrival_and_reaches_the_queue_unconfirmed() {
         // `settled` drops provisional rows so the access pre-filter's guesses
         // stay out of the queue, but a `PullConflict` is not a guess. If every
@@ -1525,7 +1525,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn settled_drops_what_the_heavy_phase_has_not_confirmed() {
         // The access pre-filter over-reports, so its guesses must not reach the
         // queue as denials.
@@ -3664,7 +3664,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn an_answer_writes_its_row_and_ends_that_call_s_waiting() {
         // The other half, so the test above cannot pass on a `record_refresh` that
         // never writes anything at all.
@@ -3715,7 +3715,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn apply_replaces_the_guess_and_clears_provisional() {
         let row = RowSignals::new(PackageState::Latest, None, true);
         row.apply(MainPagePackageRefreshData {
@@ -3733,7 +3733,7 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn apply_clears_a_pre_filter_mark_the_refresh_did_not_confirm() {
         // The readable-bucket list only knows buckets registered with the stack,
         // while `set_remote` accepts any S3 bucket. Only ever ADDING the mark made
@@ -3756,7 +3756,7 @@ mod tests {
         assert_eq!(row.role_switch_host.get_untracked(), None);
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn apply_marks_a_row_the_pre_filter_cleared() {
         // And the other direction: the pre-filter says nothing about writes and
         // over-reports for unmanaged roles, so it can miss a denial the real call finds.
