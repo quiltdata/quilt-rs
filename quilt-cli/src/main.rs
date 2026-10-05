@@ -3,7 +3,6 @@
 // the lint in production; allow it only under `cfg(test)`.
 #![cfg_attr(test, allow(clippy::items_after_statements))]
 
-use clap::Parser;
 use std::io;
 use tracing::log;
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
@@ -18,7 +17,7 @@ use cli::print;
 
 #[tokio::main]
 async fn main() {
-    let args = Args::parse();
+    let args = Args::try_parse_with_env(std::env::args_os()).unwrap_or_else(|err| err.exit());
     init_logging(args.verbose);
     let format = format_from_args(&args);
     cli::notice_lock_waits(|line| eprintln!("{line}"));
@@ -93,6 +92,7 @@ fn build_filter(env_value: Option<&str>, verbose: bool) -> EnvFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     #[test]
     fn build_filter_uses_info_default_when_verbose_without_rust_log() {
