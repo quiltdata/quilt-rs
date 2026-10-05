@@ -4,8 +4,11 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+use clap::CommandFactory;
+use clap::FromArgMatches;
 use clap::Parser;
 use clap::Subcommand;
+use clap::builder::TypedValueParser as _;
 use tracing::log;
 
 use quilt_rs::flow::UserMeta;
@@ -43,6 +46,9 @@ pub use output::Std;
 pub use output::print;
 
 const DOMAIN_DIR_NAMESPACE: &str = "com.quiltdata.quilt-sync";
+
+/// The environment variable `--domain` falls back to.
+const DOMAIN_ENV: &str = "QUILT_DOMAIN";
 
 /// Resolve the commit command's `(--workflow, --no-workflow)` flag pair into a
 /// [`WorkflowIntent`] at the clap boundary.
@@ -187,7 +193,15 @@ pub struct Args {
     home: Option<PathBuf>,
 
     /// Path to local domain
-    #[arg(short, long, global = true)]
+    // Accepts an empty value so `try_parse_with_env` can tell an empty
+    // variable (unset) from an empty flag (an error).
+    #[arg(
+        short,
+        long,
+        global = true,
+        env = DOMAIN_ENV,
+        value_parser = clap::builder::OsStringValueParser::new().map(PathBuf::from),
+    )]
     domain: Option<PathBuf>,
 
     /// Enable INFO-level logging; use `RUST_LOG` for finer-grained filtering.
@@ -197,6 +211,41 @@ pub struct Args {
     /// Print machine-readable JSON instead of human-readable text.
     #[arg(long, global = true)]
     pub(crate) json: bool,
+}
+
+impl Args {
+    /// Parses `argv` as [`Parser::try_parse_from`] does, with `--domain`
+    /// falling back to `QUILT_DOMAIN` when the flag is absent.
+    ///
+    /// An empty `QUILT_DOMAIN` counts as unset, so the domain falls back to
+    /// the default. An empty `--domain ""` stays a usage error: it usually
+    /// means an unset shell variable.
+    pub fn try_parse_with_env<I, T>(argv: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let mut command = Self::command();
+        let mut matches = command.try_get_matches_from_mut(argv)?;
+        let source = matches.value_source("domain");
+        let mut parsed =
+            Self::from_arg_matches_mut(&mut matches).map_err(|err| err.format(&mut command))?;
+        if parsed
+            .domain
+            .as_ref()
+            .is_some_and(|domain| domain.as_os_str().is_empty())
+        {
+            if source == Some(clap::parser::ValueSource::EnvVariable) {
+                parsed.domain = None;
+            } else {
+                return Err(command.error(
+                    clap::error::ErrorKind::InvalidValue,
+                    "a value is required for '--domain <DOMAIN>' but none was supplied",
+                ));
+            }
+        }
+        Ok(parsed)
+    }
 }
 
 /// The package a command acts on.
@@ -1155,9 +1204,121 @@ mod tests {
                 pkg: PackageRef { namespace: Some(namespace) },
             } if namespace == "demo/sales"
         ));
+    }
 
-        let default = Args::try_parse_from(["quilt", "list"]).expect("parses");
-        assert_eq!(default.domain, None);
+    /// Parses `argv` with `QUILT_DOMAIN` set to `value` (or removed, for
+    /// `None`) and returns the domain it resolves to, or the parse error.
+    ///
+    /// Clap reads the variable from the process environment, and setting it
+    /// here would race the other tests. So the parse runs in a child: this
+    /// test binary re-run on `domain_env_child` alone, with the variable set
+    /// only in the child's environment.
+    fn parse_domain_under_env(argv: &[&str], value: Option<&str>) -> Result<PathBuf, String> {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["cli::tests::domain_env_child", "--exact", "--nocapture"])
+            .env(DOMAIN_ENV_CHILD_ARGV, argv.join("\u{1f}"));
+        match value {
+            Some(value) => child.env(DOMAIN_ENV, value),
+            None => child.env_remove(DOMAIN_ENV),
+        };
+        let output = child.output().expect("spawn the parser");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let line = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix(DOMAIN_ENV_CHILD_MARKER))
+            .unwrap_or_else(|| panic!("the child printed no result: {stdout}"));
+        serde_json::from_str::<Result<PathBuf, String>>(line).expect("the child's result")
+    }
+
+    const DOMAIN_ENV_CHILD_ARGV: &str = "QUILT_TEST_DOMAIN_ENV_ARGV";
+    const DOMAIN_ENV_CHILD_MARKER: &str = "domain-env-result:";
+
+    /// The child half of `parse_domain_under_env`; a no-op when run directly.
+    #[test]
+    fn domain_env_child() {
+        let Ok(argv) = std::env::var(DOMAIN_ENV_CHILD_ARGV) else {
+            return;
+        };
+        let result = Args::try_parse_with_env(argv.split('\u{1f}'))
+            .map_err(|err| err.to_string())
+            .and_then(|args| get_domain_dir(args.domain).map_err(|err| err.to_string()));
+        println!(
+            "{DOMAIN_ENV_CHILD_MARKER}{}",
+            serde_json::to_string(&result).unwrap()
+        );
+    }
+
+    #[test]
+    fn domain_env_is_used_without_the_flag() {
+        let domain = PathBuf::from("/tmp/quilt-env-domain");
+        assert_eq!(
+            parse_domain_under_env(&["quilt", "list"], Some("/tmp/quilt-env-domain")),
+            Ok(domain.clone())
+        );
+        // Global, like the flag: the variable reaches every command.
+        assert_eq!(
+            parse_domain_under_env(
+                &["quilt", "status", "-n", "demo/sales"],
+                Some("/tmp/quilt-env-domain")
+            ),
+            Ok(domain)
+        );
+    }
+
+    #[test]
+    fn domain_flag_beats_domain_env() {
+        let flag = PathBuf::from("/tmp/quilt-flag-domain");
+        for argv in [
+            ["quilt", "--domain", "/tmp/quilt-flag-domain", "list"],
+            ["quilt", "list", "-d", "/tmp/quilt-flag-domain"],
+        ] {
+            assert_eq!(
+                parse_domain_under_env(&argv, Some("/tmp/quilt-env-domain")),
+                Ok(flag.clone()),
+                "{argv:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_domain_env_falls_back_to_the_default() {
+        let default = get_domain_dir(None).map_err(|err| err.to_string());
+        assert_eq!(parse_domain_under_env(&["quilt", "list"], None), default);
+        assert_eq!(
+            parse_domain_under_env(&["quilt", "list"], Some("")),
+            default
+        );
+        // An empty variable leaves the flag in charge.
+        assert_eq!(
+            parse_domain_under_env(&["quilt", "list", "-d", "/tmp/quilt-flag-domain"], Some("")),
+            Ok(PathBuf::from("/tmp/quilt-flag-domain"))
+        );
+    }
+
+    /// Only an empty variable means unset: `--domain ""` is a mistake, such as
+    /// an unset shell variable, and must not quietly pick the default domain.
+    #[test]
+    fn empty_domain_flag_is_an_error() {
+        for value in [None, Some(""), Some("/tmp/quilt-env-domain")] {
+            let result = parse_domain_under_env(&["quilt", "list", "--domain", ""], value);
+            assert!(
+                result
+                    .as_ref()
+                    .is_err_and(|err| err.contains("a value is required for '--domain")),
+                "{value:?}: {result:?}"
+            );
+        }
+    }
+
+    /// The hint shows whatever the variable holds, an empty value included.
+    #[test]
+    fn help_names_the_domain_env() {
+        for value in [None, Some(""), Some("/tmp/quilt-env-domain")] {
+            // `--help` is a parse "error" whose message is the help text.
+            let help = parse_domain_under_env(&["quilt", "--help"], value).unwrap_err();
+            assert!(help.contains("[env: QUILT_DOMAIN"), "{value:?}: {help}");
+        }
     }
 
     #[test]

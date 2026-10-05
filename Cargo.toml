@@ -35,7 +35,7 @@ aws-smithy-runtime-api = { version = "1.19.0", features = ["client", "http-1x"] 
 aws-smithy-types = "1.8.1"
 aws-types = "1.6.0"
 chrono = { version = "0.4.45", features = ["serde"] }
-clap = { version = "4.6.7", features = ["derive"] }
+clap = { version = "4.6.7", features = ["derive", "env"] }
 dirs = "7.0.0"
 getrandom = "0.4"
 gitignores = "4.8"

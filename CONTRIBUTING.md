@@ -56,6 +56,11 @@ for the app and `ui/dist-gallery` for the gallery, because Trunk writes every
 target it is given to `<dist>/index.html` and a shared directory would leave
 whichever rebuilt last owning the page both of them serve.
 
+`just gallery` is a debug build: it rebuilds fast and keeps full names in
+panics, but its wasm is large. `just gallery-release` serves the same gallery
+as a release build, as small as the shipped app's, but each build is slower.
+Use it for a final look before pushing.
+
 The gallery is also published to the repository's GitHub Pages site as the
 kit's design record, never as the app. `.github/workflows/deploy-gallery.yaml`
 rebuilds it on each push to `main` that touches the frontend, and can be run by

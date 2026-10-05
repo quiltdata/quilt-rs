@@ -128,6 +128,9 @@ work.
   `com.quiltdata.quilt-sync/`, shared with QuiltSync
   (`~/.local/share/com.quiltdata.quilt-sync/` on Linux,
   `~/Library/Application Support/com.quiltdata.quilt-sync/` on macOS).
+  Without the flag, `quilt` reads the domain from `QUILT_DOMAIN`, so
+  `export QUILT_DOMAIN=<path>` points every command in a shell at one domain.
+  The flag wins over the variable, and an empty `QUILT_DOMAIN` counts as unset.
 - `--json` — print a machine-readable form instead of human-readable text.
   Every command accepts it, so `quilt list --json | jq` and
   `quilt --json list | jq` both work.

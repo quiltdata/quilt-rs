@@ -8,7 +8,8 @@
   <!--
     Debug harness and design record. Its own Trunk target so it mounts
     `Gallery`, never `App` — `App` invokes on mount and the Tauri bridge has no
-    `catch`, so in a plain browser it traps the wasm module. Run: `just gallery`.
+    `catch`, so in a plain browser it traps the wasm module. Run: `just gallery`
+    (debug) or `just gallery-release` (release).
 
     Deployed to GitHub Pages as the kit's design record (deploy-gallery.yaml),
     never as the app. It is served under a subpath: Trunk prefixes the URLs it
