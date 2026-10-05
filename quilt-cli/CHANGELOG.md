@@ -31,9 +31,9 @@
 
 ### Changed
 
-- `QUILT_LOG` sets how much is logged, in place of `RUST_LOG`, which is no longer read. `QUILT_LOG=debug` shows quilt's own debug lines while its dependencies stay at warnings; `tracing` directives such as `quilt_rs=trace` still work
+- `QUILT_LOG` sets how much is logged, in place of `RUST_LOG`, which is no longer read. `QUILT_LOG=debug` shows quilt's own debug lines while its dependencies stay at warnings; `tracing` directives such as `quilt_rs=trace` still work (<https://github.com/quiltdata/quilt-rs/pull/1067>)
 
-- `-v` shows quilt's INFO logs and keeps its dependencies at warnings, and it now works with `QUILT_LOG` set instead of being ignored
+- `-v` shows quilt's INFO logs and keeps its dependencies at warnings, and it now works with `QUILT_LOG` set instead of being ignored (<https://github.com/quiltdata/quilt-rs/pull/1067>)
 
 - `quilt log` says why each revision is kept (`current`, `latest`, `base`, `not pushed`, `unpublished`), or how much removing it would free, so you can see what `quilt remove-revisions` would remove; `--json` adds `kept` and `frees` (<https://github.com/quiltdata/quilt-rs/pull/1051>)
 
