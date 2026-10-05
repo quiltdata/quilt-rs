@@ -73,9 +73,9 @@ that mean what they mean in Vite (`just --list gallery` lists them):
 The gallery is also published to the repository's GitHub Pages site as the
 kit's design record, never as the app. `.github/workflows/deploy-gallery.yaml`
 runs `just gallery build` on each push to `main` that touches the frontend, and
-can be run by hand. The site lives under the repository's subpath, so a story must not load
-an asset by an absolute path such as `/assets/...`; a relative path works both
-there and in the app.
+can be run by hand. The site lives under the repository's subpath, so a story
+must not load an asset by an absolute path such as `/assets/...`; a relative
+path works both there and in the app.
 
 A bare cargo command covers the workspace's default members (`quilt-rs`,
 `quilt-cli`, `quilt-sync`), not `quilt-uri` or `quilt-sync-ui`. Add
