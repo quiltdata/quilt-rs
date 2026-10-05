@@ -235,8 +235,8 @@ fn package() -> Vec<File> {
         File::new("README.md", 2_400, Mark::Here),
         File::new("quilt_summarize.json", 1_100, Mark::Here),
         File::new("manifest.jsonl", 44_000, Mark::Missing),
-        File::new("notes/ernest-thread.md", 12_800, Mark::Changed),
-        File::new("notes/caihong-upload.md", 8_200, Mark::Changed),
+        File::new("notes/kickoff-thread.md", 12_800, Mark::Changed),
+        File::new("notes/intake-upload.md", 8_200, Mark::Changed),
         File::new("notes/plate-07-rerun.md", 3_400, Mark::New),
         File::new("notes/superseded-layout.md", 2_900, Mark::Deleted),
         File::new(".DS_Store", 6_148, Mark::Ignored),
@@ -1560,7 +1560,7 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="a search and a facet that leave nothing — compact, and no way out">
                 {pane(Pane {
                     facet: "Not downloaded",
-                    query: "ernest",
+                    query: "kickoff",
                     ..Pane::new("fp-narrowed")
                 })}
             </Cell>

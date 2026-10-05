@@ -103,8 +103,8 @@ fn groups() -> Vec<(&'static str, Vec<Entry>)> {
         (
             "notes/",
             vec![
-                Entry::Changed("ernest-thread.md", "12 KB"),
-                Entry::Changed("caihong-upload.md", "8 KB"),
+                Entry::Changed("kickoff-thread.md", "12 KB"),
+                Entry::Changed("intake-upload.md", "8 KB"),
                 Entry::Here("plate-notes.md", "4 KB"),
             ],
         ),

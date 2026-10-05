@@ -45,7 +45,7 @@
 //!
 //! Never a revision's full size: only objects no other revision or package uses.
 //! A row's figure is what it frees *alone, now* — so removing "Initial upload"
-//! makes "Add Caihong folder-upload note" free more, because objects the two
+//! makes "Add intake folder-upload note" free more, because objects the two
 //! shared are now its alone. The footer's figure is computed for the set, which
 //! is why it is larger than the rows added up.
 //!
@@ -141,7 +141,7 @@ const REVS: [Rev; 6] = [
         own: 2,
     },
     Rev {
-        message: "Add Caihong folder-upload note",
+        message: "Add intake folder-upload note",
         obtained: 3.0 * DAY,
         hash: Some("b5e013"),
         kept: None,

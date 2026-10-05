@@ -60,8 +60,8 @@ pub fn AnchoredOverlayStories() -> impl IntoView {
                     aria_label="Revisions you have"
                 >
                     <PaneSection>
-                        <RevisionRow message="Add Ernest thread" at=ago(2.0 * HOUR) />
-                        <RevisionRow message="Add Caihong folder-upload note" at=ago(3.0 * DAY) />
+                        <RevisionRow message="Add kickoff thread" at=ago(2.0 * HOUR) />
+                        <RevisionRow message="Add intake folder-upload note" at=ago(3.0 * DAY) />
                         <RevisionRow message="" at=ago(9.0 * DAY) />
                     </PaneSection>
                 </AnchoredOverlay>
@@ -98,7 +98,7 @@ pub fn AnchoredOverlayStories() -> impl IntoView {
                     aria_label="Revisions you have"
                 >
                     <PaneSection>
-                        <RevisionRow message="Add Ernest thread" at=ago(2.0 * HOUR) />
+                        <RevisionRow message="Add kickoff thread" at=ago(2.0 * HOUR) />
                     </PaneSection>
                 </AnchoredOverlay>
             </Cell>

@@ -29,7 +29,7 @@ pub fn RevisionRowStories() -> impl IntoView {
                   draws no icon, and an unsent one has neither."
         >
             <Cell wide=true label="the ordinary case">
-                <RevisionRow message="Add Ernest thread" at=ago(2.0 * HOUR) />
+                <RevisionRow message="Add kickoff thread" at=ago(2.0 * HOUR) />
             </Cell>
             <Cell wide=true label="long — truncates, whole value in the title">
                 <RevisionRow
@@ -56,13 +56,13 @@ pub fn RevisionRowStories() -> impl IntoView {
             </Cell>
             <Cell wide=true label="published, no catalog host — the cloud without the icon">
                 <RevisionRow
-                    message="Add Caihong folder-upload note"
+                    message="Add intake folder-upload note"
                     at=ago(2.0 * HOUR)
                     published=true
                 />
             </Cell>
             <Cell wide=true label="this copy only — the slashed cloud, never a link">
-                <RevisionRow message="Fix the Ernest thread link" at=ago(0.4 * HOUR) published=false />
+                <RevisionRow message="Fix the kickoff thread link" at=ago(0.4 * HOUR) published=false />
             </Cell>
         </Story>
     }
