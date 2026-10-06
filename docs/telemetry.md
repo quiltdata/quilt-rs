@@ -66,20 +66,26 @@ whatever is still queued when the process ends is lost. `App::run`'s exit callba
 in `main.rs` drops the writer's guard, which drains the queue — up to about a second
 of the quit. A `kill`, a signal or an aborting panic never reach it.
 
-**Turning up the volume.** `QUILTSYNC_LOG` **replaces** the defaults for both
-sinks:
+**Turning up the volume.** `QUILT_LOG` **replaces** the defaults for both
+sinks, under the same rule as the `quilt` CLI: a bare level such as `debug` puts
+our crates at it and dependencies at `warn`, and a value with `=` is directives:
 
 ```bash
-QUILTSYNC_LOG=quilt_sync=trace,quilt_rs=trace just app dev
+QUILT_LOG=trace just app dev
+QUILT_LOG=quilt_sync=trace,quilt_rs=trace just app dev
 ```
 
 It replaces rather than merges, so a narrow override is genuinely narrow —
-`QUILTSYNC_LOG=quilt_sync=trace` drops the dependency floor along with
-everything else, which is ordinary `RUST_LOG` behaviour. Note this is a
-**developer** convenience, not a user-facing escape hatch: an app launched from
-the OS shell inherits no terminal environment, so "set a variable and reproduce
-it" is not an instruction anybody can follow. The defaults have to be right on
-their own.
+`QUILT_LOG=quilt_sync=trace` drops the dependency floor along with everything
+else. The crash reporter never goes below `info`, whatever the value: it is
+off-machine, and `debug` is where paths and package names appear. A quieter
+value (`warn`, `error`, `off`) still quiets it. A value that is neither a level
+nor directives, such as `debgu`, is ignored and logged as an error.
+
+Note this is a **developer** convenience, not a user-facing escape hatch: an
+app launched from the OS shell inherits no terminal environment, so "set a
+variable and reproduce it" is not an instruction anybody can follow. The
+defaults have to be right on their own.
 
 **Choosing a level for new code.** The cost of a statement is its level times
 its **call rate**, and a statement in a timer-driven path has an unbounded rate.

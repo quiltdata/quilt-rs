@@ -21,11 +21,16 @@
 
 ## [v0.22.7-dev]
 
+### Added
+
+- Settings has a log level choice: Default, Trace, Debug, Info, Warn or Error. It applies after a restart; a valid `QUILT_LOG` takes its place (<https://github.com/quiltdata/quilt-rs/pull/1074>)
+
 ### Changed
 
 - **New design preview**: when nothing is left to download but files are deleted here, the caption above the file list says so, for example "All 1,090 files downloaded · 1 deleted here", matching the Keeping panel, instead of showing nothing (<https://github.com/quiltdata/quilt-rs/pull/1069>)
 - **New design preview**: *Revisions you have* shows exact sizes, such as "211.9 kB", in place of "< 1 MB" (<https://github.com/quiltdata/quilt-rs/pull/1070>)
 - Messages that say how much space was freed round sizes the same way as the rest of the app (<https://github.com/quiltdata/quilt-rs/pull/1072>)
+- The app reads its log filter from `QUILT_LOG`, the same variable and values as the `quilt` CLI, in place of `QUILTSYNC_LOG`. Crash reports never include `debug` or `trace` lines, whatever `QUILT_LOG` says (<https://github.com/quiltdata/quilt-rs/pull/1073>)
 
 ### quilt-rs
 
