@@ -19,17 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.42.1-dev]
+## [v0.42.1] - 2026-10-06
 
 ### Added
 
-- `logging::directives` turns a `QUILT_LOG` value into `tracing` directives: a level such as `debug` puts quilt's crates at that level and dependencies at `warn`, other values are kept as given, and a value that is neither, such as `debgu`, is an `InvalidLogFilter` error (<https://github.com/quiltdata/quilt-rs/pull/1067>)
-
-- `flow::format_bytes` formats a size the way the report sentences do, for example `630.2 kB` (<https://github.com/quiltdata/quilt-rs/pull/1051>)
+- `logging::directives` turns a `QUILT_LOG` value into `tracing` directives: a level such as `debug` puts quilt's crates at that level and dependencies at `warn`, a value with `=` is kept as given, and anything else, such as `debgu`, is an `InvalidLogFilter` error (<https://github.com/quiltdata/quilt-rs/pull/1067>, <https://github.com/quiltdata/quilt-rs/pull/1068>)
+- `flow::format_bytes` formats a size the way QuiltSync does, for example `630.2 kB` (<https://github.com/quiltdata/quilt-rs/pull/1051>, <https://github.com/quiltdata/quilt-rs/pull/1072>)
 
 ### Changed
 
-- `GcReport` and `RemovalReport` sentences round sizes the same way as QuiltSync, and go up to EB (<https://github.com/quiltdata/quilt-rs/pull/1072>)
+- `GcReport` and `RemovalReport` round sizes the way QuiltSync does, and go up to EB (<https://github.com/quiltdata/quilt-rs/pull/1072>)
 
 ## [v0.42.0] - 2026-10-02
 
