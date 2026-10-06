@@ -139,29 +139,14 @@ fn with_event_or_sent(el: &web_sys::Element, kind: &str, act: impl FnOnce()) {
 pub(crate) fn focus_report(el: &web_sys::Element) -> String {
     let doc = window().document().unwrap();
     format!(
-        "document focused: {:?}; element is active: {}; :focus {:?}; :focus-visible {:?}; modal: {:?}; inert: {:?}; active: {:?}",
+        "document focused: {:?}; element is active: {}; :focus {:?}; :focus-visible {:?}; open modals: {:?}; inert: {:?}; focused: {:?}",
         doc.has_focus(),
         doc.active_element().as_ref() == Some(el),
         el.matches(":focus"),
         el.matches(":focus-visible"),
-        {
-            let open = doc.query_selector_all(":modal").unwrap();
-            (0..open.length())
-                .map(|i| {
-                    let m: web_sys::Element = open.item(i).unwrap().unchecked_into();
-                    let parent = m
-                        .parent_element()
-                        .map(|p| p.outer_html().chars().take(80).collect::<String>());
-                    format!(
-                        "{} in {parent:?}",
-                        m.outer_html().chars().take(200).collect::<String>()
-                    )
-                })
-                .collect::<Vec<_>>()
-        },
+        doc.query_selector_all(":modal").map(|l| l.length()),
         doc.query_selector_all("[inert]").map(|l| l.length()),
-        doc.active_element()
-            .map(|a| a.outer_html().chars().take(200).collect::<String>()),
+        doc.active_element().map(|a| a.tag_name()),
     )
 }
 
