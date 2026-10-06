@@ -23,7 +23,7 @@
 
 ### Changed
 
-- **New design preview**: *Revisions you have* shows exact sizes, such as "211.9 kB", in place of "< 1 MB"
+- **New design preview**: *Revisions you have* shows exact sizes, such as "211.9 kB", in place of "< 1 MB" (<https://github.com/quiltdata/quilt-rs/pull/1070>)
 
 ## [v0.22.6] - 2026-10-02
 
