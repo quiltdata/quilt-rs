@@ -154,8 +154,9 @@ more:
 - [`tracing` directives](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives),
   used as given, for example `QUILT_LOG=quilt_rs=trace,aws_smithy_runtime=debug`.
 
-An empty `QUILT_LOG` counts as unset, and `-v` wins over it. `--format` never
-changes logs.
+An empty `QUILT_LOG` counts as unset, and `-v` wins over it. A value that is
+neither, such as `QUILT_LOG=debgu`, stops the command before it runs, even with
+`-v`. `--format` never changes logs.
 
 `--home <path>` is deprecated, use `quilt home <path>`. It goes before the
 command, prints a warning, then sets the home the same way before the command

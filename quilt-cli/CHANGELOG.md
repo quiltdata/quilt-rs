@@ -31,7 +31,7 @@
 
 ### Changed
 
-- `QUILT_LOG` sets how much is logged, in place of `RUST_LOG`, which is no longer read. `QUILT_LOG=debug` shows quilt's own debug lines while its dependencies stay at warnings; `tracing` directives such as `quilt_rs=trace` still work (<https://github.com/quiltdata/quilt-rs/pull/1067>)
+- `QUILT_LOG` sets how much is logged, in place of `RUST_LOG`, which is no longer read. `QUILT_LOG=debug` shows quilt's own debug lines while its dependencies stay at warnings; `tracing` directives such as `quilt_rs=trace` still work. A value that is neither a level nor valid directives, such as `debgu`, stops the command before it runs (<https://github.com/quiltdata/quilt-rs/pull/1067>)
 
 - `-v` shows quilt's INFO logs and keeps its dependencies at warnings, and it now works with `QUILT_LOG` set instead of being ignored (<https://github.com/quiltdata/quilt-rs/pull/1067>)
 

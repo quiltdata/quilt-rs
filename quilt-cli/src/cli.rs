@@ -824,6 +824,9 @@ Then run:
     )]
     WorkflowRequiresBucket,
 
+    #[error("QUILT_LOG={0}")]
+    LogEnv(quilt_rs::logging::InvalidLogFilter),
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
@@ -876,6 +879,7 @@ impl Error {
             Error::CommitMetaInvalid(_) => "commit_meta_invalid",
             Error::WorkflowEmpty => "workflow_empty",
             Error::WorkflowRequiresBucket => "workflow_requires_bucket",
+            Error::LogEnv(_) => "invalid_log_filter",
             Error::Json(_) => "invalid_json",
             #[cfg(test)]
             Error::Test(_) => "internal",
