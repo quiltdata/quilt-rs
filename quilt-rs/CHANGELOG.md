@@ -29,7 +29,7 @@
 
 ### Changed
 
-- `GcReport` and `RemovalReport` sentences round sizes the same way as QuiltSync, and go up to EB
+- `GcReport` and `RemovalReport` sentences round sizes the same way as QuiltSync, and go up to EB (<https://github.com/quiltdata/quilt-rs/pull/1072>)
 
 ## [v0.42.0] - 2026-10-02
 
