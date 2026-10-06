@@ -878,6 +878,43 @@ mod tests {
         assert_eq!(w.outcome.get_untracked(), None, "success says nothing");
     }
 
+    /// Wired as `KeepingCommands::app` is: the backend answers that it skipped
+    /// a file, and the wiring drops that list on the way to Keeping.
+    fn downloads_skipping_one(namespace: String, paths: Vec<String>) -> Answer<()> {
+        DOWNLOADED.with_borrow_mut(|calls| calls.push((namespace, paths)));
+        Box::pin(async {
+            let answer: Result<Vec<String>, String> = Ok(vec!["plate/c.csv".to_string()]);
+            answer.map(|_skipped| ())
+        })
+    }
+
+    /// A reproduction of a known gap: the file pane's Download warns about a
+    /// file the remote no longer holds, Keeping's says nothing. This pins
+    /// today's behaviour; flip it when Keeping reports skipped files.
+    #[wasm_bindgen_test]
+    async fn keeping_download_says_nothing_about_skipped_files() {
+        clear();
+        let w = Wiring::new();
+        let el = pressable(
+            a_backlog_in(EntirePackage),
+            w,
+            commands(stores_ok, downloads_skipping_one),
+        );
+        leptos::task::tick().await;
+
+        download_button(&el).click();
+        settle().await;
+
+        assert_eq!(downloaded().len(), 1, "the download ran");
+        assert_eq!(RELOADS.get(), 1, "and re-read as a success does");
+        assert_eq!(w.outcome.get_untracked(), None, "the band is told nothing");
+        assert!(
+            !el.inner_html().contains("no longer on the remote"),
+            "nothing names the skipped file; markup was {}",
+            el.inner_html()
+        );
+    }
+
     #[wasm_bindgen_test]
     async fn a_running_download_holds_the_page_and_its_spinner() {
         clear();
