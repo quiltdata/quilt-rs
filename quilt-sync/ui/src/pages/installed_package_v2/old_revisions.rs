@@ -8,8 +8,9 @@
 //! A removable row says under its time what removing it alone frees and ends
 //! in a trash button. A protected one says why it is kept in a short tag, with
 //! the reasons spelled out for the pointer, and has no button. The footer,
-//! "Remove all 4 unused", removes every removable row, at the figure the backend measured for the set,
-//! which can be more than the rows add up to.
+//! "Remove 4 unused · 211.9 kB", removes every removable row, at the figure the
+//! backend measured for the set, which can be more than the rows add up to.
+//! Sizes are exact, through the app's `format_size`.
 //!
 //! # The confirmation is the page's
 //!
@@ -52,6 +53,7 @@ use crate::kit::PaneSection;
 use crate::kit::RevisionRow;
 use crate::kit::Submit;
 use crate::kit::icons;
+use crate::util::format_size;
 
 stylance::import_crate_style!(
     style,
@@ -71,33 +73,28 @@ pub(super) fn remove_revisions(
     Box::pin(commands::remove_revisions(namespace, hashes))
 }
 
-const MB: u64 = 1_000_000;
-
-/// A size on a row or the footer: most old revisions free little or nothing,
-/// and `0.2 MB` would claim a precision nobody has a use for.
-pub(super) fn size(bytes: u64) -> String {
+/// A row's detail: `frees 211.9 kB`, or `frees nothing`.
+pub(super) fn frees(bytes: u64) -> String {
     match bytes {
-        0 => "nothing".to_string(),
-        1..MB => "< 1 MB".to_string(),
-        _ => {
-            // Display rounding only.
-            #[allow(clippy::cast_precision_loss)]
-            let mb = bytes as f64 / MB as f64;
-            if mb < 999.95 {
-                format!("{mb:.1} MB")
-            } else {
-                format!("{:.1} GB", mb / 1000.0)
-            }
-        }
+        0 => "frees nothing".to_string(),
+        _ => format!("frees {}", format_size(bytes)),
     }
 }
 
-/// The same figure in a sentence, where "frees nothing" and "< 1" read badly.
-pub(super) fn spelled(bytes: u64) -> String {
+/// The dialog's sentence: `This frees 211.9 kB.`, or `This frees no space.`
+pub(super) fn this_frees(bytes: u64) -> String {
     match bytes {
-        0 => "no space".to_string(),
-        1..MB => "less than 1 MB".to_string(),
-        _ => size(bytes),
+        0 => "This frees no space.".to_string(),
+        _ => format!("This frees {}.", format_size(bytes)),
+    }
+}
+
+/// The footer's button: `Remove 4 unused · 211.9 kB`, short enough for the
+/// popover; no size when the set frees nothing.
+pub(super) fn footer_label(count: usize, frees: u64) -> String {
+    match frees {
+        0 => format!("Remove {count} unused"),
+        _ => format!("Remove {count} unused \u{b7} {}", format_size(frees)),
     }
 }
 
@@ -117,15 +114,6 @@ fn unused(count: usize) -> String {
         "1 unused revision".to_string()
     } else {
         format!("all {count} unused revisions")
-    }
-}
-
-/// The same on the button: "all 4 unused".
-fn unused_short(count: usize) -> String {
-    if count == 1 {
-        "1 unused".to_string()
-    } else {
-        format!("all {count} unused")
     }
 }
 
@@ -197,11 +185,7 @@ impl Ask {
             namespace: namespace.to_string(),
             hashes: removable.iter().map(|row| row.hash.clone()).collect(),
             title: "Remove unused revisions",
-            consequence: format!(
-                "Remove {}? This frees {}.",
-                unused(removable.len()),
-                spelled(frees),
-            ),
+            consequence: format!("Remove {}? {}", unused(removable.len()), this_frees(frees)),
         }
     }
 
@@ -212,9 +196,9 @@ impl Ask {
             hashes: vec![row.hash.clone()],
             title: "Remove a revision",
             consequence: format!(
-                "Remove {}? This frees {}.",
+                "Remove {}? {}",
                 named(row),
-                spelled(row.frees.unwrap_or_default()),
+                this_frees(row.frees.unwrap_or_default()),
             ),
         }
     }
@@ -440,7 +424,7 @@ fn row_view(
         }
         .into_any();
     };
-    let detail = format!("frees {}", size(row.frees.unwrap_or_default()));
+    let detail = frees(row.frees.unwrap_or_default());
     let ask = Ask::one(&remover.namespace.get_value(), row);
     let label = format!("Remove {}", named(row));
     let trash = view! {
@@ -500,7 +484,7 @@ fn footer(rows: &[RevisionHistoryRow], frees: u64, remover: Remover) -> AnyView 
                 disabled=Signal::derive(move || remover.blocked())
                 on_click=move |_| remover.confirm(ask.clone())
             >
-                {format!("Remove {} \u{b7} frees {}", unused_short(count), size(frees))}
+                {footer_label(count, frees)}
             </Button>
         }
     });
@@ -573,16 +557,36 @@ mod tests {
     }
 
     #[test]
-    fn sizes_are_coarse_and_never_claim_precision() {
-        assert_eq!(size(0), "nothing");
-        assert_eq!(size(200_000), "< 1 MB");
-        assert_eq!(size(1_200_000), "1.2 MB");
-        assert_eq!(size(6_900_000), "6.9 MB");
-        assert_eq!(size(140_000_000), "140.0 MB");
-        assert_eq!(size(2_500_000_000), "2.5 GB");
-        assert_eq!(spelled(0), "no space");
-        assert_eq!(spelled(200_000), "less than 1 MB");
-        assert_eq!(spelled(4_800_000), "4.8 MB");
+    fn sizes_are_exact() {
+        assert_eq!(frees(0), "frees nothing");
+        assert_eq!(frees(211_900), "frees 211.9\u{a0}kB");
+        assert_eq!(frees(1_200_000), "frees 1.2\u{a0}MB");
+        assert_eq!(frees(2_500_000_000_000), "frees 2.5\u{a0}TB");
+        assert_eq!(this_frees(0), "This frees no space.");
+        assert_eq!(this_frees(211_900), "This frees 211.9\u{a0}kB.");
+        assert_eq!(this_frees(1_200_000), "This frees 1.2\u{a0}MB.");
+        assert_eq!(this_frees(2_500_000_000_000), "This frees 2.5\u{a0}TB.");
+    }
+
+    #[test]
+    fn the_footer_names_the_count_and_the_size_or_none() {
+        assert_eq!(footer_label(4, 0), "Remove 4 unused");
+        assert_eq!(
+            footer_label(4, 211_900),
+            "Remove 4 unused \u{b7} 211.9\u{a0}kB"
+        );
+        assert_eq!(
+            footer_label(1, 211_900),
+            "Remove 1 unused \u{b7} 211.9\u{a0}kB"
+        );
+        assert_eq!(
+            footer_label(2, 1_200_000),
+            "Remove 2 unused \u{b7} 1.2\u{a0}MB"
+        );
+        assert_eq!(
+            footer_label(3, 2_500_000_000_000),
+            "Remove 3 unused \u{b7} 2.5\u{a0}TB"
+        );
     }
 
     #[test]
@@ -606,7 +610,12 @@ mod tests {
         let initial = row(Some("Initial upload"), Some(4_800_000));
         assert_eq!(
             Ask::one("user/plate-07", &initial).consequence,
-            "Remove \u{201c}Initial upload\u{201d}? This frees 4.8 MB."
+            "Remove \u{201c}Initial upload\u{201d}? This frees 4.8\u{a0}MB."
+        );
+        let small = row(Some("Add plate 6 controls"), Some(211_900));
+        assert_eq!(
+            Ask::one("user/plate-07", &small).consequence,
+            "Remove \u{201c}Add plate 6 controls\u{201d}? This frees 211.9\u{a0}kB."
         );
         let unnamed = row(None, Some(0));
         assert_eq!(
@@ -617,7 +626,21 @@ mod tests {
         assert_eq!(unused.title, "Remove unused revisions");
         assert_eq!(
             unused.consequence,
-            "Remove all 2 unused revisions? This frees 6.9 MB."
+            "Remove all 2 unused revisions? This frees 6.9\u{a0}MB."
+        );
+        let unused = Ask::unused(
+            "user/plate-07",
+            &[&small, &unnamed, &initial, &small],
+            211_900,
+        );
+        assert_eq!(
+            unused.consequence,
+            "Remove all 4 unused revisions? This frees 211.9\u{a0}kB."
+        );
+        let unused = Ask::unused("user/plate-07", &[&unnamed], 0);
+        assert_eq!(
+            unused.consequence,
+            "Remove 1 unused revision? This frees no space."
         );
         assert_eq!(
             progress(4, "user/plate-07"),

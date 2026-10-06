@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.7-dev]
+
+### Changed
+
+- **New design preview**: *Revisions you have* shows exact sizes, such as "211.9 kB", in place of "< 1 MB"
+
+### quilt-rs
+
+- Updated [from v0.42.0 to v0.42.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.22.6] - 2026-10-02
 
 ### Added
