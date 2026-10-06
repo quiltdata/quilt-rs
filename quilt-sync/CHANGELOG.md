@@ -23,7 +23,7 @@
 
 ### Added
 
-- Settings has a log level choice: Default, Trace, Debug, Info, Warn or Error. It applies after a restart; a valid `QUILT_LOG` takes its place (PRLINK)
+- Settings has a log level choice: Default, Trace, Debug, Info, Warn or Error. It applies after a restart; a valid `QUILT_LOG` takes its place (<https://github.com/quiltdata/quilt-rs/pull/1074>)
 
 ### Changed
 
