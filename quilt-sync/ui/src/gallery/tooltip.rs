@@ -12,27 +12,18 @@ use crate::Cell;
 use crate::Story;
 use crate::kit::ActionMenu;
 use crate::kit::Align;
-use crate::kit::IconButton;
-use crate::kit::IconButtonVariant;
+use crate::kit::Button;
 use crate::kit::MenuAction;
 use crate::kit::Tooltip;
-use crate::kit::icons;
 
-/// An icon button that names its tooltip, which is the wiring every trigger
-/// owes: the tooltip cannot reach into what the closure draws.
-fn icon_trigger(label: &'static str, icon: fn() -> AnyView) -> impl FnOnce(String) -> AnyView {
-    move |id| {
-        view! {
-            <IconButton
-                icon=icon()
-                aria_label=label
-                variant=IconButtonVariant::Invisible
-                on_click=|_| ()
-                aria_describedby=id
-            />
-        }
-        .into_any()
-    }
+/// A button that names its tooltip, which is the wiring every trigger owes:
+/// the tooltip cannot reach into what the closure draws.
+///
+/// A text button, not an `IconButton`: an icon button's name is also its
+/// `title`, and an element with both shows the browser's box over the kit's a
+/// second later. A trigger carries no `title`.
+fn button_trigger(label: &'static str) -> impl FnOnce(String) -> AnyView {
+    move |id| view! { <Button on_click=|_| () aria_describedby=id>{label}</Button> }.into_any()
 }
 
 fn hint(words: &'static str) -> Signal<String> {
@@ -44,9 +35,7 @@ const NOTE: &str = "A sentence that explains a mark, and nothing else: plain tex
                     here is open — rest the pointer on a trigger for half a second, or Tab to \
                     one; a click's focus does not open it. Move onto the words and they stay; \
                     move away and they go a moment later. Escape, a click, a scroll or a \
-                    resize closes it. The icon buttons still carry their native `title` as \
-                    their name, which shows after a second beside the tooltip — moving names \
-                    into tooltips is a separate change.";
+                    resize closes it.";
 
 #[component]
 pub fn TooltipStories() -> impl IntoView {
@@ -60,7 +49,7 @@ pub fn TooltipStories() -> impl IntoView {
             <Cell label="on an icon button — hover it, or Tab to it">
                 <Tooltip
                     text=hint("Checks the platform for revisions published since this page loaded.")
-                    trigger=icon_trigger("Refresh", icons::sync)
+                    trigger=button_trigger("Refresh")
                 />
             </Cell>
             <Cell label="beside an open menu — open the dots, then hover the other button; the menu stays">
@@ -68,7 +57,7 @@ pub fn TooltipStories() -> impl IntoView {
                     <ActionMenu aria_label="More actions for this file" actions=menu />
                     <Tooltip
                         text=hint("Opening this sentence closes no menu: it is a manual popover.")
-                        trigger=icon_trigger("Refresh", icons::sync)
+                        trigger=button_trigger("Refresh")
                     />
                 </div>
             </Cell>
@@ -77,14 +66,14 @@ pub fn TooltipStories() -> impl IntoView {
                     <Tooltip
                         text=hint("A trailing trigger lines up its right edge, so the words stay beside it at any window width.")
                         align=Align::End
-                        trigger=icon_trigger("More", icons::overflow)
+                        trigger=button_trigger("More")
                     />
                 </div>
             </Cell>
             <Cell full=true label="near the bottom — scroll until this row touches the window's bottom edge, then hover: it opens above">
                 <Tooltip
                     text=hint("Below by preference, above when below does not fit.")
-                    trigger=icon_trigger("Settings", icons::gear)
+                    trigger=button_trigger("Settings")
                 />
             </Cell>
             <Cell full=true label="inside a scrolling list — hover a mark, then scroll the list: it closes">
@@ -100,7 +89,7 @@ pub fn TooltipStories() -> impl IntoView {
                                             border-bottom:1px solid var(--q-borderColor-muted)">
                                     <Tooltip
                                         text=hint("This sentence is anchored to its row; a scroll moves the row, so the sentence goes.")
-                                        trigger=icon_trigger("About this row", icons::diff)
+                                        trigger=button_trigger("About")
                                     />
                                     <span>{format!("plate-{n:02}.csv")}</span>
                                 </div>
