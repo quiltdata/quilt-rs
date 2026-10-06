@@ -13,6 +13,7 @@ use tracing_subscriber::{
 use quilt_rs::logging::LOG_ENV;
 
 use crate::Result;
+use crate::log_settings::{LogLevel, LogSettings};
 use crate::telemetry::prelude::*;
 
 /// What the **log file** keeps.
@@ -92,7 +93,8 @@ fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
     Ok(LogsDir::Permanent(logs_dir))
 }
 
-/// Build a filter from `directives`, or from [`LOG_ENV`] when it is set.
+/// Build a filter from [`LOG_ENV`] when it is set, else from the `saved` choice,
+/// else from `directives`.
 ///
 /// The whole comma-separated list is parsed at once. Parsing it as a *single*
 /// directive is what broke this the first time: a list is not a directive, so the
@@ -116,8 +118,8 @@ fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
 /// A narrow override is therefore genuinely narrow: it drops the trailing
 /// dependency floor along with everything else, which is ordinary `RUST_LOG`
 /// behaviour and what someone naming a single target is asking for.
-fn filter(directives: &str) -> EnvFilter {
-    build_filter(std::env::var(LOG_ENV).ok().as_deref(), directives)
+fn filter(saved: LogLevel, directives: &str) -> EnvFilter {
+    build_filter(std::env::var(LOG_ENV).ok().as_deref(), saved, directives)
 }
 
 /// The half of [`filter`] that does not read the environment, so the precedence
@@ -127,16 +129,19 @@ fn filter(directives: &str) -> EnvFilter {
 /// The value goes through the CLI's rule (`quilt_rs::logging::directives`): a
 /// bare level puts our crates at it and dependencies at `warn`. An empty or
 /// invalid value counts as unset; [`init_tracing`] reports an invalid one.
-fn build_filter(from_env: Option<&str>, directives: &str) -> EnvFilter {
-    let from_env = from_env.and_then(|value| quilt_rs::logging::directives(value).ok().flatten());
+/// Each source replaces the ones below it; nothing is merged.
+fn build_filter(from_env: Option<&str>, saved: LogLevel, directives: &str) -> EnvFilter {
+    let chosen = from_env
+        .and_then(|value| quilt_rs::logging::directives(value).ok().flatten())
+        .or_else(|| saved.directives());
     EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
-        .parse_lossy(from_env.as_deref().unwrap_or(directives))
+        .parse_lossy(chosen.as_deref().unwrap_or(directives))
 }
 
 pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
     let dir = get_logs_dir(base_path)?;
-    let writer = init_tracing(&dir);
+    let writer = init_tracing(&dir, LogSettings::load(base_path));
     Ok(Logging {
         dir,
         writer: Mutex::new(writer),
@@ -155,7 +160,12 @@ pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
 /// Returns the writer guard, or `None` when no file could be opened — in which case
 /// the crash sink is still installed. Previously a failed appender installed *no
 /// subscriber at all*, so the error explaining why went nowhere.
-fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
+fn init_tracing(
+    logs_dir: &LogsDir,
+    settings: std::result::Result<LogSettings, crate::Error>,
+) -> Option<WorkerGuard> {
+    let saved = settings.as_ref().map(|s| s.level).unwrap_or_default();
+
     let appender = rolling::RollingFileAppender::builder()
         .rotation(rolling::Rotation::DAILY)
         .filename_prefix("quilt-sync")
@@ -184,13 +194,13 @@ fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
             // support archive as escape sequences.
             .with_ansi(false)
             .with_writer(writer)
-            .with_filter(filter(FILE_DIRECTIVES));
+            .with_filter(filter(saved, FILE_DIRECTIVES));
 
         tracing_subscriber::registry()
             .with(file)
             .with(
                 sentry::integrations::tracing::layer()
-                    .with_filter(filter(CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
+                    .with_filter(filter(saved, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
             )
             .init();
         Some(guard)
@@ -198,7 +208,7 @@ fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
         tracing_subscriber::registry()
             .with(
                 sentry::integrations::tracing::layer()
-                    .with_filter(filter(CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
+                    .with_filter(filter(saved, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
             )
             .init();
         None
@@ -206,6 +216,9 @@ fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
 
     // Reported *after* the subscriber exists, or it goes nowhere — which is what
     // used to happen.
+    if let Err(err) = settings {
+        error!("Failed to load log settings, using defaults: {err}");
+    }
     if let Ok(value) = std::env::var(LOG_ENV)
         && let Err(invalid) = quilt_rs::logging::directives(&value)
     {
@@ -264,14 +277,22 @@ mod tests {
         use tracing_subscriber::Layer;
         use tracing_subscriber::registry::Registry;
 
-        let file = Layer::<Registry>::max_level_hint(&build_filter(None, FILE_DIRECTIVES));
+        let file = Layer::<Registry>::max_level_hint(&build_filter(
+            None,
+            LogLevel::Default,
+            FILE_DIRECTIVES,
+        ));
         assert_eq!(
             file,
             Some(LevelFilter::DEBUG),
             "the file filter admits {file:?}, so the log will be near-empty again"
         );
 
-        let crash = Layer::<Registry>::max_level_hint(&build_filter(None, CRASH_SINK_DIRECTIVES));
+        let crash = Layer::<Registry>::max_level_hint(&build_filter(
+            None,
+            LogLevel::Default,
+            CRASH_SINK_DIRECTIVES,
+        ));
         assert_eq!(
             crash,
             Some(LevelFilter::INFO),
@@ -294,7 +315,8 @@ mod tests {
     /// decision, so it cannot see an outvoted directive.
     #[test]
     fn an_override_beats_a_default_for_the_same_target() {
-        let rendered = build_filter(Some("quilt_sync=trace"), FILE_DIRECTIVES).to_string();
+        let rendered =
+            build_filter(Some("quilt_sync=trace"), LogLevel::Default, FILE_DIRECTIVES).to_string();
 
         assert!(
             rendered.contains("quilt_sync=trace"),
@@ -310,7 +332,7 @@ mod tests {
     /// `warn`.
     #[test]
     fn a_bare_level_raises_our_crates() {
-        let rendered = build_filter(Some("trace"), FILE_DIRECTIVES).to_string();
+        let rendered = build_filter(Some("trace"), LogLevel::Default, FILE_DIRECTIVES).to_string();
         assert!(rendered.contains("quilt_sync=trace"), "{rendered:?}");
     }
 
@@ -326,7 +348,8 @@ mod tests {
             ("quilt_sync=trace", LevelFilter::INFO),
             ("error", LevelFilter::ERROR),
         ] {
-            let crash = build_filter(Some(value), CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING);
+            let crash = build_filter(Some(value), LogLevel::Default, CRASH_SINK_DIRECTIVES)
+                .and(CRASH_SINK_CEILING);
             assert_eq!(
                 Filter::<Registry>::max_level_hint(&crash),
                 Some(level),
@@ -340,12 +363,45 @@ mod tests {
     #[test]
     fn no_override_leaves_the_defaults_alone() {
         for override_ in [None, Some(""), Some("   "), Some("debgu")] {
-            let rendered = build_filter(override_, FILE_DIRECTIVES).to_string();
+            let rendered = build_filter(override_, LogLevel::Default, FILE_DIRECTIVES).to_string();
             assert!(
                 rendered.contains("quilt_sync=debug"),
                 "{override_:?} cost the file filter the app's own crate: {rendered:?}"
             );
         }
+    }
+
+    /// The saved choice replaces the built-in filters, and a valid variable
+    /// replaces the saved choice. An invalid one is ignored, so the saved choice
+    /// still applies.
+    #[test]
+    fn the_variable_beats_the_saved_choice_which_beats_the_defaults() {
+        for (from_env, wanted) in [
+            (None, "quilt_sync=trace"),
+            (Some("debgu"), "quilt_sync=trace"),
+            (Some("quilt_rs=info"), "quilt_rs=info"),
+        ] {
+            let rendered = build_filter(from_env, LogLevel::Trace, FILE_DIRECTIVES).to_string();
+            assert!(rendered.contains(wanted), "{from_env:?}: {rendered:?}");
+            assert!(
+                !rendered.contains("quilt_sync=debug"),
+                "{from_env:?} merged the defaults in: {rendered:?}"
+            );
+        }
+    }
+
+    /// A loud saved choice does not reach the crash reporter either.
+    #[test]
+    fn the_crash_sink_stays_capped_whatever_is_saved() {
+        use tracing_subscriber::layer::Filter;
+        use tracing_subscriber::registry::Registry;
+
+        let crash =
+            build_filter(None, LogLevel::Trace, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING);
+        assert_eq!(
+            Filter::<Registry>::max_level_hint(&crash),
+            Some(LevelFilter::INFO)
+        );
     }
 
     /// The file keeps more than the crash reporter, which is the point of filtering

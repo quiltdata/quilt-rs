@@ -21,6 +21,10 @@
 
 ## [v0.22.7-dev]
 
+### Added
+
+- Settings has a log level choice: Default, Trace, Debug, Info, Warn or Error. It applies after a restart; a valid `QUILT_LOG` takes its place (<https://github.com/quiltdata/quilt-rs/pull/1074>)
+
 ### Changed
 
 - **New design preview**: when nothing is left to download but files are deleted here, the caption above the file list says so, for example "All 1,090 files downloaded · 1 deleted here", matching the Keeping panel, instead of showing nothing (<https://github.com/quiltdata/quilt-rs/pull/1069>)

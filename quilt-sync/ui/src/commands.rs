@@ -281,6 +281,17 @@ pub struct ExperimentalSettingsData {
     pub main_page_v2: bool,
 }
 
+/// What `QUILT_LOG` does to the saved log level.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", content = "value", rename_all = "camelCase")]
+pub enum LogEnv {
+    Unset,
+    /// Valid, so it replaces the saved choice.
+    Overrides(String),
+    /// Invalid, so ignored.
+    Ignored(String),
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
@@ -288,7 +299,9 @@ pub struct SettingsData {
     pub home_dir: Option<String>,
     pub data_dir: String,
     pub auth_hosts: Vec<String>,
+    /// The saved log level, lowercase (`default`, `trace`, …).
     pub log_level: String,
+    pub log_env: LogEnv,
     pub logs_dir: String,
     pub logs_dir_is_temporary: bool,
     pub os: String,
@@ -1297,6 +1310,15 @@ pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
         enabled: bool,
     }
     tauri::invoke("update_fswatcher_settings", &Args { enabled }).await
+}
+
+/// Save the log level (`default`, `trace`, …); it applies after a restart.
+pub async fn update_log_settings(level: String) -> Result<(), String> {
+    #[derive(Serialize)]
+    struct Args {
+        level: String,
+    }
+    tauri::invoke("update_log_settings", &Args { level }).await
 }
 
 /// Turn an experiment on or off. `None` leaves a flag as it is — a caller that
