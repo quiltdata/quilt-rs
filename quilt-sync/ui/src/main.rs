@@ -232,6 +232,7 @@ mod tests {
             data_dir: String::new(),
             auth_hosts: Vec::new(),
             log_level: String::new(),
+            log_env: commands::LogEnv::Unset,
             logs_dir: String::new(),
             logs_dir_is_temporary: false,
             os: String::new(),

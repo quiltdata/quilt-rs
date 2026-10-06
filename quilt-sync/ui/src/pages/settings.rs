@@ -96,6 +96,7 @@ fn SettingsContent(
                 version=data.version
                 os=data.os
                 log_level=data.log_level
+                log_env=data.log_env
                 logs_dir=data.logs_dir
                 logs_dir_is_temporary=data.logs_dir_is_temporary
                 notification=notification

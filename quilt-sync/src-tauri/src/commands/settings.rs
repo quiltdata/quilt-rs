@@ -16,12 +16,14 @@ use crate::experimental_settings::ExperimentalSettings;
 use crate::experimental_settings::SharedExperimentalSettings;
 use crate::fswatcher::FsWatcherSettings;
 use crate::fswatcher::SharedFsWatcherSettings;
+use crate::log_settings::LogEnv;
+use crate::log_settings::LogLevel;
+use crate::log_settings::LogSettings;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::publish_settings::PublishSettings;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
-use crate::telemetry::Telemetry;
 
 // ── Settings data for Leptos UI ──
 
@@ -171,7 +173,9 @@ pub struct SettingsData {
     pub home_dir: Option<String>,
     pub data_dir: String,
     pub auth_hosts: Vec<String>,
-    pub log_level: String,
+    /// The saved choice, which applies after a restart.
+    pub log_level: LogLevel,
+    pub log_env: LogEnv,
     pub logs_dir: String,
     pub logs_dir_is_temporary: bool,
     pub os: String,
@@ -210,7 +214,11 @@ pub async fn get_settings_data(
         .map(|h| h.as_ref().display().to_string());
 
     let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
-    let log_level = Telemetry::log_level();
+    // A broken file costs the dropdown its value, not the whole page; startup
+    // already logged why.
+    let log_level = LogSettings::load(&data_dir)
+        .map(|s| s.level)
+        .unwrap_or_default();
     let publish_data = PublishSettingsData::from(publish.read().await.clone());
     let autosync_data = AutosyncSettingsData::from(autosync_settings.read().await.clone());
     let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());
@@ -222,6 +230,7 @@ pub async fn get_settings_data(
         data_dir: data_dir.display().to_string(),
         auth_hosts,
         log_level,
+        log_env: LogEnv::from_env(),
         logs_dir: app.logging.dir.path().display().to_string(),
         logs_dir_is_temporary: matches!(app.logging.dir, crate::telemetry::LogsDir::Temporary(_)),
         os: std::env::consts::OS.to_string(),
@@ -383,6 +392,24 @@ pub async fn update_fswatcher_settings(
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
     *fswatcher_settings.write().await = new;
     Ok(())
+}
+
+/// Save the log level. Logging reads it once at startup, so it applies after a
+/// restart.
+#[tauri::command]
+pub async fn update_log_settings(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    level: LogLevel,
+) -> Result<(), String> {
+    let app_handle = app_handle.lock().await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+    LogSettings { level }
+        .save(&data_dir)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Turn an experiment on or off.

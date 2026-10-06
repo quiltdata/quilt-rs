@@ -22,6 +22,7 @@ mod env;
 mod error;
 mod experimental_settings;
 mod fswatcher;
+mod log_settings;
 mod model;
 mod notify;
 mod oauth;
@@ -263,6 +264,7 @@ fn main() {
             commands::get_toasts,
             commands::dismiss_toast,
             commands::update_fswatcher_settings,
+            commands::update_log_settings,
             commands::update_experimental_settings,
             commands::get_main_page_packages,
             commands::get_main_page_recent_files,
