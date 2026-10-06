@@ -759,6 +759,41 @@ mod tests {
     }
 
     #[test]
+    fn a_signed_out_host_is_offered_sign_in_as_the_backend_sends_it() {
+        // Repro, not yet a fix. The shape a signed-out host actually produces:
+        // the light phase drew the package from cached lineage (here `Behind`),
+        // the heavy phase's status call failed with a session error, and the
+        // page marked the row unchecked. The backend never sends `Unknown` for
+        // it — only a remote with no catalog host gets that — so the join above
+        // never fires, and the queue offers "Try again", which cannot succeed
+        // while the user is signed out.
+        let items = derive_queue(
+            &[],
+            &[host("quilt.test", false)],
+            &[pkg("a/one", PackageState::Behind, Some("quilt.test"))],
+        );
+
+        assert!(
+            items.iter().any(|i| matches!(
+                i,
+                QueueItem::Cause { action: CauseAction::SignIn { host }, .. }
+                    if host == "quilt.test"
+            )),
+            "a signed-out host must be offered [Sign in], got {items:?}"
+        );
+        assert!(
+            !items.iter().any(|i| matches!(
+                i,
+                QueueItem::Cause {
+                    action: CauseAction::TryAgain,
+                    ..
+                }
+            )),
+            "and not a [Try again] that cannot succeed while signed out: {items:?}"
+        );
+    }
+
+    #[test]
     fn an_unknown_package_on_a_signed_in_host_is_not_signed_out() {
         // R3's other half, and the one that would tell a signed-in user to sign in.
         // Unknown is also serde's catch-all, so it means "we could not tell" — of

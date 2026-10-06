@@ -2510,6 +2510,75 @@ mod tests {
         );
     }
 
+    // Repro, not yet a fix: a signed-out host's status call fails with a typed
+    // session error, which this phase propagates like any other failure. The UI
+    // then marks the row unchecked and the queue offers "Try again", which
+    // cannot succeed. The package page resolves the same error to a state
+    // (`package_page::blocked_state`); these pin the main page doing the same.
+
+    #[tokio::test]
+    async fn a_signed_out_host_resolves_the_row_to_no_session() {
+        // What the status call raises after sign-out: the token file is gone,
+        // so vending refuses before any S3 call, and `status_with_lineage`
+        // re-raises it with the package's host rather than degrading to
+        // stale lineage.
+        let m = mock_one_package(
+            Err(Error::from(quilt::Error::Login(
+                quilt::LoginError::NoSession(Some(fixtures::host())),
+            ))),
+            None,
+        );
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+
+        let refreshed = refresh_main_page_package_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &ns,
+            None,
+        )
+        .await
+        .expect("a missing session is a state this page can word, not a failed check");
+
+        assert_eq!(
+            refreshed.state,
+            PackageStateDto::NoSession {
+                host: Some("quilt.test".to_string()),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_rejected_credential_resolves_the_row_to_sign_in_expired() {
+        // The other route to a dead session. The auth dir still exists, so the
+        // Accounts card says signed in, and only the status call knows.
+        let m = mock_one_package(
+            Err(Error::from(quilt::Error::S3(quilt::S3Error {
+                host: Some(fixtures::host()),
+                kind: quilt::S3ErrorKind::InvalidCredentials("rejected".to_string()),
+            }))),
+            None,
+        );
+        let ns: quilt_uri::Namespace = "team/one".try_into().unwrap();
+
+        let refreshed = refresh_main_page_package_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &ns,
+            None,
+        )
+        .await
+        .expect("a rejected credential is a state this page can word, not a failed check");
+
+        assert_eq!(
+            refreshed.state,
+            PackageStateDto::SignInExpired {
+                host: Some("quilt.test".to_string()),
+            }
+        );
+    }
+
     #[tokio::test]
     async fn a_behind_result_passes_through_the_resolver_and_clears_the_switch_host() {
         // A `Behind` status is not a denial, so it maps straight through
