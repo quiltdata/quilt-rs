@@ -4,8 +4,11 @@ use std::sync::Mutex;
 use tempfile::TempDir;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling;
+use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::{FilterExt, LevelFilter};
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
+
+use quilt_rs::logging::{InvalidLogFilter, LOG_ENV};
 
 use crate::Result;
 use crate::telemetry::prelude::*;
@@ -30,13 +33,12 @@ const FILE_DIRECTIVES: &str = "quilt_sync=debug,quilt_rs=debug,quilt_uri=debug,w
 /// each sink filters for itself.
 const CRASH_SINK_DIRECTIVES: &str = "quilt_sync=info,quilt_rs=info,warn";
 
-/// The variable a developer can raise either sink with.
+/// The most the crash reporter ever receives, whatever [`LOG_ENV`] says.
 ///
-/// Not the escape hatch for a *user*: an app launched from the OS shell inherits no
-/// terminal environment, so "set a variable and reproduce it" is not an instruction
-/// anyone can follow. That is why the defaults above have to be right on their own,
-/// and why the user-facing control belongs in the app rather than here.
-const LOG_ENV: &str = "QUILTSYNC_LOG";
+/// `debug` is where paths and package names appear, and the crash reporter is
+/// off-machine, so raising the log to `debug` for a support case must not raise
+/// what leaves the machine. A quieter [`LOG_ENV`] still quiets this sink.
+const CRASH_SINK_CEILING: LevelFilter = LevelFilter::INFO;
 
 pub enum LogsDir {
     Permanent(PathBuf),
@@ -91,45 +93,73 @@ fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
     Ok(LogsDir::Permanent(logs_dir))
 }
 
-/// Build a filter from `directives`, or from [`LOG_ENV`] when it is set.
+/// Each sink's filter, from a [`LOG_ENV`] value or the built-in directives.
 ///
-/// The whole comma-separated list is parsed at once. Parsing it as a *single*
-/// directive is what broke this the first time: a list is not a directive, so the
-/// parse failed, a fallback silently substituted `warn`, and the log came out empty
-/// — reproducing the exact defect this module exists to fix, inside the code meant
-/// to fix it. Anything that swallows a parse failure here has to be read twice.
+/// The value goes through the same rule as the CLI's: a bare level puts our
+/// crates at it and dependencies at `warn`, a value with `=` is directives, and
+/// an empty one counts as unset. It **replaces** the built-in directives for
+/// both sinks rather than merging with them: a later directive wins for the
+/// same target, so merging once let the built-in `quilt_sync=debug` outvote an
+/// override of `quilt_sync=trace`.
 ///
-/// `parse_lossy` because a directive typed into an environment variable is a
-/// developer's convenience: a malformed one should cost them the override, not the
-/// logs. The default directives are not user input and are pinned by a test that
-/// asserts what the built filter *admits*, not merely that they parse.
-///
-/// The variable **replaces** rather than extends, which is a correctness
-/// requirement and not only a legibility one. Adding the defaults *after* an
-/// override is how this first went wrong: a later directive supersedes an earlier
-/// one for the same target, so `QUILTSYNC_LOG=quilt_sync=trace` lost to the
-/// built-in `quilt_sync=debug` and the override was silently ignored. Replacing
-/// cannot lose that way, and a developer has one string to read instead of a merge
-/// to work out.
-///
-/// A narrow override is therefore genuinely narrow: it drops the trailing
-/// dependency floor along with everything else, which is ordinary `RUST_LOG`
-/// behaviour and what someone naming a single target is asking for.
-fn filter(directives: &str) -> EnvFilter {
-    let from_env = std::env::var(LOG_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty());
-
-    build_filter(from_env.as_deref(), directives)
+/// A value that does not parse is ignored and handed back, so the caller can
+/// log it. The app has no terminal to refuse to start in, and losing the logs
+/// over a log setting would be worse than the setting being ignored.
+struct Filters {
+    file: EnvFilter,
+    crash: EnvFilter,
+    invalid: Option<InvalidLogFilter>,
 }
 
-/// The half of [`filter`] that does not read the environment, so the precedence
-/// rule above can be tested without mutating process-global state from a test that
-/// runs in parallel with every other one.
-fn build_filter(from_env: Option<&str>, directives: &str) -> EnvFilter {
+/// [`Filters`] for a [`LOG_ENV`] value, read by the caller so this stays pure.
+fn filters(quilt_log: Option<&str>) -> Filters {
+    let (from_env, invalid) = match quilt_log.map(log_filter) {
+        Some(Ok(from_env)) => (from_env, None),
+        Some(Err(invalid)) => (None, Some(invalid)),
+        None => (None, None),
+    };
+    let (file, crash) = match from_env {
+        Some(from_env) => (from_env.clone(), from_env),
+        None => (built_in(FILE_DIRECTIVES), built_in(CRASH_SINK_DIRECTIVES)),
+    };
+    Filters {
+        file,
+        crash,
+        invalid,
+    }
+}
+
+/// A [`LOG_ENV`] value as a filter under the shared rule, or `Ok(None)` when
+/// empty. Parsed strictly, so `quilt_rs=lots` is refused rather than dropped.
+///
+/// The CLI has the same few lines; the library can't hold them without
+/// depending on `tracing-subscriber`.
+fn log_filter(value: &str) -> std::result::Result<Option<EnvFilter>, InvalidLogFilter> {
+    let Some(directives) = quilt_rs::logging::directives(value)? else {
+        return Ok(None);
+    };
+    EnvFilter::builder()
+        .parse(directives)
+        .map(Some)
+        .map_err(|_| InvalidLogFilter::new(value))
+}
+
+/// The built-in directives are not user input, and a test pins what each
+/// built filter admits.
+fn built_in(directives: &str) -> EnvFilter {
     EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
-        .parse_lossy(from_env.unwrap_or(directives))
+        .parse_lossy(directives)
+}
+
+/// The crash sink's filter held at [`CRASH_SINK_CEILING`].
+fn capped<S: ::tracing::Subscriber>(
+    crash: EnvFilter,
+) -> tracing_subscriber::filter::combinator::And<EnvFilter, LevelFilter, S>
+where
+    EnvFilter: tracing_subscriber::layer::Filter<S>,
+{
+    crash.and(CRASH_SINK_CEILING)
 }
 
 pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
@@ -154,6 +184,12 @@ pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
 /// the crash sink is still installed. Previously a failed appender installed *no
 /// subscriber at all*, so the error explaining why went nowhere.
 fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
+    let Filters {
+        file: file_filter,
+        crash,
+        invalid,
+    } = filters(std::env::var(LOG_ENV).ok().as_deref());
+
     let appender = rolling::RollingFileAppender::builder()
         .rotation(rolling::Rotation::DAILY)
         .filename_prefix("quilt-sync")
@@ -182,22 +218,25 @@ fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
             // support archive as escape sequences.
             .with_ansi(false)
             .with_writer(writer)
-            .with_filter(filter(FILE_DIRECTIVES));
+            .with_filter(file_filter);
 
         tracing_subscriber::registry()
             .with(file)
-            .with(sentry::integrations::tracing::layer().with_filter(filter(CRASH_SINK_DIRECTIVES)))
+            .with(sentry::integrations::tracing::layer().with_filter(capped(crash)))
             .init();
         Some(guard)
     } else {
         tracing_subscriber::registry()
-            .with(sentry::integrations::tracing::layer().with_filter(filter(CRASH_SINK_DIRECTIVES)))
+            .with(sentry::integrations::tracing::layer().with_filter(capped(crash)))
             .init();
         None
     };
 
     // Reported *after* the subscriber exists, or it goes nowhere — which is what
-    // used to happen.
+    // used to happen. The ignored value first, so it heads the log it changed.
+    if let Some(invalid) = invalid {
+        warn!("Ignoring {LOG_ENV}: {invalid}; using the built-in log filters");
+    }
     match logs_dir {
         LogsDir::Temporary(_) => error!(
             "Failed to create permanent logs directory, using temporary directory: {}",
@@ -244,21 +283,33 @@ mod tests {
         }
     }
 
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::Filter;
+    use tracing_subscriber::registry::Registry;
+
+    /// The most the file admits for a `QUILT_LOG` value.
+    fn file_level(quilt_log: Option<&str>) -> Option<LevelFilter> {
+        Layer::<Registry>::max_level_hint(&filters(quilt_log).file)
+    }
+
+    /// The most the crash reporter admits for a `QUILT_LOG` value, ceiling
+    /// included.
+    fn crash_level(quilt_log: Option<&str>) -> Option<LevelFilter> {
+        Filter::<Registry>::max_level_hint(&capped::<Registry>(filters(quilt_log).crash))
+    }
+
     /// The **built filter** admits what its directives say — not the directives in
     /// isolation, which is the gap that let this ship broken once.
     #[test]
     fn each_built_filter_admits_what_its_directives_ask_for() {
-        use tracing_subscriber::Layer;
-        use tracing_subscriber::registry::Registry;
-
-        let file = Layer::<Registry>::max_level_hint(&filter(FILE_DIRECTIVES));
+        let file = file_level(None);
         assert_eq!(
             file,
             Some(LevelFilter::DEBUG),
             "the file filter admits {file:?}, so the log will be near-empty again"
         );
 
-        let crash = Layer::<Registry>::max_level_hint(&filter(CRASH_SINK_DIRECTIVES));
+        let crash = crash_level(None);
         assert_eq!(
             crash,
             Some(LevelFilter::INFO),
@@ -266,45 +317,78 @@ mod tests {
         );
     }
 
-    /// An override wins for a target the defaults already name.
-    ///
-    /// The regression this pins: the defaults were once added *after* the override,
-    /// and a later directive supersedes an earlier one for the same target, so
-    /// `quilt_sync=trace` lost to the built-in `quilt_sync=debug` — the override was
-    /// accepted, parsed, and then quietly outvoted. `quilt_sync` is the likeliest
-    /// target anyone raises and the one the defaults already pin, so it is exactly
-    /// the case that failed.
-    ///
-    /// The **rendered filter** is what this has to assert. Checked against the buggy
-    /// construction, `max_level_hint` still reported `TRACE` while the directive
-    /// itself had been superseded — the hint is a coarse ceiling, not the per-target
-    /// decision, so it cannot see an outvoted directive.
+    /// An empty `QUILT_LOG` counts as unset and leaves the defaults intact.
     #[test]
-    fn an_override_beats_a_default_for_the_same_target() {
-        let rendered = build_filter(Some("quilt_sync=trace"), FILE_DIRECTIVES).to_string();
+    fn an_empty_value_leaves_the_defaults_alone() {
+        for value in ["", "   "] {
+            let filters = filters(Some(value));
+            assert!(filters.invalid.is_none(), "{value:?}");
+            let rendered = filters.file.to_string();
+            assert!(
+                rendered.contains("quilt_sync=debug"),
+                "{value:?} cost the file filter the app's own crate: {rendered:?}"
+            );
+        }
+    }
 
+    /// A bare level goes through the shared rule: our crates at it, dependencies
+    /// at `warn`.
+    #[test]
+    fn a_bare_level_raises_our_crates_in_the_file() {
+        let rendered = filters(Some("trace")).file.to_string();
+        assert!(rendered.contains("quilt_sync=trace"), "{rendered:?}");
+        assert_eq!(file_level(Some("trace")), Some(LevelFilter::TRACE));
+    }
+
+    /// The value replaces the built-in directives, so it wins for a target they
+    /// already name. The rendered filter is what this asserts: the level hint
+    /// is a ceiling and cannot see a directive outvoted by a later one.
+    #[test]
+    fn a_value_replaces_the_built_in_directives() {
+        let rendered = filters(Some("quilt_sync=trace")).file.to_string();
         assert!(
             rendered.contains("quilt_sync=trace"),
-            "{rendered:?} lost the override"
+            "{rendered:?} lost the value"
         );
         assert!(
             !rendered.contains("quilt_sync=debug"),
-            "{rendered:?} still carries the default the override was meant to replace"
+            "{rendered:?} still carries the default the value replaces"
         );
     }
 
-    /// An empty or absent override leaves the defaults intact, so the mechanism that
-    /// makes the override narrow cannot narrow anything by accident.
+    /// The crash reporter never goes below `info`, however loud the file is.
     #[test]
-    fn no_override_leaves_the_defaults_alone() {
-        for override_ in [None, Some(""), Some("   ")] {
-            let rendered =
-                build_filter(override_.filter(|v| !v.trim().is_empty()), FILE_DIRECTIVES)
-                    .to_string();
-            assert!(
-                rendered.contains("quilt_sync=debug"),
-                "{override_:?} cost the file filter the app's own crate: {rendered:?}"
+    fn the_crash_sink_never_admits_debug() {
+        for value in ["debug", "trace", "quilt_sync=trace", "trace,hyper=trace"] {
+            assert_eq!(
+                crash_level(Some(value)),
+                Some(LevelFilter::INFO),
+                "QUILT_LOG={value:?}"
             );
+        }
+    }
+
+    /// A quieter value still quiets the crash reporter.
+    #[test]
+    fn a_quieter_value_still_applies_to_the_crash_sink() {
+        for (value, level) in [
+            ("warn", LevelFilter::WARN),
+            ("error", LevelFilter::ERROR),
+            ("off", LevelFilter::OFF),
+        ] {
+            assert_eq!(crash_level(Some(value)), Some(level), "QUILT_LOG={value:?}");
+        }
+    }
+
+    /// A value that does not parse is ignored and handed back for the warning,
+    /// leaving both sinks on their built-in filters.
+    #[test]
+    fn an_invalid_value_falls_back_to_the_built_in_filters() {
+        for value in ["debgu", "quilt_rs=lots"] {
+            let invalid = filters(Some(value)).invalid;
+            assert_eq!(invalid, Some(InvalidLogFilter::new(value)), "{value:?}");
+            assert_eq!(file_level(Some(value)), file_level(None), "{value:?}");
+            assert_eq!(crash_level(Some(value)), crash_level(None), "{value:?}");
         }
     }
 
