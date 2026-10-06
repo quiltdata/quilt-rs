@@ -423,7 +423,9 @@ fn nobox(have_mark: bool) -> AnyView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
+    use crate::test_support::{
+        describing_tooltip, element_saying, keyboard_focus, mount, unmount_earlier,
+    };
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -680,5 +682,157 @@ mod tests {
             "a row not asked for the mark keeps its hole blank; markup was {}",
             blank.inner_html()
         );
+    }
+
+    fn selectable_differing() -> impl IntoView {
+        view! {
+            <EntryRow
+                name="raw/plate-07.csv"
+                state="Not downloaded"
+                size="4.1 MB"
+                differs=true
+                action=EntryAction::Select(
+                    EntrySelection::new(RwSignal::new(false), Callback::new(|_| ())),
+                )
+            />
+        }
+    }
+
+    fn openable_differing() -> impl IntoView {
+        view! {
+            <EntryRow
+                name="notes/kickoff-thread.md"
+                size="12 KB"
+                differs=true
+                action=EntryAction::Open(Callback::new(|()| ()))
+            />
+        }
+    }
+
+    fn inert_differing() -> impl IntoView {
+        view! {
+            <EntryRow
+                name="old/gone.csv"
+                state="Deleted"
+                tone=StateTone::Danger
+                size="1 KB"
+                differs=true
+            />
+        }
+    }
+
+    /// `Differs` is a state of its own, beside the place's and never instead
+    /// of it, and only a row that differs says it.
+    #[wasm_bindgen_test]
+    fn a_differing_row_says_differs_beside_its_state() {
+        for (row, place) in [
+            (mount(selectable_differing), "Not downloaded"),
+            (mount(inert_differing), "Deleted"),
+        ] {
+            let differs = element_saying(&row, "Differs");
+            let state = element_saying(&row, place);
+            assert_eq!(
+                differs.compare_document_position(&state)
+                    & web_sys::Node::DOCUMENT_POSITION_FOLLOWING,
+                web_sys::Node::DOCUMENT_POSITION_FOLLOWING,
+                "`Differs` comes before {place:?}; markup was {}",
+                row.inner_html()
+            );
+        }
+
+        let plain = mount(|| {
+            view! { <EntryRow name="raw/plate-08.csv" state="Not downloaded" size="4 MB" /> }
+        });
+        element_saying(&plain, "Not downloaded");
+        assert!(
+            !plain.text_content().unwrap().contains("Differs"),
+            "a row that agrees says nothing about differing; markup was {}",
+            plain.inner_html()
+        );
+    }
+
+    /// The control focus lands on — the box on a selectable row, the name on an
+    /// openable one — names the row's tooltip and keeps the pane's sentence,
+    /// and keyboard focus on it opens the tooltip.
+    #[wasm_bindgen_test]
+    async fn the_row_s_control_is_described_by_the_differs_tooltip() {
+        unmount_earlier();
+        let selectable = mount(selectable_differing);
+        let openable = mount(openable_differing);
+        let controls = [
+            selectable
+                .query_selector("input[type=checkbox]")
+                .unwrap()
+                .expect("a selectable row has a box"),
+            openable
+                .query_selector("button")
+                .unwrap()
+                .expect("an openable row's name is a button"),
+        ];
+        for control in controls {
+            let tip = describing_tooltip(&control).unwrap_or_else(|| {
+                panic!(
+                    "the control names no tooltip: {:?}",
+                    control.get_attribute("aria-describedby")
+                )
+            });
+            assert_eq!(tip.text_content().unwrap(), DIFFERS_TITLE);
+            assert!(
+                control
+                    .get_attribute("aria-describedby")
+                    .unwrap()
+                    .split_whitespace()
+                    .any(|id| id == DIFFERS_ID),
+                "the tooltip replaced the pane's sentence"
+            );
+
+            keyboard_focus(&control);
+            leptos::task::tick().await;
+            assert!(
+                tip.matches(":popover-open").unwrap(),
+                "keyboard focus on the row's control opened nothing"
+            );
+            control
+                .unchecked_ref::<web_sys::HtmlElement>()
+                .blur()
+                .unwrap();
+            leptos::task::tick().await;
+            assert!(!tip.matches(":popover-open").unwrap());
+        }
+    }
+
+    /// An inert row has no control, and differing does not give it one: a tab
+    /// stop that does nothing is worse than none.
+    #[wasm_bindgen_test]
+    fn an_inert_differing_row_gets_no_tab_stop() {
+        let el = mount(inert_differing);
+        element_saying(&el, "Differs");
+        assert!(
+            el.query_selector("button, input, a[href], [tabindex]")
+                .unwrap()
+                .is_none(),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The row's own `title` was what hid the hint: the name's `title` covered
+    /// it. A row that differs has none; only the name's path is titled.
+    #[wasm_bindgen_test]
+    fn a_differing_row_carries_no_title_of_its_own() {
+        for el in [
+            mount(selectable_differing),
+            mount(openable_differing),
+            mount(inert_differing),
+        ] {
+            let row = el.first_element_child().expect("the row");
+            assert!(
+                !row.has_attribute("title"),
+                "markup was {}",
+                el.inner_html()
+            );
+            let titled = el.query_selector_all("[title]").unwrap();
+            assert_eq!(titled.length(), 1, "markup was {}", el.inner_html());
+        }
     }
 }

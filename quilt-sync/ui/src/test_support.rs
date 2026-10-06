@@ -96,3 +96,23 @@ pub(crate) fn shape(el: &web_sys::Element) -> String {
     out.push_str("</>");
     out
 }
+
+/// Focus an element as the keyboard would, so it matches `:focus-visible` — a
+/// tooltip opens for that focus and not for a click's.
+pub(crate) fn keyboard_focus(el: &web_sys::Element) {
+    let options = web_sys::FocusOptions::new();
+    options.set_focus_visible(true);
+    el.unchecked_ref::<web_sys::HtmlElement>()
+        .focus_with_options(&options)
+        .unwrap();
+}
+
+/// The element `aria-describedby` names on `el` that is a tooltip, if any. A
+/// description is a list of ids, and the tooltip is one of them.
+pub(crate) fn describing_tooltip(el: &web_sys::Element) -> Option<web_sys::Element> {
+    let doc = window().document().unwrap();
+    el.get_attribute("aria-describedby")?
+        .split_whitespace()
+        .filter_map(|id| doc.get_element_by_id(id))
+        .find(|named| named.get_attribute("role").as_deref() == Some("tooltip"))
+}

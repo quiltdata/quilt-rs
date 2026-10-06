@@ -392,7 +392,9 @@ pub fn Tooltip(
 mod tests {
     use super::*;
     use crate::kit::AnchoredOverlay;
-    use crate::test_support::{mount, sleep_ms, unmount_earlier};
+    use crate::test_support::{
+        button_saying, describing_tooltip, keyboard_focus, mount, sleep_ms, unmount_earlier,
+    };
     use wasm_bindgen_test::*;
 
     fn fire(target: &web_sys::EventTarget, kind: &str) {
@@ -501,5 +503,91 @@ mod tests {
             menu.get_untracked(),
             "the Escape that closed the tooltip also closed the menu"
         );
+    }
+
+    fn is_open(el: &web_sys::Element) -> bool {
+        surface(el).matches(":popover-open").unwrap()
+    }
+
+    fn focused() -> Option<web_sys::Element> {
+        web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .active_element()
+    }
+
+    fn one_mark() -> web_sys::Element {
+        mount(|| {
+            view! {
+                <Tooltip
+                    text="Explains the mark.".to_string()
+                    trigger=|id| view! { <button aria-describedby=id>"Mark"</button> }.into_any()
+                />
+            }
+        })
+    }
+
+    /// Keyboard focus opens it at once, with no hover delay; Escape closes it
+    /// and leaves focus where it was.
+    #[wasm_bindgen_test]
+    async fn keyboard_focus_opens_it_and_escape_leaves_focus_on_the_trigger() {
+        unmount_earlier();
+        let el = one_mark();
+        let mark = button_saying(&el, "Mark");
+        let tip = describing_tooltip(&mark).expect("the trigger names its tooltip");
+        assert_eq!(tip.text_content().unwrap(), "Explains the mark.");
+
+        keyboard_focus(&mark);
+        leptos::task::tick().await;
+        assert!(
+            tip.matches(":popover-open").unwrap(),
+            "keyboard focus opened nothing"
+        );
+
+        // Escape is heard from the frame after it opens.
+        sleep_ms(50).await;
+        escape();
+        leptos::task::tick().await;
+        assert!(!tip.matches(":popover-open").unwrap());
+        assert_eq!(
+            focused().as_ref(),
+            Some(mark.unchecked_ref::<web_sys::Element>()),
+            "Escape moved focus off the trigger"
+        );
+        mark.blur().unwrap();
+    }
+
+    #[wasm_bindgen_test]
+    async fn blur_closes_it() {
+        unmount_earlier();
+        let el = one_mark();
+        let mark = button_saying(&el, "Mark");
+        keyboard_focus(&mark);
+        leptos::task::tick().await;
+        assert!(is_open(&el));
+
+        mark.blur().unwrap();
+        leptos::task::tick().await;
+        assert!(!is_open(&el), "blur left the tooltip open");
+    }
+
+    /// Leaving does not close it at once — the pointer may be on its way to the
+    /// surface — but it does close once the grace is over.
+    #[wasm_bindgen_test]
+    async fn a_pointer_leaving_closes_it_after_the_grace() {
+        unmount_earlier();
+        let el = one_mark();
+        fire(&wrapper(&el), "pointerenter");
+        sleep_ms(600).await;
+        assert!(is_open(&el));
+
+        fire(&wrapper(&el), "pointerleave");
+        sleep_ms(50).await;
+        assert!(is_open(&el), "closed before the grace was over");
+        sleep_ms(200).await;
+        assert!(!is_open(&el), "still open after the grace");
+        // Out of the warm window, so the next hover waits its delay again.
+        sleep_ms(200).await;
     }
 }

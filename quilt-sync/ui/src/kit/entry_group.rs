@@ -219,7 +219,8 @@ pub fn EntryGroup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
+    use crate::test_support::{describing_tooltip, keyboard_focus, mount, unmount_earlier};
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
     /// The check lives in the hole, so it appears only where there is one: a
@@ -284,6 +285,44 @@ mod tests {
             hole.child_element_count() == 0,
             "a heading not asked for the mark keeps its hole blank; markup was {}",
             blank.inner_html()
+        );
+    }
+
+    /// Closed, a heading hides its rows' marks, so its disclosure button is
+    /// described by the dot's tooltip and opens it from the keyboard. Open, the
+    /// rows speak for themselves and the button names nothing.
+    #[wasm_bindgen_test]
+    async fn a_closed_differing_heading_s_button_is_described_by_the_tooltip() {
+        unmount_earlier();
+        let open = RwSignal::new(false);
+        let el = mount(move || {
+            view! {
+                <EntryGroup name="raw/" count=2 open=open differs=true>
+                    <span />
+                </EntryGroup>
+            }
+        });
+        let disclose = el
+            .query_selector("button[aria-expanded]")
+            .unwrap()
+            .expect("the disclosure button");
+        let tip = describing_tooltip(&disclose).expect("the closed heading names its tooltip");
+        assert_eq!(tip.text_content().unwrap(), DIFFERS_GROUP_TEXT);
+
+        keyboard_focus(&disclose);
+        leptos::task::tick().await;
+        assert!(tip.matches(":popover-open").unwrap());
+        disclose
+            .unchecked_ref::<web_sys::HtmlElement>()
+            .blur()
+            .unwrap();
+        leptos::task::tick().await;
+
+        open.set(true);
+        leptos::task::tick().await;
+        assert!(
+            describing_tooltip(&disclose).is_none(),
+            "an open heading still names the dot's tooltip"
         );
     }
 }
