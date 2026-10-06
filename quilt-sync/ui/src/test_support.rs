@@ -144,7 +144,21 @@ pub(crate) fn focus_report(el: &web_sys::Element) -> String {
         doc.active_element().as_ref() == Some(el),
         el.matches(":focus"),
         el.matches(":focus-visible"),
-        doc.query_selector_all(":modal").map(|l| l.length()),
+        {
+            let open = doc.query_selector_all(":modal").unwrap();
+            (0..open.length())
+                .map(|i| {
+                    let m: web_sys::Element = open.item(i).unwrap().unchecked_into();
+                    let parent = m
+                        .parent_element()
+                        .map(|p| p.outer_html().chars().take(80).collect::<String>());
+                    format!(
+                        "{} in {parent:?}",
+                        m.outer_html().chars().take(200).collect::<String>()
+                    )
+                })
+                .collect::<Vec<_>>()
+        },
         doc.query_selector_all("[inert]").map(|l| l.length()),
         doc.active_element()
             .map(|a| a.outer_html().chars().take(200).collect::<String>()),
