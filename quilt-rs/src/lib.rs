@@ -23,6 +23,7 @@ pub mod io;
 pub mod junk;
 pub mod lineage;
 mod local_domain;
+pub mod logging;
 pub mod manifest;
 pub mod object_hash;
 mod package_lock;
