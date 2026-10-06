@@ -56,6 +56,11 @@
 //! words. One surface per trigger costs a node, and a list marks only its rows
 //! that differ.
 //!
+//! It is also `aria-hidden`, open or closed. Its words reach a reader through
+//! the description and only through it — so a reading cursor never meets them
+//! a second time, and a surface drawn inside a `<label>` never becomes part of
+//! the name of the control that label belongs to.
+//!
 //! # Where the hover lands and where the focus lands can differ
 //!
 //! The usual caller has one element that is both: an icon button. The trigger
@@ -368,6 +373,12 @@ pub fn Tooltip(
                 class=style::surface
                 popover="manual"
                 role="tooltip"
+                // Out of the tree, and still a description: a node named
+                // directly by `aria-describedby` is read even when hidden. Left
+                // in, an open surface drawn inside a `<label>` — a selectable
+                // row's chip is — would join the label's control's name, and a
+                // reader would hear the sentence twice.
+                aria-hidden="true"
             >
                 {move || text.get()}
             </span>

@@ -79,31 +79,39 @@
 //! for. The value exists to keep three components honest; when there is nothing
 //! to be honest about, it is zero.
 //!
-//! **Except in resolve mode, where the gutter is the mark's slot.** A row that
-//! differs carries a glyph there, and every other row keeps the same empty
-//! column, so names start on one x whether or not their row is marked. A flat
-//! list therefore keeps `16px` while it marks rows: an indent is the price of a
-//! mark that does not shove its own name sideways. The list decides, as it
-//! decides the zero, because only the list knows it is resolving — no context
-//! and no second property, and select-all follows for free because it reads
-//! the same value.
-//!
 //! # A row that differs says so twice, and explains itself on request
 //!
-//! A rule and a tint, which are both colour, and a glyph in the gutter, which is
-//! a shape: the Two Channels Rule's pair. No word, because a highlighted row
-//! and a legend explain themselves once — the resolve pane's sentence is the
-//! legend. What the glyph means is a [`Tooltip`](super::Tooltip): hover the
-//! glyph, or reach the row's control from the keyboard, and the sentence
+//! A rule and a tint, which are both colour, and the word `Differs`, which is
+//! not: the Two Channels Rule's pair. The earlier ruling was *no word* — a
+//! highlighted row and a legend explain themselves once — and the owner
+//! reversed it, because colour alone is one channel however many places it is
+//! painted. One word, not the sentence: the resolve pane's sentence is still
+//! the legend for the set.
+//!
+//! The word is a chip and not a [`StateLabel`]. A state label says where the
+//! file is and picks its own glyph from its tone; this says the two revisions
+//! disagree, which is information about the comparison and never a state the
+//! file is in, so it is drawn in outline beside the filled label rather than as
+//! a second one. It has its own slot just before the state's, present only on a
+//! row that differs. The state's slot is fixed and right-aligned, so labels and
+//! sizes stay one column whether or not a chip precedes them, and the chips
+//! line up against that slot too — no row reserves anything, in or out of
+//! resolve mode, and only a marked row's name gives up the width.
+//!
+//! What it means is a [`Tooltip`](super::Tooltip): rest the pointer on the
+//! chip, or reach the row's control from the keyboard, and the sentence
 //! appears. The control names it in `aria-describedby`, beside the pane's
-//! sentence, and a hidden copy of it sits in the row for a reader moving
-//! through the list. An inert row has no control and never gets one — a tab
-//! stop that does nothing is worse than none — so it is hover-only, which is
-//! exactly why the glyph has to carry the meaning without its sentence.
+//! sentence. The chip's word is real text, so a reader moving through the list
+//! hears `Differs` where a sighted reader sees it, and the pane's sentence is
+//! the legend for both — no hidden copy of the sentence is needed. An inert
+//! row has no control and never gets one — a tab stop that does nothing is
+//! worse than none — so its sentence is hover-only, which is why the word has
+//! to carry the meaning without it.
 //!
 //! The row itself has no `title`. It had one, and the name's own `title` (the
 //! whole path) covered most of the row and won, so the hint showed only over
-//! the gutter and the size.
+//! the gutter and the size. An element with a tooltip carries no `title` of its
+//! own, or the browser's would sit on top of ours.
 //!
 //! # The `<label>` stops before the overflow, and only a selectable row has one
 //!
@@ -175,8 +183,8 @@ pub enum EntryAction {
     Open(Callback<()>),
 }
 
-/// What a marked row's tooltip and hidden sentence say. One sentence, in the
-/// page's own words — no `remote`, no `diverged`, and no platform named as the
+/// What a marked row's tooltip says, explaining its `Differs`. One sentence,
+/// in the page's own words — no `remote`, no `diverged`, and no platform named as the
 /// other place.
 pub const DIFFERS_TITLE: &str =
     "Your version of this file and the published version have different contents.";
@@ -255,9 +263,9 @@ pub fn EntryRow(
         String::from(style::root)
     };
 
-    // Made here rather than by the tooltip, because the mark it hangs from and
+    // Made here rather than by the tooltip, because the chip it hangs from and
     // the control that focus lands on are two elements: the control names the
-    // surface and forwards its focus, the mark is what a pointer rests on.
+    // surface and forwards its focus, the chip is what a pointer rests on.
     let tip = differs.then(TooltipHandle::new);
     let differs_id = differs_id();
     // The control's description: the row's own sentence first, then the
@@ -281,6 +289,7 @@ pub fn EntryRow(
             // A fixed slot, so a size lands in the same column whether or not
             // the row above carries a label. Sizes exist to be compared, and
             // ragged ones cannot be.
+            {tip.map(chip)}
             <span class=style::state>
                 {move || {
                     state.get().map(|words| view! { <StateLabel tone=tone>{words}</StateLabel> })
@@ -359,14 +368,7 @@ pub fn EntryRow(
             // sentence from.
             aria-describedby=differs.then_some(differs_id)
         >
-            {tip.map(mark)}
             {main}
-            // For a reader moving through the list rather than tabbing: the
-            // tooltip is hidden until asked for, and the glyph is a picture, so
-            // without this the row would say nothing about differing at all.
-            // Outside `main`, so it never joins a selectable row's `<label>`
-            // and with it the checkbox's name.
-            {differs.then(|| view! { <span data-sr-only>{DIFFERS_TITLE}</span> })}
             {if actions.with_untracked(Vec::is_empty) {
                 // A menu-shaped hole, for the same reason a boxless row keeps a
                 // box-shaped one: without it the sizes in a list where one row has
@@ -380,21 +382,20 @@ pub fn EntryRow(
     }
 }
 
-/// The mark of a row that differs, with its tooltip.
+/// The `Differs` chip, with its tooltip.
 ///
-/// It sits over the gutter rather than in it. The gutter is inside `main`,
-/// which on a selectable row is a `<label>` and on an openable one carries the
-/// click: a surface drawn in there would join the checkbox's name while open,
-/// and a click on its words would tick the box or open the file. So the slot is
-/// laid out by the gutter, as it always was, and the mark is positioned over it
-/// from the row — the names do not move, and nothing is added to the label.
-fn mark(tip: TooltipHandle) -> AnyView {
+/// Inside `main` like the state beside it, so a click on it does what a click
+/// on the state does — ticks or opens — and it is never a control of its own.
+/// The tooltip's surface is inside too, which is safe only because the surface
+/// keeps itself out of the accessibility tree: on a selectable row `main` is
+/// the `<label>`, and its words would otherwise join the checkbox's name.
+fn chip(tip: TooltipHandle) -> AnyView {
     view! {
-        <span class=style::glyph>
+        <span class=style::chipslot>
             <Tooltip
                 handle=tip
                 text=DIFFERS_TITLE.to_string()
-                trigger=|_| view! { <span class=style::flag>{icons::diff()}</span> }.into_any()
+                trigger=|_| view! { <span class=style::chip>"Differs"</span> }.into_any()
             />
         </span>
     }

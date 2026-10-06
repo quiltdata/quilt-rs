@@ -169,30 +169,29 @@ fn edges(long: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
     .into_any()
 }
 
-const DIFFERS: &str = "A row the two revisions disagree about carries no word: a rule, a tint \
-                       and a glyph. The rule and the tint are colour; the glyph is a shape, \
-                       the second channel, so the marked rows still stand out in greyscale. \
-                       Rest the pointer on a glyph, or Tab to a marked row's box or name, and \
-                       a tooltip says what it means; the control names that sentence, and a \
-                       hidden copy sits in the row for a screen reader. A deleted row has no \
-                       control and gets no tab stop, so it is hover-only. The glyph lives in \
-                       the gutter, so a list that marks rows keeps its gutter even with no \
-                       headings: every name starts on one x, marked or not. The last cell is \
-                       the same rows outside resolve mode, where a flat list's gutter is zero \
-                       — the indent is what the mark costs. It is information and never a \
-                       control: resolution happens at revision level.";
+const DIFFERS: &str = "A row the two revisions disagree about carries a rule, a tint and the \
+                       word Differs. The rule and the tint are colour; the word is the second \
+                       channel, so the marked rows still stand out in greyscale. It is an \
+                       outline chip, not a filled state label, because it is information about \
+                       the comparison and never a state the file is in. Rest the pointer on a \
+                       chip, or Tab to a marked row's box or name, and a tooltip says what \
+                       differs; the control names that sentence. A deleted row has no control \
+                       and gets no tab stop, so its sentence is hover-only. The chip has its own \
+                       slot before the state, and only a marked row draws it: states and sizes \
+                       stay one column, and the names do not move. Resolution happens at \
+                       revision level, so nothing here is a control.";
 
-/// Six rows, two of each shape, the first of each pair marked when `marking`.
+/// Six rows, two of each shape, the first of each pair marked.
 /// One list, so alignment between marked and unmarked rows is what the cell
 /// shows rather than something to take on trust.
-fn shapes(marking: bool, opened: RwSignal<String>) -> AnyView {
+fn shapes(opened: RwSignal<String>) -> AnyView {
     view! {
         <div style="width:100%">
             <EntryRow
                 name="raw/plate-07.csv"
                 state="Not downloaded"
                 size="4.1 MB"
-                differs=marking
+                differs=true
                 action=pick(RwSignal::new(false))
                 actions=menu()
             />
@@ -206,7 +205,7 @@ fn shapes(marking: bool, opened: RwSignal<String>) -> AnyView {
             <EntryRow
                 name="notes/kickoff-thread.md"
                 size="12 KB"
-                differs=marking
+                differs=true
                 action=open("notes/kickoff-thread.md", opened)
                 actions=menu()
                 have_mark=true
@@ -223,7 +222,7 @@ fn shapes(marking: bool, opened: RwSignal<String>) -> AnyView {
                 state="Deleted"
                 tone=StateTone::Danger
                 size="4.0 MB"
-                differs=marking
+                differs=true
                 actions=menu()
             />
             <EntryRow
@@ -243,17 +242,14 @@ fn differing(opened: RwSignal<String>) -> AnyView {
         <Story title="EntryRow · rows that differ" note=DIFFERS>
             <Cell
                 full=true
-                label="resolve mode, flat list — selectable, openable and deleted, each marked and not; the gutter is kept for the glyph"
+                label="resolve mode, flat list — selectable, openable and deleted, each marked and not"
             >
-                <div style="width:100%; --q-entry-gutter: 16px">
+                <div style="width:100%; --q-entry-gutter: 0">
                     <Provider value=DiffersId("resolve-differing-entry-row")>
-                        {shapes(true, opened)}
+                        {shapes(opened)}
                         {differs_caption(3)}
                     </Provider>
                 </div>
-            </Cell>
-            <Cell full=true label="the same rows outside resolve mode, flat — the gutter is zero">
-                <div style="width:100%; --q-entry-gutter: 0">{shapes(false, opened)}</div>
             </Cell>
         </Story>
     }

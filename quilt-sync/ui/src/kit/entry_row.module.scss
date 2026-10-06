@@ -20,8 +20,6 @@
   min-height: var(--q-control-height);
   padding-right: var(--q-space-2);
   border-bottom: 1px solid var(--q-borderColor-muted);
-  /* What a differing row's mark is positioned against. */
-  position: relative;
 }
 
 .root:hover {
@@ -141,49 +139,40 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The two revisions disagree about this file. A rule, a tint and a mark, no
- * word: a highlighted-rows-and-legend pattern explains itself once instead of
- * twenty times, and gives a busy row back a column.
- *
- * The rule and the tint are both colour, which is one channel. The mark below
- * is the second — a shape, so it survives greyscale — and the tooltip it
- * carries is what it means, for whoever asks. */
+/* The two revisions disagree about this file. A rule and a tint, and the word
+ * `Differs` in a chip before the state. The rule and the tint are colour, one
+ * channel; the word is the second, and survives greyscale. The tooltip on the
+ * chip says what differs, for whoever asks. */
 .root.differs {
   box-shadow: inset 3px 0 0 var(--q-fgColor-danger);
   background: var(--q-bgColor-danger-muted);
 }
 
-/* The mark's slot: exactly over the gutter, which `main` lays out as it always
- * did. Positioned from the row and not placed in `main`, because `main` is a
- * `<label>` or carries the click, and the tooltip's words must be in neither.
- * The gutter is the slot, so a list that marks rows keeps it even with no
- * headings — the resolve pane holds it at 16px — and every row's name, marked or
- * not, starts on the one x. */
-.glyph {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: var(--q-space-3);
-  width: var(--q-entry-gutter, 16px);
+/* The chip's slot, present only on a row that differs. Nothing is reserved on
+ * the other rows: the state's slot after it is fixed and right-aligned, so the
+ * labels and sizes stay one column either way and the chips line up against
+ * it. Only the marked row's name gives up the width. */
+.chipslot {
+  flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
-/* What the pointer rests on: the gutter's width square, not the glyph's 12px,
- * so it can be found without aiming. The mark step, not `onMuted`: it is a
- * glyph, which is what the brighter step is for, and the rule beside it is the
- * same colour. */
-.flag {
-  display: flex;
+/* Information, never a state, so it must not look like the `StateLabel` beside
+ * it: the same box — radius, body type, a 20px line — but drawn in outline,
+ * no fill and no glyph, where a state is filled and carries its tone's
+ * silhouette. The edge is the danger mark step, which is what makes it an
+ * outline at all against the row's tint (the label's muted edge would vanish
+ * into it). The words take the darkest step, because they sit on the tone's
+ * own fill — the row's tint shows through. Never truncates, like a label. */
+.chip {
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: var(--q-entry-gutter, 16px);
-  height: var(--q-entry-gutter, 16px);
-  color: var(--q-fgColor-danger);
-}
-
-.flag svg {
-  width: 12px;
-  height: 12px;
+  padding: 0 var(--q-space-2);
+  border: 1px solid var(--q-fgColor-danger);
+  border-radius: var(--q-radius);
+  background: transparent;
+  color: var(--q-fgColor-danger-onMuted);
+  font-size: var(--q-text-body);
+  line-height: 20px;
+  white-space: nowrap;
 }
