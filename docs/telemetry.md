@@ -79,8 +79,8 @@ It replaces rather than merges, so a narrow override is genuinely narrow —
 `QUILT_LOG=quilt_sync=trace` drops the dependency floor along with everything
 else. The crash reporter never goes below `info`, whatever the value: it is
 off-machine, and `debug` is where paths and package names appear. A quieter
-value (`warn`, `error`, `off`) still quiets it. A value that does not parse is
-ignored, and the log file starts with a warning naming it.
+value (`warn`, `error`, `off`) still quiets it. A value that is neither a level
+nor directives, such as `debgu`, is ignored and logged as an error.
 
 Note this is a **developer** convenience, not a user-facing escape hatch: an
 app launched from the OS shell inherits no terminal environment, so "set a
