@@ -15,8 +15,6 @@ pub const OUR_TARGETS: [&str; 4] = ["quilt", "quilt_rs", "quilt_uri", "quilt_syn
 /// What every dependency logs at when a bare level is given.
 const DEPENDENCY_LEVEL: &str = "warn";
 
-const LEVELS: [&str; 6] = ["trace", "debug", "info", "warn", "error", "off"];
-
 /// A log filter value that is neither a level nor a list of directives.
 ///
 /// Each app decides how to report it; the CLI refuses to run.
@@ -43,15 +41,15 @@ impl InvalidLogFilter {
 /// because the dependencies, not this code, are the volume. A level quieter
 /// than `warn` (`error`, `off`) applies to everything instead, so dependencies
 /// are never louder than asked. Case and surrounding spaces do not matter.
-/// Anything else is directives, returned verbatim.
+/// A value with `=` is directives, returned verbatim.
 ///
 /// # Errors
 ///
-/// A comma-separated part with no `=` that is not a level, such as `debgu` or
-/// `quilt_rs`. `tracing` would read it as a target name and hide every other
-/// line, so a typo in a level is an error rather than silence. This checks
-/// the shape only: a caller that builds the filter still has to parse the
-/// directives strictly, which catches `quilt_rs=lots`.
+/// A value that is not a level and has no `=`, such as `debgu` or `quilt_rs`.
+/// `tracing` would read it as a target name and hide every other line, so a
+/// typo in a level is an error rather than silence. A caller that builds the
+/// filter still has to parse the directives strictly, which catches
+/// `quilt_rs=lots`.
 ///
 /// ```
 /// use quilt_rs::logging::directives;
@@ -81,15 +79,9 @@ pub fn directives(value: &str) -> Result<Option<String>, InvalidLogFilter> {
             Ok(Some(parts.join(",")))
         }
         "error" | "off" => Ok(Some(level)),
-        _ if trimmed.split(',').all(is_directive_shaped) => Ok(Some(trimmed.to_string())),
+        _ if trimmed.contains('=') => Ok(Some(trimmed.to_string())),
         _ => Err(InvalidLogFilter::new(value)),
     }
-}
-
-/// A part of a directive list: empty, `target=level`, or a bare level.
-fn is_directive_shaped(part: &str) -> bool {
-    let part = part.trim();
-    part.is_empty() || part.contains('=') || LEVELS.contains(&part.to_ascii_lowercase().as_str())
 }
 
 #[cfg(test)]
@@ -148,12 +140,7 @@ mod tests {
     /// hid every quilt line, warnings and errors included.
     #[test]
     fn a_word_that_is_not_a_level_is_an_error() {
-        for value in [
-            "debgu",
-            "quilt_rs",
-            "debgu,hyper=off",
-            "quilt_rs=trace,hyper",
-        ] {
+        for value in ["debgu", "quilt_rs"] {
             assert_eq!(
                 directives(value),
                 Err(InvalidLogFilter::new(value)),
