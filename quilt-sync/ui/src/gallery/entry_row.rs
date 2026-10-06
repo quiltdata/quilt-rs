@@ -178,8 +178,8 @@ const DIFFERS: &str = "A row can carry two states on two axes: where the file is
                        Rest the pointer on Differs, or Tab to a marked row's box or name, and a \
                        tooltip says what differs; the control names that sentence. A deleted \
                        row has no control and gets no tab stop, so its sentence is hover-only. \
-                       Differs has its own slot before the place's label, and only a marked row \
-                       draws it: labels and sizes stay one column, and the names do not move. \
+                       Differs shares the state slot with the place's label, and the two stack \
+                       right-aligned: sizes stay one column, and the names do not move. \
                        Resolution happens at revision level, so nothing here is a control.";
 
 /// Six rows, two of each shape, the first of each pair marked.

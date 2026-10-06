@@ -92,11 +92,11 @@
 //! word and its × are not, and survive greyscale. The resolve pane's sentence
 //! counts the set, and a [`Tooltip`](super::Tooltip) says what differs.
 //!
-//! The label has its own slot just before the place's, present only on a row
-//! that differs. The place's slot is fixed and right-aligned, so labels and
-//! sizes stay one column whether or not a `Differs` precedes them, and those
-//! line up against that slot too — no row reserves anything, in or out of
-//! resolve mode, and only a marked row's name gives up the width.
+//! The label shares the state slot with the place's, before it, and the two
+//! stack right-aligned like any pair of labels. The slot is right-aligned and
+//! at least one label wide, so sizes stay one column whether or not a row
+//! carries two — no row reserves anything, in or out of resolve mode, and only
+//! a marked row's name gives up the width.
 //!
 //! Rest the pointer on `Differs`, or reach the row's control from the
 //! keyboard, and the tooltip's sentence appears. The control names it in
@@ -289,9 +289,11 @@ pub fn EntryRow(
         view! {
             // A fixed slot, so a size lands in the same column whether or not
             // the row above carries a label. Sizes exist to be compared, and
-            // ragged ones cannot be.
-            {tip.map(differs_label)}
+            // ragged ones cannot be. A row that differs puts `Differs` in the
+            // same slot, before the place's label: the two stack right-aligned
+            // like any labels, and the slot grows for them.
             <span class=style::state>
+                {tip.map(differs_label)}
                 {move || {
                     state.get().map(|words| view! { <StateLabel tone=tone>{words}</StateLabel> })
                 }}

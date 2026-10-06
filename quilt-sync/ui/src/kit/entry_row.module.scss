@@ -125,6 +125,7 @@
   flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
+  gap: var(--q-space-1);
   /* Wide enough for the longest label in the vocabulary. DESIGN.md forbids
    * truncating a state label — if one overflows, the words are wrong — so
    * adding a state means checking this number. */
@@ -148,11 +149,10 @@
   background: var(--q-bgColor-danger-muted);
 }
 
-/* The `Differs` label's slot, present only on a row that differs. Nothing is
- * reserved on the other rows: the place's slot after it is fixed and
- * right-aligned, so the labels and sizes stay one column either way and the
- * `Differs` labels line up against it. Only the marked row's name gives up the
- * width. Never shrinks, as a state label never does. */
+/* The `Differs` label's wrapper, inside the state slot beside the place's
+ * label. The slot is right-aligned, so the two stack from the right like any
+ * pair of labels; only the marked row's name gives up the width. Never shrinks,
+ * as a state label never does. */
 .compared {
   flex: 0 0 auto;
   display: flex;
