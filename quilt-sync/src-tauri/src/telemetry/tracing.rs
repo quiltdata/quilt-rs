@@ -5,7 +5,12 @@ use tempfile::TempDir;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
+use tracing_subscriber::{
+    EnvFilter,
+    filter::{FilterExt, LevelFilter},
+};
+
+use quilt_rs::logging::LOG_ENV;
 
 use crate::Result;
 use crate::telemetry::prelude::*;
@@ -30,13 +35,9 @@ const FILE_DIRECTIVES: &str = "quilt_sync=debug,quilt_rs=debug,quilt_uri=debug,w
 /// each sink filters for itself.
 const CRASH_SINK_DIRECTIVES: &str = "quilt_sync=info,quilt_rs=info,warn";
 
-/// The variable a developer can raise either sink with.
-///
-/// Not the escape hatch for a *user*: an app launched from the OS shell inherits no
-/// terminal environment, so "set a variable and reproduce it" is not an instruction
-/// anyone can follow. That is why the defaults above have to be right on their own,
-/// and why the user-facing control belongs in the app rather than here.
-const LOG_ENV: &str = "QUILTSYNC_LOG";
+/// The most the crash reporter receives, whatever [`LOG_ENV`] says: `debug` is
+/// where paths and package names appear, and this sink leaves the machine.
+const CRASH_SINK_CEILING: LevelFilter = LevelFilter::INFO;
 
 pub enum LogsDir {
     Permanent(PathBuf),
@@ -107,7 +108,7 @@ fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
 /// The variable **replaces** rather than extends, which is a correctness
 /// requirement and not only a legibility one. Adding the defaults *after* an
 /// override is how this first went wrong: a later directive supersedes an earlier
-/// one for the same target, so `QUILTSYNC_LOG=quilt_sync=trace` lost to the
+/// one for the same target, so `quilt_sync=trace` from the variable lost to the
 /// built-in `quilt_sync=debug` and the override was silently ignored. Replacing
 /// cannot lose that way, and a developer has one string to read instead of a merge
 /// to work out.
@@ -116,20 +117,21 @@ fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
 /// dependency floor along with everything else, which is ordinary `RUST_LOG`
 /// behaviour and what someone naming a single target is asking for.
 fn filter(directives: &str) -> EnvFilter {
-    let from_env = std::env::var(LOG_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty());
-
-    build_filter(from_env.as_deref(), directives)
+    build_filter(std::env::var(LOG_ENV).ok().as_deref(), directives)
 }
 
 /// The half of [`filter`] that does not read the environment, so the precedence
 /// rule above can be tested without mutating process-global state from a test that
 /// runs in parallel with every other one.
+///
+/// The value goes through the CLI's rule (`quilt_rs::logging::directives`): a
+/// bare level puts our crates at it and dependencies at `warn`. An empty or
+/// invalid value counts as unset; [`init_tracing`] reports an invalid one.
 fn build_filter(from_env: Option<&str>, directives: &str) -> EnvFilter {
+    let from_env = from_env.and_then(|value| quilt_rs::logging::directives(value).ok().flatten());
     EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
-        .parse_lossy(from_env.unwrap_or(directives))
+        .parse_lossy(from_env.as_deref().unwrap_or(directives))
 }
 
 pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
@@ -186,18 +188,29 @@ fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
 
         tracing_subscriber::registry()
             .with(file)
-            .with(sentry::integrations::tracing::layer().with_filter(filter(CRASH_SINK_DIRECTIVES)))
+            .with(
+                sentry::integrations::tracing::layer()
+                    .with_filter(filter(CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
+            )
             .init();
         Some(guard)
     } else {
         tracing_subscriber::registry()
-            .with(sentry::integrations::tracing::layer().with_filter(filter(CRASH_SINK_DIRECTIVES)))
+            .with(
+                sentry::integrations::tracing::layer()
+                    .with_filter(filter(CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
+            )
             .init();
         None
     };
 
     // Reported *after* the subscriber exists, or it goes nowhere — which is what
     // used to happen.
+    if let Ok(value) = std::env::var(LOG_ENV)
+        && let Err(invalid) = quilt_rs::logging::directives(&value)
+    {
+        error!("Ignoring {LOG_ENV}: {invalid}");
+    }
     match logs_dir {
         LogsDir::Temporary(_) => error!(
             "Failed to create permanent logs directory, using temporary directory: {}",
@@ -251,14 +264,14 @@ mod tests {
         use tracing_subscriber::Layer;
         use tracing_subscriber::registry::Registry;
 
-        let file = Layer::<Registry>::max_level_hint(&filter(FILE_DIRECTIVES));
+        let file = Layer::<Registry>::max_level_hint(&build_filter(None, FILE_DIRECTIVES));
         assert_eq!(
             file,
             Some(LevelFilter::DEBUG),
             "the file filter admits {file:?}, so the log will be near-empty again"
         );
 
-        let crash = Layer::<Registry>::max_level_hint(&filter(CRASH_SINK_DIRECTIVES));
+        let crash = Layer::<Registry>::max_level_hint(&build_filter(None, CRASH_SINK_DIRECTIVES));
         assert_eq!(
             crash,
             Some(LevelFilter::INFO),
@@ -293,14 +306,41 @@ mod tests {
         );
     }
 
-    /// An empty or absent override leaves the defaults intact, so the mechanism that
+    /// A bare level goes through the CLI's rule: our crates at it, the rest at
+    /// `warn`.
+    #[test]
+    fn a_bare_level_raises_our_crates() {
+        let rendered = build_filter(Some("trace"), FILE_DIRECTIVES).to_string();
+        assert!(rendered.contains("quilt_sync=trace"), "{rendered:?}");
+    }
+
+    /// The crash reporter never admits `debug`, however loud the variable, and a
+    /// quieter value still quiets it.
+    #[test]
+    fn the_crash_sink_is_capped_at_info() {
+        use tracing_subscriber::layer::Filter;
+        use tracing_subscriber::registry::Registry;
+
+        for (value, level) in [
+            ("trace", LevelFilter::INFO),
+            ("quilt_sync=trace", LevelFilter::INFO),
+            ("error", LevelFilter::ERROR),
+        ] {
+            let crash = build_filter(Some(value), CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING);
+            assert_eq!(
+                Filter::<Registry>::max_level_hint(&crash),
+                Some(level),
+                "{value:?}"
+            );
+        }
+    }
+
+    /// An empty, absent or invalid override leaves the defaults intact, so the mechanism that
     /// makes the override narrow cannot narrow anything by accident.
     #[test]
     fn no_override_leaves_the_defaults_alone() {
-        for override_ in [None, Some(""), Some("   ")] {
-            let rendered =
-                build_filter(override_.filter(|v| !v.trim().is_empty()), FILE_DIRECTIVES)
-                    .to_string();
+        for override_ in [None, Some(""), Some("   "), Some("debgu")] {
+            let rendered = build_filter(override_, FILE_DIRECTIVES).to_string();
             assert!(
                 rendered.contains("quilt_sync=debug"),
                 "{override_:?} cost the file filter the app's own crate: {rendered:?}"
