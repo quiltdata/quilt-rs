@@ -19,31 +19,23 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.36.0-dev]
+## [v0.36.0] - 2026-10-07
 
 ### Added
 
-- `quilt remove-revisions` removes the old revisions this copy no longer needs, oldest first, with the stored files only they use, and says what it freed, for example `Removed 4 old revisions of user/plate-07 · freed 630.2 kB`. `--count N` removes only the N oldest. The revision the files are at, the remote's latest, the merge base and any revision not on the registry are kept; `--json` lists the removed hashes and what was freed (<https://github.com/quiltdata/quilt-rs/pull/1051>)
-
-- `QUILT_DOMAIN` sets the domain when `--domain` is not given, so one `export` points every command in a shell at the same domain. `--domain` still wins, and an empty `QUILT_DOMAIN` counts as unset (<https://github.com/quiltdata/quilt-rs/pull/1059>)
-
+- `quilt remove-revisions` removes the old revisions this copy no longer needs, oldest first, with the stored files only they use, and says what it freed. `--count N` removes only the N oldest. Revisions still needed (current, latest, base, not pushed or not published) are kept (<https://github.com/quiltdata/quilt-rs/pull/1051>)
+- `QUILT_DOMAIN` sets the domain when `--domain` is not given (<https://github.com/quiltdata/quilt-rs/pull/1059>)
 - `--format text|json` and `QUILT_FORMAT` pick the format of a command's result, so `export QUILT_FORMAT=json` makes every command print JSON; `--json` still works (<https://github.com/quiltdata/quilt-rs/pull/1062>)
-
-- `--log <filter>` sets how much one command logs and takes the same values as `QUILT_LOG`, which it overrides, for example `quilt push --log debug` (<https://github.com/quiltdata/quilt-rs/pull/1071>)
 
 ### Changed
 
-- `QUILT_LOG` sets how much is logged, in place of `RUST_LOG`, which is no longer read. `QUILT_LOG=debug` shows quilt's own debug lines while its dependencies stay at warnings; `tracing` directives such as `quilt_rs=trace` still work. A value that is neither a level nor valid directives, such as `debgu`, stops the command before it runs (<https://github.com/quiltdata/quilt-rs/pull/1067>)
-
-- `-v` is shorthand for `--log info`: it shows quilt's INFO logs and keeps its dependencies at warnings, and it now works with `QUILT_LOG` set instead of being ignored (<https://github.com/quiltdata/quilt-rs/pull/1067>, <https://github.com/quiltdata/quilt-rs/pull/1071>)
-
-- `quilt log` says why each revision is kept (`current`, `latest`, `base`, `not pushed`, `unpublished`), or how much removing it would free, so you can see what `quilt remove-revisions` would remove; `--json` adds `kept` and `frees` (<https://github.com/quiltdata/quilt-rs/pull/1051>)
-
-- `quilt log`, `quilt gc` and `quilt remove-revisions` round sizes the same way as QuiltSync, and go up to EB (<https://github.com/quiltdata/quilt-rs/pull/1072>)
+- `QUILT_LOG` sets how much is logged, in place of `RUST_LOG`, which is no longer read. A level such as `debug` applies to quilt while its dependencies stay at warnings, directives such as `quilt_rs=trace` still work, and an invalid value such as `debgu` stops the command. `--log <filter>` sets it for one command, and `-v` is `--log info` (<https://github.com/quiltdata/quilt-rs/pull/1067>, <https://github.com/quiltdata/quilt-rs/pull/1068>, <https://github.com/quiltdata/quilt-rs/pull/1071>)
+- `quilt log` says why each revision is kept (`current`, `latest`, `base`, `not pushed`, `unpublished`), or how much removing it would free; `--json` adds `kept` and `frees` (<https://github.com/quiltdata/quilt-rs/pull/1051>)
+- `quilt log`, `quilt gc` and `quilt remove-revisions` round sizes the way QuiltSync does, and go up to EB (<https://github.com/quiltdata/quilt-rs/pull/1072>)
 
 ### quilt-rs
 
-- Updated [from v0.42.0 to v0.42.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.42.0 to v0.42.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.0...quilt-rs/v0.42.1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.35.0] - 2026-10-02
 

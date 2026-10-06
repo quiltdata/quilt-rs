@@ -19,23 +19,23 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.22.7-dev]
+## [v0.22.7] - 2026-10-07
 
 ### Added
 
-- Settings has a log level choice: Default, Trace, Debug, Info, Warn or Error. It applies after a restart; a valid `QUILT_LOG` takes its place (<https://github.com/quiltdata/quilt-rs/pull/1074>)
+- Settings has a log level choice. It applies after a restart, and a valid `QUILT_LOG` overrides it (<https://github.com/quiltdata/quilt-rs/pull/1074>)
 
 ### Changed
 
-- **New design preview**: when nothing is left to download but files are deleted here, the caption above the file list says so, for example "All 1,090 files downloaded · 1 deleted here", matching the Keeping panel, instead of showing nothing (<https://github.com/quiltdata/quilt-rs/pull/1069>)
+- The app reads its log filter from `QUILT_LOG`, with the same values as the `quilt` CLI, in place of `QUILTSYNC_LOG`. Crash reports never include `debug` or `trace` lines (<https://github.com/quiltdata/quilt-rs/pull/1073>)
+- **New design preview**: when nothing is left to download but files are deleted here, the caption above the file list says so, for example "All 1,090 files downloaded · 1 deleted here" (<https://github.com/quiltdata/quilt-rs/pull/1069>)
 - **New design preview**: *Revisions you have* shows exact sizes, such as "211.9 kB", in place of "< 1 MB" (<https://github.com/quiltdata/quilt-rs/pull/1070>)
-- **New design preview**: in Resolve mode, files that differ from the published revision say *Differs* beside their state, and a tooltip explains it on hover or keyboard focus (<https://github.com/quiltdata/quilt-rs/pull/1075>)
+- **New design preview**: in Resolve mode, files that differ from the published revision are marked *Differs*, with a tooltip that explains it (<https://github.com/quiltdata/quilt-rs/pull/1075>)
 - Messages that say how much space was freed round sizes the same way as the rest of the app (<https://github.com/quiltdata/quilt-rs/pull/1072>)
-- The app reads its log filter from `QUILT_LOG`, the same variable and values as the `quilt` CLI, in place of `QUILTSYNC_LOG`. Crash reports never include `debug` or `trace` lines, whatever `QUILT_LOG` says (<https://github.com/quiltdata/quilt-rs/pull/1073>)
 
 ### quilt-rs
 
-- Updated [from v0.42.0 to v0.42.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.42.0 to v0.42.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.0...quilt-rs/v0.42.1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.22.6] - 2026-10-02
 

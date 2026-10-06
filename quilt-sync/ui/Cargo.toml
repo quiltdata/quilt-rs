@@ -23,8 +23,8 @@ name = "gallery"
 path = "src/gallery.rs"
 
 [dependencies]
-leptos = { version = "0.8.21", features = ["csr"] }
-leptos_router = "0.8.16"
+leptos = { version = "0.8.22", features = ["csr"] }
+leptos_router = "0.8.17"
 wasm-bindgen = "0.2.129"
 wasm-bindgen-futures = "0.4.79"
 js-sys = "0.3.106"

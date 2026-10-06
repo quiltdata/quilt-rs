@@ -42,7 +42,7 @@ gitignores = "4.8"
 hex = "0.4.3"
 http-body = "1.1.0"
 ignore = "0.4"
-jsonschema = { version = "0.58.4", default-features = false }
+jsonschema = { version = "0.58.6", default-features = false }
 multibase = "0.9.3"
 multihash = "0.19.5"
 percent-encoding = "2.3.2"
@@ -58,12 +58,12 @@ serde_yaml = "0.9.34"
 tabled = "0.22.0"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
-tokio = { version = "1.53.1", features = ["full"] }
+tokio = { version = "1.53.2", features = ["full"] }
 tokio-stream = "0.1.19"
 tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = "0.3.23"
 url = {version = "2.5.8", features = ["serde"]}
-uuid = { version = "1.26.1", features = ["v4"] }
+uuid = { version = "1.27.0", features = ["v4"] }
 
 # Dev dependencies
 tokio-test = "0.4.6"
