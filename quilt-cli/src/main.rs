@@ -3,7 +3,7 @@
 // the lint in production; allow it only under `cfg(test)`.
 #![cfg_attr(test, allow(clippy::items_after_statements))]
 
-use quilt_rs::logging::{InvalidLogFilter, LOG_ENV, directives};
+use quilt_rs::logging::{InvalidLogFilter, LOG_ENV};
 use std::io;
 use tracing::log;
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
@@ -18,7 +18,10 @@ use cli::print;
 #[tokio::main]
 async fn main() {
     let args = Args::try_parse_with_env(std::env::args_os()).unwrap_or_else(|err| err.exit());
-    let logging = init_logging(std::env::var(LOG_ENV).ok().as_deref(), args.verbose);
+    let logging = init_logging(
+        std::env::var(LOG_ENV).ok().as_deref(),
+        args.log_directives(),
+    );
     let format = args.format();
     cli::notice_lock_waits(|line| eprintln!("{line}"));
 
@@ -63,8 +66,8 @@ fn to_std(result: Result<Std, Error>) -> Std {
 ///
 /// A `QUILT_LOG` that does not parse is returned as the error, after
 /// installing the default filter so the rest of the run still logs warnings.
-fn init_logging(quilt_log: Option<&str>, verbose: bool) -> Result<(), Error> {
-    let (directives, result) = match filter_directives(quilt_log, verbose) {
+fn init_logging(quilt_log: Option<&str>, flag: Option<String>) -> Result<(), Error> {
+    let (directives, result) = match filter_directives(quilt_log, flag) {
         Ok(directives) => (directives, Ok(())),
         Err(err) => (DEFAULT_DIRECTIVES.to_string(), Err(Error::LogEnv(err))),
     };
@@ -76,7 +79,7 @@ fn init_logging(quilt_log: Option<&str>, verbose: bool) -> Result<(), Error> {
     result
 }
 
-/// Everything at WARN: what the CLI logs with neither `-v` nor `QUILT_LOG`.
+/// Everything at WARN: what the CLI logs with neither a flag nor `QUILT_LOG`.
 const DEFAULT_DIRECTIVES: &str = "warn";
 
 /// The filter for directives [`filter_directives`] chose, which already
@@ -87,33 +90,24 @@ fn build_filter(directives: &str) -> EnvFilter {
         .parse_lossy(directives)
 }
 
-/// `-v`, then `QUILT_LOG`, then WARN for everything. `-v` is `info` under the
-/// shared rule, and a flag beats the variable. An empty `QUILT_LOG` counts as
+/// The directives from `--log` or `-v`, then `QUILT_LOG`, then WARN for
+/// everything. The flag replaces the variable. An empty `QUILT_LOG` counts as
 /// unset. Reads no environment, so the rule is tested without touching the
 /// test process's.
 ///
-/// A `QUILT_LOG` that does not parse is an error even under `-v`: a broken
-/// variable is reported whether or not a flag overrides it. It is parsed
-/// strictly, so `quilt_rs=lots` fails rather than being dropped.
-fn filter_directives(quilt_log: Option<&str>, verbose: bool) -> Result<String, InvalidLogFilter> {
+/// A `QUILT_LOG` that does not parse is an error even under a flag: a broken
+/// variable is reported whether or not a flag overrides it.
+fn filter_directives(
+    quilt_log: Option<&str>,
+    flag: Option<String>,
+) -> Result<String, InvalidLogFilter> {
     let from_env = match quilt_log {
-        Some(value) => {
-            let parsed = directives(value)?;
-            if let Some(parsed) = &parsed {
-                EnvFilter::builder()
-                    .parse(parsed)
-                    .map_err(|_| InvalidLogFilter::new(value))?;
-            }
-            parsed
-        }
+        Some(value) => cli::log_filter(value)?,
         None => None,
     };
-    let chosen = if verbose {
-        directives("info")?
-    } else {
-        from_env
-    };
-    Ok(chosen.unwrap_or_else(|| DEFAULT_DIRECTIVES.to_string()))
+    Ok(flag
+        .or(from_env)
+        .unwrap_or_else(|| DEFAULT_DIRECTIVES.to_string()))
 }
 
 #[cfg(test)]
@@ -124,42 +118,48 @@ mod tests {
         format!("quilt={level},quilt_rs={level},quilt_uri={level},quilt_sync={level},warn")
     }
 
-    fn ok(quilt_log: Option<&str>, verbose: bool) -> String {
-        filter_directives(quilt_log, verbose).unwrap_or_else(|err| panic!("{quilt_log:?}: {err}"))
+    fn ok(quilt_log: Option<&str>, flag: Option<&str>) -> String {
+        filter_directives(quilt_log, flag.map(str::to_string))
+            .unwrap_or_else(|err| panic!("{quilt_log:?}: {err}"))
     }
 
     #[test]
-    fn without_quilt_log_or_verbose_everything_is_at_warn() {
-        assert_eq!(ok(None, false), "warn");
+    fn without_quilt_log_or_a_flag_everything_is_at_warn() {
+        assert_eq!(ok(None, None), "warn");
     }
 
     #[test]
-    fn verbose_puts_our_crates_at_info() {
-        assert_eq!(ok(None, true), ours_at("info"));
+    fn the_flag_sets_the_filter_without_quilt_log() {
+        assert_eq!(ok(None, Some("quilt_rs=trace")), "quilt_rs=trace");
     }
 
     #[test]
     fn quilt_log_sets_the_filter_through_the_shared_rule() {
-        assert_eq!(ok(Some("debug"), false), ours_at("debug"));
-        assert_eq!(ok(Some("error"), false), "error");
+        assert_eq!(ok(Some("debug"), None), ours_at("debug"));
+        assert_eq!(ok(Some("error"), None), "error");
         assert_eq!(
-            ok(Some("quilt_rs=trace,aws_smithy_runtime=debug"), false),
+            ok(Some("quilt_rs=trace,aws_smithy_runtime=debug"), None),
             "quilt_rs=trace,aws_smithy_runtime=debug"
         );
     }
 
     #[test]
     fn an_empty_quilt_log_counts_as_unset() {
-        assert_eq!(ok(Some(""), false), "warn");
-        assert_eq!(ok(Some("  "), true), ours_at("info"));
+        assert_eq!(ok(Some(""), None), "warn");
+        assert_eq!(ok(Some("  "), Some("error")), "error");
     }
 
     /// The regression this guards: under `RUST_LOG`, any usable value made
-    /// `-v` a no-op. A flag is the more local statement, so it wins.
+    /// `-v` a no-op. A flag is the more local statement, so it wins, and it
+    /// replaces the variable rather than adding to it.
     #[test]
-    fn verbose_beats_quilt_log() {
-        assert_eq!(ok(Some("trace"), true), ours_at("info"));
-        assert_eq!(ok(Some("off"), true), ours_at("info"));
+    fn the_flag_beats_quilt_log() {
+        assert_eq!(ok(Some("trace"), Some(&ours_at("info"))), ours_at("info"));
+        assert_eq!(ok(Some("off"), Some(&ours_at("info"))), ours_at("info"));
+        assert_eq!(
+            ok(Some("quilt_rs=trace"), Some("hyper=debug")),
+            "hyper=debug"
+        );
     }
 
     /// `debgu` used to read as a target name and hide every quilt line;
@@ -173,7 +173,7 @@ mod tests {
             "quilt_rs=trace,hyper=lots",
         ] {
             assert_eq!(
-                filter_directives(Some(value), false),
+                filter_directives(Some(value), None),
                 Err(InvalidLogFilter::new(value)),
                 "{value}"
             );
@@ -183,9 +183,9 @@ mod tests {
     /// As `QUILT_FORMAT=yaml` with `--json`: a broken variable is reported
     /// even when a flag overrides it.
     #[test]
-    fn a_quilt_log_that_does_not_parse_is_an_error_with_verbose_too() {
+    fn a_quilt_log_that_does_not_parse_is_an_error_with_a_flag_too() {
         assert_eq!(
-            filter_directives(Some("debgu"), true),
+            filter_directives(Some("debgu"), Some(ours_at("info"))),
             Err(InvalidLogFilter::new("debgu"))
         );
     }
