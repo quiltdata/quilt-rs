@@ -30,8 +30,8 @@ fn hint(words: &'static str) -> Signal<String> {
     Signal::stored(words.to_string())
 }
 
-const NOTE: &str = "A sentence that explains a mark, and nothing else: plain text, the \
-                    platform's own popover, and never the only place a fact lives. Nothing \
+const NOTE: &str = "What shows on hover or focus, in place of a `title`: plain text in the \
+                    platform's own popover, explaining a mark and never being one. Nothing \
                     here is open — rest the pointer on a trigger for half a second, or Tab to \
                     one; a click's focus does not open it. Move onto the words and they stay; \
                     move away and they go a moment later. Escape, a click, a scroll or a \

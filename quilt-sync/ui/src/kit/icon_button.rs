@@ -25,9 +25,9 @@ pub fn IconButton(
     /// The accessible name. Goes to `aria-label` and to `title` as well — Primer
     /// splits those into a required `aria-label` plus an optional `description`,
     /// and one prop doing both jobs is named after the one that is not optional.
-    /// The kit has a [`Tooltip`](super::Tooltip) now, and the name moving into one
-    /// is a later, separate change: `title` is what every icon button shows today,
-    /// and swapping it one call site at a time would make two looks of one thing.
+    /// The `title` predates [`Tooltip`](super::Tooltip) and moves to one when this
+    /// component is next worked on (DESIGN.md's Tooltip Rule) — all icon buttons
+    /// at once, so one thing never has two looks.
     ///
     /// An icon-only control without it is unusable with a screen reader and a guess
     /// with a mouse.

@@ -1,23 +1,25 @@
-//! A sentence that explains a mark, shown on hover or keyboard focus.
+//! Words shown on hover or keyboard focus: a hint that explains a mark, or the
+//! whole of a value the row had to cut short.
 //!
 //! # Why this is allowed to exist
 //!
 //! DESIGN.md bans the hand-built popover, and this is not one: it is the
 //! platform's own `popover`, as [`AnchoredOverlay`](super::AnchoredOverlay) is,
-//! with the position borrowed from the same arithmetic. The ban's amendment
-//! names the three conditions that keep it honest — the platform's popover,
-//! plain text only, and **never the only place a fact lives** — and the last one
-//! is the caller's to keep: what this says must also be on the page in some
-//! other form, because a touch screen never shows it and a reader who does not
-//! hover never asks.
+//! with the position borrowed from the same arithmetic. It holds plain text
+//! only, so it never grows into a menu.
 //!
-//! # Not `title`
+//! # Instead of `title`
 //!
-//! `title` is still right for what it is good at — the whole value of a name
-//! that was truncated, the same words as shown. It is wrong for a hint: it waits
-//! about a second, never appears on keyboard focus, cannot be styled, and an
-//! inner `title` silently wins over an outer one, which is how the row that
-//! differs came to show its path where its explanation was meant to be.
+//! DESIGN.md's Tooltip Rule: what shows on hover or focus is this, not a
+//! `title`. A `title` waits about a second, never appears on keyboard focus or
+//! touch, cannot be styled, and an inner one silently wins over an outer one,
+//! which is how the row that differs came to show its path where its
+//! explanation was meant to be. The `title`s still in the kit predate this
+//! component and move to it as their code is next worked on. An element with a
+//! tooltip carries no `title`, or the browser's box covers this one.
+//!
+//! A touch screen never shows a tooltip, so it explains a mark and is never the
+//! mark: what a reader needs at a glance is drawn on the page.
 //!
 //! # `manual`, not `auto`
 //!
