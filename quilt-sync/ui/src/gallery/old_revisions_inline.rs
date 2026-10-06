@@ -9,7 +9,7 @@
 //!
 //! # Every removal is confirmed by the kit's `ConfirmDialog`
 //!
-//! The footer's "Remove all N unused" and each row's trash open the same dialog,
+//! The footer's "Remove N unused" and each row's trash open the same dialog,
 //! whose sentence says what goes and what it frees. Cancel is first and the
 //! verb is the Danger `Remove`, so the kit's rule — only `ConfirmDialog` draws a
 //! Danger button — holds without an exception.
@@ -81,6 +81,7 @@ use crate::kit::PaneSection;
 use crate::kit::RevisionRow;
 use crate::kit::Submit;
 use crate::kit::icons;
+use quilt_sync_ui::util::format_size;
 
 const NAMESPACE: &str = "user/plate-07";
 
@@ -105,9 +106,8 @@ struct Rev {
     /// Why it is kept: the short tag on the row, and the sentence behind it in
     /// `title`. `None` is removable.
     kept: Option<(&'static str, &'static str)>,
-    /// Tenths of a MB freed by objects only this revision uses. Integers, so
-    /// the arithmetic on sets never rounds twice.
-    own: u32,
+    /// Bytes freed by objects only this revision uses.
+    own: u64,
 }
 
 /// Newest obtained first. #3 was made before #4 and re-fetched a day ago, which
@@ -138,21 +138,21 @@ const REVS: [Rev; 6] = [
         obtained: DAY,
         hash: Some("7be0c2"),
         kept: None,
-        own: 2,
+        own: 211_900,
     },
     Rev {
         message: "Add intake folder-upload note",
         obtained: 3.0 * DAY,
         hash: Some("b5e013"),
         kept: None,
-        own: 12,
+        own: 1_200_000,
     },
     Rev {
         message: "Initial upload",
         obtained: 12.0 * DAY,
         hash: Some("06e3ad"),
         kept: None,
-        own: 48,
+        own: 4_800_000,
     },
     Rev {
         message: "",
@@ -167,18 +167,18 @@ const ALL: [usize; 6] = [0, 1, 2, 3, 4, 5];
 const KEPT: [usize; 2] = [0, 1];
 const OLDER: [usize; 4] = [2, 3, 4, 5];
 
-/// Objects shared by exactly two revisions and nothing else, in tenths of a MB.
-/// Freed only once neither of the pair is left, which is how the set of 3–6
-/// frees 6.9 MB against rows that add up to 6.2.
-const SHARED: [(usize, usize, u32); 2] = [(2, 4, 1), (3, 4, 6)];
+/// Objects shared by exactly two revisions and nothing else, in bytes. Freed
+/// only once neither of the pair is left, which is how the set of 3–6 frees
+/// 6.9 MB against rows that add up to 6.2.
+const SHARED: [(usize, usize, u64); 2] = [(2, 4, 100_000), (3, 4, 600_000)];
 
 /// What removing `set` frees, given what is still here. The stand-in for the
 /// backend's answer — a real build asks, because only the store knows which
 /// objects are referenced from where.
-fn freed(set: &[usize], remaining: &[usize]) -> u32 {
+fn freed(set: &[usize], remaining: &[usize]) -> u64 {
     let gone = |i: usize| set.contains(&i) || !remaining.contains(&i);
-    let own: u32 = set.iter().map(|&i| REVS[i].own).sum();
-    let shared: u32 = SHARED
+    let own: u64 = set.iter().map(|&i| REVS[i].own).sum();
+    let shared: u64 = SHARED
         .iter()
         .filter(|&&(a, b, _)| gone(a) && gone(b) && (set.contains(&a) || set.contains(&b)))
         .map(|&(_, _, size)| size)
@@ -186,22 +186,11 @@ fn freed(set: &[usize], remaining: &[usize]) -> u32 {
     own + shared
 }
 
-/// A size on a row or the footer, honestly: most old revisions free little or
-/// nothing, and `0.2 MB` would claim a precision nobody has a use for.
-fn size(tenths: u32) -> String {
-    match tenths {
-        0 => "nothing".to_string(),
-        1..=9 => "< 1 MB".to_string(),
-        _ => format!("{}.{} MB", tenths / 10, tenths % 10),
-    }
-}
-
-/// The same figure in a sentence, where "frees nothing" and "< 1" read badly.
-fn spelled(tenths: u32) -> String {
-    match tenths {
+/// A figure in a sentence: `211.9 kB`, or `no space`.
+fn spelled(bytes: u64) -> String {
+    match bytes {
         0 => "no space".to_string(),
-        1..=9 => "less than 1 MB".to_string(),
-        _ => size(tenths),
+        _ => format_size(bytes),
     }
 }
 
@@ -470,10 +459,10 @@ fn row(i: usize, flow: Flow) -> AnyView {
     };
     // The figure is what it frees given what is left, so it is read once per
     // drawing of the list, which redraws when a removal lands.
-    let words = format!(
-        "frees {}",
-        size(freed(&[i], &flow.remaining.get_untracked()))
-    );
+    let words = match freed(&[i], &flow.remaining.get_untracked()) {
+        0 => "frees nothing".to_string(),
+        bytes => format!("frees {}", format_size(bytes)),
+    };
     view! {
         <RevisionRow
             message=rev.message
@@ -506,7 +495,11 @@ fn footer(flow: Flow) -> impl IntoView {
         };
         let button = (!removable.is_empty()).then(|| {
             let count = removable.len();
-            let total = size(freed(&removable, &flow.remaining.get_untracked()));
+            // Short, for the popover's width; no size when the set frees nothing.
+            let label = match freed(&removable, &flow.remaining.get_untracked()) {
+                0 => format!("Remove {count} unused"),
+                bytes => format!("Remove {count} unused · {}", format_size(bytes)),
+            };
             // Spinning when the set it names is the one being removed; only
             // disabled when a row's removal or a sync holds it.
             let named = removable.clone();
@@ -522,7 +515,7 @@ fn footer(flow: Flow) -> impl IntoView {
                         flow.confirm(Ask::unused(&set, &flow.remaining.get_untracked()));
                     }
                 >
-                    {format!("Remove all {count} unused · frees {total}")}
+                    {label}
                 </Button>
             }
         });
@@ -776,7 +769,7 @@ fn confirmation(ask: Ask) -> AnyView {
 
 const NOTE: &str = "Removal where the list already is: the context pane's \"Revisions you have\" \
     surface, at the pane's width. A removable row ends in a trash icon and says what removing \
-    it frees alone — often less than 1 MB or nothing, which is the truth about old revisions. \
+    it frees alone, exactly — 211.9 kB, 1.2 MB, or nothing. \
     Protected rows say why in a muted tag; hover it for the sentence. \
     \
     The footer and every trash open the kit's ConfirmDialog, which says what goes and what it \
@@ -818,7 +811,10 @@ pub fn OldRevisionsInlineScene() -> impl IntoView {
                     flow.toast
                         .set(
                             Some(
-                                format!("Removed 4 old revisions of {NAMESPACE} · freed 6.9 MB"),
+                                format!(
+                                    "Removed 4 old revisions of {NAMESPACE} · freed {}",
+                                    format_size(freed(&OLDER, &ALL)),
+                                ),
                             ),
                         );
                     staged(flow)

@@ -411,6 +411,36 @@ mod tests {
         })
     }
 
+    /// Four old ones, one freeing less than a megabyte and the rest nothing.
+    fn four_small(_: String) -> Answer {
+        Box::pin(async {
+            Ok(RevisionHistoryData {
+                rows: vec![
+                    removal_row("mine", "Mine", vec![KeptReason::Current], None),
+                    removal_row("old-1", "Small", Vec::new(), Some(211_900)),
+                    removal_row("old-2", "Empty", Vec::new(), Some(0)),
+                    removal_row("old-3", "Emptier", Vec::new(), Some(0)),
+                    removal_row("old-4", "Emptiest", Vec::new(), Some(0)),
+                ],
+                removable_frees: Some(211_900),
+            })
+        })
+    }
+
+    /// Two old ones that free nothing, alone or together.
+    fn frees_none(_: String) -> Answer {
+        Box::pin(async {
+            Ok(RevisionHistoryData {
+                rows: vec![
+                    removal_row("mine", "Mine", vec![KeptReason::Current], None),
+                    removal_row("old-1", "Old", Vec::new(), Some(0)),
+                    removal_row("old-2", "Older", Vec::new(), Some(0)),
+                ],
+                removable_frees: Some(0),
+            })
+        })
+    }
+
     fn all_kept(_: String) -> Answer {
         Box::pin(async {
             Ok(RevisionHistoryData {
@@ -514,7 +544,7 @@ mod tests {
         );
         let surface = opened(&el).await;
 
-        element_saying(&surface, "frees 1.2 MB");
+        element_saying(&surface, "frees 1.2\u{a0}MB");
         element_saying(&surface, "frees nothing");
         let tag = element_saying(&surface, "current \u{b7} not pushed");
         assert_eq!(
@@ -529,7 +559,65 @@ mod tests {
                 .is_none(),
             "a kept row has no trash"
         );
-        element_saying(&surface, "Remove all 2 unused \u{b7} frees 6.9 MB");
+        crate::test_support::button_saying(&surface, "Remove 2 unused \u{b7} 6.9\u{a0}MB");
+    }
+
+    /// Sizes are exact: a row under a megabyte says how much, and so do the
+    /// footer and its question.
+    #[wasm_bindgen_test]
+    async fn sizes_under_a_megabyte_are_exact() {
+        let el = removal_pane(
+            four_small,
+            removes_ok,
+            Wiring::new(),
+            crate::kit::Activities::new(),
+        );
+        let surface = opened(&el).await;
+
+        element_saying(&surface, "frees 211.9\u{a0}kB");
+        crate::test_support::button_saying(&surface, "Remove 4 unused \u{b7} 211.9\u{a0}kB")
+            .click();
+        leptos::task::tick().await;
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Remove all 4 unused revisions? This frees 211.9\u{a0}kB."),
+            "markup was {}",
+            dialog.inner_html()
+        );
+    }
+
+    /// A set that frees nothing drops the size from the footer; its question
+    /// says so.
+    #[wasm_bindgen_test]
+    async fn a_set_freeing_nothing_names_no_size() {
+        let el = removal_pane(
+            frees_none,
+            removes_ok,
+            Wiring::new(),
+            crate::kit::Activities::new(),
+        );
+        let surface = opened(&el).await;
+
+        crate::test_support::button_saying(&surface, "Remove 2 unused").click();
+        leptos::task::tick().await;
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Remove all 2 unused revisions? This frees no space."),
+            "markup was {}",
+            dialog.inner_html()
+        );
     }
 
     /// The trash asks first; Remove closes the dialog and starts the removal,
@@ -552,7 +640,7 @@ mod tests {
             dialog
                 .text_content()
                 .unwrap_or_default()
-                .contains("Remove \u{201c}Old\u{201d}? This frees 1.2 MB."),
+                .contains("Remove \u{201c}Old\u{201d}? This frees 1.2\u{a0}MB."),
             "markup was {}",
             dialog.inner_html()
         );
@@ -611,7 +699,7 @@ mod tests {
         let el = removal_pane(removable, removes_busy, w, crate::kit::Activities::new());
         let surface = opened(&el).await;
 
-        element_saying(&surface, "Remove all 2 unused \u{b7} frees 6.9 MB").click();
+        crate::test_support::button_saying(&surface, "Remove 2 unused \u{b7} 6.9\u{a0}MB").click();
         leptos::task::tick().await;
         let dialog = el
             .query_selector("dialog")
@@ -621,7 +709,7 @@ mod tests {
             dialog
                 .text_content()
                 .unwrap_or_default()
-                .contains("Remove all 2 unused revisions? This frees 6.9 MB.")
+                .contains("Remove all 2 unused revisions? This frees 6.9\u{a0}MB.")
         );
         crate::test_support::button_saying(&dialog, "Remove").click();
         settle().await;
