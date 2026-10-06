@@ -164,6 +164,14 @@ impl TooltipHandle {
         self.hide(false);
     }
 
+    /// A finger fires `pointerenter` too, and holding it on a mark would open
+    /// the sentence after the delay. Touch does nothing.
+    fn pointer_enter(self, event: &web_sys::PointerEvent) {
+        if event.pointer_type() != "touch" {
+            self.enter();
+        }
+    }
+
     fn enter(self) {
         self.cancel();
         if self.open.get_untracked() {
@@ -302,6 +310,12 @@ pub fn Tooltip(
                     align,
                 );
             }
+            // Closed and opened again inside one frame, two of these callbacks
+            // run while open; the first one's listeners are the ones kept, or
+            // the second would replace them and leave them attached for good.
+            if dismisser.with_value(Option::is_some) {
+                return;
+            }
             let closure =
                 Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
                     if event.type_() == "keydown" {
@@ -360,7 +374,7 @@ pub fn Tooltip(
         <span
             class=style::root
             node_ref=anchor
-            on:pointerenter=move |_| handle.enter()
+            on:pointerenter=move |event| handle.pointer_enter(&event)
             on:pointerleave=move |_| handle.leave()
             on:focusin=move |event| handle.focus_in(&event)
             on:focusout=move |_| handle.focus_out()
@@ -398,10 +412,12 @@ mod tests {
     };
     use wasm_bindgen_test::*;
 
+    /// A mouse's pointer event: the tooltip ignores a finger's.
     fn fire(target: &web_sys::EventTarget, kind: &str) {
-        target
-            .dispatch_event(&web_sys::Event::new(kind).unwrap())
-            .unwrap();
+        let init = web_sys::PointerEventInit::new();
+        init.set_pointer_type("mouse");
+        let event = web_sys::PointerEvent::new_with_event_init_dict(kind, &init).unwrap();
+        target.dispatch_event(&event).unwrap();
     }
 
     fn escape() {
@@ -591,5 +607,19 @@ mod tests {
         assert!(!is_open(&el), "still open after the grace");
         // Out of the warm window, so the next hover waits its delay again.
         sleep_ms(200).await;
+    }
+
+    /// A finger resting on a mark opens nothing: on touch the fact is already
+    /// on the page, and a long press is the system's.
+    #[wasm_bindgen_test]
+    async fn a_touch_opens_nothing() {
+        unmount_earlier();
+        let el = one_mark();
+        let init = web_sys::PointerEventInit::new();
+        init.set_pointer_type("touch");
+        let touch = web_sys::PointerEvent::new_with_event_init_dict("pointerenter", &init).unwrap();
+        wrapper(&el).dispatch_event(&touch).unwrap();
+        sleep_ms(600).await;
+        assert!(!is_open(&el), "a touch opened the tooltip");
     }
 }
