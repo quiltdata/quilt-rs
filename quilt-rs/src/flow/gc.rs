@@ -72,23 +72,32 @@ impl std::fmt::Display for GcReport {
 }
 
 /// Decimal units, as Finder counts them, with one decimal past bytes: the
-/// size every report sentence says, as in "freed 630.2 kB".
+/// size every report sentence says, as in "freed 630.2 kB", up to "18.4 EB"
+/// for `u64::MAX`. Rounds as `format_size` in quilt-sync/ui does, so the
+/// app's pages and its toasts read the same figure; the space here is a
+/// plain one.
 #[must_use]
 pub fn format_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["kB", "MB", "GB", "TB", "PB"];
+    const UNITS: [&str; 6] = ["kB", "MB", "GB", "TB", "PB", "EB"];
     if bytes < 1000 {
         return format!("{bytes} B");
     }
-    // Display rounding only.
-    #[allow(clippy::cast_precision_loss)]
-    let mut value = bytes as f64 / 1000.0;
-    for unit in &UNITS[..UNITS.len() - 1] {
-        if value < 999.95 {
-            return format!("{value:.1} {unit}");
+    // In u128, so `n * 10 + scale / 2` cannot overflow for any u64. Integers,
+    // so an exact half rounds up rather than as a float happens to land.
+    let n = u128::from(bytes);
+    let mut scale = 1000u128;
+    let mut tenths = 0;
+    let mut unit = UNITS[0];
+    for next in UNITS {
+        unit = next;
+        tenths = (n * 10 + scale / 2) / scale;
+        // Rounding up into the next unit's "1000.0" moves on to that unit.
+        if tenths < 10_000 {
+            break;
         }
-        value /= 1000.0;
+        scale *= 1000;
     }
-    format!("{value:.1} {}", UNITS[UNITS.len() - 1])
+    format!("{}.{} {unit}", tenths / 10, tenths % 10)
 }
 
 /// Delete every object no installed manifest uses, everything in the
@@ -673,13 +682,49 @@ mod tests {
         assert_eq!(report.to_string(), "Freed 12 B: 1 object, 1 staging dir");
     }
 
+    /// The same table as `format_size`'s in quilt-sync/ui, so the two read
+    /// the same figure for the same size.
     #[test]
     fn bytes_read_in_decimal_units() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
         assert_eq!(format_bytes(999), "999 B");
-        assert_eq!(format_bytes(1000), "1.0 kB");
-        assert_eq!(format_bytes(999_960), "1.0 MB");
+        assert_eq!(format_bytes(1500), "1.5 kB");
+        assert_eq!(format_bytes(44_000), "44.0 kB");
+        assert_eq!(format_bytes(114_100), "114.1 kB");
+        assert_eq!(format_bytes(211_900), "211.9 kB");
+        assert_eq!(format_bytes(1_900_000), "1.9 MB");
+        assert_eq!(format_bytes(2_500_000), "2.5 MB");
         assert_eq!(format_bytes(2_560_000), "2.6 MB");
+        assert_eq!(format_bytes(999_960), "1.0 MB");
         assert_eq!(format_bytes(3_000_000_000), "3.0 GB");
+        assert_eq!(format_bytes(1_200_000_000_000), "1.2 TB");
+        assert_eq!(format_bytes(2_500_000_000_000), "2.5 TB");
+    }
+
+    /// An exact half rounds up, in integers, as `format_size` does.
+    #[test]
+    fn an_exact_half_rounds_up() {
+        assert_eq!(format_bytes(1_250), "1.3 kB");
+        assert_eq!(format_bytes(1_350), "1.4 kB");
+        assert_eq!(format_bytes(2_250_000), "2.3 MB");
+    }
+
+    /// No u64 overflows the arithmetic, and rounding at each unit's edge moves
+    /// on to the next unit rather than reading "1000.0".
+    #[test]
+    fn bytes_hold_at_the_unit_edges_and_at_the_top() {
+        assert_eq!(format_bytes(1_000), "1.0 kB");
+        assert_eq!(format_bytes(999_949), "999.9 kB");
+        assert_eq!(format_bytes(999_950), "1.0 MB");
+        assert_eq!(format_bytes(999_949_999), "999.9 MB");
+        assert_eq!(format_bytes(999_950_000), "1.0 GB");
+        assert_eq!(format_bytes(999_950_000_000), "1.0 TB");
+        assert_eq!(format_bytes(999_949_999_999_999), "999.9 TB");
+        assert_eq!(format_bytes(999_950_000_000_000), "1.0 PB");
+        assert_eq!(format_bytes(999_950_000_000_000_000), "1.0 EB");
+        assert_eq!(format_bytes(u64::MAX - 1), "18.4 EB");
+        assert_eq!(format_bytes(u64::MAX), "18.4 EB");
     }
 
     /// A stray file where a package dir or an owner dir belongs is skipped,
