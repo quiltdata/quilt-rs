@@ -18,7 +18,7 @@ use cli::print;
 #[tokio::main]
 async fn main() {
     let args = Args::try_parse_with_env(std::env::args_os()).unwrap_or_else(|err| err.exit());
-    let logging = init_logging(args.verbose);
+    let logging = init_logging(std::env::var(LOG_ENV).ok().as_deref(), args.verbose);
     let format = args.format();
     cli::notice_lock_waits(|line| eprintln!("{line}"));
 
@@ -63,9 +63,8 @@ fn to_std(result: Result<Std, Error>) -> Std {
 ///
 /// A `QUILT_LOG` that does not parse is returned as the error, after
 /// installing the default filter so the rest of the run still logs warnings.
-fn init_logging(verbose: bool) -> Result<(), Error> {
-    let quilt_log = std::env::var(LOG_ENV).ok();
-    let (directives, result) = match filter_directives(quilt_log.as_deref(), verbose) {
+fn init_logging(quilt_log: Option<&str>, verbose: bool) -> Result<(), Error> {
+    let (directives, result) = match filter_directives(quilt_log, verbose) {
         Ok(directives) => (directives, Ok(())),
         Err(err) => (DEFAULT_DIRECTIVES.to_string(), Err(Error::LogEnv(err))),
     };
@@ -191,11 +190,36 @@ mod tests {
         );
     }
 
+    fn printed(err: InvalidLogFilter, format: cli::Format) -> String {
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        print(
+            Std::Err(Error::LogEnv(err)),
+            format,
+            &mut stdout,
+            &mut stderr,
+        )
+        .unwrap();
+        assert!(stdout.is_empty());
+        String::from_utf8(stderr).unwrap()
+    }
+
     #[test]
-    fn the_error_names_the_variable_and_the_value() {
+    fn an_invalid_quilt_log_prints_as_the_json_error_object() {
+        let json: serde_json::Value =
+            serde_json::from_str(&printed(InvalidLogFilter::new("debgu"), cli::Format::Json))
+                .unwrap();
+        assert_eq!(json["error"]["kind"], "invalid_log_filter");
         assert_eq!(
-            Error::LogEnv(InvalidLogFilter::new("debgu")).to_string(),
+            json["error"]["message"],
             "QUILT_LOG=\"debgu\" is not a log level or a list of directives"
+        );
+    }
+
+    #[test]
+    fn an_invalid_quilt_log_prints_as_text() {
+        assert_eq!(
+            printed(InvalidLogFilter::new("debgu"), cli::Format::Text),
+            "QUILT_LOG=\"debgu\" is not a log level or a list of directives\n"
         );
     }
 
