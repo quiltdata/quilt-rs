@@ -62,6 +62,7 @@ pub mod package_row;
 pub mod package_state;
 pub mod page_layout;
 pub mod pane_section;
+mod placement;
 pub mod queue_row;
 pub mod relative_time;
 pub mod revision_row;
@@ -76,6 +77,7 @@ pub mod state_label;
 mod submission;
 pub mod text_input;
 pub mod toggle_row;
+pub mod tooltip;
 pub mod zero_line;
 
 pub use action_menu::ActionMenu;
@@ -160,6 +162,8 @@ pub use submission::Submit;
 pub use text_input::TextInput;
 pub use toggle_row::ToggleRow;
 pub use toggle_row::ToggleRowSkeleton;
+pub use tooltip::Tooltip;
+pub use tooltip::TooltipHandle;
 pub use zero_line::ZeroLine;
 pub use zero_line::ZeroLineSkeleton;
 

@@ -85,6 +85,7 @@ mod gallery {
     pub mod state_label;
     pub mod state_strip;
     pub mod toggle_row;
+    pub mod tooltip;
     pub mod unchecked;
 }
 
@@ -232,6 +233,7 @@ const ENTRIES: &[Entry] = &[
     entry!(Core, "SplitButton", split_button::SplitButtonStories),
     entry!(Core, "StateLabel", state_label::StateLabelStories),
     entry!(Core, "ToggleRow", toggle_row::ToggleRowStories),
+    entry!(Core, "Tooltip", tooltip::TooltipStories),
     entry!(Combined, "File list", file_list::FileListStories),
     entry!(
         Combined,

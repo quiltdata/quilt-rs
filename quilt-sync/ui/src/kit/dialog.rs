@@ -14,11 +14,13 @@
 //!
 //! # Not a violation of the anchored-positioning ban
 //!
-//! That ban is about positioning relative to an *element* — tooltips, popovers, dropdowns,
-//! the flip-and-shift machinery that comes with them. A centred modal is positioned
-//! relative to the viewport, needs none of it, and the design record already names "a
-//! centred native `<dialog>`" as one of the two honest options for anything that will not
-//! fit inline.
+//! That ban is about positioning relative to an *element* by hand — the flip-and-shift
+//! machinery that comes with a home-made popover or dropdown. What the kit does anchor,
+//! [`AnchoredOverlay`](super::AnchoredOverlay) and [`Tooltip`](super::Tooltip), is the
+//! platform's own `popover` with the position borrowed from one shared file. A centred
+//! modal is positioned relative to the viewport, needs none of it, and the design record
+//! already names "a centred native `<dialog>`" as one of the two honest options for
+//! anything that will not fit inline.
 //!
 //! # Escape can be held, and only from here
 //!

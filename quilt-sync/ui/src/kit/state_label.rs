@@ -35,6 +35,10 @@
 //! property of the state **and where it draws**, never of the state alone, which is
 //! why they live in the vocabulary's own mapping function and not on this component
 //! — and why every label this component ever holds is a list row's.
+//!
+//! A row may hold two, one per axis: where its file is, and, in resolve mode,
+//! whether the two revisions agree about it (`Differs`). Each is one state;
+//! neither replaces the other.
 
 use leptos::prelude::*;
 

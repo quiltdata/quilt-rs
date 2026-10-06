@@ -1,0 +1,34 @@
+/*
+ * Tooltip. One sentence, floating.
+ *
+ * `position: fixed` for the overlay's reason: the top layer is not in the
+ * page's flow, and the coordinates written are the trigger's viewport rect.
+ */
+
+/* Shrinks to its trigger, so the rect the surface is placed against is the
+ * trigger's and not a line box around it. */
+.root {
+  display: inline-flex;
+  position: relative;
+}
+
+.surface {
+  position: fixed;
+  margin: 0;
+  padding: var(--q-space-1) var(--q-space-2);
+  /* A sentence, not a paragraph: narrow enough to read in one glance, and a
+   * longer one wraps rather than running across the list it explains. */
+  max-width: 280px;
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
+  font-size: var(--q-text-body);
+  /* The overlay's shadow, and for the overlay's reason: this floats above the
+   * page, and DESIGN.md keeps the one shadow for things that do. */
+  box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
+}
+
+.surface::backdrop {
+  background: transparent;
+}
