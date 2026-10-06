@@ -47,8 +47,9 @@
 //!   left to download reads `All 1,090 files downloaded` where select-all
 //!   would be, under either scope, with the Success tone's tick in the box's
 //!   hole: the column's summary, the same tick as the main page's `Everything
-//!   is Latest`. A deleted file is not on disk either, so while the package
-//!   has one the slot shows what it would without the caption.
+//!   is Latest`. A deleted file has nothing to fetch, so it counts as
+//!   downloaded: the line names it, `All 1,090 files downloaded · 1 deleted
+//!   here`, and drops the tick, which says every file is on disk.
 //! - **The cap is stated.** Over the cap the backend says so, and the pane
 //!   says how many files the package has. The flag decides, never a length.
 //! - **Search narrows what is shown.** A case-insensitive substring of the
@@ -75,6 +76,8 @@ use crate::kit::{
     SegmentedControl, Select, SelectAll, SkeletonBox, SkeletonText,
 };
 use crate::util::{format_size, thousands};
+
+use super::keeping::with_deleted_here;
 
 pub(crate) mod selection;
 
@@ -935,9 +938,10 @@ fn group_selection(pickable: Vec<String>, picking: Picking) -> Option<GroupSelec
 ///
 /// A package with nothing left to download says so here, `All 1,090 files
 /// downloaded`, under either Keeping scope and whatever the view shows: it is
-/// a fact about the package, counted as the `All` facet counts, and it waits
-/// while a file is deleted. Otherwise it is select-all, absent under
-/// whole-package scope and while nothing on screen can be ticked.
+/// a fact about the package, counted as the `All` facet counts. Files deleted
+/// here are named after it, `· 1 deleted here`, and take the tick away.
+/// Otherwise it is select-all, absent under whole-package scope and while
+/// nothing on screen can be ticked.
 fn left_slot(
     picking: Picking,
     shown: Signal<Vec<String>>,
@@ -953,23 +957,26 @@ fn left_slot(
     };
     // The package's counts, not the view's, so a facet, a search or the cap
     // changes nothing; and not a package with nothing in `All` to speak of.
-    // Nor while a file is deleted: the caption says every file is on disk,
-    // and a deleted one is not, whatever the download count says. The
-    // package's deleted count too, so one past the cap holds it back as well.
-    if counts.not_downloaded == 0 && counts.all > 0 && counts.deleted == 0 {
-        let files = counts.all;
+    // A deleted file has nothing to fetch, so it counts as downloaded: a
+    // change here waiting to be published, which the words name rather than
+    // hide. The package's deleted count too, so one past the cap is named.
+    if counts.not_downloaded == 0 && counts.all > 0 {
+        let (files, deleted) = (counts.all, counts.deleted);
         // The box's hole, as a row with no box keeps it, so the words start
         // where the rows' names do. In it, the column's summary: a box when
         // the rows have boxes, and this tick when every row has its file. The
         // Success tone's own tick, from `StateTone`, rather than a second one
         // drawn here — the same tick as the main page's `Everything is
         // Latest`. The rows' mark is the Octicon check in muted grey,
-        // bookkeeping; this one is a statement.
+        // bookkeeping; this one is a statement. The tick says every file is
+        // on disk, so a deleted one leaves the hole empty.
         return view! {
             <div class=style::selectall style=gutter>
                 <span class=style::gutter />
-                <span class=style::done>{StateTone::Success.glyph()}</span>
-                <span class=style::caption>{downloaded_words(files)}</span>
+                <span class=style::done>
+                    {(deleted == 0).then(|| StateTone::Success.glyph())}
+                </span>
+                <span class=style::caption>{downloaded_words(files, deleted)}</span>
             </div>
         }
         .into_any();
@@ -1002,15 +1009,17 @@ fn left_slot(
     .into_any()
 }
 
-/// `All 1,090 files downloaded`, and `1 file downloaded` for a package of one.
-/// Public for the gallery, whose drawn pane says the same words.
+/// `All 1,090 files downloaded`, and `1 file downloaded` for a package of one,
+/// with the files deleted here named as Keeping names them: `· 1 deleted
+/// here`. Public for the gallery, whose drawn pane says the same words.
 #[must_use]
-pub fn downloaded_words(files: usize) -> String {
-    if files == 1 {
+pub fn downloaded_words(files: usize, deleted: usize) -> String {
+    let words = if files == 1 {
         String::from("1 file downloaded")
     } else {
         format!("All {} files downloaded", thousands(files))
-    }
+    };
+    with_deleted_here(words, deleted)
 }
 
 /// The list box's last child while something is ticked: a right-aligned
@@ -1453,9 +1462,23 @@ mod facet_tests {
 
     #[test]
     fn the_caption_counts_as_the_facet_does() {
-        assert_eq!(downloaded_words(1_090), "All 1,090 files downloaded");
-        assert_eq!(downloaded_words(2), "All 2 files downloaded");
-        assert_eq!(downloaded_words(1), "1 file downloaded");
+        assert_eq!(downloaded_words(1_090, 0), "All 1,090 files downloaded");
+        assert_eq!(downloaded_words(2, 0), "All 2 files downloaded");
+        assert_eq!(downloaded_words(1, 0), "1 file downloaded");
+    }
+
+    /// Files deleted here are named after it, in Keeping's words.
+    #[test]
+    fn the_caption_names_the_files_deleted_here() {
+        assert_eq!(
+            downloaded_words(1_090, 1),
+            "All 1,090 files downloaded · 1 deleted here"
+        );
+        assert_eq!(
+            downloaded_words(5_000, 1_200),
+            "All 5,000 files downloaded · 1,200 deleted here"
+        );
+        assert_eq!(downloaded_words(1, 1), "1 file downloaded · 1 deleted here");
     }
 
     /// The facet and the search narrow together, in the one hook both the list
@@ -3009,12 +3032,30 @@ mod pane_tests {
         }
     }
 
-    /// A deleted file is not on disk, so while the package has one the
-    /// caption waits, under either scope, and the slot shows what it would without
-    /// it; the deleted file's folder has no check. Once the file is gone from
-    /// the list, the caption returns.
+    /// A modified file is on disk and has nothing to fetch, so it changes
+    /// nothing: the plain caption and its tick.
     #[wasm_bindgen_test]
-    async fn a_deleted_file_holds_the_caption_back_in_either_scope() {
+    fn a_modified_file_leaves_the_caption_and_its_tick() {
+        let entries = vec![
+            entry("README.md", "modified"),
+            entry("raw/a.csv", "pristine"),
+            entry("raw/b.csv", "added"),
+        ];
+        let el = picking_pane(entries, Picking::default(), Grouping::BaseFolder);
+        assert!(
+            caption_has_tick(&el, "All 3 files downloaded"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// A deleted file has nothing to fetch either, so the package still reads
+    /// as downloaded, under either scope, and the line names the file deleted
+    /// here. It is not on disk, so the tick goes and the folder holding it has
+    /// no check; the hole stays, and select-all does not take the slot. Once
+    /// the file is gone from the list, the plain caption and its tick return.
+    #[wasm_bindgen_test]
+    async fn a_deleted_file_is_named_after_the_caption_in_either_scope() {
         for whole_package in [false, true] {
             let picking = Picking {
                 whole_package,
@@ -3025,17 +3066,16 @@ mod pane_tests {
             let total = entries.len();
             let listing = RwSignal::new(Listing::Ready(list(entries, total, false)));
             let el = listed_pane(listing, picking);
+            let words = "All 4 files downloaded · 1 deleted here";
+            element_saying(&el, words);
             assert!(
-                !text(&el).contains("files downloaded"),
-                "markup was {}",
+                !caption_has_tick(&el, words),
+                "no tick while a file is deleted; markup was {}",
                 el.inner_html()
             );
-            let slot = el
-                .query_selector(&format!(".{}", style::selectall))
-                .unwrap();
             assert!(
-                slot.is_none_or(|s| s.query_selector("svg").unwrap().is_none()),
-                "no tick in the slot; markup was {}",
+                !text(&el).contains("Select all"),
+                "markup was {}",
                 el.inner_html()
             );
             assert!(
@@ -3050,16 +3090,16 @@ mod pane_tests {
             leptos::task::tick().await;
             assert!(
                 caption_has_tick(&el, "All 3 files downloaded"),
-                "the caption returns; markup was {}",
+                "the plain caption returns; markup was {}",
                 el.inner_html()
             );
         }
     }
 
     /// The deleted count is the package's, so a deleted file past the cap,
-    /// not among the loaded rows, holds the caption back all the same.
+    /// not among the loaded rows, is named all the same, and the tick goes.
     #[wasm_bindgen_test]
-    fn a_deleted_file_past_the_cap_holds_the_caption_back() {
+    fn a_deleted_file_past_the_cap_is_named_all_the_same() {
         let entries = downloaded_package();
         let loaded = entries.len();
         let mut listing = list(entries, loaded + 1, true);
@@ -3067,17 +3107,11 @@ mod pane_tests {
         listing.counts.changed += 1;
         listing.counts.deleted += 1;
         let el = listed_pane(RwSignal::new(Listing::Ready(listing)), Picking::default());
+        let words = "All 4 files downloaded · 1 deleted here";
+        element_saying(&el, words);
         assert!(
-            !text(&el).contains("files downloaded"),
-            "markup was {}",
-            el.inner_html()
-        );
-        let slot = el
-            .query_selector(&format!(".{}", style::selectall))
-            .unwrap();
-        assert!(
-            slot.is_none_or(|s| s.query_selector("svg").unwrap().is_none()),
-            "no tick in the slot; markup was {}",
+            !caption_has_tick(&el, words),
+            "no tick while a file is deleted; markup was {}",
             el.inner_html()
         );
     }

@@ -228,10 +228,16 @@ fn counted(held: Held) -> String {
         None if here == 0 => "No files are downloaded".to_string(),
         None => format!("{} of {} downloaded", thousands(here), thousands(total)),
     };
+    with_deleted_here(counted, deleted_here)
+}
+
+/// `words · 3 deleted here`, or `words` alone with nothing deleted here. One
+/// suffix for this caption and the file pane's, so the two say it alike.
+pub(crate) fn with_deleted_here(words: String, deleted_here: usize) -> String {
     if deleted_here == 0 {
-        counted
+        words
     } else {
-        format!("{counted} · {} deleted here", thousands(deleted_here))
+        format!("{words} · {} deleted here", thousands(deleted_here))
     }
 }
 
