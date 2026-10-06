@@ -25,6 +25,12 @@
 
 - **New design preview**: when nothing is left to download but files are deleted here, the caption above the file list says so, for example "All 1,090 files downloaded · 1 deleted here", matching the Keeping panel, instead of showing nothing (<https://github.com/quiltdata/quilt-rs/pull/1069>)
 
+- Messages that say how much space was freed round sizes the same way as the rest of the app
+
+### quilt-rs
+
+- Updated [from v0.42.0 to v0.42.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.22.6] - 2026-10-02
 
 ### Added

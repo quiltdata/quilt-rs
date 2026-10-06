@@ -37,6 +37,8 @@
 
 - `quilt log` says why each revision is kept (`current`, `latest`, `base`, `not pushed`, `unpublished`), or how much removing it would free, so you can see what `quilt remove-revisions` would remove; `--json` adds `kept` and `frees` (<https://github.com/quiltdata/quilt-rs/pull/1051>)
 
+- `quilt log`, `quilt gc` and `quilt remove-revisions` round sizes the same way as QuiltSync, and go up to EB
+
 ### quilt-rs
 
 - Updated [from v0.42.0 to v0.42.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
