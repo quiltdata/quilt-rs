@@ -309,6 +309,26 @@ pub(super) fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String
     }
 }
 
+/// The heavy phase's pause checks, in the same order as the light phase,
+/// falling back to `otherwise` when the package is not paused.
+///
+/// A pause takes precedence over the working tree's state and over a dead
+/// session, because it is the reason the tree is not being synced. Without the
+/// unexplained-pause check, this phase would replace the light phase's
+/// `Paused` with the measured state.
+fn pause_or(
+    paused: Option<&PausedReason>,
+    otherwise: impl FnOnce() -> PackageStateDto,
+) -> PackageStateDto {
+    if let Some(files) = conflict_files(paused) {
+        PackageStateDto::PullConflict { files }
+    } else if unexplained_pause(paused) {
+        PackageStateDto::Paused
+    } else {
+        otherwise()
+    }
+}
+
 /// The state a session failure resolves to, on either page.
 ///
 /// One classifier for the main page's rows and the package page's header
@@ -877,17 +897,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             // The pause checks go here rather than at the top of the function,
             // because the access-denied arm below has higher precedence and must
             // still be able to win.
-            //
-            // Both pause checks, in the same order as the light phase. A pause
-            // takes precedence over the working tree's state because it is the
-            // reason the tree is not being synced. Without the unexplained-pause
-            // check, this phase would replace the light phase's `Paused` with the
-            // measured tree state.
-            state: if let Some(files) = conflict_files(paused) {
-                PackageStateDto::PullConflict { files }
-            } else if unexplained_pause(paused) {
-                PackageStateDto::Paused
-            } else {
+            state: pause_or(paused, || {
                 PackageState::resolve(
                     status.upstream_state,
                     has_local_commit,
@@ -895,7 +905,7 @@ pub(super) async fn refresh_main_page_package_from_model(
                     Some(status.changes.len()),
                 )
                 .into()
-            },
+            }),
             // The refresh did not deny, so any pre-filter mark is cleared.
             role_switch_host: None,
         }),
@@ -914,9 +924,11 @@ pub(super) async fn refresh_main_page_package_from_model(
             // A dead session is a state, not a failed check: the auth layer
             // raised it typed, and "Try again" cannot succeed until the reader
             // signs in. The queue groups these rows by host under one [Sign in].
+            // A pause still outranks it, as in the light phase: signing in
+            // would not resolve a conflict, and the row must keep naming it.
             if let Some(state) = session_state(&err) {
                 return Ok(MainPagePackageRefresh {
-                    state,
+                    state: pause_or(paused, || state),
                     role_switch_host: None,
                 });
             }
@@ -2624,6 +2636,51 @@ mod tests {
                 host: Some("quilt.test".to_string()),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn a_pull_conflict_pause_outranks_a_signed_out_host() {
+        // The light phase names the conflict; a dead session found by the
+        // status call must not replace it, or the row and the queue lose the
+        // conflicting files and the reason sync stopped.
+        let m = mock_one_package(
+            Err(Error::from(quilt::Error::Login(
+                quilt::LoginError::NoSession(Some(fixtures::host())),
+            ))),
+            None,
+        );
+        let files = vec!["a.csv".to_string(), "b.csv".to_string()];
+
+        let refreshed = refresh_with_pause(
+            &m,
+            &RoleCache::default(),
+            Some(&PausedReason::PullConflict(files.clone())),
+        )
+        .await;
+
+        assert_eq!(refreshed.state, PackageStateDto::PullConflict { files });
+    }
+
+    #[tokio::test]
+    async fn an_unexplained_pause_outranks_a_rejected_credential() {
+        let m = mock_one_package(
+            Err(Error::from(quilt::Error::S3(quilt::S3Error {
+                host: Some(fixtures::host()),
+                kind: quilt::S3ErrorKind::InvalidCredentials("rejected".to_string()),
+            }))),
+            None,
+        );
+
+        let refreshed = refresh_with_pause(
+            &m,
+            &RoleCache::default(),
+            Some(&PausedReason::Other(
+                "workflow rejected metadata".to_string(),
+            )),
+        )
+        .await;
+
+        assert_eq!(refreshed.state, PackageStateDto::Paused);
     }
 
     /// A bare bucket on ambient AWS credentials has no deployment to sign in
