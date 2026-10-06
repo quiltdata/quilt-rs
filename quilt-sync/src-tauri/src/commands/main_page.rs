@@ -309,6 +309,44 @@ pub(super) fn conflict_files(paused: Option<&PausedReason>) -> Option<Vec<String
     }
 }
 
+/// The state a session failure resolves to, on either page.
+///
+/// One classifier for the main page's rows and the package page's header
+/// (`package_page::blocked_state`), so the two cannot word one failure two
+/// ways. `None` for anything that is not a session failure, which each caller
+/// handles its own way.
+pub(super) fn session_state(err: &Error) -> Option<PackageStateDto> {
+    // Narrowest first: `is_session_absent` is `is_invalid_credentials` OR
+    // `LoginError::NoSession`, so a general arm above the specific one makes the
+    // specific one unreachable.
+    if err.is_invalid_credentials() {
+        Some(PackageStateDto::SignInExpired {
+            host: session_host(err),
+        })
+    } else if err.is_session_absent() {
+        Some(PackageStateDto::NoSession {
+            host: session_host(err),
+        })
+    } else {
+        None
+    }
+}
+
+/// The deployment a session failure was for, by either route.
+///
+/// [`Error::s3_host`] answers for the S3 route only — a rejected credential
+/// carries its host on the `S3Error`. The login route carries it on
+/// [`quilt::LoginError::NoSession`] instead, and this surface names the
+/// deployment whichever route the failure took.
+fn session_host(err: &Error) -> Option<String> {
+    match err {
+        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
+            host.as_ref().map(ToString::to_string)
+        }
+        _ => err.s3_host().map(ToString::to_string),
+    }
+}
+
 /// How long the roster waits on one host before giving up on it. The budget
 /// covers the readable-bucket query and the role query behind a denial
 /// together.
@@ -872,13 +910,22 @@ pub(super) async fn refresh_main_page_package_from_model(
                 role_switch_host: mark.role_switch_host,
             })
         }
-        // A failure to reach the remote is not evidence about the package — it is
-        // not "Sync stopped" (Unknown), which asserts a state the call never
-        // earned. Propagate the error instead: the command surfaces it, and the
-        // UI's `PackageListRow` `Err` arm already takes the honest path, keeping
-        // the light phase's guess and leaving the row provisional (dashed) rather
-        // than replacing it with a false answer.
         Err(err) => {
+            // A dead session is a state, not a failed check: the auth layer
+            // raised it typed, and "Try again" cannot succeed until the reader
+            // signs in. The queue groups these rows by host under one [Sign in].
+            if let Some(state) = session_state(&err) {
+                return Ok(MainPagePackageRefresh {
+                    state,
+                    role_switch_host: None,
+                });
+            }
+            // A failure to reach the remote is not evidence about the package —
+            // it is not "Sync stopped" (Unknown), which asserts a state the call
+            // never earned. Propagate the error instead: the command surfaces it,
+            // and the UI's `PackageListRow` `Err` arm already takes the honest
+            // path, keeping the light phase's guess and leaving the row
+            // provisional (dashed) rather than replacing it with a false answer.
             tracing::warn!(
                 "Failed to get status for {}: {err}",
                 installed_package.namespace,
@@ -2510,11 +2557,11 @@ mod tests {
         );
     }
 
-    // Repro, not yet a fix: a signed-out host's status call fails with a typed
-    // session error, which this phase propagates like any other failure. The UI
-    // then marks the row unchecked and the queue offers "Try again", which
-    // cannot succeed. The package page resolves the same error to a state
-    // (`package_page::blocked_state`); these pin the main page doing the same.
+    // A signed-out host's status call fails with a typed session error. Passed
+    // up like any other failure, the UI would mark the row unchecked and the
+    // queue would offer "Try again", which cannot succeed. The package page
+    // resolves the same error to a state through the same `session_state`;
+    // these pin the main page doing the same.
 
     #[tokio::test]
     async fn a_signed_out_host_resolves_the_row_to_no_session() {
@@ -2577,6 +2624,29 @@ mod tests {
                 host: Some("quilt.test".to_string()),
             }
         );
+    }
+
+    /// A bare bucket on ambient AWS credentials has no deployment to sign in
+    /// to. The state still says signed out, with no host, and the queue keeps
+    /// the row as its own rather than offering a [Sign in] with nowhere to go.
+    #[test]
+    fn a_session_failure_without_a_host_names_none() {
+        let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(None)));
+        assert_eq!(
+            session_state(&err),
+            Some(PackageStateDto::NoSession { host: None })
+        );
+    }
+
+    /// A denial is the access-denied arm's, which runs first on this page and
+    /// names the role. The session classifier must not claim it.
+    #[test]
+    fn a_denial_is_not_a_session_state() {
+        let err = Error::from(quilt::Error::S3(quilt::S3Error {
+            host: Some(fixtures::host()),
+            kind: quilt::S3ErrorKind::AccessDenied("denied".to_string()),
+        }));
+        assert_eq!(session_state(&err), None);
     }
 
     #[tokio::test]

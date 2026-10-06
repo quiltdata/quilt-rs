@@ -885,8 +885,7 @@ fn MainPageRegions(
     /// The page's package read. Awaited once, by the boundary the queue and the
     /// list share.
     packages: LocalResource<Result<MainPagePackagesData, String>>,
-    /// The page's accounts read. Awaited by both boundaries — the Accounts card
-    /// draws it and the queue joins against it (§4.3, R3) — and fetched once:
+    /// The page's accounts read, which the Accounts card draws. Fetched once:
     /// awaiting a resource reads its value, it does not re-run its fetcher.
     accounts: LocalResource<Result<MainPageAccountsData, String>>,
     /// The page's reload trigger, which every resource here tracks.
@@ -1116,14 +1115,6 @@ fn MainPageRegions(
                             Callback::new(move |namespaces: Vec<Namespace>| {
                                 recheck(store, &namespaces);
                             });
-                        // The accounts read is awaited here too, for the queue's
-                        // join — inside this arm, because a page with no rows has
-                        // no queue to join anything to. Its failure is not logged a
-                        // second time (the strip's branch above handles that) and
-                        // leaves the queue with no host facts, so no cause can be
-                        // attributed to a host and those packages fall to rows of
-                        // their own. What is unknown is which hosts are signed out.
-                        let hosts = accounts.await.map(|data| data.hosts).unwrap_or_default();
                         view! {
                             // No wrapper and no margin: `PageLayout`'s column owns
                             // the gap between regions, and the queue is a direct
@@ -1135,7 +1126,6 @@ fn MainPageRegions(
                             // attention queue.
                             <queue::QueueRegion
                                 packages=settled
-                                hosts=hosts
                                 in_flight=in_flight
                                 total=total
                                 unchecked=unchecked
@@ -1345,8 +1335,8 @@ pub fn MainPage() -> impl IntoView {
             answer
         }
     });
-    // Held here rather than inside the Accounts card, because the queue joins
-    // against the same host data, and a second resource would read it twice.
+    // Held here rather than inside the Accounts card, beside the page's other
+    // reads, so the page's reload reaches it and a test can hand in its own.
     //
     // Tested only by `the_queue_is_drawn_from_the_same_payloads_as_the_cards`. A
     // card that built its own resource would call the real command, which has no
@@ -1686,7 +1676,9 @@ mod tests {
             packages: vec![
                 MainPagePackageData {
                     namespace: ns("user/plate-07"),
-                    state: PackageState::Unknown,
+                    state: PackageState::NoSession {
+                        host: Some("quilt.test".to_string()),
+                    },
                     changed_at: None,
                     bucket: None,
                     host: Some("quilt.test".to_string()),
@@ -1706,8 +1698,8 @@ mod tests {
         }
     }
 
-    /// The host the fixture above points at, signed out — the other half of R3's
-    /// join. Settled (`provisional: false`), because a provisional row spawns an
+    /// The host the fixture above points at, signed out, for the Accounts card.
+    /// Settled (`provisional: false`), because a provisional row spawns an
     /// invoke that can only fail without a Tauri host.
     fn one_signed_out_host() -> MainPageAccountsData {
         MainPageAccountsData {
@@ -2690,15 +2682,14 @@ mod tests {
     #[wasm_bindgen_test]
     async fn the_queue_is_drawn_from_the_same_payloads_as_the_cards() {
         // §1, at the seam: one package read feeds the queue and the list, and one
-        // accounts read feeds the Accounts card and the queue's join. The queue's
-        // cause names the host the accounts payload says is signed out — which
-        // needs both halves of R3's join — and the list still holds every row.
+        // accounts read feeds the Accounts card. The queue's cause names the host
+        // the package's own state says it is signed out from, and the list still
+        // holds every row.
         //
-        // Of the package half, the page still owns the `host` and the `namespace`:
-        // `settled` carries those through from its own `light` payload with
-        // `..p.clone()`, and the host is what the join below is about. Only the
-        // `state` is written here by `settle_all`, standing in for a heavy phase
-        // that has no Tauri host to answer it.
+        // Of the package half, the page still owns the `namespace`: `settled`
+        // carries it through from its own `light` payload with `..p.clone()`. Only
+        // the `state` is written here by `settle_all`, standing in for a heavy
+        // phase that has no Tauri host to answer it.
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
             Ok(a_package_needing_attention()),
@@ -2713,7 +2704,7 @@ mod tests {
         let text = el.text_content().unwrap();
         assert!(
             text.contains("Signed out from quilt.test"),
-            "the queue joined the packages against the accounts payload: {text}"
+            "the queue grouped the signed-out package under its host: {text}"
         );
         assert!(
             strip_of(&el).text_content().unwrap().contains("quilt.test"),
@@ -2735,10 +2726,9 @@ mod tests {
         // queue. Without it the queue says "Everything is Latest" above a package
         // with uncommitted changes.
         //
-        // The accounts fixture is the signed-out host, which the packages here
-        // cannot join to: `pkg` leaves `host` at `None`, so no cause is ever
-        // attributed and every row that reaches the queue is a row of its own.
-        // That is the point — this test is about the state, not the join.
+        // No state here is a shared cause, so every row that reaches the queue is
+        // a row of its own. That is the point — this test is about the state, not
+        // the grouping.
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
             Ok(MainPagePackagesData {
@@ -2887,9 +2877,9 @@ mod tests {
         // that could not read three of its forty-three packages arrives at
         // "nothing is outstanding, nothing needs attention" and would announce
         // "Everything is Latest — 40 packages" over three rows still drawn dashed
-        // in the list below. A signed-out host is the ordinary way to get there:
-        // `refresh_main_page_package` propagates a login error rather than
-        // degrading it, precisely so the row stays dashed.
+        // in the list below. An unreachable host is the ordinary way to get there:
+        // `refresh_main_page_package` propagates a failure it cannot word as a
+        // state rather than degrading it, precisely so the row stays dashed.
         //
         // The zero line speaks for every package, so it waits for every package.
         let payload = MainPagePackagesData {
@@ -2932,6 +2922,58 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    async fn a_signed_out_answer_settles_the_row_and_offers_sign_in() {
+        // What the heavy phase answers for a signed-out host: a state, not a
+        // failure. The row settles (solid, not dashed), the list words it, the
+        // queue offers [Sign in] rather than [Try again], and the all-clear stays
+        // held back, since a signed-out package is not Latest.
+        let payload = two_packages_all_latest();
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+
+        let store = seeded_store(slot);
+        let signed_out = &payload.packages[0].namespace;
+        settle_all(store, &payload);
+        settle(
+            store,
+            signed_out,
+            PackageState::NoSession {
+                host: Some("quilt.test".to_string()),
+            },
+        );
+        leptos::task::tick().await;
+
+        assert!(
+            store.unchecked(&payload.packages).is_empty(),
+            "an answer, not a failed check"
+        );
+        let queue = queue_text(&el).expect("the queue has something to say");
+        assert!(
+            queue.contains("Signed out from quilt.test") && queue.contains("Sign in"),
+            "one cause naming the host, with its remedy: {queue}"
+        );
+        assert!(
+            !queue.contains("Couldn't check") && !queue.contains("Try again"),
+            "and not a retry that cannot succeed while signed out: {queue}"
+        );
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Signed out of quilt.test"),
+            "the list row says it in the kit's words: {text}"
+        );
+        assert!(
+            !text.contains("Everything is Latest"),
+            "and the page does not claim an all-clear over it: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
     async fn a_failed_packages_read_leaves_no_queue_to_claim_all_is_well() {
         // A failed read is not an empty one: `Everything is Latest — 0 packages`
         // over a fetch that never answered is a manufactured all-clear. The strip
@@ -2960,10 +3002,10 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_failed_accounts_read_still_draws_the_queue_and_the_list() {
-        // The other direction. Without host facts no cause can be attributed to a
-        // host, so the signed-out package falls to a row of its own rather than
-        // vanishing — and the Accounts card says it could not read, where no rows
-        // would claim no sessions and no card would claim no such card.
+        // The other direction. The queue's causes come from the packages' own
+        // states, so the signed-out package is still offered [Sign in] — and the
+        // Accounts card says it could not read, where no rows would claim no
+        // sessions and no card would claim no such card.
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
             Ok(a_package_needing_attention()),
@@ -2972,19 +3014,12 @@ mod tests {
             Some(on_store),
         );
         sleep_ms(50).await;
-        // Settled, so the queue really does draw — otherwise "no host was said to
-        // be signed out" would hold over a region that drew nothing at all.
         settle_all(seeded_store(slot), &a_package_needing_attention());
         leptos::task::tick().await;
+        let queue = queue_text(&el).expect("the queue draws without the accounts read");
         assert!(
-            queue_text(&el).is_some(),
-            "the queue drew, so the assertion below is about what it says"
-        );
-
-        let text = el.text_content().unwrap();
-        assert!(
-            !text.contains("Signed out from"),
-            "nothing said any host was signed out: {text}"
+            queue.contains("Signed out from quilt.test"),
+            "the package's own state says so, not the accounts read: {queue}"
         );
         let strip = strip_of(&el).text_content().unwrap();
         assert!(

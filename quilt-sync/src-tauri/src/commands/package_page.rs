@@ -15,7 +15,7 @@ use crate::autopull::PausedReason;
 use crate::autopull::Watcher;
 use crate::commands::RoleCache;
 use crate::commands::main_page::PackageStateDto;
-use crate::commands::main_page::{conflict_files, unexplained_pause};
+use crate::commands::main_page::{conflict_files, session_state, unexplained_pause};
 use crate::commands::package_entries::{EntryList, entry_list};
 use crate::error::Error;
 use crate::model;
@@ -299,17 +299,10 @@ pub struct RoleSwitch {
 /// `None` for anything else, which the caller propagates rather than dressing up
 /// as a session failure.
 fn blocked_state(err: &Error) -> Option<PackageStateDto> {
-    // Narrowest first: `is_session_absent` is `is_invalid_credentials` OR
-    // `LoginError::NoSession`, so a general arm above the specific one makes the
-    // specific one unreachable.
-    if err.is_invalid_credentials() {
-        Some(PackageStateDto::SignInExpired {
-            host: session_host(err),
-        })
-    } else if err.is_session_absent() {
-        Some(PackageStateDto::NoSession {
-            host: session_host(err),
-        })
+    // The session half is the main page's too, so the two pages cannot word one
+    // failure two ways.
+    if let Some(state) = session_state(err) {
+        Some(state)
     } else if err.is_access_denied() {
         // Not a session failure — the credentials vended and the active role
         // cannot read the bucket — but a state all the same, and one the header
@@ -359,21 +352,6 @@ async fn role_remedy(
         alternatives,
     });
     (Some(info.current), switch)
-}
-
-/// The deployment a session failure was for, by either route.
-///
-/// [`Error::s3_host`] answers for the S3 route only — a rejected credential
-/// carries its host on the `S3Error`. The login route carries it on
-/// [`quilt::LoginError::NoSession`] instead, and this surface names the
-/// deployment whichever route the failure took.
-fn session_host(err: &Error) -> Option<String> {
-    match err {
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
-            host.as_ref().map(ToString::to_string)
-        }
-        _ => err.s3_host().map(ToString::to_string),
-    }
 }
 
 /// `i64` milliseconds into `f64`, because JavaScript has no other number.
@@ -2783,6 +2761,25 @@ mod tests {
                 host: Some("quilt.test".to_string()),
             }),
         );
+    }
+
+    /// The header and the main page's rows share one session classifier, so a
+    /// failure the header calls signed out is signed out on the main page too.
+    #[test]
+    fn the_header_words_a_session_failure_as_the_main_page_does() {
+        let failures = [
+            quilt::Error::Login(quilt::LoginError::NoSession(Some(fixtures::host()))),
+            quilt::Error::Login(quilt::LoginError::NoSession(None)),
+            quilt::Error::S3(quilt::S3Error {
+                host: Some(fixtures::host()),
+                kind: quilt::S3ErrorKind::InvalidCredentials("rejected".to_string()),
+            }),
+        ];
+        for err in failures {
+            let err = Error::Quilt(err);
+            assert!(blocked_state(&err).is_some());
+            assert_eq!(blocked_state(&err), session_state(&err));
+        }
     }
 
     /// A denial is not a session failure, and must not be worded as one: the
