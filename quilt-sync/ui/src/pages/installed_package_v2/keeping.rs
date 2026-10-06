@@ -26,8 +26,8 @@ type Answer<T> = Pin<Box<dyn Future<Output = Result<T, String>>>>;
 
 /// Stores a package's scope: `(namespace, entire_package)`.
 pub type ScopeStore = fn(String, bool) -> Answer<()>;
-/// Installs the listed backlog: `(namespace, paths)`.
-pub type BacklogDownload = fn(String, Vec<String>) -> Answer<()>;
+/// Installs the listed backlog: `(namespace, paths)`, answering the paths it skipped.
+pub type BacklogDownload = fn(String, Vec<String>) -> Answer<Vec<String>>;
 
 /// Keeping's two commands. Function pointers, so the DOM tests and the
 /// gallery answer without a Tauri host.
@@ -44,14 +44,8 @@ impl KeepingCommands {
             store: |namespace, entire_package| {
                 Box::pin(commands::package_set_sync_scope(namespace, entire_package))
             },
-            // The skipped paths are the file pane's to show; Keeping's
-            // download reports only whether it ran.
             download: |namespace, paths| {
-                Box::pin(async move {
-                    commands::package_download_backlog(namespace, paths)
-                        .await
-                        .map(|_skipped| ())
-                })
+                Box::pin(commands::package_download_backlog(namespace, paths))
             },
         }
     }
@@ -131,12 +125,19 @@ pub(super) fn KeepingSection(
         let press = move |_| {
             // The read's list, not what is outstanding by the time of the press.
             let (ns, paths) = (namespace.clone(), remote_only.clone());
-            let downloading = w.downloading;
+            let (downloading, outcome) = (w.downloading, w.outcome);
             let task = async move {
+                let asked = paths.len();
                 downloading.set(true);
-                let answer = (commands.download)(ns, paths).await;
+                let answer = (commands.download)(ns.clone(), paths).await;
                 downloading.try_set(false);
-                answer.map(|()| String::new())
+                answer.map(|skipped| {
+                    // The file pane's warning, so both downloads say it alike.
+                    if let Some(said) = super::download_outcome(ns, asked, &skipped) {
+                        outcome.try_set(Some(said));
+                    }
+                    String::new()
+                })
             };
             run(
                 w.busy,
@@ -527,17 +528,17 @@ mod tests {
         Box::pin(std::future::pending())
     }
 
-    fn downloads_ok(namespace: String, paths: Vec<String>) -> Answer<()> {
+    fn downloads_ok(namespace: String, paths: Vec<String>) -> Answer<Vec<String>> {
         DOWNLOADED.with_borrow_mut(|calls| calls.push((namespace, paths)));
-        Box::pin(async { Ok(()) })
+        Box::pin(async { Ok(Vec::new()) })
     }
 
-    fn refuses_download(namespace: String, paths: Vec<String>) -> Answer<()> {
+    fn refuses_download(namespace: String, paths: Vec<String>) -> Answer<Vec<String>> {
         DOWNLOADED.with_borrow_mut(|calls| calls.push((namespace, paths)));
         Box::pin(async { Err("AccessDenied".into()) })
     }
 
-    fn download_never(namespace: String, paths: Vec<String>) -> Answer<()> {
+    fn download_never(namespace: String, paths: Vec<String>) -> Answer<Vec<String>> {
         DOWNLOADED.with_borrow_mut(|calls| calls.push((namespace, paths)));
         Box::pin(std::future::pending())
     }
@@ -878,21 +879,14 @@ mod tests {
         assert_eq!(w.outcome.get_untracked(), None, "success says nothing");
     }
 
-    /// Wired as `KeepingCommands::app` is: the backend answers that it skipped
-    /// a file, and the wiring drops that list on the way to Keeping.
-    fn downloads_skipping_one(namespace: String, paths: Vec<String>) -> Answer<()> {
+    fn downloads_skipping_one(namespace: String, paths: Vec<String>) -> Answer<Vec<String>> {
         DOWNLOADED.with_borrow_mut(|calls| calls.push((namespace, paths)));
-        Box::pin(async {
-            let answer: Result<Vec<String>, String> = Ok(vec!["plate/c.csv".to_string()]);
-            answer.map(|_skipped| ())
-        })
+        Box::pin(async { Ok(vec!["plate/c.csv".to_string()]) })
     }
 
-    /// A reproduction of a known gap: the file pane's Download warns about a
-    /// file the remote no longer holds, Keeping's says nothing. This pins
-    /// today's behaviour; flip it when Keeping reports skipped files.
+    /// A file the remote no longer holds gets the file pane's warning.
     #[wasm_bindgen_test]
-    async fn keeping_download_says_nothing_about_skipped_files() {
+    async fn a_download_that_skips_files_names_them_on_the_band() {
         clear();
         let w = Wiring::new();
         let el = pressable(
@@ -905,14 +899,14 @@ mod tests {
         download_button(&el).click();
         settle().await;
 
-        assert_eq!(downloaded().len(), 1, "the download ran");
-        assert_eq!(RELOADS.get(), 1, "and re-read as a success does");
-        assert_eq!(w.outcome.get_untracked(), None, "the band is told nothing");
-        assert!(
-            !el.inner_html().contains("no longer on the remote"),
-            "nothing names the skipped file; markup was {}",
-            el.inner_html()
+        assert_eq!(RELOADS.get(), 1, "a partial download still re-reads");
+        let said = w.outcome.get_untracked().expect("the band warns");
+        assert_eq!(said.variant, BannerVariant::Warning);
+        assert_eq!(
+            said.lead,
+            "Downloaded 1 of 2. 1 file is no longer on the remote at this revision."
         );
+        assert_eq!(said.detail.as_deref(), Some("plate/c.csv"));
     }
 
     #[wasm_bindgen_test]

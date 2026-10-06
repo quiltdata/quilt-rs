@@ -609,7 +609,7 @@ pub fn ContextPaneScene() -> impl IntoView {
                     w=crate::pages::Wiring::new()
                     commands=crate::pages::KeepingCommands {
                         store: |_, _| Box::pin(async { Ok(()) }),
-                        download: |_, _| Box::pin(async { Ok(()) }),
+                        download: |_, _| Box::pin(async { Ok(Vec::new()) }),
                     }
                 />
             </Cell>
