@@ -119,8 +119,8 @@ Run `quilt <command> --help` for arguments.
 
 ## Global flags
 
-`--domain`, `--format`, `--json` and `--verbose` are global: each goes before
-or after the command, so `quilt --domain <path> list` and
+`--domain`, `--format`, `--json`, `--log` and `--verbose` are global: each goes
+before or after the command, so `quilt --domain <path> list` and
 `quilt list --domain <path>` both work.
 
 - `--domain <path>` (`-d`) — local domain directory (stores credentials and
@@ -140,13 +140,17 @@ or after the command, so `quilt --domain <path> list` and
 - `--json` — shorthand for `--format json`, so `quilt list --json | jq` and
   `quilt --json list | jq` both work. It also wins over `QUILT_FORMAT`, but
   cannot be combined with `--format`.
-- `--verbose` (`-v`) — show quilt's INFO-level logs on stderr. It wins over
-  `QUILT_LOG`. Commands keep stdout reserved for command output.
+- `--log <filter>` — which logs to show on stderr; takes the same values as
+  `QUILT_LOG` (see [Logs](#logs)) and wins over it, so
+  `quilt list --log debug` shows quilt's debug lines for one command.
+  Commands keep stdout reserved for command output.
+- `--verbose` (`-v`) — shorthand for `--log info`. It cannot be combined with
+  `--log`.
 
 ### Logs
 
-Logs go to stderr; by default only warnings and errors. Set `QUILT_LOG` to see
-more:
+Logs go to stderr; by default only warnings and errors. Set `QUILT_LOG` or
+pass `--log` to see more:
 
 - A level — `trace`, `debug`, `info`, `warn`, `error` or `off`. `QUILT_LOG=debug`
   shows quilt's own debug lines and keeps its dependencies (the HTTP stack, the
@@ -154,9 +158,10 @@ more:
 - [`tracing` directives](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives),
   used as given, for example `QUILT_LOG=quilt_rs=trace,aws_smithy_runtime=debug`.
 
-An empty `QUILT_LOG` counts as unset, and `-v` wins over it. A value that is
-neither, such as `QUILT_LOG=debgu`, stops the command before it runs, even with
-`-v`. `--format` never changes logs.
+`--log` or `-v` wins over `QUILT_LOG` and replaces it. An empty `QUILT_LOG`
+counts as unset; an empty `--log` is an error. A value that is neither, such as
+`QUILT_LOG=debgu` or `--log debgu`, stops the command before it runs, even when
+a flag overrides the variable. `--format` never changes logs.
 
 `--home <path>` is deprecated, use `quilt home <path>`. It goes before the
 command, prints a warning, then sets the home the same way before the command

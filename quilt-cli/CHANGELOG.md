@@ -29,11 +29,13 @@
 
 - `--format text|json` and `QUILT_FORMAT` pick the format of a command's result, so `export QUILT_FORMAT=json` makes every command print JSON; `--json` still works (<https://github.com/quiltdata/quilt-rs/pull/1062>)
 
+- `--log <filter>` sets how much one command logs and takes the same values as `QUILT_LOG`, which it overrides, for example `quilt push --log debug` (<https://github.com/quiltdata/quilt-rs/pull/1071>)
+
 ### Changed
 
 - `QUILT_LOG` sets how much is logged, in place of `RUST_LOG`, which is no longer read. `QUILT_LOG=debug` shows quilt's own debug lines while its dependencies stay at warnings; `tracing` directives such as `quilt_rs=trace` still work. A value that is neither a level nor valid directives, such as `debgu`, stops the command before it runs (<https://github.com/quiltdata/quilt-rs/pull/1067>)
 
-- `-v` shows quilt's INFO logs and keeps its dependencies at warnings, and it now works with `QUILT_LOG` set instead of being ignored (<https://github.com/quiltdata/quilt-rs/pull/1067>)
+- `-v` is shorthand for `--log info`: it shows quilt's INFO logs and keeps its dependencies at warnings, and it now works with `QUILT_LOG` set instead of being ignored (<https://github.com/quiltdata/quilt-rs/pull/1067>, <https://github.com/quiltdata/quilt-rs/pull/1071>)
 
 - `quilt log` says why each revision is kept (`current`, `latest`, `base`, `not pushed`, `unpublished`), or how much removing it would free, so you can see what `quilt remove-revisions` would remove; `--json` adds `kept` and `frees` (<https://github.com/quiltdata/quilt-rs/pull/1051>)
 

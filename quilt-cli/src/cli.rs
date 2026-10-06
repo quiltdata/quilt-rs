@@ -13,6 +13,7 @@ use tracing::log;
 
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::WorkflowIntent;
+use quilt_rs::logging::InvalidLogFilter;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 
@@ -62,6 +63,26 @@ fn format_value_parser() -> impl clap::builder::TypedValueParser<Value = String>
         clap::builder::PossibleValue::new("json"),
         clap::builder::PossibleValue::new("").hide(true),
     ])
+}
+
+/// The `tracing` directives for a `QUILT_LOG` or `--log` value under the
+/// shared rule, or `Ok(None)` for an empty value.
+///
+/// Parsed strictly, so `quilt_rs=lots` is an error rather than being dropped.
+pub fn log_filter(value: &str) -> Result<Option<String>, InvalidLogFilter> {
+    let parsed = quilt_rs::logging::directives(value)?;
+    if let Some(parsed) = &parsed {
+        tracing_subscriber::EnvFilter::builder()
+            .parse(parsed)
+            .map_err(|_| InvalidLogFilter::new(value))?;
+    }
+    Ok(parsed)
+}
+
+/// `--log`'s value parser: an empty value is an error here, unlike an empty
+/// `QUILT_LOG`, since it usually means an unset shell variable.
+fn parse_log_flag(value: &str) -> Result<String, InvalidLogFilter> {
+    log_filter(value)?.ok_or_else(|| InvalidLogFilter::new(value))
 }
 
 /// Resolve the commit command's `(--workflow, --no-workflow)` flag pair into a
@@ -218,10 +239,15 @@ pub struct Args {
     )]
     domain: Option<PathBuf>,
 
-    /// Show INFO-level logs from quilt on stderr. Beats `QUILT_LOG`, which
-    /// takes a level (`debug`) or tracing directives (`quilt_rs=trace`).
+    /// Show INFO-level logs from quilt on stderr: shorthand for `--log info`.
+    // Checked against `--log` in `try_parse_with_env`, as `--json` is.
     #[arg(short, long, global = true)]
-    pub(crate) verbose: bool,
+    verbose: bool,
+
+    /// Logs to show on stderr: a level (`debug`) or tracing directives
+    /// (`quilt_rs=trace`). Beats `QUILT_LOG`, which takes the same values.
+    #[arg(long, global = true, value_name = "FILTER", value_parser = parse_log_flag)]
+    log: Option<String>,
 
     /// Format of the command's result: `text` (the default) or `json`.
     /// Logs and warnings on stderr are never affected.
@@ -281,7 +307,22 @@ impl Args {
                 "the argument '--json' cannot be used with '--format <FORMAT>'",
             ));
         }
+        if parsed.verbose && parsed.log.is_some() {
+            return Err(command.error(
+                clap::error::ErrorKind::ArgumentConflict,
+                "the argument '--verbose' cannot be used with '--log <FILTER>'",
+            ));
+        }
         Ok(parsed)
+    }
+
+    /// The directives `--log` or `-v` asked for, if either was given.
+    pub fn log_directives(&self) -> Option<String> {
+        if self.verbose {
+            log_filter("info").expect("a level")
+        } else {
+            self.log.clone()
+        }
     }
 
     /// The format of the command's result: `--json` or `--format`, then
@@ -1181,6 +1222,72 @@ mod tests {
         assert!(!default.verbose);
     }
 
+    fn ours_at(level: &str) -> String {
+        format!("quilt={level},quilt_rs={level},quilt_uri={level},quilt_sync={level},warn")
+    }
+
+    fn log_flag(argv: &[&str]) -> Result<Option<String>, String> {
+        Args::try_parse_with_env(argv)
+            .map(|args| args.log_directives())
+            .map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn log_flag_goes_through_the_shared_rule_on_either_side_of_the_command() {
+        assert_eq!(log_flag(&["quilt", "list"]), Ok(None));
+        assert_eq!(
+            log_flag(&["quilt", "--log", "debug", "list"]),
+            Ok(Some(ours_at("debug")))
+        );
+        assert_eq!(
+            log_flag(&["quilt", "list", "--log", "error"]),
+            Ok(Some("error".to_string()))
+        );
+        assert_eq!(
+            log_flag(&["quilt", "list", "--log", "quilt_rs=trace,hyper=debug"]),
+            Ok(Some("quilt_rs=trace,hyper=debug".to_string()))
+        );
+    }
+
+    #[test]
+    fn verbose_is_log_info() {
+        for argv in [["quilt", "-v", "list"], ["quilt", "list", "--verbose"]] {
+            assert_eq!(log_flag(&argv), Ok(Some(ours_at("info"))), "{argv:?}");
+        }
+    }
+
+    /// As `--json` with `--format`: two flags that say the same thing.
+    #[test]
+    fn verbose_with_log_is_an_error() {
+        for argv in [
+            ["quilt", "-v", "list", "--log", "debug"],
+            ["quilt", "list", "--log", "info", "--verbose"],
+        ] {
+            let result = log_flag(&argv);
+            assert!(
+                result
+                    .as_ref()
+                    .is_err_and(|err| err.contains("cannot be used with")),
+                "{argv:?}: {result:?}"
+            );
+        }
+    }
+
+    /// An empty `--log`, like `--domain ""`, usually means an unset shell
+    /// variable; `quilt_rs=lots` is caught by the strict parse.
+    #[test]
+    fn a_log_flag_that_does_not_parse_is_an_error() {
+        for value in ["", "  ", "debgu", "quilt_rs", "quilt_rs=lots"] {
+            let result = log_flag(&["quilt", "list", "--log", value]);
+            assert!(
+                result
+                    .as_ref()
+                    .is_err_and(|err| err.contains("for '--log <FILTER>'")),
+                "{value:?}: {result:?}"
+            );
+        }
+    }
+
     /// `--prune` is off unless given.
     #[test]
     fn uninstall_prunes_only_when_asked() {
@@ -1699,6 +1806,7 @@ mod tests {
                 home: None,
                 domain: Some(domain.path().to_path_buf()),
                 verbose: false,
+                log: None,
                 format: None,
                 json: false,
                 command,
@@ -1727,6 +1835,7 @@ mod tests {
             home: Some(home.path().to_path_buf()),
             domain: Some(domain.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Login {
@@ -1749,6 +1858,7 @@ mod tests {
             home: None,
             domain: Some(domain_temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::List { fetch: false },
@@ -1814,6 +1924,7 @@ mod tests {
             home,
             domain,
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Install {
@@ -1847,6 +1958,7 @@ mod tests {
             home: Some(temp_dir.path().to_path_buf()),
             domain: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Commit {
@@ -1883,6 +1995,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Commit {
@@ -1916,6 +2029,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Push {
@@ -1947,6 +2061,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Push {
@@ -1981,6 +2096,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Push {
@@ -2014,6 +2130,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Pull {
@@ -2067,6 +2184,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Pull {
@@ -2152,6 +2270,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Pull {
@@ -2310,6 +2429,7 @@ mod tests {
             domain: Some(root.clone()),
             home: Some(root.clone()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Pull {
@@ -2390,6 +2510,7 @@ mod tests {
                 domain: Some(root.to_path_buf()),
                 home: Some(root.to_path_buf()),
                 verbose: false,
+                log: None,
                 format: None,
                 json: false,
                 command: Commands::Pull {
@@ -2520,6 +2641,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Pull {
@@ -2583,6 +2705,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Pull {
@@ -2624,6 +2747,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Pull {
@@ -2653,6 +2777,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Uninstall {
@@ -2685,6 +2810,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Uninstall {
@@ -2719,6 +2845,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::List { fetch: false },
@@ -2741,6 +2868,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::List { fetch: false },
@@ -2773,6 +2901,7 @@ mod tests {
             domain: Some(dir.clone()),
             home: Some(dir.clone()),
             verbose: false,
+            log: None,
             format: None,
             json: true,
             command,
@@ -2866,6 +2995,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: true,
             command: Commands::Status {
@@ -2900,6 +3030,7 @@ mod tests {
             domain,
             home,
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Install {
@@ -2938,6 +3069,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Browse { uri },
@@ -2964,6 +3096,7 @@ mod tests {
             domain: Some(temp_dir.path().to_path_buf()),
             home: Some(temp_dir.path().to_path_buf()),
             verbose: false,
+            log: None,
             format: None,
             json: false,
             command: Commands::Browse {
