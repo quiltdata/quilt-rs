@@ -88,12 +88,21 @@
 }
 
 /* A closed group holding a row that differs. A dot in the rows' mark colour,
- * small and quiet: information, never a control. */
+ * small and quiet: information, never a control.
+ *
+ * It is also what a pointer rests on for its tooltip, and 6px is a target only
+ * a steady hand finds. So the box is 16px and the dot is drawn in its middle:
+ * the padding takes no paint, and the negative margin hands the same 5px back,
+ * so the heading's spacing is what it was before the dot could be hovered. */
 .differs {
+  box-sizing: content-box;
   flex: 0 0 6px;
   height: 6px;
+  padding: 5px;
+  margin: -5px;
   border-radius: 50%;
   background: var(--q-fgColor-danger);
+  background-clip: content-box;
 }
 
 /* Neither upper-cased nor tracked — it is a number, and spacing digits apart

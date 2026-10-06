@@ -79,6 +79,40 @@
 //! for. The value exists to keep three components honest; when there is nothing
 //! to be honest about, it is zero.
 //!
+//! # A row that differs says so twice, and explains itself on request
+//!
+//! A row can carry two states, on two independent axes. One is where the file
+//! is — downloaded, `Changed`, `Not downloaded`, `Deleted`. The other is
+//! whether the two revisions agree about it, which only resolve mode asks, and
+//! whose one answer worth drawing is `Differs`. So `Differs` is a
+//! [`StateLabel`] of its own, in the Danger tone, beside the place's label and
+//! never instead of it: a file that is deleted and differs shows both.
+//!
+//! It is said in two channels. The rule and the tint are colour; the label's
+//! word and its × are not, and survive greyscale. The resolve pane's sentence
+//! counts the set, and a [`Tooltip`](super::Tooltip) says what differs.
+//!
+//! The label shares the state slot with the place's, before it, and the two
+//! stack right-aligned like any pair of labels. The slot is right-aligned and
+//! at least one label wide, so sizes stay one column whether or not a row
+//! carries two — no row reserves anything, in or out of resolve mode, and only
+//! a marked row's name gives up the width.
+//!
+//! Rest the pointer on `Differs`, or reach the row's control from the
+//! keyboard, and the tooltip's sentence appears. The control names it in
+//! `aria-describedby`, beside the pane's sentence. The label's word is real
+//! text, so a reader moving through the list hears `Differs` where a sighted
+//! reader sees it, and both have the pane's sentence — no hidden copy of the
+//! row's sentence is needed. An inert
+//! row has no control and never gets one — a tab stop that does nothing is
+//! worse than none — so its sentence is hover-only, which is why the word has
+//! to carry the meaning without it.
+//!
+//! The row itself has no `title`. It had one, and the name's own `title` (the
+//! whole path) covered most of the row and won, so the hint showed only over
+//! the gutter and the size. An element with a tooltip carries no `title` of its
+//! own, or the browser's would sit on top of ours.
+//!
 //! # The `<label>` stops before the overflow, and only a selectable row has one
 //!
 //! Clicking a selectable row toggles its box, which wants a `<label>` around the
@@ -98,6 +132,8 @@ use super::ActionMenu;
 use super::Checkbox;
 use super::MenuAction;
 use super::StateLabel;
+use super::Tooltip;
+use super::TooltipHandle;
 use super::icons;
 use super::state_label::StateTone;
 
@@ -147,8 +183,9 @@ pub enum EntryAction {
     Open(Callback<()>),
 }
 
-/// What a marked row's `title` says. One sentence, in the page's own words —
-/// no `remote`, no `diverged`, and no platform named as the other place.
+/// What a marked row's tooltip says, explaining its `Differs`. One sentence,
+/// in the page's own words — no `remote`, no `diverged`, and no platform named as the
+/// other place.
 pub const DIFFERS_TITLE: &str =
     "Your version of this file and the published version have different contents.";
 
@@ -202,9 +239,10 @@ pub fn EntryRow(
     /// column's width, draws nothing in it and takes no pointer.
     #[prop(optional)]
     action: Option<EntryAction>,
-    /// The two revisions disagree about this file. **Information, never a
-    /// control** — resolution happens at revision level, so there is nothing to
-    /// click here and the marking must not look like the state beside it.
+    /// The two revisions disagree about this file: a second state, on the
+    /// comparison's axis, drawn as its own `Differs` label beside the place's.
+    /// **Never a control** — resolution happens at revision level, so there is
+    /// nothing to click here.
     #[prop(optional)]
     differs: bool,
     /// The row's `[⋯]`. Empty means no menu at all rather than an empty one.
@@ -226,14 +264,36 @@ pub fn EntryRow(
         String::from(style::root)
     };
 
+    // Made here rather than by the tooltip, because the label it hangs from and
+    // the control that focus lands on are two elements: the control names the
+    // surface and forwards its focus, the label is what a pointer rests on.
+    let tip = differs.then(TooltipHandle::new);
+    let differs_id = differs_id();
+    // The control's description: the row's own sentence first, then the
+    // pane's count of the set. A list, so neither replaces the other.
+    let described = tip.map(|tip| format!("{} {differs_id}", tip.id()));
+    let focus_in = move |event: web_sys::FocusEvent| {
+        if let Some(tip) = tip {
+            tip.focus_in(&event);
+        }
+    };
+    let focus_out = move |_: web_sys::FocusEvent| {
+        if let Some(tip) = tip {
+            tip.focus_out();
+        }
+    };
+
     // The state and the size are the same in all three shapes, and building them
     // once keeps the arms about the one thing that actually differs.
     let trailing = move || {
         view! {
             // A fixed slot, so a size lands in the same column whether or not
             // the row above carries a label. Sizes exist to be compared, and
-            // ragged ones cannot be.
+            // ragged ones cannot be. A row that differs puts `Differs` in the
+            // same slot, before the place's label: the two stack right-aligned
+            // like any labels, and the slot grows for them.
             <span class=style::state>
+                {tip.map(differs_label)}
                 {move || {
                     state.get().map(|words| view! { <StateLabel tone=tone>{words}</StateLabel> })
                 }}
@@ -254,12 +314,13 @@ pub fn EntryRow(
             on_toggle,
             disabled,
         })) => view! {
-            <label class=style::main>
+            <label class=style::main on:focusin=focus_in on:focusout=focus_out>
                 {gutter()}
                 <Checkbox
                     state=Signal::derive(move || selected.get().into())
                     on_toggle=move |next| on_toggle.run(next)
                     disabled=disabled
+                    aria_describedby=described.clone()
                 />
                 <span class=style::name title=full_name>{name}</span>
                 {trailing()}
@@ -270,10 +331,20 @@ pub fn EntryRow(
         // button, so Enter and Space are the platform's, and its click bubbles to
         // the row, which is the one handler.
         Some(EntryAction::Open(on_open)) => view! {
-            <div class=style::main on:click=move |_| on_open.run(())>
+            <div
+                class=style::main
+                on:click=move |_| on_open.run(())
+                on:focusin=focus_in
+                on:focusout=focus_out
+            >
                 {gutter()}
                 {nobox(have_mark)}
-                <button type="button" class=style::open title=full_name>
+                <button
+                    type="button"
+                    class=style::open
+                    title=full_name
+                    aria-describedby=described.clone()
+                >
                     {name}
                 </button>
                 {trailing()}
@@ -295,11 +366,10 @@ pub fn EntryRow(
     view! {
         <div
             class=class
-            // The whole answer is a sentence, so it is one: `title` is not
-            // keyboard-reachable and is absent on touch, which is why the pane
-            // also says it once in prose for the rows as a set.
-            title=differs.then_some(DIFFERS_TITLE)
-            aria-describedby=differs.then(differs_id)
+            // Kept on the row as well as its control: an inert row has no
+            // control, and this is the one element it has to name the pane's
+            // sentence from.
+            aria-describedby=differs.then_some(differs_id)
         >
             {main}
             {if actions.with_untracked(Vec::is_empty) {
@@ -313,6 +383,29 @@ pub fn EntryRow(
             }}
         </div>
     }
+}
+
+/// The `Differs` label, with its tooltip.
+///
+/// Inside `main` like the place's label beside it, so a click on it does what
+/// a click on that one does — ticks or opens — and it is never a control of its
+/// own. The tooltip's surface is inside too, which is safe only because the
+/// surface keeps itself out of the accessibility tree: on a selectable row
+/// `main` is the `<label>`, and its words would otherwise join the checkbox's
+/// name.
+fn differs_label(tip: TooltipHandle) -> AnyView {
+    view! {
+        <span class=style::compared>
+            <Tooltip
+                handle=tip
+                text=DIFFERS_TITLE.to_string()
+                trigger=|_| {
+                    view! { <StateLabel tone=StateTone::Danger>"Differs"</StateLabel> }.into_any()
+                }
+            />
+        </span>
+    }
+    .into_any()
 }
 
 /// The hole a row without a box keeps, empty or holding the check.
@@ -330,7 +423,10 @@ fn nobox(have_mark: bool) -> AnyView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
+    use crate::test_support::{
+        blur, describing_tooltip, element_saying, focus_report, keyboard_focus, mount,
+        unmount_earlier,
+    };
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -587,5 +683,155 @@ mod tests {
             "a row not asked for the mark keeps its hole blank; markup was {}",
             blank.inner_html()
         );
+    }
+
+    fn selectable_differing() -> impl IntoView {
+        view! {
+            <EntryRow
+                name="raw/plate-07.csv"
+                state="Not downloaded"
+                size="4.1 MB"
+                differs=true
+                action=EntryAction::Select(
+                    EntrySelection::new(RwSignal::new(false), Callback::new(|_| ())),
+                )
+            />
+        }
+    }
+
+    fn openable_differing() -> impl IntoView {
+        view! {
+            <EntryRow
+                name="notes/kickoff-thread.md"
+                size="12 KB"
+                differs=true
+                action=EntryAction::Open(Callback::new(|()| ()))
+            />
+        }
+    }
+
+    fn inert_differing() -> impl IntoView {
+        view! {
+            <EntryRow
+                name="old/gone.csv"
+                state="Deleted"
+                tone=StateTone::Danger
+                size="1 KB"
+                differs=true
+            />
+        }
+    }
+
+    /// `Differs` is a state of its own, beside the place's and never instead
+    /// of it, and only a row that differs says it.
+    #[wasm_bindgen_test]
+    fn a_differing_row_says_differs_beside_its_state() {
+        for (row, place) in [
+            (mount(selectable_differing), "Not downloaded"),
+            (mount(inert_differing), "Deleted"),
+        ] {
+            let differs = element_saying(&row, "Differs");
+            let state = element_saying(&row, place);
+            assert_eq!(
+                differs.compare_document_position(&state)
+                    & web_sys::Node::DOCUMENT_POSITION_FOLLOWING,
+                web_sys::Node::DOCUMENT_POSITION_FOLLOWING,
+                "`Differs` comes before {place:?}; markup was {}",
+                row.inner_html()
+            );
+        }
+
+        let plain = mount(|| {
+            view! { <EntryRow name="raw/plate-08.csv" state="Not downloaded" size="4 MB" /> }
+        });
+        element_saying(&plain, "Not downloaded");
+        assert!(
+            !plain.text_content().unwrap().contains("Differs"),
+            "a row that agrees says nothing about differing; markup was {}",
+            plain.inner_html()
+        );
+    }
+
+    /// The control focus lands on — the box on a selectable row, the name on an
+    /// openable one — names the row's tooltip and keeps the pane's sentence,
+    /// and keyboard focus on it opens the tooltip.
+    #[wasm_bindgen_test]
+    async fn the_row_s_control_is_described_by_the_differs_tooltip() {
+        unmount_earlier();
+        let selectable = mount(selectable_differing);
+        let openable = mount(openable_differing);
+        let controls = [
+            selectable
+                .query_selector("input[type=checkbox]")
+                .unwrap()
+                .expect("a selectable row has a box"),
+            openable
+                .query_selector("button")
+                .unwrap()
+                .expect("an openable row's name is a button"),
+        ];
+        for control in controls {
+            let tip = describing_tooltip(&control).unwrap_or_else(|| {
+                panic!(
+                    "the control names no tooltip: {:?}",
+                    control.get_attribute("aria-describedby")
+                )
+            });
+            assert_eq!(tip.text_content().unwrap(), DIFFERS_TITLE);
+            assert!(
+                control
+                    .get_attribute("aria-describedby")
+                    .unwrap()
+                    .split_whitespace()
+                    .any(|id| id == DIFFERS_ID),
+                "the tooltip replaced the pane's sentence"
+            );
+
+            keyboard_focus(&control);
+            leptos::task::tick().await;
+            assert!(
+                tip.matches(":popover-open").unwrap(),
+                "keyboard focus on the row's control opened nothing; {}",
+                focus_report(&control)
+            );
+            blur(&control);
+            leptos::task::tick().await;
+            assert!(!tip.matches(":popover-open").unwrap());
+        }
+    }
+
+    /// An inert row has no control, and differing does not give it one: a tab
+    /// stop that does nothing is worse than none.
+    #[wasm_bindgen_test]
+    fn an_inert_differing_row_gets_no_tab_stop() {
+        let el = mount(inert_differing);
+        element_saying(&el, "Differs");
+        assert!(
+            el.query_selector("button, input, a[href], [tabindex]")
+                .unwrap()
+                .is_none(),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The row's own `title` was what hid the hint: the name's `title` covered
+    /// it. A row that differs has none; only the name's path is titled.
+    #[wasm_bindgen_test]
+    fn a_differing_row_carries_no_title_of_its_own() {
+        for el in [
+            mount(selectable_differing),
+            mount(openable_differing),
+            mount(inert_differing),
+        ] {
+            let row = el.first_element_child().expect("the row");
+            assert!(
+                !row.has_attribute("title"),
+                "markup was {}",
+                el.inner_html()
+            );
+            let titled = el.query_selector_all("[title]").unwrap();
+            assert_eq!(titled.length(), 1, "markup was {}", el.inner_html());
+        }
     }
 }

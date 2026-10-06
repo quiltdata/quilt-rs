@@ -186,19 +186,14 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    /// `kit/file_row.rs`'s pattern: mount a view into a fresh, attached `div` and
-    /// hand back the element to query against.
+    /// Mounted through the shared helper, so a later test's `unmount_earlier`
+    /// takes it away: a modal left open makes the rest of the page inert, and
+    /// a later test could not focus anything.
     fn mount_dialog(open: RwSignal<bool>) -> web_sys::Element {
         let reload = Trigger::new();
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), move || {
+        crate::test_support::mount(move || {
             view! { <CreatePackageDialog open=open reload=reload /> }
         })
-        .forget();
-        container.into()
     }
 
     /// Reads the `<dialog>` element's `open` PROPERTY, not an attribute —

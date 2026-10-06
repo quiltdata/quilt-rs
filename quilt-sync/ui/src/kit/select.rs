@@ -1,9 +1,11 @@
 //! Single-choice control over a native `<select>`.
 //!
-//! §2 of the design record eliminates the tooltip/dropdown/combobox class by
+//! §2 of the design record eliminates the hand-built dropdown/combobox class by
 //! committing to this: our closed state, the OS's open dropdown. It holds only
 //! while every choice is a plain string — a choice needing rich formatting means
-//! the control is wrong, and the answer is an inline list or radio group.
+//! the control is wrong, and the answer is an inline list or radio group. (The
+//! kit's [`Tooltip`](super::Tooltip) is not a way back in: it is the platform's
+//! popover, holds plain text, and chooses nothing.)
 
 use leptos::prelude::*;
 

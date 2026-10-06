@@ -125,6 +125,7 @@
   flex: 0 0 auto;
   display: flex;
   justify-content: flex-end;
+  gap: var(--q-space-1);
   /* Wide enough for the longest label in the vocabulary. DESIGN.md forbids
    * truncating a state label — if one overflows, the words are wrong — so
    * adding a state means checking this number. */
@@ -139,13 +140,20 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The two revisions disagree about this file. A rule and a tint, no word: a
- * highlighted-rows-and-legend pattern explains itself once instead of twenty
- * times, and gives a busy row back a column.
- *
- * This is one channel and the design owes it a second — the rule is a colour,
- * and so is the tint. Until that lands, `title` is the half a mouse gets free. */
+/* The two revisions disagree about this file. A rule and a tint, and a
+ * `Differs` label before the place's. The rule and the tint are colour, one
+ * channel; the label's word and its × are the second, and survive greyscale.
+ * The tooltip on the label says what differs, for whoever asks. */
 .root.differs {
   box-shadow: inset 3px 0 0 var(--q-fgColor-danger);
   background: var(--q-bgColor-danger-muted);
+}
+
+/* The `Differs` label's wrapper, inside the state slot beside the place's
+ * label. The slot is right-aligned, so the two stack from the right like any
+ * pair of labels; only the marked row's name gives up the width. Never shrinks,
+ * as a state label never does. */
+.compared {
+  flex: 0 0 auto;
+  display: flex;
 }

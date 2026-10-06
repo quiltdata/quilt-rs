@@ -3898,9 +3898,14 @@ mod marks_tests {
 
     /// Whether the folder's heading says it holds a file that differs: its
     /// disclosure names the resolve pane's sentence, and it says so in words.
+    /// One id among the description's: the disclosure names its tooltip too.
     fn heading_marked(el: &web_sys::Element) -> bool {
-        let described = disclosure(el).get_attribute("aria-describedby")
-            == Some(crate::kit::DIFFERS_ID.to_string());
+        let described = disclosure(el)
+            .get_attribute("aria-describedby")
+            .is_some_and(|ids| {
+                ids.split_whitespace()
+                    .any(|id| id == crate::kit::DIFFERS_ID)
+            });
         let says = el
             .text_content()
             .unwrap_or_default()

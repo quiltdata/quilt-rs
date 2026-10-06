@@ -22,10 +22,12 @@ pub enum IconButtonVariant {
 pub fn IconButton(
     /// The glyph. Sized by CSS, so callers pass an `svg` without dimensions.
     icon: AnyView,
-    /// The accessible name. Goes to `aria-label` and, because we chose the `title`
-    /// attribute over a tooltip component, to `title` as well — Primer splits those
-    /// into a required `aria-label` plus an optional `description`, and one prop
-    /// doing both jobs is named after the one that is not optional.
+    /// The accessible name. Goes to `aria-label` and to `title` as well — Primer
+    /// splits those into a required `aria-label` plus an optional `description`,
+    /// and one prop doing both jobs is named after the one that is not optional.
+    /// The `title` predates [`Tooltip`](super::Tooltip) and moves to one when this
+    /// component is next worked on (DESIGN.md's Tooltip Rule) — all icon buttons
+    /// at once, so one thing never has two looks.
     ///
     /// An icon-only control without it is unusable with a screen reader and a guess
     /// with a mouse.
@@ -49,6 +51,10 @@ pub fn IconButton(
     /// The id of what it opens.
     #[prop(optional, into)]
     aria_controls: MaybeProp<String>,
+    /// Ids of what describes it, space-separated — a [`Tooltip`](super::Tooltip)'s
+    /// surface, when this is that tooltip's trigger.
+    #[prop(optional, into)]
+    aria_describedby: MaybeProp<String>,
 ) -> impl IntoView {
     let is_disabled = Signal::derive(move || disabled.get().unwrap_or(false));
     let is_spinning = Signal::derive(move || spinning.get().unwrap_or(false));
@@ -72,6 +78,7 @@ pub fn IconButton(
             type="button"
             aria-expanded=move || aria_expanded.get().map(|v| v.to_string())
             aria-controls=move || aria_controls.get()
+            aria-describedby=move || aria_describedby.get()
             class=class
             aria-label=aria_label.clone()
             title=aria_label

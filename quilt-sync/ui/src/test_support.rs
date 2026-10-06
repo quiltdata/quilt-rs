@@ -96,3 +96,66 @@ pub(crate) fn shape(el: &web_sys::Element) -> String {
     out.push_str("</>");
     out
 }
+
+/// Focus an element as the keyboard would, so it matches `:focus-visible` — a
+/// tooltip opens for that focus and not for a click's.
+///
+/// A headless browser whose window is not the active one moves focus without
+/// firing focus events, as CI's does. The event is sent by hand then, so what
+/// listens for it still hears it.
+pub(crate) fn keyboard_focus(el: &web_sys::Element) {
+    let options = web_sys::FocusOptions::new();
+    options.set_focus_visible(true);
+    let html: &web_sys::HtmlElement = el.unchecked_ref();
+    with_event_or_sent(el, "focusin", || html.focus_with_options(&options).unwrap());
+}
+
+/// Take focus off an element, sending `focusout` by hand where the browser
+/// does not, as [`keyboard_focus`] does `focusin`.
+pub(crate) fn blur(el: &web_sys::Element) {
+    let html: &web_sys::HtmlElement = el.unchecked_ref();
+    with_event_or_sent(el, "focusout", || html.blur().unwrap());
+}
+
+/// Run `act`, and if it fired no bubbling `kind` at `el`, dispatch one.
+fn with_event_or_sent(el: &web_sys::Element, kind: &str, act: impl FnOnce()) {
+    let fired = std::rc::Rc::new(std::cell::Cell::new(false));
+    let heard = fired.clone();
+    let listener = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || heard.set(true));
+    el.add_event_listener_with_callback(kind, listener.as_ref().unchecked_ref())
+        .unwrap();
+    act();
+    el.remove_event_listener_with_callback(kind, listener.as_ref().unchecked_ref())
+        .unwrap();
+    if !fired.get() {
+        let init = web_sys::EventInit::new();
+        init.set_bubbles(true);
+        let event = web_sys::Event::new_with_event_init_dict(kind, &init).unwrap();
+        el.dispatch_event(&event).unwrap();
+    }
+}
+
+/// Where focus stands, for an assertion's message when a focus test fails.
+pub(crate) fn focus_report(el: &web_sys::Element) -> String {
+    let doc = window().document().unwrap();
+    format!(
+        "document focused: {:?}; element is active: {}; :focus {:?}; :focus-visible {:?}; open modals: {:?}; inert: {:?}; focused: {:?}",
+        doc.has_focus(),
+        doc.active_element().as_ref() == Some(el),
+        el.matches(":focus"),
+        el.matches(":focus-visible"),
+        doc.query_selector_all(":modal").map(|l| l.length()),
+        doc.query_selector_all("[inert]").map(|l| l.length()),
+        doc.active_element().map(|a| a.tag_name()),
+    )
+}
+
+/// The element `aria-describedby` names on `el` that is a tooltip, if any. A
+/// description is a list of ids, and the tooltip is one of them.
+pub(crate) fn describing_tooltip(el: &web_sys::Element) -> Option<web_sys::Element> {
+    let doc = window().document().unwrap();
+    el.get_attribute("aria-describedby")?
+        .split_whitespace()
+        .filter_map(|id| doc.get_element_by_id(id))
+        .find(|named| named.get_attribute("role").as_deref() == Some("tooltip"))
+}

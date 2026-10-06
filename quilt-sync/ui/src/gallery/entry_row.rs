@@ -139,29 +139,14 @@ fn click_rule(opened: RwSignal<String>) -> AnyView {
     .into_any()
 }
 
-const EDGES: &str = "A row the two revisions disagree about carries no word: a rule, a tint \
-                     and a title. It is information and never a control, since resolution \
-                     happens at revision level. It is also one channel where the design owes \
-                     two — hover it for the half a mouse gets free. The label stops before \
-                     the overflow, because a button inside a label that is not its control \
-                     is invalid markup. Click a row, then click its dots.";
+const EDGES: &str = "The label stops before the overflow, because a button inside a label \
+                     that is not its control is invalid markup. A long name truncates at the \
+                     end and keeps the whole path in its `title` — the same words as shown, \
+                     which is what `title` is still for. Click a row, then click its dots.";
 
 fn edges(long: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
     view! {
         <Story title="EntryRow · edges" note=EDGES>
-            <Cell full=true label="the two revisions disagree — no word, and hover it">
-                <Provider value=DiffersId("resolve-differing-entry-row")>
-                    <EntryRow
-                        name="notes/kickoff-thread.md"
-                        size="12 KB"
-                        differs=true
-                        action=open("notes/kickoff-thread.md", opened)
-                        actions=menu()
-                        have_mark=true
-                    />
-                    {differs_caption(1)}
-                </Provider>
-            </Cell>
             <Cell full=true label="long name — truncates, whole value in the title">
                 <EntryRow
                     name="investigations/2026-09-15-installed-package-page/verdicts-and-handoff-with-a-very-long-leaf-name.md"
@@ -178,6 +163,94 @@ fn edges(long: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
                     action=open("notes/kickoff-thread.md", opened)
                     have_mark=true
                 />
+            </Cell>
+        </Story>
+    }
+    .into_any()
+}
+
+const DIFFERS: &str = "A row can carry two states on two axes: where the file is, and — only \
+                       in resolve mode — whether the two revisions agree about it. A row they \
+                       disagree about carries a rule, a tint and its own Differs label beside \
+                       the place's, never instead of it, so a deleted file that differs shows \
+                       both. The rule and the tint are colour; the label's word and its cross \
+                       are the second channel, so the marked rows still stand out in greyscale. \
+                       Rest the pointer on Differs, or Tab to a marked row's box or name, and a \
+                       tooltip says what differs; the control names that sentence. A deleted \
+                       row has no control and gets no tab stop, so its sentence is hover-only. \
+                       Differs shares the state slot with the place's label, and the two stack \
+                       right-aligned: sizes stay one column, and the names do not move. \
+                       Resolution happens at revision level, so nothing here is a control.";
+
+/// Six rows, two of each shape, the first of each pair marked.
+/// One list, so alignment between marked and unmarked rows is what the cell
+/// shows rather than something to take on trust.
+fn shapes(opened: RwSignal<String>) -> AnyView {
+    view! {
+        <div style="width:100%">
+            <EntryRow
+                name="raw/plate-07.csv"
+                state="Not downloaded"
+                size="4.1 MB"
+                differs=true
+                action=pick(RwSignal::new(false))
+                actions=menu()
+            />
+            <EntryRow
+                name="raw/plate-08.csv"
+                state="Not downloaded"
+                size="3.9 MB"
+                action=pick(RwSignal::new(false))
+                actions=menu()
+            />
+            <EntryRow
+                name="notes/kickoff-thread.md"
+                size="12 KB"
+                differs=true
+                action=open("notes/kickoff-thread.md", opened)
+                actions=menu()
+                have_mark=true
+            />
+            <EntryRow
+                name="notes/plate-notes.md"
+                size="4 KB"
+                action=open("notes/plate-notes.md", opened)
+                actions=menu()
+                have_mark=true
+            />
+            <EntryRow
+                name="raw/plate-06.csv"
+                state="Deleted"
+                tone=StateTone::Danger
+                size="4.0 MB"
+                differs=true
+                actions=menu()
+            />
+            <EntryRow
+                name="raw/plate-05.csv"
+                state="Deleted"
+                tone=StateTone::Danger
+                size="4.2 MB"
+                actions=menu()
+            />
+        </div>
+    }
+    .into_any()
+}
+
+fn differing(opened: RwSignal<String>) -> AnyView {
+    view! {
+        <Story title="EntryRow · rows that differ" note=DIFFERS>
+            <Cell
+                full=true
+                label="resolve mode, flat list — selectable, openable and deleted, each marked and not"
+            >
+                <div style="width:100%; --q-entry-gutter: 0">
+                    <Provider value=DiffersId("resolve-differing-entry-row")>
+                        {shapes(opened)}
+                        {differs_caption(3)}
+                    </Provider>
+                </div>
             </Cell>
         </Story>
     }
@@ -238,6 +311,7 @@ pub fn EntryRowStories() -> impl IntoView {
         {states(ticked, fresh, opened)}
         {click_rule(opened)}
         {edges(long, opened)}
+        {differing(opened)}
         {mark(opened)}
     }
 }

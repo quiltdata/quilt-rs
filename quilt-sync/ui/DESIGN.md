@@ -659,8 +659,19 @@ the row still says everything it said.
 
 **The Platform Owns The Keyboard Rule.** Where a native element exists, wrap it
 rather than rebuild it. Native select, native radios, native checkbox. This is
-why the system ships no listbox, no combobox, and no popover, and why roving
-focus and arrow-key movement were never hand-written.
+why the system ships no listbox, no combobox, and no hand-built popover, and why
+roving focus and arrow-key movement were never hand-written. What floats is the
+platform's own `popover`: a menu or a panel that opens from its control, and a
+`Tooltip`, which holds plain text only.
+
+**The Tooltip Rule.** What shows on hover or focus is a `Tooltip`, not a
+`title`. A `title` never shows on keyboard focus or touch, waits a second, and
+an inner one hides an outer one. Some `title`s remain because the kit had no
+tooltip when they were written; each moves to a `Tooltip` when its code is next
+worked on, and one stays only with a reason written beside it. An element with
+a `Tooltip` carries no `title`, or the browser's box covers the kit's. A
+tooltip explains a mark and is never the mark: a distinction a reader needs at
+a glance is drawn on the row, and the tooltip says what it means.
 
 ## Do's and Don'ts
 
@@ -701,4 +712,7 @@ focus and arrow-key movement were never hand-written.
 - **Don't** link a webfont. The desktop's own face is the correct one, including
   a light one.
 - **Don't** truncate a state label. If it overflows, the words are wrong.
-- **Don't** build a listbox, combobox, or popover. Wrap the native element.
+- **Don't** build a listbox, combobox, or popover by hand. Wrap the native
+  element.
+- **Don't** add a `title` for a hint or a full value. Use `Tooltip`; a new
+  `title` needs a reason beside it.
