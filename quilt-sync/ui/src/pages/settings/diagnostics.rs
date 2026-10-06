@@ -41,11 +41,14 @@ fn LogLevelField(
 ) -> impl IntoView {
     let level = RwSignal::new(log_level_label(log_level));
     let overridden = matches!(log_env, LogEnv::Overrides(_));
+    // Disabled while a save is in flight, so saves land in the order they were chosen.
+    let saving = RwSignal::new(false);
     let env_hint = log_env_hint(log_env);
     Effect::watch(
         move || level.get(),
         move |label, _, _| {
             let label = label.to_lowercase();
+            saving.set(true);
             leptos::task::spawn_local(async move {
                 match commands::update_log_settings(label).await {
                     Ok(()) => notification.set(Some(Notification::Success(
@@ -53,6 +56,7 @@ fn LogLevelField(
                     ))),
                     Err(e) => notification.set(Some(Notification::Error(e))),
                 }
+                saving.set(false);
             });
         },
         false,
@@ -63,7 +67,7 @@ fn LogLevelField(
             naming=Naming::Hidden("Log level".to_string())
             options=LOG_LEVELS.iter().map(ToString::to_string).collect()
             selected=level
-            disabled=overridden
+            disabled=Signal::derive(move || overridden || saving.get())
         />
         <span class="value default">"Applies after a restart."</span>
         {env_hint.map(|hint| view! { <span class="value default">{hint}</span> })}
