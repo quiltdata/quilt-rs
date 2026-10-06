@@ -19,7 +19,7 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.22.7] - 2026-10-06
+## [v0.22.7] - 2026-10-07
 
 ### Added
 
@@ -28,7 +28,7 @@
 ### Changed
 
 - The app reads its log filter from `QUILT_LOG`, with the same values as the `quilt` CLI, in place of `QUILTSYNC_LOG`. Crash reports never include `debug` or `trace` lines (<https://github.com/quiltdata/quilt-rs/pull/1073>)
-- **New design preview**: when files are deleted here, the caption above the file list says so, for example "All 1,090 files downloaded · 1 deleted here" (<https://github.com/quiltdata/quilt-rs/pull/1069>)
+- **New design preview**: when nothing is left to download but files are deleted here, the caption above the file list says so, for example "All 1,090 files downloaded · 1 deleted here" (<https://github.com/quiltdata/quilt-rs/pull/1069>)
 - **New design preview**: *Revisions you have* shows exact sizes, such as "211.9 kB", in place of "< 1 MB" (<https://github.com/quiltdata/quilt-rs/pull/1070>)
 - **New design preview**: in Resolve mode, files that differ from the published revision are marked *Differs*, with a tooltip that explains it (<https://github.com/quiltdata/quilt-rs/pull/1075>)
 - Messages that say how much space was freed round sizes the same way as the rest of the app (<https://github.com/quiltdata/quilt-rs/pull/1072>)
