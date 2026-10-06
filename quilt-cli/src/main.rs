@@ -199,7 +199,7 @@ mod tests {
             &mut stderr,
         )
         .unwrap();
-        assert!(stdout.is_empty());
+        assert_eq!(stdout, b"");
         String::from_utf8(stderr).unwrap()
     }
 
