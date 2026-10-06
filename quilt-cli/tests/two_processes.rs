@@ -5,6 +5,7 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 use std::process::Child;
+use std::process::Command;
 use std::process::Output;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -12,8 +13,6 @@ use std::sync::Mutex;
 use std::thread::JoinHandle;
 use std::time::Duration;
 use std::time::Instant;
-
-mod common;
 
 use quilt_rs::paths::DomainPaths;
 use quilt_uri::Namespace;
@@ -25,7 +24,9 @@ const DEADLINE: Duration = Duration::from_secs(20);
 
 /// Runs `quilt` on `domain` to the end and returns its output if it succeeded.
 fn quilt(domain: &Path, args: &[&str]) -> Output {
-    let output = common::quilt_command(domain)
+    let output = Command::new(env!("CARGO_BIN_EXE_quilt"))
+        .arg("--domain")
+        .arg(domain)
         .args(args)
         .output()
         .expect("quilt runs");
@@ -47,7 +48,9 @@ struct Running {
 
 impl Running {
     fn spawn(domain: &Path, args: &[&str]) -> Self {
-        let mut child = common::quilt_command(domain)
+        let mut child = Command::new(env!("CARGO_BIN_EXE_quilt"))
+            .arg("--domain")
+            .arg(domain)
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
