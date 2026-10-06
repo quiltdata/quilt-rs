@@ -264,14 +264,14 @@ mod tests {
         use tracing_subscriber::Layer;
         use tracing_subscriber::registry::Registry;
 
-        let file = Layer::<Registry>::max_level_hint(&filter(FILE_DIRECTIVES));
+        let file = Layer::<Registry>::max_level_hint(&build_filter(None, FILE_DIRECTIVES));
         assert_eq!(
             file,
             Some(LevelFilter::DEBUG),
             "the file filter admits {file:?}, so the log will be near-empty again"
         );
 
-        let crash = Layer::<Registry>::max_level_hint(&filter(CRASH_SINK_DIRECTIVES));
+        let crash = Layer::<Registry>::max_level_hint(&build_filter(None, CRASH_SINK_DIRECTIVES));
         assert_eq!(
             crash,
             Some(LevelFilter::INFO),
