@@ -82,11 +82,8 @@
 //! # A row that differs says so twice, and explains itself on request
 //!
 //! A rule and a tint, which are both colour, and the word `Differs`, which is
-//! not: the Two Channels Rule's pair. The earlier ruling was *no word* — a
-//! highlighted row and a legend explain themselves once — and the owner
-//! reversed it, because colour alone is one channel however many places it is
-//! painted. One word, not the sentence: the resolve pane's sentence is still
-//! the legend for the set.
+//! not: the Two Channels Rule's pair. One word, not the sentence: the resolve
+//! pane's sentence still counts the set, and the tooltip says what differs.
 //!
 //! The word is a chip and not a [`StateLabel`]. A state label says where the
 //! file is and picks its own glyph from its tone; this says the two revisions
