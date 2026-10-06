@@ -750,14 +750,13 @@ fn pane(p: Pane) -> AnyView {
 
     // The page's rule: the package, not the view, has nothing left to
     // download, so the slot select-all would take says so under either scope.
+    // A deleted file has nothing to fetch, so it counts as downloaded, and
+    // the words name it.
     let downloaded = {
         let counted = files.iter().filter(|f| f.mark != Mark::Ignored).count();
-        // A deleted file is not on disk either, whatever the download count
-        // says, so it holds the caption back too.
-        let missing = files
-            .iter()
-            .any(|f| matches!(f.mark, Mark::Missing | Mark::Deleted));
-        (!missing && counted > 0).then_some(counted)
+        let deleted = files.iter().filter(|f| f.mark == Mark::Deleted).count();
+        let missing = files.iter().any(|f| f.mark == Mark::Missing);
+        (!missing && counted > 0).then_some((counted, deleted))
     };
     let fill = framing == Framing::Page;
     let boxes = !whole;
@@ -894,19 +893,21 @@ fn pane(p: Pane) -> AnyView {
                                 // the slot says so instead, its words in the rows'
                                 // name column: the box's 17px stays empty.
                                 {downloaded
-                                    .map(|n| {
+                                    .map(|(n, deleted)| {
                                         view! {
                                             <span style="flex:0 0 28px" />
                                             // The column's summary, as the page draws
                                             // it: the Success tone's own tick. The
                                             // rows' check is muted bookkeeping; this is
-                                            // a statement.
+                                            // a statement. A file deleted here is not
+                                            // on disk, so the hole stays empty.
                                             <span class="g-fp-done">
-                                                {StateTone::Success.glyph()}
+                                                {(deleted == 0)
+                                                    .then(|| StateTone::Success.glyph())}
                                             </span>
                                             <span style="font-size:var(--q-text-body); \
                                                          color:var(--q-fgColor-muted)">
-                                                {downloaded_words(n)}
+                                                {downloaded_words(n, deleted)}
                                             </span>
                                         }
                                     })}
@@ -1371,6 +1372,21 @@ fn downloaded_package() -> Vec<File> {
         .collect()
 }
 
+/// The same, but with `notes/superseded-layout.md` still deleted here: nothing
+/// left to download, and one change waiting to be published.
+fn deleted_here_package() -> Vec<File> {
+    package()
+        .into_iter()
+        .map(|f| match f.mark {
+            Mark::Ignored | Mark::Deleted => f,
+            _ => File {
+                mark: Mark::Here,
+                ..f
+            },
+        })
+        .collect()
+}
+
 /// This scene's package grown to 1,089 files by a folder of plates this copy
 /// has not downloaded, so the page read cuts it.
 fn over_the_cap() -> Vec<File> {
@@ -1451,9 +1467,10 @@ const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it
     here carries a muted check in the box column, in every scope, so the column fills up as \
     files land, and a folder whose files are all here carries it on its heading. Under \
     whole-package Keeping every file is downloaded, so the slot select-all leaves reads \
-    `All 53 files downloaded` behind the Success tone's tick. The last three cells are the \
-    page's own pane: over this fixture, over it grown past the cap, and with every file \
-    downloaded.";
+    `All 53 files downloaded` behind the Success tone's tick; with a file deleted here it reads \
+    `All 53 files downloaded · 1 deleted here`, with no tick. The last four cells are the \
+    page's own pane: over this fixture, over it grown past the cap, with every file \
+    downloaded, and with one deleted here.";
 
 /// The region itself, for the whole-page scene.
 ///
@@ -1545,6 +1562,9 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="Keeping → the whole package, all downloaded: no boxes, no footer, and the slot says so">
                 {pane(Pane { whole: true, files: downloaded_package(), ..Pane::new("fp-whole") })}
             </Cell>
+            <Cell full=true label="all downloaded, one file deleted here — the line names it, and the tick goes">
+                {pane(Pane { files: deleted_here_package(), ..Pane::new("fp-deleted-here") })}
+            </Cell>
             <Cell full=true label="the Changed facet — nothing here can be ticked, so select-all goes">
                 {pane(Pane { facet: "Changed", ..Pane::new("fp-changed") })}
             </Cell>
@@ -1592,6 +1612,9 @@ pub fn FilePaneScene() -> impl IntoView {
             </Cell>
             <Cell full=true label="the page's pane, every file downloaded — the caption and its tick, as the page draws them">
                 <div style=PANE>{live(entry_list(downloaded_package()))}</div>
+            </Cell>
+            <Cell full=true label="the page's pane, one file deleted here — the line names it, and no tick">
+                <div style=PANE>{live(entry_list(deleted_here_package()))}</div>
             </Cell>
         </Scene>
     }
