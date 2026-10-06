@@ -219,8 +219,9 @@ pub fn EntryGroup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{describing_tooltip, keyboard_focus, mount, unmount_earlier};
-    use wasm_bindgen::JsCast;
+    use crate::test_support::{
+        blur, describing_tooltip, focus_report, keyboard_focus, mount, unmount_earlier,
+    };
     use wasm_bindgen_test::*;
 
     /// The check lives in the hole, so it appears only where there is one: a
@@ -311,11 +312,12 @@ mod tests {
 
         keyboard_focus(&disclose);
         leptos::task::tick().await;
-        assert!(tip.matches(":popover-open").unwrap());
-        disclose
-            .unchecked_ref::<web_sys::HtmlElement>()
-            .blur()
-            .unwrap();
+        assert!(
+            tip.matches(":popover-open").unwrap(),
+            "keyboard focus opened nothing; {}",
+            focus_report(&disclose)
+        );
+        blur(&disclose);
         leptos::task::tick().await;
 
         open.set(true);

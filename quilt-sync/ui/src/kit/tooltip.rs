@@ -393,7 +393,8 @@ mod tests {
     use super::*;
     use crate::kit::AnchoredOverlay;
     use crate::test_support::{
-        button_saying, describing_tooltip, keyboard_focus, mount, sleep_ms, unmount_earlier,
+        blur, button_saying, describing_tooltip, focus_report, keyboard_focus, mount, sleep_ms,
+        unmount_earlier,
     };
     use wasm_bindgen_test::*;
 
@@ -542,7 +543,8 @@ mod tests {
         leptos::task::tick().await;
         assert!(
             tip.matches(":popover-open").unwrap(),
-            "keyboard focus opened nothing"
+            "keyboard focus opened nothing; {}",
+            focus_report(&mark)
         );
 
         // Escape is heard from the frame after it opens.
@@ -555,7 +557,7 @@ mod tests {
             Some(mark.unchecked_ref::<web_sys::Element>()),
             "Escape moved focus off the trigger"
         );
-        mark.blur().unwrap();
+        blur(&mark);
     }
 
     #[wasm_bindgen_test]
@@ -565,9 +567,9 @@ mod tests {
         let mark = button_saying(&el, "Mark");
         keyboard_focus(&mark);
         leptos::task::tick().await;
-        assert!(is_open(&el));
+        assert!(is_open(&el), "{}", focus_report(&mark));
 
-        mark.blur().unwrap();
+        blur(&mark);
         leptos::task::tick().await;
         assert!(!is_open(&el), "blur left the tooltip open");
     }

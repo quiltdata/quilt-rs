@@ -424,7 +424,8 @@ fn nobox(have_mark: bool) -> AnyView {
 mod tests {
     use super::*;
     use crate::test_support::{
-        describing_tooltip, element_saying, keyboard_focus, mount, unmount_earlier,
+        blur, describing_tooltip, element_saying, focus_report, keyboard_focus, mount,
+        unmount_earlier,
     };
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
@@ -790,12 +791,10 @@ mod tests {
             leptos::task::tick().await;
             assert!(
                 tip.matches(":popover-open").unwrap(),
-                "keyboard focus on the row's control opened nothing"
+                "keyboard focus on the row's control opened nothing; {}",
+                focus_report(&control)
             );
-            control
-                .unchecked_ref::<web_sys::HtmlElement>()
-                .blur()
-                .unwrap();
+            blur(&control);
             leptos::task::tick().await;
             assert!(!tip.matches(":popover-open").unwrap());
         }
