@@ -376,7 +376,7 @@ pub fn Tooltip(
                 // Out of the tree, and still a description: a node named
                 // directly by `aria-describedby` is read even when hidden. Left
                 // in, an open surface drawn inside a `<label>` — a selectable
-                // row's chip is — would join the label's control's name, and a
+                // row's `Differs` label is — would join the label's control's name, and a
                 // reader would hear the sentence twice.
                 aria-hidden="true"
             >

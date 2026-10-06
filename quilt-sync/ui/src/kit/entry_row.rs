@@ -81,26 +81,29 @@
 //!
 //! # A row that differs says so twice, and explains itself on request
 //!
-//! A rule and a tint, which are both colour, and the word `Differs`, which is
-//! not: the Two Channels Rule's pair. One word, not the sentence: the resolve
-//! pane's sentence still counts the set, and the tooltip says what differs.
+//! A row can carry two states, on two independent axes. One is where the file
+//! is — downloaded, `Changed`, `Not downloaded`, `Deleted`. The other is
+//! whether the two revisions agree about it, which only resolve mode asks, and
+//! whose one answer worth drawing is `Differs`. So `Differs` is a
+//! [`StateLabel`] of its own, in the Danger tone, beside the place's label and
+//! never instead of it: a file that is deleted and differs shows both.
 //!
-//! The word is a chip and not a [`StateLabel`]. A state label says where the
-//! file is and picks its own glyph from its tone; this says the two revisions
-//! disagree, which is information about the comparison and never a state the
-//! file is in, so it is drawn in outline beside the filled label rather than as
-//! a second one. It has its own slot just before the state's, present only on a
-//! row that differs. The state's slot is fixed and right-aligned, so labels and
-//! sizes stay one column whether or not a chip precedes them, and the chips
+//! It is said in two channels. The rule and the tint are colour; the label's
+//! word and its × are not, and survive greyscale. The resolve pane's sentence
+//! counts the set, and a [`Tooltip`](super::Tooltip) says what differs.
+//!
+//! The label has its own slot just before the place's, present only on a row
+//! that differs. The place's slot is fixed and right-aligned, so labels and
+//! sizes stay one column whether or not a `Differs` precedes them, and those
 //! line up against that slot too — no row reserves anything, in or out of
 //! resolve mode, and only a marked row's name gives up the width.
 //!
-//! What it means is a [`Tooltip`](super::Tooltip): rest the pointer on the
-//! chip, or reach the row's control from the keyboard, and the sentence
-//! appears. The control names it in `aria-describedby`, beside the pane's
-//! sentence. The chip's word is real text, so a reader moving through the list
-//! hears `Differs` where a sighted reader sees it, and the pane's sentence is
-//! the legend for both — no hidden copy of the sentence is needed. An inert
+//! Rest the pointer on `Differs`, or reach the row's control from the
+//! keyboard, and the tooltip's sentence appears. The control names it in
+//! `aria-describedby`, beside the pane's sentence. The label's word is real
+//! text, so a reader moving through the list hears `Differs` where a sighted
+//! reader sees it, and both have the pane's sentence — no hidden copy of the
+//! row's sentence is needed. An inert
 //! row has no control and never gets one — a tab stop that does nothing is
 //! worse than none — so its sentence is hover-only, which is why the word has
 //! to carry the meaning without it.
@@ -236,9 +239,10 @@ pub fn EntryRow(
     /// column's width, draws nothing in it and takes no pointer.
     #[prop(optional)]
     action: Option<EntryAction>,
-    /// The two revisions disagree about this file. **Information, never a
-    /// control** — resolution happens at revision level, so there is nothing to
-    /// click here and the marking must not look like the state beside it.
+    /// The two revisions disagree about this file: a second state, on the
+    /// comparison's axis, drawn as its own `Differs` label beside the place's.
+    /// **Never a control** — resolution happens at revision level, so there is
+    /// nothing to click here.
     #[prop(optional)]
     differs: bool,
     /// The row's `[⋯]`. Empty means no menu at all rather than an empty one.
@@ -260,9 +264,9 @@ pub fn EntryRow(
         String::from(style::root)
     };
 
-    // Made here rather than by the tooltip, because the chip it hangs from and
+    // Made here rather than by the tooltip, because the label it hangs from and
     // the control that focus lands on are two elements: the control names the
-    // surface and forwards its focus, the chip is what a pointer rests on.
+    // surface and forwards its focus, the label is what a pointer rests on.
     let tip = differs.then(TooltipHandle::new);
     let differs_id = differs_id();
     // The control's description: the row's own sentence first, then the
@@ -286,7 +290,7 @@ pub fn EntryRow(
             // A fixed slot, so a size lands in the same column whether or not
             // the row above carries a label. Sizes exist to be compared, and
             // ragged ones cannot be.
-            {tip.map(chip)}
+            {tip.map(differs_label)}
             <span class=style::state>
                 {move || {
                     state.get().map(|words| view! { <StateLabel tone=tone>{words}</StateLabel> })
@@ -379,20 +383,23 @@ pub fn EntryRow(
     }
 }
 
-/// The `Differs` chip, with its tooltip.
+/// The `Differs` label, with its tooltip.
 ///
-/// Inside `main` like the state beside it, so a click on it does what a click
-/// on the state does — ticks or opens — and it is never a control of its own.
-/// The tooltip's surface is inside too, which is safe only because the surface
-/// keeps itself out of the accessibility tree: on a selectable row `main` is
-/// the `<label>`, and its words would otherwise join the checkbox's name.
-fn chip(tip: TooltipHandle) -> AnyView {
+/// Inside `main` like the place's label beside it, so a click on it does what
+/// a click on that one does — ticks or opens — and it is never a control of its
+/// own. The tooltip's surface is inside too, which is safe only because the
+/// surface keeps itself out of the accessibility tree: on a selectable row
+/// `main` is the `<label>`, and its words would otherwise join the checkbox's
+/// name.
+fn differs_label(tip: TooltipHandle) -> AnyView {
     view! {
-        <span class=style::chipslot>
+        <span class=style::compared>
             <Tooltip
                 handle=tip
                 text=DIFFERS_TITLE.to_string()
-                trigger=|_| view! { <span class=style::chip>"Differs"</span> }.into_any()
+                trigger=|_| {
+                    view! { <StateLabel tone=StateTone::Danger>"Differs"</StateLabel> }.into_any()
+                }
             />
         </span>
     }

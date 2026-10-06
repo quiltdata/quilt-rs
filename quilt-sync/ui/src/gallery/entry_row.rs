@@ -169,17 +169,18 @@ fn edges(long: RwSignal<bool>, opened: RwSignal<String>) -> AnyView {
     .into_any()
 }
 
-const DIFFERS: &str = "A row the two revisions disagree about carries a rule, a tint and the \
-                       word Differs. The rule and the tint are colour; the word is the second \
-                       channel, so the marked rows still stand out in greyscale. It is an \
-                       outline chip, not a filled state label, because it is information about \
-                       the comparison and never a state the file is in. Rest the pointer on a \
-                       chip, or Tab to a marked row's box or name, and a tooltip says what \
-                       differs; the control names that sentence. A deleted row has no control \
-                       and gets no tab stop, so its sentence is hover-only. The chip has its own \
-                       slot before the state, and only a marked row draws it: states and sizes \
-                       stay one column, and the names do not move. Resolution happens at \
-                       revision level, so nothing here is a control.";
+const DIFFERS: &str = "A row can carry two states on two axes: where the file is, and — only \
+                       in resolve mode — whether the two revisions agree about it. A row they \
+                       disagree about carries a rule, a tint and its own Differs label beside \
+                       the place's, never instead of it, so a deleted file that differs shows \
+                       both. The rule and the tint are colour; the label's word and its cross \
+                       are the second channel, so the marked rows still stand out in greyscale. \
+                       Rest the pointer on Differs, or Tab to a marked row's box or name, and a \
+                       tooltip says what differs; the control names that sentence. A deleted \
+                       row has no control and gets no tab stop, so its sentence is hover-only. \
+                       Differs has its own slot before the place's label, and only a marked row \
+                       draws it: labels and sizes stay one column, and the names do not move. \
+                       Resolution happens at revision level, so nothing here is a control.";
 
 /// Six rows, two of each shape, the first of each pair marked.
 /// One list, so alignment between marked and unmarked rows is what the cell

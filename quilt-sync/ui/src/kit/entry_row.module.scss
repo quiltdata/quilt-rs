@@ -139,40 +139,21 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The two revisions disagree about this file. A rule and a tint, and the word
- * `Differs` in a chip before the state. The rule and the tint are colour, one
- * channel; the word is the second, and survives greyscale. The tooltip on the
- * chip says what differs, for whoever asks. */
+/* The two revisions disagree about this file. A rule and a tint, and a
+ * `Differs` label before the place's. The rule and the tint are colour, one
+ * channel; the label's word and its × are the second, and survive greyscale.
+ * The tooltip on the label says what differs, for whoever asks. */
 .root.differs {
   box-shadow: inset 3px 0 0 var(--q-fgColor-danger);
   background: var(--q-bgColor-danger-muted);
 }
 
-/* The chip's slot, present only on a row that differs. Nothing is reserved on
- * the other rows: the state's slot after it is fixed and right-aligned, so the
- * labels and sizes stay one column either way and the chips line up against
- * it. Only the marked row's name gives up the width. */
-.chipslot {
+/* The `Differs` label's slot, present only on a row that differs. Nothing is
+ * reserved on the other rows: the place's slot after it is fixed and
+ * right-aligned, so the labels and sizes stay one column either way and the
+ * `Differs` labels line up against it. Only the marked row's name gives up the
+ * width. Never shrinks, as a state label never does. */
+.compared {
   flex: 0 0 auto;
   display: flex;
-}
-
-/* Information, never a state, so it must not look like the `StateLabel` beside
- * it: the same box — radius, body type, a 20px line — but drawn in outline,
- * no fill and no glyph, where a state is filled and carries its tone's
- * silhouette. The edge is the danger mark step, which is what makes it an
- * outline at all against the row's tint (the label's muted edge would vanish
- * into it). The words take the darkest step, because they sit on the tone's
- * own fill — the row's tint shows through. Never truncates, like a label. */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 var(--q-space-2);
-  border: 1px solid var(--q-fgColor-danger);
-  border-radius: var(--q-radius);
-  background: transparent;
-  color: var(--q-fgColor-danger-onMuted);
-  font-size: var(--q-text-body);
-  line-height: 20px;
-  white-space: nowrap;
 }
