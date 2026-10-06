@@ -32,6 +32,10 @@
 - Messages that say how much space was freed round sizes the same way as the rest of the app (<https://github.com/quiltdata/quilt-rs/pull/1072>)
 - The app reads its log filter from `QUILT_LOG`, the same variable and values as the `quilt` CLI, in place of `QUILTSYNC_LOG`. Crash reports never include `debug` or `trace` lines, whatever `QUILT_LOG` says (<https://github.com/quiltdata/quilt-rs/pull/1073>)
 
+### Fixed
+
+- **New design preview**: packages on a host you are signed out of, or whose sign-in expired, now show "Signed out from {host}" or "Sign-in expired on {host}" with Sign in in the main page's queue, in place of "Couldn't check for new revisions" with a Try again that could not work (<https://github.com/quiltdata/quilt-rs/pull/1076>)
+
 ### quilt-rs
 
 - Updated [from v0.42.0 to v0.42.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
