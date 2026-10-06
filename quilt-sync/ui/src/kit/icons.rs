@@ -1,14 +1,15 @@
 //! The kit's glyphs, drawn once and used by both binaries.
 //!
-//! The appbar's pair, the four the installed-package page needs, the close mark
-//! and `SplitButton`'s tick. Each is a 16-unit `viewBox` drawn in
-//! `currentColor` and hidden from assistive tech: the control that holds it
-//! carries the name.
+//! The appbar's pair, the four the installed-package page needs, the close
+//! mark, `SplitButton`'s tick and resolve mode's mark for a file that differs.
+//! Each is a 16-unit `viewBox` drawn in `currentColor` and hidden from
+//! assistive tech: the control that holds it carries the name, or, for a mark
+//! that sits beside no control, a hidden sentence does.
 //!
-//! Eleven are Octicons v19 — `gear-16`, `sync-16`, `chevron-left-16`,
+//! Twelve are Octicons v19 — `gear-16`, `sync-16`, `chevron-left-16`,
 //! `chevron-down-16`, `chevron-right-16`, `kebab-horizontal-16`, `check-16`,
-//! `cloud-16`, `cloud-offline-16`, `link-external-16` and `trash-16` — MIT
-//! License, Copyright (c) GitHub Inc. —
+//! `cloud-16`, `cloud-offline-16`, `link-external-16`, `trash-16` and
+//! `diff-16` — MIT License, Copyright (c) GitHub Inc. —
 //! <https://github.com/primer/octicons>. Filled paths rather than 1.4px strokes
 //! because at 15px a stroked gear's spokes read as a sun.
 //!
@@ -193,6 +194,21 @@ pub fn trash() -> AnyView {
     view! {
         <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
             <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z" />
+        </svg>
+    }
+    .into_any()
+}
+
+/// Two versions of one file disagree. The mark at the head of an
+/// [`EntryRow`](super::EntryRow) that differs: a plus over a minus, the shape
+/// every diff tool already uses, so it reads without a word — and it is the
+/// row's second channel, the one that survives greyscale where the stripe and
+/// the tint do not.
+#[must_use]
+pub fn diff() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+            <path d="M8.75 1.75V5H12a.75.75 0 0 1 0 1.5H8.75v3.25a.75.75 0 0 1-1.5 0V6.5H4A.75.75 0 0 1 4 5h3.25V1.75a.75.75 0 0 1 1.5 0ZM4 13h8a.75.75 0 0 1 0 1.5H4A.75.75 0 0 1 4 13Z" />
         </svg>
     }
     .into_any()

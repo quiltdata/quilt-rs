@@ -1033,7 +1033,16 @@ fn pane(p: Pane) -> AnyView {
                                                     (false, _) => LIST_RESTING,
                                                 }
                                             },
-                                            if group_sig.get() == "None" { "0" } else { "16px" },
+                                            // Zero only with no heading and no
+                                            // mark: a marked row's glyph sits in
+                                            // the gutter, so resolve mode keeps it.
+                                            if group_sig.get() == "None"
+                                                && marked.with_value(Vec::is_empty)
+                                            {
+                                                "0"
+                                            } else {
+                                                "16px"
+                                            },
                                         )
                                     }
                                 >

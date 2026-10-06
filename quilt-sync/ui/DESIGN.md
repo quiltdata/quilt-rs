@@ -659,8 +659,12 @@ the row still says everything it said.
 
 **The Platform Owns The Keyboard Rule.** Where a native element exists, wrap it
 rather than rebuild it. Native select, native radios, native checkbox. This is
-why the system ships no listbox, no combobox, and no popover, and why roving
-focus and arrow-key movement were never hand-written.
+why the system ships no listbox, no combobox, and no hand-built popover, and why
+roving focus and arrow-key movement were never hand-written. What floats is the
+platform's own `popover`: a menu or a panel that opens from its control, and a
+tooltip — which is allowed when it is the platform's popover, holds plain text
+only, and is never the only place a fact lives. A tooltip explains a mark; it is
+not one, so whatever it says is also on the page in some other form.
 
 ## Do's and Don'ts
 
@@ -701,4 +705,6 @@ focus and arrow-key movement were never hand-written.
 - **Don't** link a webfont. The desktop's own face is the correct one, including
   a light one.
 - **Don't** truncate a state label. If it overflows, the words are wrong.
-- **Don't** build a listbox, combobox, or popover. Wrap the native element.
+- **Don't** build a listbox, combobox, or popover by hand. Wrap the native
+  element. A tooltip is allowed when it is the platform's popover, holds plain
+  text only, and is never the only place a fact lives.

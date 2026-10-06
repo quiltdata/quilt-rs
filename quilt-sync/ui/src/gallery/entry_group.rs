@@ -242,7 +242,7 @@ pub fn EntryGroupStories() -> impl IntoView {
                     />
                 </EntryGroup>
             </Cell>
-            <Cell full=true label="collapsed, holding a file that differs — resolve mode marks the heading">
+            <Cell full=true label="collapsed, holding a file that differs — resolve mode marks the heading; hover the dot, or Tab to the triangle">
                 {marked_group(marked_shut)}
             </Cell>
             <Cell full=true label="every file already here — nothing to select, so no box, and the heading and every row have the check">

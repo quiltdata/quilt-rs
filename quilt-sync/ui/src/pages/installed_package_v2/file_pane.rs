@@ -717,8 +717,10 @@ fn rows_view(
     let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
     let items = group(&paths, grouping);
     // A list with no heading at all has no disclosure to align to, so the
-    // gutter the rows keep for one is zero (`EntryRow`'s module doc).
-    let headed = items.iter().any(|i| matches!(i, Item::Group { .. }));
+    // gutter the rows keep for one is zero — unless resolve mode is marking
+    // rows, when the gutter is the mark's slot and every row keeps it, so a
+    // marked name and an unmarked one start on one x (`EntryRow`'s module doc).
+    let keeps_gutter = differing.is_some() || items.iter().any(|i| matches!(i, Item::Group { .. }));
     let drawn = items
         .into_iter()
         .map(|item| match item {
@@ -804,7 +806,7 @@ fn rows_view(
     view! {
         <div
             class=style::list
-            style=format!("--q-entry-gutter:{}", if headed { "16px" } else { "0px" })
+            style=format!("--q-entry-gutter:{}", if keeps_gutter { "16px" } else { "0px" })
         >
             {drawn}
         </div>
@@ -934,7 +936,7 @@ fn group_selection(pickable: Vec<String>, picking: Picking) -> Option<GroupSelec
 }
 
 /// The toolbar's left slot, in the rows' checkbox column: the list box's
-/// `space-3` plus the gutter the rows keep for a disclosure.
+/// `space-3` plus the gutter the rows keep for a disclosure or a mark.
 ///
 /// A package with nothing left to download says so here, `All 1,090 files
 /// downloaded`, under either Keeping scope and whatever the view shows: it is
@@ -946,13 +948,13 @@ fn left_slot(
     picking: Picking,
     shown: Signal<Vec<String>>,
     narrowed: Signal<bool>,
-    headed: Signal<bool>,
+    keeps_gutter: Signal<bool>,
     counts: &EntryCounts,
 ) -> AnyView {
     let gutter = move || {
         format!(
             "--q-entry-gutter:{}",
-            if headed.get() { "16px" } else { "0px" }
+            if keeps_gutter.get() { "16px" } else { "0px" }
         )
     };
     // The package's counts, not the view's, so a facet, a search or the cap
@@ -1218,8 +1220,11 @@ fn ready(
     let here = Memo::new(move |_| {
         rows.with_value(|rs| folders_here(rs, Grouping::from_label(&grouping.get()), truncated))
     });
-    let headed = Signal::derive(move || {
-        shown.with(|rs| draws_a_heading(rs, Grouping::from_label(&grouping.get())))
+    // Whether the rows keep their gutter, which select-all has to agree with:
+    // a heading needs it for its disclosure, and resolve mode for its mark.
+    let keeps_gutter = Signal::derive(move || {
+        differing.with(Option::is_some)
+            || shown.with(|rs| draws_a_heading(rs, Grouping::from_label(&grouping.get())))
     });
 
     let body = move || {
@@ -1281,7 +1286,7 @@ fn ready(
             <div class=style::listing>
                 {toolbar(
                     grouping,
-                    left_slot(picking, shown_offered, narrowed, headed, &counts),
+                    left_slot(picking, shown_offered, narrowed, keeps_gutter, &counts),
                     Some(facets(&counts, facet).into_any()),
                 )}
                 <Card flush=true label="Files" fill=true>
@@ -3898,9 +3903,14 @@ mod marks_tests {
 
     /// Whether the folder's heading says it holds a file that differs: its
     /// disclosure names the resolve pane's sentence, and it says so in words.
+    /// One id among the description's: the disclosure names its tooltip too.
     fn heading_marked(el: &web_sys::Element) -> bool {
-        let described = disclosure(el).get_attribute("aria-describedby")
-            == Some(crate::kit::DIFFERS_ID.to_string());
+        let described = disclosure(el)
+            .get_attribute("aria-describedby")
+            .is_some_and(|ids| {
+                ids.split_whitespace()
+                    .any(|id| id == crate::kit::DIFFERS_ID)
+            });
         let says = el
             .text_content()
             .unwrap_or_default()

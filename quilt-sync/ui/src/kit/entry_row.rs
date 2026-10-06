@@ -79,6 +79,32 @@
 //! for. The value exists to keep three components honest; when there is nothing
 //! to be honest about, it is zero.
 //!
+//! **Except in resolve mode, where the gutter is the mark's slot.** A row that
+//! differs carries a glyph there, and every other row keeps the same empty
+//! column, so names start on one x whether or not their row is marked. A flat
+//! list therefore keeps `16px` while it marks rows: an indent is the price of a
+//! mark that does not shove its own name sideways. The list decides, as it
+//! decides the zero, because only the list knows it is resolving — no context
+//! and no second property, and select-all follows for free because it reads
+//! the same value.
+//!
+//! # A row that differs says so twice, and explains itself on request
+//!
+//! A rule and a tint, which are both colour, and a glyph in the gutter, which is
+//! a shape: the Two Channels Rule's pair. No word, because a highlighted row
+//! and a legend explain themselves once — the resolve pane's sentence is the
+//! legend. What the glyph means is a [`Tooltip`](super::Tooltip): hover the
+//! glyph, or reach the row's control from the keyboard, and the sentence
+//! appears. The control names it in `aria-describedby`, beside the pane's
+//! sentence, and a hidden copy of it sits in the row for a reader moving
+//! through the list. An inert row has no control and never gets one — a tab
+//! stop that does nothing is worse than none — so it is hover-only, which is
+//! exactly why the glyph has to carry the meaning without its sentence.
+//!
+//! The row itself has no `title`. It had one, and the name's own `title` (the
+//! whole path) covered most of the row and won, so the hint showed only over
+//! the gutter and the size.
+//!
 //! # The `<label>` stops before the overflow, and only a selectable row has one
 //!
 //! Clicking a selectable row toggles its box, which wants a `<label>` around the
@@ -98,6 +124,8 @@ use super::ActionMenu;
 use super::Checkbox;
 use super::MenuAction;
 use super::StateLabel;
+use super::Tooltip;
+use super::TooltipHandle;
 use super::icons;
 use super::state_label::StateTone;
 
@@ -147,8 +175,9 @@ pub enum EntryAction {
     Open(Callback<()>),
 }
 
-/// What a marked row's `title` says. One sentence, in the page's own words —
-/// no `remote`, no `diverged`, and no platform named as the other place.
+/// What a marked row's tooltip and hidden sentence say. One sentence, in the
+/// page's own words — no `remote`, no `diverged`, and no platform named as the
+/// other place.
 pub const DIFFERS_TITLE: &str =
     "Your version of this file and the published version have different contents.";
 
@@ -226,6 +255,25 @@ pub fn EntryRow(
         String::from(style::root)
     };
 
+    // Made here rather than by the tooltip, because the mark it hangs from and
+    // the control that focus lands on are two elements: the control names the
+    // surface and forwards its focus, the mark is what a pointer rests on.
+    let tip = differs.then(TooltipHandle::new);
+    let differs_id = differs_id();
+    // The control's description: the row's own sentence first, then the
+    // pane's count of the set. A list, so neither replaces the other.
+    let described = tip.map(|tip| format!("{} {differs_id}", tip.id()));
+    let focus_in = move |event: web_sys::FocusEvent| {
+        if let Some(tip) = tip {
+            tip.focus_in(&event);
+        }
+    };
+    let focus_out = move |_: web_sys::FocusEvent| {
+        if let Some(tip) = tip {
+            tip.focus_out();
+        }
+    };
+
     // The state and the size are the same in all three shapes, and building them
     // once keeps the arms about the one thing that actually differs.
     let trailing = move || {
@@ -254,12 +302,13 @@ pub fn EntryRow(
             on_toggle,
             disabled,
         })) => view! {
-            <label class=style::main>
+            <label class=style::main on:focusin=focus_in on:focusout=focus_out>
                 {gutter()}
                 <Checkbox
                     state=Signal::derive(move || selected.get().into())
                     on_toggle=move |next| on_toggle.run(next)
                     disabled=disabled
+                    aria_describedby=described.clone()
                 />
                 <span class=style::name title=full_name>{name}</span>
                 {trailing()}
@@ -270,10 +319,20 @@ pub fn EntryRow(
         // button, so Enter and Space are the platform's, and its click bubbles to
         // the row, which is the one handler.
         Some(EntryAction::Open(on_open)) => view! {
-            <div class=style::main on:click=move |_| on_open.run(())>
+            <div
+                class=style::main
+                on:click=move |_| on_open.run(())
+                on:focusin=focus_in
+                on:focusout=focus_out
+            >
                 {gutter()}
                 {nobox(have_mark)}
-                <button type="button" class=style::open title=full_name>
+                <button
+                    type="button"
+                    class=style::open
+                    title=full_name
+                    aria-describedby=described.clone()
+                >
                     {name}
                 </button>
                 {trailing()}
@@ -295,13 +354,19 @@ pub fn EntryRow(
     view! {
         <div
             class=class
-            // The whole answer is a sentence, so it is one: `title` is not
-            // keyboard-reachable and is absent on touch, which is why the pane
-            // also says it once in prose for the rows as a set.
-            title=differs.then_some(DIFFERS_TITLE)
-            aria-describedby=differs.then(differs_id)
+            // Kept on the row as well as its control: an inert row has no
+            // control, and this is the one element it has to name the pane's
+            // sentence from.
+            aria-describedby=differs.then_some(differs_id)
         >
+            {tip.map(mark)}
             {main}
+            // For a reader moving through the list rather than tabbing: the
+            // tooltip is hidden until asked for, and the glyph is a picture, so
+            // without this the row would say nothing about differing at all.
+            // Outside `main`, so it never joins a selectable row's `<label>`
+            // and with it the checkbox's name.
+            {differs.then(|| view! { <span data-sr-only>{DIFFERS_TITLE}</span> })}
             {if actions.with_untracked(Vec::is_empty) {
                 // A menu-shaped hole, for the same reason a boxless row keeps a
                 // box-shaped one: without it the sizes in a list where one row has
@@ -313,6 +378,27 @@ pub fn EntryRow(
             }}
         </div>
     }
+}
+
+/// The mark of a row that differs, with its tooltip.
+///
+/// It sits over the gutter rather than in it. The gutter is inside `main`,
+/// which on a selectable row is a `<label>` and on an openable one carries the
+/// click: a surface drawn in there would join the checkbox's name while open,
+/// and a click on its words would tick the box or open the file. So the slot is
+/// laid out by the gutter, as it always was, and the mark is positioned over it
+/// from the row — the names do not move, and nothing is added to the label.
+fn mark(tip: TooltipHandle) -> AnyView {
+    view! {
+        <span class=style::glyph>
+            <Tooltip
+                handle=tip
+                text=DIFFERS_TITLE.to_string()
+                trigger=|_| view! { <span class=style::flag>{icons::diff()}</span> }.into_any()
+            />
+        </span>
+    }
+    .into_any()
 }
 
 /// The hole a row without a box keeps, empty or holding the check.

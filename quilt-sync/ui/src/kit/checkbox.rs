@@ -69,6 +69,11 @@ pub fn Checkbox(
     #[prop(optional, into)]
     aria_label: MaybeProp<String>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
+    /// Ids of what describes the box, space-separated. For a row whose
+    /// explanation is a [`Tooltip`](super::Tooltip): the box is what focus
+    /// lands on, so it is what has to name the sentence.
+    #[prop(optional, into)]
+    aria_describedby: MaybeProp<String>,
 ) -> impl IntoView {
     let is_disabled = Signal::derive(move || disabled.get().unwrap_or(false));
 
@@ -83,6 +88,7 @@ pub fn Checkbox(
                 prop:indeterminate=move || matches!(state.get(), CheckState::Mixed)
                 disabled=move || is_disabled.get()
                 aria-label=move || aria_label.get()
+                aria-describedby=move || aria_describedby.get()
                 on:change=move |_| on_toggle(state.get().toggled())
             />
             // `data-` and not a class: the attribute survives stylance's hashing,

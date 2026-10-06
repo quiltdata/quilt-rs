@@ -3,10 +3,11 @@
 //! # A bar in the flow, not a floating toast
 //!
 //! It sits under the appbar and pushes the page down. A toast would need fixed
-//! positioning and a stacking context, and the design bans the anchored-positioning class
-//! outright — that ban is what keeps tooltip/popover/dropdown machinery out of the
-//! codebase. A bar also cannot be missed by a user who happens to be looking at the
-//! bottom of a long list, which is where a corner toast fails.
+//! positioning and a stacking context, and the design bans hand-built floating
+//! machinery — what floats is the platform's own `popover`, and only for a surface
+//! anchored to the control that summoned it (`AnchoredOverlay`, `Tooltip`). An outcome
+//! has no such control. A bar also cannot be missed by a user who happens to be looking
+//! at the bottom of a long list, which is where a corner toast fails.
 //!
 //! # Three kinds, and the type enforces it
 //!

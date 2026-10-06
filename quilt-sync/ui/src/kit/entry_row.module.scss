@@ -20,6 +20,8 @@
   min-height: var(--q-control-height);
   padding-right: var(--q-space-2);
   border-bottom: 1px solid var(--q-borderColor-muted);
+  /* What a differing row's mark is positioned against. */
+  position: relative;
 }
 
 .root:hover {
@@ -139,13 +141,49 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* The two revisions disagree about this file. A rule and a tint, no word: a
- * highlighted-rows-and-legend pattern explains itself once instead of twenty
- * times, and gives a busy row back a column.
+/* The two revisions disagree about this file. A rule, a tint and a mark, no
+ * word: a highlighted-rows-and-legend pattern explains itself once instead of
+ * twenty times, and gives a busy row back a column.
  *
- * This is one channel and the design owes it a second — the rule is a colour,
- * and so is the tint. Until that lands, `title` is the half a mouse gets free. */
+ * The rule and the tint are both colour, which is one channel. The mark below
+ * is the second — a shape, so it survives greyscale — and the tooltip it
+ * carries is what it means, for whoever asks. */
 .root.differs {
   box-shadow: inset 3px 0 0 var(--q-fgColor-danger);
   background: var(--q-bgColor-danger-muted);
+}
+
+/* The mark's slot: exactly over the gutter, which `main` lays out as it always
+ * did. Positioned from the row and not placed in `main`, because `main` is a
+ * `<label>` or carries the click, and the tooltip's words must be in neither.
+ * The gutter is the slot, so a list that marks rows keeps it even with no
+ * headings — the resolve pane holds it at 16px — and every row's name, marked or
+ * not, starts on the one x. */
+.glyph {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--q-space-3);
+  width: var(--q-entry-gutter, 16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* What the pointer rests on: the gutter's width square, not the glyph's 12px,
+ * so it can be found without aiming. The mark step, not `onMuted`: it is a
+ * glyph, which is what the brighter step is for, and the rule beside it is the
+ * same colour. */
+.flag {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--q-entry-gutter, 16px);
+  height: var(--q-entry-gutter, 16px);
+  color: var(--q-fgColor-danger);
+}
+
+.flag svg {
+  width: 12px;
+  height: 12px;
 }
