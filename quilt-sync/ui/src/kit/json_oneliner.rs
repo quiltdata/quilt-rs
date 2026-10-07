@@ -6,7 +6,9 @@
 //! key, and a nested value too long for the room left is folded to `<…N>`.
 //!
 //! The port is faithful, quirks included, and the catalog's own test cases are
-//! below, so the two cannot drift without a test saying so. Sizes are in
+//! below, so the two cannot drift without a test saying so. One departure: a
+//! string is drawn and counted in its escaped form, so a newline in a value
+//! cannot break the line it is printed on. Sizes are in
 //! characters — Unicode scalar values, where the catalog counts UTF-16 units —
 //! and the budget is an `f64` because the caller divides a width by a
 //! character's.
@@ -112,14 +114,20 @@ impl Entry {
 
 fn value_part(value: &Value) -> Part {
     match value {
-        Value::String(s) => Part {
-            kind: Kind::String,
-            value: Value::String(s.clone()).to_string(),
-            text: Some(s.clone()),
-            size: len(s) + 2.0,
-            nested: None,
-            children: 0,
-        },
+        // Drawn and counted escaped, where the catalog draws the raw text: a
+        // newline in a value must not break the one line this is.
+        Value::String(s) => {
+            let quoted = Value::String(s.clone()).to_string();
+            let escaped = quoted[1..quoted.len() - 1].to_string();
+            Part {
+                kind: Kind::String,
+                size: len(&quoted),
+                value: quoted,
+                text: Some(escaped),
+                nested: None,
+                children: 0,
+            }
+        }
         Value::Number(_) | Value::Bool(_) | Value::Null => {
             Part::new(Kind::Primitive, &value.to_string())
         }
@@ -444,6 +452,25 @@ mod tests {
             &v,
             50.0,
             r#"{ A: [ 1, <…2> ], B: "Lorem", C: { <…2> }, <…2> }"#,
+        );
+    }
+
+    /// A string with a newline stays on the line: drawn and counted in its
+    /// escaped form. The catalog draws the raw text, which breaks a folded
+    /// line under `white-space: pre`; this is the port's one departure.
+    #[test]
+    fn a_newline_in_a_string_is_drawn_escaped_and_counted_so() {
+        let p = print(&json!({"notes": "first\nsecond"}), 100.0, true);
+        let string = p
+            .parts
+            .iter()
+            .find(|p| p.kind == Kind::String)
+            .expect("the string part");
+        assert_eq!(string.text.as_deref(), Some(r"first\nsecond"));
+        check(
+            &json!({"notes": "first\nsecond"}),
+            100.0,
+            r#"{ notes: "first\nsecond" }"#,
         );
     }
 

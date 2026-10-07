@@ -19,6 +19,10 @@
 //!   leaving it is a named command, so a caller that can open a URL passes
 //!   `on_open_url` and `http(s)` values become link-styled buttons; `s3://`
 //!   values stay text.
+//! - **A folded line stays one line.** Its strings are drawn escaped — a
+//!   newline as `\n` — where the catalog draws them raw and a multi-line value
+//!   breaks the line. Opened, a string is drawn as it is, line breaks and all,
+//!   because that is where it is read.
 //! - **No deferred rendering.** The catalog defers each branch a tick behind
 //!   `Suspense`. A closed branch here draws nothing below its line, which is
 //!   the same saving with no placeholder to flash.
