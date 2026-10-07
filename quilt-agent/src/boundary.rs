@@ -60,10 +60,19 @@ fn marker_file(boundary: &Boundary, window_s: u64, obs: &Observation) -> Verdict
     };
     let (markers, data): (Vec<&Member>, Vec<&Member>) =
         obs.members.iter().partition(|m| globs.is_match(&m.path));
-    if markers.len() < boundary.markers.len() || markers.is_empty() {
+    // Every configured marker must be present, each matched by its own file.
+    let mut hit = vec![false; boundary.markers.len()];
+    for m in &markers {
+        for i in globs.matches(&m.path) {
+            hit[i] = true;
+        }
+    }
+    if !hit.iter().all(|h| *h) {
         return Verdict::Pending;
     }
-    let newest_marker = markers.iter().map(|m| m.mtime).max().expect("non-empty");
+    let Some(newest_marker) = markers.iter().map(|m| m.mtime).max() else {
+        return Verdict::Pending;
+    };
 
     // UNK-32: a member written after the marker means the instrument was not
     // done when it wrote the marker (the MinKNOW case). Re-arm instead of
@@ -195,6 +204,22 @@ mod tests {
             decide_at(&marker_boundary(), 120, &m, 0, 10_000),
             Verdict::Pending
         );
+    }
+
+    /// Two files matching one marker pattern do not stand in for a second one.
+    #[test]
+    fn every_marker_pattern_must_match() {
+        let b = Boundary {
+            markers: vec!["done.txt".to_string(), "final.xml".to_string()],
+            ..marker_boundary()
+        };
+        let m = [member("done.txt", 0), member("sub/done.txt", 0)];
+        assert_eq!(decide_at(&b, 0, &m, 0, 10_000), Verdict::Pending);
+        let m = [member("done.txt", 0), member("final.xml", 0)];
+        assert!(matches!(
+            decide_at(&b, 0, &m, 0, 10_000),
+            Verdict::Complete { .. }
+        ));
     }
 
     #[test]

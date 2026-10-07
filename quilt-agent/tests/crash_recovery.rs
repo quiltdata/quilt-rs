@@ -58,8 +58,12 @@ impl Remote for Flaky {
         }
         self.inner.put_object_if(h, u, c, cond).await
     }
-    async fn get_object_etag(&self, h: Option<&Host>, u: &S3Uri) -> Res<Option<String>> {
-        self.inner.get_object_etag(h, u).await
+    async fn get_object_with_etag(
+        &self,
+        h: Option<&Host>,
+        u: &S3Uri,
+    ) -> Res<Option<(String, Vec<u8>)>> {
+        self.inner.get_object_with_etag(h, u).await
     }
     async fn upload_file(
         &self,
@@ -194,5 +198,176 @@ async fn interrupted_run_lands_exactly_once() -> Result<(), Box<dyn std::error::
         journal.contains(&latest),
         "the landed hash is the one latest names"
     );
+    Ok(())
+}
+
+/// Rewrite the journal keeping only the lines `keep` accepts.
+fn keep_journal_lines(journal: &Path, keep: impl Fn(&str) -> bool) -> std::io::Result<()> {
+    let text = std::fs::read_to_string(journal)?;
+    let mut kept = String::new();
+    for line in text.lines().filter(|l| keep(l)) {
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    std::fs::write(journal, kept)
+}
+
+fn landed_events(spool_dir: &Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(spool_dir.join("journal.jsonl"))
+        .expect("journal")
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|e| e["event"] == "landed")
+        .collect()
+}
+
+/// A crash after the revision is pushed but before `Landed` is journalled
+/// replays the push. The replay must not add a second history entry.
+#[tokio::test]
+async fn replayed_publish_adds_no_second_history_entry() -> Result<(), Box<dyn std::error::Error>> {
+    let source = tempfile::tempdir()?;
+    let spool_dir = tempfile::tempdir()?;
+    let run = source.path().join("plate");
+    std::fs::create_dir(&run)?;
+    std::fs::write(run.join("a.fcs"), b"aaaa")?;
+    std::fs::write(run.join("done.txt"), b"")?;
+    let later = SystemTime::now() + Duration::from_secs(3600);
+    let remote = Flaky {
+        inner: MockRemote::default(),
+        fail_seal: AtomicBool::new(false),
+    };
+    let mut agent = Agent::new(
+        profile(source.path()),
+        remote,
+        Spool::open(spool_dir.path())?,
+        None,
+    );
+    agent.pass(SystemTime::now()).await?;
+    agent.pass(later).await?;
+    assert_eq!(landed_events(spool_dir.path()).len(), 1);
+
+    // Forget the Landed line, as if the process died right after the push.
+    let journal = spool_dir.path().join("journal.jsonl");
+    keep_journal_lines(&journal, |l| !l.contains(r#""event":"landed""#))?;
+    // History tags have one-second resolution; replay in a later second so a
+    // clock-based timestamp would land on a new tag.
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let Agent { remote, .. } = agent;
+    let mut agent = Agent::new(
+        profile(source.path()),
+        remote,
+        Spool::open(spool_dir.path())?,
+        None,
+    );
+    agent.pass(later).await?;
+
+    let host: Host = "example.quiltdata.com".parse()?;
+    let ns: Namespace = ("reader-1", "plate").into();
+    let history = agent
+        .remote
+        .inner
+        .published_revisions(&host, "raw", &ns)
+        .await?;
+    assert_eq!(
+        history.len(),
+        1,
+        "one history entry after a replay: {history:?}"
+    );
+    Ok(())
+}
+
+/// A second run that lands in the same package moves latest past the
+/// agent's own first revision.
+#[tokio::test]
+async fn a_later_run_of_the_same_package_advances_latest() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = tempfile::tempdir()?;
+    let spool_dir = tempfile::tempdir()?;
+    let later = SystemTime::now() + Duration::from_secs(3600);
+    let remote = Flaky {
+        inner: MockRemote::default(),
+        fail_seal: AtomicBool::new(false),
+    };
+    let mut agent = Agent::new(
+        profile(source.path()),
+        remote,
+        Spool::open(spool_dir.path())?,
+        None,
+    );
+    for (i, t) in [(1u8, later), (2, later + Duration::from_secs(3600))] {
+        // Same folder name, so the same package; a new folder each time.
+        let run = source.path().join("plate");
+        let _ = std::fs::remove_dir_all(&run);
+        std::fs::create_dir(&run)?;
+        std::fs::write(run.join("a.fcs"), vec![i; 4])?;
+        std::fs::write(run.join("done.txt"), b"")?;
+        // Clear the snapshot so the reused folder is observed afresh.
+        let journal = spool_dir.path().join("journal.jsonl");
+        if i == 2 {
+            keep_journal_lines(&journal, |l| l.contains(r#""event":"landed""#))?;
+            let Agent { remote, .. } = agent;
+            agent = Agent::new(
+                profile(source.path()),
+                remote,
+                Spool::open(spool_dir.path())?,
+                None,
+            );
+        }
+        agent.pass(t - Duration::from_secs(3600)).await?;
+        agent.pass(t).await?;
+    }
+    let landed = landed_events(spool_dir.path());
+    assert_eq!(landed.len(), 2);
+    assert_eq!(landed[1]["latest_advanced"], true);
+    let latest = read(&agent.remote, ".quilt/named_packages/reader-1/plate/latest").await;
+    assert_eq!(latest, landed[1]["top_hash"].as_str().unwrap());
+    Ok(())
+}
+
+/// An over-cap run is refused once, not on every pass.
+#[tokio::test]
+async fn an_over_cap_run_is_refused_once() -> Result<(), Box<dyn std::error::Error>> {
+    let source = tempfile::tempdir()?;
+    let spool_dir = tempfile::tempdir()?;
+    let run = source.path().join("huge");
+    std::fs::create_dir(&run)?;
+    std::fs::write(run.join("a.raw"), vec![0u8; 2 * 1024 * 1024])?;
+    std::fs::write(run.join("done.txt"), b"")?;
+    let yaml = format!(
+        r#"
+schema_version: "1"
+observer: {{ id: edge-01, placement: beside }}
+registry: {{ url: "https://example.quiltdata.com", credential_ref: k }}
+spool: {{ max_bytes: 1048576 }}
+instruments:
+  - id: reader-1
+    source: {{ path: "{}" }}
+    landing: {{ bucket: raw, prefix: lab }}
+    boundary: {{ method: marker_file, markers: ["done.txt"], confirm_window_s: 60 }}
+"#,
+        source.path().display()
+    );
+    let remote = Flaky {
+        inner: MockRemote::default(),
+        fail_seal: AtomicBool::new(false),
+    };
+    let mut agent = Agent::new(
+        Profile::parse(&yaml)?,
+        remote,
+        Spool::open(spool_dir.path())?,
+        None,
+    );
+    // Each round waits out the confirm window, so a folder the spool forgot
+    // would be decided — and refused — again.
+    let start = SystemTime::now();
+    for n in 0..4 {
+        agent.pass(start + Duration::from_secs(n * 3600)).await?;
+        agent
+            .pass(start + Duration::from_secs(n * 3600 + 120))
+            .await?;
+    }
+    let journal = std::fs::read_to_string(spool_dir.path().join("journal.jsonl"))?;
+    assert_eq!(journal.matches(r#""event":"refused""#).count(), 1);
+    assert_eq!(landed_events(spool_dir.path()).len(), 0);
     Ok(())
 }

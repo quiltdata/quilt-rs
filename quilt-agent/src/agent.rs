@@ -45,6 +45,8 @@ pub struct Agent<R> {
     /// `None` publishes on ambient AWS credentials (bucket-only mode).
     pub host: Option<Host>,
     tracked: BTreeMap<PathBuf, Tracked>,
+    /// (folder, member count) already warned about, so a warning fires per change.
+    late: std::collections::BTreeSet<(PathBuf, usize)>,
 }
 
 impl<R: Remote + Sync> Agent<R> {
@@ -55,6 +57,7 @@ impl<R: Remote + Sync> Agent<R> {
             spool,
             host,
             tracked: BTreeMap::new(),
+            late: std::collections::BTreeSet::new(),
         }
     }
 
@@ -94,7 +97,19 @@ impl<R: Remote + Sync> Agent<R> {
         let known = self.spool.known_folders()?;
         let ignore = watch::glob_set(&instrument.source.ignore)?;
         for folder in watch::run_folders(&instrument.source)? {
-            if known.contains(&folder) {
+            if let Some(snapshotted) = known.get(&folder) {
+                // D-13: a file that appears after the boundary is a new
+                // observation, never a late member. Say so loudly, once per
+                // change, instead of dropping it silently.
+                let now_count = watch::members(&folder, &ignore)?.len();
+                if now_count > *snapshotted && self.late.insert((folder.clone(), now_count)) {
+                    tracing::warn!(
+                        folder = %folder.display(),
+                        snapshotted,
+                        now = now_count,
+                        "files appeared after this run was captured; they are not in its revision"
+                    );
+                }
                 continue;
             }
             let members = watch::members(&folder, &ignore)?;
@@ -148,23 +163,14 @@ impl<R: Remote + Sync> Agent<R> {
             now_utc.format("%Y%m%dT%H%M%SZ"),
             &uuid.simple().to_string()[..8]
         );
-        let total_bytes = tracked.members.iter().map(|m| m.size).sum();
-        if total_bytes > self.profile.spool.max_bytes {
-            // ponytail: staging is off, so the cap only guards against a run the
-            // operator has said is too big; staged copies come with stage_copy.
-            self.spool.record(&Event::Refused {
-                run_id,
-                reason: format!("over_cap: {total_bytes} bytes > spool.max_bytes"),
-            })?;
-            return Ok(());
-        }
+        let total_bytes: u64 = tracked.members.iter().map(|m| m.size).sum();
         let b = &instrument.boundary;
         let params = match b.method {
             Method::SizeStable => json!({ "stable_for_s": instrument.quiet_window_s() }),
             _ => json!({ "markers": b.markers, "confirm_window_s": instrument.quiet_window_s() }),
         };
         self.spool.record(&Event::Snapshot {
-            run_id,
+            run_id: run_id.clone(),
             instrument_id: instrument.id.clone(),
             folder: folder.to_path_buf(),
             sentinel_id: uuid.to_string(),
@@ -188,6 +194,14 @@ impl<R: Remote + Sync> Agent<R> {
                 })
                 .collect(),
         })?;
+        // Recorded after the snapshot, so the folder is known and is refused
+        // once, not again on every pass.
+        if total_bytes > self.profile.spool.max_bytes {
+            self.spool.record(&Event::Refused {
+                run_id,
+                reason: format!("over_cap: {total_bytes} bytes > spool.max_bytes"),
+            })?;
+        }
         Ok(())
     }
 
@@ -352,14 +366,24 @@ impl<R: Remote + Sync> Agent<R> {
         };
         // A fresh revision per run (DEC-23); latest moves only if nobody else
         // has moved it (DEC-18). Re-running after a crash yields the same hash.
+        // The parent is this agent's last revision of the same package, so a
+        // later run moves latest past it; anyone else's latest is left alone.
+        let parent = self
+            .spool
+            .last_landed(&bucket_package_key(bucket, &revision.package_name))?;
+        // A time fixed by the run, not the clock, so a replay after a crash
+        // rewrites the same history entry instead of adding a second one.
+        let timestamp = DateTime::parse_from_rfc3339(&sentinel.snapshot_time_utc)
+            .map_err(|e| Error::Refused(format!("sentinel snapshot time: {e}")))?
+            .with_timezone(&Utc);
         let pushed = flow::push_revision(
             &LocalStorage::default(),
             &self.remote,
             self.host.as_ref(),
             &package,
             revision.manifest,
-            None,
-            Utc::now(),
+            parent.as_deref(),
+            timestamp,
         )
         .await?;
         tracing::info!(
@@ -371,7 +395,7 @@ impl<R: Remote + Sync> Agent<R> {
         );
         self.spool.record(&Event::Landed {
             run_id: run_id.to_string(),
-            package_name: revision.package_name,
+            package_name: bucket_package_key(bucket, &revision.package_name),
             top_hash: pushed.top_hash,
             latest_advanced: pushed.latest_advanced,
         })?;
@@ -453,6 +477,11 @@ fn instrument_json(i: &Instrument) -> serde_json::Value {
         }
     }
     v
+}
+
+/// The journal's key for a package: the same name in two buckets is two packages.
+fn bucket_package_key(bucket: &str, package_name: &str) -> String {
+    format!("{bucket}:{package_name}")
 }
 
 fn s3(bucket: &str, key: &str) -> S3Uri {

@@ -93,6 +93,8 @@ pub struct Run {
     pub snapshot: Event,
     pub verified: BTreeMap<String, FileEntry>,
     pub sealed: Option<(String, Option<String>)>,
+    /// Journal line of the `Sealed` event, for ordering the chain by seal time.
+    pub sealed_at_line: usize,
     pub state: RunState,
 }
 
@@ -105,10 +107,20 @@ pub struct Spool {
 impl Spool {
     pub fn open(root: &Path) -> Result<Self, Error> {
         std::fs::create_dir_all(root)?;
-        let journal = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(root.join("journal.jsonl"))?;
+        let path = root.join("journal.jsonl");
+        // A kill mid-write leaves a line with no newline. Cut it off before
+        // appending, or the next event is glued to it and lost on every read.
+        if let Ok(bytes) = std::fs::read(&path)
+            && let Some(last) = bytes.last()
+            && *last != b'\n'
+        {
+            let keep = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+            OpenOptions::new()
+                .write(true)
+                .open(&path)?
+                .set_len(keep as u64)?;
+        }
+        let journal = OpenOptions::new().create(true).append(true).open(&path)?;
         Ok(Spool {
             root: root.to_path_buf(),
             journal,
@@ -129,7 +141,7 @@ impl Spool {
     pub fn runs(&self) -> Result<BTreeMap<String, Run>, Error> {
         let file = File::open(self.root.join("journal.jsonl"))?;
         let mut runs: BTreeMap<String, Run> = BTreeMap::new();
-        for line in BufReader::new(file).lines() {
+        for (line_no, line) in BufReader::new(file).lines().enumerate() {
             let line = line?;
             let Ok(event) = serde_json::from_str::<Event>(&line) else {
                 tracing::warn!("skipping unreadable journal line");
@@ -144,6 +156,7 @@ impl Spool {
                             snapshot: event,
                             verified: BTreeMap::new(),
                             sealed: None,
+                            sealed_at_line: 0,
                             state: RunState::Uploading,
                         },
                     );
@@ -160,6 +173,7 @@ impl Spool {
                 } => {
                     if let Some(run) = runs.get_mut(&id) {
                         run.sealed = Some((sentinel_key, previous_sentinel_id));
+                        run.sealed_at_line = line_no;
                         run.state = RunState::Sealed;
                     }
                 }
@@ -182,6 +196,8 @@ impl Spool {
     }
 
     /// The last sentinel sealed for `instrument_id`, for the chain (INV-7).
+    /// Ordered by when it was sealed, not when its run began: a run that
+    /// retried for hours and sealed late is still the newest link.
     pub fn previous_sentinel(&self, instrument_id: &str) -> Result<Option<String>, Error> {
         let runs = self.runs()?;
         Ok(runs
@@ -191,22 +207,42 @@ impl Spool {
                 Event::Snapshot {
                     instrument_id: i,
                     sentinel_id,
-                    snapshot_time_utc,
                     ..
-                } if i == instrument_id => Some((snapshot_time_utc.clone(), sentinel_id.clone())),
+                } if i == instrument_id => Some((r.sealed_at_line, sentinel_id.clone())),
                 _ => None,
             })
             .max()
             .map(|(_, id)| id))
     }
 
-    /// Folders already observed, so a scan does not snapshot a run twice.
-    pub fn known_folders(&self) -> Result<Vec<PathBuf>, Error> {
+    /// The top hash this agent last landed for `package` (`bucket:name`).
+    pub fn last_landed(&self, package: &str) -> Result<Option<String>, Error> {
+        let file = File::open(self.root.join("journal.jsonl"))?;
+        let mut last = None;
+        for line in BufReader::new(file).lines() {
+            if let Ok(Event::Landed {
+                package_name,
+                top_hash,
+                ..
+            }) = serde_json::from_str(&line?)
+                && package_name == package
+            {
+                last = Some(top_hash);
+            }
+        }
+        Ok(last)
+    }
+
+    /// Folders already observed, with how many members their snapshot froze,
+    /// so a scan neither snapshots a run twice nor misses files added after.
+    pub fn known_folders(&self) -> Result<BTreeMap<PathBuf, usize>, Error> {
         Ok(self
             .runs()?
             .values()
             .filter_map(|r| match &r.snapshot {
-                Event::Snapshot { folder, .. } => Some(folder.clone()),
+                Event::Snapshot {
+                    folder, members, ..
+                } => Some((folder.clone(), members.len())),
                 _ => None,
             })
             .collect())
@@ -279,8 +315,38 @@ mod tests {
             .append(true)
             .open(dir.path().join("journal.jsonl"))?;
         f.write_all(br#"{"event":"sealed","run_id":"r1","sentinel_ke"#)?;
-        let spool = Spool::open(dir.path())?;
+        let mut spool = Spool::open(dir.path())?;
         assert_eq!(spool.runs()?["r1"].state, RunState::Uploading);
+        // The first event after reopening is not glued to the torn line.
+        spool.record(&Event::Landed {
+            run_id: "r1".into(),
+            package_name: "a/b".into(),
+            top_hash: "h".into(),
+            latest_advanced: true,
+        })?;
+        assert_eq!(spool.runs()?["r1"].state, RunState::Landed);
+        Ok(())
+    }
+
+    /// A run that seals after a newer run is the newest link; the chain
+    /// must not fork back to the run that started later.
+    #[test]
+    fn chain_follows_seal_order_not_start_order() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let mut spool = Spool::open(dir.path())?;
+        spool.record(&snapshot("old", "i", "2026-10-07T00:00:00Z"))?;
+        spool.record(&snapshot("new", "i", "2026-10-07T01:00:00Z"))?;
+        for run in ["new", "old"] {
+            spool.record(&Event::Sealed {
+                run_id: run.into(),
+                sentinel_key: "k".into(),
+                previous_sentinel_id: None,
+            })?;
+        }
+        assert_eq!(
+            spool.previous_sentinel("i")?.as_deref(),
+            Some("sentinel-old")
+        );
         Ok(())
     }
 

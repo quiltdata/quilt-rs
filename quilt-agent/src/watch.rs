@@ -68,7 +68,10 @@ pub fn members(folder: &Path, ignore: &GlobSet) -> Result<Vec<Member>, Error> {
             if ignore.is_match(&rel) || rel.file_name().is_some_and(|n| ignore.is_match(n)) {
                 continue;
             }
-            let meta = entry.metadata()?;
+            // `fs::metadata`, not `DirEntry::metadata`: on Windows the latter
+            // comes from the directory listing, which lags a file still open
+            // for writing.
+            let meta = std::fs::metadata(&path)?;
             out.insert(
                 rel.clone(),
                 Member {
