@@ -1,47 +1,33 @@
-//! A JSON value printed on one line within a character budget.
+//! A port of the catalog's `JSONOneliner`: a JSON value on one line within a
+//! character budget, the rest counted as `<…N>` — `{ A: 1, B: true, C, <…2> }`.
 //!
-//! A port of the catalog's `utils/JSONOneliner.ts`, so a value folded here reads
-//! as it does in the catalog: `{ A: 1, B: true, C, <…2> }`. What does not fit is
-//! dropped from the end and counted: a key whose value is too long keeps its
-//! key, and a nested value too long for the room left is folded to `<…N>`.
-//!
-//! The port is faithful, quirks included, and the catalog's own test cases are
-//! below, so the two cannot drift without a test saying so. One departure: a
-//! string is drawn and counted in its escaped form, so a newline in a value
-//! cannot break the line it is printed on. Sizes are in
-//! characters — Unicode scalar values, where the catalog counts UTF-16 units —
-//! and the budget is an `f64` because the caller divides a width by a
-//! character's.
+//! Faithful, quirks included; the catalog's test cases are below. One
+//! departure: strings are drawn and counted escaped, so a newline cannot break
+//! the line. Sizes count Unicode scalar values, not UTF-16 units.
 
 use serde_json::Value;
 
-/// What a part is, which decides how it is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
     Brace,
-    /// `: ` between a key and its value.
     Equal,
     Key,
-    /// A nested array or object, expanded or folded by the second pass.
+    /// A nested value, for the second pass.
     Object,
-    /// A number, a boolean or `null`.
     Primitive,
     Separator,
     String,
-    /// `<…N>`: how many entries were left out.
     More,
 }
 
-/// One printed part.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Part {
     pub kind: Kind,
-    /// The text, as printed. A string's is its JSON form, quotes included.
+    /// As printed; a string's includes its quotes.
     pub value: String,
-    /// A string's own text, without quotes or escapes, for drawing it.
+    /// A string's escaped text without quotes, for drawing it.
     pub text: Option<String>,
     size: f64,
-    /// A nested value, for the second pass.
     nested: Option<Value>,
     children: usize,
 }
@@ -59,7 +45,6 @@ impl Part {
     }
 }
 
-/// A line, and the budget it left.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Printed {
     pub parts: Vec<Part>,
@@ -92,7 +77,6 @@ fn braces(array: bool) -> (Part, Part) {
     }
 }
 
-/// An entry of the first level: a lone part, or a key with its value.
 enum Entry {
     Part(Part),
     Group { elements: Vec<Part>, size: f64 },
@@ -114,8 +98,7 @@ impl Entry {
 
 fn value_part(value: &Value) -> Part {
     match value {
-        // Drawn and counted escaped, where the catalog draws the raw text: a
-        // newline in a value must not break the one line this is.
+        // Escaped, unlike the catalog, so a newline cannot break the line.
         Value::String(s) => {
             let quoted = Value::String(s.clone()).to_string();
             let escaped = quoted[1..quoted.len() - 1].to_string();
@@ -210,8 +193,7 @@ fn rest_size(entries: &[Entry], index: usize) -> f64 {
         .sum()
 }
 
-/// The catalog counts the entry at `index` twice — its whole size and its
-/// first element's — and the port keeps it, or its outputs would differ.
+/// Counts the entry at `index` twice, as the catalog does.
 fn enough_for_rest(entries: &[Entry], index: usize, available: f64) -> bool {
     available - (entries[index].size() + rest_size(entries, index)) > 0.0
 }
@@ -258,9 +240,8 @@ fn fold_second_level(mut line: Printed, part: &Part) -> Printed {
     line
 }
 
-/// Print an array or an object on one line within `available` characters.
-///
-/// Anything else prints as an empty line: a scalar has nothing to fold.
+/// Print an array or object within `available` characters; a scalar prints
+/// nothing.
 #[must_use]
 pub fn print(value: &Value, available: f64, show_values: bool) -> Printed {
     let entries = entries(value, show_values);
@@ -455,9 +436,7 @@ mod tests {
         );
     }
 
-    /// A string with a newline stays on the line: drawn and counted in its
-    /// escaped form. The catalog draws the raw text, which breaks a folded
-    /// line under `white-space: pre`; this is the port's one departure.
+    /// The port's one departure from the catalog.
     #[test]
     fn a_newline_in_a_string_is_drawn_escaped_and_counted_so() {
         let p = print(&json!({"notes": "first\nsecond"}), 100.0, true);

@@ -1,11 +1,4 @@
-/*
- * JsonDisplay. A JSON value in the mono face, one line per entry, branches
- * folded to a line until opened.
- *
- * Sized in `ch`, and the Rust side reads the same two numbers (`ICON_CH`,
- * `INDENT_CH`): the folded line's room is the root's width in characters less
- * these, so a change here is a change there.
- */
+/* Sized in `ch`; `ICON_CH` and `INDENT_CH` in the Rust side must match. */
 
 .root {
   position: relative;
@@ -18,8 +11,6 @@
   white-space: pre;
 }
 
-/* Ten characters, unseen and out of the flow, measured to turn a width into a
- * count of characters. */
 .probe {
   position: absolute;
   visibility: hidden;
@@ -30,8 +21,7 @@
   display: flex;
 }
 
-/* A branch's line is its control: a native button, reset to read as a line of
- * text. The focus ring is the platform's. */
+/* A native button, reset to read as a line of text. */
 .toggle {
   display: flex;
   width: 100%;
@@ -49,7 +39,6 @@
   background: var(--q-overlay-hover);
 }
 
-/* The chevron's slot, kept on every line below the top so keys line up. */
 .icon {
   display: inline-flex;
   flex: none;
@@ -68,8 +57,7 @@
   padding-left: 2ch;
 }
 
-/* Two text levels: what the data says is default, the punctuation around it
- * is muted. The catalog's three opacity steps would be a third level. */
+/* Data default, punctuation muted: the kit's two text levels. */
 .key,
 .value {
   color: var(--q-fgColor-default);
@@ -79,13 +67,10 @@
   color: var(--q-fgColor-muted);
 }
 
-/* A folded line never wraps: the printer fitted it to the room. */
 .folded {
   overflow: hidden;
 }
 
-/* An `http(s)` value the caller can open. A button, because opening it is a
- * command the caller runs, drawn as a link because that is what it reads as. */
 .link {
   padding: 0;
   border: 0;

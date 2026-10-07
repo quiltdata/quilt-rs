@@ -1,34 +1,10 @@
-//! A JSON value as a tree you can fold: each array and object is one line
-//! until it is opened, and that line says as much of it as fits.
+//! A port of the catalog's `JsonDisplay`: a JSON tree where each array and
+//! object is one line, fitted by [`json_oneliner::print`], until opened.
 //!
-//! A port of the catalog's `JsonDisplay`, so metadata reads the same in the
-//! app as on the web. The folded line is [`json_oneliner::print`], the
-//! catalog's own algorithm, given the width the line has.
-//!
-//! # What changed in the port
-//!
-//! - **A native button opens a branch.** The catalog's rows are clickable
-//!   `div`s, which no keyboard reaches. Here the row is a `<button>` with
-//!   `aria-expanded`, per the Platform Owns The Keyboard Rule, and the
-//!   closing brace is text, not a second toggle.
-//! - **Two text levels.** The catalog fades values, separators and braces by
-//!   opacity, three steps deep. The kit has default and muted only, so keys
-//!   and values are default and the punctuation is muted.
-//! - **No links of its own.** The catalog links `s3://` values to its bucket
-//!   view and `http(s)` values to a new tab. The app has no bucket view, and
-//!   leaving it is a named command, so a caller that can open a URL passes
-//!   `on_open_url` and `http(s)` values become link-styled buttons; `s3://`
-//!   values stay text.
-//! - **A folded line stays one line.** Its strings are drawn escaped — a
-//!   newline as `\n` — where the catalog draws them raw and a multi-line value
-//!   breaks the line. Opened, a string is drawn as it is, line breaks and all,
-//!   because that is where it is read.
-//! - **No deferred rendering.** The catalog defers each branch a tick behind
-//!   `Suspense`. A closed branch here draws nothing below its line, which is
-//!   the same saving with no placeholder to flash.
-//! - **The budget is measured in the face's own `ch`**, not a constant pixel
-//!   width per character, and the indent and the chevron are each `2ch`, so
-//!   the arithmetic that sizes a nested line is exact rather than estimated.
+//! Differences from the catalog: a branch opens on a native `<button>`; two
+//! text levels instead of opacity steps; URLs open only through
+//! `on_open_url`; folded strings are drawn escaped so the line stays one line;
+//! closed branches draw nothing; the budget is measured in the face's `ch`.
 
 use leptos::prelude::*;
 use serde_json::Value;
@@ -40,21 +16,17 @@ use super::json_oneliner::{self, Kind, Part};
 
 stylance::import_crate_style!(style, "src/kit/json_display.module.scss");
 
-/// The chevron's slot and one level's indent, in `ch`. The stylesheet uses
-/// the same two numbers.
+/// In `ch`; the stylesheet uses the same numbers.
 const ICON_CH: f64 = 2.0;
 const INDENT_CH: f64 = 2.0;
-/// Room the catalog keeps beside a folded line: a separator, a `<…N>`, and
-/// the braces' spaces.
+/// The catalog's reserve: a separator, a `<…N>`, and the braces' spaces.
 const RESERVED_CH: f64 = 2.0 + 4.0 + 4.0;
 
 /// How many levels start open.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Expanded {
-    /// Everything folded to its line.
     #[default]
     None,
-    /// The first `n` levels open.
     Levels(usize),
     All,
 }
@@ -75,10 +47,9 @@ impl Expanded {
     }
 }
 
-/// What every entry of one tree shares.
 #[derive(Clone, Copy)]
 struct Ctx {
-    /// The line's room, in characters, at the top level.
+    /// The top line's room, in characters.
     budget: Signal<f64>,
     show_values: bool,
     on_open_url: Option<Callback<String>>,
@@ -91,21 +62,15 @@ struct Ctx {
 )]
 pub fn JsonDisplay(
     value: Value,
-    /// A name for the top-level value, drawn as its key.
-    #[prop(optional, into)]
-    name: Option<String>,
+    #[prop(optional, into)] name: Option<String>,
     #[prop(optional)] expanded: Expanded,
-    /// Show values on a folded line, not just keys. Arrays always show theirs:
-    /// an array has no keys to show instead.
+    /// Values on a folded line, not just keys. Arrays always show theirs.
     #[prop(optional, default = true)]
     show_values: bool,
-    /// The line's room in characters, instead of the width measured. For a
-    /// caller that already knows it, and for tests, which have no layout.
+    /// A fixed room in characters instead of the measured width.
     #[prop(optional)]
     chars: Option<f64>,
-    /// Opens an `http(s)` value. Absent, URLs are text.
-    #[prop(optional)]
-    on_open_url: Option<Callback<String>>,
+    #[prop(optional)] on_open_url: Option<Callback<String>>,
 ) -> impl IntoView {
     let root: NodeRef<leptos::html::Div> = NodeRef::new();
     let probe: NodeRef<leptos::html::Span> = NodeRef::new();
@@ -122,8 +87,7 @@ pub fn JsonDisplay(
 
     view! {
         <div class=style::root node_ref=root>
-            // Ten characters of the face, unseen, so a `ch` can be read in
-            // pixels and the width turned into a count of characters.
+            // Measured to turn the width into characters.
             <span class=style::probe node_ref=probe aria-hidden="true">
                 "0000000000"
             </span>
@@ -132,10 +96,9 @@ pub fn JsonDisplay(
     }
 }
 
-/// A resize observer and the callback it calls, which must outlive it.
 type Observing = (web_sys::ResizeObserver, Closure<dyn FnMut()>);
 
-/// Watch the root's width and keep `out` at the characters it holds.
+/// Keep `out` at the number of characters the root's width holds.
 fn measure(
     root: NodeRef<leptos::html::Div>,
     probe: NodeRef<leptos::html::Span>,
@@ -150,8 +113,6 @@ fn measure(
             out.set(f64::from(root.client_width()) / ch);
         }
     };
-    // The observer and its callback, held for as long as the tree is drawn and
-    // let go together when it is not.
     let held: StoredValue<Option<Observing>, LocalStorage> = StoredValue::new_local(None);
     root.on_load(move |el| {
         update();
@@ -170,9 +131,7 @@ fn measure(
     });
 }
 
-/// One entry: a scalar's line, or an array's or object's folding branch.
-///
-/// `indent` is how many characters this entry starts in from the root.
+/// `indent` is in characters from the root.
 fn entry(
     ctx: Ctx,
     name: Option<&str>,
@@ -241,8 +200,7 @@ fn scalar(ctx: Ctx, value: &Value) -> AnyView {
 
 fn branch(ctx: Ctx, name: Option<&str>, value: Value, expanded: Expanded, indent: f64) -> AnyView {
     let array = value.is_array();
-    // An array's entries are keyed by index once open, as the catalog's are:
-    // `Object.entries` on an array gives `0`, `1`, ….
+    // Arrays are keyed by index once open, as in the catalog.
     let children: Vec<(Option<String>, Value)> = match &value {
         Value::Array(items) => items
             .iter()
@@ -259,8 +217,6 @@ fn branch(ctx: Ctx, name: Option<&str>, value: Value, expanded: Expanded, indent
     let empty = children.is_empty();
     let open = RwSignal::new(!empty && expanded.open());
 
-    // The room the folded line has: the root's, less this entry's indent, its
-    // chevron, its key, and what the catalog keeps in reserve.
     #[allow(clippy::cast_precision_loss, reason = "a key's length in characters")]
     let key_ch = name.map_or(0.0, |n| n.chars().count() as f64 + 2.0);
     let budget = ctx.budget;
@@ -288,7 +244,6 @@ fn branch(ctx: Ctx, name: Option<&str>, value: Value, expanded: Expanded, indent
     };
 
     let line = if empty {
-        // Nothing to open: a line, not a control.
         view! { <div class=style::line>{head}</div> }.into_any()
     } else {
         view! {
@@ -330,8 +285,7 @@ fn branch(ctx: Ctx, name: Option<&str>, value: Value, expanded: Expanded, indent
     .into_any()
 }
 
-/// A folded line's parts, each in its class. Spaces doubled where two braces
-/// meet — `[  ]` — are collapsed, as the catalog does.
+/// A folded line's parts. `[  ]` collapses to `[]`, as in the catalog.
 fn folded_line(parts: &[Part]) -> impl IntoView + use<> {
     let brace_trimmed = |i: usize, part: &Part| -> String {
         let prev = i.checked_sub(1).and_then(|j| parts.get(j));
@@ -388,8 +342,7 @@ mod tests {
         el.text_content().unwrap_or_default()
     }
 
-    /// The drawn line is the printer's, with the catalog's brace trimming. At
-    /// 62 wide the printer has 50, the catalog test's own budget.
+    /// At 62 wide the printer has 50, a catalog test's budget.
     #[wasm_bindgen_test]
     fn a_folded_line_reads_as_the_catalog_prints_it() {
         let el = mount(|| {
@@ -417,7 +370,6 @@ mod tests {
         );
     }
 
-    /// A branch opens on its button, and only then draws what is inside it.
     #[wasm_bindgen_test]
     async fn the_button_opens_the_branch() {
         let el = mount(|| view! { <JsonDisplay value=json!({"plate": 7}) chars=80.0 /> });
@@ -446,7 +398,6 @@ mod tests {
         );
     }
 
-    /// An empty object is a line and not a control: there is nothing to open.
     #[wasm_bindgen_test]
     fn an_empty_object_is_not_a_control() {
         let el = mount(|| view! { <JsonDisplay value=json!({}) chars=80.0 /> });

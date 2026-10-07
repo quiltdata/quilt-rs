@@ -64,10 +64,7 @@
   max-width: 70ch;
 }
 
-/* A bar with an action is as tall as the control. The glyph and the message's first line
- * are centred on that height instead of riding at its top: each is pushed down by half
- * the difference. Still `flex-start`, so a message that wraps keeps its glyph beside the
- * first line, as above. */
+/* With an action the bar is a control tall: centre the glyph and the first line on it. */
 .with_action > svg {
   margin-top: calc((var(--q-control-height) - 16px) / 2);
 }
@@ -76,7 +73,6 @@
   padding-block: calc((var(--q-control-height) - 1lh) / 2);
 }
 
-/* Trailing, like the dismiss: the end of the bar is where its controls live. */
 .action {
   flex: none;
   display: flex;

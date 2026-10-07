@@ -1,8 +1,5 @@
-//! `JsonDisplay` stories.
-//!
-//! The catalog's JSON viewer, ported. The fixed-width cells reuse the
-//! catalog's own test fixture at its own budgets, so each folded line can be
-//! read against the expected string in `kit/json_oneliner.rs`.
+//! `JsonDisplay` stories. The fixed-width cells match tests in
+//! `kit/json_oneliner.rs`.
 
 use leptos::prelude::*;
 use serde_json::{Value, json};
@@ -23,9 +20,7 @@ fn nested() -> Value {
     })
 }
 
-/// The width that leaves the printer `budget` characters: the top line keeps
-/// 2 for its chevron and 10 in reserve, as the catalog's does. So each fixed
-/// cell prints the line its test in `kit/json_oneliner.rs` expects.
+/// The width that leaves the printer `budget`: 2 for the chevron, 10 reserved.
 fn printer(budget: f64) -> f64 {
     budget + 12.0
 }
@@ -49,11 +44,9 @@ pub fn JsonDisplayStories() -> impl IntoView {
     view! {
         <Story
             title="JsonDisplay"
-            note="The catalog's JSON viewer, ported: each array and object is one line until it \
-                  is opened, and that line says as much as fits — what does not is counted, \
-                  `<…N>`. Click a line, or Tab to it and press Space, to open it. Unless a cell \
-                  says otherwise the line's room is measured: drag the window narrower and the \
-                  folded lines refit. The fixed-width cells are the catalog's own test cases."
+            note="The catalog's JSON viewer, ported: each array and object is one line until \
+                  opened, and what does not fit is counted, `<…N>`. Unless a cell is fixed, \
+                  the line refits as the window narrows."
         >
             <Cell full=true label="folded, measured width — package metadata">
                 <JsonDisplay value=metadata() />

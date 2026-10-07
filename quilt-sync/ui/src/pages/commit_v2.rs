@@ -1,30 +1,10 @@
 //! The commit page v2's regions, as views over props.
 //!
-//! Not routed yet. The gallery draws these over fixture data, and the port
-//! that puts the page behind `ByDesign` fills the same props from
-//! `get_commit_data`, so the page and its gallery scene are one drawing rather
-//! than two. Nothing here calls a command: every effect is a callback the
-//! caller owns, which is the kit's rule applied to a page's regions.
-//!
-//! # One column, in the order you confirm
-//!
-//! 1. [`CommitHeader`]: the trail, `New revision`, and the one primary.
-//! 2. [`ProblemBanner`], only when there is a problem.
-//! 3. [`MessageField`]: the generated message is the placeholder, so an empty
-//!    field means "use it".
-//! 4. [`WorkflowField`]: a live select, like the message is a live field.
-//! 5. [`MetadataField`]: the metadata drawn as the catalog draws it, with
-//!    `Edit` swapping in the full-width editor — the one fold on the page.
-//! 6. [`IncludedList`]: the changed files, last, so a long list scrolls the
-//!    page under the form rather than pushing the form below the fold.
-//!
-//! [`CommitColumn`] fixes that order in one place.
-//!
-//! # The page's words
-//!
-//! The v2 vocabulary only: a revision is saved or published, and nothing here
-//! names a hash. A test holds every fixed string to the same banned list as
-//! the package states.
+//! Not routed yet: the gallery draws them over fixtures, and the port will
+//! fill the same props from `get_commit_data`. Every effect is a callback.
+//! [`CommitColumn`] fixes the order: header, problem, message, workflow,
+//! metadata, then the files, last so a long list scrolls under the form.
+//! v2 vocabulary only; a test holds the fixed strings to the banned words.
 
 use leptos::prelude::*;
 
@@ -54,16 +34,14 @@ use super::json_editor::JsonEditor;
 
 stylance::import_crate_style!(style, "src/pages/commit_v2.module.scss");
 
-/// What the revision will do, which decides the primary's words and whether it
-/// has a caret.
+/// What the revision will do, which decides the primary's words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Primary {
-    /// Files changed, and the package has a bucket: `Publish N files`.
+    /// `Publish N files`.
     Files(usize),
-    /// Only the message, workflow or metadata changed: `Publish revision`.
+    /// Only metadata changed: `Publish revision`.
     MetadataOnly,
-    /// No bucket to publish to: `Save revision`, and no caret, because there
-    /// is no other way to do it.
+    /// No bucket: `Save revision`, with no caret.
     LocalOnly,
 }
 
@@ -79,21 +57,17 @@ impl Primary {
     }
 }
 
-/// The caret's other option: save the revision here and publish it later.
 pub const SAVE_WITHOUT_PUBLISHING: &str = "Save without publishing";
 
 /// The primary's callbacks and state, which the page owns.
 #[derive(Clone, Copy)]
 pub struct PrimaryWiring {
-    /// Which option the split button's face shows: `0` publishes, `1` saves.
-    /// The page's, so it can remember a deliberate pick.
+    /// The split button's face: `0` publishes, `1` saves.
     pub choice: RwSignal<usize>,
     pub on_publish: Callback<()>,
     pub on_save: Callback<()>,
-    /// Why it cannot run, when it cannot: a failed workflow check, no access,
-    /// no session. Disables it, and the tooltip says why.
+    /// Why it cannot run; disables it and is its tooltip.
     pub blocked: Signal<Option<String>>,
-    /// A save or publish is in flight.
     pub running: Signal<bool>,
 }
 
@@ -135,32 +109,23 @@ fn primary_face(primary: Primary, w: PrimaryWiring) -> AnyView {
     }
 }
 
-/// The page's header: the trail up through the package, the page's name, and
-/// one primary beside `Open folder`.
-///
-/// No state label and no `[⋯]`. The label would describe the package rather
-/// than the revision being written, and everything a menu could hold is
-/// already on the page.
+/// The page's header. No state label and no `[⋯]`: both would be about the
+/// package, not the revision being written.
 #[component]
 pub fn CommitHeader(
     #[prop(into)] namespace: String,
-    /// The package page, which the trail's second crumb goes back to.
-    #[prop(into)]
-    package_href: String,
+    #[prop(into)] package_href: String,
     primary: Primary,
     w: PrimaryWiring,
     on_open_folder: Callback<()>,
-    /// The trail's first crumb. `/` in the app, which renders whichever main
-    /// page is switched on; the gallery points it at its own cell.
+    /// The trail's first crumb; `/` by default.
     #[prop(optional, into)]
     home_href: Option<String>,
 ) -> impl IntoView {
     let blocked = w.blocked;
     let home_href = home_href.unwrap_or_else(|| "/".to_string());
-    // The tooltip only while there is a reason. The reason is also on the page,
-    // under the field or in the banner, because a disabled button takes no
-    // focus and a touch screen shows no tooltip; the tooltip is for the pointer
-    // that rests on the button wondering why.
+    // The reason is also on the page: a disabled button takes no focus, and
+    // touch shows no tooltip.
     let face = move || match blocked.get() {
         Some(reason) => view! {
             <Tooltip
@@ -206,28 +171,20 @@ pub fn CommitHeader(
     }
 }
 
-/// Something that stands in the way of publishing, or would make the revision
-/// worse than it means to be.
+/// What the problems banner reports.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Problem {
-    /// System files the user almost certainly did not mean to publish.
-    Junk {
-        count: usize,
-        /// The distinct names, such as `.DS_Store`.
-        names: Vec<String>,
-    },
-    /// The active role cannot write to the bucket, in the roster's own words.
-    /// Blocks saving as well as publishing: saving checks the workflow, which
-    /// reads the bucket's config first.
+    /// System files such as `.DS_Store`.
+    Junk { count: usize, names: Vec<String> },
+    /// The role cannot write to the bucket. Blocks saving too: saving checks
+    /// the workflow, which reads the bucket's config.
     NoAccess { reason: String },
-    /// No session to publish with. Blocks saving too, for the same reason. `host` is the deployment to sign in to;
-    /// `None` for ambient credentials, whose remedy is outside the app.
+    /// No session; blocks saving too. `host` is `None` for ambient credentials.
     SignedOut { host: Option<String> },
-    // A newer published revision is a problem too, deferred to a later item.
+    // A newer published revision: deferred.
 }
 
 impl Problem {
-    /// The sentence the banner says.
     #[must_use]
     pub fn words(&self) -> String {
         match self {
@@ -244,7 +201,6 @@ impl Problem {
                 }
             }
             Self::NoAccess { reason } => format!("{reason}."),
-            // The banner's `Sign in` is the rest of the sentence.
             Self::SignedOut { host: Some(host) } => format!("You are signed out of {host}."),
             Self::SignedOut { host: None } => {
                 "There are no credentials for this bucket. Add some to publish.".to_string()
@@ -260,8 +216,7 @@ impl Problem {
     }
 }
 
-/// The problems banner: one bar, standing while its cause does, with the
-/// remedy beside the sentence when there is one to offer.
+/// The problems banner, with its remedy as the banner's action.
 #[component]
 #[allow(
     clippy::needless_pass_by_value,
@@ -269,12 +224,8 @@ impl Problem {
 )]
 pub fn ProblemBanner(
     problem: Problem,
-    /// `Ignore them`, for junk files.
-    #[prop(optional)]
-    on_ignore_junk: Option<Callback<()>>,
-    /// Where `Sign in` goes, for a signed-out page with a host.
-    #[prop(optional, into)]
-    sign_in_href: Option<String>,
+    #[prop(optional)] on_ignore_junk: Option<Callback<()>>,
+    #[prop(optional, into)] sign_in_href: Option<String>,
 ) -> impl IntoView {
     let remedy = match &problem {
         Problem::Junk { .. } => on_ignore_junk.map(|ignore| {
@@ -300,19 +251,13 @@ pub fn ProblemBanner(
     }
 }
 
-/// The message. Its placeholder is the message the revision gets when the
-/// field is left empty, so an empty field is a choice and not an omission.
+/// The message. The placeholder is what an empty field publishes.
 #[component]
 pub fn MessageField(
     value: RwSignal<String>,
-    /// The generated message.
-    #[prop(into)]
-    placeholder: String,
-    /// A failed workflow check on the message.
-    #[prop(optional, into)]
-    error: MaybeProp<String>,
-    /// Coming from `Create new revision`, the message is the point, so it is
-    /// focused; coming from `Review before publishing…`, nothing is.
+    #[prop(into)] placeholder: String,
+    #[prop(optional, into)] error: MaybeProp<String>,
+    /// Set when arriving from `Create new revision`.
     #[prop(optional)]
     autofocus: bool,
 ) -> impl IntoView {
@@ -337,38 +282,28 @@ pub fn MessageField(
     }
 }
 
-/// The workflow choice, when the bucket offers one.
 #[derive(Clone)]
 pub struct WorkflowChoice {
     pub options: Vec<String>,
     pub selected: RwSignal<String>,
 }
 
-/// The workflow the revision will carry, as a field like the message: a live
-/// `Select` when the bucket offers a choice, its words when it does not.
-///
-/// Not folded. A select is one control tall, so folding it saved nothing and
-/// cost a click on the choice most likely to make a publish fail. A failed
-/// check's error appears under it, where it is already on screen.
+/// The workflow: a live `Select`, or its words when there is nothing to choose.
 #[component]
 #[allow(
     clippy::needless_pass_by_value,
     reason = "a component's props are owned; the body reads them from there"
 )]
 pub fn WorkflowField(
-    /// `None` when there is nothing to choose: a package with no bucket, or a
-    /// bucket with no workflows. The field then shows `no_workflow`.
+    /// `None` shows `no_workflow` instead.
     #[prop(default = None)]
     workflow: Option<WorkflowChoice>,
     #[prop(optional, into)] no_workflow: Option<String>,
     #[prop(optional, into)] error: MaybeProp<String>,
-    /// The selected workflow is the publish settings' default. Said under the
-    /// field, and only then: the other sources — the bucket's default, the
-    /// published revision's, a pick made here — are what the reader expects.
+    /// The value came from the publish settings, the one source worth naming.
     #[prop(optional, into)]
     from_settings: Signal<bool>,
-    /// Where `Change it in Settings` goes. `/settings` in the app; the gallery
-    /// points it at its own cell.
+    /// `/settings` by default.
     #[prop(optional, into)]
     settings_href: Option<String>,
 ) -> impl IntoView {
@@ -406,36 +341,21 @@ pub fn WorkflowField(
     .into_any()
 }
 
-/// The metadata the revision will carry: drawn as the catalog draws it until
-/// `Edit` swaps in the editor.
-///
-/// Folded, it is a [`JsonDisplay`]: one line that fits the room it has, and
-/// opens in place to read the whole document without the editor. It folds
-/// because the editor is the one tall control on the page, and drawn open it
-/// would push the files below the fold.
-///
-/// Open, it is v1's metadata editor at full width. Its context menu and
-/// dropdowns are drawn inside the editor's own box, so nothing between it and
-/// the page may clip: no ancestor here sets `overflow`, and the page has no
-/// second column that scrolls on its own the way v1's did.
-///
-/// It opens on its own when a check fails, because an error under a folded
-/// field is an error nobody can act on. The reader can fold it again; it opens
-/// once per failure, not on every keystroke while one stands.
+/// The metadata: a [`JsonDisplay`] preview until `Edit` swaps in v1's editor,
+/// the one tall control on the page. Nothing above the editor may set
+/// `overflow`, or its context menu is cropped. A failed check opens it.
 #[component]
 pub fn MetadataField(
-    /// The metadata, as JSON text.
     metadata: RwSignal<String>,
     editing: RwSignal<bool>,
     #[prop(optional, into)] error: MaybeProp<String>,
-    /// The metadata is the publish settings' default. See [`WorkflowField`].
+    /// See [`WorkflowField`].
     #[prop(optional, into)]
     from_settings: Signal<bool>,
     #[prop(optional, into)] settings_href: Option<String>,
 ) -> impl IntoView {
     let failing = Signal::derive(move || error.get().is_some());
-    // Opens on the edge into failure, so a reader who folds it over a standing
-    // error is not overruled on the next keystroke.
+    // On the edge into failure only, so folding it over an error sticks.
     Effect::new(move |was: Option<bool>| {
         let now = failing.get();
         if now && !was.unwrap_or(false) && !editing.get_untracked() {
@@ -443,13 +363,11 @@ pub fn MetadataField(
         }
         now
     });
-    // Its own ids rather than `FormControl`'s: the name shares a row with
-    // `Edit`, which a `FormControl` has no room for.
+    // Not a `FormControl`: the name shares its row with `Edit`.
     let control_id = crate::kit::unique_id("metadata");
     let error_id = format!("{control_id}-error");
     let body_id = format!("{control_id}-body");
     let preview = move || match MetadataPreview::of(&metadata.get()) {
-        // Muted, so it reads as an absence and not as a value called "None".
         MetadataPreview::None => {
             view! { <span class=style::field_empty>"No metadata"</span> }.into_any()
         }
@@ -465,7 +383,6 @@ pub fn MetadataField(
     view! {
         <div class=style::field>
             <div class=style::field_head>
-                // A label only while there is a control to name.
                 {
                     let control_id = control_id.clone();
                     move || {
@@ -486,8 +403,6 @@ pub fn MetadataField(
                     aria_controls=body_id.clone()
                     on_click=move |_| editing.update(|open| *open = !*open)
                 >
-                    // `Add` while there is nothing to edit; same place, so the
-                    // row does not move when the first field is written.
                     {move || {
                         if editing.get() {
                             "Done"
@@ -513,9 +428,8 @@ pub fn MetadataField(
     }
 }
 
-/// The hint under a field whose value the publish settings supplied, while
-/// they do. A global default can make a publish fail in a bucket that does not
-/// expect it, so this is the source worth naming; the others are not.
+/// Shown while the publish settings supplied the value: a global default can
+/// fail in a bucket that does not expect it.
 fn settings_hint(from_settings: Signal<bool>, href: Option<String>) -> impl IntoView {
     let href = href.unwrap_or_else(|| "/settings".to_string());
     move || {
@@ -540,15 +454,11 @@ fn metadata_editor(
     let editor_ref = NodeRef::<leptos::html::Div>::new();
     let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
     view! {
-        // The textarea's own wrapper, because the glue hides the textarea's
-        // parent once the editor mounts. It is the fallback, and what the
-        // editor writes back to: the glue fires `input` on every edit.
+        // Its own wrapper: the glue hides the textarea's parent on mount.
         <div>
             <textarea
                 node_ref=textarea_ref
                 id=id
-                // The error's id only while the error is drawn: a description
-                // that names nothing is one the gallery's id test refuses.
                 aria-describedby=move || invalid.get().then(|| described_by.clone())
                 aria-invalid=move || invalid.get().then_some("true")
                 class=style::metadata
@@ -558,8 +468,6 @@ fn metadata_editor(
                 on:input=move |ev| metadata.set(event_target_value(&ev))
             />
         </div>
-        // The red border on the editor's own frame, which `.invalid` reaches
-        // through its custom property.
         <div class=move || invalid.get().then_some(style::invalid)>
             <JsonEditor
                 node_ref=editor_ref
@@ -572,14 +480,12 @@ fn metadata_editor(
     .into_any()
 }
 
-/// What the folded section shows for the metadata text.
+/// What the folded metadata shows.
 #[derive(Debug, PartialEq)]
 pub enum MetadataPreview {
-    /// Empty text or an empty object: words, not braces.
+    /// Empty text or `{}`.
     None,
-    /// Text that does not parse. Its error is what opens the editor.
     Invalid,
-    /// A value worth drawing, as the catalog draws it.
     Json(serde_json::Value),
 }
 
@@ -597,7 +503,7 @@ impl MetadataPreview {
     }
 }
 
-/// How a file differs from the current revision. The v2 file pane's words.
+/// How a file differs, in the v2 file pane's words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Change {
     Changed,
@@ -624,7 +530,6 @@ impl Change {
     }
 }
 
-/// One changed file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IncludedFile {
     pub path: String,
@@ -632,7 +537,6 @@ pub struct IncludedFile {
     pub change: Change,
 }
 
-/// The one sentence for a revision with no file changes.
 pub const METADATA_ONLY: &str = "No file changes. This revision only updates metadata.";
 
 fn files_words(n: usize) -> String {
@@ -651,11 +555,8 @@ fn ignored_words(n: usize) -> String {
     }
 }
 
-/// What's included: the changed files and nothing else, then how many ignored
-/// files are left out. No facets and no search: the list is what will be
-/// published, and narrowing it would only hide some of that.
-///
-/// Last on the page, so however long it is the form above stays where it is.
+/// The changed files, then how many ignored files are left out. No facets and
+/// no search: narrowing what will be published only hides some of it.
 #[component]
 #[allow(
     clippy::needless_pass_by_value,
@@ -663,9 +564,8 @@ fn ignored_words(n: usize) -> String {
 )]
 pub fn IncludedList(
     files: Vec<IncludedFile>,
-    /// Ignored files, which the revision leaves out.
     ignored: usize,
-    /// `Ignore` from a row's `[⋯]`, with the row's path.
+    /// A row's `[⋯]` → `Ignore`, with its path.
     on_ignore: Callback<String>,
 ) -> impl IntoView {
     let total: u64 = files.iter().map(|f| f.size).sum();
@@ -722,8 +622,7 @@ pub fn IncludedList(
     }
 }
 
-/// The page's column, in the order the reader confirms: header, problem,
-/// message, workflow, metadata, then the files.
+/// The page's column, in the order the reader confirms.
 #[component]
 pub fn CommitColumn(
     header: AnyView,
@@ -745,8 +644,7 @@ pub fn CommitColumn(
     }
 }
 
-/// The page while `get_commit_data` is in flight: the header's shape, then
-/// the message and the workflow line, in the column's own rhythm.
+/// The page while `get_commit_data` is in flight.
 #[component]
 pub fn CommitPageSkeleton() -> impl IntoView {
     view! {
@@ -766,8 +664,7 @@ pub fn CommitPageSkeleton() -> impl IntoView {
 mod tests {
     use super::*;
 
-    /// The same list `package_state.rs` holds the package states to, plus the
-    /// words this page is likeliest to reach for.
+    /// `package_state.rs`'s list, plus `commits` and `hash`.
     const BANNED: &[&str] = &[
         "commit", "commits", "push", "pull", "remote", "behind", "ahead", "diverged", "dirty",
         "hash",

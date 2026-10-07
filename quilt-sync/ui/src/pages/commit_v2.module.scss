@@ -1,27 +1,20 @@
-// The page's one column. Its own gap rather than `PageLayout`'s `space-6`:
-// five regions at 24px apart cost a field's height at the 560px floor, and
-// these five read as one form, not as separate regions.
+// Tighter than `PageLayout`'s gap: these read as one form.
 .column {
   display: flex;
   flex-direction: column;
   gap: var(--q-space-4);
 }
 
-// The primary's slot, and the test's handle on it. `contents`, so it adds no
-// box between the header's actions and the button; it still hears the pointer
-// for the tooltip, because the button inside it is what is hovered.
+// A test handle that adds no box.
 .slot {
   display: contents;
 }
 
-// The sentence and its remedy on one line, wrapping as a floor.
 .remedy_link {
   color: var(--q-fgColor-accent);
 }
 
-// A field that is not a `FormControl` — the read-only workflow, and the
-// metadata, whose name shares a row with `Edit` — drawn with the same name,
-// gap, caption and error, so the column reads as one form.
+// Fields that are not a `FormControl`, drawn to match one.
 .field {
   min-width: 0;
 }
@@ -32,8 +25,7 @@
   font-weight: 600;
 }
 
-// The metadata's name and `Edit`, one control tall, so swapping the preview
-// for the editor does not move the row.
+// One control tall, so toggling `Edit` does not move the row.
 .field_head {
   display: flex;
   align-items: center;
@@ -47,9 +39,7 @@
   margin-bottom: 0;
 }
 
-// Full width, because `JsonDisplay` fits its folded line to the width it is
-// given: a width that followed the content would follow the line, and the line
-// would fold to nothing.
+// Full width: `JsonDisplay` fits its line to the width it is given.
 .field_value {
   min-width: 0;
   margin: 0;
@@ -64,7 +54,7 @@
   color: var(--q-fgColor-muted);
 }
 
-// `FormControl`'s error, restated: the glyph, then the words, in danger.
+// As `FormControl`'s error.
 .field_error {
   display: flex;
   align-items: flex-start;
@@ -80,8 +70,7 @@
   margin-top: 3px;
 }
 
-// `TextInput`'s field, grown to a block of monospace. Full width, and resized
-// only vertically, so a wide document never pushes the column sideways.
+// The fallback textarea.
 .metadata {
   width: 100%;
   min-width: 0;
@@ -96,19 +85,13 @@
   resize: vertical;
 }
 
-// The editor's box. A height of its own, because the editor fills its parent
-// and a block with `height: auto` gives it nothing to fill. No `overflow`, here
-// or on any ancestor: the editor draws its context menu inside this box, and a
-// clipping ancestor crops it — which is what v1's scrolling column did.
-//
-// 150px is the most the 560px floor allows: with a failed check, the caption
-// under the editor must still end inside the window. Measured in the gallery's
-// commit page scene; at 220 the caption landed at 613.
+// The editor fills its parent, so it needs a height. 150px keeps a failed
+// check's error inside the 560px window. No `overflow` here or above: it crops
+// the editor's context menu.
 .editor {
   height: 150px;
 }
 
-// The editor's frame, recoloured through its own custom property.
 .invalid {
   --jse-main-border: 1px solid var(--q-borderColor-danger-muted);
 }

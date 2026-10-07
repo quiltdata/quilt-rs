@@ -1,15 +1,8 @@
-//! The metadata editor: `vanilla-jsoneditor`, mounted over a fallback
-//! `<textarea>` through `js/json-editor-glue.js`.
+//! The metadata editor, `vanilla-jsoneditor`, over a fallback `<textarea>`.
+//! Shared by both commit pages.
 //!
-//! Shared by the commit page and its v2. The glue hides the textarea's
-//! **parent** once the editor mounts, so a caller gives the textarea a wrapper
-//! of its own: on v1 that is its `<p>`, on v2 a bare `div` — never a
-//! `FormControl`, whose label and error must stay.
-//!
-//! The editor draws its context menu and its dropdowns inside its own box, so
-//! an ancestor with `overflow: hidden` or `auto` crops them. v1's two columns
-//! needed a scrolling column; the v2 page is one column and gives the editor no
-//! clipping ancestor.
+//! The glue hides the textarea's parent on mount, so give the textarea a
+//! wrapper of its own. Ancestors with `overflow` crop the editor's menus.
 
 use leptos::html;
 use leptos::prelude::*;
@@ -32,8 +25,7 @@ extern "C" {
     fn destroy_json_editor_js(target: &web_sys::HtmlElement);
 }
 
-/// The glue has run: `index.html` and `gallery.html` load it, a test runner's
-/// document does not.
+/// The test runner's document has no bundle.
 fn bundle_loaded() -> bool {
     web_sys::window().is_some_and(|window| {
         js_sys::Reflect::get(&window, &"__createJsonEditor".into()).is_ok_and(|f| f.is_function())
@@ -63,7 +55,7 @@ pub(crate) fn JsonEditor(
     node_ref: NodeRef<html::Div>,
     textarea_ref: NodeRef<html::Textarea>,
     initial_value: String,
-    /// The editor box's class. v1's `metadata` by default.
+    /// `metadata` by default.
     #[prop(optional)]
     class: Option<&'static str>,
 ) -> impl IntoView {
@@ -84,9 +76,7 @@ pub(crate) fn JsonEditor(
             return;
         };
         mounted.set_value(true);
-        // The bundle is a page's `<script>`, so a document without it — the
-        // test runner's — keeps the textarea rather than trapping on a call
-        // to a function that is not there.
+        // Without the bundle, keep the textarea rather than trap.
         if !bundle_loaded() {
             return;
         }
