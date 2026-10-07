@@ -1,0 +1,19 @@
+# systemd unit. Install: copy to /etc/systemd/system/, put the API key in
+# /etc/quilt-agent/env as QUILT_AGENT_API_KEY=qk_..., then
+# `systemctl enable --now quilt-agent`.
+[Unit]
+Description=Quilt lab-to-cloud agent
+After=network-online.target remote-fs.target
+Wants=network-online.target
+
+[Service]
+User=quilt-agent
+EnvironmentFile=/etc/quilt-agent/env
+ExecStart=/usr/local/bin/quilt-agent run /etc/quilt-agent/profile.yaml
+Restart=always
+RestartSec=5
+# SIGINT is the agent's clean stop; the journal resumes on next start.
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

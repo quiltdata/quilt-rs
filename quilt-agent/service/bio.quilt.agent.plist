@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- launchd daemon. Install to /Library/LaunchDaemons/ and set the key below. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>bio.quilt.agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/quilt-agent</string>
+    <string>run</string>
+    <string>/Library/Application Support/QuiltAgent/profile.yaml</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>QUILT_AGENT_API_KEY</key><string>REPLACE_WITH_qk_KEY</string></dict>
+  <key>KeepAlive</key><true/>
+  <key>RunAtLoad</key><true/>
+  <key>StandardErrorPath</key><string>/Library/Logs/quilt-agent.log</string>
+</dict>
+</plist>

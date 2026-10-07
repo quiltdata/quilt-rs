@@ -5785,6 +5785,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "quilt-agent"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "globset",
+ "hostname",
+ "jsonschema",
+ "notify",
+ "quilt-rs",
+ "quilt-uri",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "quilt-cli"
 version = "0.36.1-dev"
 dependencies = [

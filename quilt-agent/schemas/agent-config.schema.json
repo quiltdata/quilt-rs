@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quilt.bio/schemas/lab-to-cloud/agent-config/1",
+  "title": "Lab-to-Cloud agent profile",
+  "description": "The agent's one-time configuration (spec/agent.md §Profile). YAML on disk; this schema is normative for its JSON form. Secrets are referenced by name, never held here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "observer", "registry", "instruments"],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "observer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "placement"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "Stable observer id, e.g. vir-edge-01." },
+        "placement": { "enum": ["on", "beside"] },
+        "spool_root": { "type": "string" },
+        "status_port": { "type": "integer", "minimum": 1024, "maximum": 65535, "default": 4781 }
+      }
+    },
+    "registry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "credential_ref"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" },
+        "credential_ref": { "type": "string", "description": "Name of the qk_ key in the OS credential store; never the key." },
+        "heartbeat_s": { "type": "integer", "minimum": 30, "default": 300 }
+      }
+    },
+    "spool": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_bytes": { "type": "integer", "minimum": 1048576, "default": 53687091200 },
+        "compaction_interval_s": { "type": "integer", "minimum": 60, "default": 3600 }
+      }
+    },
+    "upload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "concurrency": { "type": "integer", "minimum": 1, "maximum": 64, "default": 4 },
+        "max_bandwidth_bytes_s": { "type": "integer", "minimum": 0, "description": "0 = unlimited." },
+        "retry_base_ms": { "type": "integer", "minimum": 100, "default": 1000 },
+        "retry_max_ms": { "type": "integer", "minimum": 1000, "default": 300000 }
+      }
+    },
+    "packager": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "locus": { "enum": ["agent", "stack"], "default": "agent" },
+        "workflow_intent": { "type": "string", "default": "bucket_default", "description": "bucket_default | none | <workflow id>" },
+        "eln_keys": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["benchling.experiment-ID"],
+          "description": "Crate type.id keys that name an ELN anchor, in precedence order."
+        },
+        "metadata_static": { "type": "object" }
+      }
+    },
+    "instruments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "source", "landing", "boundary"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9._-]+$" },
+          "vendor": { "type": "string" },
+          "model": { "type": "string" },
+          "software": { "type": "string" },
+          "software_version": { "type": "string" },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1, "description": "UNC path, mapped drive, or mount; read-only." },
+              "run_folder_glob": { "type": "string", "default": "*", "description": "Which children of path are run folders (or run files)." },
+              "ignore": { "type": "array", "items": { "type": "string" }, "description": "Globs never treated as members (thumbs.db, ~$*, .tmp)." },
+              "watch": { "enum": ["notify", "poll", "auto"], "default": "auto" },
+              "poll_s": { "type": "integer", "minimum": 5, "default": 30 },
+              "dir_cache_ttl_s": { "type": "integer", "minimum": 0, "default": 0, "description": "Measured directory-listing cache TTL of this mount; floors confirm_window_s and stable_for_s (UNK-31; SP-1 measured 60 s on smbfs)." },
+              "stage_copy": { "type": "boolean", "default": false, "description": "Copy members into the spool at boundary (for shares that recycle)." }
+            }
+          },
+          "landing": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["bucket", "prefix"],
+            "properties": {
+              "bucket": { "type": "string", "minLength": 3 },
+              "prefix": { "type": "string", "description": "landing_prefix; instrument id and run id are appended." }
+            }
+          },
+          "boundary": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["method"],
+            "properties": {
+              "method": { "enum": ["marker_file", "vendor_manifest", "explicit", "size_stable"] },
+              "markers": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+              "marker_must_be_newest": { "type": "boolean", "default": true },
+              "manifest_kind": { "type": "string" },
+              "manifest_glob": { "type": "string" },
+              "require_all_listed": { "type": "boolean", "default": true },
+              "explicit_source": { "enum": ["loopback", "control_dir"] },
+              "control_dir": { "type": "string" },
+              "stable_for_s": { "type": "integer", "minimum": 30, "default": 900 },
+              "min_members": { "type": "integer", "minimum": 1, "default": 1 },
+              "confirm_window_s": { "type": "integer", "minimum": 0, "default": 120 },
+              "suspect_alert_after_s": { "type": "integer", "minimum": 60, "default": 3600 }
+            },
+            "allOf": [
+              { "if": { "properties": { "method": { "const": "marker_file" } } }, "then": { "required": ["markers"] } },
+              { "if": { "properties": { "method": { "const": "vendor_manifest" } } }, "then": { "required": ["manifest_kind", "manifest_glob"] } },
+              { "if": { "properties": { "method": { "const": "explicit" } } }, "then": { "required": ["explicit_source"] } }
+            ]
+          },
+          "packaging": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "package_name_pattern": { "type": "string", "default": "{instrument_id}/{folder_name}" },
+              "metadata_static": { "type": "object" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

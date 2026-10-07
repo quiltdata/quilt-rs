@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quilt.bio/schemas/lab-to-cloud/sentinel/1",
+  "title": "Lab-to-Cloud sentinel",
+  "description": "The observation record an observer writes last into a run's landing prefix. Normative for spec/sentinel.md. INV-1, INV-2, INV-3, INV-6, INV-7.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "sentinel_id", "run_id", "previous_sentinel_id", "observer",
+    "instrument", "source_path", "boundary", "instrument_local_time", "snapshot_time_utc",
+    "observer_time_utc", "checksum_algorithm", "files", "file_count", "total_bytes"
+  ],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "sentinel_id": { "type": "string", "format": "uuid" },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6,12}$",
+      "description": "<observer_time_utc basic ISO>-<short uuid>; the idempotency key."
+    },
+    "previous_sentinel_id": {
+      "oneOf": [ { "type": "string", "format": "uuid" }, { "type": "null" } ],
+      "description": "The last sentinel this observer sealed for this instrument; null only for the first ever, or after a declared chain reset (notes)."
+    },
+    "observer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "host", "agent_version", "placement"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "host": { "type": "string", "minLength": 1 },
+        "agent_version": { "type": "string", "minLength": 1 },
+        "placement": { "enum": ["on", "beside"] }
+      }
+    },
+    "instrument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "vendor": { "type": "string" },
+        "model": { "type": "string" },
+        "software": { "type": "string" },
+        "software_version": { "type": "string" }
+      }
+    },
+    "source_path": { "type": "string", "minLength": 1 },
+    "boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "evidence", "guessed", "decided_at_utc", "params"],
+      "properties": {
+        "method": { "enum": ["marker_file", "vendor_manifest", "explicit", "size_stable"] },
+        "evidence": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "guessed": { "type": "boolean" },
+        "decided_at_utc": { "type": "string", "format": "date-time" },
+        "params": { "type": "object" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "method": { "const": "size_stable" } } },
+          "then": { "properties": { "guessed": { "const": true } } },
+          "else": { "properties": { "guessed": { "const": false } } }
+        }
+      ]
+    },
+    "instrument_local_time": {
+      "oneOf": [
+        { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?$" },
+        { "type": "null" }
+      ],
+      "description": "Instrument-local wall clock, no offset, never corrected. Null when no instrument-side time exists."
+    },
+    "snapshot_time_utc": { "type": "string", "format": "date-time" },
+    "observer_time_utc": { "type": "string", "format": "date-time" },
+    "checksum_algorithm": { "type": "string", "minLength": 1 },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "key", "size", "checksum"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "description": "Share-relative, forward slashes, byte-preserved." },
+          "key": { "type": "string", "minLength": 1, "description": "Landed object key in the landing bucket." },
+          "size": { "type": "integer", "minimum": 0 },
+          "checksum": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["algorithm", "value"],
+            "properties": {
+              "algorithm": { "type": "string", "minLength": 1 },
+              "value": { "type": "string", "minLength": 1 }
+            }
+          },
+          "mtime_local": { "type": "string" },
+          "version_id": { "type": "string" }
+        }
+      }
+    },
+    "file_count": { "type": "integer", "minimum": 0 },
+    "total_bytes": { "type": "integer", "minimum": 0 },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "package_name"],
+      "properties": {
+        "kind": { "enum": ["eln", "on_arrival"] },
+        "eln": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["system", "key", "value"],
+          "properties": {
+            "system": { "type": "string" },
+            "key": { "type": "string", "description": "The crate's type.id key, e.g. benchling.experiment-ID" },
+            "value": { "type": "string" }
+          }
+        },
+        "package_name": { "type": "string", "pattern": "^[^/]+/[^/]+$" }
+      }
+    },
+    "crate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "key"],
+      "properties": {
+        "path": { "type": "string" },
+        "key": { "type": "string" }
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["top_hash", "package_name", "latest_advanced"],
+      "properties": {
+        "top_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "package_name": { "type": "string" },
+        "latest_advanced": { "type": "boolean" },
+        "pushed_at_utc": { "type": "string", "format": "date-time" }
+      },
+      "description": "Added once by the packager after the revision exists; the only mutation the sentinel receives."
+    },
+    "notes": { "type": "string", "maxLength": 4096 }
+  }
+}
