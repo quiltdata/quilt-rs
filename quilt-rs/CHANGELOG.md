@@ -23,7 +23,7 @@
 
 ### Added
 
-- `Auth::set_api_key` and `RemoteS3::set_api_key` let an unattended client authenticate to a stack with a registry API key (`qk_…`) instead of an interactive session; the key is held in memory only and a rejected key fails closed
+- `Auth::set_api_key` and `RemoteS3::set_api_key` let an unattended client authenticate to a stack with a registry API key (`qk_…`) instead of an interactive session; the key is held in memory only and a rejected key fails closed (<https://github.com/quiltdata/quilt-rs/pull/1079>)
 
 ## [v0.42.1] - 2026-10-06
 
