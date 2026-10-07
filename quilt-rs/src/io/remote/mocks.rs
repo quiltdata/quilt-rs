@@ -23,6 +23,7 @@ use quilt_uri::paths::tag_key;
 
 use crate::Res;
 
+use super::PutCondition;
 use super::Remote;
 
 /// A mock implementation of the `Remote` trait.
@@ -159,6 +160,43 @@ impl Remote for MockRemote {
             gate.hold().await;
         }
         self.storage.write_byte_stream(key, contents.into()).await
+    }
+
+    /// The mock's `ETag` is the object's bytes, so a test can name it without
+    /// a HEAD and any rewrite changes it.
+    async fn put_object_if(
+        &self,
+        _host: Option<&Host>,
+        s3_uri: &S3Uri,
+        contents: impl Into<ByteStream>,
+        condition: PutCondition,
+    ) -> Res {
+        let key = s3_uri.to_string();
+        let current = self.get_object_etag(None, s3_uri).await?;
+        let holds = match &condition {
+            PutCondition::Absent => current.is_none(),
+            PutCondition::ETag(etag) => current.as_ref() == Some(etag),
+        };
+        if !holds {
+            return Err(S3Error::new(S3ErrorKind::PreconditionFailed(key)).into());
+        }
+        self.storage.write_byte_stream(key, contents.into()).await
+    }
+
+    async fn get_object_etag(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<Option<String>> {
+        let key = s3_uri.to_string();
+        if !self.storage.exists(&key).await {
+            return Ok(None);
+        }
+        let bytes = self
+            .storage
+            .read_byte_stream(&key)
+            .await?
+            .collect()
+            .await
+            .map_err(|e| S3Error::new(S3ErrorKind::GetObject(e.to_string())))?
+            .into_bytes();
+        Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
     }
 
     async fn resolve_url(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
