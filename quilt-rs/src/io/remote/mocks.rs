@@ -81,7 +81,7 @@ impl MockRemote {
             .unwrap_or(0)
     }
 
-    /// Holds the next `get_object_stream` or `put_object` of `uri` until the
+    /// Holds the next `get_object_stream`, `put_object` or `put_object_if` of `uri` until the
     /// returned gate is released, so a test can land another operation inside
     /// this one. Only the next call parks; later ones pass.
     ///
@@ -172,6 +172,10 @@ impl Remote for MockRemote {
         condition: PutCondition,
     ) -> Res {
         let key = s3_uri.to_string();
+        let parked = self.parked.lock().unwrap().remove(&key);
+        if let Some(gate) = parked {
+            gate.hold().await;
+        }
         let current = self
             .get_object_with_etag(None, s3_uri)
             .await?

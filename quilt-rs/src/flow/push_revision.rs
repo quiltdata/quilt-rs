@@ -14,8 +14,11 @@ use crate::io::manifest::tag_timestamp;
 use crate::io::manifest::upload_manifest;
 use crate::io::remote::PutCondition;
 use crate::io::remote::Remote;
+use crate::io::remote::entry_view;
+use crate::io::remote::validate_workflow_against_current_config;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestRow;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::S3PackageHandle;
@@ -38,6 +41,11 @@ pub struct RevisionPushed {
 /// package's history. Then set `latest` to it if `latest` is absent or equals
 /// `parent`; otherwise leave `latest` alone and report `latest_advanced: false`.
 ///
+/// The bucket's workflow gate runs first, against its current config, exactly
+/// as at [`push_package`](super::push): a revision the bucket would reject is
+/// refused before anything is written. Resolve the header's workflow with
+/// [`resolve_workflow`](crate::io::remote::resolve_workflow) to attach one.
+///
 /// Every row's `physical_key` must already point at uploaded bytes; nothing is
 /// uploaded but the manifest and its tags. Re-running with the same manifest
 /// is safe: the revision is content-addressed and the tags are rewritten with
@@ -51,6 +59,21 @@ pub async fn push_revision(
     parent: Option<&str>,
     timestamp: chrono::DateTime<chrono::Utc>,
 ) -> Res<RevisionPushed> {
+    let mut sorted: Vec<&ManifestRow> = manifest.rows.iter().collect();
+    sorted.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+    let entries: Vec<_> = sorted.into_iter().map(entry_view).collect();
+    validate_workflow_against_current_config(
+        remote,
+        host,
+        &package.bucket,
+        &package.namespace.to_string(),
+        manifest.header.message.as_deref(),
+        manifest.header.user_meta.as_ref(),
+        manifest.header.workflow.as_ref(),
+        &entries,
+    )
+    .await?;
+
     let rows = manifest.rows.into_iter().map(Ok).collect::<Vec<_>>();
     let stream = Box::pin(tokio_stream::once(Ok(rows)));
     let dest_dir = tempfile::tempdir()?;
@@ -132,7 +155,6 @@ mod tests {
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::mocks::MockStorage;
     use crate::manifest::ManifestHeader;
-    use crate::manifest::ManifestRow;
 
     const BUCKET: &str = "b";
 
@@ -223,6 +245,54 @@ mod tests {
         let _ = push(&remote, manifest("b"), Some(&first.top_hash)).await?;
         let stale = push(&remote, manifest("c"), Some(&first.top_hash)).await?;
         assert!(!stale.latest_advanced);
+        Ok(())
+    }
+
+    /// A bucket that requires a workflow refuses a revision without one,
+    /// before anything is written: the same gate `push_package` applies.
+    #[test(tokio::test)]
+    async fn a_required_workflow_refuses_before_writing() -> Res {
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                None,
+                &S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?,
+                b"version: \"1\"\nis_workflow_required: true\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
+            )
+            .await?;
+        let err = push(&remote, manifest("a"), None).await.unwrap_err();
+        assert!(
+            matches!(err, crate::Error::WorkflowValidation(_)),
+            "expected a workflow refusal, got: {err:?}"
+        );
+        assert!(
+            remote
+                .get_object_with_etag(None, &latest_uri())
+                .await?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    /// Another writer moves `latest` between our read and our write: the
+    /// conditional put loses, and the push reports it rather than failing.
+    #[test(tokio::test)]
+    async fn losing_the_race_at_put_time_reports_not_advanced() -> Res {
+        let remote = MockRemote::default();
+        let first = push(&remote, manifest("a"), None).await?;
+        let gate = remote.park(&latest_uri().to_string());
+        let ours = push(&remote, manifest("b"), Some(&first.top_hash));
+        let theirs = async {
+            gate.arrived().await;
+            remote
+                .put_object(None, &latest_uri(), b"theirs".to_vec())
+                .await
+                .unwrap();
+            gate.release();
+        };
+        let (ours, ()) = tokio::join!(ours, theirs);
+        assert!(!ours?.latest_advanced);
+        assert_eq!(latest(&remote).await?, "theirs");
         Ok(())
     }
 

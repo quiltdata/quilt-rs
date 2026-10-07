@@ -113,7 +113,11 @@ pub(super) fn classify_s3_error(
         // bucket would send it to write into one that does not exist.
         Some("NoSuchKey" | "NotFound") => S3ErrorKind::NotFound(described.to_string()),
         Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
-        Some("PreconditionFailed") => S3ErrorKind::PreconditionFailed(described.to_string()),
+        // S3 answers a lost conditional write with 412, or with 409
+        // ConditionalRequestConflict when a concurrent write raced it.
+        Some("PreconditionFailed" | "ConditionalRequestConflict") => {
+            S3ErrorKind::PreconditionFailed(described.to_string())
+        }
         _ if status == Some(412) => S3ErrorKind::PreconditionFailed(described.to_string()),
         _ if status == Some(403) => S3ErrorKind::AccessDenied(described.to_string()),
         _ => fallback(described.to_string()),
@@ -684,7 +688,12 @@ impl Remote for RemoteS3 {
             Err(SdkError::ServiceError(err)) if err.err().is_no_such_key() => return Ok(None),
             Err(err) => return Err(s3_error_or_session_loss(err, host, S3ErrorKind::GetObject)),
         };
-        let etag = object.e_tag.unwrap_or_default();
+        // An empty `If-Match` would match nothing and read as a lost race.
+        let Some(etag) = object.e_tag.filter(|e| !e.is_empty()) else {
+            return Err(
+                S3Error::new(S3ErrorKind::GetObject(format!("{s3_uri} returned no ETag"))).into(),
+            );
+        };
         let body = object
             .body
             .collect()
