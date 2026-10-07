@@ -12,9 +12,11 @@ resumes any in-flight run from its journal on the next start.
 Windows, from an elevated prompt. The key goes in the service account's own
 environment, not the machine's, so other local users cannot read it:
 
-```
+```bat
+set EXE="C:\Program Files\QuiltAgent\quilt-agent.exe"
+set PROFILE=C:\ProgramData\QuiltAgent\profile.yaml
 schtasks /Create /TN QuiltAgent /SC ONSTART /RU <account> /RP ^
-  /TR "cmd /c set QUILT_AGENT_API_KEY=qk_... && \"C:\Program Files\QuiltAgent\quilt-agent.exe\" run C:\ProgramData\QuiltAgent\profile.yaml"
+  /TR "cmd /c set QUILT_AGENT_API_KEY=qk_... && %EXE% run %PROFILE%"
 ```
 
 Restrict the task's ACL to administrators and `<account>`; anyone who can read
