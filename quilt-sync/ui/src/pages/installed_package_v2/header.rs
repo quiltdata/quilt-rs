@@ -77,7 +77,7 @@ use crate::util;
 
 use super::bucket_form::BucketDialog;
 use super::role_dialog::RoleDialog;
-use super::{Dialogs, Outcome, Wiring, holding, run};
+use super::{Dialogs, Outcome, Reread, Wiring, holding, run};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.scss");
 
@@ -221,7 +221,7 @@ fn menu(
                         outcome,
                         ns.clone(),
                         "Could not open this package in the catalog.",
-                        None,
+                        Reread::Never,
                         async move { commands::open_in_web_browser(url).await },
                     );
                 }),
@@ -280,7 +280,9 @@ fn primary_action(
     let resolve_to = super::carrying(crate::routes::resolve_href(&ns));
     let revision_to = crate::routes::commit_href(&ns);
     // With confirmation on, `Publish` is the commit page too; off, it is pull's
-    // shape — run here, reported by its toast, the page re-read after.
+    // shape — run here, reported by its toast — except that the page is read
+    // again after a failure as well: the commit can land and the push still be
+    // refused, and the page must show the revision that now exists.
     let on_publish = if super::confirm_publish() {
         let publish_to = revision_to.clone();
         Callback::new(move |()| goto.set(Some(publish_to.clone())))
@@ -295,7 +297,7 @@ fn primary_action(
                 outcome,
                 ns.clone(),
                 "Could not publish this package.",
-                Some(reload),
+                Reread::Always(reload),
                 async move { commands::package_publish(ns, uri).await },
             );
         })
@@ -339,7 +341,7 @@ fn primary_action(
                 outcome,
                 ns.clone(),
                 "Could not get the latest revision.",
-                Some(reload),
+                Reread::OnSuccess(reload),
                 async move { commands::package_pull(ns, uri).await },
             );
         }
@@ -502,7 +504,7 @@ pub fn PageHeader(
             outcome,
             ns.clone(),
             "Could not open this package's folder.",
-            None,
+            Reread::Never,
             async move { commands::open_in_file_browser(ns, uri).await },
         );
     };
@@ -760,14 +762,31 @@ mod tests {
     /// while it runs and stays where it is. There is no bridge under the
     /// runner, so the failure arm is what runs — a workflow's refusal takes the
     /// same path — and it reaches the band, keyed to the package.
+    ///
+    /// The page is read again after the failure too: publish commits before it
+    /// pushes, so a refused push can leave a revision the old details do not
+    /// show. The re-read leaves the band alone.
     #[wasm_bindgen_test]
     async fn publish_runs_in_place_and_reports_its_failure_on_the_band() {
         let w = Wiring::new();
+        let reloads = RwSignal::new(0_u32);
+        let owner = Owner::new();
+        owner.with(|| {
+            Effect::new(move |seen: Option<()>| {
+                w.reload.track();
+                // The first run is the subscription, not a re-read.
+                if seen.is_some() {
+                    reloads.update(|n| *n += 1);
+                }
+            });
+        });
         let el = mount_routed_with(data(kit::PackageState::PendingCommit), w, false);
         sleep_ms(50).await;
 
         button(&el, "Publish").click();
         sleep_ms(50).await;
+
+        assert_eq!(reloads.get_untracked(), 1, "read again after the failure");
 
         assert!(
             !el.text_content()

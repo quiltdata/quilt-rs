@@ -257,6 +257,7 @@ fn main() {
             commands::package_pull_outcome,
             commands::package_push,
             commands::update_publish_settings,
+            commands::set_confirm_before_publish,
             commands::update_autosync_settings,
             commands::set_autosync_direction,
             commands::get_autosync_snapshot,

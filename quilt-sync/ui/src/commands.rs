@@ -1264,7 +1264,6 @@ pub async fn update_publish_settings(
     message_template: String,
     default_workflow: String,
     default_metadata: String,
-    confirm_before_publish: bool,
 ) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -1272,7 +1271,6 @@ pub async fn update_publish_settings(
         message_template: String,
         default_workflow: String,
         default_metadata: String,
-        confirm_before_publish: bool,
     }
     tauri::invoke(
         "update_publish_settings",
@@ -1280,6 +1278,22 @@ pub async fn update_publish_settings(
             message_template,
             default_workflow,
             default_metadata,
+        },
+    )
+    .await
+}
+
+/// *Confirm before publishing* on its own, so saving it cannot touch the
+/// commit defaults and saving those cannot touch it.
+pub async fn set_confirm_before_publish(confirm_before_publish: bool) -> Result<(), String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Args {
+        confirm_before_publish: bool,
+    }
+    tauri::invoke(
+        "set_confirm_before_publish",
+        &Args {
             confirm_before_publish,
         },
     )

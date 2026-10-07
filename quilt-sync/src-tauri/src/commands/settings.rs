@@ -21,6 +21,7 @@ use crate::log_settings::LogLevel;
 use crate::log_settings::LogSettings;
 use crate::model;
 use crate::model::QuiltModel;
+use crate::publish_settings;
 use crate::publish_settings::PublishSettings;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
@@ -244,6 +245,8 @@ pub async fn get_settings_data(
     })
 }
 
+/// The commit defaults from the Settings popup. *Confirm before publishing*
+/// is the checkbox's, see [`set_confirm_before_publish`], and is kept as it is.
 #[tauri::command]
 pub async fn update_publish_settings(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
@@ -251,7 +254,6 @@ pub async fn update_publish_settings(
     message_template: String,
     default_workflow: String,
     default_metadata: String,
-    confirm_before_publish: bool,
 ) -> Result<(), String> {
     // Validate metadata is parseable JSON (or empty/whitespace = no metadata).
     // `opt_from_string` below trims whitespace-only input down to `None`, so
@@ -262,22 +264,42 @@ pub async fn update_publish_settings(
             .map_err(|e| format!("Invalid metadata JSON: {e}"))?;
     }
 
-    let new = PublishSettings {
-        message_template: opt_from_string(&message_template),
-        default_workflow: opt_from_string(&default_workflow),
-        default_metadata: opt_from_string(&default_metadata),
-        confirm_before_publish,
-    };
-
     let app_handle = app_handle.lock().await;
     let data_dir = app_handle
         .path()
         .app_local_data_dir()
         .map_err(|e| e.to_string())?;
 
-    new.save(&data_dir).await.map_err(|e| e.to_string())?;
-    *publish.write().await = new;
-    Ok(())
+    publish_settings::update(&publish, &data_dir, |current| {
+        current.with_defaults(
+            opt_from_string(&message_template),
+            opt_from_string(&default_workflow),
+            opt_from_string(&default_metadata),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// *Confirm before publishing*, from its checkbox. The commit defaults are
+/// kept as they are.
+#[tauri::command]
+pub async fn set_confirm_before_publish(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    publish: tauri::State<'_, SharedPublishSettings>,
+    confirm_before_publish: bool,
+) -> Result<(), String> {
+    let app_handle = app_handle.lock().await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    publish_settings::update(&publish, &data_dir, |current| {
+        current.with_confirm_before_publish(confirm_before_publish)
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 fn opt_from_string(s: &str) -> Option<String> {

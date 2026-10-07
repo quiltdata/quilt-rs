@@ -125,7 +125,7 @@ pub(super) fn PublishSection(
                 </dd>
 
                 <ConfirmBeforePublishing
-                    publish=current.clone()
+                    confirm_before_publish=current.confirm_before_publish
                     notification=notification
                     refetch=refetch
                 />
@@ -155,17 +155,16 @@ pub(super) fn PublishSection(
 /// *Confirm before publishing*, as one row of the section's list.
 #[component]
 fn ConfirmBeforePublishing(
-    publish: PublishSettingsData,
+    confirm_before_publish: bool,
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
 ) -> impl IntoView {
     // Saved on the click, as the other checkboxes on this page are, rather than
     // through the popup: it is a yes-or-no about how Publish behaves, not a
-    // commit default. The command takes every publish setting, so the stored
-    // defaults ride along unchanged.
-    let confirm = RwSignal::new(publish.confirm_before_publish);
+    // commit default. Saved on its own, so this row and the popup each change
+    // only their own fields and neither puts back what the other replaced.
+    let confirm = RwSignal::new(confirm_before_publish);
     let saving = RwSignal::new(false);
-    let defaults = publish;
     let on_toggle = move |ev: leptos::ev::Event| {
         let on = event_target_checked(&ev);
         if saving.get_untracked() {
@@ -173,21 +172,8 @@ fn ConfirmBeforePublishing(
         }
         saving.set(true);
         confirm.set(on);
-        let PublishSettingsData {
-            message_template,
-            default_workflow,
-            default_metadata,
-            ..
-        } = defaults.clone();
         leptos::task::spawn_local(async move {
-            match commands::update_publish_settings(
-                message_template,
-                default_workflow,
-                default_metadata,
-                on,
-            )
-            .await
-            {
+            match commands::set_confirm_before_publish(on).await {
                 Ok(()) => {
                     notification.set(Some(Notification::Success(
                         "Commit and Push settings saved".into(),
@@ -237,8 +223,6 @@ fn PublishSettingsPopup(
     let use_bucket_default = RwSignal::new(current.default_workflow.is_empty());
     let metadata_error = RwSignal::new(None::<String>);
     let saving = RwSignal::new(false);
-    // Not edited here; carried so saving the defaults keeps it as it is.
-    let confirm_before_publish = current.confirm_before_publish;
 
     // Reactive: warn while an override is selected or metadata is present.
     let show_warning = Signal::derive(move || {
@@ -267,9 +251,7 @@ fn PublishSettingsPopup(
         saving.set(true);
         let on_close = on_close_save.clone();
         leptos::task::spawn_local(async move {
-            match commands::update_publish_settings(template, wf, meta, confirm_before_publish)
-                .await
-            {
+            match commands::update_publish_settings(template, wf, meta).await {
                 Ok(()) => {
                     notification.set(Some(Notification::Success(
                         "Commit and Push settings saved".into(),
