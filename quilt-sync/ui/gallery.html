@@ -28,6 +28,11 @@
   <!-- The appbar's mark, for the whole-page scenes; the app's index.html copies all of assets/. -->
   <link data-trunk rel="copy-dir" href="assets/img" data-target-path="assets/img" />
 
+  <!-- The metadata editor, for the commit page scene: the same bundle the app's
+       index.html loads, written by Trunk.toml's pre-build hook. -->
+  <link data-trunk rel="copy-file" href="assets/js/json-editor.js" data-target-path="assets/js" />
+  <script src="assets/js/json-editor.js"></script>
+
   <link data-trunk rel="rust" data-bin="gallery" data-wasm-opt="z" />
 </head>
 <body></body>

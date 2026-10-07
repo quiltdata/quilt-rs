@@ -1,12 +1,13 @@
 //! The v2 package page's header: trail, identity, one resolved state, one
 //! action, `Open folder`, and everything else behind `[⋯]`.
 //!
-//! # Page-local, not a kit piece
+//! # The row is the kit's, the contents are this page's
 //!
-//! One page draws this, and the pieces it is built from are the kit's. A
-//! component would be a wrapper with one caller. The gallery scene at
-//! `gallery/package_header.rs` draws the same arrangement over the same pieces,
-//! state by state, and is where the arrangement was settled.
+//! The geometry — trail, name, label, trailing actions — is `kit::PageHeader`,
+//! which the commit page draws too. What fills it is this page's: the
+//! package's state, its action, its menu and the dialogs behind them. The
+//! gallery scene at `gallery/package_header.rs` draws the same row over the
+//! same pieces, state by state, and is where the arrangement was settled.
 //!
 //! # The row is state-driven; the menu is not
 //!
@@ -84,7 +85,6 @@ use crate::kit::ConfirmDialog;
 use crate::kit::ConfirmOption;
 use crate::kit::MenuAction;
 use crate::kit::PackageAction;
-use crate::kit::SkeletonBox;
 use crate::kit::SplitButton;
 use crate::kit::SplitOption;
 use crate::kit::StateLabel;
@@ -574,16 +574,16 @@ pub fn PageHeader(
     };
 
     view! {
-        <div class=style::root>
-            // The parent route, named rather than called "Back": it is an
-            // up-link and not history. `/` renders whichever main page is
-            // switched on, so it lands a reader back where they came from.
-            <BackLink href="/" label="Packages" />
-            <div class=style::row>
-                <h2 class=style::name>{namespace}</h2>
-                <StateLabel tone=rendered.tone>{rendered.words}</StateLabel>
-
-                <div class=style::actions>
+        <div>
+            <kit::PageHeader
+                // The parent route, named rather than called "Back": it is an
+                // up-link and not history. `/` renders whichever main page is
+                // switched on, so it lands a reader back where they came from.
+                trail=view! { <BackLink href="/" label="Packages" /> }.into_any()
+                title=namespace
+                label=view! { <StateLabel tone=rendered.tone>{rendered.words}</StateLabel> }
+                    .into_any()
+                actions=view! {
                     {move || {
                         (!resolving.get())
                             .then(|| {
@@ -617,29 +617,12 @@ pub fn PageHeader(
                             )
                         })
                     />
-                </div>
-            </div>
+                }
+                    .into_any()
+            />
             <BucketDialog open=bucket_open data=data.clone() w=w />
             {role_dialog}
             {danger_dialogs(&data, w, goto, undo_open, remove_open)}
-        </div>
-    }
-}
-
-/// The header's shape while its read is in flight.
-///
-/// Built from the same stylesheet as the header itself, so the gap between the
-/// two bands is the real one and the height it reserves cannot drift from the
-/// header's. A hard-coded pixel height would agree with the header only until
-/// somebody changed a control.
-#[component]
-pub fn PageHeaderSkeleton() -> impl IntoView {
-    view! {
-        <div class=style::root>
-            <SkeletonBox width="88px" height="16px" />
-            <div class=style::row>
-                <SkeletonBox width="240px" height="var(--q-control-height)" />
-            </div>
         </div>
     }
 }

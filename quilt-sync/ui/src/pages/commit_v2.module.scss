@@ -1,0 +1,128 @@
+// The page's one column. Its own gap rather than `PageLayout`'s `space-6`:
+// five regions at 24px apart cost a field's height at the 560px floor, and
+// these five read as one form, not as separate regions.
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-4);
+}
+
+// The primary's slot, and the test's handle on it. `contents`, so it adds no
+// box between the header's actions and the button; it still hears the pointer
+// for the tooltip, because the button inside it is what is hovered.
+.slot {
+  display: contents;
+}
+
+// The sentence and its remedy on one line, wrapping as a floor.
+.problem {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--q-space-2) var(--q-space-3);
+}
+
+.remedy_link {
+  color: var(--q-fgColor-accent);
+}
+
+.workflow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+}
+
+// One line: what the section is, what it holds, and `Edit`. Exactly a control
+// tall, so opening and closing does not move the line itself.
+.summary_row {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  min-height: var(--q-control-height);
+}
+
+.section_name {
+  flex: none;
+  font-weight: 600;
+}
+
+.summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--q-fgColor-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary_action {
+  margin-left: auto;
+  flex: none;
+}
+
+.workflow_body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+}
+
+// `TextInput`'s field, grown to a block of monospace. Full width, and resized
+// only vertically, so a wide document never pushes the column sideways.
+.metadata {
+  width: 100%;
+  min-width: 0;
+  padding: var(--q-space-2);
+  border: 1px solid var(--q-borderColor-field);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  resize: vertical;
+}
+
+// The editor's box. A height of its own, because the editor fills its parent
+// and a block with `height: auto` gives it nothing to fill. No `overflow`, here
+// or on any ancestor: the editor draws its context menu inside this box, and a
+// clipping ancestor crops it — which is what v1's scrolling column did.
+//
+// 150px is the most the 560px floor allows: with a failed check, the caption
+// under the editor must still end inside the window. Measured in the gallery's
+// commit page scene; at 220 the caption landed at 613.
+.editor {
+  height: 150px;
+}
+
+// The editor's frame, recoloured through its own custom property.
+.invalid {
+  --jse-main-border: 1px solid var(--q-borderColor-danger-muted);
+}
+
+.included {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+}
+
+.included_heading {
+  margin: 0;
+  font-size: var(--q-text-body);
+  font-weight: 600;
+}
+
+.tally {
+  font-weight: 400;
+  color: var(--q-fgColor-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.quiet {
+  margin: 0;
+  color: var(--q-fgColor-muted);
+}
+
+.skeleton_field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+}

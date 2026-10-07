@@ -42,11 +42,12 @@ pub(crate) mod resolve;
 mod revision_history;
 mod role_dialog;
 
+use crate::kit::PageHeaderSkeleton;
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
 use file_pane::{Reach, RowCommand, RowMenu};
+use header::PageHeader;
 pub use header::{MenuCommand, MenuItem, menu_items};
-use header::{PageHeader, PageHeaderSkeleton};
 use resolve::{ResolveCommands, ResolvePane};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss");

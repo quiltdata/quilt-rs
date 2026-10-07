@@ -1,0 +1,68 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+}
+
+// One row, wrapping. The widest arrangement was measured at 609px in the
+// gallery scene against the 992 the page has at 1024, so the wrap is a floor
+// for narrow windows rather than the normal case.
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  flex-wrap: wrap;
+}
+
+// Truncates rather than wrapping: a long namespace must not push the controls
+// onto a second line and change the header's height with the package.
+.name {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--q-text-title);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// One uniform gap, not two groups: at most a primary, `Open folder` and a
+// `[⋯]`, and a wider gap would separate a group of one from a group of two.
+.actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  gap: var(--q-space-2);
+}
+
+// Sized like `BackLink`, so swapping one for the other does not move the row.
+.trail {
+  align-self: flex-start;
+  font-size: var(--q-text-body);
+}
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crumb {
+  display: inline-flex;
+  align-items: center;
+}
+
+.link {
+  color: var(--q-fgColor-accent);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.separator {
+  padding-inline: var(--q-space-1);
+  color: var(--q-fgColor-muted);
+}
