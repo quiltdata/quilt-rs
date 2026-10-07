@@ -24,10 +24,13 @@
 //!   This is the bet the layout makes by putting the list last, and it is won.
 //! - **The folded section is three lines, 104px**: its heading with `Edit`,
 //!   the exact workflow the revision will carry — the select's own option, so
-//!   it follows a change — and a one-line preview of the metadata, each field
-//!   as `key: value`, cut with an ellipsis. Two lines more than a bare summary,
-//!   and worth them: the reader sees what will be published without opening
-//!   anything. It costs the 300-file cell two rows, seven down to five.
+//!   it follows a change — and the metadata as the catalog draws it: a
+//!   `kit::JsonDisplay` folded to one line that fits the room it has, and
+//!   opens in place to read the whole document without the editor. Two
+//!   lines more than a bare summary, and worth them: the reader sees what will
+//!   be published without opening anything. It costs the 300-file cell two
+//!   rows, seven down to five. Opened, the metadata pushes the files down, as
+//!   the reader asked it to.
 //! - **The header is 60px**, the same as the installed-package page's: it is
 //!   the same `kit::PageHeader`, with a `Trail` where that page has a
 //!   `BackLink`.

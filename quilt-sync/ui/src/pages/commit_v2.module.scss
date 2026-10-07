@@ -61,10 +61,12 @@
   white-space: nowrap;
 }
 
+// The rest of the row, whatever its content. `JsonDisplay` fits its folded line
+// to the width it is given, so a width that followed the content would follow
+// the line, and the line would fold to nothing.
 .preview_value {
+  flex: 1 1 0;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .preview_note {

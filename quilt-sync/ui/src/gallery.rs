@@ -67,6 +67,7 @@ mod gallery {
     pub mod forms;
     pub mod host_row;
     pub mod installed_package;
+    pub mod json_display;
     pub mod list_toolbar;
     pub mod load_failure;
     pub mod old_revisions_inline;
@@ -218,6 +219,7 @@ const ENTRIES: &[Entry] = &[
     entry!(Core, "Feedback", feedback::FeedbackStories),
     entry!(Core, "Forms", forms::FormsStories),
     entry!(Core, "HostRow", host_row::HostRowStories),
+    entry!(Core, "JsonDisplay", json_display::JsonDisplayStories),
     entry!(Core, "LoadFailure", load_failure::LoadFailureStories),
     entry!(Core, "PackageRow", packages::PackageRowStories),
     entry!(Core, "PaneSection", pane_section::PaneSectionStories),

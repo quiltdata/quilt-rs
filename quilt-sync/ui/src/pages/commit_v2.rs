@@ -35,6 +35,7 @@ use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::EntryRow;
 use crate::kit::FormControl;
+use crate::kit::JsonDisplay;
 use crate::kit::MenuAction;
 use crate::kit::Naming;
 use crate::kit::PageHeader;
@@ -348,7 +349,7 @@ pub struct WorkflowChoice {
 ///
 /// Folded, it names the exact workflow — the select's own option, so it
 /// follows a change — and previews the metadata on one line (see
-/// [`metadata_preview`]), with `Edit`. Open, it is the workflow `Select` and
+/// [`JsonDisplay`], folded to a line that opens in place), with `Edit`. Open, it is the workflow `Select` and
 /// v1's metadata editor at full width. Its context menu and dropdowns are drawn
 /// inside the editor's own box, so nothing between it and the page may clip:
 /// no ancestor here sets `overflow`, and the page has no second column that
@@ -400,7 +401,13 @@ pub fn WorkflowSection(
     let selected = workflow.as_ref().map(|choice| choice.selected);
     let no_workflow = no_workflow.unwrap_or_else(|| "None".to_string());
     let workflow_words = move || selected.map_or_else(|| no_workflow.clone(), |s| s.get());
-    let metadata_words = move || metadata_preview(&metadata.get());
+    // Drawn as the catalog draws metadata: one folded line that opens in place,
+    // so it can be read without the editor.
+    let metadata_view = move || match MetadataPreview::of(&metadata.get()) {
+        MetadataPreview::None => view! { <span>"None"</span> }.into_any(),
+        MetadataPreview::Invalid => view! { <span>"Not valid JSON"</span> }.into_any(),
+        MetadataPreview::Json(value) => view! { <JsonDisplay value=value /> }.into_any(),
+    };
 
     view! {
         <section class=style::workflow aria-label="Workflow and metadata">
@@ -423,7 +430,7 @@ pub fn WorkflowSection(
                     <dd>{workflow_words.clone()}</dd>
                     <dt>"Metadata"</dt>
                     <dd>
-                        <span class=style::preview_value>{metadata_words}</span>
+                        <div class=style::preview_value>{metadata_view}</div>
                         {metadata_source
                             .clone()
                             .map(|source| {
@@ -505,37 +512,28 @@ fn metadata_editor(
     .into_any()
 }
 
-/// The metadata in one line, for the folded section: each top-level field as
-/// `key: value`, joined by ` · `. Nested values are counted rather than
-/// spelled out, because a line has no room for them; text that is not JSON
-/// says so, since its error is what opens the section.
-#[must_use]
-pub fn metadata_preview(text: &str) -> String {
-    use serde_json::Value;
+/// What the folded section shows for the metadata text.
+#[derive(Debug, PartialEq)]
+pub enum MetadataPreview {
+    /// Empty text or an empty object: words, not braces.
+    None,
+    /// Text that does not parse. Its error is what opens the section.
+    Invalid,
+    /// A value worth drawing, as the catalog draws it.
+    Json(serde_json::Value),
+}
 
-    fn value(v: &Value) -> String {
-        match v {
-            Value::String(s) => s.clone(),
-            Value::Array(items) if items.len() == 1 => "1 item".to_string(),
-            Value::Array(items) => format!("{} items", items.len()),
-            Value::Object(fields) if fields.len() == 1 => "1 field".to_string(),
-            Value::Object(fields) => format!("{} fields", fields.len()),
-            other => other.to_string(),
+impl MetadataPreview {
+    #[must_use]
+    pub fn of(text: &str) -> Self {
+        if text.trim().is_empty() {
+            return Self::None;
         }
-    }
-
-    if text.trim().is_empty() {
-        return "None".to_string();
-    }
-    match serde_json::from_str::<Value>(text) {
-        Ok(Value::Object(fields)) if fields.is_empty() => "None".to_string(),
-        Ok(Value::Object(fields)) => fields
-            .iter()
-            .map(|(k, v)| format!("{k}: {}", value(v)))
-            .collect::<Vec<_>>()
-            .join(" · "),
-        Ok(other) => value(&other),
-        Err(_) => "Not valid JSON".to_string(),
+        match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(serde_json::Value::Object(fields)) if fields.is_empty() => Self::None,
+            Ok(value) => Self::Json(value),
+            Err(_) => Self::Invalid,
+        }
     }
 }
 
@@ -764,18 +762,14 @@ mod tests {
     }
 
     #[test]
-    fn the_metadata_preview_is_one_line() {
+    fn the_metadata_preview_draws_json_and_words_for_the_rest() {
         assert_eq!(
-            metadata_preview("{\"assay\": \"ELISA\", \"plate\": 7}"),
-            "assay: ELISA · plate: 7"
+            MetadataPreview::of("{\"plate\": 7}"),
+            MetadataPreview::Json(serde_json::json!({"plate": 7}))
         );
-        assert_eq!(
-            metadata_preview("{\"wells\": [1, 2, 3], \"run\": {\"a\": 1}}"),
-            "wells: 3 items · run: 1 field"
-        );
-        assert_eq!(metadata_preview(""), "None");
-        assert_eq!(metadata_preview("{}"), "None");
-        assert_eq!(metadata_preview("{\"a\": "), "Not valid JSON");
+        assert_eq!(MetadataPreview::of("  "), MetadataPreview::None);
+        assert_eq!(MetadataPreview::of("{}"), MetadataPreview::None);
+        assert_eq!(MetadataPreview::of("{\"a\": "), MetadataPreview::Invalid);
     }
 
     #[test]
