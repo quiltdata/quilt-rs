@@ -1,5 +1,6 @@
 use leptos::prelude::*;
 
+use super::event_target_checked;
 use crate::commands::{self, PublishSettingsData};
 use crate::components::Notification;
 use crate::components::buttons;
@@ -122,6 +123,12 @@ pub(super) fn PublishSection(
                         class:default=metadata_is_default
                     >{metadata_display}</span>
                 </dd>
+
+                <ConfirmBeforePublishing
+                    publish=current.clone()
+                    notification=notification
+                    refetch=refetch
+                />
             </dl>
             <div class="settings-actions">
                 <button
@@ -145,6 +152,78 @@ pub(super) fn PublishSection(
     }
 }
 
+/// *Confirm before publishing*, as one row of the section's list.
+#[component]
+fn ConfirmBeforePublishing(
+    publish: PublishSettingsData,
+    notification: RwSignal<Option<Notification>>,
+    refetch: Trigger,
+) -> impl IntoView {
+    // Saved on the click, as the other checkboxes on this page are, rather than
+    // through the popup: it is a yes-or-no about how Publish behaves, not a
+    // commit default. The command takes every publish setting, so the stored
+    // defaults ride along unchanged.
+    let confirm = RwSignal::new(publish.confirm_before_publish);
+    let saving = RwSignal::new(false);
+    let defaults = publish;
+    let on_toggle = move |ev: leptos::ev::Event| {
+        let on = event_target_checked(&ev);
+        if saving.get_untracked() {
+            return;
+        }
+        saving.set(true);
+        confirm.set(on);
+        let PublishSettingsData {
+            message_template,
+            default_workflow,
+            default_metadata,
+            ..
+        } = defaults.clone();
+        leptos::task::spawn_local(async move {
+            match commands::update_publish_settings(
+                message_template,
+                default_workflow,
+                default_metadata,
+                on,
+            )
+            .await
+            {
+                Ok(()) => {
+                    notification.set(Some(Notification::Success(
+                        "Commit and Push settings saved".into(),
+                    )));
+                    refetch.notify();
+                }
+                Err(e) => {
+                    // Back to what is on disk, so the box does not claim a
+                    // setting that was not saved.
+                    confirm.set(!on);
+                    notification.set(Some(Notification::Error(e)));
+                }
+            }
+            saving.set(false);
+        });
+    };
+
+    view! {
+        <dt>"Confirm before publishing"</dt>
+        <dd>
+            <label class="checkbox-option">
+                <input
+                    type="checkbox"
+                    prop:checked=move || confirm.get()
+                    prop:disabled=move || saving.get()
+                    on:change=on_toggle
+                />
+                <span class="value default">
+                    "Publish on the package page opens the commit page, so you can \
+                     review the message and metadata first."
+                </span>
+            </label>
+        </dd>
+    }
+}
+
 #[component]
 fn PublishSettingsPopup(
     current: PublishSettingsData,
@@ -158,6 +237,8 @@ fn PublishSettingsPopup(
     let use_bucket_default = RwSignal::new(current.default_workflow.is_empty());
     let metadata_error = RwSignal::new(None::<String>);
     let saving = RwSignal::new(false);
+    // Not edited here; carried so saving the defaults keeps it as it is.
+    let confirm_before_publish = current.confirm_before_publish;
 
     // Reactive: warn while an override is selected or metadata is present.
     let show_warning = Signal::derive(move || {
@@ -186,7 +267,9 @@ fn PublishSettingsPopup(
         saving.set(true);
         let on_close = on_close_save.clone();
         leptos::task::spawn_local(async move {
-            match commands::update_publish_settings(template, wf, meta).await {
+            match commands::update_publish_settings(template, wf, meta, confirm_before_publish)
+                .await
+            {
                 Ok(()) => {
                     notification.set(Some(Notification::Success(
                         "Commit and Push settings saved".into(),

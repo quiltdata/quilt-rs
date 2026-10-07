@@ -361,6 +361,23 @@ pub fn differing_marks(
 #[derive(Clone, Copy)]
 struct Carried(Memo<Option<routes::DeepLinkOutcome>>);
 
+/// *Confirm before publishing*, as Settings had it when the page opened:
+/// whether the header's `Publish` goes to the commit page or publishes in
+/// place. Read with the design preview, once per visit, so a change in Settings
+/// takes effect on the next page the reader opens.
+///
+/// Context rather than a field of [`Wiring`], which is passed by value to every
+/// part of the page and is at the size where that stops being cheap; one
+/// control reads this. Absent — a header drawn without the page — reads as off,
+/// which is the default.
+#[derive(Clone, Copy)]
+pub(crate) struct ConfirmPublish(pub bool);
+
+/// Whether the page this is drawn in asked for *Confirm before publishing*.
+fn confirm_publish() -> bool {
+    use_context::<ConfirmPublish>().is_some_and(|ConfirmPublish(on)| on)
+}
+
 /// `href` with the page's deep-link outcome after it, so entering Resolve,
 /// leaving it, or replacing the address does not end that outcome's band.
 fn carrying(href: String) -> String {
@@ -921,13 +938,17 @@ fn package_failure(namespace: String, reload: Trigger) -> AnyView {
 /// `main.rs`'s `PackagePage` decides, from the same answer `/` renders the main
 /// page by, so a reader who has the new main page gets this one with it and
 /// every link to a package lands here rather than on v1's.
+///
+/// `confirm_publish` is *Confirm before publishing* from that same answer —
+/// see [`ConfirmPublish`].
 #[component]
-pub fn InstalledPackageV2() -> impl IntoView {
+pub fn InstalledPackageV2(#[prop(optional)] confirm_publish: bool) -> impl IntoView {
     view! {
         <PackageScreen
             read=read_page
             resolving=ResolveCommands::app()
             revision_message=mismatch_band::app_revision_message
+            confirm_publish=confirm_publish
         />
     }
 }
@@ -949,6 +970,7 @@ fn PackageScreen(
     read: PageRead,
     resolving: ResolveCommands,
     revision_message: mismatch_band::RevisionMessage,
+    #[prop(optional)] confirm_publish: bool,
 ) -> impl IntoView {
     let query = use_query_map();
     // The address is the only input, and changes without a remount: one route serves every package.
@@ -976,6 +998,7 @@ fn PackageScreen(
     let dismissed: RwSignal<Option<String>> = RwSignal::new(None);
     // Here and not in the header, which every re-read rebuilds — see `Wiring`.
     let w = Wiring::new();
+    provide_context(ConfirmPublish(confirm_publish));
     w.follow(ns.into());
     let Wiring {
         outcome, reload, ..
@@ -2032,7 +2055,7 @@ mod tests {
             view! {
                 <Router>
                     <Routes fallback=|| view! { "no route" }>
-                        <Route path=path!("/installed-package") view=InstalledPackageV2 />
+                        <Route path=path!("/installed-package") view=|| view! { <InstalledPackageV2 /> } />
                     </Routes>
                 </Router>
             }
@@ -2151,7 +2174,7 @@ mod tests {
             view! {
                 <Router>
                     <Routes fallback=|| view! { "no route" }>
-                        <Route path=path!("/installed-package") view=InstalledPackageV2 />
+                        <Route path=path!("/installed-package") view=|| view! { <InstalledPackageV2 /> } />
                     </Routes>
                 </Router>
             }
@@ -2172,7 +2195,7 @@ mod tests {
             view! {
                 <Router>
                     <Routes fallback=|| view! { "no route" }>
-                        <Route path=path!("/installed-package") view=InstalledPackageV2 />
+                        <Route path=path!("/installed-package") view=|| view! { <InstalledPackageV2 /> } />
                     </Routes>
                 </Router>
             }

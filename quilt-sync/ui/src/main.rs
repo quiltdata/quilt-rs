@@ -70,7 +70,7 @@ fn Home() -> impl IntoView {
     view! {
         <ByDesign
             read=read_settings
-            v2=|| view! { <pages::MainPage /> }.into_any()
+            v2=|_| view! { <pages::MainPage /> }.into_any()
             v1=|| view! { <pages::InstalledPackagesList /> }.into_any()
             skeleton=|| view! { <pages::MainPageSkeleton actions=loading_actions() /> }.into_any()
             loading="Loading QuiltSync"
@@ -93,7 +93,10 @@ fn PackagePage(read: SettingsRead) -> impl IntoView {
     view! {
         <ByDesign
             read=read
-            v2=|| view! { <pages::InstalledPackageV2 /> }.into_any()
+            v2=|settings| {
+                let confirm_publish = settings.publish.confirm_before_publish;
+                view! { <pages::InstalledPackageV2 confirm_publish=confirm_publish /> }.into_any()
+            }
             v1=|| view! { <pages::InstalledPackage /> }.into_any()
             skeleton=|| view! { <pages::PackagePageSkeleton actions=loading_actions() /> }.into_any()
             loading="Loading package"
@@ -111,6 +114,10 @@ fn read_settings() -> Pin<Box<dyn Future<Output = Result<commands::SettingsData,
 /// One route that is two pages: `v2` when [`design_preview`] says so, `v1`
 /// otherwise, asked afresh on every visit.
 ///
+/// `v2` is handed the answer it was chosen by, so a page that needs a setting
+/// reads it from this one read rather than asking again — and gets the value
+/// saved before this visit, for the same reason the preference does.
+///
 /// A fetch, so there is a frame before the answer — [`design_loading`] says what
 /// it holds. Asked per visit rather than once for the session, because saving the
 /// preference in Settings has to take effect on the next page the reader opens,
@@ -125,7 +132,7 @@ fn read_settings() -> Pin<Box<dyn Future<Output = Result<commands::SettingsData,
 #[component]
 fn ByDesign(
     read: SettingsRead,
-    v2: fn() -> AnyView,
+    v2: fn(&commands::SettingsData) -> AnyView,
     v1: fn() -> AnyView,
     /// `v2`'s first paint, for the loading frame when the root marker predicts
     /// `v2`.
@@ -141,7 +148,10 @@ fn ByDesign(
                 let settings = settings.await;
                 let on = design_preview(settings.as_ref().map_err(String::as_str));
                 quilt_sync_ui::theme::set_v2(on);
-                if on { v2() } else { v1() }
+                match settings {
+                    Ok(data) if on => v2(&data),
+                    _ => v1(),
+                }
             })}
         </Suspense>
     }

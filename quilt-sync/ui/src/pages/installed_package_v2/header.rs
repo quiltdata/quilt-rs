@@ -39,10 +39,19 @@
 //! Three channels — the notification stack, the page's band, a dialog — and
 //! one rule, by what the command does. Navigating reports by arriving, on none
 //! of them. A self-evident effect says nothing and reports only its failure,
-//! on the page's band. `Get latest` keeps what pull already does — its report
-//! reaches the notification stack — and its failure goes to the band. A
-//! dialog-borne command draws its refusal inside the dialog, which stays open.
-//! Every command, as it starts, retracts what the band said about the last one.
+//! on the page's band. `Get latest` and `Publish` keep what pull and publish
+//! already do — their report reaches the notification stack — and their
+//! failure goes to the band. A dialog-borne command draws its refusal inside
+//! the dialog, which stays open. Every command, as it starts, retracts what the
+//! band said about the last one.
+//!
+//! `Publish` is the one command that is either kind, and Settings decides
+//! which. By default it publishes in place, with the commit defaults from
+//! Settings, so the package's most common job is one click. With *Confirm
+//! before publishing* on it goes to the commit page, where the reader reviews
+//! the message and metadata first, and reports by arriving. `Create new
+//! revision` always goes there: choosing what the revision says is the point
+//! of it.
 
 use leptos::prelude::*;
 
@@ -269,8 +278,28 @@ fn primary_action(
     let uri = data.uri.clone();
     // Keeps a deep link's mismatch, so entering the mode does not end its band.
     let resolve_to = super::carrying(crate::routes::resolve_href(&ns));
-    let publish_to = crate::routes::commit_href(&ns);
-    let revision_to = publish_to.clone();
+    let revision_to = crate::routes::commit_href(&ns);
+    // With confirmation on, `Publish` is the commit page too; off, it is pull's
+    // shape — run here, reported by its toast, the page re-read after.
+    let on_publish = if super::confirm_publish() {
+        let publish_to = revision_to.clone();
+        Callback::new(move |()| goto.set(Some(publish_to.clone())))
+    } else {
+        let ns = ns.to_string();
+        let uri = uri.clone();
+        Callback::new(move |()| {
+            let ns = ns.clone();
+            let uri = uri.clone();
+            run(
+                busy,
+                outcome,
+                ns.clone(),
+                "Could not publish this package.",
+                Some(reload),
+                async move { commands::package_publish(ns, uri).await },
+            );
+        })
+    };
     // The deployment to sign in to, when the state names one. `None` for a bare
     // bucket on ambient credentials, which is why the kit offers no action there.
     let sign_in_to = match &data.state {
@@ -286,10 +315,7 @@ fn primary_action(
                 <SplitButton
                     disabled=Signal::derive(move || busy.get())
                     options=vec![
-                        SplitOption::new(
-                            "Publish",
-                            Callback::new(move |()| goto.set(Some(publish_to.clone()))),
-                        ),
+                        SplitOption::new("Publish", on_publish),
                         SplitOption::new(
                             "Create new revision",
                             Callback::new(move |()| goto.set(Some(revision_to.clone()))),
@@ -606,10 +632,20 @@ mod tests {
     /// A header mounted on a real route table, so a navigation lands somewhere
     /// this test can read.
     fn mount_routed(data: commands::PackageHeaderData) -> web_sys::Element {
+        mount_routed_with(data, Wiring::new(), false)
+    }
+
+    /// [`mount_routed`] over the page's signals, so a test can read the band,
+    /// and with *Confirm before publishing* as `confirm` says.
+    fn mount_routed_with(
+        data: commands::PackageHeaderData,
+        w: Wiring,
+        confirm: bool,
+    ) -> web_sys::Element {
         go_to("/installed-package?namespace=team%2Fdataset");
         mount(move || {
+            provide_context(super::super::ConfirmPublish(confirm));
             let data = data.clone();
-            let w = Wiring::new();
             view! {
                 <Router>
                     <Routes fallback=|| view! { "no route" }>
@@ -720,16 +756,87 @@ mod tests {
         );
     }
 
-    /// A command that navigates reports by arriving, and nothing is said —
-    /// `channel-per-command`'s first rule. Publishing lands on the commit page,
-    /// which is also where `Create new revision` goes: they are one job done two
-    /// ways.
+    /// By default `Publish` runs here, the way `Get latest` does: the page holds
+    /// while it runs and stays where it is. There is no bridge under the
+    /// runner, so the failure arm is what runs — a workflow's refusal takes the
+    /// same path — and it reaches the band, keyed to the package.
     #[wasm_bindgen_test]
-    async fn publish_arrives_on_the_commit_page() {
-        let el = mount_routed(data(kit::PackageState::PendingCommit));
+    async fn publish_runs_in_place_and_reports_its_failure_on_the_band() {
+        let w = Wiring::new();
+        let el = mount_routed_with(data(kit::PackageState::PendingCommit), w, false);
         sleep_ms(50).await;
 
         button(&el, "Publish").click();
+        sleep_ms(50).await;
+
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("the commit page"),
+            "stays on the package page; markup was {}",
+            el.inner_html()
+        );
+        let said = w
+            .outcome
+            .get_untracked()
+            .expect("the failure reached the band");
+        assert_eq!(said.namespace, "team/dataset");
+        assert_eq!(said.variant, BannerVariant::Critical);
+        assert_eq!(said.lead, "Could not publish this package.");
+        assert!(
+            !w.busy.get_untracked(),
+            "the signal comes back down when it settles"
+        );
+    }
+
+    /// With *Confirm before publishing* on, `Publish` goes to the commit page
+    /// and reports by arriving — `channel-per-command`'s first rule.
+    #[wasm_bindgen_test]
+    async fn with_confirmation_on_publish_arrives_on_the_commit_page() {
+        let w = Wiring::new();
+        let el = mount_routed_with(data(kit::PackageState::PendingCommit), w, true);
+        sleep_ms(50).await;
+
+        button(&el, "Publish").click();
+        sleep_ms(50).await;
+
+        assert!(
+            el.text_content()
+                .unwrap_or_default()
+                .contains("the commit page"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(w.outcome.get_untracked().is_none(), "and nothing is said");
+    }
+
+    /// `Create new revision` behind the caret goes to the commit page whatever
+    /// the setting says: choosing what the revision says is what it is for.
+    #[wasm_bindgen_test]
+    async fn create_new_revision_on_the_caret_arrives_on_the_commit_page() {
+        let el = mount_routed(data(kit::PackageState::PendingCommit));
+        sleep_ms(50).await;
+
+        let choices = el
+            .query_selector_all(&format!("[popover]{SPLIT_CHOICES} button"))
+            .unwrap();
+        (0..choices.length())
+            .map(|i| {
+                choices
+                    .item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::HtmlElement>()
+            })
+            .find(|b| {
+                b.text_content()
+                    .unwrap_or_default()
+                    .contains("Create new revision")
+            })
+            .unwrap_or_else(|| panic!("the caret's choice; markup was {}", el.inner_html()))
+            .click();
+        leptos::task::tick().await;
+        // The face now says it, and a press on the face runs it.
+        button(&el, "Create new revision").click();
         sleep_ms(50).await;
 
         assert!(

@@ -235,6 +235,9 @@ pub struct PublishSettingsData {
     pub message_template: String,
     pub default_workflow: String,
     pub default_metadata: String,
+    /// *Confirm before publishing*: the package page's `Publish` opens the
+    /// commit page for review instead of publishing in one click.
+    pub confirm_before_publish: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -1261,6 +1264,7 @@ pub async fn update_publish_settings(
     message_template: String,
     default_workflow: String,
     default_metadata: String,
+    confirm_before_publish: bool,
 ) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -1268,6 +1272,7 @@ pub async fn update_publish_settings(
         message_template: String,
         default_workflow: String,
         default_metadata: String,
+        confirm_before_publish: bool,
     }
     tauri::invoke(
         "update_publish_settings",
@@ -1275,6 +1280,7 @@ pub async fn update_publish_settings(
             message_template,
             default_workflow,
             default_metadata,
+            confirm_before_publish,
         },
     )
     .await

@@ -21,6 +21,11 @@ pub struct PublishSettings {
     pub message_template: Option<String>,
     pub default_workflow: Option<String>,
     pub default_metadata: Option<String>,
+    /// Whether the package page's `Publish` opens the commit page for review
+    /// instead of publishing in one click. Off unless the reader turned it on,
+    /// and a file written before the setting existed reads as off.
+    #[serde(default)]
+    pub confirm_before_publish: bool,
 }
 
 impl PublishSettings {
@@ -70,10 +75,30 @@ mod tests {
             message_template: Some("Auto-publish {date}".to_string()),
             default_workflow: Some("release".to_string()),
             default_metadata: Some(r#"{"source":"desktop"}"#.to_string()),
+            confirm_before_publish: true,
         };
         settings.save(dir.path()).await?;
         let loaded = PublishSettings::load(dir.path()).await?;
         assert_eq!(loaded, settings);
+        Ok(())
+    }
+
+    /// A file saved before *Confirm before publishing* existed loads, with
+    /// the setting off.
+    #[tokio::test]
+    async fn a_file_without_confirm_before_publish_reads_as_off() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        tokio::fs::write(
+            dir.path().join(FILE_NAME),
+            br#"{"message_template":"Auto-publish {date}","default_workflow":null,"default_metadata":null}"#,
+        )
+        .await?;
+        let loaded = PublishSettings::load(dir.path()).await?;
+        assert_eq!(
+            loaded.message_template.as_deref(),
+            Some("Auto-publish {date}")
+        );
+        assert!(!loaded.confirm_before_publish);
         Ok(())
     }
 

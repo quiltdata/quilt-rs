@@ -33,6 +33,7 @@ pub struct PublishSettingsData {
     pub message_template: String,
     pub default_workflow: String,
     pub default_metadata: String,
+    pub confirm_before_publish: bool,
 }
 
 impl From<PublishSettings> for PublishSettingsData {
@@ -41,6 +42,7 @@ impl From<PublishSettings> for PublishSettingsData {
             message_template: s.message_template.unwrap_or_default(),
             default_workflow: s.default_workflow.unwrap_or_default(),
             default_metadata: s.default_metadata.unwrap_or_default(),
+            confirm_before_publish: s.confirm_before_publish,
         }
     }
 }
@@ -249,6 +251,7 @@ pub async fn update_publish_settings(
     message_template: String,
     default_workflow: String,
     default_metadata: String,
+    confirm_before_publish: bool,
 ) -> Result<(), String> {
     // Validate metadata is parseable JSON (or empty/whitespace = no metadata).
     // `opt_from_string` below trims whitespace-only input down to `None`, so
@@ -263,6 +266,7 @@ pub async fn update_publish_settings(
         message_template: opt_from_string(&message_template),
         default_workflow: opt_from_string(&default_workflow),
         default_metadata: opt_from_string(&default_metadata),
+        confirm_before_publish,
     };
 
     let app_handle = app_handle.lock().await;

@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.8-dev]
+
+### Changed
+
+- **New design preview**: Publish on the package page now publishes in one click; turn on *Confirm before publishing* in Settings to review on the commit page first. A package to publish in the main page's queue opens its package page
+
 ## [v0.22.7] - 2026-10-07
 
 ### Added
