@@ -112,8 +112,15 @@ fn CommitContent(
 
     let namespace = data.namespace.clone();
     let message = RwSignal::new(data.message.clone());
-    let user_meta = data.user_meta.clone();
-    let user_meta_for_editor = data.user_meta.clone();
+    // The editor starts from the publish settings' default metadata, as
+    // one-click Publish would send it; with none set, from the current
+    // revision's metadata, since a form can't show "keep".
+    let starting_meta = data
+        .settings_user_meta
+        .clone()
+        .unwrap_or_else(|| data.user_meta.clone());
+    let user_meta = starting_meta.clone();
+    let user_meta_for_editor = starting_meta.clone();
     let user_meta_error = data.user_meta_error.clone();
     let entries = data.entries;
     let ignored_count = data.ignored_count;
@@ -124,7 +131,11 @@ fn CommitContent(
     // submits. The selected index into that list is the whole client-side
     // state.
     let previous_workflow = PreviousWorkflow::from_stamp(data.workflow.as_ref());
-    let wf_view = build_workflow_view(&data.workflows, previous_workflow.preselect_id());
+    let wf_view = build_workflow_view(
+        &data.workflows,
+        previous_workflow.preselect_id(),
+        data.settings_workflow.as_deref(),
+    );
     // `wf_view.initial` is the single source of truth for the starting
     // selection: it both seeds this signal (which submit reads) and is passed
     // to `WorkflowSection` to render the `selected` attribute, so display and
@@ -172,9 +183,10 @@ fn CommitContent(
     // writes edits into the hidden `#metadata` textarea and dispatches an
     // `input` event (see json-editor-glue.js), so this tracks edits from either
     // the editor or the textarea fallback.
-    let metadata_text = RwSignal::new(data.user_meta.clone());
-    // The previous revision's metadata, as seeded into the editor. Used as the
-    // effective candidate when the editor is left empty — see
+    let metadata_text = RwSignal::new(starting_meta);
+    // The previous revision's metadata, which an empty editor keeps — not
+    // necessarily what the editor was seeded with. Used as the effective
+    // candidate when the editor is left empty — see
     // `effective_metadata` and the parity note at the validation send site.
     let seeded_previous_meta = data.user_meta.clone();
     // Per-field dirtiness: validation runs eagerly (the Name check must fire on

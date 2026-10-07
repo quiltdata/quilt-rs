@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
 
 use quilt_rs::io::remote::WORKFLOWS_CONFIG_KEY;
+use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::io::remote::WorkflowsConfig;
 use quilt_rs::workflow::PackageCandidate;
 use quilt_rs::workflow::RuleViolation;
@@ -22,6 +23,8 @@ use crate::Error;
 use crate::commands::RoleCache;
 use crate::model;
 use crate::model::QuiltModel;
+use crate::publish_settings::PublishSettings;
+use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
 
 use super::package_entries::InstalledPackageEntryData;
@@ -86,9 +89,21 @@ pub struct CommitData {
     pub namespace: quilt_uri::Namespace,
     pub uri: Option<quilt_uri::S3PackageUri>,
     pub status: String,
+    /// The message the form starts with: what one-click Publish would send,
+    /// the settings' template rendered over the summary of the changes.
     pub message: String,
+    /// The current revision's metadata: what an emptied editor keeps.
     pub user_meta: String,
     pub user_meta_error: Option<String>,
+    /// The publish settings' default metadata, which the editor starts with
+    /// in place of [`Self::user_meta`]. `None` when it is empty, which means
+    /// "keep" — a form can't show that, so the editor starts from
+    /// `user_meta` as before.
+    pub settings_user_meta: Option<String>,
+    /// The publish settings' default workflow id, preselected ahead of the
+    /// bucket's own preselection when the bucket declares it. `None` defers
+    /// to the bucket.
+    pub settings_workflow: Option<String>,
     pub workflow: Option<CommitWorkflowData>,
     pub workflows: CommitWorkflows,
     /// Why the active role cannot reach this package's bucket, worded exactly
@@ -283,6 +298,7 @@ async fn get_commit_data_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
+    settings: &PublishSettings,
     namespace: &quilt_uri::Namespace,
 ) -> Result<CommitData, Error> {
     let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
@@ -432,8 +448,14 @@ async fn get_commit_data_from_model(
         .filter(|f| !status.changes.contains_key(*f))
         .count();
 
-    // Generate commit message from changes
-    let message = crate::commit_message::generate(&status.changes);
+    // Start from what one-click Publish and autosync would send.
+    let (message, settings_user_meta, settings_workflow) =
+        model::publish_inputs(namespace, settings, &status);
+    let settings_user_meta = Some(settings_user_meta).filter(|m| !m.trim().is_empty());
+    let settings_workflow = match settings_workflow {
+        WorkflowIntent::Named(id) => Some(id),
+        WorkflowIntent::BucketDefault | WorkflowIntent::NoWorkflow => None,
+    };
 
     // Load remote manifest for user_meta and workflow
     let (user_meta, user_meta_error, workflow) =
@@ -479,6 +501,8 @@ async fn get_commit_data_from_model(
         message,
         user_meta,
         user_meta_error,
+        settings_user_meta,
+        settings_workflow,
         workflow,
         workflows,
         no_access_reason,
@@ -495,13 +519,15 @@ pub async fn get_commit_data(
     m: tauri::State<'_, model::Model>,
     roles: tauri::State<'_, RoleCache>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    publish_settings: tauri::State<'_, SharedPublishSettings>,
     namespace: String,
 ) -> Result<CommitData, String> {
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    get_commit_data_from_model(&*m, &roles, &tracing, &namespace)
+    let settings = publish_settings.read().await.clone();
+    get_commit_data_from_model(&*m, &roles, &tracing, &settings, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -836,9 +862,15 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.namespace.to_string(), "foo/bar");
         let uri = data.uri.as_ref().expect("URI present");
@@ -847,6 +879,78 @@ mod tests {
             catalog_host(data.uri.as_ref()).as_deref(),
             Some("quilt.test")
         );
+        Ok(())
+    }
+
+    /// The form starts from what one-click Publish would send: the rendered
+    /// template, the default metadata and the default workflow. The current
+    /// revision's metadata is still carried, since an emptied editor keeps it.
+    #[tokio::test]
+    async fn commit_data_starts_from_the_publish_settings() -> Result<(), String> {
+        let mut model = mocks::create();
+        mocks::mock_installed_package(&mut model);
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+        let settings = PublishSettings {
+            message_template: Some("Review {namespace}: {changes}".to_string()),
+            default_workflow: Some(" release ".to_string()),
+            default_metadata: Some(r#"{"source":"desktop"}"#.to_string()),
+        };
+
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &settings,
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let summary = crate::commit_message::generate(&std::collections::BTreeMap::new());
+        assert_eq!(data.message, format!("Review foo/bar: {summary}"));
+        assert_eq!(
+            data.settings_user_meta.as_deref(),
+            Some(r#"{"source":"desktop"}"#)
+        );
+        assert_eq!(data.settings_workflow.as_deref(), Some("release"));
+        // The fixture's revision has no metadata of its own.
+        assert_eq!(data.user_meta, "");
+        Ok(())
+    }
+
+    /// With nothing set, the form starts as it did before: the bare summary,
+    /// the current revision's metadata and the bucket's preselection.
+    #[tokio::test]
+    async fn commit_data_without_publish_settings_keeps_the_old_start() -> Result<(), String> {
+        for default_metadata in [None, Some("  ".to_string())] {
+            let mut model = mocks::create();
+            mocks::mock_installed_package(&mut model);
+            let tracing = crate::telemetry::Telemetry::default();
+            let namespace = ("foo", "bar").into();
+            let settings = PublishSettings {
+                message_template: None,
+                default_workflow: Some("  ".to_string()),
+                default_metadata,
+            };
+
+            let data = get_commit_data_from_model(
+                &model,
+                &RoleCache::default(),
+                &tracing,
+                &settings,
+                &namespace,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+            assert_eq!(
+                data.message,
+                crate::commit_message::generate(&std::collections::BTreeMap::new())
+            );
+            assert_eq!(data.settings_user_meta, None);
+            assert_eq!(data.settings_workflow, None);
+        }
         Ok(())
     }
 
@@ -910,10 +1014,15 @@ mod tests {
             let tracing = crate::telemetry::Telemetry::default();
             let namespace = ("foo", "bar").into();
 
-            let data =
-                get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-                    .await
-                    .map_err(|e| format!("page must open without a session ({described}): {e}"))?;
+            let data = get_commit_data_from_model(
+                &model,
+                &RoleCache::default(),
+                &tracing,
+                &PublishSettings::default(),
+                &namespace,
+            )
+            .await
+            .map_err(|e| format!("page must open without a session ({described}): {e}"))?;
 
             assert_eq!(
                 data.namespace.to_string(),
@@ -972,9 +1081,15 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert_eq!(data.namespace.to_string(), "foo/bar");
         assert!(
@@ -1006,9 +1121,15 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(
             data.entries.iter().any(|e| e.filename == "file.txt"),
@@ -1025,8 +1146,14 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("missing", "package").into();
 
-        let result =
-            get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace).await;
+        let result = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await;
         assert!(result.is_err());
     }
 
@@ -1088,9 +1215,15 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(data.workflow.is_some());
         let workflow = data.workflow.unwrap();
@@ -1154,9 +1287,15 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(data.workflow.is_some());
         let workflow = data.workflow.unwrap();
@@ -1212,9 +1351,15 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(data.workflow.is_none());
         Ok(())
@@ -1295,9 +1440,15 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         // `Ok(Some(cfg))` → Available, carrying the list/default/required flag.
         let CommitWorkflows::Available {
@@ -1340,9 +1491,15 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(matches!(data.workflows, CommitWorkflows::NotConfigured));
         Ok(())
@@ -1362,9 +1519,15 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(matches!(data.workflows, CommitWorkflows::Unavailable));
         Ok(())
@@ -1446,9 +1609,15 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         let CommitWorkflows::Invalid { reason, config_url } = data.workflows else {
             return Err("expected Invalid".to_string());
@@ -1480,9 +1649,15 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(matches!(data.workflows, CommitWorkflows::Unavailable));
         Ok(())
