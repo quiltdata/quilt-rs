@@ -1196,3 +1196,126 @@ async fn expire_credentials_forces_a_revend_without_touching_tokens() -> Res {
     assert!(auth_io.read_tokens().await?.is_some());
     Ok(())
 }
+
+const API_KEY: &str = "qk_test-key";
+
+/// Answers the credentials endpoint only for the API key, and counts calls, so
+/// a test can see the key was sent and the token files were never consulted.
+#[derive(Default)]
+struct ApiKeyHttpClient {
+    vends: AtomicUsize,
+    reject: bool,
+}
+
+#[async_trait]
+impl HttpClient for ApiKeyHttpClient {
+    async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        auth_token: Option<&str>,
+    ) -> Res<T> {
+        let registry = get_registry();
+        match url {
+            u if u == format!("https://{}/config.json", fixtures::host()) => {
+                let config = QuiltStackConfig {
+                    registry_url: format!("https://{registry}").parse()?,
+                };
+                Ok(serde_json::from_value(serde_json::to_value(config)?)?)
+            }
+            u if u == format!("https://{registry}/api/auth/get_credentials") => {
+                assert_eq!(auth_token, Some(API_KEY));
+                self.vends.fetch_add(1, Ordering::SeqCst);
+                if self.reject {
+                    return Err(Error::Auth(
+                        fixtures::host(),
+                        AuthError::CredentialsRead("401 Unauthorized".to_string()),
+                    ));
+                }
+                let creds = RemoteCredentials {
+                    access_key_id: "key-access-key".to_string(),
+                    secret_access_key: "key-secret-key".to_string(),
+                    session_token: "key-session-token".to_string(),
+                    expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+                };
+                Ok(serde_json::from_value(serde_json::to_value(creds)?)?)
+            }
+            _ => panic!("Unexpected GET URL: {url}"),
+        }
+    }
+
+    async fn head(&self, _url: &str) -> Res<HeaderMap> {
+        unimplemented!()
+    }
+
+    async fn post<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        _form_data: &HashMap<String, String>,
+    ) -> Res<T> {
+        panic!("an API key never refreshes a token, got POST {url}")
+    }
+
+    async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        _body: &B,
+    ) -> Res<T> {
+        panic!("an API key never posts JSON, got POST {url}")
+    }
+
+    async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        _body: &B,
+        _auth_token: &str,
+    ) -> Res<T> {
+        panic!("an API key never posts JSON, got POST {url}")
+    }
+}
+
+/// With an API key set, credentials vend with the key and no session on disk
+/// is needed — the unattended path.
+#[test(tokio::test)]
+async fn test_api_key_vends_without_a_session() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths.clone(), storage.clone());
+    let host = fixtures::host();
+    auth.set_api_key(&host, API_KEY.to_string());
+
+    let client = ApiKeyHttpClient::default();
+    let creds = auth.get_credentials_or_refresh(&client, &host).await?;
+
+    assert_eq!(creds.access_key, "key-access-key");
+    assert_eq!(client.vends.load(Ordering::SeqCst), 1);
+    // The key's credentials are never cached to disk.
+    let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+    assert!(auth_io.read_credentials().await?.is_none());
+    Ok(())
+}
+
+/// A rejected key fails closed instead of falling back to a stored session.
+#[test(tokio::test)]
+async fn test_api_key_rejected_fails_closed() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths, storage);
+    let host = fixtures::host();
+    auth.set_api_key(&host, API_KEY.to_string());
+
+    let client = ApiKeyHttpClient {
+        reject: true,
+        ..ApiKeyHttpClient::default()
+    };
+    assert!(
+        auth.get_credentials_or_refresh(&client, &host)
+            .await
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_api_key_is_redacted_in_debug() {
+    assert_eq!(format!("{:?}", ApiKey(API_KEY.to_string())), "[REDACTED]");
+}

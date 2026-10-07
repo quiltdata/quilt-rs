@@ -93,6 +93,21 @@ const ROLE_ENDPOINT: &str = "registry GraphQL endpoint";
 /// is why the first observation of a session always flushes.
 type SessionRoles = Arc<StdMutex<HashMap<Host, String>>>;
 
+/// A registry API key (`qk_…`). Held in memory only and never written to disk;
+/// `Debug` redacts it so it cannot reach a log through `Auth`'s derive.
+#[derive(Clone)]
+struct ApiKey(String);
+
+impl std::fmt::Debug for ApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+/// Per-host API keys. Keyed by host because a key is valid only on the stack
+/// that issued it; sending it to another host's registry would leak it.
+type ApiKeys = Arc<StdMutex<HashMap<Host, ApiKey>>>;
+
 /// The active role plus every role the user holds, as the switcher needs
 /// them. `available` includes `current`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +131,7 @@ pub struct Auth<S: Storage = LocalStorage> {
     pub storage: Arc<S>,
     refresh_locks: RefreshLocks,
     session_roles: SessionRoles,
+    api_keys: ApiKeys,
 }
 
 impl<S: Storage> Clone for Auth<S> {
@@ -125,6 +141,7 @@ impl<S: Storage> Clone for Auth<S> {
             storage: Arc::clone(&self.storage),
             refresh_locks: Arc::clone(&self.refresh_locks),
             session_roles: Arc::clone(&self.session_roles),
+            api_keys: Arc::clone(&self.api_keys),
         }
     }
 }
@@ -136,7 +153,26 @@ impl<S: Storage + Send + Sync> Auth<S> {
             storage,
             refresh_locks: Arc::new(StdMutex::new(HashMap::new())),
             session_roles: Arc::new(StdMutex::new(HashMap::new())),
+            api_keys: Arc::new(StdMutex::new(HashMap::new())),
         }
+    }
+
+    /// Authenticate to `host` with a registry API key instead of an interactive
+    /// session, for unattended clients. While set, credential vending for `host`
+    /// sends the key and never reads or writes the token and credential files.
+    pub fn set_api_key(&self, host: &Host, key: String) {
+        self.api_keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(host.clone(), ApiKey(key));
+    }
+
+    fn api_key_for(&self, host: &Host) -> Option<ApiKey> {
+        self.api_keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(host)
+            .cloned()
     }
 
     /// Get the `Arc<Mutex>` for this host's refresh lock, creating it
@@ -831,6 +867,14 @@ impl<S: Storage + Send + Sync> Auth<S> {
         // always "the cached ones are fine". The outcomes worth a line are the
         // *unusual* ones below — no credentials, or a refresh — which stay louder.
         trace!("⏳ Getting or refreshing credentials for {}", host);
+
+        // The SDK caches what the credentials provider returns until it nears
+        // expiry, so vending on every call here costs one request per TTL. A
+        // rejected key fails closed: there is no session to fall back to.
+        if let Some(ApiKey(key)) = self.api_key_for(host) {
+            return refresh_credentials(http_client, host, &key).await;
+        }
+
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
 
         match auth_io.read_credentials().await {
