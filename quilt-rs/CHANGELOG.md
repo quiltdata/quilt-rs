@@ -24,6 +24,7 @@
 ### Added
 
 - `Auth::set_api_key` and `RemoteS3::set_api_key` let an unattended client authenticate to a stack with a registry API key (`qk_…`) instead of an interactive session; the key is held in memory only and a rejected key fails closed
+- `flow::push_revision` publishes a manifest whose entries are already in S3 and moves `latest` only if nobody else has moved it since the caller's parent, so an unattended writer never overwrites a scientist's `latest`; `Remote` gains `put_object_if` and `get_object_etag` (with default bodies) for the conditional write
 
 ## [v0.42.1] - 2026-10-06
 
