@@ -1,7 +1,7 @@
 //! Scans an instrument's source for run folders and their members.
 //!
 //! Polling is the source of truth: over SMB, `notify` delivers nothing usable
-//! and a directory listing can be a minute stale (SP-1). The run loop uses
+//! and a directory listing can be a minute stale. The run loop uses
 //! `notify` only to wake early; a missed event costs at most one poll.
 
 use std::collections::BTreeMap;

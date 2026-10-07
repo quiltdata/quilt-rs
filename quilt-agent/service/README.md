@@ -7,7 +7,7 @@ resumes any in-flight run from its journal on the next start.
 |---|---|---|
 | Linux | `quilt-agent.service` | systemd; `Restart=always` |
 | macOS | `bio.quilt.agent.plist` | launchd daemon; `KeepAlive` |
-| Windows | Scheduled Task (below) | a native Windows service is not in increment 1 |
+| Windows | Scheduled Task (below) | no native Windows service yet |
 
 Windows, from an elevated prompt, running as an account that can read the share:
 

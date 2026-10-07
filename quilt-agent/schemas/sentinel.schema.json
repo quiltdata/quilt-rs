@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://quilt.bio/schemas/lab-to-cloud/sentinel/1",
   "title": "Lab-to-Cloud sentinel",
-  "description": "The observation record an observer writes last into a run's landing prefix. Normative for spec/sentinel.md. INV-1, INV-2, INV-3, INV-6, INV-7.",
+  "description": "The observation record an observer writes last into a run's landing prefix.",
   "type": "object",
   "additionalProperties": false,
   "required": [

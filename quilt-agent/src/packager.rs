@@ -1,4 +1,4 @@
-//! Turns a sealed run into a package revision (`spec/packager.md`, agent locus):
+//! Turns a sealed run into a package revision:
 //! the sentinel's members become manifest rows pointing at the landed objects,
 //! named by the RO-Crate when one exists and the profile pattern otherwise.
 
@@ -20,7 +20,7 @@ pub const CRATE_NAME: &str = "ro-crate-metadata.json";
 
 /// An ELN anchor found in the crate. `matched` is the crate's own spelling,
 /// `configured` the profile's: they differ only in case, and saying so is the
-/// point (UNK-30) — a silent mismatch leaves the ELN canvas unlinked.
+/// point — a silent mismatch leaves the ELN canvas unlinked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ElnAnchor {
     pub configured: String,
@@ -36,7 +36,7 @@ pub struct Revision {
 }
 
 /// The crate's `type.id` keys: a non-file entity addressed as
-/// `<lowercased @type>.<@id>`, valued by its `name` (Vir's 9/14 conventions).
+/// `<lowercased @type>.<@id>`, valued by its `name`.
 fn type_id_keys(graph: &[Value]) -> Vec<(String, String)> {
     graph
         .iter()
@@ -285,7 +285,7 @@ mod tests {
         Ok(())
     }
 
-    /// UNK-30: the crate spells the key `experiment-id`, the profile
+    /// The crate spells the key `experiment-id`, the profile
     /// `experiment-ID`. Match anyway, and record the crate's spelling.
     #[test]
     fn eln_key_matches_case_insensitively_and_reports_the_spelling() -> Result<(), Error> {

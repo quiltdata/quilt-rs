@@ -1,4 +1,4 @@
-//! Unattended instrument-to-cloud mover (lab-to-cloud increment 1).
+//! Unattended instrument-to-cloud mover.
 //!
 //! Watches instrument run folders, decides when a run is complete, lands its
 //! files in S3, writes a sentinel recording what was observed, and publishes

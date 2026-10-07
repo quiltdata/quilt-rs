@@ -1,5 +1,5 @@
-//! The observation record written last into a run's landing prefix
-//! (`spec/sentinel.md`). Every sentinel is checked against the vendored schema
+//! The observation record written last into a run's landing prefix.
+//! Every sentinel is checked against the vendored schema
 //! before it is written, so a malformed one never reaches S3.
 
 use serde::Deserialize;
@@ -98,7 +98,7 @@ pub(crate) mod tests {
         assert_eq!(back, raw);
     }
 
-    /// INV-1: a timer-only boundary may never claim to be verified.
+    /// A timer-only boundary may never claim to be verified.
     #[test]
     fn a_guess_marked_verified_is_rejected() {
         let mut s = example();

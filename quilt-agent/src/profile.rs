@@ -126,9 +126,9 @@ pub struct Source {
     pub ignore: Vec<String>,
     #[serde(default = "Source::default_poll_s")]
     pub poll_s: u64,
-    /// The directory-listing cache TTL measured on this site's mount (UNK-31).
+    /// The directory-listing cache TTL measured on this site's mount.
     /// A new file can be invisible for this long, so no quiet window may be
-    /// shorter: SP-1 measured 60 s on macOS smbfs.
+    /// shorter: 60 s was measured on macOS smbfs.
     #[serde(default)]
     pub dir_cache_ttl_s: u64,
 }
@@ -223,7 +223,7 @@ impl Default for Packaging {
 
 impl Instrument {
     /// The quiet window this instrument's boundary waits out, floored by the
-    /// mount's listing-cache TTL (UNK-31).
+    /// mount's listing-cache TTL.
     #[must_use]
     pub fn quiet_window_s(&self) -> u64 {
         let configured = match self.boundary.method {

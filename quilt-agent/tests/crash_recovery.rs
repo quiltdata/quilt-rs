@@ -1,5 +1,5 @@
 //! A run interrupted between upload and publish resumes from the journal and
-//! lands exactly once: one sentinel, one revision, `latest` set once (INV-5).
+//! lands exactly once: one sentinel, one revision, `latest` set once.
 
 use std::path::Path;
 use std::sync::atomic::AtomicBool;

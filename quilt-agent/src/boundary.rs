@@ -1,4 +1,4 @@
-//! Decides when a run folder is complete (`spec/boundary-methods.md`).
+//! Decides when a run folder is complete.
 //!
 //! Pure over an observation: no I/O, no clock reads, so every rule is a unit
 //! test. One method per instrument; only `size_stable` returns a guess.
@@ -36,7 +36,7 @@ pub fn decide(boundary: &Boundary, quiet_window_s: u64, obs: &Observation) -> Ve
     match boundary.method {
         Method::MarkerFile => marker_file(boundary, quiet_window_s, obs),
         Method::SizeStable => size_stable(boundary, quiet_window_s, obs),
-        // ponytail: parsers wait on the site inventory (UNK-16); refusing loudly
+        // ponytail: no vendor manifest parsers yet; refusing loudly
         // beats guessing a vendor layout.
         Method::VendorManifest => Verdict::Suspect(format!(
             "manifest layout unknown: no parser for {}",
@@ -74,11 +74,11 @@ fn marker_file(boundary: &Boundary, window_s: u64, obs: &Observation) -> Verdict
         return Verdict::Pending;
     };
 
-    // UNK-32: a member written after the marker means the instrument was not
+    // A member written after the marker means the instrument was not
     // done when it wrote the marker (the MinKNOW case). Re-arm instead of
     // parking: wait until the folder has been still for the whole window after
     // that last write, then complete and say which member came late. Parking
-    // forever (SP-2's result) strands the run until an operator intervenes.
+    // forever strands the run until an operator intervenes.
     let late: Vec<&Member> = if boundary.marker_must_be_newest {
         data.iter()
             .copied()
@@ -235,7 +235,7 @@ mod tests {
         ));
     }
 
-    /// SP-2 case (c): the marker lands before the last member. Never complete
+    /// The marker lands before the last member. Never complete
     /// while that member is still being written; complete once it has been
     /// still for the window, and say it came late.
     #[test]

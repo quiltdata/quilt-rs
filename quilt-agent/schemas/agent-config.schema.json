@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://quilt.bio/schemas/lab-to-cloud/agent-config/1",
   "title": "Lab-to-Cloud agent profile",
-  "description": "The agent's one-time configuration (spec/agent.md §Profile). YAML on disk; this schema is normative for its JSON form. Secrets are referenced by name, never held here.",
+  "description": "The agent's one-time configuration. YAML on disk; this schema is normative for its JSON form. Secrets are referenced by name, never held here.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "observer", "registry", "instruments"],
@@ -85,7 +85,7 @@
               "ignore": { "type": "array", "items": { "type": "string" }, "description": "Globs never treated as members (thumbs.db, ~$*, .tmp)." },
               "watch": { "enum": ["notify", "poll", "auto"], "default": "auto" },
               "poll_s": { "type": "integer", "minimum": 5, "default": 30 },
-              "dir_cache_ttl_s": { "type": "integer", "minimum": 0, "default": 0, "description": "Measured directory-listing cache TTL of this mount; floors confirm_window_s and stable_for_s (UNK-31; SP-1 measured 60 s on smbfs)." },
+              "dir_cache_ttl_s": { "type": "integer", "minimum": 0, "default": 0, "description": "Measured directory-listing cache TTL of this mount; floors confirm_window_s and stable_for_s (60 s measured on macOS smbfs)." },
               "stage_copy": { "type": "boolean", "default": false, "description": "Copy members into the spool at boundary (for shares that recycle)." }
             }
           },

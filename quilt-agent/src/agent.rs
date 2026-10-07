@@ -1,7 +1,7 @@
 //! One pass of the agent over every instrument: find run folders, decide their
 //! boundaries, freeze membership, upload, seal, publish. Each step is journalled
 //! before the next starts, so a pass after a crash picks up where the journal
-//! ends and does nothing twice that matters (INV-5).
+//! ends and does nothing twice that matters.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -98,7 +98,7 @@ impl<R: Remote + Sync> Agent<R> {
         let ignore = watch::glob_set(&instrument.source.ignore)?;
         for folder in watch::run_folders(&instrument.source)? {
             if let Some(snapshotted) = known.get(&folder) {
-                // D-13: a file that appears after the boundary is a new
+                // A file that appears after the boundary is a new
                 // observation, never a late member. Say so loudly, once per
                 // change, instead of dropping it silently.
                 let now_count = watch::members(&folder, &ignore)?.len();
@@ -364,8 +364,8 @@ impl<R: Remote + Sync> Agent<R> {
                 Error::Refused(format!("package name {}: {e}", revision.package_name))
             })?,
         };
-        // A fresh revision per run (DEC-23); latest moves only if nobody else
-        // has moved it (DEC-18). Re-running after a crash yields the same hash.
+        // A fresh revision per run; latest moves only if nobody else
+        // has moved it. Re-running after a crash yields the same hash.
         // The parent is this agent's last revision of the same package, so a
         // later run moves latest past it; anyone else's latest is left alone.
         let parent = self
@@ -411,7 +411,7 @@ impl<R: Remote + Sync> Agent<R> {
         m: &SnapMember,
     ) -> Result<FileEntry, Error> {
         let source = folder.join(&m.path);
-        // D-13: a member that changed after the boundary is a different run.
+        // A member that changed after the boundary is a different run.
         let meta = std::fs::metadata(&source).map_err(|e| {
             Error::Refused(format!("member unreadable after boundary: {}: {e}", m.path))
         })?;
@@ -513,7 +513,7 @@ fn unix(t: SystemTime) -> i64 {
 }
 
 /// The instrument's wall clock as the share reports it: no offset, never
-/// corrected (INV-6).
+/// corrected.
 fn local_time(t: SystemTime) -> String {
     DateTime::<chrono::Local>::from(t)
         .naive_local()

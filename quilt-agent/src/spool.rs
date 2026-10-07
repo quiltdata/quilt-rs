@@ -1,5 +1,5 @@
 //! The durable state between "boundary decided" and "revision published"
-//! (`spec/spool.md`): an append-only journal, one fsync'd JSON line per state
+//! is an append-only journal, one fsync'd JSON line per state
 //! change. A run's state is the fold of its events and is never stored
 //! separately, so a `kill -9` at any point resumes from the last line written.
 
@@ -195,7 +195,7 @@ impl Spool {
         Ok(runs)
     }
 
-    /// The last sentinel sealed for `instrument_id`, for the chain (INV-7).
+    /// The last sentinel sealed for `instrument_id`, for the chain.
     /// Ordered by when it was sealed, not when its run began: a run that
     /// retried for hours and sealed late is still the newest link.
     pub fn previous_sentinel(&self, instrument_id: &str) -> Result<Option<String>, Error> {
