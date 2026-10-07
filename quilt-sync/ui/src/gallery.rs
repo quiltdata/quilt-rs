@@ -1128,7 +1128,7 @@ mod tests {
     }
 
     /// The failed-check cell starts collapsed, as every cell does, and opens
-    /// itself: the section's own rule, not the fixture's. Its primary is the
+    /// itself: the field's own rule, not the fixture's. Its primary is the
     /// one disabled; the resting cell's is not.
     #[wasm_bindgen_test]
     async fn the_failed_check_opens_its_own_section() {
@@ -1147,7 +1147,7 @@ mod tests {
         let rest_blocked = has("#commit-rest [data-primary-action] button[disabled]");
         drop(handle);
         container.remove();
-        assert!(failed_open, "a failed check opens the section");
+        assert!(failed_open, "a failed check opens the metadata editor");
         assert!(!rest_open, "a passing one leaves it folded");
         assert!(failed_blocked && !rest_blocked);
     }

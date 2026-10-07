@@ -19,46 +19,32 @@
   color: var(--q-fgColor-accent);
 }
 
-.workflow {
-  display: flex;
-  flex-direction: column;
-  gap: var(--q-space-3);
-}
-
-// One line: what the section is, what it holds, and `Edit`. Exactly a control
-// tall, so opening and closing does not move the line itself.
-.summary_row {
-  display: flex;
-  align-items: center;
-  gap: var(--q-space-3);
-  min-height: var(--q-control-height);
-}
-
-.section_name {
-  flex: none;
-  font-weight: 600;
-}
-
-// The folded section's two lines: a muted name, then what the revision will
-// carry. One line each, cut with an ellipsis, so a long workflow name or a
-// metadata document with many fields never grows the section.
-// The folded section's two read-only fields, stacked as the form's are.
-.preview {
-  display: flex;
-  flex-direction: column;
-  gap: var(--q-space-3);
-  margin: 0;
-}
-
-// The same name, gap and caption as `FormControl`'s, so the field reads as
-// the one `Edit` opens, without a control in it yet.
+// A field that is not a `FormControl` — the read-only workflow, and the
+// metadata, whose name shares a row with `Edit` — drawn with the same name,
+// gap, caption and error, so the column reads as one form.
 .field {
   min-width: 0;
 }
 
 .field_name {
+  display: block;
   margin-bottom: var(--q-space-1);
   font-weight: 600;
+}
+
+// The metadata's name and `Edit`, one control tall, so swapping the preview
+// for the editor does not move the row.
+.field_head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-3);
+  min-height: var(--q-control-height);
+  margin-bottom: var(--q-space-1);
+}
+
+.field_head .field_name {
+  margin-bottom: 0;
 }
 
 // Full width, because `JsonDisplay` fits its folded line to the width it is
@@ -74,15 +60,20 @@
   color: var(--q-fgColor-muted);
 }
 
-.summary_action {
-  margin-left: auto;
-  flex: none;
+// `FormControl`'s error, restated: the glyph, then the words, in danger.
+.field_error {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: var(--q-space-1) 0 0;
+  color: var(--q-fgColor-danger);
 }
 
-.workflow_body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--q-space-3);
+.field_error svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
 }
 
 // `TextInput`'s field, grown to a block of monospace. Full width, and resized

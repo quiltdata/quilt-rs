@@ -12,10 +12,10 @@
 //! 2. [`ProblemBanner`], only when there is a problem.
 //! 3. [`MessageField`]: the generated message is the placeholder, so an empty
 //!    field means "use it".
-//! 4. [`WorkflowSection`]: folded to the exact workflow and a one-line
-//!    preview of the metadata, with `Edit` opening the select and a
-//!    full-width metadata editor.
-//! 5. [`IncludedList`]: the changed files, last, so a long list scrolls the
+//! 4. [`WorkflowField`]: a live select, like the message is a live field.
+//! 5. [`MetadataField`]: the metadata drawn as the catalog draws it, with
+//!    `Edit` swapping in the full-width editor — the one fold on the page.
+//! 6. [`IncludedList`]: the changed files, last, so a long list scrolls the
 //!    page under the form rather than pushing the form below the fold.
 //!
 //! [`CommitColumn`] fixes that order in one place.
@@ -344,155 +344,174 @@ pub struct WorkflowChoice {
     pub selected: RwSignal<String>,
 }
 
-/// Workflow and metadata: what the revision will carry, until somebody wants
-/// to change it.
+/// The workflow the revision will carry, as a field like the message: a live
+/// `Select` when the bucket offers a choice, its words when it does not.
 ///
-/// Folded, it names the exact workflow — the select's own option, so it
-/// follows a change — and previews the metadata on one line (see
-/// [`JsonDisplay`], folded to a line that opens in place), with `Edit`. Open, it is the workflow `Select` and
-/// v1's metadata editor at full width. Its context menu and dropdowns are drawn
-/// inside the editor's own box, so nothing between it and the page may clip:
-/// no ancestor here sets `overflow`, and the page has no second column that
-/// scrolls on its own the way v1's did.
-///
-/// It opens on its own when a check fails, because an error inside a closed
-/// section is an error nobody sees. The reader can close it again; it opens
-/// once per failure, not on every keystroke while one stands.
+/// Not folded. A select is one control tall, so folding it saved nothing and
+/// cost a click on the choice most likely to make a publish fail. A failed
+/// check's error appears under it, where it is already on screen.
 #[component]
 #[allow(
     clippy::needless_pass_by_value,
     reason = "a component's props are owned; the body reads them from there"
 )]
-pub fn WorkflowSection(
-    /// What the workflow line says when there is no choice to read it from:
-    /// a package with no bucket, or a bucket with no workflows.
-    #[prop(optional, into)]
-    no_workflow: Option<String>,
+pub fn WorkflowField(
+    /// `None` when there is nothing to choose: a package with no bucket, or a
+    /// bucket with no workflows. The field then shows `no_workflow`.
+    #[prop(default = None)]
+    workflow: Option<WorkflowChoice>,
+    #[prop(optional, into)] no_workflow: Option<String>,
+    #[prop(optional, into)] error: MaybeProp<String>,
     /// The selected workflow is the publish settings' default. Said under the
     /// field, and only then: the other sources — the bucket's default, the
     /// published revision's, a pick made here — are what the reader expects.
     #[prop(optional, into)]
-    workflow_from_settings: Signal<bool>,
-    /// The metadata is the publish settings' default, for the same reason.
-    #[prop(optional, into)]
-    metadata_from_settings: Signal<bool>,
+    from_settings: Signal<bool>,
     /// Where `Change it in Settings` goes. `/settings` in the app; the gallery
     /// points it at its own cell.
     #[prop(optional, into)]
     settings_href: Option<String>,
-    expanded: RwSignal<bool>,
-    /// `None` when the bucket has no workflows to choose between.
-    #[prop(default = None)]
-    workflow: Option<WorkflowChoice>,
-    #[prop(optional, into)] workflow_error: MaybeProp<String>,
+) -> impl IntoView {
+    let hint = settings_hint(from_settings, settings_href);
+    let Some(choice) = workflow else {
+        let words = no_workflow.unwrap_or_else(|| "None".to_string());
+        return view! {
+            <div class=style::field>
+                <div class=style::field_name>"Workflow"</div>
+                <div class=style::field_value>{words}</div>
+                {hint}
+            </div>
+        }
+        .into_any();
+    };
+    view! {
+        <div class=style::field>
+            <FormControl
+                label="Workflow"
+                error=error
+                control=move |id| {
+                    view! {
+                        <Select
+                            naming=Naming::FormControl(id)
+                            options=choice.options.clone()
+                            selected=choice.selected
+                        />
+                    }
+                        .into_any()
+                }
+            />
+            {hint}
+        </div>
+    }
+    .into_any()
+}
+
+/// The metadata the revision will carry: drawn as the catalog draws it until
+/// `Edit` swaps in the editor.
+///
+/// Folded, it is a [`JsonDisplay`]: one line that fits the room it has, and
+/// opens in place to read the whole document without the editor. It folds
+/// because the editor is the one tall control on the page, and drawn open it
+/// would push the files below the fold.
+///
+/// Open, it is v1's metadata editor at full width. Its context menu and
+/// dropdowns are drawn inside the editor's own box, so nothing between it and
+/// the page may clip: no ancestor here sets `overflow`, and the page has no
+/// second column that scrolls on its own the way v1's did.
+///
+/// It opens on its own when a check fails, because an error under a folded
+/// field is an error nobody can act on. The reader can fold it again; it opens
+/// once per failure, not on every keystroke while one stands.
+#[component]
+pub fn MetadataField(
     /// The metadata, as JSON text.
     metadata: RwSignal<String>,
-    #[prop(optional, into)] metadata_error: MaybeProp<String>,
+    editing: RwSignal<bool>,
+    #[prop(optional, into)] error: MaybeProp<String>,
+    /// The metadata is the publish settings' default. See [`WorkflowField`].
+    #[prop(optional, into)]
+    from_settings: Signal<bool>,
+    #[prop(optional, into)] settings_href: Option<String>,
 ) -> impl IntoView {
-    let failing =
-        Signal::derive(move || workflow_error.get().is_some() || metadata_error.get().is_some());
-    // Opens on the edge into failure, so a reader who closes it over a standing
-    // error is not overruled on the next keystroke. Untracked read of
-    // `expanded`, so closing it does not run this again.
+    let failing = Signal::derive(move || error.get().is_some());
+    // Opens on the edge into failure, so a reader who folds it over a standing
+    // error is not overruled on the next keystroke.
     Effect::new(move |was: Option<bool>| {
         let now = failing.get();
-        if now && !was.unwrap_or(false) && !expanded.get_untracked() {
-            expanded.set(true);
+        if now && !was.unwrap_or(false) && !editing.get_untracked() {
+            editing.set(true);
         }
         now
     });
-    let body_id = crate::kit::unique_id("workflow-meta");
-    let controls = body_id.clone();
-    let metadata_invalid = Signal::derive(move || metadata_error.get().is_some());
-    // The selected option itself, so the folded line names the exact workflow
-    // the revision will carry, and follows the select when it changes.
-    let selected = workflow.as_ref().map(|choice| choice.selected);
-    let no_workflow = no_workflow.unwrap_or_else(|| "None".to_string());
-    let workflow_words = move || selected.map_or_else(|| no_workflow.clone(), |s| s.get());
-    // Drawn as the catalog draws metadata: one folded line that opens in place,
-    // so it can be read without the editor.
-    let metadata_view = move || match MetadataPreview::of(&metadata.get()) {
+    // Its own ids rather than `FormControl`'s: the name shares a row with
+    // `Edit`, which a `FormControl` has no room for.
+    let control_id = crate::kit::unique_id("metadata");
+    let error_id = format!("{control_id}-error");
+    let body_id = format!("{control_id}-body");
+    let preview = move || match MetadataPreview::of(&metadata.get()) {
         MetadataPreview::None => view! { <span>"None"</span> }.into_any(),
         MetadataPreview::Invalid => view! { <span>"Not valid JSON"</span> }.into_any(),
         MetadataPreview::Json(value) => view! { <JsonDisplay value=value /> }.into_any(),
     };
+    let editor = {
+        let control_id = control_id.clone();
+        let error_id = error_id.clone();
+        move || metadata_editor(control_id.clone(), error_id.clone(), metadata, failing)
+    };
 
     view! {
-        <section class=style::workflow aria-label="Workflow and metadata">
-            <div class=style::summary_row>
-                <span class=style::section_name>"Workflow & metadata"</span>
-                <span class=style::summary_action>
-                    <Button
-                        aria_expanded=Signal::derive(move || Some(expanded.get()))
-                        aria_controls=controls
-                        on_click=move |_| expanded.update(|open| *open = !*open)
-                    >
-                        {move || if expanded.get() { "Done" } else { "Edit" }}
-                    </Button>
-                </span>
-            </div>
-            // Folded, what the revision will carry; open, the controls say it.
-            <Show when=move || !expanded.get()>
-                // Two fields in the form's own shape — a name, the value, and a
-                // hint under it — read-only until `Edit`.
-                <dl class=style::preview>
-                    <div class=style::field>
-                        <dt class=style::field_name>"Workflow"</dt>
-                        <dd class=style::field_value>{workflow_words.clone()}</dd>
-                        {settings_hint(workflow_from_settings, settings_href.clone())}
-                    </div>
-                    <div class=style::field>
-                        <dt class=style::field_name>"Metadata"</dt>
-                        <dd class=style::field_value>{metadata_view}</dd>
-                        {settings_hint(metadata_from_settings, settings_href.clone())}
-                    </div>
-                </dl>
-            </Show>
-            <Show when=move || expanded.get()>
-                <div class=style::workflow_body id=body_id.clone()>
-                    {workflow
-                        .clone()
-                        .map(|choice| {
+        <div class=style::field>
+            <div class=style::field_head>
+                // A label only while there is a control to name.
+                {
+                    let control_id = control_id.clone();
+                    move || {
+                        if editing.get() {
                             view! {
-                                <FormControl
-                                    label="Workflow"
-                                    error=workflow_error
-                                    control=move |id| {
-                                        view! {
-                                            <Select
-                                                naming=Naming::FormControl(id)
-                                                options=choice.options.clone()
-                                                selected=choice.selected
-                                            />
-                                        }
-                                            .into_any()
-                                    }
-                                />
+                                <label class=style::field_name for=control_id.clone()>
+                                    "Metadata"
+                                </label>
                             }
-                        })}
-                    <FormControl
-                        label="Metadata"
-                        error=metadata_error
-                        control=move |id| metadata_editor(id, metadata, metadata_invalid)
-                    />
-                </div>
+                                .into_any()
+                        } else {
+                            view! { <span class=style::field_name>"Metadata"</span> }.into_any()
+                        }
+                    }
+                }
+                <Button
+                    aria_expanded=Signal::derive(move || Some(editing.get()))
+                    aria_controls=body_id.clone()
+                    on_click=move |_| editing.update(|open| *open = !*open)
+                >
+                    {move || if editing.get() { "Done" } else { "Edit" }}
+                </Button>
+            </div>
+            <div class=style::field_value id=body_id>
+                {move || if editing.get() { editor.clone()() } else { preview().into_any() }}
+            </div>
+            <Show when=move || error.get().is_some()>
+                <p class=style::field_error id=error_id.clone()>
+                    {StateTone::Danger.glyph()}
+                    <span>{move || error.get().unwrap_or_default()}</span>
+                </p>
             </Show>
-        </section>
+            {settings_hint(from_settings, settings_href)}
+        </div>
     }
 }
 
-/// The hint under a folded field whose value the publish settings supplied,
-/// while they do. A global default can make a publish fail in a bucket that
-/// does not expect it, so this is the source worth naming; the others are not.
+/// The hint under a field whose value the publish settings supplied, while
+/// they do. A global default can make a publish fail in a bucket that does not
+/// expect it, so this is the source worth naming; the others are not.
 fn settings_hint(from_settings: Signal<bool>, href: Option<String>) -> impl IntoView {
     let href = href.unwrap_or_else(|| "/settings".to_string());
     move || {
         from_settings.get().then(|| {
             view! {
-                <dd class=style::field_hint>
+                <p class=style::field_hint>
                     "From your publish settings. "
                     <a class=style::remedy_link href=href.clone()>"Change it in Settings"</a>
-                </dd>
+                </p>
             }
         })
     }
@@ -500,11 +519,11 @@ fn settings_hint(from_settings: Signal<bool>, href: Option<String>) -> impl Into
 
 /// The metadata control: v1's editor over its fallback textarea.
 fn metadata_editor(
-    id: crate::kit::ControlId,
+    id: String,
+    described_by: String,
     metadata: RwSignal<String>,
     invalid: Signal<bool>,
 ) -> AnyView {
-    let (id, described_by) = id.into_attrs();
     let editor_ref = NodeRef::<leptos::html::Div>::new();
     let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
     view! {
@@ -515,7 +534,9 @@ fn metadata_editor(
             <textarea
                 node_ref=textarea_ref
                 id=id
-                aria-describedby=described_by
+                // The error's id only while the error is drawn: a description
+                // that names nothing is one the gallery's id test refuses.
+                aria-describedby=move || invalid.get().then(|| described_by.clone())
                 aria-invalid=move || invalid.get().then_some("true")
                 class=style::metadata
                 rows=6
@@ -543,7 +564,7 @@ fn metadata_editor(
 pub enum MetadataPreview {
     /// Empty text or an empty object: words, not braces.
     None,
-    /// Text that does not parse. Its error is what opens the section.
+    /// Text that does not parse. Its error is what opens the editor.
     Invalid,
     /// A value worth drawing, as the catalog draws it.
     Json(serde_json::Value),
@@ -689,13 +710,14 @@ pub fn IncludedList(
 }
 
 /// The page's column, in the order the reader confirms: header, problem,
-/// message, workflow and metadata, then the files.
+/// message, workflow, metadata, then the files.
 #[component]
 pub fn CommitColumn(
     header: AnyView,
     #[prop(optional)] problem: Option<AnyView>,
     message: AnyView,
     workflow: AnyView,
+    metadata: AnyView,
     included: AnyView,
 ) -> impl IntoView {
     view! {
@@ -704,6 +726,7 @@ pub fn CommitColumn(
             {problem}
             {message}
             {workflow}
+            {metadata}
             {included}
         </div>
     }
@@ -753,7 +776,7 @@ mod tests {
             METADATA_ONLY.to_string(),
             "New revision".to_string(),
             "Ignore them".to_string(),
-            "Workflow & metadata".to_string(),
+            "Metadata".to_string(),
             "What's included".to_string(),
         ];
         for primary in [

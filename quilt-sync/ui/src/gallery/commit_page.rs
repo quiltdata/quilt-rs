@@ -10,27 +10,29 @@
 //! **The form stays on the first screen in every cell.** Measured from the
 //! window's top edge, in Chrome:
 //!
-//! | | header ends | message ends | workflow section ends | files start | rows on screen |
+//! | | header ends | message ends | metadata ends | files start | rows on screen |
 //! |---|---:|---:|---:|---:|---:|
-//! | at rest, 4 files | 144 | 217 | 378 | 394 | 4 of 4 |
-//! | 300 files | 144 | 217 | 378 | 394 | **4** of 300 |
-//! | both values from your publish settings | 144 | 217 | 426 | 442 | 2 of 4 |
-//! | junk banner, signed out | 144 | 283 | 444 | 460 | 2 of 4 |
-//! | no access | 144 | 271 | 432 | 448 | 2 of 4 |
-//! | workflow & metadata open | 144 | 217 | 519 | 535 | 0 |
-//! | a failed check | 144 | 217 | 543 | 559 | 0 |
+//! | at rest, 4 files | 144 | 217 | 361 | 377 | 4 of 4 |
+//! | 300 files | 144 | 217 | 361 | 377 | **4** of 300 |
+//! | no bucket, so no workflow to pick | 144 | 217 | 349 | 365 | 4 of 4 |
+//! | both values from your publish settings | 144 | 217 | 410 | 426 | 3 of 4 |
+//! | junk banner, signed out | 144 | 283 | 427 | 443 | 2 of 4 |
+//! | no access | 144 | 271 | 415 | 431 | 2 of 4 |
+//! | the metadata editor open | 144 | 217 | 491 | 507 | 0 |
+//! | a failed check | 144 | 217 | 515 | 531 | 0 |
 //!
 //! - **The long list costs the form nothing.** The 300-file cell lays out the
 //!   form exactly where the four-file cell does, and the page scrolls under it.
 //!   This is the bet the layout makes by putting the list last, and it is won.
-//! - **Folded, the section is its heading and two read-only fields**, 161px:
-//!   `Workflow` and `Metadata`, each a name and its value in the form's own
-//!   shape, so they read as the fields `Edit` opens. The workflow is the
-//!   select's own option, so it follows a change. The metadata is drawn as the
-//!   catalog draws it: a `kit::JsonDisplay` folded to one line that fits the
-//!   room it has, and opens in place to read the whole document without the
-//!   editor. The reader sees what will be published without opening anything,
-//!   and the 300-file cell keeps four rows on the first screen.
+//! - **Workflow is a field like the message: a live select.** It was folded
+//!   behind a shared `Edit` once, which saved 8px — a select is one control
+//!   tall — and cost a click on the choice most likely to make a publish fail.
+//!   With nothing to choose it is the words, `None — this package has no
+//!   bucket yet`, rather than a select with one option.
+//! - **Metadata is the one fold**, with its own `Edit`, because its editor is
+//!   the one tall control on the page. Folded, it is drawn as the catalog
+//!   draws it: a `kit::JsonDisplay` folded to one line that fits the room it
+//!   has, and opens in place to read the whole document without the editor.
 //! - **A field names its source only when it is the publish settings**, 24px
 //!   under the value: `From your publish settings. Change it in Settings`.
 //!   The other sources — the bucket's default workflow, the published
@@ -45,12 +47,12 @@
 //!   are centred on that height, through `Banner`'s `action` slot; drawn
 //!   inside the sentence, the button made the line taller and left the glyph
 //!   at its top.
-//! - **Opened, the section takes the rest of the window.** The workflow
-//!   `Select` and the metadata editor end at 519, and the list starts below
-//!   the fold. That is the right trade while editing: the reader asked for the
-//!   editor. With a failed check the caption adds 24px and ends at 543, inside
-//!   the window — which is what sets the editor's height. At 220px the caption
-//!   landed at 613, below the fold; 150 is the most the floor allows.
+//! - **Opened, the metadata editor takes the rest of the window.** It ends at
+//!   491, and the list starts below the fold. That is the right trade while
+//!   editing: the reader asked for the editor. A failed metadata check opens
+//!   it on its own, and its error ends at 515, inside the window — which is
+//!   what sets the editor's height at 150px. A failed workflow check needs no
+//!   opening: its error is under the select, already on screen.
 //! - **The editor's context menu is not cropped.** It is v1's
 //!   `vanilla-jsoneditor`, and it draws its menu inside its own box, so any
 //!   clipping ancestor would crop it — v1's scrolling column was one. Right-
@@ -104,7 +106,8 @@ use crate::kit::PageLayout;
 use crate::kit::icons;
 use crate::pages::commit_v2::{
     Change, CommitColumn, CommitHeader, CommitPageSkeleton, IncludedFile, IncludedList,
-    MessageField, Primary, PrimaryWiring, Problem, ProblemBanner, WorkflowChoice, WorkflowSection,
+    MessageField, MetadataField, Primary, PrimaryWiring, Problem, ProblemBanner, WorkflowChoice,
+    WorkflowField,
 };
 
 const NAMESPACE: &str = "user/plate-07";
@@ -179,7 +182,7 @@ struct Fixture {
     problem: Option<Problem>,
     /// Why the primary cannot run.
     blocked: Option<&'static str>,
-    expanded: bool,
+    editing: bool,
     /// The bucket offers workflows to choose between.
     workflows: bool,
     metadata: &'static str,
@@ -200,7 +203,7 @@ impl Fixture {
             ignored: 2,
             problem: None,
             blocked: None,
-            expanded: false,
+            editing: false,
             workflows: true,
             metadata: METADATA,
             metadata_error: None,
@@ -218,7 +221,7 @@ fn page(f: Fixture) -> AnyView {
         ignored,
         problem,
         blocked,
-        expanded,
+        editing,
         workflows,
         metadata,
         metadata_error,
@@ -254,15 +257,21 @@ fn page(f: Fixture) -> AnyView {
         }
     });
     let workflow_view = view! {
-        <WorkflowSection
-            no_workflow=no_workflow
-            workflow_from_settings=from_settings.0
-            metadata_from_settings=from_settings.1
-            settings_href=format!("#{id}")
-            expanded=RwSignal::new(expanded)
+        <WorkflowField
             workflow=workflow
+            no_workflow=no_workflow
+            from_settings=from_settings.0
+            settings_href=format!("#{id}")
+        />
+    }
+    .into_any();
+    let metadata_view = view! {
+        <MetadataField
             metadata=RwSignal::new(metadata.to_string())
-            metadata_error=metadata_error.map(str::to_string)
+            editing=RwSignal::new(editing)
+            error=metadata_error.map(str::to_string)
+            from_settings=from_settings.1
+            settings_href=format!("#{id}")
         />
     }
     .into_any();
@@ -290,6 +299,7 @@ fn page(f: Fixture) -> AnyView {
                     }
                         .into_any()
                     workflow=workflow_view
+                    metadata=metadata_view
                     included=view! {
                         <IncludedList
                             files=files
@@ -357,19 +367,19 @@ pub fn CommitPageScene() -> impl IntoView {
                     ..Fixture::new("commit-local-only")
                 })}
             </Cell>
-            <Cell full=true label="workflow & metadata expanded">
-                {page(Fixture { expanded: true, ..Fixture::new("commit-expanded") })}
+            <Cell full=true label="the metadata editor open">
+                {page(Fixture { editing: true, ..Fixture::new("commit-expanded") })}
             </Cell>
             <Cell
                 full=true
                 label="the metadata editor's context menu — right-click a key: the menu opens upward \
                        over the form and nothing crops it"
             >
-                {page(Fixture { expanded: true, ..Fixture::new("commit-editor-menu") })}
+                {page(Fixture { editing: true, ..Fixture::new("commit-editor-menu") })}
             </Cell>
             <Cell
                 full=true
-                label="a failed workflow check — the section opened itself, the caption says why, \
+                label="a failed metadata check — the editor opened itself, the caption says why, \
                        and Publish is disabled with a tooltip saying the same"
             >
                 {page(Fixture {
