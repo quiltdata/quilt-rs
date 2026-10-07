@@ -91,7 +91,8 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
 /// rather than as a generic failure. Both are wrong about the cause; only one
 /// of them sends the user round the re-login loop.
 ///
-/// Only a denial, a credential failure or a missing object changes the kind.
+/// Only a denial, a credential failure, a missing object or a failed
+/// precondition changes the kind.
 /// Everything else is handed to `fallback`, so a call site keeps the
 /// operation-specific kind it would have produced anyway — a failed put stays
 /// [`S3ErrorKind::PutObject`] rather than collapsing into an undiagnosable
