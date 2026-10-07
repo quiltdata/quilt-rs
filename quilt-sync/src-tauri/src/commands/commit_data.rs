@@ -919,6 +919,60 @@ mod tests {
         Ok(())
     }
 
+    /// The settings' metadata and the previous revision's travel separately,
+    /// so the editor can start from the one while an emptied editor keeps the
+    /// other.
+    #[tokio::test]
+    async fn commit_data_keeps_settings_and_previous_metadata_apart() -> Result<(), String> {
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|pkg| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri(&pkg.namespace.to_string()),
+                    "abcdef".to_string(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::default()));
+        model.expect_browse_remote_manifest().returning(|_| {
+            let mut manifest = mocks::create_remote_manifest();
+            manifest.header.user_meta = Some(serde_json::json!({"owner": "alice"}));
+            Ok(manifest)
+        });
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+        let settings = PublishSettings {
+            default_metadata: Some(r#"{"source":"desktop"}"#.to_string()),
+            ..PublishSettings::default()
+        };
+
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &settings,
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        assert_eq!(
+            data.settings_user_meta.as_deref(),
+            Some(r#"{"source":"desktop"}"#)
+        );
+        assert_eq!(data.user_meta, r#"{"owner":"alice"}"#);
+        Ok(())
+    }
+
     /// With nothing set, the form starts as it did before: the bare summary,
     /// the current revision's metadata and the bucket's preselection.
     #[tokio::test]

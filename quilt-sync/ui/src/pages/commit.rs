@@ -115,10 +115,7 @@ fn CommitContent(
     // The editor starts from the publish settings' default metadata, as
     // one-click Publish would send it; with none set, from the current
     // revision's metadata, since a form can't show "keep".
-    let starting_meta = data
-        .settings_user_meta
-        .clone()
-        .unwrap_or_else(|| data.user_meta.clone());
+    let starting_meta = starting_metadata(data.settings_user_meta.as_deref(), &data.user_meta);
     let user_meta = starting_meta.clone();
     let user_meta_for_editor = starting_meta.clone();
     let user_meta_error = data.user_meta_error.clone();
@@ -883,6 +880,12 @@ fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
 /// validates — so live validation substitutes that seeded previous value rather
 /// than validating `{}`. A non-empty editor is validated as typed. When both are
 /// empty they collapse to `{}` on both paths, keeping live and commit consistent.
+/// The text the metadata editor starts with: the publish settings' default
+/// metadata when there is one, else the previous revision's metadata.
+fn starting_metadata(settings: Option<&str>, previous: &str) -> String {
+    settings.unwrap_or(previous).to_string()
+}
+
 fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
     if editor_text.trim().is_empty() {
         seeded_previous.to_string()
@@ -1023,7 +1026,7 @@ fn JsonEditor(
 mod tests {
     use super::{
         commit_disabled, displayed_violations, effective_metadata, field_violations,
-        should_debounce,
+        should_debounce, starting_metadata,
     };
     use crate::commands::{CommitViolation, ViolationField};
     use crate::util::commit_denied_hint;
@@ -1092,6 +1095,21 @@ mod tests {
         assert_eq!(effective_metadata(r#"{"x":1}"#, "prev"), r#"{"x":1}"#);
         // Both empty collapse to the same empty string → `{}` on both paths.
         assert_eq!(effective_metadata("", ""), "");
+    }
+
+    #[test]
+    fn editor_starts_from_settings_but_an_emptied_editor_keeps_the_previous() {
+        let settings = r#"{"source":"desktop"}"#;
+        let previous = r#"{"owner":"alice"}"#;
+        // The editor starts from the settings' default metadata.
+        let start = starting_metadata(Some(settings), previous);
+        assert_eq!(start, settings);
+        // Left as seeded, it is validated as the settings value.
+        assert_eq!(effective_metadata(&start, previous), settings);
+        // Cleared, it keeps the previous revision's metadata, not the settings'.
+        assert_eq!(effective_metadata("", previous), previous);
+        // With no settings metadata, the editor starts from the previous one.
+        assert_eq!(starting_metadata(None, previous), previous);
     }
 
     #[test]
