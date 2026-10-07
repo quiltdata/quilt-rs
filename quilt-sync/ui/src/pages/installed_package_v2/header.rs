@@ -12,9 +12,11 @@
 //!
 //! Every control on the row answers *what does this package need*, so it is the
 //! state's own action and nothing else. `Create new revision` answers *what may
-//! I choose to do*, which does not vary with state, so it lives in `[⋯]` — and
-//! also behind the caret of the `Publish` split button in the states that
-//! publish, where it is next to the cursor at the moment it is wanted.
+//! I choose to do*, which does not vary with state, so it lives in `[⋯]`. The
+//! caret of the `Publish` split button holds `Review before publishing…`, which
+//! is the same commit page reached from the other side: the moment the reader
+//! wants to check the message and metadata is the moment they are about to
+//! publish, so that is where the cursor already is.
 //!
 //! # The words are not chosen here
 //!
@@ -39,10 +41,34 @@
 //! Three channels — the notification stack, the page's band, a dialog — and
 //! one rule, by what the command does. Navigating reports by arriving, on none
 //! of them. A self-evident effect says nothing and reports only its failure,
-//! on the page's band. `Get latest` keeps what pull already does — its report
-//! reaches the notification stack — and its failure goes to the band. A
-//! dialog-borne command draws its refusal inside the dialog, which stays open.
-//! Every command, as it starts, retracts what the band said about the last one.
+//! on the page's band. `Get latest` and `Publish` keep what pull and publish
+//! already do — their report reaches the notification stack — and their
+//! failure goes to the band. A dialog-borne command draws its refusal inside
+//! the dialog, which stays open. Every command, as it starts, retracts what the
+//! band said about the last one.
+//!
+//! `Publish` runs in place, with the message, workflow and metadata from the
+//! publish settings, so the package's most common job is one click. The page
+//! is read again after it whether it succeeds or not, because it commits
+//! before it pushes and a refused push still leaves a new local revision.
+//! `Review before publishing…` behind its caret and `Create new revision` in
+//! `[⋯]` navigate to the commit page and report by arriving: choosing what the
+//! revision says is the point of them.
+//!
+//! # The caret's choice is remembered, per package
+//!
+//! Picking `Review before publishing…` behind the caret puts it on the face,
+//! and the face stays that way for that package the next time the page opens.
+//! Per package, because a package that needs its message checked every time
+//! is not a reason to slow down every other one. It is a choice the reader
+//! made deliberately, not one inferred from what they did last — the line the
+//! kit's split button draws for whoever persists it.
+//!
+//! It lives in the webview's `localStorage`, as a name (`publish`, `review`)
+//! rather than the option's index or label, so reordering or relabelling the
+//! options cannot flip what a stored choice means. Anything unreadable falls
+//! back to `Publish`, and a failure to read or write says nothing: the cost of
+//! losing it is one extra click.
 
 use leptos::prelude::*;
 
@@ -68,7 +94,7 @@ use crate::util;
 
 use super::bucket_form::BucketDialog;
 use super::role_dialog::RoleDialog;
-use super::{Dialogs, Outcome, Wiring, holding, run};
+use super::{Dialogs, Outcome, Reread, Wiring, holding, run};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.scss");
 
@@ -212,7 +238,7 @@ fn menu(
                         outcome,
                         ns.clone(),
                         "Could not open this package in the catalog.",
-                        None,
+                        Reread::Never,
                         async move { commands::open_in_web_browser(url).await },
                     );
                 }),
@@ -236,10 +262,42 @@ fn menu(
         .collect()
 }
 
+/// The stored names of the `Publish` split button's options, in the order
+/// [`primary_action`] lists them: the stored value is the name, the signal the
+/// kit reads is the index.
+const PUBLISH_CHOICES: [&str; 2] = ["publish", "review"];
+
+/// The `localStorage` key a package's choice lives under.
+fn publish_choice_key(namespace: &str) -> String {
+    format!("quilt-sync.publish-choice.{namespace}")
+}
+
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok()?
+}
+
+/// The option this package's split button last had on its face. `Publish`
+/// when nothing usable is stored, or there is no storage to read.
+fn remembered_publish_choice(namespace: &str) -> usize {
+    local_storage()
+        .and_then(|storage| storage.get_item(&publish_choice_key(namespace)).ok()?)
+        .and_then(|name| PUBLISH_CHOICES.iter().position(|known| *known == name))
+        .unwrap_or(0)
+}
+
+/// Store the option the reader picked for this package. Every failure is
+/// ignored — a quota, a private mode, no storage at all.
+fn remember_publish_choice(namespace: &str, choice: usize) {
+    let (Some(storage), Some(name)) = (local_storage(), PUBLISH_CHOICES.get(choice)) else {
+        return;
+    };
+    drop(storage.set_item(&publish_choice_key(namespace), name));
+}
+
 /// The state's own action, as the row draws it.
 ///
 /// Both shapes live here because they are one slot: the publishing states get a
-/// split button whose caret holds `Create new revision`, and the rest get their
+/// split button whose caret holds `Review before publishing…`, and the rest get their
 /// verb plainly. `Latest` and a denial with no other role held get neither, and
 /// the row keeps its height either way.
 fn primary_action(
@@ -269,8 +327,27 @@ fn primary_action(
     let uri = data.uri.clone();
     // Keeps a deep link's mismatch, so entering the mode does not end its band.
     let resolve_to = super::carrying(crate::routes::resolve_href(&ns));
-    let publish_to = crate::routes::commit_href(&ns);
-    let revision_to = publish_to.clone();
+    let revision_to = crate::routes::commit_href(&ns);
+    // `Publish` is pull's shape — run here, reported by its toast — except that
+    // the page is read again after a failure as well: the commit can land and
+    // the push still be refused, and the page must show the revision that now
+    // exists.
+    let on_publish = {
+        let ns = ns.to_string();
+        let uri = uri.clone();
+        Callback::new(move |()| {
+            let ns = ns.clone();
+            let uri = uri.clone();
+            run(
+                busy,
+                outcome,
+                ns.clone(),
+                "Could not publish this package.",
+                Reread::Always(reload),
+                async move { commands::package_publish(ns, uri).await },
+            );
+        })
+    };
     // The deployment to sign in to, when the state names one. `None` for a bare
     // bucket on ambient credentials, which is why the kit offers no action there.
     let sign_in_to = match &data.state {
@@ -285,13 +362,11 @@ fn primary_action(
             <span class=style::action_slot data-primary-action>
                 <SplitButton
                     disabled=Signal::derive(move || busy.get())
+                    // In `PUBLISH_CHOICES`' order, which is what a stored choice names.
                     options=vec![
+                        SplitOption::new("Publish", on_publish),
                         SplitOption::new(
-                            "Publish",
-                            Callback::new(move |()| goto.set(Some(publish_to.clone()))),
-                        ),
-                        SplitOption::new(
-                            "Create new revision",
+                            "Review before publishing…",
                             Callback::new(move |()| goto.set(Some(revision_to.clone()))),
                         ),
                     ]
@@ -313,7 +388,7 @@ fn primary_action(
                 outcome,
                 ns.clone(),
                 "Could not get the latest revision.",
-                Some(reload),
+                Reread::OnSuccess(reload),
                 async move { commands::package_pull(ns, uri).await },
             );
         }
@@ -455,7 +530,24 @@ pub fn PageHeader(
     let rendered = render(&data.state, kit::Site::PageHeader);
     let action = rendered.action;
     let namespace = data.namespace.to_string();
-    let publish_choice = RwSignal::new(0_usize);
+    // Seeded from what the reader picked for this package last time, and
+    // written back only when they pick: a visit that changes nothing stores
+    // nothing.
+    let seed = remembered_publish_choice(&namespace);
+    let publish_choice = RwSignal::new(seed);
+    {
+        let namespace = namespace.clone();
+        // Compared with the last value seen rather than watched for changes:
+        // an effect's first run comes a tick after the header is drawn, and a
+        // pick in that tick must still be stored.
+        Effect::new(move |seen: Option<usize>| {
+            let choice = publish_choice.get();
+            if choice != seen.unwrap_or(seed) {
+                remember_publish_choice(&namespace, choice);
+            }
+            choice
+        });
+    }
     // The role the denial named, for the dialog's sentence. The remedy is only
     // carried with a denial, so any other state has no role to name.
     let refused = match &data.state {
@@ -476,7 +568,7 @@ pub fn PageHeader(
             outcome,
             ns.clone(),
             "Could not open this package's folder.",
-            None,
+            Reread::Never,
             async move { commands::open_in_file_browser(ns, uri).await },
         );
     };
@@ -606,10 +698,14 @@ mod tests {
     /// A header mounted on a real route table, so a navigation lands somewhere
     /// this test can read.
     fn mount_routed(data: commands::PackageHeaderData) -> web_sys::Element {
+        mount_routed_with(data, Wiring::new())
+    }
+
+    /// [`mount_routed`] over the page's signals, so a test can read the band.
+    fn mount_routed_with(data: commands::PackageHeaderData, w: Wiring) -> web_sys::Element {
         go_to("/installed-package?namespace=team%2Fdataset");
         mount(move || {
             let data = data.clone();
-            let w = Wiring::new();
             view! {
                 <Router>
                     <Routes fallback=|| view! { "no route" }>
@@ -720,16 +816,71 @@ mod tests {
         );
     }
 
-    /// A command that navigates reports by arriving, and nothing is said —
-    /// `channel-per-command`'s first rule. Publishing lands on the commit page,
-    /// which is also where `Create new revision` goes: they are one job done two
-    /// ways.
+    /// `Publish` runs here, the way `Get latest` does: the page holds
+    /// while it runs and stays where it is. There is no bridge under the
+    /// runner, so the failure arm is what runs — a workflow's refusal takes the
+    /// same path — and it reaches the band, keyed to the package.
+    ///
+    /// The page is read again after the failure too: publish commits before it
+    /// pushes, so a refused push can leave a revision the old details do not
+    /// show. The re-read leaves the band alone.
     #[wasm_bindgen_test]
-    async fn publish_arrives_on_the_commit_page() {
-        let el = mount_routed(data(kit::PackageState::PendingCommit));
+    async fn publish_runs_in_place_and_reports_its_failure_on_the_band() {
+        forget_choices();
+        let w = Wiring::new();
+        let reloads = RwSignal::new(0_u32);
+        let owner = Owner::new();
+        owner.with(|| {
+            Effect::new(move |seen: Option<()>| {
+                w.reload.track();
+                // The first run is the subscription, not a re-read.
+                if seen.is_some() {
+                    reloads.update(|n| *n += 1);
+                }
+            });
+        });
+        let el = mount_routed_with(data(kit::PackageState::PendingCommit), w);
         sleep_ms(50).await;
 
         button(&el, "Publish").click();
+        sleep_ms(50).await;
+
+        assert_eq!(reloads.get_untracked(), 1, "read again after the failure");
+
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("the commit page"),
+            "stays on the package page; markup was {}",
+            el.inner_html()
+        );
+        let said = w
+            .outcome
+            .get_untracked()
+            .expect("the failure reached the band");
+        assert_eq!(said.namespace, "team/dataset");
+        assert_eq!(said.variant, BannerVariant::Critical);
+        assert_eq!(said.lead, "Could not publish this package.");
+        assert!(
+            !w.busy.get_untracked(),
+            "the signal comes back down when it settles"
+        );
+    }
+
+    /// `Review before publishing…` behind the caret goes to the commit page,
+    /// where the reader checks the message and metadata first, and reports by
+    /// arriving — `channel-per-command`'s first rule.
+    #[wasm_bindgen_test]
+    async fn review_before_publishing_on_the_caret_arrives_on_the_commit_page() {
+        forget_choices();
+        let w = Wiring::new();
+        let el = mount_routed_with(data(kit::PackageState::PendingCommit), w);
+        sleep_ms(50).await;
+
+        pick(&el, "Review before publishing…");
+        leptos::task::tick().await;
+        // The face now says it, and a press on the face runs it.
+        button(&el, "Review before publishing…").click();
         sleep_ms(50).await;
 
         assert!(
@@ -739,6 +890,108 @@ mod tests {
             "markup was {}",
             el.inner_html()
         );
+        assert!(w.outcome.get_untracked().is_none(), "and nothing is said");
+        forget_choices();
+    }
+
+    /// A namespace no other test draws, for the choice that must not leak.
+    const OTHER: &str = "team/other";
+
+    /// Every key these tests store under, removed, so no test starts on a face
+    /// another one picked.
+    fn forget_choices() {
+        let storage = local_storage().expect("a browser with storage");
+        for namespace in ["team/dataset", OTHER] {
+            drop(storage.remove_item(&publish_choice_key(namespace)));
+        }
+    }
+
+    fn stored_choice(namespace: &str) -> Option<String> {
+        local_storage()
+            .expect("a browser with storage")
+            .get_item(&publish_choice_key(namespace))
+            .unwrap()
+    }
+
+    fn store_choice(namespace: &str, value: &str) {
+        local_storage()
+            .expect("a browser with storage")
+            .set_item(&publish_choice_key(namespace), value)
+            .unwrap();
+    }
+
+    /// Pick `label` behind the caret: it moves the face and runs nothing.
+    fn pick(el: &web_sys::Element, label: &str) {
+        let choices = el
+            .query_selector_all(&format!("[popover]{SPLIT_CHOICES} button"))
+            .unwrap();
+        (0..choices.length())
+            .map(|i| {
+                choices
+                    .item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::HtmlElement>()
+            })
+            .find(|b| b.text_content().unwrap_or_default().contains(label))
+            .unwrap_or_else(|| panic!("the caret's choice; markup was {}", el.inner_html()))
+            .click();
+    }
+
+    /// A package whose reader picked `Review before publishing…` opens with it
+    /// on the face.
+    #[wasm_bindgen_test]
+    fn a_remembered_review_is_on_the_face() {
+        forget_choices();
+        store_choice("team/dataset", "review");
+
+        let el = mount_header(data(kit::PackageState::PendingCommit));
+        button(&el, "Review before publishing…");
+
+        forget_choices();
+    }
+
+    /// Picking stores the choice for that package and no other: a package
+    /// that needs reviewing does not slow down the rest.
+    #[wasm_bindgen_test]
+    async fn picking_remembers_the_choice_for_that_package_only() {
+        forget_choices();
+        let el = mount_header(data(kit::PackageState::PendingCommit));
+        assert_eq!(
+            stored_choice("team/dataset"),
+            None,
+            "opening stores nothing"
+        );
+
+        pick(&el, "Review before publishing…");
+        sleep_ms(10).await;
+        button(&el, "Review before publishing…");
+        assert_eq!(stored_choice("team/dataset").as_deref(), Some("review"));
+        assert_eq!(stored_choice(OTHER), None);
+
+        let other = commands::PackageHeaderData {
+            namespace: OTHER.try_into().unwrap(),
+            ..data(kit::PackageState::PendingCommit)
+        };
+        let el = mount_header(other);
+        button(&el, "Publish");
+
+        forget_choices();
+    }
+
+    /// What storage holds is not trusted: a name this build does not know —
+    /// an older build's, an index, a hand edit — falls back to `Publish`.
+    #[wasm_bindgen_test]
+    fn an_unknown_stored_choice_falls_back_to_publish() {
+        forget_choices();
+        for garbage in ["1", "Review before publishing…", "", "nonsense"] {
+            store_choice("team/dataset", garbage);
+            assert_eq!(remembered_publish_choice("team/dataset"), 0, "{garbage:?}");
+        }
+        store_choice("team/dataset", "nonsense");
+        let el = mount_header(data(kit::PackageState::PendingCommit));
+        button(&el, "Publish");
+
+        forget_choices();
     }
 
     /// Resolve is a mode of this page, not another route: it pushes `resolve=1`
@@ -1012,10 +1265,13 @@ mod tests {
     }
 
     /// The design's rule: the row is state-driven, the menu is not. This command
-    /// answers "what may I choose to do", so it is present in every state.
+    /// answers "what may I choose to do", so it is present in every state —
+    /// including the ones that publish, whose caret offers `Review before
+    /// publishing…` instead.
     #[wasm_bindgen_test]
     fn create_new_revision_is_in_the_menu_in_every_state() {
         for state in [
+            kit::PackageState::PendingCommit,
             kit::PackageState::Latest,
             kit::PackageState::Behind,
             kit::PackageState::NoSession { host: None },

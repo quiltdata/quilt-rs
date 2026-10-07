@@ -208,8 +208,8 @@ mod tests {
                 Callback::new(move |()| ran.update(|r| r.push("publish".into()))),
             ),
             SplitOption::new(
-                "Create new revision",
-                Callback::new(move |()| ran.update(|r| r.push("revision".into()))),
+                "Review before publishing…",
+                Callback::new(move |()| ran.update(|r| r.push("review".into()))),
             ),
         ]
     }
@@ -236,7 +236,7 @@ mod tests {
         buttons(&root)[0].click();
         assert_eq!(
             ran.get_untracked(),
-            vec!["publish".to_string(), "revision".to_string()],
+            vec!["publish".to_string(), "review".to_string()],
             "the face must follow the selection rather than stay on the first option"
         );
     }
@@ -257,7 +257,7 @@ mod tests {
 
         assert_eq!(
             buttons(&root)[0].text_content().unwrap().trim(),
-            "Create new revision"
+            "Review before publishing…"
         );
     }
 
@@ -309,7 +309,7 @@ mod tests {
             .iter()
             .map(|b| b.text_content().unwrap().trim().to_string())
             .collect();
-        assert_eq!(options, vec!["Publish", "Create new revision"]);
+        assert_eq!(options, vec!["Publish", "Review before publishing…"]);
 
         assert_eq!(found[2].get_attribute("aria-current"), None);
         assert_eq!(

@@ -8,17 +8,17 @@ use crate::kit::ButtonVariant;
 use crate::kit::SplitButton;
 use crate::kit::SplitOption;
 
-fn publish_or_revision() -> Vec<SplitOption> {
+fn publish_or_review() -> Vec<SplitOption> {
     vec![
         SplitOption::new("Publish", Callback::new(|()| ())),
-        SplitOption::new("Create new revision", Callback::new(|()| ())),
+        SplitOption::new("Review before publishing…", Callback::new(|()| ())),
     ]
 }
 
 fn three() -> Vec<SplitOption> {
     vec![
         SplitOption::new("Publish", Callback::new(|()| ())),
-        SplitOption::new("Create new revision", Callback::new(|()| ())),
+        SplitOption::new("Review before publishing…", Callback::new(|()| ())),
         SplitOption::new("Publish without checks", Callback::new(|()| ())),
     ]
 }
@@ -47,7 +47,7 @@ fn ShapeStory() -> impl IntoView {
         >
             <Cell wide=true label="live — pick the other option, watch the face">
                 <SplitButton
-                    options=publish_or_revision()
+                    options=publish_or_review()
                     selected=live
                     menu_label="Change what this button does"
                     variant=ButtonVariant::Primary
@@ -55,7 +55,7 @@ fn ShapeStory() -> impl IntoView {
             </Cell>
             <Cell wide=true label="default weight">
                 <SplitButton
-                    options=publish_or_revision()
+                    options=publish_or_review()
                     selected=RwSignal::new(0)
                     menu_label="Change what this button does"
                 />
@@ -92,7 +92,7 @@ fn EdgesStory() -> impl IntoView {
         >
             <Cell wide=true label="working — the caret goes with the face">
                 <SplitButton
-                    options=publish_or_revision()
+                    options=publish_or_review()
                     selected=RwSignal::new(0)
                     menu_label="Change what this button does"
                     variant=ButtonVariant::Primary
@@ -101,7 +101,7 @@ fn EdgesStory() -> impl IntoView {
             </Cell>
             <Cell wide=true label="unavailable — both halves">
                 <SplitButton
-                    options=publish_or_revision()
+                    options=publish_or_review()
                     selected=RwSignal::new(0)
                     menu_label="Change what this button does"
                     variant=ButtonVariant::Primary
@@ -116,7 +116,7 @@ fn EdgesStory() -> impl IntoView {
                                 "Publish this revision to the bucket",
                                 Callback::new(|()| ()),
                             ),
-                            SplitOption::new("Create new revision", Callback::new(|()| ())),
+                            SplitOption::new("Review before publishing…", Callback::new(|()| ())),
                         ]
                         selected=RwSignal::new(0)
                         menu_label="Change what this button does"
@@ -126,7 +126,7 @@ fn EdgesStory() -> impl IntoView {
             </Cell>
             <Cell wide=true label="a stored selection that no longer exists — falls back">
                 <SplitButton
-                    options=publish_or_revision()
+                    options=publish_or_review()
                     selected=RwSignal::new(7)
                     menu_label="Change what this button does"
                     variant=ButtonVariant::Primary

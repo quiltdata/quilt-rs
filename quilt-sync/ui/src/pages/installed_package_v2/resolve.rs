@@ -15,7 +15,7 @@ use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 use quilt_uri::{Namespace, S3PackageUri};
 
-use super::{Outcome, Replace, Wiring, holding, run};
+use super::{Outcome, Replace, Reread, Wiring, holding, run};
 use crate::commands;
 use crate::kit::readable;
 use crate::kit::{
@@ -281,7 +281,7 @@ fn certify_press(target: Target, w: Wiring, certify: RevisionChoice) -> impl Fn(
             outcome,
             namespace,
             "Could not share your revision.",
-            Some(reload),
+            Reread::OnSuccess(reload),
             task,
         );
     }

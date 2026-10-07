@@ -2,8 +2,8 @@
 //!
 //! # The row is the link
 //!
-//! Every state that names an operation names a page that performs it — `Publish`
-//! opens the commit page, `Resolve` the merge page, the other two the package's own —
+//! Every state that names an operation names a page that performs it — `Resolve` opens
+//! the package page's resolve mode, the others the package's own page —
 //! so a row has exactly one destination and the whole row goes there. The verb rides
 //! along as text rather than as a button, because a button promises the operation
 //! happens on press and none of these do. One tab stop per row either way, and the
@@ -216,7 +216,7 @@ mod tests {
                     tone=StateTone::Danger
                     remedy=Some(Remedy {
                         action: PackageAction::Publish,
-                        href: "/commit?namespace=org/dataset-c".to_string(),
+                        href: "/installed-package?namespace=org%2Fdataset-c&filter=unmodified".to_string(),
                     })
                 />
             }
@@ -227,7 +227,7 @@ mod tests {
             .expect("the row is the link");
         assert_eq!(
             link.get_attribute("href").as_deref(),
-            Some("/commit?namespace=org/dataset-c")
+            Some("/installed-package?namespace=org%2Fdataset-c&filter=unmodified")
         );
         assert!(
             link.text_content().unwrap().contains("Publish"),

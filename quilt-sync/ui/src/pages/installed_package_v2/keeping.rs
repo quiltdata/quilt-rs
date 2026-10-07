@@ -17,7 +17,7 @@ use std::pin::Pin;
 
 use leptos::prelude::*;
 
-use super::{Wiring, run};
+use super::{Reread, Wiring, run};
 use crate::commands::{self, KeepingScope, PackageSize};
 use crate::kit::{Button, Choice, ChoiceGroup, PaneSection};
 use crate::util::{format_size, thousands};
@@ -115,7 +115,7 @@ pub(super) fn KeepingSection(
                 w.outcome,
                 namespace.clone(),
                 "Could not change what this package keeps.",
-                Some(w.reload),
+                Reread::OnSuccess(w.reload),
                 task,
             );
         });
@@ -144,7 +144,7 @@ pub(super) fn KeepingSection(
                 w.outcome,
                 namespace.clone(),
                 "Could not download the files.",
-                Some(w.reload),
+                Reread::OnSuccess(w.reload),
                 task,
             );
         };
