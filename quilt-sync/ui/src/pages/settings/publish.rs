@@ -15,6 +15,10 @@ use crate::components::buttons;
 const PUBLISH_PLACEHOLDERS: &[&str] =
     &["{date}", "{time}", "{datetime}", "{namespace}", "{changes}"];
 
+/// What these defaults are for, shown on the section and in its popup.
+const DEFAULTS_USE: &str = "Publish and autosync send these defaults. They also fill in the \
+     commit form, where you can change them before you commit.";
+
 /// Copy for the global-scope reminder shown in the "Edit commit defaults" popup.
 const GLOBAL_SCOPE_WARNING: &str = "These settings apply to every bucket. Workflow ids and \
      metadata schemas are defined per bucket — a global override can make commits fail in \
@@ -98,6 +102,7 @@ pub(super) fn PublishSection(
     view! {
         <section class="settings-section qui-publish-settings">
             <h2 class="section-title">"Commit and Push"</h2>
+            <p class="section-description">{DEFAULTS_USE}</p>
             <dl class="settings-list">
                 <dt>"Message template"</dt>
                 <dd>
@@ -218,6 +223,7 @@ fn PublishSettingsPopup(
         }>
             <div class="popup-content publish-settings-form" on:click=|ev| ev.stop_propagation()>
                 <h2 class="section-title">"Edit commit defaults"</h2>
+                <p class="section-description">{DEFAULTS_USE}</p>
 
                 <div class="field">
                     <label for="publish-message-template">"Message template"</label>

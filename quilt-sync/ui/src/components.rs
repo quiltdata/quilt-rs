@@ -22,4 +22,5 @@ pub use toasts::ToastStack;
 pub use update_checker::UpdateChecker;
 pub use workflow_select::{
     PreviousWorkflow, WorkflowSection, build_workflow_view, previous_workflow_note,
+    settings_hint_view,
 };

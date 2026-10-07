@@ -84,8 +84,17 @@ pub struct CommitData {
     pub uri: Option<S3PackageUri>,
     pub status: String,
     pub message: String,
+    /// The current revision's metadata: what an emptied editor keeps.
     pub user_meta: String,
     pub user_meta_error: Option<String>,
+    /// The publish settings' default metadata, which the editor starts with
+    /// in place of `user_meta`; `None` when the settings have none.
+    pub settings_user_meta: Option<String>,
+    /// The publish settings' default workflow id, preselected first when the
+    /// bucket declares it.
+    pub settings_workflow: Option<String>,
+    /// Whether the publish settings set a message template.
+    pub has_message_template: bool,
     /// The previous revision's stamped workflow selection (its `id`), if any.
     pub workflow: Option<WorkflowData>,
     /// The bucket's workflow-selection situation for the commit dialog.

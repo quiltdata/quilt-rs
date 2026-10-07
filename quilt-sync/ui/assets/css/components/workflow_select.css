@@ -93,3 +93,12 @@
 .qui-workflow-links-label {
   white-space: nowrap;
 }
+
+/* "… in Settings." helper line under a commit-form field whose starting value
+ * comes from the commit defaults; the link opens the settings page. */
+.qui-settings-hint {
+  color: var(--q-ui-palette-text-secondary);
+  display: block;
+  font-size: var(--q-ui-font-size-small);
+  margin: var(--q-ui-size-0-5) 0 0;
+}

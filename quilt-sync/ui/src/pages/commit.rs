@@ -16,7 +16,7 @@ use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, PreviousWorkflow, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData, WorkflowSection, build_workflow_view, previous_workflow_note,
-    with_popover,
+    settings_hint_view, with_popover,
 };
 use crate::util;
 use crate::util::format_size;
@@ -112,9 +112,16 @@ fn CommitContent(
 
     let namespace = data.namespace.clone();
     let message = RwSignal::new(data.message.clone());
-    let user_meta = data.user_meta.clone();
-    let user_meta_for_editor = data.user_meta.clone();
+    // The editor starts from the publish settings' default metadata, as
+    // one-click Publish would send it; with none set, from the current
+    // revision's metadata, since a form can't show "keep".
+    let starting_meta = starting_metadata(data.settings_user_meta.as_deref(), &data.user_meta);
+    let user_meta = starting_meta.clone();
+    let user_meta_for_editor = starting_meta.clone();
     let user_meta_error = data.user_meta_error.clone();
+    let message_hint = message_settings_hint(data.has_message_template);
+    let metadata_from_settings = data.settings_user_meta.is_some();
+    let settings_workflow = data.settings_workflow.clone();
     let entries = data.entries;
     let ignored_count = data.ignored_count;
     let unmodified_count = data.unmodified_count;
@@ -124,7 +131,11 @@ fn CommitContent(
     // submits. The selected index into that list is the whole client-side
     // state.
     let previous_workflow = PreviousWorkflow::from_stamp(data.workflow.as_ref());
-    let wf_view = build_workflow_view(&data.workflows, previous_workflow.preselect_id());
+    let wf_view = build_workflow_view(
+        &data.workflows,
+        previous_workflow.preselect_id(),
+        data.settings_workflow.as_deref(),
+    );
     // `wf_view.initial` is the single source of truth for the starting
     // selection: it both seeds this signal (which submit reads) and is passed
     // to `WorkflowSection` to render the `selected` attribute, so display and
@@ -172,9 +183,10 @@ fn CommitContent(
     // writes edits into the hidden `#metadata` textarea and dispatches an
     // `input` event (see json-editor-glue.js), so this tracks edits from either
     // the editor or the textarea fallback.
-    let metadata_text = RwSignal::new(data.user_meta.clone());
-    // The previous revision's metadata, as seeded into the editor. Used as the
-    // effective candidate when the editor is left empty — see
+    let metadata_text = RwSignal::new(starting_meta);
+    // The previous revision's metadata, which an empty editor keeps — not
+    // necessarily what the editor was seeded with. Used as the effective
+    // candidate when the editor is left empty — see
     // `effective_metadata` and the parity note at the validation send site.
     let seeded_previous_meta = data.user_meta.clone();
     // Per-field dirtiness: validation runs eagerly (the Name check must fire on
@@ -389,6 +401,7 @@ fn CommitContent(
                         view=wf_view
                         selected=selected_workflow
                         note=workflow_note
+                        settings_workflow=settings_workflow
                     />
 
                     // ── Namespace (readonly) ──
@@ -423,6 +436,7 @@ fn CommitContent(
                                 }
                             />
                         </p>
+                        {settings_hint_view(message_hint)}
                         {move || field_violation_view(&live_violations.get(), ViolationField::Message)}
                     </div>
 
@@ -452,6 +466,9 @@ fn CommitContent(
                             textarea_ref=textarea_ref
                             initial_value=user_meta_for_editor
                         />
+                        // Only when Settings set it: no nudge to set one.
+                        {metadata_from_settings
+                            .then(|| settings_hint_view("This metadata is your default in"))}
                         // After the editor so the error sits below it and its
                         // toggling never shifts the editor; a separate reactive
                         // node, so validation updates don't re-render the editor.
@@ -871,6 +888,22 @@ fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
 /// validates — so live validation substitutes that seeded previous value rather
 /// than validating `{}`. A non-empty editor is validated as typed. When both are
 /// empty they collapse to `{}` on both paths, keeping live and commit consistent.
+/// Where the form's message comes from, ahead of a link to Settings. The
+/// message always has a default there, so the hint shows either way.
+fn message_settings_hint(has_template: bool) -> &'static str {
+    if has_template {
+        "This message follows your template in"
+    } else {
+        "You can change the default message in"
+    }
+}
+
+/// The text the metadata editor starts with: the publish settings' default
+/// metadata when there is one, else the previous revision's metadata.
+fn starting_metadata(settings: Option<&str>, previous: &str) -> String {
+    settings.unwrap_or(previous).to_string()
+}
+
 fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
     if editor_text.trim().is_empty() {
         seeded_previous.to_string()
@@ -1011,7 +1044,7 @@ fn JsonEditor(
 mod tests {
     use super::{
         commit_disabled, displayed_violations, effective_metadata, field_violations,
-        should_debounce,
+        message_settings_hint, should_debounce, starting_metadata,
     };
     use crate::commands::{CommitViolation, ViolationField};
     use crate::util::commit_denied_hint;
@@ -1080,6 +1113,33 @@ mod tests {
         assert_eq!(effective_metadata(r#"{"x":1}"#, "prev"), r#"{"x":1}"#);
         // Both empty collapse to the same empty string → `{}` on both paths.
         assert_eq!(effective_metadata("", ""), "");
+    }
+
+    #[test]
+    fn editor_starts_from_settings_but_an_emptied_editor_keeps_the_previous() {
+        let settings = r#"{"source":"desktop"}"#;
+        let previous = r#"{"owner":"alice"}"#;
+        // The editor starts from the settings' default metadata.
+        let start = starting_metadata(Some(settings), previous);
+        assert_eq!(start, settings);
+        // Left as seeded, it is validated as the settings value.
+        assert_eq!(effective_metadata(&start, previous), settings);
+        // Cleared, it keeps the previous revision's metadata, not the settings'.
+        assert_eq!(effective_metadata("", previous), previous);
+        // With no settings metadata, the editor starts from the previous one.
+        assert_eq!(starting_metadata(None, previous), previous);
+    }
+
+    #[test]
+    fn message_hint_says_whether_a_template_is_set() {
+        assert_eq!(
+            message_settings_hint(true),
+            "This message follows your template in"
+        );
+        assert_eq!(
+            message_settings_hint(false),
+            "You can change the default message in"
+        );
     }
 
     #[test]

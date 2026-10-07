@@ -262,9 +262,16 @@ pub struct WorkflowView {
 }
 
 /// Map the backend [`CommitWorkflows`] state to the section's render model.
+///
+/// `settings_workflow_id` is the publish settings' default workflow, which the
+/// commit dialog preselects first so it starts from what one-click Publish
+/// would send. It applies only when the bucket declares it; otherwise
+/// [`preselected_index`] decides, unchanged. Callers with no publish to mirror
+/// pass `None`.
 pub fn build_workflow_view(
     workflows: &CommitWorkflows,
     previous_workflow_id: Option<&str>,
+    settings_workflow_id: Option<&str>,
 ) -> WorkflowView {
     match workflows {
         CommitWorkflows::Available {
@@ -281,12 +288,20 @@ pub fn build_workflow_view(
                 default_workflow.as_deref(),
                 *is_workflow_required,
             ),
-            initial: preselected_index(
-                workflows,
-                previous_workflow_id,
-                default_workflow.as_deref(),
-                *is_workflow_required,
-            ),
+            initial: settings_workflow_id
+                .and_then(|id| workflows.iter().position(|w| w.id == id))
+                // Options are laid out as `[None, workflows..]`.
+                .map_or_else(
+                    || {
+                        preselected_index(
+                            workflows,
+                            previous_workflow_id,
+                            default_workflow.as_deref(),
+                            *is_workflow_required,
+                        )
+                    },
+                    |pos| pos + 1,
+                ),
             config_url: config_url.clone(),
         },
         // Ungoverned bucket: a single disabled `None`. Submit sends
@@ -340,6 +355,74 @@ pub fn build_workflow_view(
     }
 }
 
+// ── Settings hint ──
+
+/// Whether the dropdown says its selection comes from Settings: only while
+/// the selected workflow is the publish settings' default. With no default
+/// workflow in Settings there is nothing to explain, and the form doesn't
+/// nudge the user to set one.
+pub fn shows_settings_workflow_hint(
+    selected: Option<&WorkflowIntent>,
+    settings_workflow: Option<&str>,
+) -> bool {
+    matches!(
+        (selected, settings_workflow),
+        (Some(WorkflowIntent::Named(id)), Some(settings)) if id == settings
+    )
+}
+
+/// The publish settings' default workflow when this bucket can't use it:
+/// it isn't among the declared workflows, or the bucket has no workflows
+/// config. One-click Publish sends it as is and fails here, while the form
+/// falls back to the bucket's preselection, so the form says so. `None` when
+/// Settings names no workflow, the bucket declares it, or the config couldn't
+/// be read (nothing is known either way).
+pub fn missing_settings_workflow<'a>(
+    view: &WorkflowView,
+    settings_workflow: Option<&'a str>,
+) -> Option<&'a str> {
+    let id = settings_workflow?;
+    match view.kind {
+        WorkflowViewKind::Available { .. } => (!view
+            .options
+            .iter()
+            .any(|o| matches!(&o.intent, WorkflowIntent::Named(named) if named == id)))
+        .then_some(id),
+        WorkflowViewKind::NotConfigured => Some(id),
+        WorkflowViewKind::Unavailable | WorkflowViewKind::Invalid { .. } => None,
+    }
+}
+
+/// The warning for [`missing_settings_workflow`], ending in a link to
+/// Settings where the default is changed.
+fn missing_settings_workflow_view(id: &str) -> impl IntoView + use<> {
+    let text = format!(
+        "⚠ Your default workflow in Settings, \"{id}\", isn't one of this bucket's \
+         workflows, so Publish would fail here. Change it in"
+    );
+    view! {
+        <span class="qui-settings-hint qui-workflow-note-warn">
+            {text}
+            " "
+            <a class="qui-workflow-link" href="/settings">"Settings"</a>
+            "."
+        </span>
+    }
+}
+
+/// A helper line ending in a link to Settings, where the commit defaults are
+/// edited: `{text} Settings.`
+pub fn settings_hint_view(text: &'static str) -> impl IntoView {
+    view! {
+        <span class="qui-settings-hint">
+            {text}
+            " "
+            <a class="qui-workflow-link" href="/settings">"Settings"</a>
+            "."
+        </span>
+    }
+}
+
 // ── Workflow section ──
 
 #[component]
@@ -351,7 +434,14 @@ pub fn WorkflowSection(
     /// push has no previous revision, so the popup passes a note that is always
     /// `None`.
     note: Memo<Option<String>>,
+    /// The publish settings' default workflow id. While it is the selection,
+    /// a hint says it comes from Settings. Callers with no publish to mirror
+    /// leave it out.
+    #[prop(optional_no_strip)]
+    settings_workflow: Option<String>,
 ) -> impl IntoView {
+    let missing = missing_settings_workflow(&view, settings_workflow.as_deref())
+        .map(|id| missing_settings_workflow_view(id).into_any());
     let WorkflowView {
         kind,
         options,
@@ -359,18 +449,34 @@ pub fn WorkflowSection(
         config_url,
     } = view;
 
+    // The warning renders inside the section's own block, so it sits right
+    // under the selector instead of a whole form gap below it.
     match kind {
         WorkflowViewKind::Available {
             is_workflow_required,
-        } => workflow_dropdown(
-            options,
-            selected,
-            initial,
-            is_workflow_required,
-            note,
-            config_url,
-        )
-        .into_any(),
+        } => {
+            // Why this workflow is selected, while Settings' pick is selected.
+            let hint_intents: Vec<WorkflowIntent> =
+                options.iter().map(|o| o.intent.clone()).collect();
+            let settings_row = move || {
+                shows_settings_workflow_hint(
+                    hint_intents.get(selected.get()),
+                    settings_workflow.as_deref(),
+                )
+                .then(|| settings_hint_view("This workflow is your default in"))
+            };
+            let settings_rows = view! { {settings_row} {missing} }.into_any();
+            workflow_dropdown(
+                options,
+                selected,
+                initial,
+                is_workflow_required,
+                note,
+                config_url,
+                settings_rows,
+            )
+            .into_any()
+        }
         // Ungoverned bucket: a single disabled `None`, plus a hint explaining
         // why there is no choice to make. Submit already carries `BucketDefault`
         // via `options[0]`.
@@ -383,6 +489,7 @@ pub fn WorkflowSection(
                     </select>
                 </p>
                 <span class="qui-workflow-hint">"This bucket has no workflow configuration."</span>
+                {missing}
             </div>
         }
         .into_any(),
@@ -487,10 +594,14 @@ fn workflow_dropdown(
     is_workflow_required: bool,
     note: Memo<Option<String>>,
     config_url: Option<String>,
+    // The Settings lines under the selector: why the selection came from
+    // Settings, or that Settings names a workflow this bucket can't use.
+    settings_rows: AnyView,
 ) -> impl IntoView {
     // Intents indexed by option position — used to decide whether the current
     // selection is the (disabled) `None` item, which drives the required hint.
     let intents: Vec<WorkflowIntent> = options.iter().map(|o| o.intent.clone()).collect();
+
     let show_required_hint = move || {
         is_workflow_required
             && intents
@@ -576,6 +687,7 @@ fn workflow_dropdown(
                     <p class="qui-workflow-hint qui-workflow-note-warn">{text}</p>
                 })
             }}
+            {settings_rows}
             // Catalog links for the current selection (config.yml + the
             // selected workflow's schemas), recomputed as the selection changes.
             {links_row}
@@ -587,7 +699,8 @@ fn workflow_dropdown(
 mod tests {
     use super::{
         PreviousWorkflow, WorkflowOption, WorkflowViewKind, build_workflow_view, catalog_links,
-        preselected_index, previous_workflow_note, workflow_options,
+        missing_settings_workflow, preselected_index, previous_workflow_note,
+        shows_settings_workflow_hint, workflow_options,
     };
     use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowIntent};
 
@@ -765,7 +878,7 @@ mod tests {
             is_workflow_required: false,
             config_url: None,
         };
-        let view = build_workflow_view(&workflows, Some("beta"));
+        let view = build_workflow_view(&workflows, Some("beta"), None);
         assert_eq!(
             view.kind,
             WorkflowViewKind::Available {
@@ -784,7 +897,7 @@ mod tests {
 
     #[test]
     fn view_not_configured_is_single_disabled_none_submitting_bucket_default() {
-        let view = build_workflow_view(&CommitWorkflows::NotConfigured, None);
+        let view = build_workflow_view(&CommitWorkflows::NotConfigured, None, None);
         assert_eq!(view.kind, WorkflowViewKind::NotConfigured);
         assert_eq!(view.initial, 0);
         assert_eq!(
@@ -801,7 +914,7 @@ mod tests {
 
     #[test]
     fn view_unavailable_submits_bucket_default() {
-        let view = build_workflow_view(&CommitWorkflows::Unavailable, Some("ignored"));
+        let view = build_workflow_view(&CommitWorkflows::Unavailable, Some("ignored"), None);
         assert_eq!(view.kind, WorkflowViewKind::Unavailable);
         assert_eq!(view.initial, 0);
         // Both non-Available states submit `BucketDefault`, but they are
@@ -819,6 +932,7 @@ mod tests {
                 config_url: Some("https://cat/b/b/tree/.quilt/workflows/config.yml".to_string()),
             },
             Some("ignored"),
+            None,
         );
         assert_eq!(
             view.kind,
@@ -903,6 +1017,132 @@ mod tests {
     }
 
     #[test]
+    fn view_settings_workflow_comes_first() {
+        // The publish settings' default workflow wins over both the bucket
+        // default and the previous pick, as one-click Publish would send it.
+        let workflows = CommitWorkflows::Available {
+            workflows: vec![
+                wf("alpha", Some("Alpha WF")),
+                wf("beta", None),
+                wf("gamma", None),
+            ],
+            default_workflow: Some("alpha".to_string()),
+            is_workflow_required: true,
+            config_url: None,
+        };
+        let view = build_workflow_view(&workflows, Some("beta"), Some("gamma"));
+        assert_eq!(
+            view.options[view.initial].intent,
+            WorkflowIntent::Named("gamma".to_string())
+        );
+    }
+
+    #[test]
+    fn view_settings_workflow_the_bucket_does_not_declare_falls_back() {
+        // A settings workflow this bucket doesn't declare leaves the bucket's
+        // own preselection rules unchanged.
+        let workflows = CommitWorkflows::Available {
+            workflows: vec![wf("alpha", Some("Alpha WF")), wf("beta", None)],
+            default_workflow: Some("alpha".to_string()),
+            is_workflow_required: false,
+            config_url: None,
+        };
+        let view = build_workflow_view(&workflows, Some("beta"), Some("ghost"));
+        assert_eq!(
+            view.initial,
+            preselected_index(
+                &[wf("alpha", Some("Alpha WF")), wf("beta", None)],
+                Some("beta"),
+                Some("alpha"),
+                false
+            )
+        );
+        // Required, no bucket default: the previous pick still breaks the tie.
+        let workflows = CommitWorkflows::Available {
+            workflows: vec![wf("alpha", Some("Alpha WF")), wf("beta", None)],
+            default_workflow: None,
+            is_workflow_required: true,
+            config_url: None,
+        };
+        let view = build_workflow_view(&workflows, Some("beta"), Some("ghost"));
+        assert_eq!(view.initial, 2);
+    }
+
+    #[test]
+    fn view_settings_workflow_is_ignored_without_a_config() {
+        for state in [CommitWorkflows::NotConfigured, CommitWorkflows::Unavailable] {
+            let view = build_workflow_view(&state, None, Some("gamma"));
+            assert_eq!(view.initial, 0);
+            assert_eq!(view.options[0].intent, WorkflowIntent::BucketDefault);
+        }
+    }
+
+    #[test]
+    fn note_flags_a_settings_workflow_that_differs_from_the_previous_pick() {
+        let workflows = vec![wf("alpha", Some("Alpha WF")), wf("beta", None)];
+        let note = previous_workflow_note(
+            &PreviousWorkflow::Named("alpha".to_string()),
+            &WorkflowIntent::Named("beta".to_string()),
+            &workflows,
+        );
+        assert_eq!(
+            note.as_deref(),
+            Some("The previous revision used the \"Alpha WF\" workflow.")
+        );
+    }
+
+    #[test]
+    fn settings_workflow_missing_from_the_bucket_is_reported() {
+        let available = build_workflow_view(
+            &CommitWorkflows::Available {
+                workflows: vec![wf("alpha", Some("Alpha WF")), wf("beta", None)],
+                default_workflow: None,
+                is_workflow_required: false,
+                config_url: None,
+            },
+            None,
+            Some("wrong-workflow"),
+        );
+        // Not declared: reported, and the selection falls back to the bucket's.
+        assert_eq!(
+            missing_settings_workflow(&available, Some("wrong-workflow")),
+            Some("wrong-workflow")
+        );
+        assert_eq!(available.initial, 0);
+        // Declared: nothing to report.
+        assert_eq!(missing_settings_workflow(&available, Some("beta")), None);
+        // No Settings workflow: nothing to report, and no nudge to set one.
+        assert_eq!(missing_settings_workflow(&available, None), None);
+        // A bucket with no workflows config can't use any named workflow.
+        let not_configured = build_workflow_view(&CommitWorkflows::NotConfigured, None, None);
+        assert_eq!(
+            missing_settings_workflow(&not_configured, Some("beta")),
+            Some("beta")
+        );
+        // Couldn't load the config: unknown, so no claim either way.
+        let unavailable = build_workflow_view(&CommitWorkflows::Unavailable, None, None);
+        assert_eq!(missing_settings_workflow(&unavailable, Some("beta")), None);
+    }
+
+    #[test]
+    fn settings_workflow_hint_follows_the_selection() {
+        let gamma = WorkflowIntent::Named("gamma".to_string());
+        // Shown while the settings' workflow is the one selected.
+        assert!(shows_settings_workflow_hint(Some(&gamma), Some("gamma")));
+        // Hidden once the user picks something else.
+        assert!(!shows_settings_workflow_hint(
+            Some(&WorkflowIntent::Named("alpha".to_string())),
+            Some("gamma")
+        ));
+        assert!(!shows_settings_workflow_hint(
+            Some(&WorkflowIntent::NoWorkflow),
+            Some("gamma")
+        ));
+        // Never shown when Settings names no workflow: no nudge to set one.
+        assert!(!shows_settings_workflow_hint(Some(&gamma), None));
+    }
+
+    #[test]
     fn view_first_push_available_preselects_bucket_default() {
         // A first push feeds `None` for the previous workflow id; the resulting
         // selection is the bucket default, never `Named("")`.
@@ -912,7 +1152,7 @@ mod tests {
             is_workflow_required: true,
             config_url: None,
         };
-        let view = build_workflow_view(&workflows, None);
+        let view = build_workflow_view(&workflows, None, None);
         assert_eq!(view.initial, 2);
         assert_eq!(
             view.options[view.initial].intent,
@@ -1103,7 +1343,7 @@ mod tests {
         // The submit path reads `options[selected].intent`; both non-Available
         // states must send `BucketDefault` from their single option at index 0.
         for state in [CommitWorkflows::NotConfigured, CommitWorkflows::Unavailable] {
-            let view = build_workflow_view(&state, None);
+            let view = build_workflow_view(&state, None, None);
             assert_eq!(
                 view.options[view.initial].intent,
                 WorkflowIntent::BucketDefault
@@ -1131,7 +1371,7 @@ mod tests {
             is_workflow_required: false,
             config_url: Some("https://catalog/b/b/tree/.quilt/workflows/config.yml".to_string()),
         };
-        let view = build_workflow_view(&workflows, None);
+        let view = build_workflow_view(&workflows, None, None);
         assert_eq!(
             view.config_url.as_deref(),
             Some("https://catalog/b/b/tree/.quilt/workflows/config.yml")

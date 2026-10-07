@@ -211,8 +211,9 @@ pub async fn package_push(
 /// Shared by both publish paths, the manual one-click Publish command and the
 /// autosync watcher tick, to keep them in lockstep so a change to publish
 /// settings (new placeholder, new field) applies identically regardless of
-/// who triggered the publish.
-fn publish_inputs(
+/// who triggered the publish. The commit form starts from it too, so
+/// reviewing a publish shows what Publish would send.
+pub fn publish_inputs(
     namespace: &quilt_uri::Namespace,
     settings: &PublishSettings,
     status: &quilt::lineage::InstalledPackageStatus,

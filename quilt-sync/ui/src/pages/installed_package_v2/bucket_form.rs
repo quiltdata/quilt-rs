@@ -265,8 +265,8 @@ pub(super) fn BucketDialog(
     let wf_view = Memo::new(move |_| {
         workflows.get().flatten().and_then(|(target, answer)| {
             (Some(target) == valid_target.get()).then(|| match answer {
-                Ok(config) => build_workflow_view(&config, None),
-                Err(_) => build_workflow_view(&CommitWorkflows::Unavailable, None),
+                Ok(config) => build_workflow_view(&config, None, None),
+                Err(_) => build_workflow_view(&CommitWorkflows::Unavailable, None, None),
             })
         })
     });

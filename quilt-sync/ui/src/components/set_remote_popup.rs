@@ -134,8 +134,8 @@ pub fn SetRemotePopup(
             // value while re-running), so the view is `None` (loading) until the
             // fetch for the *current* bucket resolves.
             (Some(target) == valid_target.get()).then(|| match res {
-                Ok(cw) => build_workflow_view(&cw, None),
-                Err(_) => build_workflow_view(&CommitWorkflows::Unavailable, None),
+                Ok(cw) => build_workflow_view(&cw, None, None),
+                Err(_) => build_workflow_view(&CommitWorkflows::Unavailable, None, None),
             })
         })
     });
