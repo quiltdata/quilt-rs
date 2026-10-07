@@ -11,7 +11,7 @@ resumes any in-flight run from its journal on the next start.
 
 Windows, from an elevated prompt, running as an account that can read the share:
 
-```
+```bat
 setx /M QUILT_AGENT_API_KEY qk_...
 schtasks /Create /TN QuiltAgent /SC ONSTART /RU <account> /RP ^
   /TR "\"C:\Program Files\QuiltAgent\quilt-agent.exe\" run C:\ProgramData\QuiltAgent\profile.yaml"

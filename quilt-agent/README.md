@@ -14,7 +14,7 @@ was observed, and publishes the run as a fresh Quilt package revision.
   has moved it. The crate's `clippy.toml` forbids pull, reset, certify and
   `push_package`.
 
-```
+```sh
 quilt-agent check profile.yaml
 QUILT_AGENT_API_KEY=qk_... quilt-agent run profile.yaml
 quilt-agent run profile.yaml --bucket-only   # ambient AWS credentials, no registry
