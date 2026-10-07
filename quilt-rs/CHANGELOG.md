@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.42.2-dev]
+
+### Added
+
+- `Auth::set_api_key` and `RemoteS3::set_api_key` let an unattended client authenticate to a stack with a registry API key (`qk_…`) instead of an interactive session; the key is held in memory only and a rejected key fails closed
+
 ## [v0.42.1] - 2026-10-06
 
 ### Added
