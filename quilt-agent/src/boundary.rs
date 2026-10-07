@@ -60,7 +60,7 @@ fn marker_file(boundary: &Boundary, window_s: u64, obs: &Observation) -> Verdict
     };
     let (markers, data): (Vec<&Member>, Vec<&Member>) =
         obs.members.iter().partition(|m| globs.is_match(&m.path));
-    // Every configured marker must be present, each matched by its own file.
+    // Every configured marker pattern must match at least one file.
     let mut hit = vec![false; boundary.markers.len()];
     for m in &markers {
         for i in globs.matches(&m.path) {

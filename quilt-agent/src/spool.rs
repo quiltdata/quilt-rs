@@ -35,7 +35,7 @@ pub enum Event {
         /// Relative paths, sizes and mtimes as seen at the boundary.
         members: Vec<SnapMember>,
     },
-    /// The run is too big for the spool and was not staged.
+    /// The run is over the size cap and will not be uploaded.
     Refused { run_id: String, reason: String },
     /// One member uploaded and checked against the snapshot.
     MemberVerified { run_id: String, file: FileEntry },
