@@ -156,13 +156,14 @@ fn states() -> Vec<(&'static str, PackageState)> {
 /// menu is fixed across them by design, which is what this fixture asserts by
 /// being one.
 ///
-/// `Create new revision` is in the menu in **every** state, and also behind the
-/// caret of the `Publish` split button in the states that publish. The
-/// duplication is deliberate. The menu is its stable home — one place to learn,
-/// available even when the package has nothing to publish and so nothing to hang
-/// a caret on. The caret is proximity: at the moment somebody is about to
-/// publish, the other way to do it should be next to their cursor rather than a
-/// menu away.
+/// `Create new revision` is in the menu in **every** state, and the caret of the
+/// `Publish` split button holds `Review before publishing…` in the states that
+/// publish. Both reach the commit page, and the overlap is deliberate. The menu
+/// is the stable home — one place to learn, available even when the package has
+/// nothing to publish and so nothing to hang a caret on. The caret is proximity:
+/// `Publish` itself publishes in one click, so at the moment somebody is about
+/// to publish, the way to check the message and metadata first should be next
+/// to their cursor rather than a menu away.
 fn scene_payload() -> commands::PackageHeaderData {
     let namespace: quilt_uri::Namespace = NAMESPACE.try_into().expect("a namespace");
     commands::PackageHeaderData {
@@ -204,11 +205,11 @@ fn scene_menu() -> Vec<MenuItem> {
 /// control in the resting state, which is the state people see most.
 ///
 /// So: the states that publish get a [`SplitButton`](crate::kit::SplitButton)
-/// whose caret holds `Create new revision`, the states with another verb get
-/// that verb plainly, and the states with nothing to do get an empty slot.
+/// whose caret holds `Review before publishing…`, the states with another verb
+/// get that verb plainly, and the states with nothing to do get an empty slot.
 ///
-/// The command is in the menu in every state **and** behind the caret in the
-/// publishing ones. Duplication on purpose: the menu is the stable home, the
+/// The commit page is in the menu in every state **and** behind the caret in
+/// the publishing ones. Overlap on purpose: the menu is the stable home, the
 /// caret is proximity at the moment it is wanted. See [`scene_payload`].
 ///
 /// # One gap, because there is nothing left to group
@@ -254,7 +255,7 @@ fn header(state: &PackageState, publish_choice: RwSignal<usize>, action_open: bo
                                     options=vec![
                                         SplitOption::new("Publish", Callback::new(|()| ())),
                                         SplitOption::new(
-                                            "Create new revision",
+                                            "Review before publishing…",
                                             Callback::new(|()| ()),
                                         ),
                                     ]

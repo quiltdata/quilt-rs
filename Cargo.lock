@@ -5852,7 +5852,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-sync"
-version = "0.22.7"
+version = "0.22.8-dev"
 dependencies = [
  "chrono",
  "dotenv",

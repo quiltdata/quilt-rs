@@ -137,12 +137,15 @@ async fn holding<T>(
 /// `on_failure` is the page's own sentence for the command not happening; the
 /// backend's text follows it as the detail, which is the split the pause band
 /// already makes.
+///
+/// `after` says when the page reads the package again. A re-read leaves the
+/// band alone, so a failure stays on screen above the fresh details.
 pub(super) fn run(
     busy: RwSignal<bool>,
     outcome: RwSignal<Option<Outcome>>,
     namespace: String,
     on_failure: &'static str,
-    after: Option<Trigger>,
+    after: Reread,
     task: impl std::future::Future<Output = Result<String, String>> + 'static,
 ) {
     // The controls are disabled while this is true, so this guard only
@@ -151,20 +154,37 @@ pub(super) fn run(
         return;
     }
     leptos::task::spawn_local(async move {
-        match holding(busy, outcome, task).await {
-            Ok(_) => {
-                if let Some(reload) = after {
-                    reload.notify();
-                }
-            }
-            Err(message) => outcome.set(Some(Outcome {
+        let answer = holding(busy, outcome, task).await;
+        let reload = match (after, answer.is_ok()) {
+            (Reread::OnSuccess(reload), true) | (Reread::Always(reload), _) => Some(reload),
+            _ => None,
+        };
+        if let Err(message) = answer {
+            outcome.set(Some(Outcome {
                 namespace,
                 variant: BannerVariant::Critical,
                 lead: on_failure.to_string(),
                 detail: Some(message),
-            })),
+            }));
+        }
+        if let Some(reload) = reload {
+            reload.notify();
         }
     });
+}
+
+/// When a command run by [`run`] has the page read its package again.
+#[derive(Clone, Copy)]
+pub(super) enum Reread {
+    /// Not at all: the command changes nothing the page shows.
+    Never,
+    /// Only after a success. A failure here left the package as it was, so
+    /// what is on screen is still true.
+    OnSuccess(Trigger),
+    /// Whether it succeeds or not, because it can fail halfway. Publish
+    /// commits and then pushes, so a refused push still leaves a new local
+    /// revision the page has to show.
+    Always(Trigger),
 }
 
 /// A navigation in place of the current entry, and the package it leaves.
@@ -529,7 +549,7 @@ fn file_downloader(namespace: String, w: Wiring, files: Files) -> Callback<Vec<S
             w.outcome,
             namespace.clone(),
             "Could not download the files.",
-            Some(w.reload),
+            Reread::OnSuccess(w.reload),
             task,
         );
     })
@@ -1785,7 +1805,7 @@ mod tests {
             outcome,
             "team/dataset".to_string(),
             "Could not make your revision the shared one.",
-            None,
+            Reread::Never,
             async {
                 Err(
                     r#"{"kind":"access_denied","message":"The active role does not have access to this object."}"#

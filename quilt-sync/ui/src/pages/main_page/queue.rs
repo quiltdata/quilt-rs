@@ -399,11 +399,12 @@ fn zero_line_text(total: usize) -> String {
 }
 
 /// The one page that can act on a package row's `Rendered.action` — every
-/// action is a navigation, never a mutation. `Get latest` and `Choose S3
-/// bucket` have no page of their own: in v1 they are `buttons::Pull`
-/// (`pages/installed_package/status_banner.rs:138`) and `buttons::SetRemote`
-/// (`pages/installed_package/toolbar.rs:99`), both living on the package's own
-/// page, so landing there is the honest answer rather than inventing a command.
+/// action is a navigation, never a mutation. `Publish`, `Get latest` and
+/// `Choose S3 bucket` have no page of their own: each is a control on the
+/// package's own page, so landing there is the honest answer rather than
+/// running a command from a list. `Publish` lands there rather than on the
+/// commit page: the package page's `Publish` publishes in one click, and its
+/// caret offers the commit page for a reader who wants to review first.
 ///
 /// Exhaustive over [`PackageAction`], so a verb added to the vocabulary file
 /// stops this build rather than reaching a wasm render path.
@@ -413,7 +414,6 @@ fn zero_line_text(total: usize) -> String {
 /// that drifts points the gallery's rows at pages the app does not use.
 pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
     match action {
-        PackageAction::Publish => crate::routes::commit_href(namespace),
         // The package page's own resolve mode, not `/merge`: this queue is drawn
         // only by the main page, which is v2's, and `/installed-package` renders
         // v2 exactly when the main page does. The one exception is `/main`
@@ -429,11 +429,14 @@ pub fn action_href(action: PackageAction, namespace: &Namespace) -> String {
         // in hand (ruling 5); a row that reaches this match has no host, so the
         // honest answer is the package's own page, whose header offers the
         // host-scoped control.
-        PackageAction::GetLatest | PackageAction::ChooseS3Bucket | PackageAction::SignIn => {
-            super::package_page_href(namespace)
-        }
-        // Unreachable from `action`; mapped so this match cannot go stale.
-        PackageAction::SwitchRole => super::package_page_href(namespace),
+        //
+        // `SwitchRole` is unreachable from `action`; mapped so this match
+        // cannot go stale.
+        PackageAction::Publish
+        | PackageAction::GetLatest
+        | PackageAction::ChooseS3Bucket
+        | PackageAction::SignIn
+        | PackageAction::SwitchRole => super::package_page_href(namespace),
     }
 }
 
@@ -1457,7 +1460,9 @@ mod tests {
         // missing namespace from a present one.
         let package_page = "/installed-package?namespace=org%2Fpkg&filter=unmodified";
         let href = |a| action_href(a, &org_pkg);
-        assert_eq!(href(Publish), "/commit?namespace=org%2Fpkg");
+        // The package page's `Publish` publishes in one click and offers the
+        // commit page behind its caret, so the row lands there.
+        assert_eq!(href(Publish), package_page);
         assert_eq!(href(GetLatest), package_page);
         assert_eq!(href(ChooseS3Bucket), package_page);
         // A row's `SignIn` has no host to sign in to, so it lands on the
