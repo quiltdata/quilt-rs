@@ -355,6 +355,35 @@ pub fn build_workflow_view(
     }
 }
 
+// ── Settings hint ──
+
+/// Whether the dropdown says its selection comes from Settings: only while
+/// the selected workflow is the publish settings' default. With no default
+/// workflow in Settings there is nothing to explain, and the form doesn't
+/// nudge the user to set one.
+pub fn shows_settings_workflow_hint(
+    selected: Option<&WorkflowIntent>,
+    settings_workflow: Option<&str>,
+) -> bool {
+    matches!(
+        (selected, settings_workflow),
+        (Some(WorkflowIntent::Named(id)), Some(settings)) if id == settings
+    )
+}
+
+/// A helper line ending in a link to Settings, where the commit defaults are
+/// edited: `{text} Settings.`
+pub fn settings_hint_view(text: &'static str) -> impl IntoView {
+    view! {
+        <span class="qui-settings-hint">
+            {text}
+            " "
+            <a class="qui-workflow-link" href="/settings">"Settings"</a>
+            "."
+        </span>
+    }
+}
+
 // ── Workflow section ──
 
 #[component]
@@ -366,6 +395,11 @@ pub fn WorkflowSection(
     /// push has no previous revision, so the popup passes a note that is always
     /// `None`.
     note: Memo<Option<String>>,
+    /// The publish settings' default workflow id. While it is the selection,
+    /// a hint says it comes from Settings. Callers with no publish to mirror
+    /// leave it out.
+    #[prop(optional_no_strip)]
+    settings_workflow: Option<String>,
 ) -> impl IntoView {
     let WorkflowView {
         kind,
@@ -384,6 +418,7 @@ pub fn WorkflowSection(
             is_workflow_required,
             note,
             config_url,
+            settings_workflow,
         )
         .into_any(),
         // Ungoverned bucket: a single disabled `None`, plus a hint explaining
@@ -502,10 +537,19 @@ fn workflow_dropdown(
     is_workflow_required: bool,
     note: Memo<Option<String>>,
     config_url: Option<String>,
+    settings_workflow: Option<String>,
 ) -> impl IntoView {
     // Intents indexed by option position — used to decide whether the current
     // selection is the (disabled) `None` item, which drives the required hint.
     let intents: Vec<WorkflowIntent> = options.iter().map(|o| o.intent.clone()).collect();
+    let hint_intents = intents.clone();
+    let settings_row = move || {
+        shows_settings_workflow_hint(
+            hint_intents.get(selected.get()),
+            settings_workflow.as_deref(),
+        )
+        .then(|| settings_hint_view("This workflow is your default in"))
+    };
     let show_required_hint = move || {
         is_workflow_required
             && intents
@@ -591,6 +635,8 @@ fn workflow_dropdown(
                     <p class="qui-workflow-hint qui-workflow-note-warn">{text}</p>
                 })
             }}
+            // Why this workflow is selected, when Settings chose it.
+            {settings_row}
             // Catalog links for the current selection (config.yml + the
             // selected workflow's schemas), recomputed as the selection changes.
             {links_row}
@@ -602,7 +648,7 @@ fn workflow_dropdown(
 mod tests {
     use super::{
         PreviousWorkflow, WorkflowOption, WorkflowViewKind, build_workflow_view, catalog_links,
-        preselected_index, previous_workflow_note, workflow_options,
+        preselected_index, previous_workflow_note, shows_settings_workflow_hint, workflow_options,
     };
     use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowIntent};
 
@@ -991,6 +1037,24 @@ mod tests {
             note.as_deref(),
             Some("The previous revision used the \"Alpha WF\" workflow.")
         );
+    }
+
+    #[test]
+    fn settings_workflow_hint_follows_the_selection() {
+        let gamma = WorkflowIntent::Named("gamma".to_string());
+        // Shown while the settings' workflow is the one selected.
+        assert!(shows_settings_workflow_hint(Some(&gamma), Some("gamma")));
+        // Hidden once the user picks something else.
+        assert!(!shows_settings_workflow_hint(
+            Some(&WorkflowIntent::Named("alpha".to_string())),
+            Some("gamma")
+        ));
+        assert!(!shows_settings_workflow_hint(
+            Some(&WorkflowIntent::NoWorkflow),
+            Some("gamma")
+        ));
+        // Never shown when Settings names no workflow: no nudge to set one.
+        assert!(!shows_settings_workflow_hint(Some(&gamma), None));
     }
 
     #[test]

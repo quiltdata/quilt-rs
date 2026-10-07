@@ -104,6 +104,9 @@ pub struct CommitData {
     /// bucket's own preselection when the bucket declares it. `None` defers
     /// to the bucket.
     pub settings_workflow: Option<String>,
+    /// Whether the publish settings set a message template, so the form can
+    /// say where its message comes from.
+    pub has_message_template: bool,
     pub workflow: Option<CommitWorkflowData>,
     pub workflows: CommitWorkflows,
     /// Why the active role cannot reach this package's bucket, worded exactly
@@ -456,6 +459,10 @@ async fn get_commit_data_from_model(
         WorkflowIntent::Named(id) => Some(id),
         WorkflowIntent::BucketDefault | WorkflowIntent::NoWorkflow => None,
     };
+    let has_message_template = settings
+        .message_template
+        .as_deref()
+        .is_some_and(|t| !t.trim().is_empty());
 
     // Load remote manifest for user_meta and workflow
     let (user_meta, user_meta_error, workflow) =
@@ -503,6 +510,7 @@ async fn get_commit_data_from_model(
         user_meta_error,
         settings_user_meta,
         settings_workflow,
+        has_message_template,
         workflow,
         workflows,
         no_access_reason,
@@ -914,6 +922,7 @@ mod tests {
             Some(r#"{"source":"desktop"}"#)
         );
         assert_eq!(data.settings_workflow.as_deref(), Some("release"));
+        assert!(data.has_message_template);
         // The fixture's revision has no metadata of its own.
         assert_eq!(data.user_meta, "");
         Ok(())
@@ -1004,6 +1013,7 @@ mod tests {
             );
             assert_eq!(data.settings_user_meta, None);
             assert_eq!(data.settings_workflow, None);
+            assert!(!data.has_message_template);
         }
         Ok(())
     }

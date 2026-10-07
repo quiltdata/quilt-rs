@@ -16,7 +16,7 @@ use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, PreviousWorkflow, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData, WorkflowSection, build_workflow_view, previous_workflow_note,
-    with_popover,
+    settings_hint_view, with_popover,
 };
 use crate::util;
 use crate::util::format_size;
@@ -119,6 +119,9 @@ fn CommitContent(
     let user_meta = starting_meta.clone();
     let user_meta_for_editor = starting_meta.clone();
     let user_meta_error = data.user_meta_error.clone();
+    let message_hint = message_settings_hint(data.has_message_template);
+    let metadata_from_settings = data.settings_user_meta.is_some();
+    let settings_workflow = data.settings_workflow.clone();
     let entries = data.entries;
     let ignored_count = data.ignored_count;
     let unmodified_count = data.unmodified_count;
@@ -398,6 +401,7 @@ fn CommitContent(
                         view=wf_view
                         selected=selected_workflow
                         note=workflow_note
+                        settings_workflow=settings_workflow
                     />
 
                     // ── Namespace (readonly) ──
@@ -432,6 +436,7 @@ fn CommitContent(
                                 }
                             />
                         </p>
+                        {settings_hint_view(message_hint)}
                         {move || field_violation_view(&live_violations.get(), ViolationField::Message)}
                     </div>
 
@@ -461,6 +466,9 @@ fn CommitContent(
                             textarea_ref=textarea_ref
                             initial_value=user_meta_for_editor
                         />
+                        // Only when Settings set it: no nudge to set one.
+                        {metadata_from_settings
+                            .then(|| settings_hint_view("This metadata is your default in"))}
                         // After the editor so the error sits below it and its
                         // toggling never shifts the editor; a separate reactive
                         // node, so validation updates don't re-render the editor.
@@ -880,6 +888,16 @@ fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
 /// validates — so live validation substitutes that seeded previous value rather
 /// than validating `{}`. A non-empty editor is validated as typed. When both are
 /// empty they collapse to `{}` on both paths, keeping live and commit consistent.
+/// Where the form's message comes from, ahead of a link to Settings. The
+/// message always has a default there, so the hint shows either way.
+fn message_settings_hint(has_template: bool) -> &'static str {
+    if has_template {
+        "This message follows your template in"
+    } else {
+        "You can change the default message in"
+    }
+}
+
 /// The text the metadata editor starts with: the publish settings' default
 /// metadata when there is one, else the previous revision's metadata.
 fn starting_metadata(settings: Option<&str>, previous: &str) -> String {
@@ -1026,7 +1044,7 @@ fn JsonEditor(
 mod tests {
     use super::{
         commit_disabled, displayed_violations, effective_metadata, field_violations,
-        should_debounce, starting_metadata,
+        message_settings_hint, should_debounce, starting_metadata,
     };
     use crate::commands::{CommitViolation, ViolationField};
     use crate::util::commit_denied_hint;
@@ -1110,6 +1128,18 @@ mod tests {
         assert_eq!(effective_metadata("", previous), previous);
         // With no settings metadata, the editor starts from the previous one.
         assert_eq!(starting_metadata(None, previous), previous);
+    }
+
+    #[test]
+    fn message_hint_says_whether_a_template_is_set() {
+        assert_eq!(
+            message_settings_hint(true),
+            "This message follows your template in"
+        );
+        assert_eq!(
+            message_settings_hint(false),
+            "You can change the default message in"
+        );
     }
 
     #[test]
