@@ -42,35 +42,35 @@
 // The folded section's two lines: a muted name, then what the revision will
 // carry. One line each, cut with an ellipsis, so a long workflow name or a
 // metadata document with many fields never grows the section.
+// The folded section's two read-only fields, stacked as the form's are.
 .preview {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: var(--q-space-1) var(--q-space-4);
-  margin: 0;
-}
-
-.preview dt {
-  color: var(--q-fgColor-muted);
-}
-
-.preview dd {
   display: flex;
-  gap: var(--q-space-2);
+  flex-direction: column;
+  gap: var(--q-space-3);
+  margin: 0;
+}
+
+// The same name, gap and caption as `FormControl`'s, so the field reads as
+// the one `Edit` opens, without a control in it yet.
+.field {
+  min-width: 0;
+}
+
+.field_name {
+  margin-bottom: var(--q-space-1);
+  font-weight: 600;
+}
+
+// Full width, because `JsonDisplay` fits its folded line to the width it is
+// given: a width that followed the content would follow the line, and the line
+// would fold to nothing.
+.field_value {
   min-width: 0;
   margin: 0;
-  white-space: nowrap;
 }
 
-// The rest of the row, whatever its content. `JsonDisplay` fits its folded line
-// to the width it is given, so a width that followed the content would follow
-// the line, and the line would fold to nothing.
-.preview_value {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.preview_note {
-  flex: none;
+.field_hint {
+  margin: var(--q-space-1) 0 0;
   color: var(--q-fgColor-muted);
 }
 

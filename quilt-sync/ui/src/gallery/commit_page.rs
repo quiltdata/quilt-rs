@@ -12,25 +12,31 @@
 //!
 //! | | header ends | message ends | workflow section ends | files start | rows on screen |
 //! |---|---:|---:|---:|---:|---:|
-//! | at rest, 4 files | 144 | 217 | 321 | 337 | 4 of 4 |
-//! | 300 files | 144 | 217 | 321 | 337 | **5** of 300 |
-//! | junk banner, signed out | 144 | 283 | 387 | 403 | 3 of 4 |
-//! | no access | 144 | 271 | 375 | 391 | 4 of 4 |
+//! | at rest, 4 files | 144 | 217 | 378 | 394 | 4 of 4 |
+//! | 300 files | 144 | 217 | 378 | 394 | **4** of 300 |
+//! | both values from your publish settings | 144 | 217 | 426 | 442 | 2 of 4 |
+//! | junk banner, signed out | 144 | 283 | 444 | 460 | 2 of 4 |
+//! | no access | 144 | 271 | 432 | 448 | 2 of 4 |
 //! | workflow & metadata open | 144 | 217 | 519 | 535 | 0 |
 //! | a failed check | 144 | 217 | 543 | 559 | 0 |
 //!
 //! - **The long list costs the form nothing.** The 300-file cell lays out the
 //!   form exactly where the four-file cell does, and the page scrolls under it.
 //!   This is the bet the layout makes by putting the list last, and it is won.
-//! - **The folded section is three lines, 104px**: its heading with `Edit`,
-//!   the exact workflow the revision will carry — the select's own option, so
-//!   it follows a change — and the metadata as the catalog draws it: a
-//!   `kit::JsonDisplay` folded to one line that fits the room it has, and
-//!   opens in place to read the whole document without the editor. Two
-//!   lines more than a bare summary, and worth them: the reader sees what will
-//!   be published without opening anything. It costs the 300-file cell two
-//!   rows, seven down to five. Opened, the metadata pushes the files down, as
-//!   the reader asked it to.
+//! - **Folded, the section is its heading and two read-only fields**, 161px:
+//!   `Workflow` and `Metadata`, each a name and its value in the form's own
+//!   shape, so they read as the fields `Edit` opens. The workflow is the
+//!   select's own option, so it follows a change. The metadata is drawn as the
+//!   catalog draws it: a `kit::JsonDisplay` folded to one line that fits the
+//!   room it has, and opens in place to read the whole document without the
+//!   editor. The reader sees what will be published without opening anything,
+//!   and the 300-file cell keeps four rows on the first screen.
+//! - **A field names its source only when it is the publish settings**, 24px
+//!   under the value: `From your publish settings. Change it in Settings`.
+//!   The other sources — the bucket's default workflow, the published
+//!   revision's metadata, an edit made here — are what the reader expects; a
+//!   global default can make a publish fail in a bucket that does not expect
+//!   it, so it is the one worth saying. The v1 page's rule, kept.
 //! - **The header is 60px**, the same as the installed-package page's: it is
 //!   the same `kit::PageHeader`, with a `Trail` where that page has a
 //!   `BackLink`.
@@ -178,7 +184,8 @@ struct Fixture {
     workflows: bool,
     metadata: &'static str,
     metadata_error: Option<&'static str>,
-    metadata_source: &'static str,
+    /// Which values the publish settings supplied: (workflow, metadata).
+    from_settings: (bool, bool),
     /// What the workflow line says when the bucket offers no choice.
     no_workflow: &'static str,
 }
@@ -197,7 +204,7 @@ impl Fixture {
             workflows: true,
             metadata: METADATA,
             metadata_error: None,
-            metadata_source: "from the current revision",
+            from_settings: (false, false),
             no_workflow: "None",
         }
     }
@@ -215,7 +222,7 @@ fn page(f: Fixture) -> AnyView {
         workflows,
         metadata,
         metadata_error,
-        metadata_source,
+        from_settings,
         no_workflow,
     } = f;
     let w = PrimaryWiring {
@@ -246,28 +253,19 @@ fn page(f: Fixture) -> AnyView {
                 .into_any(),
         }
     });
-    let workflow_view = match workflow {
-        Some(workflow) => view! {
-            <WorkflowSection
-                metadata_source=metadata_source
-                expanded=RwSignal::new(expanded)
-                workflow=workflow
-                metadata=RwSignal::new(metadata.to_string())
-                metadata_error=metadata_error.map(str::to_string)
-            />
-        }
-        .into_any(),
-        None => view! {
-            <WorkflowSection
-                no_workflow=no_workflow
-                metadata_source=metadata_source
-                expanded=RwSignal::new(expanded)
-                metadata=RwSignal::new(metadata.to_string())
-                metadata_error=metadata_error.map(str::to_string)
-            />
-        }
-        .into_any(),
-    };
+    let workflow_view = view! {
+        <WorkflowSection
+            no_workflow=no_workflow
+            workflow_from_settings=from_settings.0
+            metadata_from_settings=from_settings.1
+            settings_href=format!("#{id}")
+            expanded=RwSignal::new(expanded)
+            workflow=workflow
+            metadata=RwSignal::new(metadata.to_string())
+            metadata_error=metadata_error.map(str::to_string)
+        />
+    }
+    .into_any();
 
     view! {
         <div id=id class="g-window" style="width:1024px; --q-frame-height:560px; max-width:100%">
@@ -334,13 +332,20 @@ pub fn CommitPageScene() -> impl IntoView {
             <Cell full=true label="files changed, at rest">
                 {page(Fixture::new("commit-rest"))}
             </Cell>
+            <Cell
+                full=true
+                label="workflow and metadata from your publish settings — each field says so, and \
+                       only then"
+            >
+                {page(Fixture { from_settings: (true, true), ..Fixture::new("commit-from-settings") })}
+            </Cell>
             <Cell full=true label="metadata only — no file changes, so the primary publishes the revision">
                 {page(Fixture {
                     primary: Primary::MetadataOnly,
                     files: Vec::new(),
                     ignored: 0,
                     metadata: "{\"assay\": \"ELISA\", \"plate\": 7, \"reviewed\": true}",
-                    metadata_source: "edited",
+                    from_settings: (false, true),
                     ..Fixture::new("commit-metadata-only")
                 })}
             </Cell>

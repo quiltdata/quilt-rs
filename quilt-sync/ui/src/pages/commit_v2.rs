@@ -368,13 +368,21 @@ pub fn WorkflowSection(
     /// a package with no bucket, or a bucket with no workflows.
     #[prop(optional, into)]
     no_workflow: Option<String>,
-    /// Where the metadata came from, after its preview: `from the current
-    /// revision`, `from your publish settings`.
+    /// The selected workflow is the publish settings' default. Said under the
+    /// field, and only then: the other sources — the bucket's default, the
+    /// published revision's, a pick made here — are what the reader expects.
     #[prop(optional, into)]
-    metadata_source: Option<String>,
+    workflow_from_settings: Signal<bool>,
+    /// The metadata is the publish settings' default, for the same reason.
+    #[prop(optional, into)]
+    metadata_from_settings: Signal<bool>,
+    /// Where `Change it in Settings` goes. `/settings` in the app; the gallery
+    /// points it at its own cell.
+    #[prop(optional, into)]
+    settings_href: Option<String>,
     expanded: RwSignal<bool>,
     /// `None` when the bucket has no workflows to choose between.
-    #[prop(optional)]
+    #[prop(default = None)]
     workflow: Option<WorkflowChoice>,
     #[prop(optional, into)] workflow_error: MaybeProp<String>,
     /// The metadata, as JSON text.
@@ -425,18 +433,19 @@ pub fn WorkflowSection(
             </div>
             // Folded, what the revision will carry; open, the controls say it.
             <Show when=move || !expanded.get()>
+                // Two fields in the form's own shape — a name, the value, and a
+                // hint under it — read-only until `Edit`.
                 <dl class=style::preview>
-                    <dt>"Workflow"</dt>
-                    <dd>{workflow_words.clone()}</dd>
-                    <dt>"Metadata"</dt>
-                    <dd>
-                        <div class=style::preview_value>{metadata_view}</div>
-                        {metadata_source
-                            .clone()
-                            .map(|source| {
-                                view! { <span class=style::preview_note>{source}</span> }
-                            })}
-                    </dd>
+                    <div class=style::field>
+                        <dt class=style::field_name>"Workflow"</dt>
+                        <dd class=style::field_value>{workflow_words.clone()}</dd>
+                        {settings_hint(workflow_from_settings, settings_href.clone())}
+                    </div>
+                    <div class=style::field>
+                        <dt class=style::field_name>"Metadata"</dt>
+                        <dd class=style::field_value>{metadata_view}</dd>
+                        {settings_hint(metadata_from_settings, settings_href.clone())}
+                    </div>
                 </dl>
             </Show>
             <Show when=move || expanded.get()>
@@ -469,6 +478,23 @@ pub fn WorkflowSection(
                 </div>
             </Show>
         </section>
+    }
+}
+
+/// The hint under a folded field whose value the publish settings supplied,
+/// while they do. A global default can make a publish fail in a bucket that
+/// does not expect it, so this is the source worth naming; the others are not.
+fn settings_hint(from_settings: Signal<bool>, href: Option<String>) -> impl IntoView {
+    let href = href.unwrap_or_else(|| "/settings".to_string());
+    move || {
+        from_settings.get().then(|| {
+            view! {
+                <dd class=style::field_hint>
+                    "From your publish settings. "
+                    <a class=style::remedy_link href=href.clone()>"Change it in Settings"</a>
+                </dd>
+            }
+        })
     }
 }
 
