@@ -243,7 +243,7 @@ mod tests {
 
     use crate::sentinel::tests::example;
 
-    const KEY: &str = "lab/cytoflex-lx-techops-1/20260915T101955Z-8e11c3/.quilt-sentinel.json";
+    const KEY: &str = "lab/flow-cytometer-1/20260915T101955Z-8e11c3/.quilt-sentinel.json";
 
     fn crate_with(eln_id: &str, has_part: &[&str]) -> Value {
         json!({ "@graph": [
@@ -259,7 +259,7 @@ mod tests {
             &example(),
             KEY,
             "raw",
-            "2026-09-15_ADQC_plate3",
+            "2026-09-15_plate3",
             "{instrument_id}/{folder_name}",
             &["benchling.experiment-ID".to_string()],
             c,
@@ -269,14 +269,11 @@ mod tests {
     #[test]
     fn rows_point_at_the_landed_versions() -> Result<(), Error> {
         let rev = build_with(None)?;
-        assert_eq!(
-            rev.package_name,
-            "cytoflex-lx-techops-1/2026-09-15_ADQC_plate3"
-        );
+        assert_eq!(rev.package_name, "flow-cytometer-1/2026-09-15_plate3");
         let row = &rev.manifest.rows[0];
         assert_eq!(
             row.physical_key,
-            "s3://raw/lab/cytoflex-lx-techops-1/20260915T101955Z-8e11c3/plate3/A01.fcs?versionId=3sL4kqtJ"
+            "s3://raw/lab/flow-cytometer-1/20260915T101955Z-8e11c3/plate3/A01.fcs?versionId=3sL4kqtJ"
         );
         assert_eq!(row.size, 4_194_304);
         let meta = rev.manifest.header.user_meta.unwrap();

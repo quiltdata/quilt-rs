@@ -13,7 +13,7 @@
       "additionalProperties": false,
       "required": ["id", "placement"],
       "properties": {
-        "id": { "type": "string", "minLength": 1, "description": "Stable observer id, e.g. vir-edge-01." },
+        "id": { "type": "string", "minLength": 1, "description": "Stable observer id, e.g. edge-01." },
         "placement": { "enum": ["on", "beside"] },
         "spool_root": { "type": "string" },
         "status_port": { "type": "integer", "minimum": 1024, "maximum": 65535, "default": 4781 }
