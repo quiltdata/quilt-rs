@@ -54,6 +54,21 @@
 //! `Review before publishing…` behind its caret and `Create new revision` in
 //! `[⋯]` navigate to the commit page and report by arriving: choosing what the
 //! revision says is the point of them.
+//!
+//! # The caret's choice is remembered, per package
+//!
+//! Picking `Review before publishing…` behind the caret puts it on the face,
+//! and the face stays that way for that package the next time the page opens.
+//! Per package, because a package that needs its message checked every time
+//! is not a reason to slow down every other one. It is a choice the reader
+//! made deliberately, not one inferred from what they did last — the line the
+//! kit's split button draws for whoever persists it.
+//!
+//! It lives in the webview's `localStorage`, as a name (`publish`, `review`)
+//! rather than the option's index or label, so reordering or relabelling the
+//! options cannot flip what a stored choice means. Anything unreadable falls
+//! back to `Publish`, and a failure to read or write says nothing: the cost of
+//! losing it is one extra click.
 
 use leptos::prelude::*;
 
@@ -247,6 +262,38 @@ fn menu(
         .collect()
 }
 
+/// The stored names of the `Publish` split button's options, in the order
+/// [`primary_action`] lists them: the stored value is the name, the signal the
+/// kit reads is the index.
+const PUBLISH_CHOICES: [&str; 2] = ["publish", "review"];
+
+/// The `localStorage` key a package's choice lives under.
+fn publish_choice_key(namespace: &str) -> String {
+    format!("quilt-sync.publish-choice.{namespace}")
+}
+
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok()?
+}
+
+/// The option this package's split button last had on its face. `Publish`
+/// when nothing usable is stored, or there is no storage to read.
+fn remembered_publish_choice(namespace: &str) -> usize {
+    local_storage()
+        .and_then(|storage| storage.get_item(&publish_choice_key(namespace)).ok()?)
+        .and_then(|name| PUBLISH_CHOICES.iter().position(|known| *known == name))
+        .unwrap_or(0)
+}
+
+/// Store the option the reader picked for this package. Every failure is
+/// ignored — a quota, a private mode, no storage at all.
+fn remember_publish_choice(namespace: &str, choice: usize) {
+    let (Some(storage), Some(name)) = (local_storage(), PUBLISH_CHOICES.get(choice)) else {
+        return;
+    };
+    drop(storage.set_item(&publish_choice_key(namespace), name));
+}
+
 /// The state's own action, as the row draws it.
 ///
 /// Both shapes live here because they are one slot: the publishing states get a
@@ -315,6 +362,7 @@ fn primary_action(
             <span class=style::action_slot data-primary-action>
                 <SplitButton
                     disabled=Signal::derive(move || busy.get())
+                    // In `PUBLISH_CHOICES`' order, which is what a stored choice names.
                     options=vec![
                         SplitOption::new("Publish", on_publish),
                         SplitOption::new(
@@ -482,7 +530,24 @@ pub fn PageHeader(
     let rendered = render(&data.state, kit::Site::PageHeader);
     let action = rendered.action;
     let namespace = data.namespace.to_string();
-    let publish_choice = RwSignal::new(0_usize);
+    // Seeded from what the reader picked for this package last time, and
+    // written back only when they pick: a visit that changes nothing stores
+    // nothing.
+    let seed = remembered_publish_choice(&namespace);
+    let publish_choice = RwSignal::new(seed);
+    {
+        let namespace = namespace.clone();
+        // Compared with the last value seen rather than watched for changes:
+        // an effect's first run comes a tick after the header is drawn, and a
+        // pick in that tick must still be stored.
+        Effect::new(move |seen: Option<usize>| {
+            let choice = publish_choice.get();
+            if choice != seen.unwrap_or(seed) {
+                remember_publish_choice(&namespace, choice);
+            }
+            choice
+        });
+    }
     // The role the denial named, for the dialog's sentence. The remedy is only
     // carried with a denial, so any other state has no role to name.
     let refused = match &data.state {
@@ -761,6 +826,7 @@ mod tests {
     /// show. The re-read leaves the band alone.
     #[wasm_bindgen_test]
     async fn publish_runs_in_place_and_reports_its_failure_on_the_band() {
+        forget_choices();
         let w = Wiring::new();
         let reloads = RwSignal::new(0_u32);
         let owner = Owner::new();
@@ -806,27 +872,12 @@ mod tests {
     /// arriving — `channel-per-command`'s first rule.
     #[wasm_bindgen_test]
     async fn review_before_publishing_on_the_caret_arrives_on_the_commit_page() {
+        forget_choices();
         let w = Wiring::new();
         let el = mount_routed_with(data(kit::PackageState::PendingCommit), w);
         sleep_ms(50).await;
 
-        let choices = el
-            .query_selector_all(&format!("[popover]{SPLIT_CHOICES} button"))
-            .unwrap();
-        (0..choices.length())
-            .map(|i| {
-                choices
-                    .item(i)
-                    .unwrap()
-                    .unchecked_into::<web_sys::HtmlElement>()
-            })
-            .find(|b| {
-                b.text_content()
-                    .unwrap_or_default()
-                    .contains("Review before publishing…")
-            })
-            .unwrap_or_else(|| panic!("the caret's choice; markup was {}", el.inner_html()))
-            .click();
+        pick(&el, "Review before publishing…");
         leptos::task::tick().await;
         // The face now says it, and a press on the face runs it.
         button(&el, "Review before publishing…").click();
@@ -840,6 +891,107 @@ mod tests {
             el.inner_html()
         );
         assert!(w.outcome.get_untracked().is_none(), "and nothing is said");
+        forget_choices();
+    }
+
+    /// A namespace no other test draws, for the choice that must not leak.
+    const OTHER: &str = "team/other";
+
+    /// Every key these tests store under, removed, so no test starts on a face
+    /// another one picked.
+    fn forget_choices() {
+        let storage = local_storage().expect("a browser with storage");
+        for namespace in ["team/dataset", OTHER] {
+            drop(storage.remove_item(&publish_choice_key(namespace)));
+        }
+    }
+
+    fn stored_choice(namespace: &str) -> Option<String> {
+        local_storage()
+            .expect("a browser with storage")
+            .get_item(&publish_choice_key(namespace))
+            .unwrap()
+    }
+
+    fn store_choice(namespace: &str, value: &str) {
+        local_storage()
+            .expect("a browser with storage")
+            .set_item(&publish_choice_key(namespace), value)
+            .unwrap();
+    }
+
+    /// Pick `label` behind the caret: it moves the face and runs nothing.
+    fn pick(el: &web_sys::Element, label: &str) {
+        let choices = el
+            .query_selector_all(&format!("[popover]{SPLIT_CHOICES} button"))
+            .unwrap();
+        (0..choices.length())
+            .map(|i| {
+                choices
+                    .item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::HtmlElement>()
+            })
+            .find(|b| b.text_content().unwrap_or_default().contains(label))
+            .unwrap_or_else(|| panic!("the caret's choice; markup was {}", el.inner_html()))
+            .click();
+    }
+
+    /// A package whose reader picked `Review before publishing…` opens with it
+    /// on the face.
+    #[wasm_bindgen_test]
+    fn a_remembered_review_is_on_the_face() {
+        forget_choices();
+        store_choice("team/dataset", "review");
+
+        let el = mount_header(data(kit::PackageState::PendingCommit));
+        button(&el, "Review before publishing…");
+
+        forget_choices();
+    }
+
+    /// Picking stores the choice for that package and no other: a package
+    /// that needs reviewing does not slow down the rest.
+    #[wasm_bindgen_test]
+    async fn picking_remembers_the_choice_for_that_package_only() {
+        forget_choices();
+        let el = mount_header(data(kit::PackageState::PendingCommit));
+        assert_eq!(
+            stored_choice("team/dataset"),
+            None,
+            "opening stores nothing"
+        );
+
+        pick(&el, "Review before publishing…");
+        sleep_ms(10).await;
+        button(&el, "Review before publishing…");
+        assert_eq!(stored_choice("team/dataset").as_deref(), Some("review"));
+        assert_eq!(stored_choice(OTHER), None);
+
+        let other = commands::PackageHeaderData {
+            namespace: OTHER.try_into().unwrap(),
+            ..data(kit::PackageState::PendingCommit)
+        };
+        let el = mount_header(other);
+        button(&el, "Publish");
+
+        forget_choices();
+    }
+
+    /// What storage holds is not trusted: a name this build does not know —
+    /// an older build's, an index, a hand edit — falls back to `Publish`.
+    #[wasm_bindgen_test]
+    fn an_unknown_stored_choice_falls_back_to_publish() {
+        forget_choices();
+        for garbage in ["1", "Review before publishing…", "", "nonsense"] {
+            store_choice("team/dataset", garbage);
+            assert_eq!(remembered_publish_choice("team/dataset"), 0, "{garbage:?}");
+        }
+        store_choice("team/dataset", "nonsense");
+        let el = mount_header(data(kit::PackageState::PendingCommit));
+        button(&el, "Publish");
+
+        forget_choices();
     }
 
     /// Resolve is a mode of this page, not another route: it pushes `resolve=1`

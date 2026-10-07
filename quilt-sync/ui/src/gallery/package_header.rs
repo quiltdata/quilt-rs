@@ -324,8 +324,8 @@ pub fn PackageHeaderRegion(
 #[component]
 pub fn PackageHeaderScene() -> impl IntoView {
     // One signal across every cell, so picking in any of them moves them all —
-    // which is what a preference persisted by the page would do. Per-cell signals
-    // would draw a control that cannot exist.
+    // which is what the page's preference, remembered per package, does for one
+    // package's states. Per-cell signals would draw a control that cannot exist.
     let publish_choice = RwSignal::new(0_usize);
 
     view! {
