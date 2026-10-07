@@ -1299,8 +1299,18 @@ async fn test_api_key_vends_without_a_session() -> Res {
 async fn test_api_key_rejected_fails_closed() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
-    let auth = Auth::new(paths, storage);
+    let auth = Auth::new(paths.clone(), storage.clone());
     let host = fixtures::host();
+    // A valid interactive session is on disk: a rejected key must not fall
+    // back to it.
+    AuthIo::new(storage, paths.auth_host(&host))
+        .write_credentials(&Credentials {
+            access_key: "session-access-key".to_string(),
+            secret_key: "session-secret-key".to_string(),
+            token: "session-token".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        })
+        .await?;
     auth.set_api_key(&host, API_KEY.to_string());
 
     let client = ApiKeyHttpClient {
