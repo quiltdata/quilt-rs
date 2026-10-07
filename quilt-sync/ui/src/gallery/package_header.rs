@@ -9,15 +9,14 @@
 //! states are not a component, they are the header with different props, and the
 //! place to see that is here.
 //!
-//! **`pages::installed_package_v2::header::PageHeader` is built now, and this is
-//! still a parallel drawing of its row.** Its menu is not drawn: it is the page's
-//! own, from `pages::menu_items` over a fixture payload, with the handlers
-//! dropped. One difference keeps the row a drawing for the moment: the page's
-//! header takes a payload where this takes a bare state — and with it this has an
-//! `action_open` the page has no use for until resolve mode exists, the
-//! whole-page scene's one cell that needs it. Worth collapsing once resolve mode
-//! lands, because a scene that hand-draws a region it could render is a scene
-//! that stops being true the first time somebody edits the region.
+//! **The row is `kit::PageHeader`, the one the page draws.** Its menu is not
+//! drawn either: it is the page's own, from `pages::menu_items` over a fixture
+//! payload, with the handlers dropped. What is still this scene's own is the
+//! choice of primary: the page's header takes a payload where this takes a bare
+//! state, and with it an `action_open` the whole-page scene's resolve cell
+//! needs. Worth collapsing into the page's header in time, because a scene that
+//! hand-picks what a region would pick is a scene that stops being true the
+//! first time somebody edits the region.
 //!
 //! # The words are not chosen here
 //!
@@ -60,6 +59,7 @@ use crate::kit::ButtonVariant;
 use crate::kit::MenuAction;
 use crate::kit::PackageAction;
 use crate::kit::PackageState;
+use crate::kit::PageHeader;
 use crate::kit::Site;
 use crate::kit::SplitButton;
 use crate::kit::SplitOption;
@@ -235,19 +235,11 @@ fn header(state: &PackageState, publish_choice: RwSignal<usize>, action_open: bo
     let publishes = !action_open && matches!(action, Some(PackageAction::Publish));
 
     view! {
-        <div class="g-stack" style="gap:var(--q-space-2)">
-            <BackLink href="#packageheader" label="Packages" />
-            <div style="display:flex; align-items:center; gap:var(--q-space-2); \
-                        flex-wrap:wrap">
-                <h3 style="margin:0; font-size:var(--q-text-title); \
-                           min-width:0; overflow:hidden; text-overflow:ellipsis; \
-                           white-space:nowrap">
-                    {NAMESPACE}
-                </h3>
-                <StateLabel tone=rendered.tone>{rendered.words}</StateLabel>
-
-                <div style="margin-left:auto; display:flex; align-items:center; \
-                            gap:var(--q-space-2)">
+        <PageHeader
+            trail=view! { <BackLink href="#packageheader" label="Packages" /> }.into_any()
+            title=NAMESPACE
+            label=view! { <StateLabel tone=rendered.tone>{rendered.words}</StateLabel> }.into_any()
+            actions=view! {
                     {publishes
                         .then(|| {
                             view! {
@@ -291,9 +283,9 @@ fn header(state: &PackageState, publish_choice: RwSignal<usize>, action_open: bo
                                 .collect::<Vec<_>>()
                         }
                     />
-                </div>
-            </div>
-        </div>
+            }
+                .into_any()
+        />
     }
     .into_any()
 }

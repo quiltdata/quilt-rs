@@ -1,0 +1,126 @@
+// Tighter than `PageLayout`'s gap: these read as one form.
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-4);
+}
+
+// A test handle that adds no box.
+.slot {
+  display: contents;
+}
+
+.remedy_link {
+  color: var(--q-fgColor-accent);
+}
+
+// Fields that are not a `FormControl`, drawn to match one.
+.field {
+  min-width: 0;
+}
+
+.field_name {
+  display: block;
+  margin-bottom: var(--q-space-1);
+  font-weight: 600;
+}
+
+// One control tall, so toggling `Edit` does not move the row.
+.field_head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-3);
+  min-height: var(--q-control-height);
+  margin-bottom: var(--q-space-1);
+}
+
+.field_head .field_name {
+  margin-bottom: 0;
+}
+
+// Full width: `JsonDisplay` fits its line to the width it is given.
+.field_value {
+  min-width: 0;
+  margin: 0;
+}
+
+.field_empty {
+  color: var(--q-fgColor-muted);
+}
+
+.field_hint {
+  margin: var(--q-space-1) 0 0;
+  color: var(--q-fgColor-muted);
+}
+
+// As `FormControl`'s error.
+.field_error {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: var(--q-space-1) 0 0;
+  color: var(--q-fgColor-danger);
+}
+
+.field_error svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+}
+
+// The fallback textarea.
+.metadata {
+  width: 100%;
+  min-width: 0;
+  padding: var(--q-space-2);
+  border: 1px solid var(--q-borderColor-field);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  resize: vertical;
+}
+
+// The editor fills its parent, so it needs a height. 150px keeps a failed
+// check's error inside the 560px window. No `overflow` here or above: it crops
+// the editor's context menu.
+.editor {
+  height: 150px;
+}
+
+.invalid {
+  --jse-main-border: 1px solid var(--q-borderColor-danger-muted);
+}
+
+.included {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+}
+
+.included_heading {
+  margin: 0;
+  font-size: var(--q-text-body);
+  font-weight: 600;
+}
+
+.tally {
+  font-weight: 400;
+  color: var(--q-fgColor-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.quiet {
+  margin: 0;
+  color: var(--q-fgColor-muted);
+}
+
+.skeleton_field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+}

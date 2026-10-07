@@ -54,6 +54,7 @@ mod gallery {
     pub mod card;
     pub mod checkbox;
     pub mod choice_group;
+    pub mod commit_page;
     pub mod confirm_dialog;
     pub mod context_pane;
     pub mod countdown;
@@ -66,6 +67,7 @@ mod gallery {
     pub mod forms;
     pub mod host_row;
     pub mod installed_package;
+    pub mod json_display;
     pub mod list_toolbar;
     pub mod load_failure;
     pub mod old_revisions_inline;
@@ -217,6 +219,7 @@ const ENTRIES: &[Entry] = &[
     entry!(Core, "Feedback", feedback::FeedbackStories),
     entry!(Core, "Forms", forms::FormsStories),
     entry!(Core, "HostRow", host_row::HostRowStories),
+    entry!(Core, "JsonDisplay", json_display::JsonDisplayStories),
     entry!(Core, "LoadFailure", load_failure::LoadFailureStories),
     entry!(Core, "PackageRow", packages::PackageRowStories),
     entry!(Core, "PaneSection", pane_section::PaneSectionStories),
@@ -324,6 +327,7 @@ const ENTRIES: &[Entry] = &[
         "Installed package",
         installed_package::InstalledPackageScene
     ),
+    entry!(Pages, "Commit page", commit_page::CommitPageScene),
     entry!(Pages, "While loading", page::LoadingScene),
 ];
 
@@ -1121,6 +1125,31 @@ mod tests {
         container.remove();
         assert_eq!(pages, 2, "the main page and the package page");
         assert!(busy >= 2, "each says it is busy, found {busy}");
+    }
+
+    /// The failed-check cell starts collapsed, as every cell does, and opens
+    /// itself: the field's own rule, not the fixture's. Its primary is the
+    /// one disabled; the resting cell's is not.
+    #[wasm_bindgen_test]
+    async fn the_failed_check_opens_its_own_section() {
+        use crate::gallery::commit_page::CommitPageScene;
+
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        let handle = leptos::mount::mount_to(container.clone(), CommitPageScene);
+        leptos::task::tick().await;
+        let has = |selector: &str| container.query_selector(selector).unwrap().is_some();
+        let failed_open = has("#commit-failed-check textarea");
+        let rest_open = has("#commit-rest textarea");
+        let failed_blocked = has("#commit-failed-check [data-primary-action] button[disabled]");
+        let rest_blocked = has("#commit-rest [data-primary-action] button[disabled]");
+        drop(handle);
+        container.remove();
+        assert!(failed_open, "a failed check opens the metadata editor");
+        assert!(!rest_open, "a passing one leaves it folded");
+        assert!(failed_blocked && !rest_blocked);
     }
 
     #[wasm_bindgen_test]

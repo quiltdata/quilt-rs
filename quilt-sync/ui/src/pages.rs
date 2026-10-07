@@ -1,8 +1,11 @@
 mod commit;
+// Not routed yet: the gallery draws these regions, and the port routes them.
+pub mod commit_v2;
 mod error;
 mod installed_package;
 mod installed_package_v2;
 mod installed_packages_list;
+mod json_editor;
 mod login;
 mod main_page;
 mod merge;

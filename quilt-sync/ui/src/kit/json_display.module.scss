@@ -1,0 +1,82 @@
+/* Sized in `ch`; `ICON_CH` and `INDENT_CH` in the Rust side must match. */
+
+.root {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  white-space: pre;
+}
+
+.probe {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.line {
+  display: flex;
+}
+
+/* A native button, reset to read as a line of text. */
+.toggle {
+  display: flex;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--q-radius);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.toggle:hover {
+  background: var(--q-overlay-hover);
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 2ch;
+  color: var(--q-fgColor-muted);
+}
+
+.icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.inner {
+  padding-left: 2ch;
+}
+
+/* Data default, punctuation muted: the kit's two text levels. */
+.key,
+.value {
+  color: var(--q-fgColor-default);
+}
+
+.muted {
+  color: var(--q-fgColor-muted);
+}
+
+.folded {
+  overflow: hidden;
+}
+
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--q-fgColor-accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

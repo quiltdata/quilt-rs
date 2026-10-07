@@ -64,6 +64,24 @@
   max-width: 70ch;
 }
 
+/* With an action the bar is a control tall: centre the glyph and the first line on it. */
+.with_action > svg {
+  margin-top: calc((var(--q-control-height) - 16px) / 2);
+}
+
+.with_action .message {
+  padding-block: calc((var(--q-control-height) - 1lh) / 2);
+}
+
+.action {
+  flex: none;
+  display: flex;
+  align-items: center;
+  /* A control's height whatever it holds, so a plain link lines up as a button does. */
+  min-height: var(--q-control-height);
+  margin-left: auto;
+}
+
 /* Inherits the tone's text colour rather than going muted. On a tinted fill a grey
  * control reads as disabled, and this one is the only way out of the bar. */
 .dismiss {

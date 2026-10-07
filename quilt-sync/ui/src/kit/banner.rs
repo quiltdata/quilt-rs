@@ -90,16 +90,23 @@ pub fn Banner(
     /// Draws the dismiss button. Left out for a bar that stands while its cause does.
     #[prop(optional, into)]
     on_dismiss: Option<Callback<MouseEvent>>,
+    /// One control at the trailing end, such as `Ignore them`.
+    #[prop(optional)]
+    action: Option<AnyView>,
     /// The message, as prose. Wraps rather than truncating — the end of an error is where
     /// the specifics are, and half an error is worse than a scrollbar.
     children: Children,
 ) -> impl IntoView {
-    let class = format!("{} {}", style::root, variant.class());
+    let class = match action {
+        Some(_) => format!("{} {} {}", style::root, variant.class(), style::with_action),
+        None => format!("{} {}", style::root, variant.class()),
+    };
 
     view! {
         <div class=class role=variant.role()>
             {variant.tone().glyph()}
             <p class=style::message>{children()}</p>
+            {action.map(|action| view! { <div class=style::action>{action}</div> })}
             {on_dismiss.map(|dismiss| view! {
                 <button
                     type="button"
