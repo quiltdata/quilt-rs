@@ -327,8 +327,8 @@ mod tests {
     fn downloads_ok(
         _: String,
         _: Vec<String>,
-    ) -> Pin<Box<dyn Future<Output = Result<(), String>>>> {
-        Box::pin(async { Ok(()) })
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>>>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 
     fn idle_commands() -> KeepingCommands {
