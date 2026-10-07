@@ -266,6 +266,14 @@ fn reject_unbuilt(value: &serde_json::Value) -> Result<(), Error> {
         .flatten()
         .enumerate()
     {
+        if i.pointer("/boundary/explicit_source")
+            .and_then(|v| v.as_str())
+            == Some("loopback")
+        {
+            found.push(format!(
+                "instruments/{n}/boundary/explicit_source: loopback"
+            ));
+        }
         for key in [
             "source/stage_copy",
             "source/watch",
@@ -329,6 +337,16 @@ instruments:
         );
         let err = Profile::parse(&with).unwrap_err().to_string();
         assert!(err.contains("source/stage_copy"), "{err}");
+    }
+
+    #[test]
+    fn a_loopback_explicit_source_is_refused() {
+        let with = MINIMAL.replace(
+            "method: marker_file, markers: [\"done.txt\"], confirm_window_s: 30",
+            "method: explicit, explicit_source: loopback, control_dir: /tmp",
+        );
+        let err = Profile::parse(&with).unwrap_err().to_string();
+        assert!(err.contains("explicit_source: loopback"), "{err}");
     }
 
     #[test]

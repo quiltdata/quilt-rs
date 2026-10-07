@@ -457,5 +457,9 @@ instruments:
     agent.pass(later + Duration::from_secs(60)).await?;
     let landed = landed_events(spool_dir.path());
     assert_eq!(landed.len(), 1);
+    assert!(
+        !control.path().join("sample.d.complete").exists(),
+        "a used request is removed so it cannot close the next run at that name"
+    );
     Ok(())
 }

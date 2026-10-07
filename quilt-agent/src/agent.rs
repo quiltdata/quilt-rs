@@ -394,6 +394,18 @@ impl<R: Remote + Sync> Agent<R> {
             latest_advanced = pushed.latest_advanced,
             "landed"
         );
+        // The request is spent: left in place it would close the next run
+        // written at the same folder name the moment it appears.
+        if let Some(dir) = &instrument.boundary.control_dir
+            && let Some(name) = folder.file_name()
+        {
+            let request = dir.join(format!("{}.complete", name.to_string_lossy()));
+            if let Err(e) = std::fs::remove_file(&request)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(request = %request.display(), "could not remove a used request: {e}");
+            }
+        }
         self.spool.record(&Event::Landed {
             run_id: run_id.to_string(),
             package_name: bucket_package_key(bucket, &revision.package_name),
