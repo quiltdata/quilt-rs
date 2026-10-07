@@ -1,10 +1,8 @@
 //! §4.3: the attention queue, derived and drawn. It has no payload of its own —
-//! given the resolved package list and the host facts, the grouping, the
-//! counts and the order are all computed here, and [`QueueRegion`] draws what
-//! that computation produces.
+//! given the resolved package list, the grouping, the counts and the order are
+//! all computed here, and [`QueueRegion`] draws what that computation produces.
 
 use std::collections::HashMap;
-use std::collections::HashSet;
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
@@ -12,7 +10,6 @@ use leptos_router::hooks::use_navigate;
 use quilt_uri::Namespace;
 
 use super::super::main_page::list_class;
-use crate::commands::AccountHostData;
 use crate::commands::MainPagePackageData;
 use crate::commands::PausedPackageData;
 use crate::commands::PausedReasonData;
@@ -98,7 +95,7 @@ pub enum CauseAction {
 }
 
 /// The queue, derived. Section 4.3: it has no payload — given the resolved
-/// package list and the host facts, everything below is computed here.
+/// package list, everything below is computed here.
 /// `unchecked` is the packages whose heavy-phase call FAILED — not the ones still
 /// waiting, which are not news (R3). They arrive separately because `packages` is
 /// the *settled* list and R2 drops them before the queue could see them: without a
@@ -107,36 +104,33 @@ pub enum CauseAction {
 /// for `PullConflict` — turn an absence into a fact the page carries.
 pub fn derive_queue(
     packages: &[MainPagePackageData],
-    hosts: &[AccountHostData],
     unchecked: &[MainPagePackageData],
 ) -> Vec<QueueItem> {
-    let signed_out: HashSet<&str> = hosts
-        .iter()
-        .filter(|h| !h.signed_in)
-        .map(|h| h.host.as_str())
-        .collect();
-
-    let mut signed_out_groups: HashMap<&str, Vec<&MainPagePackageData>> = HashMap::new();
+    // Keyed on the cause's own words as well as the host: signed out and
+    // sign-in expired are two causes, even on one host.
+    let mut session_groups: HashMap<(&str, &str), Vec<&MainPagePackageData>> = HashMap::new();
     let mut role_denied_groups: HashMap<&str, Vec<&MainPagePackageData>> = HashMap::new();
     let mut rows: Vec<&MainPagePackageData> = Vec::new();
 
     // Two passes rather than one: a package's membership of a shared cause is
-    // decided by the join, and only what the join rejects becomes its own row.
+    // decided by its state, and only what no cause takes becomes its own row.
     for package in packages {
-        // R3: Unknown alone is not enough — it is serde's catch-all for a
-        // state this build could not read, of which a signed-out host is only
-        // one cause. The join against `signed_out` is the other half.
-        let is_signed_out = package.state == PackageState::Unknown
-            && package
-                .host
-                .as_deref()
-                .is_some_and(|host| signed_out.contains(host));
-        if is_signed_out {
-            let host = package
-                .host
-                .as_deref()
-                .expect("checked by is_some_and above");
-            signed_out_groups.entry(host).or_default().push(package);
+        // R3: a dead session is the row's own state, resolved by the backend
+        // from the error the status call raised — the same classification the
+        // package page's header uses. One [Sign in] per host, worded as that
+        // page words it. A session state with no host (a bare bucket on ambient
+        // AWS credentials) has nowhere to sign in to, so it stays its own row,
+        // which `render` draws without a button.
+        let session = match &package.state {
+            PackageState::NoSession { host: Some(host) } => Some(("Signed out from", host)),
+            PackageState::SignInExpired { host: Some(host) } => Some(("Sign-in expired on", host)),
+            _ => None,
+        };
+        if let Some((words, host)) = session {
+            session_groups
+                .entry((words, host.as_str()))
+                .or_default()
+                .push(package);
             continue;
         }
 
@@ -182,10 +176,10 @@ pub fn derive_queue(
         ));
     }
 
-    for (host, members) in signed_out_groups {
-        let text = format!("Signed out from {host}");
+    for ((words, host), members) in session_groups {
+        let text = format!("{words} {host}");
         ranked_causes.push((
-            4, // §5 row 4: signed-out is the attributable half of "error".
+            4, // §5 row 4: a dead session is the attributable half of "error".
             text.clone(),
             QueueItem::Cause {
                 text,
@@ -262,9 +256,10 @@ fn role_denied_text(state: &PackageState, host: Option<&str>, bucket: &str) -> S
 
 /// Section 5's lattice, as a sort key. Lower sorts first: pull-conflict above
 /// error above diverged above behind above "has changes" above no-remote
-/// above unpublished. `Unknown` takes the "error" rank — of which the
-/// signed-out group is the attributable half, so what reaches this function
-/// as `Unknown` is a state this build could not otherwise explain.
+/// above unpublished. `Unknown` takes the "error" rank — of which a dead
+/// session is the attributable half, so what reaches this function as
+/// `Unknown` is a remote with no catalog host, or a state this build could not
+/// read.
 /// `RoleDenied` sorts last only to keep this match total: R2 groups every
 /// denial by bucket, so a `RoleDenied` package never reaches `rows` unless
 /// its bucket is absent, and a denial is not unimportant.
@@ -276,10 +271,10 @@ fn precedence(state: &PackageState) -> u8 {
         // disk; a stopped sync is a fact, where `Unknown` is the absence of one.
         PackageState::Paused => 1,
         // The attributable half of that same error rank, named rather than
-        // inferred. A signed-out package normally reaches the queue as a member
+        // inferred. A session state with a host reaches the queue as a member
         // of its host's `CauseAction::SignIn` group and never as a row of its
-        // own; these arms are for one that escaped grouping, and they put it
-        // where the group would have sat rather than at the foot of the lattice.
+        // own; these arms are for one with no host, and they put it where the
+        // group would have sat rather than at the foot of the lattice.
         PackageState::Unknown
         | PackageState::NoSession { .. }
         | PackageState::SignInExpired { .. } => 2,
@@ -490,7 +485,6 @@ pub fn QueueRegion(
     /// The packages the page can account for — the resolved list, which drops
     /// every row the heavy phase has not confirmed (R2).
     packages: Signal<Vec<MainPagePackageData>>,
-    hosts: Vec<AccountHostData>,
     in_flight: Signal<bool>,
     /// How many packages the page holds altogether, confirmed or not. The zero
     /// line speaks for all of them, so it may not be drawn until `packages`
@@ -535,7 +529,7 @@ pub fn QueueRegion(
 
     // The rows. Read by the keyed `<For>` and by `shape`, and deliberately NOT
     // by the closure that wraps them — see [`Shape`].
-    let items = Signal::derive(move || derive_queue(&packages.get(), &hosts, &unchecked.get()));
+    let items = Signal::derive(move || derive_queue(&packages.get(), &unchecked.get()));
 
     // Derived from the rows rendered, never written by hand — a `Cause`'s count
     // is its members, a `Package` is one of itself. A signal, so the card can
@@ -661,7 +655,6 @@ enum Shape {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::AccountHostData;
     use crate::commands::MainPagePackageData;
     use crate::kit::PackageState;
     use wasm_bindgen::JsCast;
@@ -684,6 +677,18 @@ mod tests {
         }
     }
 
+    /// A row the way the backend resolves a signed-out host: the state names
+    /// the host, and so does the row.
+    fn signed_out(namespace: &str, host: &str) -> MainPagePackageData {
+        pkg(
+            namespace,
+            PackageState::NoSession {
+                host: Some(host.to_string()),
+            },
+            Some(host),
+        )
+    }
+
     fn pkg_in_bucket(
         namespace: &str,
         state: PackageState,
@@ -701,39 +706,24 @@ mod tests {
         }
     }
 
-    fn host(name: &str, signed_in: bool) -> AccountHostData {
-        AccountHostData {
-            host: name.to_string(),
-            signed_in,
-            current_role: None,
-            roles: Vec::new(),
-            provisional: false,
-        }
-    }
-
     #[test]
     fn a_latest_package_never_reaches_the_queue() {
         // The queue is what needs a decision. Everything else is the list's job.
-        let items = derive_queue(
-            &[pkg("a/b", PackageState::Latest, Some("quilt.test"))],
-            &[host("quilt.test", true)],
-            &[],
-        );
+        let items = derive_queue(&[pkg("a/b", PackageState::Latest, Some("quilt.test"))], &[]);
         assert_eq!(items, [] as [QueueItem; 0]);
     }
 
     #[test]
     fn signed_out_packages_collapse_into_one_cause_naming_the_host() {
-        // R3. Unknown state AND a host the accounts payload says is signed out.
+        // R3. The backend resolves a dead session into the row's own state.
         // Without the grouping, a signed-out host with 11 packages buries the three
         // problems that need individual decisions.
         let items = derive_queue(
             &[
-                pkg("a/one", PackageState::Unknown, Some("quilt.test")),
-                pkg("a/two", PackageState::Unknown, Some("quilt.test")),
+                signed_out("a/one", "quilt.test"),
+                signed_out("a/two", "quilt.test"),
                 pkg("b/three", PackageState::Behind, Some("quilt.test")),
             ],
-            &[host("quilt.test", false)],
             &[],
         );
 
@@ -744,7 +734,11 @@ mod tests {
                 members,
             } => {
                 assert_eq!(text, "Signed out from quilt.test");
-                assert_eq!(members.len(), 2, "the two Unknown ones, not the Behind one");
+                assert_eq!(
+                    members.len(),
+                    2,
+                    "the two signed-out ones, not the Behind one"
+                );
                 assert!(
                     matches!(action, CauseAction::SignIn { host } if host == "quilt.test"),
                     "a wrong host wired into [Sign in] must fail this: {action:?}"
@@ -759,18 +753,103 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_package_on_a_signed_in_host_is_not_signed_out() {
+    fn a_signed_out_host_is_offered_sign_in_as_the_backend_sends_it() {
+        // The shape a signed-out host produces: the heavy phase's status call
+        // fails with a session error, and the backend resolves it to the row's
+        // `NoSession` state, so the row settles rather than going unchecked.
+        // Before that, the row went unchecked and the queue offered "Try
+        // again", which cannot succeed while the user is signed out.
+        let items = derive_queue(&[signed_out("a/one", "quilt.test")], &[]);
+
+        assert!(
+            items.iter().any(|i| matches!(
+                i,
+                QueueItem::Cause { action: CauseAction::SignIn { host }, .. }
+                    if host == "quilt.test"
+            )),
+            "a signed-out host must be offered [Sign in], got {items:?}"
+        );
+        assert!(
+            !items.iter().any(|i| matches!(
+                i,
+                QueueItem::Cause {
+                    action: CauseAction::TryAgain,
+                    ..
+                }
+            )),
+            "and not a [Try again] that cannot succeed while signed out: {items:?}"
+        );
+    }
+
+    #[test]
+    fn an_expired_sign_in_is_its_own_cause_with_its_own_words() {
+        // A rejected credential is a different fact from a missing one, and the
+        // package page words them apart. The queue does too, even on one host:
+        // grouping them would say "signed out" to a reader whose session is
+        // still on disk.
+        let items = derive_queue(
+            &[
+                signed_out("a/one", "quilt.test"),
+                pkg(
+                    "a/two",
+                    PackageState::SignInExpired {
+                        host: Some("quilt.test".to_string()),
+                    },
+                    Some("quilt.test"),
+                ),
+            ],
+            &[],
+        );
+
+        let causes: Vec<(&str, &CauseAction)> = items
+            .iter()
+            .filter_map(|i| match i {
+                QueueItem::Cause { text, action, .. } => Some((text.as_str(), action)),
+                QueueItem::Package { .. } => None,
+            })
+            .collect();
+        let sign_in = CauseAction::SignIn {
+            host: "quilt.test".to_string(),
+        };
+        assert_eq!(
+            causes,
+            vec![
+                ("Sign-in expired on quilt.test", &sign_in),
+                ("Signed out from quilt.test", &sign_in),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_session_failure_with_no_host_is_its_own_row() {
+        // A bare bucket on ambient AWS credentials: no deployment to sign in to,
+        // so no cause can offer [Sign in] for it. It stays a row, which `render`
+        // draws without a button, as the package page's header does.
+        let state = PackageState::NoSession { host: None };
+        let items = derive_queue(&[pkg("a/one", state.clone(), None)], &[]);
+
+        assert_eq!(
+            items,
+            vec![QueueItem::Package {
+                namespace: ns("a/one"),
+                state: state.clone(),
+            }]
+        );
+        assert_eq!(render(&state, Site::QueueRow).action, None);
+    }
+
+    #[test]
+    fn an_unknown_package_is_not_signed_out() {
         // R3's other half, and the one that would tell a signed-in user to sign in.
-        // Unknown is also serde's catch-all, so it means "we could not tell" — of
-        // which a logout is one cause among several.
+        // Unknown is a remote with no catalog host, or serde's catch-all, so it
+        // means "we could not tell" — never a session the backend classified.
         let items = derive_queue(
             &[pkg("a/one", PackageState::Unknown, Some("quilt.test"))],
-            &[host("quilt.test", true)],
             &[],
         );
         assert!(
             items.iter().all(|i| !matches!(i, QueueItem::Cause { .. })),
-            "no cause: the session is fine"
+            "no cause: nothing here says the session is dead"
         );
         assert_eq!(
             items.len(),
@@ -811,7 +890,6 @@ mod tests {
                     "other-bucket",
                 ),
             ],
-            &[host("quilt.test", true)],
             &[],
         );
         let causes: Vec<_> = items
@@ -836,8 +914,9 @@ mod tests {
     #[test]
     fn a_pause_outranks_a_signed_out_host() {
         // R4. The backend already resolved this into the state, so a conflicted
-        // package on a signed-out host arrives as PullConflict, never Unknown, and
-        // the signed-out join cannot see it. This test pins that it stays true.
+        // package on a signed-out host arrives as PullConflict, never NoSession,
+        // and the signed-out group cannot see it. This test pins that it stays
+        // true.
         let items = derive_queue(
             &[pkg(
                 "a/one",
@@ -846,7 +925,6 @@ mod tests {
                 },
                 Some("quilt.test"),
             )],
-            &[host("quilt.test", false)],
             &[],
         );
         assert_eq!(items.len(), 1);
@@ -860,11 +938,7 @@ mod tests {
     fn a_cause_of_one_is_still_a_cause() {
         // CauseRow renders "1 package" singular deliberately: a cause affecting one
         // package is still worth stating once rather than twice.
-        let items = derive_queue(
-            &[pkg("a/one", PackageState::Unknown, Some("quilt.test"))],
-            &[host("quilt.test", false)],
-            &[],
-        );
+        let items = derive_queue(&[signed_out("a/one", "quilt.test")], &[]);
         assert!(matches!(&items[0], QueueItem::Cause { members, .. } if members.len() == 1));
     }
 
@@ -882,11 +956,7 @@ mod tests {
                     },
                     Some("one.quilt.test"),
                 ),
-                pkg("a/out", PackageState::Unknown, Some("another.quilt.test")),
-            ],
-            &[
-                host("one.quilt.test", true),
-                host("another.quilt.test", false),
+                signed_out("a/out", "another.quilt.test"),
             ],
             &[],
         );
@@ -903,11 +973,7 @@ mod tests {
     #[test]
     fn a_local_only_package_is_never_grouped_by_host() {
         // Task 1's `host: None`. Without this it would group under a host named "".
-        let items = derive_queue(
-            &[pkg("local/thing", PackageState::Unpublished, None)],
-            &[host("quilt.test", false)],
-            &[],
-        );
+        let items = derive_queue(&[pkg("local/thing", PackageState::Unpublished, None)], &[]);
         assert!(matches!(&items[0], QueueItem::Package { .. }));
     }
 
@@ -925,7 +991,7 @@ mod tests {
         // last and sorts first, so it makes the two orders disagree.
         let items = derive_queue(
             &[
-                pkg("a/one", PackageState::Unknown, Some("another.quilt.test")),
+                signed_out("a/one", "another.quilt.test"),
                 pkg_in_bucket(
                     "b/two",
                     PackageState::RoleDenied {
@@ -934,10 +1000,6 @@ mod tests {
                     "one.quilt.test",
                     "team-bucket",
                 ),
-            ],
-            &[
-                host("another.quilt.test", false),
-                host("one.quilt.test", true),
             ],
             &[pkg(
                 "c/three",
@@ -979,7 +1041,6 @@ mod tests {
                 },
                 Some("quilt.test"),
             )],
-            &[host("quilt.test", true)],
             &[],
         );
         assert_eq!(items.len(), 1, "not dropped, and not folded into a cause");
@@ -1015,7 +1076,6 @@ mod tests {
     /// the `Router` the actions navigate through.
     fn mount_region(
         packages: Signal<Vec<MainPagePackageData>>,
-        hosts: Vec<AccountHostData>,
         in_flight: Signal<bool>,
     ) -> web_sys::Element {
         // Every test using this helper hands in a fully-accounted payload, so
@@ -1023,7 +1083,6 @@ mod tests {
         // `main_page.rs`'s `a_package_the_page_could_not_read_holds_back_the_all_clear`.
         mount_region_of(
             packages,
-            hosts,
             in_flight,
             Signal::derive(move || packages.get().len()),
             Signal::stored(Vec::new()),
@@ -1036,14 +1095,12 @@ mod tests {
     /// for — the call is the only observable the affordance has.
     fn mount_region_unchecked(
         packages: Signal<Vec<MainPagePackageData>>,
-        hosts: Vec<AccountHostData>,
         unchecked: Vec<MainPagePackageData>,
         retry: Callback<Vec<Namespace>>,
     ) -> web_sys::Element {
         let total = unchecked.len() + packages.get_untracked().len();
         mount_region_of(
             packages,
-            hosts,
             Signal::stored(false),
             Signal::stored(total),
             Signal::stored(unchecked),
@@ -1055,7 +1112,6 @@ mod tests {
     /// where the page holds more packages than it can account for.
     fn mount_region_of(
         packages: Signal<Vec<MainPagePackageData>>,
-        hosts: Vec<AccountHostData>,
         in_flight: Signal<bool>,
         total: Signal<usize>,
         unchecked: Signal<Vec<MainPagePackageData>>,
@@ -1065,7 +1121,6 @@ mod tests {
             view! {
                 <QueueRegion
                     packages=packages
-                    hosts=hosts
                     in_flight=in_flight
                     total=total
                     unchecked=unchecked
@@ -1107,19 +1162,11 @@ mod tests {
             .collect()
     }
 
-    fn one_signed_in() -> Vec<AccountHostData> {
-        vec![host("one.quilt.test", true)]
-    }
-
     fn two_signed_out() -> Vec<MainPagePackageData> {
         vec![
-            pkg("a/one", PackageState::Unknown, Some("another.quilt.test")),
-            pkg("a/two", PackageState::Unknown, Some("another.quilt.test")),
+            signed_out("a/one", "another.quilt.test"),
+            signed_out("a/two", "another.quilt.test"),
         ]
-    }
-
-    fn one_signed_out() -> Vec<AccountHostData> {
-        vec![host("another.quilt.test", false)]
     }
 
     fn one_role_denied() -> Vec<MainPagePackageData> {
@@ -1137,10 +1184,10 @@ mod tests {
         vec![pkg("a/one", PackageState::Behind, Some("one.quilt.test"))]
     }
 
-    /// `Unknown` on a signed-in host: R3's other half, so it is its own row
-    /// rather than swept into a signed-out cause — and `render` gives it no
-    /// action, unlike `one_behind`.
-    fn one_unknown_signed_in() -> Vec<MainPagePackageData> {
+    /// `Unknown`: R3's other half, so it is its own row rather than swept into
+    /// a signed-out cause — and `render` gives it no action, unlike
+    /// `one_behind`.
+    fn one_unknown() -> Vec<MainPagePackageData> {
         vec![pkg("a/one", PackageState::Unknown, Some("one.quilt.test"))]
     }
 
@@ -1149,11 +1196,7 @@ mod tests {
         // Acceptance criterion 8, and ZeroLine's own doc: with autosync working
         // this is the common case, and a full-height empty state here would push
         // the package list below the fold to announce that nothing is wrong.
-        let el = mount_region(
-            Signal::stored(all_latest(43)),
-            one_signed_in(),
-            Signal::stored(false),
-        );
+        let el = mount_region(Signal::stored(all_latest(43)), Signal::stored(false));
         let text = el.text_content().unwrap();
         assert!(text.contains("Everything is Latest"), "got: {text}");
         assert!(
@@ -1173,11 +1216,7 @@ mod tests {
         // A second N, never 43 again: a hard-coded "43 packages" string would
         // pass the test above and only fail here, where the fixture's count
         // actually varies.
-        let el = mount_region(
-            Signal::stored(all_latest(7)),
-            one_signed_in(),
-            Signal::stored(false),
-        );
+        let el = mount_region(Signal::stored(all_latest(7)), Signal::stored(false));
         assert!(
             el.text_content().unwrap().contains("7 packages"),
             "got: {}",
@@ -1190,11 +1229,7 @@ mod tests {
         // `zero_line_text`'s `total == 1` branch is real code, not a case ever
         // proven by the plural fixtures above — deleting it and always taking
         // the plural arm must fail exactly here.
-        let el = mount_region(
-            Signal::stored(all_latest(1)),
-            one_signed_in(),
-            Signal::stored(false),
-        );
+        let el = mount_region(Signal::stored(all_latest(1)), Signal::stored(false));
         let text = el.text_content().unwrap();
         assert!(text.contains("1 package"), "got: {text}");
         assert!(
@@ -1210,11 +1245,7 @@ mod tests {
         // non-sequitur that invents copy for a case the zero line was never
         // meant to speak for. Render nothing — the empty-install story
         // belongs to the list's own blankslate.
-        let el = mount_region(
-            Signal::stored(vec![]),
-            one_signed_in(),
-            Signal::stored(false),
-        );
+        let el = mount_region(Signal::stored(vec![]), Signal::stored(false));
         assert_eq!(
             el.text_content().unwrap().trim(),
             "",
@@ -1233,7 +1264,6 @@ mod tests {
                 PackageState::Latest,
                 Some("one.quilt.test"),
             )]),
-            one_signed_in(),
             Signal::stored(true),
         );
         assert_eq!(
@@ -1256,7 +1286,6 @@ mod tests {
     fn a_load_with_nothing_settled_yet_holds_the_line_open() {
         let el = mount_region_of(
             Signal::stored(vec![]),
-            one_signed_in(),
             Signal::stored(true),
             Signal::stored(3),
             Signal::stored(Vec::new()),
@@ -1274,7 +1303,6 @@ mod tests {
     fn a_fresh_install_holds_no_line_open_even_while_in_flight() {
         let el = mount_region_of(
             Signal::stored(vec![]),
-            one_signed_in(),
             Signal::stored(true),
             Signal::stored(0),
             Signal::stored(Vec::new()),
@@ -1291,7 +1319,6 @@ mod tests {
                 PackageState::Latest,
                 Some("one.quilt.test"),
             )]),
-            one_signed_in(),
             Signal::stored(false),
             Signal::stored(2),
             Signal::stored(Vec::new()),
@@ -1309,7 +1336,6 @@ mod tests {
         let packages = RwSignal::new(vec![]);
         let el = mount_region_of(
             packages.into(),
-            one_signed_in(),
             Signal::stored(true),
             Signal::stored(2),
             Signal::stored(Vec::new()),
@@ -1346,7 +1372,6 @@ mod tests {
                 PackageState::Diverged,
                 Some("one.quilt.test"),
             )]),
-            one_signed_in(),
             Signal::stored(true),
         );
         let text = el.text_content().unwrap();
@@ -1367,7 +1392,6 @@ mod tests {
                 PackageState::Latest,
                 Some("one.quilt.test"),
             )]),
-            one_signed_in(),
             in_flight.into(),
         );
         assert!(!el.text_content().unwrap().contains("Everything is Latest"));
@@ -1403,14 +1427,10 @@ mod tests {
         // `items.len()` (which would read 2, not 3).
         let el = mount_region(
             Signal::stored(vec![
-                pkg("a/one", PackageState::Unknown, Some("another.quilt.test")),
-                pkg("a/two", PackageState::Unknown, Some("another.quilt.test")),
+                signed_out("a/one", "another.quilt.test"),
+                signed_out("a/two", "another.quilt.test"),
                 pkg("c/three", PackageState::Behind, Some("one.quilt.test")),
             ]),
-            vec![
-                host("another.quilt.test", false),
-                host("one.quilt.test", true),
-            ],
             Signal::stored(false),
         );
         let text = el.text_content().unwrap();
@@ -1468,11 +1488,7 @@ mod tests {
         // host-scoped and acts where it stands, so it stays a button. Either half
         // alone would pass against a region that had turned everything into one or
         // the other.
-        let denied = mount_region(
-            Signal::stored(two_signed_out()),
-            one_signed_out(),
-            Signal::stored(false),
-        );
+        let denied = mount_region(Signal::stored(two_signed_out()), Signal::stored(false));
         // `:not([aria-expanded])` skips the cause row's expander, which is also a
         // button — selecting the first button here tests the expander instead.
         let sign_in = denied
@@ -1488,11 +1504,7 @@ mod tests {
              than resolving one"
         );
 
-        let publishable = mount_region(
-            Signal::stored(one_behind()),
-            one_signed_in(),
-            Signal::stored(false),
-        );
+        let publishable = mount_region(Signal::stored(one_behind()), Signal::stored(false));
         assert_eq!(
             publishable.query_selector_all("button").unwrap().length(),
             0,
@@ -1516,11 +1528,7 @@ mod tests {
         // answer for a state the app has no operation to fix. Dropping
         // `tone=rendered.tone` from the `None` branch still compiles and
         // still passes every OTHER test; this is the one that must catch it.
-        let el = mount_region(
-            Signal::stored(one_unknown_signed_in()),
-            one_signed_in(),
-            Signal::stored(false),
-        );
+        let el = mount_region(Signal::stored(one_unknown()), Signal::stored(false));
         let text = el.text_content().unwrap();
         assert!(
             text.contains("cannot be checked"),
@@ -1529,7 +1537,7 @@ mod tests {
         assert_eq!(
             el.query_selector_all("button").unwrap().length(),
             0,
-            "no cause here (signed in) and no action on this state — no button at all"
+            "no cause here and no action on this state — no button at all"
         );
         assert_eq!(
             el.query_selector_all("a").unwrap().length(),
@@ -1540,11 +1548,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn a_shared_cause_states_its_count_and_offers_the_one_fix() {
-        let el = mount_region(
-            Signal::stored(two_signed_out()),
-            one_signed_out(),
-            Signal::stored(false),
-        );
+        let el = mount_region(Signal::stored(two_signed_out()), Signal::stored(false));
         let text = el.text_content().unwrap();
         assert!(
             text.contains("Signed out from another.quilt.test"),
@@ -1562,11 +1566,7 @@ mod tests {
         // Section 5.3: a link may be duplicated across scopes, a control may not.
         // Switching role is host-scoped, so the control belongs to the Accounts
         // card and this row points at it.
-        let el = mount_region(
-            Signal::stored(one_role_denied()),
-            one_signed_in(),
-            Signal::stored(false),
-        );
+        let el = mount_region(Signal::stored(one_role_denied()), Signal::stored(false));
         let text = el.text_content().unwrap();
         assert!(text.contains("No access as analyst"), "got: {text}");
         assert!(text.contains("s3://team-bucket"), "got: {text}");
@@ -1588,11 +1588,7 @@ mod tests {
         // QueueRow's doc: expanding "Signed out — 11 packages" answers WHICH
         // packages, and repeating "Signed out" on all eleven is exactly the
         // redundancy the cause row exists to remove.
-        let el = mount_region(
-            Signal::stored(two_signed_out()),
-            one_signed_out(),
-            Signal::stored(false),
-        );
+        let el = mount_region(Signal::stored(two_signed_out()), Signal::stored(false));
         assert!(
             !el.text_content().unwrap().contains("a/one"),
             "collapsed by default"
@@ -1618,11 +1614,7 @@ mod tests {
         // `render(state, Site::QueueRow)` exists precisely because the two sites
         // word themselves differently: the list names a state in a chip, the queue
         // continues the sentence the package name started.
-        let el = mount_region(
-            Signal::stored(one_behind()),
-            one_signed_in(),
-            Signal::stored(false),
-        );
+        let el = mount_region(Signal::stored(one_behind()), Signal::stored(false));
         let text = el.text_content().unwrap();
         assert!(text.contains("has a newer revision"), "got: {text}");
         assert!(
@@ -1643,7 +1635,7 @@ mod tests {
             PackageState::Latest,
             Some("one.quilt.test"),
         )]);
-        let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
+        let el = mount_region(packages.into(), Signal::stored(false));
         assert!(
             !el.text_content().unwrap().contains("has 1 changed file"),
             "nothing to say yet"
@@ -1670,11 +1662,11 @@ mod tests {
         // one page load — and rebuilding the expander signals each time would close a
         // group under the user's hands.
         let packages = RwSignal::new(vec![
-            pkg("a/one", PackageState::Unknown, Some("another.quilt.test")),
-            pkg("a/two", PackageState::Unknown, Some("another.quilt.test")),
+            signed_out("a/one", "another.quilt.test"),
+            signed_out("a/two", "another.quilt.test"),
             pkg("b/three", PackageState::Latest, Some("another.quilt.test")),
         ]);
-        let el = mount_region(packages.into(), one_signed_out(), Signal::stored(false));
+        let el = mount_region(packages.into(), Signal::stored(false));
         click(&expander(&el));
         leptos::task::tick().await;
         assert!(el.text_content().unwrap().contains("a/one"), "opened");
@@ -1714,7 +1706,7 @@ mod tests {
             pkg("a/one", PackageState::Behind, Some("one.quilt.test")),
             pkg("b/two", PackageState::Unpublished, Some("one.quilt.test")),
         ]);
-        let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
+        let el = mount_region(packages.into(), Signal::stored(false));
         row_of(&el, "a/one")
             .set_attribute("data-node", "a")
             .unwrap();
@@ -1765,7 +1757,7 @@ mod tests {
             PackageState::Behind,
             Some("one.quilt.test"),
         )]);
-        let el = mount_region(packages.into(), one_signed_in(), Signal::stored(false));
+        let el = mount_region(packages.into(), Signal::stored(false));
         assert!(
             el.text_content().unwrap().contains("has a newer revision"),
             "before: {}",
@@ -1791,12 +1783,8 @@ mod tests {
     async fn a_group_that_gains_a_member_keeps_its_expansion_and_its_count_grows() {
         // The count is derived from the members, so it must move; the expansion is
         // keyed on the cause's identity, which did not change.
-        let packages = RwSignal::new(vec![pkg(
-            "a/one",
-            PackageState::Unknown,
-            Some("another.quilt.test"),
-        )]);
-        let el = mount_region(packages.into(), one_signed_out(), Signal::stored(false));
+        let packages = RwSignal::new(vec![signed_out("a/one", "another.quilt.test")]);
+        let el = mount_region(packages.into(), Signal::stored(false));
         click(&expander(&el));
         leptos::task::tick().await;
         assert!(
@@ -1806,11 +1794,7 @@ mod tests {
         );
 
         packages.update(|p| {
-            p.push(pkg(
-                "a/two",
-                PackageState::Unknown,
-                Some("another.quilt.test"),
-            ));
+            p.push(signed_out("a/two", "another.quilt.test"));
         });
         leptos::task::tick().await;
 
@@ -1831,17 +1815,15 @@ mod tests {
         // R6's half, which must survive R4: a refetch constructs a new `QueueRegion`,
         // and the expansion the user opened was about a set that no longer exists.
         let packages = RwSignal::new(vec![
-            pkg("a/one", PackageState::Unknown, Some("another.quilt.test")),
-            pkg("a/two", PackageState::Unknown, Some("another.quilt.test")),
+            signed_out("a/one", "another.quilt.test"),
+            signed_out("a/two", "another.quilt.test"),
         ]);
         let show = RwSignal::new(true);
-        let hosts = one_signed_out();
         let el = mount(move || {
             view! {
                 <Show when=move || show.get()>
                     <QueueRegion
                         packages=packages.into()
-                        hosts=hosts.clone()
                         in_flight=Signal::stored(false)
                         total=Signal::derive(move || packages.get().len())
                         unchecked=Signal::stored(Vec::new())
@@ -1877,7 +1859,6 @@ mod tests {
         // show that.
         let items = derive_queue(
             &[],
-            &[host("quilt.test", true)],
             &[
                 pkg("a/one", PackageState::Latest, Some("quilt.test")),
                 pkg("a/two", PackageState::Behind, Some("quilt.test")),
@@ -1906,7 +1887,6 @@ mod tests {
         // two scopes.
         let items = derive_queue(
             &[],
-            &[],
             &[
                 pkg("a/one", PackageState::Latest, Some("one.quilt.test")),
                 pkg("b/two", PackageState::Latest, Some("another.quilt.test")),
@@ -1933,7 +1913,7 @@ mod tests {
         // `role_denied_groups` already follows for a missing bucket. "Unchecked"
         // is not a state either, so there is no per-package row to fall back to:
         // it stays dashed and dimmed in the list, and the queue says nothing.
-        let items = derive_queue(&[], &[], &[pkg("a/one", PackageState::Latest, None)]);
+        let items = derive_queue(&[], &[pkg("a/one", PackageState::Latest, None)]);
 
         assert!(
             items.is_empty(),
@@ -1948,7 +1928,6 @@ mod tests {
         // knows before what it could not determine.
         let items = derive_queue(
             &two_signed_out(),
-            &one_signed_out(),
             &[pkg(
                 "z/failed",
                 PackageState::Latest,
@@ -1981,7 +1960,6 @@ mod tests {
         // app could not read.
         let el = mount_region_unchecked(
             Signal::stored(Vec::new()),
-            vec![host("quilt.test", true)],
             vec![pkg("a/one", PackageState::Latest, Some("quilt.test"))],
             Callback::new(|_| ()),
         );
@@ -2006,7 +1984,6 @@ mod tests {
         let asked: RwSignal<Vec<Vec<String>>> = RwSignal::new(Vec::new());
         let el = mount_region_unchecked(
             Signal::stored(Vec::new()),
-            vec![host("quilt.test", true)],
             vec![
                 pkg("a/one", PackageState::Latest, Some("quilt.test")),
                 pkg("a/two", PackageState::Latest, Some("quilt.test")),
@@ -2056,9 +2033,6 @@ mod tests {
                     Some("quilt.test"),
                 ),
             ],
-            // Signed IN, or the unread one joins a signed-out cause instead of
-            // being the row this test compares against.
-            &[host("quilt.test", true)],
             &[],
         );
 
@@ -2085,19 +2059,17 @@ mod tests {
         packages: Signal<Vec<MainPagePackageData>>,
         pause_messages: HashMap<Namespace, String>,
     ) -> web_sys::Element {
-        mount_region_with_pauses(packages, Vec::new(), Signal::stored(pause_messages))
+        mount_region_with_pauses(packages, Signal::stored(pause_messages))
     }
 
     fn mount_region_with_pauses(
         packages: Signal<Vec<MainPagePackageData>>,
-        hosts: Vec<AccountHostData>,
         pause_messages: Signal<HashMap<Namespace, String>>,
     ) -> web_sys::Element {
         mount(move || {
             view! {
                 <QueueRegion
                     packages=packages
-                    hosts=hosts
                     in_flight=Signal::stored(false)
                     total=Signal::derive(move || packages.get().len())
                     unchecked=Signal::stored(Vec::new())
@@ -2196,11 +2168,7 @@ mod tests {
     #[wasm_bindgen_test]
     async fn a_new_pause_map_leaves_an_expanded_cause_open() {
         let pauses = RwSignal::new(HashMap::new());
-        let el = mount_region_with_pauses(
-            Signal::stored(two_signed_out()),
-            one_signed_out(),
-            pauses.into(),
-        );
+        let el = mount_region_with_pauses(Signal::stored(two_signed_out()), pauses.into());
 
         click(&expander(&el));
         leptos::task::tick().await;
@@ -2226,11 +2194,7 @@ mod tests {
     /// inside its item rather than siblings of it.
     #[wasm_bindgen_test]
     async fn the_queue_announces_itself_as_a_list() {
-        let el = mount_region(
-            Signal::stored(two_signed_out()),
-            one_signed_out(),
-            Signal::stored(false),
-        );
+        let el = mount_region(Signal::stored(two_signed_out()), Signal::stored(false));
         assert!(
             el.query_selector("ul > li").unwrap().is_some(),
             "the queue's items are list items"

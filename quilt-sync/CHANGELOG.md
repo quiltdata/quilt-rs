@@ -33,6 +33,10 @@
 - **New design preview**: in Resolve mode, files that differ from the published revision are marked *Differs*, with a tooltip that explains it (<https://github.com/quiltdata/quilt-rs/pull/1075>)
 - Messages that say how much space was freed round sizes the same way as the rest of the app (<https://github.com/quiltdata/quilt-rs/pull/1072>)
 
+### Fixed
+
+- **New design preview**: packages on a host you are signed out of, or whose sign-in expired, now show "Signed out from {host}" or "Sign-in expired on {host}" with Sign in in the main page's queue, in place of "Couldn't check for new revisions" with a Try again that could not work (<https://github.com/quiltdata/quilt-rs/pull/1076>)
+
 ### quilt-rs
 
 - Updated [from v0.42.0 to v0.42.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.0...quilt-rs/v0.42.1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
