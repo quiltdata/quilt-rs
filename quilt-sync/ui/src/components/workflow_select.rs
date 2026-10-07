@@ -371,6 +371,45 @@ pub fn shows_settings_workflow_hint(
     )
 }
 
+/// The publish settings' default workflow when this bucket can't use it:
+/// it isn't among the declared workflows, or the bucket has no workflows
+/// config. One-click Publish sends it as is and fails here, while the form
+/// falls back to the bucket's preselection, so the form says so. `None` when
+/// Settings names no workflow, the bucket declares it, or the config couldn't
+/// be read (nothing is known either way).
+pub fn missing_settings_workflow<'a>(
+    view: &WorkflowView,
+    settings_workflow: Option<&'a str>,
+) -> Option<&'a str> {
+    let id = settings_workflow?;
+    match view.kind {
+        WorkflowViewKind::Available { .. } => (!view
+            .options
+            .iter()
+            .any(|o| matches!(&o.intent, WorkflowIntent::Named(named) if named == id)))
+        .then_some(id),
+        WorkflowViewKind::NotConfigured => Some(id),
+        WorkflowViewKind::Unavailable | WorkflowViewKind::Invalid { .. } => None,
+    }
+}
+
+/// The warning for [`missing_settings_workflow`], ending in a link to
+/// Settings where the default is changed.
+fn missing_settings_workflow_view(id: &str) -> impl IntoView + use<> {
+    let text = format!(
+        "⚠ Your default workflow in Settings, \"{id}\", isn't one of this bucket's \
+         workflows, so Publish would fail here. Change it in"
+    );
+    view! {
+        <span class="qui-settings-hint qui-workflow-note-warn">
+            {text}
+            " "
+            <a class="qui-workflow-link" href="/settings">"Settings"</a>
+            "."
+        </span>
+    }
+}
+
 /// A helper line ending in a link to Settings, where the commit defaults are
 /// edited: `{text} Settings.`
 pub fn settings_hint_view(text: &'static str) -> impl IntoView {
@@ -401,6 +440,8 @@ pub fn WorkflowSection(
     #[prop(optional_no_strip)]
     settings_workflow: Option<String>,
 ) -> impl IntoView {
+    let missing = missing_settings_workflow(&view, settings_workflow.as_deref())
+        .map(missing_settings_workflow_view);
     let WorkflowView {
         kind,
         options,
@@ -408,7 +449,7 @@ pub fn WorkflowSection(
         config_url,
     } = view;
 
-    match kind {
+    let section = match kind {
         WorkflowViewKind::Available {
             is_workflow_required,
         } => workflow_dropdown(
@@ -471,6 +512,12 @@ pub fn WorkflowSection(
             }
             .into_any()
         }
+    };
+    view! {
+        {section}
+        // Settings names a workflow this bucket can't use: the form falls back
+        // to the bucket's preselection, but Publish would fail here.
+        {missing}
     }
 }
 
@@ -648,7 +695,8 @@ fn workflow_dropdown(
 mod tests {
     use super::{
         PreviousWorkflow, WorkflowOption, WorkflowViewKind, build_workflow_view, catalog_links,
-        preselected_index, previous_workflow_note, shows_settings_workflow_hint, workflow_options,
+        missing_settings_workflow, preselected_index, previous_workflow_note,
+        shows_settings_workflow_hint, workflow_options,
     };
     use crate::commands::{CommitWorkflows, WorkflowData, WorkflowInfo, WorkflowIntent};
 
@@ -1037,6 +1085,39 @@ mod tests {
             note.as_deref(),
             Some("The previous revision used the \"Alpha WF\" workflow.")
         );
+    }
+
+    #[test]
+    fn settings_workflow_missing_from_the_bucket_is_reported() {
+        let available = build_workflow_view(
+            &CommitWorkflows::Available {
+                workflows: vec![wf("alpha", Some("Alpha WF")), wf("beta", None)],
+                default_workflow: None,
+                is_workflow_required: false,
+                config_url: None,
+            },
+            None,
+            Some("wrong-workflow"),
+        );
+        // Not declared: reported, and the selection falls back to the bucket's.
+        assert_eq!(
+            missing_settings_workflow(&available, Some("wrong-workflow")),
+            Some("wrong-workflow")
+        );
+        assert_eq!(available.initial, 0);
+        // Declared: nothing to report.
+        assert_eq!(missing_settings_workflow(&available, Some("beta")), None);
+        // No Settings workflow: nothing to report, and no nudge to set one.
+        assert_eq!(missing_settings_workflow(&available, None), None);
+        // A bucket with no workflows config can't use any named workflow.
+        let not_configured = build_workflow_view(&CommitWorkflows::NotConfigured, None, None);
+        assert_eq!(
+            missing_settings_workflow(&not_configured, Some("beta")),
+            Some("beta")
+        );
+        // Couldn't load the config: unknown, so no claim either way.
+        let unavailable = build_workflow_view(&CommitWorkflows::Unavailable, None, None);
+        assert_eq!(missing_settings_workflow(&unavailable, Some("beta")), None);
     }
 
     #[test]
