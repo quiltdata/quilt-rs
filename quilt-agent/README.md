@@ -5,8 +5,10 @@ when a run is complete, lands its files in S3, writes a sentinel recording what
 was observed, and publishes the run as a fresh Quilt package revision.
 
 - **Outbound HTTPS only.** Reads the instrument's share; never writes to it.
-- **Completion is an observation.** One boundary method per instrument
-  (`marker_file`, `size_stable`); a `size_stable` run is marked `guessed: true`.
+- **Completion is an observation.** One boundary method per instrument:
+  `marker_file`; `explicit` (a scheduler or person writes
+  `<run folder>.complete` into the agent's `control_dir`); or `size_stable`,
+  marked `guessed: true`.
 - **Survives kill and outage.** Every step is journalled under `spool_root`; the
   next start resumes where the journal ends and lands the run exactly once.
 - **Never moves someone else's `latest`.** Publishing uses

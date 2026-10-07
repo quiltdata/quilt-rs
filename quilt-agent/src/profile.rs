@@ -135,6 +135,9 @@ pub struct Boundary {
     #[serde(default = "Boundary::default_min_members")]
     pub min_members: usize,
     pub manifest_kind: Option<String>,
+    /// For `explicit`: a directory the operator or a scheduler writes
+    /// `<run folder name>.complete` into. Not on the share, which stays read-only.
+    pub control_dir: Option<PathBuf>,
 }
 
 impl Boundary {

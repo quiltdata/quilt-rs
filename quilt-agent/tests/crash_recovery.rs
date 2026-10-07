@@ -410,3 +410,52 @@ async fn a_new_run_at_a_reused_path_is_captured() -> Result<(), Box<dyn std::err
     assert_eq!(landed_events(spool_dir.path()).len(), 2);
     Ok(())
 }
+
+/// A tier-3 folder with no marker lands only when someone asks for it.
+#[tokio::test]
+async fn an_explicit_run_lands_only_after_the_request() -> Result<(), Box<dyn std::error::Error>> {
+    let source = tempfile::tempdir()?;
+    let control = tempfile::tempdir()?;
+    let spool_dir = tempfile::tempdir()?;
+    let run = source.path().join("sample.d");
+    std::fs::create_dir(&run)?;
+    std::fs::write(run.join("data.ms"), b"spectra")?;
+    let yaml = format!(
+        r#"
+schema_version: "1"
+observer: {{ id: edge-01, placement: beside }}
+registry: {{ url: "https://example.quiltdata.com", credential_ref: k }}
+instruments:
+  - id: ms-1
+    source: {{ path: "{}" }}
+    landing: {{ bucket: raw, prefix: lab }}
+    boundary: {{ method: explicit, explicit_source: control_dir, control_dir: "{}", confirm_window_s: 30 }}
+"#,
+        source.path().display(),
+        control.path().display()
+    );
+    let remote = Flaky {
+        inner: MockRemote::default(),
+        fail_seal: AtomicBool::new(false),
+    };
+    let mut agent = Agent::new(
+        Profile::parse(&yaml)?,
+        remote,
+        Spool::open(spool_dir.path())?,
+        None,
+    );
+    let later = SystemTime::now() + Duration::from_secs(3600);
+    agent.pass(SystemTime::now()).await?;
+    agent.pass(later).await?;
+    assert_eq!(
+        landed_events(spool_dir.path()).len(),
+        0,
+        "no request, no landing"
+    );
+
+    std::fs::write(control.path().join("sample.d.complete"), b"")?;
+    agent.pass(later + Duration::from_secs(60)).await?;
+    let landed = landed_events(spool_dir.path());
+    assert_eq!(landed.len(), 1);
+    Ok(())
+}

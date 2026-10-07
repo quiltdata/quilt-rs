@@ -126,6 +126,7 @@ impl<R: Remote + Sync> Agent<R> {
                 instrument.quiet_window_s(),
                 &boundary::Observation {
                     members: &tracked.members,
+                    requested_at: completion_request(instrument, &folder),
                     last_change: tracked.last_change,
                     now,
                 },
@@ -479,6 +480,15 @@ impl<R: Remote + Sync> Agent<R> {
             .into_bytes();
         Ok(serde_json::from_slice(&bytes)?)
     }
+}
+
+/// When `<control_dir>/<folder name>.complete` was written, if it exists.
+fn completion_request(instrument: &Instrument, folder: &Path) -> Option<SystemTime> {
+    let dir = instrument.boundary.control_dir.as_ref()?;
+    let name = folder.file_name()?.to_string_lossy();
+    std::fs::metadata(dir.join(format!("{name}.complete")))
+        .and_then(|m| m.modified())
+        .ok()
 }
 
 fn instrument_json(i: &Instrument) -> serde_json::Value {
