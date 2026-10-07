@@ -190,14 +190,16 @@ pub trait Remote {
         }
     }
 
-    /// The object's current `ETag`, or `None` when the key holds no object.
-    fn get_object_etag(
+    /// The object's bytes and the `ETag` of those same bytes, from one read,
+    /// or `None` when the key holds no object. One read, so the `ETag` can
+    /// guard a later conditional write of what the caller actually saw.
+    fn get_object_with_etag(
         &self,
         host: Option<&Host>,
         s3_uri: &S3Uri,
-    ) -> impl Future<Output = Res<Option<String>>> + Send {
+    ) -> impl Future<Output = Res<Option<(String, Vec<u8>)>>> + Send {
         let _ = (host, s3_uri);
-        async { Err(S3Error::new(S3ErrorKind::Exists("etag unsupported".to_string())).into()) }
+        async { Err(S3Error::new(S3ErrorKind::GetObject("etag unsupported".to_string())).into()) }
     }
 
     /// Upload file and request checkum from S3

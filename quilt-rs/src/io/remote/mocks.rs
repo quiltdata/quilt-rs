@@ -172,7 +172,10 @@ impl Remote for MockRemote {
         condition: PutCondition,
     ) -> Res {
         let key = s3_uri.to_string();
-        let current = self.get_object_etag(None, s3_uri).await?;
+        let current = self
+            .get_object_with_etag(None, s3_uri)
+            .await?
+            .map(|(etag, _)| etag);
         let holds = match &condition {
             PutCondition::Absent => current.is_none(),
             PutCondition::ETag(etag) => current.as_ref() == Some(etag),
@@ -183,7 +186,11 @@ impl Remote for MockRemote {
         self.storage.write_byte_stream(key, contents.into()).await
     }
 
-    async fn get_object_etag(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<Option<String>> {
+    async fn get_object_with_etag(
+        &self,
+        _host: Option<&Host>,
+        s3_uri: &S3Uri,
+    ) -> Res<Option<(String, Vec<u8>)>> {
         let key = s3_uri.to_string();
         if !self.storage.exists(&key).await {
             return Ok(None);
@@ -195,8 +202,9 @@ impl Remote for MockRemote {
             .collect()
             .await
             .map_err(|e| S3Error::new(S3ErrorKind::GetObject(e.to_string())))?
-            .into_bytes();
-        Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+            .into_bytes()
+            .to_vec();
+        Ok(Some((String::from_utf8_lossy(&bytes).into_owned(), bytes)))
     }
 
     async fn resolve_url(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {

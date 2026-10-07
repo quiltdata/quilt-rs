@@ -666,19 +666,32 @@ impl Remote for RemoteS3 {
         Ok(())
     }
 
-    async fn get_object_etag(&self, host: Option<&Host>, s3_uri: &S3Uri) -> Res<Option<String>> {
+    async fn get_object_with_etag(
+        &self,
+        host: Option<&Host>,
+        s3_uri: &S3Uri,
+    ) -> Res<Option<(String, Vec<u8>)>> {
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-        match client
-            .head_object()
+        let object = match client
+            .get_object()
             .bucket(&s3_uri.bucket)
             .key(&s3_uri.key)
             .send()
             .await
         {
-            Ok(head) => Ok(head.e_tag),
-            Err(SdkError::ServiceError(err)) if err.err().is_not_found() => Ok(None),
-            Err(err) => Err(s3_error_or_session_loss(err, host, S3ErrorKind::Exists)),
-        }
+            Ok(object) => object,
+            Err(SdkError::ServiceError(err)) if err.err().is_no_such_key() => return Ok(None),
+            Err(err) => return Err(s3_error_or_session_loss(err, host, S3ErrorKind::GetObject)),
+        };
+        let etag = object.e_tag.unwrap_or_default();
+        let body = object
+            .body
+            .collect()
+            .await
+            .map_err(|e| S3Error::new(S3ErrorKind::GetObject(e.to_string())))?
+            .into_bytes()
+            .to_vec();
+        Ok(Some((etag, body)))
     }
 
     async fn resolve_url(&self, host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {

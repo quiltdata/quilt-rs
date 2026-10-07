@@ -27,7 +27,8 @@ use quilt_uri::TagUri;
 pub struct RevisionPushed {
     /// The new revision's top hash.
     pub top_hash: String,
-    /// True iff this push moved `latest` to `top_hash`.
+    /// True iff `latest` names `top_hash` when the push returns: this push
+    /// moved it there, or it already was.
     pub latest_advanced: bool,
     /// What `latest` held when the push decided, if anything.
     pub latest_before: Option<String>,
@@ -72,11 +73,9 @@ pub async fn push_revision(
     debug!("✔️ Revision {top_hash} recorded in history");
 
     let latest = S3Uri::from(TagUri::latest(&manifest_uri));
-    let etag = remote.get_object_etag(host, &latest).await?;
-    let latest_before = match &etag {
-        Some(_) => Some(read_tag(remote, host, &latest).await?),
-        None => None,
-    };
+    let current = remote.get_object_with_etag(host, &latest).await?;
+    let etag = current.as_ref().map(|(etag, _)| etag.clone());
+    let latest_before = current.map(|(_, body)| String::from_utf8_lossy(&body).trim().to_string());
 
     let condition = match (&etag, &latest_before) {
         (None, _) => Some(PutCondition::Absent),
@@ -122,18 +121,6 @@ pub async fn push_revision(
         }
         Err(e) => Err(e),
     }
-}
-
-async fn read_tag(remote: &impl Remote, host: Option<&Host>, uri: &S3Uri) -> Res<String> {
-    let stream = remote.get_object_stream(host, uri).await?;
-    let bytes = stream.body.collect().await.map_err(|e| {
-        crate::Error::S3(crate::error::S3Error::new(
-            crate::error::S3ErrorKind::GetObject(e.to_string()),
-        ))
-    })?;
-    Ok(String::from_utf8_lossy(&bytes.into_bytes())
-        .trim()
-        .to_string())
 }
 
 #[cfg(test)]
@@ -186,7 +173,11 @@ mod tests {
     }
 
     async fn latest(remote: &MockRemote) -> Res<String> {
-        read_tag(remote, None, &latest_uri()).await
+        let (_, body) = remote
+            .get_object_with_etag(None, &latest_uri())
+            .await?
+            .expect("latest exists");
+        Ok(String::from_utf8(body).expect("utf8"))
     }
 
     #[test(tokio::test)]
