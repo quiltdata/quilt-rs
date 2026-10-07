@@ -105,15 +105,23 @@ async fn serve(profile: Profile, bucket_only: bool) -> Result<(), Error> {
     );
     // notify only shortens the wait to the next scan; polling is the truth.
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
-    let mut watcher = notify::recommended_watcher(move |_| {
+    // Kept alive for the loop; `None` (no inotify slots, say) means polling only.
+    let _watcher = match notify::recommended_watcher(move |_| {
         let _ = tx.try_send(());
-    })
-    .map_err(|e| Error::Io(std::io::Error::other(e)))?;
-    for i in &profile.instruments {
-        if let Err(e) = watcher.watch(&i.source.path, notify::RecursiveMode::Recursive) {
-            tracing::info!(path = %i.source.path.display(), "no change events, polling only: {e}");
+    }) {
+        Ok(mut watcher) => {
+            for i in &profile.instruments {
+                if let Err(e) = watcher.watch(&i.source.path, notify::RecursiveMode::Recursive) {
+                    tracing::info!(path = %i.source.path.display(), "no change events, polling only: {e}");
+                }
+            }
+            Some(watcher)
         }
-    }
+        Err(e) => {
+            tracing::info!("no change events, polling only: {e}");
+            None
+        }
+    };
 
     let mut agent = Agent::new(profile, remote, spool, host);
     tracing::info!("running; poll every {}s", poll.as_secs());

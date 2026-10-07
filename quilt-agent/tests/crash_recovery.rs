@@ -162,7 +162,8 @@ async fn interrupted_run_lands_exactly_once() -> Result<(), Box<dyn std::error::
     assert_eq!(r.verified.len(), 3, "all members verified before the seal");
 
     // Pass 2 is a new process: same spool, same bucket, nothing in memory.
-    let Agent { remote, .. } = first;
+    let Agent { remote, spool, .. } = first;
+    drop(spool); // the old process is gone: release its spool lock
     let mut second = Agent::new(
         profile(source.path()),
         remote,
@@ -252,7 +253,8 @@ async fn replayed_publish_adds_no_second_history_entry() -> Result<(), Box<dyn s
     // History tags have one-second resolution; replay in a later second so a
     // clock-based timestamp would land on a new tag.
     tokio::time::sleep(Duration::from_millis(1100)).await;
-    let Agent { remote, .. } = agent;
+    let Agent { remote, spool, .. } = agent;
+    drop(spool);
     let mut agent = Agent::new(
         profile(source.path()),
         remote,
@@ -283,43 +285,49 @@ async fn a_later_run_of_the_same_package_advances_latest() -> Result<(), Box<dyn
 {
     let source = tempfile::tempdir()?;
     let spool_dir = tempfile::tempdir()?;
-    let later = SystemTime::now() + Duration::from_secs(3600);
+    // Both runs name the same package: the pattern ignores the folder name.
+    let yaml = format!(
+        r#"
+schema_version: "1"
+observer: {{ id: edge-01, placement: beside }}
+registry: {{ url: "https://example.quiltdata.com", credential_ref: k }}
+instruments:
+  - id: reader-1
+    source: {{ path: "{}" }}
+    landing: {{ bucket: raw, prefix: lab }}
+    boundary: {{ method: marker_file, markers: ["done.txt"], confirm_window_s: 60 }}
+    packaging: {{ package_name_pattern: "{{instrument_id}}/plates" }}
+"#,
+        source.path().display()
+    );
     let remote = Flaky {
         inner: MockRemote::default(),
         fail_seal: AtomicBool::new(false),
     };
     let mut agent = Agent::new(
-        profile(source.path()),
+        Profile::parse(&yaml)?,
         remote,
         Spool::open(spool_dir.path())?,
         None,
     );
-    for (i, t) in [(1u8, later), (2, later + Duration::from_secs(3600))] {
-        // Same folder name, so the same package; a new folder each time.
-        let run = source.path().join("plate");
-        let _ = std::fs::remove_dir_all(&run);
+    let start = SystemTime::now();
+    for (i, name) in [(1u8, "plate1"), (2, "plate2")] {
+        let run = source.path().join(name);
         std::fs::create_dir(&run)?;
         std::fs::write(run.join("a.fcs"), vec![i; 4])?;
         std::fs::write(run.join("done.txt"), b"")?;
-        // Clear the snapshot so the reused folder is observed afresh.
-        let journal = spool_dir.path().join("journal.jsonl");
-        if i == 2 {
-            keep_journal_lines(&journal, |l| l.contains(r#""event":"landed""#))?;
-            let Agent { remote, .. } = agent;
-            agent = Agent::new(
-                profile(source.path()),
-                remote,
-                Spool::open(spool_dir.path())?,
-                None,
-            );
-        }
-        agent.pass(t - Duration::from_secs(3600)).await?;
+        let t = start + Duration::from_secs(u64::from(i) * 3600);
         agent.pass(t).await?;
+        agent.pass(t + Duration::from_secs(120)).await?;
     }
     let landed = landed_events(spool_dir.path());
     assert_eq!(landed.len(), 2);
     assert_eq!(landed[1]["latest_advanced"], true);
-    let latest = read(&agent.remote, ".quilt/named_packages/reader-1/plate/latest").await;
+    let latest = read(
+        &agent.remote,
+        ".quilt/named_packages/reader-1/plates/latest",
+    )
+    .await;
     assert_eq!(latest, landed[1]["top_hash"].as_str().unwrap());
     Ok(())
 }
@@ -369,5 +377,36 @@ instruments:
     let journal = std::fs::read_to_string(spool_dir.path().join("journal.jsonl"))?;
     assert_eq!(journal.matches(r#""event":"refused""#).count(), 1);
     assert_eq!(landed_events(spool_dir.path()).len(), 0);
+    Ok(())
+}
+
+/// An instrument that clears its output folder and writes the next run at the
+/// same path gets that run captured too, not ignored as already done.
+#[tokio::test]
+async fn a_new_run_at_a_reused_path_is_captured() -> Result<(), Box<dyn std::error::Error>> {
+    let source = tempfile::tempdir()?;
+    let spool_dir = tempfile::tempdir()?;
+    let remote = Flaky {
+        inner: MockRemote::default(),
+        fail_seal: AtomicBool::new(false),
+    };
+    let mut agent = Agent::new(
+        profile(source.path()),
+        remote,
+        Spool::open(spool_dir.path())?,
+        None,
+    );
+    let run = source.path().join("current");
+    let start = SystemTime::now();
+    for i in 1u8..=2 {
+        let _ = std::fs::remove_dir_all(&run);
+        std::fs::create_dir(&run)?;
+        std::fs::write(run.join(format!("plate{i}.fcs")), vec![i; 4])?;
+        std::fs::write(run.join("done.txt"), b"")?;
+        let t = start + Duration::from_secs(u64::from(i) * 3600);
+        agent.pass(t).await?;
+        agent.pass(t + Duration::from_secs(120)).await?;
+    }
+    assert_eq!(landed_events(spool_dir.path()).len(), 2);
     Ok(())
 }

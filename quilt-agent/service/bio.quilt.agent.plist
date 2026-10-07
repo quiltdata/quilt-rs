@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- launchd daemon. Install to /Library/LaunchDaemons/ and set the key below. -->
+<!-- launchd daemon. Install to /Library/LaunchDaemons/ (owner root:wheel, mode 0600, since it holds the key) and set the key below. -->
 <plist version="1.0">
 <dict>
   <key>Label</key><string>bio.quilt.agent</string>

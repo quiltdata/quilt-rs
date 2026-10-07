@@ -1,5 +1,6 @@
 # systemd unit. Install: copy to /etc/systemd/system/, put the API key in
-# /etc/quilt-agent/env as QUILT_AGENT_API_KEY=qk_..., then
+# /etc/quilt-agent/env as QUILT_AGENT_API_KEY=qk_... (owner root, mode 0600:
+# systemd reads it as root, so the agent's user never needs to), then
 # `systemctl enable --now quilt-agent`.
 [Unit]
 Description=Quilt lab-to-cloud agent

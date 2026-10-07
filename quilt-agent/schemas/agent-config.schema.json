@@ -81,7 +81,7 @@
             "required": ["path"],
             "properties": {
               "path": { "type": "string", "minLength": 1, "description": "UNC path, mapped drive, or mount; read-only." },
-              "run_folder_glob": { "type": "string", "default": "*", "description": "Which children of path are run folders (or run files)." },
+              "run_folder_glob": { "type": "string", "default": "*", "description": "Which directories directly under path are run folders." },
               "ignore": { "type": "array", "items": { "type": "string" }, "description": "Globs never treated as members (thumbs.db, ~$*, .tmp)." },
               "watch": { "enum": ["notify", "poll", "auto"], "default": "auto" },
               "poll_s": { "type": "integer", "minimum": 5, "default": 30 },

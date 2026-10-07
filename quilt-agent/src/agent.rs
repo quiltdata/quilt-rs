@@ -97,20 +97,27 @@ impl<R: Remote + Sync> Agent<R> {
         let known = self.spool.known_folders()?;
         let ignore = watch::glob_set(&instrument.source.ignore)?;
         for folder in watch::run_folders(&instrument.source)? {
-            if let Some(snapshotted) = known.get(&folder) {
-                // A file that appears after the boundary is a new
-                // observation, never a late member. Say so loudly, once per
-                // change, instead of dropping it silently.
-                let now_count = watch::members(&folder, &ignore)?.len();
-                if now_count > *snapshotted && self.late.insert((folder.clone(), now_count)) {
-                    tracing::warn!(
-                        folder = %folder.display(),
-                        snapshotted,
-                        now = now_count,
-                        "files appeared after this run was captured; they are not in its revision"
-                    );
+            if let Some(captured) = known.get(&folder) {
+                let now: Vec<SnapMember> = watch::members(&folder, &ignore)?
+                    .iter()
+                    .map(snap_member)
+                    .collect();
+                if captured.iter().all(|m| now.contains(m)) {
+                    // A file that appears after the boundary is a new
+                    // observation, never a late member. Say so once per
+                    // change instead of dropping it silently.
+                    if now.len() > captured.len() && self.late.insert((folder.clone(), now.len())) {
+                        tracing::warn!(
+                            folder = %folder.display(),
+                            captured = captured.len(),
+                            now = now.len(),
+                            "files appeared after this run was captured; they are not in its revision"
+                        );
+                    }
+                    continue;
                 }
-                continue;
+                // A captured member is gone or rewritten: the instrument wrote
+                // a new run at the same path. Observe it as one.
             }
             let members = watch::members(&folder, &ignore)?;
             let tracked = Tracked::update(self.tracked.remove(&folder), members, now);
@@ -184,15 +191,7 @@ impl<R: Remote + Sync> Agent<R> {
             instrument_local_time: instrument_mtime.map(local_time),
             snapshot_time_utc: now_utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             total_bytes,
-            members: tracked
-                .members
-                .iter()
-                .map(|m| SnapMember {
-                    path: slash_path(&m.path),
-                    size: m.size,
-                    mtime_unix: unix(m.mtime),
-                })
-                .collect(),
+            members: tracked.members.iter().map(snap_member).collect(),
         })?;
         // Recorded after the snapshot, so the folder is known and is refused
         // once, not again on every pass.
@@ -366,11 +365,12 @@ impl<R: Remote + Sync> Agent<R> {
         };
         // A fresh revision per run; latest moves only if nobody else
         // has moved it. Re-running after a crash yields the same hash.
-        // The parent is this agent's last revision of the same package, so a
-        // later run moves latest past it; anyone else's latest is left alone.
+        // The parent is this agent's newest earlier-captured revision of the
+        // same package, so a later run moves latest past it and an older run
+        // retried late never does; anyone else's latest is left alone.
         let parent = self
             .spool
-            .last_landed(&bucket_package_key(bucket, &revision.package_name))?;
+            .parent_for(&bucket_package_key(bucket, &revision.package_name), run_id)?;
         // A time fixed by the run, not the clock, so a replay after a crash
         // rewrites the same history entry instead of adding a second one.
         let timestamp = DateTime::parse_from_rfc3339(&sentinel.snapshot_time_utc)
@@ -411,21 +411,15 @@ impl<R: Remote + Sync> Agent<R> {
         m: &SnapMember,
     ) -> Result<FileEntry, Error> {
         let source = folder.join(&m.path);
-        // A member that changed after the boundary is a different run.
-        let meta = std::fs::metadata(&source).map_err(|e| {
-            Error::Refused(format!("member unreadable after boundary: {}: {e}", m.path))
-        })?;
-        if meta.len() != m.size || unix(meta.modified()?) != m.mtime_unix {
-            return Err(Error::Refused(format!(
-                "member changed after boundary: {}",
-                m.path
-            )));
-        }
+        // Checked before and after the upload: bytes that changed in between
+        // are not the run the boundary decided on.
+        Self::unchanged(&source, m)?;
         let key = join_key(&[run_prefix, &m.path]);
         let (uri, hash) = self
             .remote
             .upload_file(host_config, &source, &s3(bucket, &key), m.size)
             .await?;
+        Self::unchanged(&source, m)?;
         // ObjectHash serializes as {"type", "value"}, the sentinel's checksum shape.
         let v = serde_json::to_value(&hash)?;
         let checksum = Checksum {
@@ -443,6 +437,29 @@ impl<R: Remote + Sync> Agent<R> {
             )),
             version_id: uri.version,
         })
+    }
+
+    /// A member still matches its snapshot. A missing file or a changed size
+    /// or mtime is a different run (refused); any other I/O error — a share
+    /// that dropped off the network — is transient and retried next pass.
+    fn unchanged(source: &Path, m: &SnapMember) -> Result<(), Error> {
+        let meta = match std::fs::metadata(source) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Err(Error::Refused(format!(
+                    "member gone after boundary: {}",
+                    m.path
+                )));
+            }
+            Err(e) => return Err(e.into()),
+        };
+        if meta.len() != m.size || unix(meta.modified()?) != m.mtime_unix {
+            return Err(Error::Refused(format!(
+                "member changed after boundary: {}",
+                m.path
+            )));
+        }
+        Ok(())
     }
 
     async fn read_json<T: serde::de::DeserializeOwned>(
@@ -499,6 +516,14 @@ fn join_key(parts: &[&str]) -> String {
         .filter(|p| !p.is_empty())
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn snap_member(m: &watch::Member) -> SnapMember {
+    SnapMember {
+        path: slash_path(&m.path),
+        size: m.size,
+        mtime_unix: unix(m.mtime),
+    }
 }
 
 fn slash_path(p: &Path) -> String {

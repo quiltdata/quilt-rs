@@ -9,12 +9,16 @@ resumes any in-flight run from its journal on the next start.
 | macOS | `bio.quilt.agent.plist` | launchd daemon; `KeepAlive` |
 | Windows | Scheduled Task (below) | no native Windows service yet |
 
-Windows, from an elevated prompt, running as an account that can read the share:
+Windows, from an elevated prompt. The key goes in the service account's own
+environment, not the machine's, so other local users cannot read it:
 
-```bat
-setx /M QUILT_AGENT_API_KEY qk_...
-schtasks /Create /TN QuiltAgent /SC ONSTART /RU <account> /RP ^
-  /TR "\"C:\Program Files\QuiltAgent\quilt-agent.exe\" run C:\ProgramData\QuiltAgent\profile.yaml"
 ```
+schtasks /Create /TN QuiltAgent /SC ONSTART /RU <account> /RP ^
+  /TR "cmd /c set QUILT_AGENT_API_KEY=qk_... && \"C:\Program Files\QuiltAgent\quilt-agent.exe\" run C:\ProgramData\QuiltAgent\profile.yaml"
+```
+
+Restrict the task's ACL to administrators and `<account>`; anyone who can read
+the task definition can read the key. An OS keystore replaces this with the
+installer.
 
 Validate a profile before installing: `quilt-agent check profile.yaml`.

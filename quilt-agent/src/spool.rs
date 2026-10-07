@@ -95,6 +95,10 @@ pub struct Run {
     pub sealed: Option<(String, Option<String>)>,
     /// Journal line of the `Sealed` event, for ordering the chain by seal time.
     pub sealed_at_line: usize,
+    /// Journal line of the `Snapshot`: the order runs were captured in.
+    pub captured_at_line: usize,
+    /// `(package, top_hash)` once landed.
+    pub landed: Option<(String, String)>,
     pub state: RunState,
 }
 
@@ -121,6 +125,14 @@ impl Spool {
                 .set_len(keep as u64)?;
         }
         let journal = OpenOptions::new().create(true).append(true).open(&path)?;
+        // One agent per spool: a second process would snapshot the same runs.
+        // The OS releases the lock when this process exits, however it exits.
+        journal.try_lock().map_err(|_| {
+            Error::Refused(format!(
+                "another quilt-agent is using {}; stop it first",
+                root.display()
+            ))
+        })?;
         Ok(Spool {
             root: root.to_path_buf(),
             journal,
@@ -157,6 +169,8 @@ impl Spool {
                             verified: BTreeMap::new(),
                             sealed: None,
                             sealed_at_line: 0,
+                            captured_at_line: line_no,
+                            landed: None,
                             state: RunState::Uploading,
                         },
                     );
@@ -177,8 +191,13 @@ impl Spool {
                         run.state = RunState::Sealed;
                     }
                 }
-                Event::Landed { .. } => {
+                Event::Landed {
+                    package_name,
+                    top_hash,
+                    ..
+                } => {
                     if let Some(run) = runs.get_mut(&id) {
+                        run.landed = Some((package_name, top_hash));
                         run.state = RunState::Landed;
                     }
                 }
@@ -215,34 +234,38 @@ impl Spool {
             .map(|(_, id)| id))
     }
 
-    /// The top hash this agent last landed for `package` (`bucket:name`).
-    pub fn last_landed(&self, package: &str) -> Result<Option<String>, Error> {
-        let file = File::open(self.root.join("journal.jsonl"))?;
-        let mut last = None;
-        for line in BufReader::new(file).lines() {
-            if let Ok(Event::Landed {
-                package_name,
-                top_hash,
-                ..
-            }) = serde_json::from_str(&line?)
-                && package_name == package
-            {
-                last = Some(top_hash);
-            }
-        }
-        Ok(last)
+    /// The parent for `run_id`'s revision of `package` (`bucket:name`): the
+    /// newest of this agent's runs of that package captured *before* it. An
+    /// older run retried after a newer one landed must not name the newer
+    /// one as its parent, or its publish would move `latest` backward.
+    pub fn parent_for(&self, package: &str, run_id: &str) -> Result<Option<String>, Error> {
+        let runs = self.runs()?;
+        let Some(mine) = runs.get(run_id).map(|r| r.captured_at_line) else {
+            return Ok(None);
+        };
+        Ok(runs
+            .values()
+            .filter(|r| r.captured_at_line < mine)
+            .filter_map(|r| match &r.landed {
+                Some((p, hash)) if p == package => Some((r.captured_at_line, hash.clone())),
+                _ => None,
+            })
+            .max()
+            .map(|(_, hash)| hash))
     }
 
-    /// Folders already observed, with how many members their snapshot froze,
-    /// so a scan neither snapshots a run twice nor misses files added after.
-    pub fn known_folders(&self) -> Result<BTreeMap<PathBuf, usize>, Error> {
-        Ok(self
-            .runs()?
-            .values()
-            .filter_map(|r| match &r.snapshot {
+    /// The newest snapshot of each folder: the members it froze. A scan uses
+    /// it to tell a captured run (still there, maybe grown) from a new run
+    /// the instrument wrote at the same path.
+    pub fn known_folders(&self) -> Result<BTreeMap<PathBuf, Vec<SnapMember>>, Error> {
+        let mut runs: Vec<Run> = self.runs()?.into_values().collect();
+        runs.sort_by_key(|r| r.captured_at_line);
+        Ok(runs
+            .into_iter()
+            .filter_map(|r| match r.snapshot {
                 Event::Snapshot {
                     folder, members, ..
-                } => Some((folder.clone(), members.len())),
+                } => Some((folder, members)),
                 _ => None,
             })
             .collect())
@@ -279,6 +302,14 @@ mod tests {
             mtime_local: None,
             version_id: Some("v1".to_string()),
         }
+    }
+
+    #[test]
+    fn a_second_agent_cannot_open_the_same_spool() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let _first = Spool::open(dir.path())?;
+        assert!(Spool::open(dir.path()).is_err());
+        Ok(())
     }
 
     #[test]
@@ -325,6 +356,32 @@ mod tests {
             latest_advanced: true,
         })?;
         assert_eq!(spool.runs()?["r1"].state, RunState::Landed);
+        Ok(())
+    }
+
+    fn landed(run: &str, hash: &str) -> Event {
+        Event::Landed {
+            run_id: run.into(),
+            package_name: "raw:a/b".into(),
+            top_hash: hash.into(),
+            latest_advanced: true,
+        }
+    }
+
+    /// Run A is captured before B; B lands first; A's retry must not take B
+    /// as its parent, or it would move `latest` back to the older run.
+    #[test]
+    fn an_older_run_retried_late_never_parents_on_a_newer_one() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let mut spool = Spool::open(dir.path())?;
+        spool.record(&snapshot("a", "i", "2026-10-07T00:00:00Z"))?;
+        spool.record(&snapshot("b", "i", "2026-10-07T01:00:00Z"))?;
+        spool.record(&landed("b", "hash-b"))?;
+        assert_eq!(spool.parent_for("raw:a/b", "a")?, None);
+        spool.record(&landed("a", "hash-a"))?;
+        assert_eq!(spool.parent_for("raw:a/b", "b")?.as_deref(), Some("hash-a"));
+        spool.record(&snapshot("c", "i", "2026-10-07T02:00:00Z"))?;
+        assert_eq!(spool.parent_for("raw:a/b", "c")?.as_deref(), Some("hash-b"));
         Ok(())
     }
 

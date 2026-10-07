@@ -18,8 +18,6 @@ pub struct Profile {
     #[serde(default)]
     pub spool: Spool,
     #[serde(default)]
-    pub upload: Upload,
-    #[serde(default)]
     pub packager: Packager,
     pub instruments: Vec<Instrument>,
 }
@@ -53,32 +51,6 @@ impl Default for Spool {
     fn default() -> Self {
         Spool {
             max_bytes: Self::default_max_bytes(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct Upload {
-    #[serde(default = "Upload::default_retry_base_ms")]
-    pub retry_base_ms: u64,
-    #[serde(default = "Upload::default_retry_max_ms")]
-    pub retry_max_ms: u64,
-}
-
-impl Upload {
-    fn default_retry_base_ms() -> u64 {
-        1_000
-    }
-    fn default_retry_max_ms() -> u64 {
-        300_000
-    }
-}
-
-impl Default for Upload {
-    fn default() -> Self {
-        Upload {
-            retry_base_ms: Self::default_retry_base_ms(),
-            retry_max_ms: Self::default_retry_max_ms(),
         }
     }
 }
@@ -257,7 +229,57 @@ impl Profile {
                 err.instance_path()
             )));
         }
-        serde_json::from_value(value).map_err(|e| Error::Profile(e.to_string()))
+        reject_unbuilt(&value)?;
+        let profile: Profile =
+            serde_json::from_value(value).map_err(|e| Error::Profile(e.to_string()))?;
+        for i in &profile.instruments {
+            let mut globs = vec![i.source.run_folder_glob.clone()];
+            globs.extend(i.source.ignore.iter().cloned());
+            globs.extend(i.boundary.markers.iter().cloned());
+            crate::watch::glob_set(&globs)
+                .map_err(|e| Error::Profile(format!("instrument {}: {e}", i.id)))?;
+        }
+        Ok(profile)
+    }
+}
+
+/// Settings the schema reserves but this build does not act on. Refusing them
+/// beats starting an agent that quietly does something other than asked.
+fn reject_unbuilt(value: &serde_json::Value) -> Result<(), Error> {
+    let mut found = Vec::new();
+    for key in [
+        "upload",
+        "packager/locus",
+        "packager/workflow_intent",
+        "packager/metadata_static",
+    ] {
+        if value.pointer(&format!("/{key}")).is_some() {
+            found.push(key.to_string());
+        }
+    }
+    for (n, i) in value["instruments"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        for key in [
+            "source/stage_copy",
+            "source/watch",
+            "packaging/metadata_static",
+        ] {
+            if i.pointer(&format!("/{key}")).is_some() {
+                found.push(format!("instruments/{n}/{key}"));
+            }
+        }
+    }
+    if found.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::Profile(format!(
+            "not supported by this version: {}",
+            found.join(", ")
+        )))
     }
 }
 
@@ -294,6 +316,23 @@ instruments:
         let p = Profile::parse(MINIMAL).unwrap();
         // confirm_window_s is 30, the measured cache TTL 60: the TTL wins.
         assert_eq!(p.instruments[0].quiet_window_s(), 60);
+    }
+
+    #[test]
+    fn a_setting_this_build_ignores_is_refused() {
+        let with = MINIMAL.replace(
+            "dir_cache_ttl_s: 60",
+            "dir_cache_ttl_s: 60, stage_copy: true",
+        );
+        let err = Profile::parse(&with).unwrap_err().to_string();
+        assert!(err.contains("source/stage_copy"), "{err}");
+    }
+
+    #[test]
+    fn a_malformed_glob_fails_check() {
+        let bad = MINIMAL.replace("markers: [\"done.txt\"]", "markers: [\"done[.txt\"]");
+        let err = Profile::parse(&bad).unwrap_err().to_string();
+        assert!(err.contains("plate-reader-1"), "{err}");
     }
 
     #[test]
