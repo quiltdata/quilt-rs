@@ -124,8 +124,11 @@ fn explicit(window_s: u64, obs: &Observation) -> Verdict {
     let Some(requested) = obs.requested_at else {
         return Verdict::Pending;
     };
-    let quiet = quiet_for(obs);
-    if quiet < window_s || obs.now < requested {
+    // Waited from the later of the last write and the request, so a request
+    // made just before a final write still gets the whole window after it.
+    let since = obs.last_change.max(requested);
+    let quiet = obs.now.duration_since(since).map_or(0, |d| d.as_secs());
+    if quiet < window_s {
         return Verdict::Pending;
     }
     let at: chrono::DateTime<chrono::Utc> = requested.into();
@@ -325,6 +328,12 @@ mod tests {
             now: at(now),
         };
         assert_eq!(decide(&b, 30, &obs(None, 10_000)), Verdict::Pending);
+        // Quiet for hours, then a request: the window starts at the request.
+        assert_eq!(decide(&b, 30, &obs(Some(9_000), 9_010)), Verdict::Pending);
+        assert!(matches!(
+            decide(&b, 30, &obs(Some(9_000), 9_030)),
+            Verdict::Complete { .. }
+        ));
         assert_eq!(decide(&b, 30, &obs(Some(5), 20)), Verdict::Pending);
         match decide(&b, 30, &obs(Some(5), 40)) {
             Verdict::Complete {

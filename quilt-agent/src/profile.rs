@@ -242,6 +242,20 @@ impl Profile {
             crate::watch::glob_set(&globs)
                 .map_err(|e| Error::Profile(format!("instrument {}: {e}", i.id)))?;
         }
+        // A request names a folder, not an instrument: two instruments sharing a
+        // control directory would both close on one request.
+        let mut dirs = std::collections::BTreeSet::new();
+        for i in &profile.instruments {
+            if let Some(d) = &i.boundary.control_dir
+                && !dirs.insert(d)
+            {
+                return Err(Error::Profile(format!(
+                    "instrument {}: control_dir {} is already used by another instrument",
+                    i.id,
+                    d.display()
+                )));
+            }
+        }
         Ok(profile)
     }
 }
@@ -347,6 +361,22 @@ instruments:
         );
         let err = Profile::parse(&with).unwrap_err().to_string();
         assert!(err.contains("explicit_source: loopback"), "{err}");
+    }
+
+    #[test]
+    fn two_instruments_cannot_share_a_control_dir() {
+        let explicit = "method: explicit, explicit_source: control_dir, control_dir: /srv/requests";
+        let one = MINIMAL.replace(
+            "method: marker_file, markers: [\"done.txt\"], confirm_window_s: 30",
+            explicit,
+        );
+        let instrument = &one[one.find("  - id: plate-reader-1").expect("instrument")..];
+        let two = format!(
+            "{one}{}",
+            instrument.replace("plate-reader-1", "plate-reader-2")
+        );
+        let err = Profile::parse(&two).unwrap_err().to_string();
+        assert!(err.contains("already used"), "{err}");
     }
 
     #[test]

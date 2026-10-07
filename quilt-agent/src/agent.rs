@@ -126,7 +126,7 @@ impl<R: Remote + Sync> Agent<R> {
                 instrument.quiet_window_s(),
                 &boundary::Observation {
                     members: &tracked.members,
-                    requested_at: completion_request(instrument, &folder),
+                    requested_at: completion_request(instrument, &folder)?,
                     last_change: tracked.last_change,
                     now,
                 },
@@ -495,12 +495,17 @@ impl<R: Remote + Sync> Agent<R> {
 }
 
 /// When `<control_dir>/<folder name>.complete` was written, if it exists.
-fn completion_request(instrument: &Instrument, folder: &Path) -> Option<SystemTime> {
-    let dir = instrument.boundary.control_dir.as_ref()?;
-    let name = folder.file_name()?.to_string_lossy();
-    std::fs::metadata(dir.join(format!("{name}.complete")))
-        .and_then(|m| m.modified())
-        .ok()
+/// A missing request is the normal case; any other error (an unreadable
+/// control directory) is reported, not mistaken for "no request".
+fn completion_request(instrument: &Instrument, folder: &Path) -> Result<Option<SystemTime>, Error> {
+    let (Some(dir), Some(name)) = (&instrument.boundary.control_dir, folder.file_name()) else {
+        return Ok(None);
+    };
+    match std::fs::metadata(dir.join(format!("{}.complete", name.to_string_lossy()))) {
+        Ok(meta) => Ok(Some(meta.modified()?)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
 }
 
 fn instrument_json(i: &Instrument) -> serde_json::Value {
