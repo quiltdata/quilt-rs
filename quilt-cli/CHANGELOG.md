@@ -23,7 +23,7 @@
 
 ### Added
 
-- Publish a prebuilt Windows (x86_64-msvc) binary on each release, so `cargo binstall quilt-cli` works on Windows
+- Publish a prebuilt Windows (x86_64-msvc) binary on each release, so `cargo binstall quilt-cli` works on Windows (<https://github.com/quiltdata/quilt-rs/pull/1081>)
 
 ## [v0.36.0] - 2026-10-07
 
