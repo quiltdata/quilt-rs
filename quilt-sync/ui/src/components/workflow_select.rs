@@ -441,7 +441,7 @@ pub fn WorkflowSection(
     settings_workflow: Option<String>,
 ) -> impl IntoView {
     let missing = missing_settings_workflow(&view, settings_workflow.as_deref())
-        .map(missing_settings_workflow_view);
+        .map(|id| missing_settings_workflow_view(id).into_any());
     let WorkflowView {
         kind,
         options,
@@ -449,19 +449,34 @@ pub fn WorkflowSection(
         config_url,
     } = view;
 
-    let section = match kind {
+    // The warning renders inside the section's own block, so it sits right
+    // under the selector instead of a whole form gap below it.
+    match kind {
         WorkflowViewKind::Available {
             is_workflow_required,
-        } => workflow_dropdown(
-            options,
-            selected,
-            initial,
-            is_workflow_required,
-            note,
-            config_url,
-            settings_workflow,
-        )
-        .into_any(),
+        } => {
+            // Why this workflow is selected, while Settings' pick is selected.
+            let hint_intents: Vec<WorkflowIntent> =
+                options.iter().map(|o| o.intent.clone()).collect();
+            let settings_row = move || {
+                shows_settings_workflow_hint(
+                    hint_intents.get(selected.get()),
+                    settings_workflow.as_deref(),
+                )
+                .then(|| settings_hint_view("This workflow is your default in"))
+            };
+            let settings_rows = view! { {settings_row} {missing} }.into_any();
+            workflow_dropdown(
+                options,
+                selected,
+                initial,
+                is_workflow_required,
+                note,
+                config_url,
+                settings_rows,
+            )
+            .into_any()
+        }
         // Ungoverned bucket: a single disabled `None`, plus a hint explaining
         // why there is no choice to make. Submit already carries `BucketDefault`
         // via `options[0]`.
@@ -474,6 +489,7 @@ pub fn WorkflowSection(
                     </select>
                 </p>
                 <span class="qui-workflow-hint">"This bucket has no workflow configuration."</span>
+                {missing}
             </div>
         }
         .into_any(),
@@ -512,12 +528,6 @@ pub fn WorkflowSection(
             }
             .into_any()
         }
-    };
-    view! {
-        {section}
-        // Settings names a workflow this bucket can't use: the form falls back
-        // to the bucket's preselection, but Publish would fail here.
-        {missing}
     }
 }
 
@@ -584,19 +594,14 @@ fn workflow_dropdown(
     is_workflow_required: bool,
     note: Memo<Option<String>>,
     config_url: Option<String>,
-    settings_workflow: Option<String>,
+    // The Settings lines under the selector: why the selection came from
+    // Settings, or that Settings names a workflow this bucket can't use.
+    settings_rows: AnyView,
 ) -> impl IntoView {
     // Intents indexed by option position — used to decide whether the current
     // selection is the (disabled) `None` item, which drives the required hint.
     let intents: Vec<WorkflowIntent> = options.iter().map(|o| o.intent.clone()).collect();
-    let hint_intents = intents.clone();
-    let settings_row = move || {
-        shows_settings_workflow_hint(
-            hint_intents.get(selected.get()),
-            settings_workflow.as_deref(),
-        )
-        .then(|| settings_hint_view("This workflow is your default in"))
-    };
+
     let show_required_hint = move || {
         is_workflow_required
             && intents
@@ -682,8 +687,7 @@ fn workflow_dropdown(
                     <p class="qui-workflow-hint qui-workflow-note-warn">{text}</p>
                 })
             }}
-            // Why this workflow is selected, when Settings chose it.
-            {settings_row}
+            {settings_rows}
             // Catalog links for the current selection (config.yml + the
             // selected workflow's schemas), recomputed as the selection changes.
             {links_row}
