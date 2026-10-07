@@ -449,7 +449,10 @@ pub fn MetadataField(
     let error_id = format!("{control_id}-error");
     let body_id = format!("{control_id}-body");
     let preview = move || match MetadataPreview::of(&metadata.get()) {
-        MetadataPreview::None => view! { <span>"None"</span> }.into_any(),
+        // Muted, so it reads as an absence and not as a value called "None".
+        MetadataPreview::None => {
+            view! { <span class=style::field_empty>"No metadata"</span> }.into_any()
+        }
         MetadataPreview::Invalid => view! { <span>"Not valid JSON"</span> }.into_any(),
         MetadataPreview::Json(value) => view! { <JsonDisplay value=value /> }.into_any(),
     };
@@ -483,7 +486,17 @@ pub fn MetadataField(
                     aria_controls=body_id.clone()
                     on_click=move |_| editing.update(|open| *open = !*open)
                 >
-                    {move || if editing.get() { "Done" } else { "Edit" }}
+                    // `Add` while there is nothing to edit; same place, so the
+                    // row does not move when the first field is written.
+                    {move || {
+                        if editing.get() {
+                            "Done"
+                        } else if MetadataPreview::of(&metadata.get()) == MetadataPreview::None {
+                            "Add"
+                        } else {
+                            "Edit"
+                        }
+                    }}
                 </Button>
             </div>
             <div class=style::field_value id=body_id>

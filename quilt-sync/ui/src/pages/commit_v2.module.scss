@@ -55,6 +55,10 @@
   margin: 0;
 }
 
+.field_empty {
+  color: var(--q-fgColor-muted);
+}
+
 .field_hint {
   margin: var(--q-space-1) 0 0;
   color: var(--q-fgColor-muted);

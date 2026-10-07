@@ -33,6 +33,8 @@
 //!   the one tall control on the page. Folded, it is drawn as the catalog
 //!   draws it: a `kit::JsonDisplay` folded to one line that fits the room it
 //!   has, and opens in place to read the whole document without the editor.
+//!   With none — empty text or `{}` — it reads `No metadata`, muted so it is
+//!   an absence and not a value called "None", and its button reads `Add`.
 //! - **A field names its source only when it is the publish settings**, 24px
 //!   under the value: `From your publish settings. Change it in Settings`.
 //!   The other sources — the bucket's default workflow, the published
@@ -366,6 +368,9 @@ pub fn CommitPageScene() -> impl IntoView {
                     no_workflow: "None — this package has no bucket yet",
                     ..Fixture::new("commit-local-only")
                 })}
+            </Cell>
+            <Cell full=true label="no metadata — the absence muted, and the button reads Add">
+                {page(Fixture { metadata: "", ..Fixture::new("commit-no-metadata") })}
             </Cell>
             <Cell full=true label="the metadata editor open">
                 {page(Fixture { editing: true, ..Fixture::new("commit-expanded") })}
