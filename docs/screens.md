@@ -372,6 +372,59 @@ After either action -> **Installed Package**
 
 ---
 
+### Commit (v2)
+
+With *New design preview* on, `/commit` renders this page instead, from the
+same read and through the same commands. One column, in the order you
+confirm; the file list goes last so a long list scrolls under the form.
+
+```text
++--[appbar]----------------------------------------------+
+| [logo]                                 [refresh] [gear] |
++---------------------------------------------------------+
+| Packages > user/package-a                               |
+| New revision     [Publish 3 files | v] [Open folder]    |
+|                                                         |
+| [! 2 system files would be published (.DS_Store)]       |
+|                                     [Ignore them]       |
+| Message                                                 |
+| [ Updated 3 files: a.csv, b.csv, c.json (placeholder) ] |
+| Workflow                                                |
+| [ Bucket's default (Plate reads)                   v ]  |
+| Metadata                                       [Edit]   |
+| { "assay": "ELISA", "plate": 7 }                        |
+|                                                         |
+| What's included · 3 files · 8.5 MB                      |
+|  data/file-a.csv          Changed   4.2 MB   [...]      |
+|  data/file-b.parquet      New       4.3 MB   [...]      |
+|  data/file-c.json         Deleted   18.4 kB  [...]      |
+| 2 ignored files not included                            |
++---------------------------------------------------------+
+```
+
+- The primary reads `Publish N files`, or `Publish revision` when only
+  metadata changed; its caret holds `Save without publishing`. A package
+  with no bucket gets `Save revision` with no caret. N and the size count
+  every change in the package, not the capped list; the size is the new and
+  changed files' bytes.
+- The message starts empty over the publish message as its placeholder;
+  an empty message submits the placeholder.
+- The workflow is a live select, or plain words when there is nothing to
+  choose. The metadata is a read-only preview with `Edit` (`Add` when
+  empty), which opens the JSON editor; a failed metadata check opens it.
+  Each says "From your publish settings" only while Settings supplied it.
+- A role without access, no session, or a failing workflow check disables
+  the whole primary, with the reason in a tooltip.
+- `Ignore` on a row and `Ignore them` on the banner open the **Ignore
+  Popup**; adding the pattern re-reads the page.
+- Arriving from `Create new revision` focuses the message
+  (`focus=message`); `Review before publishing…` focuses nothing.
+
+After either action -> **Installed Package**. A failure stays on the page,
+in the banner under the appbar, and the page re-reads.
+
+---
+
 ### Merge
 
 Shown when local and remote versions have diverged.

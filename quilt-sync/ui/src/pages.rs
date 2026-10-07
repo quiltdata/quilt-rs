@@ -16,6 +16,7 @@ mod setup;
 mod status_watch;
 
 pub use commit::Commit;
+pub use commit_v2::{CommitV2, CommitV2Skeleton};
 pub use error::Error;
 pub use installed_package::InstalledPackage;
 pub use installed_package_v2::InstalledPackageV2;

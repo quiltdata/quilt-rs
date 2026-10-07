@@ -114,6 +114,11 @@ pub struct CommitData {
     pub entries: Vec<EntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
+    /// The entries by kind over the whole package, not the capped `entries`.
+    pub counts: EntryCounts,
+    /// The new and changed files' bytes over the whole package; a deletion
+    /// adds none.
+    pub changed_bytes: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]

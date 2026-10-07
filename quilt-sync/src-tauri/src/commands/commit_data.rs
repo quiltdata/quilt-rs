@@ -27,6 +27,7 @@ use crate::publish_settings::PublishSettings;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
 
+use super::package_entries::EntryCounts;
 use super::package_entries::InstalledPackageEntryData;
 use super::package_list::denied_mark;
 
@@ -133,6 +134,13 @@ pub struct CommitData {
     pub entries: Vec<InstalledPackageEntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
+    /// The package's entries by kind, over the whole package rather than the
+    /// capped `entries`, as the v2 package page counts them. `counts.changed`
+    /// is what `Publish N files` says.
+    pub counts: EntryCounts,
+    /// The bytes the revision brings in: the new and changed files' sizes,
+    /// over the whole package. A deletion is a change but brings none.
+    pub changed_bytes: u64,
 }
 
 #[derive(Serialize)]
@@ -451,6 +459,11 @@ async fn get_commit_data_from_model(
         .filter(|f| !status.changes.contains_key(*f))
         .count();
 
+    let counts =
+        super::package_entries::entry_list(namespace, &status, &lineage.paths, &manifest_entries)
+            .counts;
+    let changed_bytes = changed_bytes(&status.changes);
+
     // Start from what one-click Publish and autosync would send.
     let (message, settings_user_meta, settings_workflow) =
         model::publish_inputs(namespace, settings, &status);
@@ -519,7 +532,20 @@ async fn get_commit_data_from_model(
         entries: entries_list,
         ignored_count,
         unmodified_count,
+        counts,
+        changed_bytes,
     })
+}
+
+/// What the new and changed files weigh; a deletion adds nothing.
+fn changed_bytes(changes: &quilt::lineage::ChangeSet) -> u64 {
+    changes
+        .values()
+        .map(|change| match change {
+            quilt::lineage::Change::Added(row) | quilt::lineage::Change::Modified(row) => row.size,
+            quilt::lineage::Change::Removed(_) => 0,
+        })
+        .sum()
 }
 
 #[tauri::command]
@@ -1473,6 +1499,82 @@ mod tests {
             })
         });
         model
+    }
+
+    /// The totals count every change in the package, not the capped list, so
+    /// `Publish N files` stays true past the cap. Deletions are changes, but
+    /// bring no bytes into the revision.
+    #[tokio::test]
+    async fn commit_data_totals_count_past_the_list_cap() -> Result<(), String> {
+        let mut model = mocks::create();
+        let remote_manifest = quilt_uri::ManifestUri {
+            bucket: "quilt-example".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abcdef".to_string(),
+            origin: Some(fixtures::host()),
+        };
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    remote_manifest.clone(),
+                    remote_manifest.hash.clone(),
+                ))
+            });
+        let row = |size| quilt::manifest::ManifestRow {
+            size,
+            ..quilt::manifest::ManifestRow::default()
+        };
+        let mut status = quilt::lineage::InstalledPackageStatus::default();
+        for i in 0..1200 {
+            status.changes.insert(
+                std::path::PathBuf::from(format!("new/{i:04}.csv")),
+                quilt::lineage::Change::Added(row(10)),
+            );
+        }
+        status.changes.insert(
+            std::path::PathBuf::from("changed.csv"),
+            quilt::lineage::Change::Modified(row(5)),
+        );
+        status.changes.insert(
+            std::path::PathBuf::from("gone.csv"),
+            quilt::lineage::Change::Removed(row(1_000_000)),
+        );
+        status.ignored_files.push((
+            std::path::PathBuf::from("scratch.tmp"),
+            "*.tmp".to_string(),
+            7,
+        ));
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| Ok(status));
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
+        model
+            .expect_browse_remote_manifest()
+            .returning(|_| Ok(mocks::create_remote_manifest()));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
+
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &PublishSettings::default(),
+            &("foo", "bar").into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        assert!(data.entries.len() < 1202, "the list is capped");
+        assert_eq!(data.counts.changed, 1202);
+        assert_eq!(data.counts.deleted, 1);
+        assert_eq!(data.counts.ignored, 1);
+        assert_eq!(data.changed_bytes, 1200 * 10 + 5);
+        Ok(())
     }
 
     #[tokio::test]

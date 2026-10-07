@@ -880,7 +880,7 @@ fn commit_disabled(message: &str, blocked: bool) -> bool {
 /// Guards the mount-time Effect run, which observes the initial key equal to the
 /// seeded mirror — scheduling a `set` there would re-run the validation resource
 /// with identical input (`RwSignal::set` has no `PartialEq` dedupe).
-fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
+pub(super) fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
     key != debounced
 }
 
@@ -902,11 +902,11 @@ fn message_settings_hint(has_template: bool) -> &'static str {
 
 /// The text the metadata editor starts with: the publish settings' default
 /// metadata when there is one, else the previous revision's metadata.
-fn starting_metadata(settings: Option<&str>, previous: &str) -> String {
+pub(super) fn starting_metadata(settings: Option<&str>, previous: &str) -> String {
     settings.unwrap_or(previous).to_string()
 }
 
-fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
+pub(super) fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
     if editor_text.trim().is_empty() {
         seeded_previous.to_string()
     } else {
@@ -922,7 +922,7 @@ fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
 /// pristine form — e.g. empty seeded metadata live-validated against a schema
 /// with required fields — never paints "as you type" errors before the user
 /// types.
-fn displayed_violations(
+pub(super) fn displayed_violations(
     violations: &[CommitViolation],
     message_dirty: bool,
     metadata_dirty: bool,
@@ -941,7 +941,10 @@ fn displayed_violations(
 /// The messages of the violations that belong under `field`, in order. Pure
 /// mapping from the backend's per-field violation list to the strings one field
 /// renders, so the routing is unit-testable without a DOM.
-fn field_violations(violations: &[CommitViolation], field: ViolationField) -> Vec<String> {
+pub(super) fn field_violations(
+    violations: &[CommitViolation],
+    field: ViolationField,
+) -> Vec<String> {
     violations
         .iter()
         .filter(|violation| violation.field == field)
