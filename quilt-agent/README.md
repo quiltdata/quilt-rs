@@ -16,6 +16,7 @@ was observed, and publishes the run as a fresh Quilt package revision.
 
 ```sh
 quilt-agent check profile.yaml
+quilt-agent status profile.yaml   # one JSON line per run; parked runs say why
 QUILT_AGENT_API_KEY=qk_... quilt-agent run profile.yaml
 quilt-agent run profile.yaml --bucket-only   # ambient AWS credentials, no registry
 ```

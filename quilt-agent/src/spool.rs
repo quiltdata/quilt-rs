@@ -78,7 +78,8 @@ pub struct SnapMember {
 }
 
 /// Where a run stands, folded from its events.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RunState {
     Uploading,
     Sealed,
@@ -99,6 +100,8 @@ pub struct Run {
     pub captured_at_line: usize,
     /// `(package, top_hash)` once landed.
     pub landed: Option<(String, String)>,
+    /// Why the run is parked, when it is `Refused` or `Suspect`.
+    pub reason: Option<String>,
     pub state: RunState,
 }
 
@@ -139,6 +142,16 @@ impl Spool {
         })
     }
 
+    /// The runs in the journal under `root`, read without taking the lock, so
+    /// `quilt-agent status` works while the service is running.
+    pub fn read_only(root: &Path) -> Result<BTreeMap<String, Run>, Error> {
+        Spool {
+            root: root.to_path_buf(),
+            journal: File::open(root.join("journal.jsonl"))?,
+        }
+        .runs()
+    }
+
     /// Append and fsync one event; it is durable when this returns.
     pub fn record(&mut self, event: &Event) -> Result<(), Error> {
         let mut line = serde_json::to_vec(event)?;
@@ -171,6 +184,7 @@ impl Spool {
                             sealed_at_line: 0,
                             captured_at_line: line_no,
                             landed: None,
+                            reason: None,
                             state: RunState::Uploading,
                         },
                     );
@@ -201,13 +215,17 @@ impl Spool {
                         run.state = RunState::Landed;
                     }
                 }
-                Event::Suspect { .. } => {
+                Event::Suspect { reason, .. } => {
                     if let Some(run) = runs.get_mut(&id) {
+                        run.reason = Some(reason);
                         run.state = RunState::Suspect;
                     }
                 }
-                Event::Refused { .. } => {
-                    runs.entry(id).and_modify(|r| r.state = RunState::Refused);
+                Event::Refused { reason, .. } => {
+                    if let Some(run) = runs.get_mut(&id) {
+                        run.reason = Some(reason);
+                        run.state = RunState::Refused;
+                    }
                 }
             }
         }
@@ -302,6 +320,25 @@ mod tests {
             mtime_local: None,
             version_id: Some("v1".to_string()),
         }
+    }
+
+    /// `status` reads a running agent's journal and shows why a run is parked.
+    #[test]
+    fn status_reads_past_the_lock_and_keeps_the_reason() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let mut spool = Spool::open(dir.path())?;
+        spool.record(&snapshot("r1", "i", "2026-10-07T00:00:00Z"))?;
+        spool.record(&Event::Suspect {
+            run_id: "r1".into(),
+            reason: "member changed after boundary: a.fcs".into(),
+        })?;
+        let runs = Spool::read_only(dir.path())?;
+        assert_eq!(runs["r1"].state, RunState::Suspect);
+        assert_eq!(
+            runs["r1"].reason.as_deref(),
+            Some("member changed after boundary: a.fcs")
+        );
+        Ok(())
     }
 
     #[test]
