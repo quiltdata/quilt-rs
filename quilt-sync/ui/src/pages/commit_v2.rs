@@ -12,8 +12,9 @@
 //! 2. [`ProblemBanner`], only when there is a problem.
 //! 3. [`MessageField`]: the generated message is the placeholder, so an empty
 //!    field means "use it".
-//! 4. [`WorkflowSection`]: one summary line with `Edit`, opening to the
-//!    workflow and a full-width metadata editor.
+//! 4. [`WorkflowSection`]: folded to the exact workflow and a one-line
+//!    preview of the metadata, with `Edit` opening the select and a
+//!    full-width metadata editor.
 //! 5. [`IncludedList`]: the changed files, last, so a long list scrolls the
 //!    page under the form rather than pushing the form below the fold.
 //!
@@ -287,13 +288,14 @@ pub fn ProblemBanner(
             .map(|href| view! { <a class=style::remedy_link href=href>"Sign in"</a> }.into_any()),
         _ => None,
     };
-    view! {
-        <Banner variant=problem.variant()>
-            <span class=style::problem>
-                <span>{problem.words()}</span>
-                {remedy}
-            </span>
-        </Banner>
+    match remedy {
+        Some(remedy) => view! {
+            <Banner variant=problem.variant() action=remedy>
+                {problem.words()}
+            </Banner>
+        }
+        .into_any(),
+        None => view! { <Banner variant=problem.variant()>{problem.words()}</Banner> }.into_any(),
     }
 }
 
@@ -341,9 +343,12 @@ pub struct WorkflowChoice {
     pub selected: RwSignal<String>,
 }
 
-/// Workflow and metadata: one line until somebody wants more.
+/// Workflow and metadata: what the revision will carry, until somebody wants
+/// to change it.
 ///
-/// Collapsed it is a summary and `Edit`. Open it is the workflow `Select` and
+/// Folded, it names the exact workflow — the select's own option, so it
+/// follows a change — and previews the metadata on one line (see
+/// [`metadata_preview`]), with `Edit`. Open, it is the workflow `Select` and
 /// v1's metadata editor at full width. Its context menu and dropdowns are drawn
 /// inside the editor's own box, so nothing between it and the page may clip:
 /// no ancestor here sets `overflow`, and the page has no second column that
@@ -358,10 +363,14 @@ pub struct WorkflowChoice {
     reason = "a component's props are owned; the body reads them from there"
 )]
 pub fn WorkflowSection(
-    /// What the revision will carry, as one line: `Bucket's default workflow ·
-    /// kept from current revision`.
-    #[prop(into)]
-    summary: Signal<String>,
+    /// What the workflow line says when there is no choice to read it from:
+    /// a package with no bucket, or a bucket with no workflows.
+    #[prop(optional, into)]
+    no_workflow: Option<String>,
+    /// Where the metadata came from, after its preview: `from the current
+    /// revision`, `from your publish settings`.
+    #[prop(optional, into)]
+    metadata_source: Option<String>,
     expanded: RwSignal<bool>,
     /// `None` when the bucket has no workflows to choose between.
     #[prop(optional)]
@@ -386,12 +395,17 @@ pub fn WorkflowSection(
     let body_id = crate::kit::unique_id("workflow-meta");
     let controls = body_id.clone();
     let metadata_invalid = Signal::derive(move || metadata_error.get().is_some());
+    // The selected option itself, so the folded line names the exact workflow
+    // the revision will carry, and follows the select when it changes.
+    let selected = workflow.as_ref().map(|choice| choice.selected);
+    let no_workflow = no_workflow.unwrap_or_else(|| "None".to_string());
+    let workflow_words = move || selected.map_or_else(|| no_workflow.clone(), |s| s.get());
+    let metadata_words = move || metadata_preview(&metadata.get());
 
     view! {
         <section class=style::workflow aria-label="Workflow and metadata">
             <div class=style::summary_row>
                 <span class=style::section_name>"Workflow & metadata"</span>
-                <span class=style::summary>{move || summary.get()}</span>
                 <span class=style::summary_action>
                     <Button
                         aria_expanded=Signal::derive(move || Some(expanded.get()))
@@ -402,6 +416,22 @@ pub fn WorkflowSection(
                     </Button>
                 </span>
             </div>
+            // Folded, what the revision will carry; open, the controls say it.
+            <Show when=move || !expanded.get()>
+                <dl class=style::preview>
+                    <dt>"Workflow"</dt>
+                    <dd>{workflow_words.clone()}</dd>
+                    <dt>"Metadata"</dt>
+                    <dd>
+                        <span class=style::preview_value>{metadata_words}</span>
+                        {metadata_source
+                            .clone()
+                            .map(|source| {
+                                view! { <span class=style::preview_note>{source}</span> }
+                            })}
+                    </dd>
+                </dl>
+            </Show>
             <Show when=move || expanded.get()>
                 <div class=style::workflow_body id=body_id.clone()>
                     {workflow
@@ -427,47 +457,85 @@ pub fn WorkflowSection(
                     <FormControl
                         label="Metadata"
                         error=metadata_error
-                        control=move |id| {
-                            let (id, described_by) = id.into_attrs();
-                            let editor_ref = NodeRef::<leptos::html::Div>::new();
-                            let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
-                            view! {
-                                // The textarea's own wrapper, because the glue hides
-                                // the textarea's parent once the editor mounts. It is
-                                // the fallback, and what the editor writes back to:
-                                // the glue fires `input` on every edit.
-                                <div>
-                                    <textarea
-                                        node_ref=textarea_ref
-                                        id=id
-                                        aria-describedby=described_by
-                                        aria-invalid=move || metadata_invalid.get().then_some("true")
-                                        class=style::metadata
-                                        rows=6
-                                        spellcheck="false"
-                                        prop:value=move || metadata.get_untracked()
-                                        on:input=move |ev| metadata.set(event_target_value(&ev))
-                                    />
-                                </div>
-                                // The red border on the editor's own frame, which
-                                // `.invalid` reaches through its custom property.
-                                <div class=move || {
-                                    metadata_invalid.get().then_some(style::invalid)
-                                }>
-                                    <JsonEditor
-                                        node_ref=editor_ref
-                                        textarea_ref=textarea_ref
-                                        initial_value=metadata.get_untracked()
-                                        class=style::editor
-                                    />
-                                </div>
-                            }
-                                .into_any()
-                        }
+                        control=move |id| metadata_editor(id, metadata, metadata_invalid)
                     />
                 </div>
             </Show>
         </section>
+    }
+}
+
+/// The metadata control: v1's editor over its fallback textarea.
+fn metadata_editor(
+    id: crate::kit::ControlId,
+    metadata: RwSignal<String>,
+    invalid: Signal<bool>,
+) -> AnyView {
+    let (id, described_by) = id.into_attrs();
+    let editor_ref = NodeRef::<leptos::html::Div>::new();
+    let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
+    view! {
+        // The textarea's own wrapper, because the glue hides the textarea's
+        // parent once the editor mounts. It is the fallback, and what the
+        // editor writes back to: the glue fires `input` on every edit.
+        <div>
+            <textarea
+                node_ref=textarea_ref
+                id=id
+                aria-describedby=described_by
+                aria-invalid=move || invalid.get().then_some("true")
+                class=style::metadata
+                rows=6
+                spellcheck="false"
+                prop:value=move || metadata.get_untracked()
+                on:input=move |ev| metadata.set(event_target_value(&ev))
+            />
+        </div>
+        // The red border on the editor's own frame, which `.invalid` reaches
+        // through its custom property.
+        <div class=move || invalid.get().then_some(style::invalid)>
+            <JsonEditor
+                node_ref=editor_ref
+                textarea_ref=textarea_ref
+                initial_value=metadata.get_untracked()
+                class=style::editor
+            />
+        </div>
+    }
+    .into_any()
+}
+
+/// The metadata in one line, for the folded section: each top-level field as
+/// `key: value`, joined by ` · `. Nested values are counted rather than
+/// spelled out, because a line has no room for them; text that is not JSON
+/// says so, since its error is what opens the section.
+#[must_use]
+pub fn metadata_preview(text: &str) -> String {
+    use serde_json::Value;
+
+    fn value(v: &Value) -> String {
+        match v {
+            Value::String(s) => s.clone(),
+            Value::Array(items) if items.len() == 1 => "1 item".to_string(),
+            Value::Array(items) => format!("{} items", items.len()),
+            Value::Object(fields) if fields.len() == 1 => "1 field".to_string(),
+            Value::Object(fields) => format!("{} fields", fields.len()),
+            other => other.to_string(),
+        }
+    }
+
+    if text.trim().is_empty() {
+        return "None".to_string();
+    }
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(fields)) if fields.is_empty() => "None".to_string(),
+        Ok(Value::Object(fields)) => fields
+            .iter()
+            .map(|(k, v)| format!("{k}: {}", value(v)))
+            .collect::<Vec<_>>()
+            .join(" · "),
+        Ok(other) => value(&other),
+        Err(_) => "Not valid JSON".to_string(),
     }
 }
 
@@ -693,6 +761,21 @@ mod tests {
         for words in &all {
             assert_eq!(banned_in(words), None, "{words:?}");
         }
+    }
+
+    #[test]
+    fn the_metadata_preview_is_one_line() {
+        assert_eq!(
+            metadata_preview("{\"assay\": \"ELISA\", \"plate\": 7}"),
+            "assay: ELISA · plate: 7"
+        );
+        assert_eq!(
+            metadata_preview("{\"wells\": [1, 2, 3], \"run\": {\"a\": 1}}"),
+            "wells: 3 items · run: 1 field"
+        );
+        assert_eq!(metadata_preview(""), "None");
+        assert_eq!(metadata_preview("{}"), "None");
+        assert_eq!(metadata_preview("{\"a\": "), "Not valid JSON");
     }
 
     #[test]

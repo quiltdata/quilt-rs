@@ -15,13 +15,6 @@
 }
 
 // The sentence and its remedy on one line, wrapping as a floor.
-.problem {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--q-space-2) var(--q-space-3);
-}
-
 .remedy_link {
   color: var(--q-fgColor-accent);
 }
@@ -46,12 +39,37 @@
   font-weight: 600;
 }
 
-.summary {
+// The folded section's two lines: a muted name, then what the revision will
+// carry. One line each, cut with an ellipsis, so a long workflow name or a
+// metadata document with many fields never grows the section.
+.preview {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--q-space-1) var(--q-space-4);
+  margin: 0;
+}
+
+.preview dt {
+  color: var(--q-fgColor-muted);
+}
+
+.preview dd {
+  display: flex;
+  gap: var(--q-space-2);
+  min-width: 0;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.preview_value {
   min-width: 0;
   overflow: hidden;
-  color: var(--q-fgColor-muted);
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.preview_note {
+  flex: none;
+  color: var(--q-fgColor-muted);
 }
 
 .summary_action {

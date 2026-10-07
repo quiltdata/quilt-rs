@@ -10,24 +10,32 @@
 //! **The form stays on the first screen in every cell.** Measured from the
 //! window's top edge, in Chrome:
 //!
-//! | | header ends | message ends | workflow line ends | files start | rows on screen |
+//! | | header ends | message ends | workflow section ends | files start | rows on screen |
 //! |---|---:|---:|---:|---:|---:|
-//! | at rest, 4 files | 144 | 217 | 265 | 281 | 4 of 4 |
-//! | 300 files | 144 | 217 | 265 | 281 | **7** of 300 |
-//! | junk banner | 144 | 283 | 331 | 347 | 4 of 4 |
-//! | no access, signed out | 144 | 271 | 319 | 335 | 4 of 4 |
+//! | at rest, 4 files | 144 | 217 | 321 | 337 | 4 of 4 |
+//! | 300 files | 144 | 217 | 321 | 337 | **5** of 300 |
+//! | junk banner, signed out | 144 | 283 | 387 | 403 | 3 of 4 |
+//! | no access | 144 | 271 | 375 | 391 | 4 of 4 |
 //! | workflow & metadata open | 144 | 217 | 519 | 535 | 0 |
 //! | a failed check | 144 | 217 | 543 | 559 | 0 |
 //!
 //! - **The long list costs the form nothing.** The 300-file cell lays out the
-//!   form exactly where the four-file cell does, and the page scrolls under it
-//!   (10,244px of page). This is the bet the layout makes by putting the list
-//!   last, and it is won.
+//!   form exactly where the four-file cell does, and the page scrolls under it.
+//!   This is the bet the layout makes by putting the list last, and it is won.
+//! - **The folded section is three lines, 104px**: its heading with `Edit`,
+//!   the exact workflow the revision will carry — the select's own option, so
+//!   it follows a change — and a one-line preview of the metadata, each field
+//!   as `key: value`, cut with an ellipsis. Two lines more than a bare summary,
+//!   and worth them: the reader sees what will be published without opening
+//!   anything. It costs the 300-file cell two rows, seven down to five.
 //! - **The header is 60px**, the same as the installed-package page's: it is
 //!   the same `kit::PageHeader`, with a `Trail` where that page has a
 //!   `BackLink`.
-//! - **A banner costs 54px on one line**, 66 with `Ignore them`: the button
-//!   is taller than a line of text.
+//! - **A banner costs 54px on one line**, 66 with an action — `Ignore them`,
+//!   `Sign in` — which takes a control's height. The glyph and the sentence
+//!   are centred on that height, through `Banner`'s `action` slot; drawn
+//!   inside the sentence, the button made the line taller and left the glyph
+//!   at its top.
 //! - **Opened, the section takes the rest of the window.** The workflow
 //!   `Select` and the metadata editor end at 519, and the list starts below
 //!   the fold. That is the right trade while editing: the reader asked for the
@@ -92,7 +100,11 @@ use crate::pages::commit_v2::{
 
 const NAMESPACE: &str = "user/plate-07";
 const GENERATED: &str = "Updated 3 files: plate-03.csv, plate-04.csv, wells.csv";
-const SUMMARY: &str = "Bucket's default workflow · kept from current revision";
+/// Long enough to be cut: more fields than the line holds, and a nested value
+/// the preview counts rather than spells out.
+const LONG_METADATA: &str = "{\"assay\": \"ELISA\", \"plate\": 7, \"instrument\": \"SpectraMax iD5\", \
+    \"wavelength_nm\": 450, \"wells\": [\"A1\", \"A2\", \"A3\"], \"protocol\": {\"version\": 3, \
+    \"incubation_min\": 60}, \"notes\": \"Second read after recalibration\"}";
 const METADATA: &str = "{\n  \"assay\": \"ELISA\",\n  \"plate\": 7\n}";
 
 /// The appbar is the app's own, untouched.
@@ -161,8 +173,11 @@ struct Fixture {
     expanded: bool,
     /// The bucket offers workflows to choose between.
     workflows: bool,
+    metadata: &'static str,
     metadata_error: Option<&'static str>,
-    summary: &'static str,
+    metadata_source: &'static str,
+    /// What the workflow line says when the bucket offers no choice.
+    no_workflow: &'static str,
 }
 
 impl Fixture {
@@ -177,8 +192,10 @@ impl Fixture {
             blocked: None,
             expanded: false,
             workflows: true,
+            metadata: METADATA,
             metadata_error: None,
-            summary: SUMMARY,
+            metadata_source: "from the current revision",
+            no_workflow: "None",
         }
     }
 }
@@ -193,8 +210,10 @@ fn page(f: Fixture) -> AnyView {
         blocked,
         expanded,
         workflows,
+        metadata,
         metadata_error,
-        summary,
+        metadata_source,
+        no_workflow,
     } = f;
     let w = PrimaryWiring {
         choice: RwSignal::new(0),
@@ -227,19 +246,20 @@ fn page(f: Fixture) -> AnyView {
     let workflow_view = match workflow {
         Some(workflow) => view! {
             <WorkflowSection
-                summary=summary.to_string()
+                metadata_source=metadata_source
                 expanded=RwSignal::new(expanded)
                 workflow=workflow
-                metadata=RwSignal::new(METADATA.to_string())
+                metadata=RwSignal::new(metadata.to_string())
                 metadata_error=metadata_error.map(str::to_string)
             />
         }
         .into_any(),
         None => view! {
             <WorkflowSection
-                summary=summary.to_string()
+                no_workflow=no_workflow
+                metadata_source=metadata_source
                 expanded=RwSignal::new(expanded)
-                metadata=RwSignal::new(METADATA.to_string())
+                metadata=RwSignal::new(metadata.to_string())
                 metadata_error=metadata_error.map(str::to_string)
             />
         }
@@ -316,7 +336,8 @@ pub fn CommitPageScene() -> impl IntoView {
                     primary: Primary::MetadataOnly,
                     files: Vec::new(),
                     ignored: 0,
-                    summary: "Plate reads · metadata edited",
+                    metadata: "{\"assay\": \"ELISA\", \"plate\": 7, \"reviewed\": true}",
+                    metadata_source: "edited",
                     ..Fixture::new("commit-metadata-only")
                 })}
             </Cell>
@@ -324,7 +345,7 @@ pub fn CommitPageScene() -> impl IntoView {
                 {page(Fixture {
                     primary: Primary::LocalOnly,
                     workflows: false,
-                    summary: "No workflow · this package has no bucket yet",
+                    no_workflow: "None — this package has no bucket yet",
                     ..Fixture::new("commit-local-only")
                 })}
             </Cell>
@@ -381,6 +402,7 @@ pub fn CommitPageScene() -> impl IntoView {
                     primary: Primary::Files(300),
                     files: many_files(),
                     ignored: 14,
+                    metadata: LONG_METADATA,
                     ..Fixture::new("commit-long")
                 })}
             </Cell>
