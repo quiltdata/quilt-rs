@@ -463,3 +463,49 @@ instruments:
     );
     Ok(())
 }
+
+/// A request is spent when its run is captured, even if that run is then
+/// refused for size: it must not close the next run written at the same name.
+#[tokio::test]
+async fn a_refused_explicit_run_still_consumes_its_request()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = tempfile::tempdir()?;
+    let control = tempfile::tempdir()?;
+    let spool_dir = tempfile::tempdir()?;
+    let run = source.path().join("sample.d");
+    std::fs::create_dir(&run)?;
+    std::fs::write(run.join("data.ms"), vec![0u8; 2 * 1024 * 1024])?;
+    std::fs::write(control.path().join("sample.d.complete"), b"")?;
+    let yaml = format!(
+        r#"
+schema_version: "1"
+observer: {{ id: edge-01, placement: beside }}
+registry: {{ url: "https://example.quiltdata.com", credential_ref: k }}
+spool: {{ max_bytes: 1048576 }}
+instruments:
+  - id: ms-1
+    source: {{ path: "{}" }}
+    landing: {{ bucket: raw, prefix: lab }}
+    boundary: {{ method: explicit, explicit_source: control_dir, control_dir: "{}", confirm_window_s: 30 }}
+"#,
+        source.path().display(),
+        control.path().display()
+    );
+    let remote = Flaky {
+        inner: MockRemote::default(),
+        fail_seal: AtomicBool::new(false),
+    };
+    let mut agent = Agent::new(
+        Profile::parse(&yaml)?,
+        remote,
+        Spool::open(spool_dir.path())?,
+        None,
+    );
+    let later = SystemTime::now() + Duration::from_secs(3600);
+    agent.pass(SystemTime::now()).await?;
+    agent.pass(later).await?;
+    let journal = std::fs::read_to_string(spool_dir.path().join("journal.jsonl"))?;
+    assert_eq!(journal.matches(r#""event":"refused""#).count(), 1);
+    assert!(!control.path().join("sample.d.complete").exists());
+    Ok(())
+}

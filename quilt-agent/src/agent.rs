@@ -142,14 +142,17 @@ impl<R: Remote + Sync> Agent<R> {
                 Verdict::Complete {
                     evidence,
                     instrument_mtime,
-                } => self.snapshot(
-                    instrument,
-                    &folder,
-                    &tracked,
-                    &evidence,
-                    instrument_mtime,
-                    now,
-                )?,
+                } => {
+                    self.snapshot(
+                        instrument,
+                        &folder,
+                        &tracked,
+                        &evidence,
+                        instrument_mtime,
+                        now,
+                    )?;
+                    consume_request(instrument, &folder);
+                }
             }
         }
         Ok(())
@@ -394,18 +397,6 @@ impl<R: Remote + Sync> Agent<R> {
             latest_advanced = pushed.latest_advanced,
             "landed"
         );
-        // The request is spent: left in place it would close the next run
-        // written at the same folder name the moment it appears.
-        if let Some(dir) = &instrument.boundary.control_dir
-            && let Some(name) = folder.file_name()
-        {
-            let request = dir.join(format!("{}.complete", name.to_string_lossy()));
-            if let Err(e) = std::fs::remove_file(&request)
-                && e.kind() != std::io::ErrorKind::NotFound
-            {
-                tracing::warn!(request = %request.display(), "could not remove a used request: {e}");
-            }
-        }
         self.spool.record(&Event::Landed {
             run_id: run_id.to_string(),
             package_name: bucket_package_key(bucket, &revision.package_name),
@@ -501,10 +492,31 @@ fn completion_request(instrument: &Instrument, folder: &Path) -> Result<Option<S
     let (Some(dir), Some(name)) = (&instrument.boundary.control_dir, folder.file_name()) else {
         return Ok(None);
     };
+    if !std::fs::metadata(dir)?.is_dir() {
+        return Err(Error::Refused(format!(
+            "control_dir {} is not a directory",
+            dir.display()
+        )));
+    }
     match std::fs::metadata(dir.join(format!("{}.complete", name.to_string_lossy()))) {
         Ok(meta) => Ok(Some(meta.modified()?)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
+    }
+}
+
+/// Remove a run's request once the run is captured. Captured is when the
+/// request has done its job: left in place it would close the next run written
+/// at that folder name. A failure is logged; the snapshot already stands.
+fn consume_request(instrument: &Instrument, folder: &Path) {
+    let (Some(dir), Some(name)) = (&instrument.boundary.control_dir, folder.file_name()) else {
+        return;
+    };
+    let request = dir.join(format!("{}.complete", name.to_string_lossy()));
+    if let Err(e) = std::fs::remove_file(&request)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(request = %request.display(), "could not remove a used request: {e}");
     }
 }
 

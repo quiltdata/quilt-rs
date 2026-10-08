@@ -246,8 +246,9 @@ impl Profile {
         // control directory would both close on one request.
         let mut dirs = std::collections::BTreeSet::new();
         for i in &profile.instruments {
+            // Resolved, so `./requests` and `requests` (or a symlink) count as one.
             if let Some(d) = &i.boundary.control_dir
-                && !dirs.insert(d)
+                && !dirs.insert(std::fs::canonicalize(d).unwrap_or_else(|_| d.clone()))
             {
                 return Err(Error::Profile(format!(
                     "instrument {}: control_dir {} is already used by another instrument",
