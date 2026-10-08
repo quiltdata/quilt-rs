@@ -128,8 +128,10 @@ pub struct CommitData {
 #[serde(rename_all = "camelCase")]
 pub struct JunkSummary {
     pub count: usize,
-    /// Each distinct file name once, in path order.
+    /// The first few distinct file names, in path order.
     pub names: Vec<String>,
+    /// How many more distinct names there are.
+    pub more_names: usize,
     /// The first one and its pattern, which *Ignore them* offers.
     pub first_path: String,
     pub first_pattern: String,

@@ -116,9 +116,15 @@ pub(crate) fn problem(
                 .map(str::to_string),
         });
     }
-    junk.map(|junk| Problem::Junk {
-        count: junk.count,
-        names: junk.names.clone(),
+    junk.map(|junk| {
+        let mut names = junk.names.clone();
+        if junk.more_names > 0 {
+            names.push(format!("and {} more", junk.more_names));
+        }
+        Problem::Junk {
+            count: junk.count,
+            names,
+        }
     })
 }
 
@@ -1277,6 +1283,7 @@ mod tests {
         let junk = JunkSummary {
             count: 2,
             names: vec![".DS_Store".to_string()],
+            more_names: 0,
             first_path: "raw/.DS_Store".to_string(),
             first_pattern: ".DS_Store".to_string(),
         };
@@ -1300,6 +1307,25 @@ mod tests {
             })
         );
         assert_eq!(problem(None, false, None, None), None);
+
+        // Many names: a few, then how many more, with the count exact.
+        let many = JunkSummary {
+            count: 40,
+            names: vec![
+                "a.pyc".to_string(),
+                "b.pyc".to_string(),
+                "c.pyc".to_string(),
+            ],
+            more_names: 37,
+            first_path: "gen/a.pyc".to_string(),
+            first_pattern: "*.pyc".to_string(),
+        };
+        assert_eq!(
+            problem(None, false, None, Some(&many))
+                .map(|p| p.words())
+                .as_deref(),
+            Some("40 system files would be published (a.pyc, b.pyc, c.pyc, and 37 more)")
+        );
     }
 
     #[test]

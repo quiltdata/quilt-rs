@@ -152,8 +152,11 @@ pub struct CommitData {
 #[serde(rename_all = "camelCase")]
 pub struct JunkSummary {
     pub count: usize,
-    /// Each distinct file name once, in path order.
+    /// The first few distinct file names, in path order: enough to say what
+    /// they are, never thousands over IPC and into one banner.
     pub names: Vec<String>,
+    /// How many more distinct names there are than `names` holds.
+    pub more_names: usize,
     /// The first one and the pattern that matches it, which *Ignore them*
     /// offers.
     pub first_path: String,
@@ -556,6 +559,9 @@ async fn get_commit_data_from_model(
     })
 }
 
+/// How many system-file names the warning names; the count stays exact.
+const JUNK_NAMES_SHOWN: usize = 3;
+
 /// The system files among the changes, uncapped, or `None` when there are
 /// none.
 fn junk_summary(junky: &[(std::path::PathBuf, String)]) -> Option<JunkSummary> {
@@ -571,13 +577,15 @@ fn junk_summary(junky: &[(std::path::PathBuf, String)]) -> Option<JunkSummary> {
             || path.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
-        if seen.insert(name.clone()) {
+        if seen.insert(name.clone()) && names.len() < JUNK_NAMES_SHOWN {
             names.push(name);
         }
     }
+    let more_names = seen.len() - names.len();
     Some(JunkSummary {
         count: sorted.len(),
         names,
+        more_names,
         first_path: first_path.display().to_string(),
         first_pattern: first_pattern.clone(),
     })
@@ -1566,6 +1574,7 @@ mod tests {
         let junk = junk_summary(&junky).expect("system files");
         assert_eq!(junk.count, 5);
         assert_eq!(junk.names, [".DS_Store", "x.pyc", "y.pyc"]);
+        assert_eq!(junk.more_names, 0);
         assert_eq!(junk.first_path, "a/.DS_Store");
         assert_eq!(junk_summary(&[]), None);
 
@@ -1577,7 +1586,10 @@ mod tests {
                 )
             })
             .collect();
-        assert_eq!(junk_summary(&many).map(|j| j.names.len()), Some(20_000));
+        let many = junk_summary(&many).expect("system files");
+        assert_eq!(many.count, 20_000);
+        assert_eq!(many.names, ["m00000.pyc", "m00001.pyc", "m00002.pyc"]);
+        assert_eq!(many.more_names, 19_997);
     }
 
     #[tokio::test]
@@ -1667,6 +1679,7 @@ mod tests {
             Some(JunkSummary {
                 count: 2,
                 names: vec!["1100.csv".to_string(), "1101.csv".to_string()],
+                more_names: 0,
                 first_path: "new/1100.csv".to_string(),
                 first_pattern: "*.csv".to_string(),
             })
