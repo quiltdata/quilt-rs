@@ -113,7 +113,15 @@ fn MinutesSentence(
                     let id = error_id.clone();
                     Signal::derive(move || error.get().map(|_| id.clone()))
                 }
-                on_commit=on_commit.unwrap_or_else(|| Callback::new(|()| ()))
+                // Only a valid value is saved; an invalid one stays on screen
+                // with its error.
+                on_commit=Callback::new(move |()| {
+                    if let Some(commit) = on_commit
+                        && error.with_untracked(Option::is_none)
+                    {
+                        commit.run(());
+                    }
+                })
             />
             {unit}
             {after}
@@ -333,12 +341,16 @@ pub fn PublishingCard(
                     <label class=style::field_name for=metadata_id.clone()>
                         "Default metadata"
                     </label>
-                    {metadata_editor(
-                        metadata_id.clone(),
-                        error_id.clone(),
-                        metadata,
-                        Signal::derive(move || error.with(Option::is_some)),
-                    )}
+                    // `inert` while saving, as the other fields are disabled:
+                    // the editor has no disabled state of its own.
+                    <div inert=move || saving.get()>
+                        {metadata_editor(
+                            metadata_id.clone(),
+                            error_id.clone(),
+                            metadata,
+                            Signal::derive(move || error.with(Option::is_some)),
+                        )}
+                    </div>
                     <Show when=move || error.with(Option::is_some)>
                         <p class=style::error id=error_id.clone()>
                             {StateTone::Danger.glyph()}
@@ -903,6 +915,44 @@ mod tests {
             log_env_hint(&LogEnv::Ignored("debgu".into())).as_deref(),
             Some("QUILT_LOG=\"debgu\" is not a log level or a list of directives, so it's ignored")
         );
+    }
+
+    /// A minute field saves on Enter or leaving it, and only a valid value.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn only_valid_minutes_are_saved() {
+        use wasm_bindgen::JsCast;
+
+        let minutes = RwSignal::new("1".to_string());
+        let saves = RwSignal::new(0);
+        let el = crate::test_support::mount(move || {
+            view! {
+                <SyncingCard
+                    pull=RwSignal::new(true)
+                    pull_minutes=minutes
+                    publish=RwSignal::new(false)
+                    publish_minutes=RwSignal::new("5".to_string())
+                    watch=RwSignal::new(true)
+                    on_pull_minutes=Callback::new(move |()| saves.update(|n| *n += 1))
+                />
+            }
+        });
+        let field: web_sys::HtmlInputElement = el
+            .query_selector("input[type=number]")
+            .unwrap()
+            .expect("the pull minutes")
+            .dyn_into()
+            .unwrap();
+        let change = || {
+            field
+                .dispatch_event(&web_sys::Event::new("change").unwrap())
+                .unwrap();
+        };
+        minutes.set("0".to_string());
+        change();
+        assert_eq!(saves.get_untracked(), 0, "0 is not saved");
+        minutes.set("3".to_string());
+        change();
+        assert_eq!(saves.get_untracked(), 1, "3 is");
     }
 
     /// v2 vocabulary: no commit, push, pull or remote in the page's words.
