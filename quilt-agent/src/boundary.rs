@@ -26,6 +26,8 @@ pub enum Verdict {
 #[derive(Debug)]
 pub struct Observation<'a> {
     pub members: &'a [Member],
+    /// For `explicit`: when someone asked for this run to be closed, if they have.
+    pub requested_at: Option<SystemTime>,
     /// When the folder's listing last changed (a member added, resized or touched).
     pub last_change: SystemTime,
     pub now: SystemTime,
@@ -43,7 +45,7 @@ pub fn decide(boundary: &Boundary, quiet_window_s: u64, obs: &Observation) -> Ve
             boundary.manifest_kind.as_deref().unwrap_or("<unset>")
         )),
         // ponytail: needs the loopback endpoint; add with the first site that asks.
-        Method::Explicit => Verdict::Suspect("explicit boundary not supported yet".to_string()),
+        Method::Explicit => explicit(quiet_window_s, obs),
     }
 }
 
@@ -116,6 +118,30 @@ fn marker_file(boundary: &Boundary, window_s: u64, obs: &Observation) -> Verdict
     }
 }
 
+/// Closed by request, then held for the confirm window so a request made
+/// just before the last write does not cut it off.
+fn explicit(window_s: u64, obs: &Observation) -> Verdict {
+    let Some(requested) = obs.requested_at else {
+        return Verdict::Pending;
+    };
+    // Waited from the later of the last write and the request, so a request
+    // made just before a final write still gets the whole window after it.
+    let since = obs.last_change.max(requested);
+    let quiet = obs.now.duration_since(since).map_or(0, |d| d.as_secs());
+    if quiet < window_s {
+        return Verdict::Pending;
+    }
+    let at: chrono::DateTime<chrono::Utc> = requested.into();
+    Verdict::Complete {
+        evidence: truncate(format!(
+            "completion requested at {}; folder stable {quiet}s (window {window_s}s); {} members",
+            at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            obs.members.len()
+        )),
+        instrument_mtime: None,
+    }
+}
+
 fn size_stable(boundary: &Boundary, window_s: u64, obs: &Observation) -> Verdict {
     if obs.members.len() < boundary.min_members {
         return Verdict::Pending;
@@ -176,6 +202,7 @@ mod tests {
             stable_for_s: 900,
             min_members: 1,
             manifest_kind: None,
+            control_dir: None,
         }
     }
 
@@ -191,6 +218,7 @@ mod tests {
             window,
             &Observation {
                 members,
+                requested_at: None,
                 last_change: at(last_change),
                 now: at(now),
             },
@@ -284,6 +312,39 @@ mod tests {
             decide_at(&b, 900, &m, 0, 900),
             Verdict::Complete { .. }
         ));
+    }
+
+    #[test]
+    fn explicit_waits_for_a_request_then_the_window() {
+        let b = Boundary {
+            method: Method::Explicit,
+            ..marker_boundary()
+        };
+        let m = [member("a.d/data", 0)];
+        let obs = |requested: Option<u64>, now: u64| Observation {
+            members: &m,
+            requested_at: requested.map(at),
+            last_change: at(0),
+            now: at(now),
+        };
+        assert_eq!(decide(&b, 30, &obs(None, 10_000)), Verdict::Pending);
+        // Quiet for hours, then a request: the window starts at the request.
+        assert_eq!(decide(&b, 30, &obs(Some(9_000), 9_010)), Verdict::Pending);
+        assert!(matches!(
+            decide(&b, 30, &obs(Some(9_000), 9_030)),
+            Verdict::Complete { .. }
+        ));
+        assert_eq!(decide(&b, 30, &obs(Some(5), 20)), Verdict::Pending);
+        match decide(&b, 30, &obs(Some(5), 40)) {
+            Verdict::Complete {
+                evidence,
+                instrument_mtime,
+            } => {
+                assert!(evidence.contains("completion requested"), "{evidence}");
+                assert_eq!(instrument_mtime, None);
+            }
+            other => panic!("expected Complete, got {other:?}"),
+        }
     }
 
     #[test]

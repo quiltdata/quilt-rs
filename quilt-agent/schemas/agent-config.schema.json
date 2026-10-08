@@ -110,7 +110,7 @@
               "manifest_glob": { "type": "string" },
               "require_all_listed": { "type": "boolean", "default": true },
               "explicit_source": { "enum": ["loopback", "control_dir"] },
-              "control_dir": { "type": "string" },
+              "control_dir": { "type": "string", "description": "For explicit: a directory, not on the share, where <run folder name>.complete closes that run." },
               "stable_for_s": { "type": "integer", "minimum": 30, "default": 900 },
               "min_members": { "type": "integer", "minimum": 1, "default": 1 },
               "confirm_window_s": { "type": "integer", "minimum": 0, "default": 120 },
@@ -119,7 +119,7 @@
             "allOf": [
               { "if": { "properties": { "method": { "const": "marker_file" } } }, "then": { "required": ["markers"] } },
               { "if": { "properties": { "method": { "const": "vendor_manifest" } } }, "then": { "required": ["manifest_kind", "manifest_glob"] } },
-              { "if": { "properties": { "method": { "const": "explicit" } } }, "then": { "required": ["explicit_source"] } }
+              { "if": { "properties": { "method": { "const": "explicit" } } }, "then": { "required": ["explicit_source", "control_dir"] } }
             ]
           },
           "packaging": {

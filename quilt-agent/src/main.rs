@@ -25,6 +25,9 @@ struct Cli {
 enum Command {
     /// Validate a profile and exit.
     Check { profile: PathBuf },
+    /// Print every run the agent has captured, as JSON, one per line. Runs
+    /// that need an operator (refused or suspect) carry their reason.
+    Status { profile: PathBuf },
     /// Run until stopped: the service entry point.
     Run {
         profile: PathBuf,
@@ -57,6 +60,37 @@ async fn run(command: Command) -> Result<(), Error> {
             println!("ok: {} instrument(s)", p.instruments.len());
             Ok(())
         }
+        Command::Status { profile } => {
+            let p = Profile::load(&profile)?;
+            for (run_id, run) in Spool::read_only(&spool_root(&p))? {
+                let quilt_agent::spool::Event::Snapshot {
+                    instrument_id,
+                    folder,
+                    total_bytes,
+                    members,
+                    snapshot_time_utc,
+                    ..
+                } = &run.snapshot
+                else {
+                    continue;
+                };
+                let line = serde_json::json!({
+                    "run_id": run_id,
+                    "instrument_id": instrument_id,
+                    "folder": folder,
+                    "state": run.state,
+                    "since_utc": snapshot_time_utc,
+                    "file_count": members.len(),
+                    "uploaded": run.verified.len(),
+                    "total_bytes": total_bytes,
+                    "package": run.landed.as_ref().map(|(p, _)| p),
+                    "top_hash": run.landed.as_ref().map(|(_, h)| h),
+                    "reason": run.reason,
+                });
+                println!("{line}");
+            }
+            Ok(())
+        }
         Command::Run {
             profile,
             bucket_only,
@@ -64,12 +98,16 @@ async fn run(command: Command) -> Result<(), Error> {
     }
 }
 
-async fn serve(profile: Profile, bucket_only: bool) -> Result<(), Error> {
-    let spool_root = profile
+fn spool_root(profile: &Profile) -> PathBuf {
+    profile
         .observer
         .spool_root
         .clone()
-        .unwrap_or_else(|| PathBuf::from("spool"));
+        .unwrap_or_else(|| PathBuf::from("spool"))
+}
+
+async fn serve(profile: Profile, bucket_only: bool) -> Result<(), Error> {
+    let spool_root = spool_root(&profile);
     let spool = Spool::open(&spool_root)?;
     let remote = RemoteS3::new(
         DomainPaths::new(spool_root.join("domain")),

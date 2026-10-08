@@ -135,6 +135,9 @@ pub struct Boundary {
     #[serde(default = "Boundary::default_min_members")]
     pub min_members: usize,
     pub manifest_kind: Option<String>,
+    /// For `explicit`: a directory the operator or a scheduler writes
+    /// `<run folder name>.complete` into. Not on the share, which stays read-only.
+    pub control_dir: Option<PathBuf>,
 }
 
 impl Boundary {
@@ -239,6 +242,21 @@ impl Profile {
             crate::watch::glob_set(&globs)
                 .map_err(|e| Error::Profile(format!("instrument {}: {e}", i.id)))?;
         }
+        // A request names a folder, not an instrument: two instruments sharing a
+        // control directory would both close on one request.
+        let mut dirs = std::collections::BTreeSet::new();
+        for i in &profile.instruments {
+            // Resolved, so `./requests` and `requests` (or a symlink) count as one.
+            if let Some(d) = &i.boundary.control_dir
+                && !dirs.insert(std::fs::canonicalize(d).unwrap_or_else(|_| d.clone()))
+            {
+                return Err(Error::Profile(format!(
+                    "instrument {}: control_dir {} is already used by another instrument",
+                    i.id,
+                    d.display()
+                )));
+            }
+        }
         Ok(profile)
     }
 }
@@ -263,6 +281,14 @@ fn reject_unbuilt(value: &serde_json::Value) -> Result<(), Error> {
         .flatten()
         .enumerate()
     {
+        if i.pointer("/boundary/explicit_source")
+            .and_then(|v| v.as_str())
+            == Some("loopback")
+        {
+            found.push(format!(
+                "instruments/{n}/boundary/explicit_source: loopback"
+            ));
+        }
         for key in [
             "source/stage_copy",
             "source/watch",
@@ -326,6 +352,32 @@ instruments:
         );
         let err = Profile::parse(&with).unwrap_err().to_string();
         assert!(err.contains("source/stage_copy"), "{err}");
+    }
+
+    #[test]
+    fn a_loopback_explicit_source_is_refused() {
+        let with = MINIMAL.replace(
+            "method: marker_file, markers: [\"done.txt\"], confirm_window_s: 30",
+            "method: explicit, explicit_source: loopback, control_dir: /tmp",
+        );
+        let err = Profile::parse(&with).unwrap_err().to_string();
+        assert!(err.contains("explicit_source: loopback"), "{err}");
+    }
+
+    #[test]
+    fn two_instruments_cannot_share_a_control_dir() {
+        let explicit = "method: explicit, explicit_source: control_dir, control_dir: /srv/requests";
+        let one = MINIMAL.replace(
+            "method: marker_file, markers: [\"done.txt\"], confirm_window_s: 30",
+            explicit,
+        );
+        let instrument = &one[one.find("  - id: plate-reader-1").expect("instrument")..];
+        let two = format!(
+            "{one}{}",
+            instrument.replace("plate-reader-1", "plate-reader-2")
+        );
+        let err = Profile::parse(&two).unwrap_err().to_string();
+        assert!(err.contains("already used"), "{err}");
     }
 
     #[test]
