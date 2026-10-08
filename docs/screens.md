@@ -406,7 +406,9 @@ confirm; the file list goes last so a long list scrolls under the form.
   metadata changed; its caret holds `Save without publishing`. A package
   with no bucket gets `Save revision` with no caret. N and the size count
   every change in the package, not the capped list; the size is the new and
-  changed files' bytes.
+  changed files' bytes. The list holds at most 1000 rows (the package page's
+  cap), changes first; past it a line says "Showing 1000 of N files. All N
+  are included." The system-files banner counts the whole package.
 - The message starts empty over the publish message as its placeholder;
   an empty message submits the placeholder.
 - The workflow is a live select, or plain words when there is nothing to

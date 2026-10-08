@@ -17,7 +17,7 @@ use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
-use crate::commands::{self, CommitData, CommitViolation, EntryData, ViolationField};
+use crate::commands::{self, CommitData, CommitViolation, EntryData, JunkSummary, ViolationField};
 use crate::commands::{CommitWorkflows, WorkflowIntent};
 use crate::components::appbar::appbar_actions;
 use crate::components::build_workflow_view;
@@ -96,43 +96,13 @@ pub(crate) const fn primary(has_bucket: bool, changed: usize) -> Primary {
     }
 }
 
-/// The system files that would be published: the first one's path and the
-/// pattern that matches it, for *Ignore them*, and every distinct file name,
-/// for the banner's words.
-pub(crate) fn junk(entries: &[EntryData]) -> Option<(String, String, usize, Vec<String>)> {
-    let junky: Vec<_> = entries
-        .iter()
-        .filter(|e| e.ignored_by.is_none())
-        .filter_map(|e| e.junky_pattern.as_ref().map(|p| (e, p)))
-        .collect();
-    let (first, pattern) = junky.first()?;
-    let mut names: Vec<String> = Vec::new();
-    for (e, _) in &junky {
-        let name = e
-            .filename
-            .rsplit('/')
-            .next()
-            .unwrap_or(&e.filename)
-            .to_string();
-        if !names.contains(&name) {
-            names.push(name);
-        }
-    }
-    Some((
-        first.filename.clone(),
-        (*pattern).clone(),
-        junky.len(),
-        names,
-    ))
-}
-
 /// The one problem the banner reports, worst first: a role that cannot write,
 /// no session, then system files.
 pub(crate) fn problem(
     no_access_reason: Option<&str>,
     no_session: bool,
     no_session_host: Option<&str>,
-    entries: &[EntryData],
+    junk: Option<&JunkSummary>,
 ) -> Option<Problem> {
     if let Some(reason) = no_access_reason.filter(|r| !r.is_empty()) {
         return Some(Problem::NoAccess {
@@ -146,7 +116,10 @@ pub(crate) fn problem(
                 .map(str::to_string),
         });
     }
-    junk(entries).map(|(_, _, count, names)| Problem::Junk { count, names })
+    junk.map(|junk| Problem::Junk {
+        count: junk.count,
+        names: junk.names.clone(),
+    })
 }
 
 /// Why the primary cannot run, in its tooltip. A role or a session blocks
@@ -373,12 +346,13 @@ impl Draft {
 
     /// Start from the answer's values, once per package. A re-read keeps
     /// the draft, unless the workflow it holds is no longer offered.
-    fn seed(self, d: &CommitData, form: &Form) {
+    /// Whether this answer seeded it: the first for this package.
+    fn seed(self, d: &CommitData, form: &Form) -> bool {
         if self.seeded.get_value().as_deref() == Some(form.namespace.as_str()) {
             if self.workflow.with(|w| form.label(w).is_none()) {
                 self.workflow.set(form.initial.clone());
             }
-            return;
+            return false;
         }
         self.seeded.set_value(Some(form.namespace.clone()));
         self.message.set(String::new());
@@ -388,8 +362,11 @@ impl Draft {
         ));
         self.workflow.set(form.initial.clone());
         self.editing.set(false);
+        true
     }
 }
+
+const IGNORE_FAILED: &str = "Could not ignore this file.";
 
 /// What the last command said on this page.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -575,15 +552,20 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
     });
 
     // The ignore popup reports through a `Notification`; its failure is this
-    // page's news, and its success re-reads the page, which is the report.
+    // page's news, and its success re-reads the page, which is the report —
+    // so a success also takes down a failure an earlier try left up.
     let popup_said = RwSignal::new(None::<Notification>);
-    Effect::new(move |_| {
-        if let Some(Notification::Error(detail)) = popup_said.get() {
-            said.set(Some(Said {
-                lead: "Could not ignore this file.".to_string(),
-                detail: Some(detail),
-            }));
+    Effect::new(move |_| match popup_said.get() {
+        Some(Notification::Error(detail)) => said.set(Some(Said {
+            lead: IGNORE_FAILED.to_string(),
+            detail: Some(detail),
+        })),
+        Some(Notification::Success(_))
+            if said.with_untracked(|s| s.as_ref().is_some_and(|s| s.lead == IGNORE_FAILED)) =>
+        {
+            said.set(None);
         }
+        _ => {}
     });
 
     let body = move || match answer() {
@@ -599,7 +581,9 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
             let Some(fixed) = form.get_untracked() else {
                 return ().into_any();
             };
-            untrack(|| draft.seed(&d, &fixed));
+            // Focus is asked for on arrival only: a re-read after Ignore or
+            // a failed publish must not pull the cursor from where it is.
+            let fresh = untrack(|| draft.seed(&d, &fixed));
             column(
                 &d,
                 fixed,
@@ -609,7 +593,7 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
                 run,
                 open_folder,
                 ignoring,
-                focus,
+                focus && fresh,
             )
         }
     };
@@ -828,19 +812,22 @@ fn focus_message(focus_ref: NodeRef<leptos::html::Div>) {
 /// The problems banner, with *Ignore them* opening the ignore popup on the
 /// first system file and its pattern.
 fn problem_banner(d: &CommitData, ignoring: RwSignal<Option<IgnorePopupData>>) -> Option<AnyView> {
-    let junk_to_ignore = junk(&d.entries);
+    let junk_to_ignore = d
+        .junk
+        .as_ref()
+        .map(|j| (j.first_path.clone(), j.first_pattern.clone()));
     let (namespace, uri) = (d.namespace.to_string(), d.uri.clone());
     problem(
         d.no_access_reason.as_deref(),
         d.no_session,
         d.no_session_host.as_deref(),
-        &d.entries,
+        d.junk.as_ref(),
     )
     .map(|problem| {
         let ignore = {
             let (namespace, uri) = (namespace.clone(), uri.clone());
             Callback::new(move |()| {
-                if let Some((path, pattern, _, _)) = junk_to_ignore.clone() {
+                if let Some((path, pattern)) = junk_to_ignore.clone() {
                     ignoring.set(Some(IgnorePopupData {
                         namespace: namespace.clone(),
                         path,
@@ -980,6 +967,7 @@ mod tests {
                 deleted: 1,
             },
             changed_bytes: 2_500_000,
+            junk: None,
         }
     }
 
@@ -1033,6 +1021,12 @@ mod tests {
             el.inner_html()
         );
         assert!(text.contains("2 ignored files not included"));
+        // Three rows came for 1203 changes: the list says it was cut.
+        assert!(
+            text.contains("Showing 3 of 1203 files. All 1203 are included."),
+            "markup was {}",
+            el.inner_html()
+        );
         // The message starts empty, over the publish message.
         let input = message_input(&el);
         assert_eq!(input.value(), "");
@@ -1062,6 +1056,26 @@ mod tests {
             .unwrap()
             .active_element();
         assert_ne!(active, Some(message_input(&el).unchecked_into()));
+    }
+
+    /// Focus is asked for on arrival, not on every re-read: Refresh — as
+    /// Ignore or a failed publish would — leaves the cursor where it went.
+    #[wasm_bindgen_test]
+    async fn a_re_read_does_not_take_the_focus_back() {
+        let el = page_at("/commit?namespace=org%2Fpkg&focus=message").await;
+        message_input(&el).blur().unwrap();
+        crate::test_support::element_saying(&el, "Refresh").click();
+        sleep_ms(80).await;
+        let active = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .active_element();
+        assert_ne!(
+            active,
+            Some(message_input(&el).unchecked_into()),
+            "the re-read left the focus alone"
+        );
     }
 
     fn entry(path: &str, status: &str) -> EntryData {
@@ -1256,37 +1270,36 @@ mod tests {
         assert!(!focuses_message(Some("other")));
     }
 
+    /// The banner reads the uncapped summary, not the capped rows: a system
+    /// file past the cap still warns.
     #[test]
     fn the_banner_reports_the_worst_problem() {
-        let mut junky = entry("raw/.DS_Store", "added");
-        junky.junky_pattern = Some(".DS_Store".to_string());
-        let mut junky2 = entry("notes/.DS_Store", "added");
-        junky2.junky_pattern = Some(".DS_Store".to_string());
-        let entries = [junky, junky2, entry("a.csv", "added")];
+        let junk = JunkSummary {
+            count: 2,
+            names: vec![".DS_Store".to_string()],
+            first_path: "raw/.DS_Store".to_string(),
+            first_pattern: ".DS_Store".to_string(),
+        };
         assert_eq!(
-            problem(None, false, None, &entries),
+            problem(None, false, None, Some(&junk)),
             Some(Problem::Junk {
                 count: 2,
                 names: vec![".DS_Store".to_string()],
             })
         );
         assert_eq!(
-            problem(None, true, Some("quilt.test"), &entries),
+            problem(None, true, Some("quilt.test"), Some(&junk)),
             Some(Problem::SignedOut {
                 host: Some("quilt.test".to_string())
             })
         );
         assert_eq!(
-            problem(Some("Your role cannot write here"), true, None, &entries),
+            problem(Some("Your role cannot write here"), true, None, Some(&junk)),
             Some(Problem::NoAccess {
                 reason: "Your role cannot write here".to_string()
             })
         );
-        assert_eq!(problem(None, false, None, &[entry("a.csv", "added")]), None);
-        assert_eq!(
-            junk(&entries).map(|(path, pattern, ..)| (path, pattern)),
-            Some(("raw/.DS_Store".to_string(), ".DS_Store".to_string()))
-        );
+        assert_eq!(problem(None, false, None, None), None);
     }
 
     #[test]
@@ -1313,7 +1326,7 @@ mod tests {
             "Could not publish this revision.".to_string(),
             "Could not save this revision.".to_string(),
             "Could not open the folder.".to_string(),
-            "Could not ignore this file.".to_string(),
+            IGNORE_FAILED.to_string(),
             "Could not load this package.".to_string(),
             missing_workflow_note("wrong-workflow"),
             blocked_reason(Some("No access"), false, None, None).unwrap(),

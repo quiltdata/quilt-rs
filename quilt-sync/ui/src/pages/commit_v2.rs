@@ -557,6 +557,13 @@ fn files_words(n: usize) -> String {
     }
 }
 
+/// Said when the list shows fewer files than the revision includes: the
+/// page's read is capped, the revision is not.
+#[must_use]
+pub fn cut_words(shown: usize, total: usize) -> String {
+    format!("Showing {shown} of {total} files. All {total} are included.")
+}
+
 fn ignored_words(n: usize) -> String {
     if n == 1 {
         "1 ignored file not included".to_string()
@@ -585,6 +592,7 @@ pub fn IncludedList(
 ) -> impl IntoView {
     let (count, total) =
         totals.unwrap_or_else(|| (files.len(), files.iter().map(|f| f.size).sum()));
+    let cut = (count > files.len() && !files.is_empty()).then(|| cut_words(files.len(), count));
     let heading_id = crate::kit::unique_id("included");
     let labelled_by = heading_id.clone();
     let tally = (count > 0).then(|| format!(" · {} · {}", files_words(count), format_size(total)));
@@ -625,6 +633,7 @@ pub fn IncludedList(
                 <span class=style::tally>{tally}</span>
             </h3>
             {rows}
+            {cut.map(|words| view! { <p class=style::quiet>{words}</p> })}
             {(ignored > 0)
                 .then(|| {
                     view! {
@@ -703,6 +712,7 @@ pub(super) mod tests {
             "Ignore them".to_string(),
             "Metadata".to_string(),
             "What's included".to_string(),
+            cut_words(1000, 2000),
         ];
         for primary in [
             Primary::Files(1),
