@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.43.0-dev]
+
+### Changed
+
+- **Breaking:** The pull dry run also returns the paths the newer revision changes and removes, and its hash: `PullPreview` has new `changed`, `removed` and `latest_hash` fields
+
 ## [v0.42.1] - 2026-10-06
 
 ### Added
