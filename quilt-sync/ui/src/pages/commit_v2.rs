@@ -384,10 +384,21 @@ pub fn MetadataField(
         MetadataPreview::Invalid => view! { <span>"Not valid JSON"</span> }.into_any(),
         MetadataPreview::Json(value) => view! { <JsonDisplay value=value /> }.into_any(),
     };
+    // Here rather than in the editor, so a height the reader dragged to
+    // survives `Done` and `Edit`.
+    let height = RwSignal::new(EDITOR_HEIGHT);
     let editor = {
         let control_id = control_id.clone();
         let error_id = error_id.clone();
-        move || metadata_editor(control_id.clone(), error_id.clone(), metadata, failing)
+        move || {
+            metadata_editor(
+                control_id.clone(),
+                error_id.clone(),
+                metadata,
+                failing,
+                height,
+            )
+        }
     };
 
     view! {
@@ -454,12 +465,37 @@ fn settings_hint(from_settings: Signal<bool>, href: Option<String>) -> impl Into
     }
 }
 
-/// The metadata control: v1's editor over its fallback textarea.
+/// The editor's height on opening, and the least it can be dragged to. 150px
+/// keeps a failed check's error inside the 560px window.
+const EDITOR_HEIGHT: i32 = 150;
+
+/// How far one arrow key moves the editor's lower edge.
+const EDITOR_STEP: i32 = 24;
+
+/// The editor's height after a drag of `dy` from `start`.
+fn dragged_height(start: i32, dy: i32) -> i32 {
+    (start + dy).max(EDITOR_HEIGHT)
+}
+
+/// The editor's height after `key` on its grip, or `None` for another key.
+fn keyed_height(height: i32, key: &str) -> Option<i32> {
+    match key {
+        "ArrowDown" => Some(height + EDITOR_STEP),
+        "ArrowUp" => Some(dragged_height(height, -EDITOR_STEP)),
+        "Home" => Some(EDITOR_HEIGHT),
+        _ => None,
+    }
+}
+
+/// The metadata control: v1's editor over its fallback textarea, with a grip
+/// under it that drags it taller. Not CSS `resize`: that needs `overflow` on
+/// the box, which crops the editor's context menu.
 fn metadata_editor(
     id: String,
     described_by: String,
     metadata: RwSignal<String>,
     invalid: Signal<bool>,
+    height: RwSignal<i32>,
 ) -> AnyView {
     let editor_ref = NodeRef::<leptos::html::Div>::new();
     let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
@@ -478,7 +514,10 @@ fn metadata_editor(
                 on:input=move |ev| metadata.set(event_target_value(&ev))
             />
         </div>
-        <div class=move || invalid.get().then_some(style::invalid)>
+        <div
+            class=move || invalid.get().then_some(style::invalid)
+            style:height=move || format!("{}px", height.get())
+        >
             <JsonEditor
                 node_ref=editor_ref
                 textarea_ref=textarea_ref
@@ -486,8 +525,53 @@ fn metadata_editor(
                 class=style::editor
             />
         </div>
+        {editor_grip(height)}
     }
     .into_any()
+}
+
+/// The bar under the editor: drag it, or focus it and use the arrow keys.
+fn editor_grip(height: RwSignal<i32>) -> impl IntoView {
+    // (pointer y, height) where the drag began.
+    let drag = StoredValue::new(None::<(i32, i32)>);
+    let end = move |_| drag.set_value(None);
+    view! {
+        <div
+            class=style::grip
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize the metadata editor"
+            aria-valuemin=EDITOR_HEIGHT
+            aria-valuenow=move || height.get()
+            tabindex="0"
+            on:pointerdown=move |ev: leptos::ev::PointerEvent| {
+                if ev.button() != 0 {
+                    return;
+                }
+                ev.prevent_default();
+                if let Some(grip) = ev
+                    .current_target()
+                    .and_then(|t| wasm_bindgen::JsCast::dyn_into::<web_sys::Element>(t).ok())
+                {
+                    let _ = grip.set_pointer_capture(ev.pointer_id());
+                }
+                drag.set_value(Some((ev.client_y(), height.get_untracked())));
+            }
+            on:pointermove=move |ev: leptos::ev::PointerEvent| {
+                if let Some((y, start)) = drag.get_value() {
+                    height.set(dragged_height(start, ev.client_y() - y));
+                }
+            }
+            on:pointerup=end
+            on:pointercancel=end
+            on:keydown=move |ev: leptos::ev::KeyboardEvent| {
+                if let Some(next) = keyed_height(height.get_untracked(), &ev.key()) {
+                    ev.prevent_default();
+                    height.set(next);
+                }
+            }
+        ></div>
+    }
 }
 
 /// What the folded metadata shows.
@@ -743,6 +827,19 @@ pub(super) mod tests {
         for words in &all {
             assert_eq!(banned_in(words), None, "{words:?}");
         }
+    }
+
+    #[test]
+    fn the_editor_grows_but_never_below_its_opening_height() {
+        assert_eq!(dragged_height(EDITOR_HEIGHT, 90), EDITOR_HEIGHT + 90);
+        assert_eq!(dragged_height(EDITOR_HEIGHT + 30, -90), EDITOR_HEIGHT);
+        assert_eq!(
+            keyed_height(EDITOR_HEIGHT, "ArrowDown"),
+            Some(EDITOR_HEIGHT + EDITOR_STEP)
+        );
+        assert_eq!(keyed_height(EDITOR_HEIGHT, "ArrowUp"), Some(EDITOR_HEIGHT));
+        assert_eq!(keyed_height(EDITOR_HEIGHT * 2, "Home"), Some(EDITOR_HEIGHT));
+        assert_eq!(keyed_height(EDITOR_HEIGHT, "Enter"), None);
     }
 
     #[test]

@@ -414,7 +414,8 @@ confirm; the file list goes last so a long list scrolls under the form.
 - The workflow is a live select, or plain words when there is nothing to
   choose. The metadata is a read-only preview with `Edit` (`Add` when
   empty), which opens the JSON editor; a failed metadata check opens it.
-  Each says "From your publish settings" only while Settings supplied it.
+  The bar under the editor drags it taller, and never shorter than it
+  opens. Each says "From your publish settings" only while Settings supplied it.
 - A role without access, no session, or a failing workflow check disables
   the whole primary, with the reason in a tooltip.
 - `Ignore` on a row and `Ignore them` on the banner open the **Ignore

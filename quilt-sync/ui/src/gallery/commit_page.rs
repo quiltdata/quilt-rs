@@ -13,13 +13,15 @@
 //! | both values from your publish settings | 144 | 217 | 410 | 426 | 3 of 4 |
 //! | junk banner, signed out | 144 | 283 | 427 | 443 | 2 of 4 |
 //! | no access | 144 | 271 | 415 | 431 | 2 of 4 |
-//! | the metadata editor open | 144 | 217 | 491 | 507 | 0 |
-//! | a failed check | 144 | 217 | 515 | 531 | 0 |
+//! | the metadata editor open | 144 | 217 | 503 | 519 | 0 |
+//! | a failed check | 144 | 217 | 527 | 543 | 0 |
 //!
 //! - The form stays on the first screen in every cell; a long list scrolls
 //!   under it.
-//! - A failed check's error ends at 515, inside the window. That sets the
-//!   metadata editor's height at 150px; at 220 the error fell to 613.
+//! - A failed check's error ends at 527, inside the window. That sets the
+//!   metadata editor's opening height at 150px, which is also the least its
+//!   grip drags it to; at 220 the error fell to 613. The grip is the 12px
+//!   under the editor.
 //! - The editor's context menu is not cropped: its one clipping ancestor is
 //!   the page's scroller, and the menu fits in it.
 //!
@@ -292,7 +294,7 @@ pub fn CommitPageScene() -> impl IntoView {
             <Cell full=true label="no metadata — the absence muted, and the button reads Add">
                 {page(Fixture { metadata: "", ..Fixture::new("commit-no-metadata") })}
             </Cell>
-            <Cell full=true label="the metadata editor open">
+            <Cell full=true label="the metadata editor open — drag the bar under it, or focus it and use the arrow keys, to make it taller">
                 {page(Fixture { editing: true, ..Fixture::new("commit-expanded") })}
             </Cell>
             <Cell

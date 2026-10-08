@@ -21,6 +21,10 @@
 
 ## [v0.22.9-dev]
 
+### Changed
+
+- **New design preview**: on the commit page, drag the bar under the metadata editor to make it taller. The `›` between the links above the page title has more room (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+
 ### Fixed
 
 - **New design preview**: the package page no longer flashes its loading frame when it refreshes on its own, a second or two after it opens or whenever autosync reports back (<https://github.com/quiltdata/quilt-rs/pull/1093>)

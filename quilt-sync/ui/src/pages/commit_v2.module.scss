@@ -85,11 +85,39 @@
   resize: vertical;
 }
 
-// The editor fills its parent, so it needs a height. 150px keeps a failed
-// check's error inside the 560px window. No `overflow` here or above: it crops
-// the editor's context menu.
+// The editor fills its parent, whose height the grip sets. No `overflow` here
+// or above: it crops the editor's context menu.
 .editor {
-  height: 150px;
+  height: 100%;
+}
+
+// A short bar centred on a strip as wide as the editor, so the whole strip
+// takes the drag.
+.grip {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: var(--q-space-3);
+  border-radius: var(--q-radius);
+  cursor: ns-resize;
+  touch-action: none;
+
+  &::before {
+    content: "";
+    width: var(--q-space-8);
+    height: 3px;
+    border-radius: 2px;
+    background: var(--q-borderColor-default);
+  }
+
+  &:hover::before {
+    background: var(--q-fgColor-muted);
+  }
+
+  &:focus-visible {
+    outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+    outline-offset: -2px;
+  }
 }
 
 .invalid {
