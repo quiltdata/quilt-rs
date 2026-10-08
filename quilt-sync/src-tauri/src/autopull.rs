@@ -270,8 +270,10 @@ impl Watcher {
     /// the paused map either way, and every route that clears a pause
     /// ([`Self::clear_paused`] after a manual push / pull / commit / publish /
     /// reset, [`Self::clear_all_paused`] when autosync is switched on) clears
-    /// this one too.
-    pub async fn pause(&self, namespace: &Namespace, origin: &Host, reason: PausedReason) {
+    /// this one too. Likewise with or without `origin`: a package installed from
+    /// a plain S3 URI has no deployment to attribute the pause to, but pulls
+    /// all the same.
+    pub async fn pause(&self, namespace: &Namespace, origin: Option<&Host>, reason: PausedReason) {
         tick::pause(&self.inner, namespace, origin, reason).await;
     }
 
