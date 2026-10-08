@@ -144,6 +144,13 @@ pub fn commit_href(namespace: &Namespace) -> String {
     format!("/commit?namespace={namespace}")
 }
 
+/// The commit screen as *Create new revision* opens it: with the message
+/// focused, because the reader came to write one. Every other way in focuses
+/// nothing.
+pub fn new_revision_href(namespace: &Namespace) -> String {
+    format!("{}&focus=message", commit_href(namespace))
+}
+
 /// The merge screen for one package.
 pub fn merge_href(namespace: &Namespace) -> String {
     let namespace = namespace.to_string();
@@ -178,6 +185,10 @@ mod tests {
             "/installed-package?namespace=org%2Fpkg&filter=unmodified"
         );
         assert_eq!(commit_href(&ns("org/pkg")), "/commit?namespace=org%2Fpkg");
+        assert_eq!(
+            new_revision_href(&ns("org/pkg")),
+            "/commit?namespace=org%2Fpkg&focus=message"
+        );
         assert_eq!(merge_href(&ns("org/pkg")), "/merge?namespace=org%2Fpkg");
     }
 

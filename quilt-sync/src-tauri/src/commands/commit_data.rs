@@ -27,6 +27,8 @@ use crate::publish_settings::PublishSettings;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
 
+use super::package_entries::ENTRIES_CAP;
+use super::package_entries::EntryCounts;
 use super::package_entries::InstalledPackageEntryData;
 use super::package_list::denied_mark;
 
@@ -133,6 +135,32 @@ pub struct CommitData {
     pub entries: Vec<InstalledPackageEntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
+    /// The package's entries by kind, over the whole package rather than the
+    /// capped `entries`, as the v2 package page counts them. `counts.changed`
+    /// is what `Publish N files` says.
+    pub counts: EntryCounts,
+    /// The bytes the revision brings in: the new and changed files' sizes,
+    /// over the whole package. A deletion is a change but brings none.
+    pub changed_bytes: u64,
+    /// The system files the revision would publish, over the whole package:
+    /// the capped `entries` can leave them out.
+    pub junk: Option<JunkSummary>,
+}
+
+/// The system files among the changes, for the commit page's warning.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct JunkSummary {
+    pub count: usize,
+    /// The first few distinct file names, in path order: enough to say what
+    /// they are, never thousands over IPC and into one banner.
+    pub names: Vec<String>,
+    /// How many more distinct names there are than `names` holds.
+    pub more_names: usize,
+    /// The first one and the pattern that matches it, which *Ignore them*
+    /// offers.
+    pub first_path: String,
+    pub first_pattern: String,
 }
 
 #[derive(Serialize)]
@@ -381,9 +409,14 @@ async fn get_commit_data_from_model(
         .map(|(p, pat)| (p.clone(), pat.clone()))
         .collect();
 
-    // Modified entries
+    // The changes first, then unchanged and ignored files, cut at the cap
+    // before each push: a long list keeps every change it can, and the page
+    // shows how many it left out. Committing includes them all regardless.
     let mut entries_list = Vec::new();
     for (filename, change) in &status.changes {
+        if entries_list.len() >= ENTRIES_CAP {
+            break;
+        }
         let (status_str, size) = match change {
             quilt::lineage::Change::Added(r) => ("added", r.size),
             quilt::lineage::Change::Modified(r) => ("modified", r.size),
@@ -397,14 +430,14 @@ async fn get_commit_data_from_model(
             ignored_by: None,
             namespace: namespace.clone(),
         });
-        if entries_list.len() > 1000 {
-            break;
-        }
     }
 
     // Unmodified entries (from manifest, not changed)
     let manifest_entries = m.get_installed_package_records(&installed_package).await?;
     for (filename, row) in &manifest_entries {
+        if entries_list.len() >= ENTRIES_CAP {
+            break;
+        }
         if status.changes.contains_key(filename) {
             continue;
         }
@@ -421,13 +454,13 @@ async fn get_commit_data_from_model(
             ignored_by: None,
             namespace: namespace.clone(),
         });
-        if entries_list.len() > 1000 {
-            break;
-        }
     }
 
     // Ignored files
     for (filename, pattern, size) in &status.ignored_files {
+        if entries_list.len() >= ENTRIES_CAP {
+            break;
+        }
         entries_list.push(InstalledPackageEntryData {
             filename: filename.display().to_string(),
             size: *size,
@@ -436,9 +469,6 @@ async fn get_commit_data_from_model(
             ignored_by: Some(pattern.clone()),
             namespace: namespace.clone(),
         });
-        if entries_list.len() > 1000 {
-            break;
-        }
     }
 
     entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
@@ -450,6 +480,10 @@ async fn get_commit_data_from_model(
         .keys()
         .filter(|f| !status.changes.contains_key(*f))
         .count();
+
+    let counts = super::package_entries::entry_counts(&status, &lineage.paths, &manifest_entries);
+    let changed_bytes = changed_bytes(&status.changes);
+    let junk = junk_summary(&status.junky_changes);
 
     // Start from what one-click Publish and autosync would send.
     let (message, settings_user_meta, settings_workflow) =
@@ -519,7 +553,53 @@ async fn get_commit_data_from_model(
         entries: entries_list,
         ignored_count,
         unmodified_count,
+        counts,
+        changed_bytes,
+        junk,
     })
+}
+
+/// How many system-file names the warning names; the count stays exact.
+const JUNK_NAMES_SHOWN: usize = 3;
+
+/// The system files among the changes, uncapped, or `None` when there are
+/// none.
+fn junk_summary(junky: &[(std::path::PathBuf, String)]) -> Option<JunkSummary> {
+    let mut sorted: Vec<_> = junky.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let (first_path, first_pattern) = sorted.first()?;
+    // A set beside the list, so many distinct names stay a linear scan; the
+    // list keeps path order.
+    let mut seen = std::collections::HashSet::new();
+    let mut names: Vec<String> = Vec::new();
+    for (path, _) in &sorted {
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        if seen.insert(name.clone()) && names.len() < JUNK_NAMES_SHOWN {
+            names.push(name);
+        }
+    }
+    let more_names = seen.len() - names.len();
+    Some(JunkSummary {
+        count: sorted.len(),
+        names,
+        more_names,
+        first_path: first_path.display().to_string(),
+        first_pattern: first_pattern.clone(),
+    })
+}
+
+/// What the new and changed files weigh; a deletion adds nothing.
+fn changed_bytes(changes: &quilt::lineage::ChangeSet) -> u64 {
+    changes
+        .values()
+        .map(|change| match change {
+            quilt::lineage::Change::Added(row) | quilt::lineage::Change::Modified(row) => row.size,
+            quilt::lineage::Change::Removed(_) => 0,
+        })
+        .sum()
 }
 
 #[tauri::command]
@@ -1473,6 +1553,138 @@ mod tests {
             })
         });
         model
+    }
+
+    /// The totals count every change in the package, not the capped list, so
+    /// `Publish N files` stays true past the cap. Deletions are changes, but
+    /// bring no bytes into the revision.
+    /// Each distinct name once, in path order, however many there are.
+    #[test]
+    fn the_junk_summary_names_each_file_once_in_path_order() {
+        let junky: Vec<_> = [
+            "b/.DS_Store",
+            "a/.DS_Store",
+            "a/x.pyc",
+            "c/x.pyc",
+            "b/y.pyc",
+        ]
+        .into_iter()
+        .map(|p| (std::path::PathBuf::from(p), "*".to_string()))
+        .collect();
+        let junk = junk_summary(&junky).expect("system files");
+        assert_eq!(junk.count, 5);
+        assert_eq!(junk.names, [".DS_Store", "x.pyc", "y.pyc"]);
+        assert_eq!(junk.more_names, 0);
+        assert_eq!(junk.first_path, "a/.DS_Store");
+        assert_eq!(junk_summary(&[]), None);
+
+        let many: Vec<_> = (0..20_000)
+            .map(|i| {
+                (
+                    std::path::PathBuf::from(format!("gen/m{i:05}.pyc")),
+                    "*.pyc".to_string(),
+                )
+            })
+            .collect();
+        let many = junk_summary(&many).expect("system files");
+        assert_eq!(many.count, 20_000);
+        assert_eq!(many.names, ["m00000.pyc", "m00001.pyc", "m00002.pyc"]);
+        assert_eq!(many.more_names, 19_997);
+    }
+
+    #[tokio::test]
+    async fn commit_data_totals_count_past_the_list_cap() -> Result<(), String> {
+        let mut model = mocks::create();
+        let remote_manifest = quilt_uri::ManifestUri {
+            bucket: "quilt-example".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abcdef".to_string(),
+            origin: Some(fixtures::host()),
+        };
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    remote_manifest.clone(),
+                    remote_manifest.hash.clone(),
+                ))
+            });
+        let row = |size| quilt::manifest::ManifestRow {
+            size,
+            ..quilt::manifest::ManifestRow::default()
+        };
+        let mut status = quilt::lineage::InstalledPackageStatus::default();
+        for i in 0..1200 {
+            status.changes.insert(
+                std::path::PathBuf::from(format!("new/{i:04}.csv")),
+                quilt::lineage::Change::Added(row(10)),
+            );
+        }
+        status.changes.insert(
+            std::path::PathBuf::from("changed.csv"),
+            quilt::lineage::Change::Modified(row(5)),
+        );
+        status.changes.insert(
+            std::path::PathBuf::from("gone.csv"),
+            quilt::lineage::Change::Removed(row(1_000_000)),
+        );
+        status.ignored_files.push((
+            std::path::PathBuf::from("scratch.tmp"),
+            "*.tmp".to_string(),
+            7,
+        ));
+        // System files past the cap still warn: `new/1100.csv` sorts after
+        // every row the list keeps.
+        for path in ["new/1100.csv", "new/1101.csv"] {
+            status
+                .junky_changes
+                .push((std::path::PathBuf::from(path), "*.csv".to_string()));
+        }
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| Ok(status));
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
+        model
+            .expect_browse_remote_manifest()
+            .returning(|_| Ok(mocks::create_remote_manifest()));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
+
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &PublishSettings::default(),
+            &("foo", "bar").into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.entries.len(), ENTRIES_CAP, "cut at the cap exactly");
+        assert!(
+            data.entries.iter().all(|e| e.ignored_by.is_none()
+                && matches!(e.status.as_str(), "added" | "modified" | "deleted")),
+            "changes fill the list before anything else"
+        );
+        assert_eq!(data.counts.changed, 1202);
+        assert_eq!(data.counts.deleted, 1);
+        assert_eq!(data.counts.ignored, 1);
+        assert_eq!(data.changed_bytes, 1200 * 10 + 5);
+        assert_eq!(
+            data.junk,
+            Some(JunkSummary {
+                count: 2,
+                names: vec!["1100.csv".to_string(), "1101.csv".to_string()],
+                more_names: 0,
+                first_path: "new/1100.csv".to_string(),
+                first_pattern: "*.csv".to_string(),
+            })
+        );
+        Ok(())
     }
 
     #[tokio::test]

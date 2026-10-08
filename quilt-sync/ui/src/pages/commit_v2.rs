@@ -1,7 +1,7 @@
 //! The commit page v2's regions, as views over props.
 //!
-//! Not routed yet: the gallery draws them over fixtures, and the port will
-//! fill the same props from `get_commit_data`. Every effect is a callback.
+//! The gallery draws them over fixtures, and [`CommitV2`] fills the same
+//! props from `get_commit_data`. Every effect is a callback.
 //! [`CommitColumn`] fixes the order: header, problem, message, workflow,
 //! metadata, then the files, last so a long list scrolls under the form.
 //! v2 vocabulary only; a test holds the fixed strings to the banned words.
@@ -33,6 +33,9 @@ use crate::util::format_size;
 use super::json_editor::JsonEditor;
 
 stylance::import_crate_style!(style, "src/pages/commit_v2.module.scss");
+
+mod page;
+pub use page::{CommitV2, CommitV2Skeleton};
 
 /// What the revision will do, which decides the primary's words.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -306,14 +309,20 @@ pub fn WorkflowField(
     /// `/settings` by default.
     #[prop(optional, into)]
     settings_href: Option<String>,
+    /// A warning under the field that is not the check's: the Settings
+    /// workflow this bucket cannot use.
+    #[prop(optional, into)]
+    note: Option<String>,
 ) -> impl IntoView {
     let hint = settings_hint(from_settings, settings_href);
+    let note = note.map(|note| view! { <p class=style::field_hint>{note}</p> });
     let Some(choice) = workflow else {
         let words = no_workflow.unwrap_or_else(|| "None".to_string());
         return view! {
             <div class=style::field>
                 <div class=style::field_name>"Workflow"</div>
                 <div class=style::field_value>{words}</div>
+                {note}
                 {hint}
             </div>
         }
@@ -335,6 +344,7 @@ pub fn WorkflowField(
                         .into_any()
                 }
             />
+            {note}
             {hint}
         </div>
     }
@@ -547,6 +557,13 @@ fn files_words(n: usize) -> String {
     }
 }
 
+/// Said when the list shows fewer files than the revision includes: the
+/// page's read is capped, the revision is not.
+#[must_use]
+pub fn cut_words(shown: usize, total: usize) -> String {
+    format!("Showing {shown} of {total} files. All {total} are included.")
+}
+
 fn ignored_words(n: usize) -> String {
     if n == 1 {
         "1 ignored file not included".to_string()
@@ -567,12 +584,18 @@ pub fn IncludedList(
     ignored: usize,
     /// A row's `[⋯]` → `Ignore`, with its path.
     on_ignore: Callback<String>,
+    /// The heading's `(files, bytes)` when `files` is not all of them: the
+    /// page's list is capped, its totals are not. Counted from `files` by
+    /// default.
+    #[prop(optional)]
+    totals: Option<(usize, u64)>,
 ) -> impl IntoView {
-    let total: u64 = files.iter().map(|f| f.size).sum();
+    let (count, total) =
+        totals.unwrap_or_else(|| (files.len(), files.iter().map(|f| f.size).sum()));
+    let cut = (count > files.len() && !files.is_empty()).then(|| cut_words(files.len(), count));
     let heading_id = crate::kit::unique_id("included");
     let labelled_by = heading_id.clone();
-    let tally = (!files.is_empty())
-        .then(|| format!(" · {} · {}", files_words(files.len()), format_size(total)));
+    let tally = (count > 0).then(|| format!(" · {} · {}", files_words(count), format_size(total)));
     let rows = if files.is_empty() {
         view! { <p class=style::quiet>{METADATA_ONLY}</p> }.into_any()
     } else {
@@ -610,6 +633,7 @@ pub fn IncludedList(
                 <span class=style::tally>{tally}</span>
             </h3>
             {rows}
+            {cut.map(|words| view! { <p class=style::quiet>{words}</p> })}
             {(ignored > 0)
                 .then(|| {
                     view! {
@@ -661,7 +685,7 @@ pub fn CommitPageSkeleton() -> impl IntoView {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     /// `package_state.rs`'s list, plus `commits` and `hash`.
@@ -670,7 +694,7 @@ mod tests {
         "hash",
     ];
 
-    fn banned_in(words: &str) -> Option<&'static str> {
+    pub(super) fn banned_in(words: &str) -> Option<&'static str> {
         let lower = words.to_lowercase();
         BANNED.iter().copied().find(|bad| {
             lower
@@ -688,6 +712,7 @@ mod tests {
             "Ignore them".to_string(),
             "Metadata".to_string(),
             "What's included".to_string(),
+            cut_words(1000, 2000),
         ];
         for primary in [
             Primary::Files(1),

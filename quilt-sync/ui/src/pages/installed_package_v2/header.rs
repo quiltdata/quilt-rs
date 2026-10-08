@@ -221,7 +221,7 @@ fn menu(
 ) -> Vec<MenuAction> {
     let Wiring { busy, outcome, .. } = w;
     let ns = data.namespace.to_string();
-    let commit_to = crate::routes::commit_href(&data.namespace);
+    let commit_to = crate::routes::new_revision_href(&data.namespace);
     menu_items(data, busy.get())
         .into_iter()
         .map(|item| {

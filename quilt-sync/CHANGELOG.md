@@ -25,6 +25,7 @@
 
 - **New design preview**: Publish on the package page now publishes in one click. Choose *Review before publishing…* on its button to check the message and metadata first; the button remembers your choice for each package. A package to publish in the main page's queue opens its package page (<https://github.com/quiltdata/quilt-rs/pull/1085>)
 - The commit form starts from your Commit and Push defaults, the same message template, metadata and workflow that Publish and autosync send, so reviewing before publishing shows what Publish would send. The form says which values come from Settings, with a link there, and Settings says these defaults also fill in the commit form (<https://github.com/quiltdata/quilt-rs/pull/1086>)
+- **New design preview**: *Review before publishing…* and *Create new revision* open a redesigned page for the new revision. It shows the message, workflow and metadata in one column, then the files the revision includes, and its button says how many files it publishes. An empty message uses the suggested one. *Create new revision* puts the cursor in the message (<https://github.com/quiltdata/quilt-rs/pull/1090>)
 
 ## [v0.22.7] - 2026-10-07
 

@@ -43,7 +43,7 @@ fn App() -> impl IntoView {
         <Router>
             <Routes fallback=|| view! { <pages::NotFound /> }>
                 <Route path=path!("/") view=|| view! { <Home /> } />
-                <Route path=path!("/commit") view=pages::Commit />
+                <Route path=path!("/commit") view=|| view! { <CommitPage read=read_settings /> } />
                 <Route path=path!("/installed-package") view=|| view! { <PackagePage read=read_settings /> } />
                 <Route path=path!("/installed-packages-list") view=pages::InstalledPackagesList />
                 <Route path=path!("/login") view=pages::Login />
@@ -97,6 +97,22 @@ fn PackagePage(read: SettingsRead) -> impl IntoView {
             v1=|| view! { <pages::InstalledPackage /> }.into_any()
             skeleton=|| view! { <pages::PackagePageSkeleton actions=loading_actions() /> }.into_any()
             loading="Loading package"
+        />
+    }
+}
+
+/// `/commit` is the new revision's screen, and the design preview decides
+/// which one, as for [`PackagePage`]: every way here is a link from a package
+/// page, so the commit page is the one beside the package page the reader has.
+#[component]
+fn CommitPage(read: SettingsRead) -> impl IntoView {
+    view! {
+        <ByDesign
+            read=read
+            v2=|| view! { <pages::CommitV2 /> }.into_any()
+            v1=|| view! { <pages::Commit /> }.into_any()
+            skeleton=|| view! { <pages::CommitV2Skeleton actions=loading_actions() /> }.into_any()
+            loading="Loading new revision"
         />
     }
 }
@@ -474,6 +490,60 @@ mod tests {
         let el = package_route(settings_fail).await;
         assert!(draws_v1(&el), "markup was {}", el.inner_html());
         assert!(!draws_v2(&el), "markup was {}", el.inner_html());
+    }
+
+    /// `/commit` as the router draws it, over a stubbed settings read.
+    async fn commit_route(read: SettingsRead) -> Mounted {
+        let el = Mounted::new(move || {
+            view! {
+                <Router>
+                    <CommitPage read=read />
+                </Router>
+            }
+        });
+        sleep_ms(100).await;
+        el
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_commit_route_is_v2_with_the_preview_on() {
+        let el = commit_route(settings_on).await;
+        assert!(draws_v2(&el), "markup was {}", el.inner_html());
+        assert!(!draws_v1(&el), "markup was {}", el.inner_html());
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_commit_route_is_v1_with_the_preview_off() {
+        let el = commit_route(settings_off).await;
+        assert!(draws_v1(&el), "markup was {}", el.inner_html());
+        assert!(!draws_v2(&el), "markup was {}", el.inner_html());
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_commit_route_is_v1_when_settings_cannot_be_read() {
+        let el = commit_route(settings_fail).await;
+        assert!(draws_v1(&el), "markup was {}", el.inner_html());
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_commit_route_waits_on_the_commit_skeleton() {
+        quilt_sync_ui::theme::set_v2(true);
+        let el = commit_route(settings_pending).await;
+        let status = el
+            .query_selector("[data-home-frame] [role=status]")
+            .unwrap()
+            .expect("the frame, still up: the read never answers");
+        assert_eq!(
+            status.text_content().unwrap().trim(),
+            "Loading new revision"
+        );
+        assert!(
+            el.query_selector("[data-home-frame] [data-v2-page] [aria-busy=true]")
+                .unwrap()
+                .is_some(),
+            "the commit page's skeleton; markup was {}",
+            el.inner_html()
+        );
     }
 
     #[test]

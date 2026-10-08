@@ -1,7 +1,7 @@
-//! The commit page v2, drawn before it is routed.
+//! The commit page v2, one cell per state.
 //!
 //! Every region is `pages::commit_v2`'s own, over fixture props, so the routed
-//! page and this scene cannot drift. Callbacks are dropped.
+//! page (`pages::CommitV2`) and this scene cannot drift. Callbacks are dropped.
 //!
 //! # Measured at 1024x560, in Chrome
 //!
@@ -253,8 +253,7 @@ fn loading() -> AnyView {
 }
 
 const NOTE: &str = "The commit page v2 at the app's 1024×560 floor, one cell per state: header, \
-    problem, message, workflow, metadata, then the changed files, which scroll under the form. \
-    Not routed yet.";
+    problem, message, workflow, metadata, then the changed files, which scroll under the form.";
 
 const FAILED_CHECK: &str = "The workflow requires an \"operator\" field in the metadata";
 

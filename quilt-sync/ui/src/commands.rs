@@ -114,6 +114,27 @@ pub struct CommitData {
     pub entries: Vec<EntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
+    /// The entries by kind over the whole package, not the capped `entries`.
+    pub counts: EntryCounts,
+    /// The new and changed files' bytes over the whole package; a deletion
+    /// adds none.
+    pub changed_bytes: u64,
+    /// The system files the revision would publish, over the whole package.
+    pub junk: Option<JunkSummary>,
+}
+
+/// The system files among the changes, uncapped.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JunkSummary {
+    pub count: usize,
+    /// The first few distinct file names, in path order.
+    pub names: Vec<String>,
+    /// How many more distinct names there are.
+    pub more_names: usize,
+    /// The first one and its pattern, which *Ignore them* offers.
+    pub first_path: String,
+    pub first_pattern: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
