@@ -1578,6 +1578,39 @@ mod tests {
         );
     }
 
+    /// The UI mirrors this exact camelCase JSON in `quilt_sync_ui::commands`'s
+    /// `pull_preview_wire_form_is_verbatim`. If the two drift, the package page
+    /// silently misreads what a newer revision brings at the Tauri boundary.
+    #[test]
+    fn pull_preview_wire_form_is_verbatim() {
+        use std::path::PathBuf;
+
+        use crate::quilt::flow::PullOutcome;
+        use crate::quilt::flow::PullPreview;
+        assert_eq!(
+            serde_json::to_string(&PullPreview {
+                outcome: PullOutcome::CleanUpdate,
+                added: vec![PathBuf::from("a.txt")],
+                changed: vec![PathBuf::from("b.txt")],
+                removed: vec![PathBuf::from("c.txt")],
+                latest_hash: Some("abc123".to_string()),
+            })
+            .unwrap(),
+            r#"{"outcome":"CleanUpdate","added":["a.txt"],"changed":["b.txt"],"removed":["c.txt"],"latestHash":"abc123"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&PullPreview {
+                outcome: PullOutcome::UpToDate,
+                added: vec![],
+                changed: vec![],
+                removed: vec![],
+                latest_hash: None,
+            })
+            .unwrap(),
+            r#"{"outcome":"UpToDate","added":[],"changed":[],"removed":[],"latestHash":null}"#
+        );
+    }
+
     #[test]
     fn banner_maps_local_only_and_installed() {
         assert_eq!(
