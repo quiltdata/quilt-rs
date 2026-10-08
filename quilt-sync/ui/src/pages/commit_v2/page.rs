@@ -216,6 +216,51 @@ fn caption(violations: &[CommitViolation], field: ViolationField) -> Option<Stri
     (!messages.is_empty()).then(|| messages.join(" "))
 }
 
+/// The select's options and where it starts, from the dropdown v1 draws.
+///
+/// The select cannot grey an option, so a disabled one (`None` on a bucket
+/// that requires a workflow) is left out — unless v1 would start on it, which
+/// it does on a required bucket that names no default: then it stays, at the
+/// head, so the reader still has to choose, and `needs_choice` says so. With
+/// one workflow left there is nothing to choose, and it starts on that one.
+///
+/// Labels are made unique, since two workflows may share a name: the label
+/// is how the select names an option, and the draft keeps the intent.
+pub(crate) fn workflow_choices(view: &WorkflowView) -> (Vec<WorkflowOption>, WorkflowIntent, bool) {
+    let enabled: Vec<WorkflowOption> = view
+        .options
+        .iter()
+        .filter(|o| !o.disabled)
+        .cloned()
+        .collect();
+    let start = view.options.get(view.initial);
+    let (mut options, initial, needs_choice) = match start {
+        Some(start) if start.disabled && enabled.len() == 1 => {
+            (enabled.clone(), enabled[0].intent.clone(), false)
+        }
+        Some(start) if start.disabled && !enabled.is_empty() => {
+            let mut options = vec![start.clone()];
+            options.extend(enabled);
+            (options, start.intent.clone(), true)
+        }
+        Some(start) => (enabled, start.intent.clone(), false),
+        None => (enabled, WorkflowIntent::BucketDefault, false),
+    };
+    let labels: Vec<String> = options.iter().map(|o| o.label.clone()).collect();
+    for option in &mut options {
+        if labels.iter().filter(|l| **l == option.label).count() > 1
+            && let WorkflowIntent::Named(id) = &option.intent
+        {
+            option.label = format!("{} ({id})", option.label);
+        }
+    }
+    (options, initial, needs_choice)
+}
+
+/// What the primary says while a required workflow is still unchosen.
+pub(crate) const CHOOSE_A_WORKFLOW: &str =
+    "This bucket requires a workflow. Choose one to publish.";
+
 /// The form's fixed facts, from one answer: what the page validates and
 /// submits against. Compared, so a re-read that changed nothing here does not
 /// re-run validation.
@@ -226,10 +271,11 @@ struct Form {
     previous_meta: String,
     settings_meta: Option<String>,
     settings_workflow: Option<String>,
-    /// The choosable options, in order; a disabled one (`None` on a bucket
-    /// that requires a workflow) is left out, as the select cannot grey one.
+    /// The select's options, from [`workflow_choices`].
     options: Vec<WorkflowOption>,
-    initial: String,
+    initial: WorkflowIntent,
+    /// Starting on `initial` means nothing is chosen yet; it blocks.
+    needs_choice: bool,
     choosable: bool,
     words: String,
     missing_settings_workflow: Option<String>,
@@ -244,11 +290,7 @@ impl Form {
             previous.preselect_id(),
             d.settings_workflow.as_deref(),
         );
-        let initial = view
-            .options
-            .get(view.initial)
-            .map(|o| o.label.clone())
-            .unwrap_or_default();
+        let (options, initial, needs_choice) = workflow_choices(&view);
         let missing =
             missing_settings_workflow(&view, d.settings_workflow.as_deref()).map(str::to_string);
         let choosable = matches!(d.workflows, CommitWorkflows::Available { .. });
@@ -259,18 +301,31 @@ impl Form {
             settings_meta: d.settings_user_meta.clone(),
             settings_workflow: d.settings_workflow.clone(),
             words: workflow_words(&view.kind, has_bucket),
-            options: view.options.into_iter().filter(|o| !o.disabled).collect(),
+            options,
             initial,
+            needs_choice,
             choosable,
             missing_settings_workflow: missing,
         }
     }
 
-    fn intent(&self, label: &str) -> WorkflowIntent {
+    fn label(&self, intent: &WorkflowIntent) -> Option<String> {
+        self.options
+            .iter()
+            .find(|o| o.intent == *intent)
+            .map(|o| o.label.clone())
+    }
+
+    fn intent_of(&self, label: &str) -> Option<WorkflowIntent> {
         self.options
             .iter()
             .find(|o| o.label == label)
-            .map_or(WorkflowIntent::BucketDefault, |o| o.intent.clone())
+            .map(|o| o.intent.clone())
+    }
+
+    /// Whether `intent` is the unchosen start a required bucket refuses.
+    fn unchosen(&self, intent: &WorkflowIntent) -> bool {
+        self.needs_choice && *intent == self.initial
     }
 }
 
@@ -279,7 +334,9 @@ impl Form {
 struct Draft {
     message: RwSignal<String>,
     metadata: RwSignal<String>,
-    workflow: RwSignal<String>,
+    /// The intent, not the label: two workflows may share a name, and a
+    /// re-read may rename one.
+    workflow: RwSignal<WorkflowIntent>,
     editing: RwSignal<bool>,
     /// The package the draft was seeded for.
     seeded: StoredValue<Option<String>>,
@@ -290,15 +347,19 @@ impl Draft {
         Self {
             message: RwSignal::new(String::new()),
             metadata: RwSignal::new(String::new()),
-            workflow: RwSignal::new(String::new()),
+            workflow: RwSignal::new(WorkflowIntent::BucketDefault),
             editing: RwSignal::new(false),
             seeded: StoredValue::new(None),
         }
     }
 
-    /// Start from the answer's values, once per package.
+    /// Start from the answer's values, once per package. A re-read keeps
+    /// the draft, unless the workflow it holds is no longer offered.
     fn seed(self, d: &CommitData, form: &Form) {
         if self.seeded.get_value().as_deref() == Some(form.namespace.as_str()) {
+            if self.workflow.with(|w| form.label(w).is_none()) {
+                self.workflow.set(form.initial.clone());
+            }
             return;
         }
         self.seeded.set_value(Some(form.namespace.clone()));
@@ -369,12 +430,9 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
     });
 
     // ── Live validation, v1's ──
-    let workflow_id = Memo::new(move |_| {
-        let label = draft.workflow.get();
-        form.with(|f| match f.as_ref().map(|f| f.intent(&label)) {
-            Some(WorkflowIntent::Named(id)) => Some(id),
-            _ => None,
-        })
+    let workflow_id = Memo::new(move |_| match draft.workflow.get() {
+        WorkflowIntent::Named(id) => Some(id),
+        _ => None,
     });
     let live_key = Memo::new(move |_| {
         let placeholder = form.with(|f| f.as_ref().map(|f| f.placeholder.clone()));
@@ -451,7 +509,7 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
         };
         let message = effective_message(&draft.message.get_untracked(), &fixed.placeholder);
         let metadata = draft.metadata.get_untracked();
-        let workflow = fixed.intent(&draft.workflow.get_untracked());
+        let workflow = draft.workflow.get_untracked();
         let (namespace, uri) = (d.namespace.clone(), d.uri.clone());
         running.set(true);
         said.set(None);
@@ -602,8 +660,16 @@ fn column(
 
     let (no_access, no_session) = (d.no_access_reason.clone(), d.no_session);
     let host = d.no_session_host.clone();
+    let unchosen = fixed.clone();
     let blocked = Signal::derive(move || {
-        let check = violations.with(|v| v.first().map(|v| v.message.clone()));
+        let check = violations
+            .with(|v| v.first().map(|v| v.message.clone()))
+            .or_else(|| {
+                draft
+                    .workflow
+                    .with(|w| unchosen.unchosen(w))
+                    .then(|| CHOOSE_A_WORKFLOW.to_string())
+            });
         blocked_reason(
             no_access.as_deref(),
             no_session,
@@ -791,13 +857,29 @@ fn workflow_field(fixed: &Form, draft: Draft, violations: Memo<Vec<CommitViolati
     {
         let hinted = fixed.clone();
         let from_settings = Signal::derive(move || {
-            let intent = hinted.intent(&draft.workflow.get());
             hinted.choosable
-                && shows_settings_workflow_hint(Some(&intent), hinted.settings_workflow.as_deref())
+                && draft.workflow.with(|intent| {
+                    shows_settings_workflow_hint(Some(intent), hinted.settings_workflow.as_deref())
+                })
         });
-        let choice = (fixed.choosable && fixed.options.len() > 1).then(|| WorkflowChoice {
-            options: fixed.options.iter().map(|o| o.label.clone()).collect(),
-            selected: draft.workflow,
+        let choice = (fixed.choosable && fixed.options.len() > 1).then(|| {
+            // The select speaks labels; the draft keeps the intent behind one.
+            let selected = RwSignal::new(
+                draft
+                    .workflow
+                    .with_untracked(|w| fixed.label(w))
+                    .unwrap_or_default(),
+            );
+            let picked = fixed.clone();
+            Effect::new(move |_| {
+                if let Some(intent) = selected.with(|label| picked.intent_of(label)) {
+                    draft.workflow.set(intent);
+                }
+            });
+            WorkflowChoice {
+                options: fixed.options.iter().map(|o| o.label.clone()).collect(),
+                selected,
+            }
         });
         let words = if fixed.choosable {
             fixed
@@ -996,6 +1078,81 @@ mod tests {
                 ("c.csv", Change::Deleted)
             ]
         );
+    }
+
+    fn option(label: &str, intent: WorkflowIntent, disabled: bool) -> WorkflowOption {
+        WorkflowOption {
+            label: label.to_string(),
+            intent,
+            disabled,
+            metadata_schema_url: None,
+            entries_schema_url: None,
+        }
+    }
+
+    fn named(id: &str) -> WorkflowIntent {
+        WorkflowIntent::Named(id.to_string())
+    }
+
+    fn available(options: Vec<WorkflowOption>, initial: usize) -> WorkflowView {
+        WorkflowView {
+            kind: WorkflowViewKind::Available {
+                is_workflow_required: true,
+            },
+            options,
+            initial,
+            config_url: None,
+        }
+    }
+
+    /// A required bucket with one workflow and no default: v1 starts on the
+    /// greyed `None`; here the one workflow is the start, so it can run.
+    #[test]
+    fn the_only_workflow_of_a_required_bucket_is_the_start() {
+        let (options, initial, needs_choice) = workflow_choices(&available(
+            vec![
+                option("None", WorkflowIntent::NoWorkflow, true),
+                option("Plate reads", named("plates"), false),
+            ],
+            0,
+        ));
+        assert_eq!(initial, named("plates"));
+        assert!(!needs_choice);
+        assert_eq!(options.len(), 1);
+    }
+
+    /// With several to choose from, the greyed start stays and blocks.
+    #[test]
+    fn several_workflows_of_a_required_bucket_must_be_chosen() {
+        let (options, initial, needs_choice) = workflow_choices(&available(
+            vec![
+                option("None", WorkflowIntent::NoWorkflow, true),
+                option("Plate reads", named("plates"), false),
+                option("Exports", named("exports"), false),
+            ],
+            0,
+        ));
+        assert_eq!(initial, WorkflowIntent::NoWorkflow);
+        assert!(needs_choice);
+        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, ["None", "Plate reads", "Exports"]);
+        assert_eq!(super::super::tests::banned_in(CHOOSE_A_WORKFLOW), None);
+    }
+
+    /// Two workflows with one name stay two choices, each its own id.
+    #[test]
+    fn workflows_sharing_a_name_stay_apart() {
+        let (options, initial, _) = workflow_choices(&available(
+            vec![
+                option("None", WorkflowIntent::NoWorkflow, false),
+                option("Plates", named("plates-a"), false),
+                option("Plates", named("plates-b"), false),
+            ],
+            2,
+        ));
+        assert_eq!(initial, named("plates-b"));
+        let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, ["None", "Plates (plates-a)", "Plates (plates-b)"]);
     }
 
     #[test]
