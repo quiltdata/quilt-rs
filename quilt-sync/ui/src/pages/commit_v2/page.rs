@@ -246,15 +246,33 @@ pub(crate) fn workflow_choices(view: &WorkflowView) -> (Vec<WorkflowOption>, Wor
         Some(start) => (enabled, start.intent.clone(), false),
         None => (enabled, WorkflowIntent::BucketDefault, false),
     };
-    let labels: Vec<String> = options.iter().map(|o| o.label.clone()).collect();
-    for option in &mut options {
-        if labels.iter().filter(|l| **l == option.label).count() > 1
-            && let WorkflowIntent::Named(id) = &option.intent
-        {
-            option.label = format!("{} ({id})", option.label);
-        }
-    }
+    unique_labels(&mut options);
     (options, initial, needs_choice)
+}
+
+/// Give every option its own label, so the select's label names exactly one
+/// intent. A name two workflows share gets the workflow's id; anything that
+/// still collides — a workflow whose own name reads like that, say — gets a
+/// counter. The first holder of a label keeps it as it is.
+fn unique_labels(options: &mut [WorkflowOption]) {
+    let shared: Vec<bool> = options
+        .iter()
+        .map(|o| options.iter().filter(|p| p.label == o.label).count() > 1)
+        .collect();
+    let mut used = std::collections::HashSet::new();
+    for (option, shared) in options.iter_mut().zip(shared) {
+        let mut label = match &option.intent {
+            WorkflowIntent::Named(id) if shared => format!("{} ({id})", option.label),
+            _ => option.label.clone(),
+        };
+        let base = label.clone();
+        let mut n = 2;
+        while !used.insert(label.clone()) {
+            label = format!("{base} ({n})");
+            n += 1;
+        }
+        option.label = label;
+    }
 }
 
 /// What the primary says while a required workflow is still unchosen.
@@ -1153,6 +1171,64 @@ mod tests {
         assert_eq!(initial, named("plates-b"));
         let labels: Vec<_> = options.iter().map(|o| o.label.as_str()).collect();
         assert_eq!(labels, ["None", "Plates (plates-a)", "Plates (plates-b)"]);
+    }
+
+    /// A workflow whose own name reads like a told-apart one cannot take
+    /// another's label: every label names one intent.
+    #[test]
+    fn no_two_options_share_a_label() {
+        let (options, _, _) = workflow_choices(&available(
+            vec![
+                option("None", WorkflowIntent::NoWorkflow, false),
+                option("Plates (plates-a)", named("odd"), false),
+                option("Plates", named("plates-a"), false),
+                option("Plates", named("plates-a-2"), false),
+                option("None", named("none"), false),
+            ],
+            0,
+        ));
+        let labels: Vec<_> = options.iter().map(|o| o.label.clone()).collect();
+        let mut distinct = labels.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(distinct.len(), labels.len(), "{labels:?}");
+        let form_intents: Vec<_> = options.iter().map(|o| o.intent.clone()).collect();
+        assert_eq!(
+            form_intents,
+            [
+                WorkflowIntent::NoWorkflow,
+                named("odd"),
+                named("plates-a"),
+                named("plates-a-2"),
+                named("none")
+            ]
+        );
+    }
+
+    /// Through the page's own form: every option's label leads back to its
+    /// own workflow, the second of two same-named ones included.
+    #[test]
+    fn each_label_selects_its_own_workflow() {
+        let info = |id: &str, name: &str| commands::WorkflowInfo {
+            id: id.to_string(),
+            name: Some(name.to_string()),
+            description: None,
+            metadata_schema_url: None,
+            entries_schema_url: None,
+        };
+        let mut d = commit_data();
+        d.workflows = CommitWorkflows::Available {
+            workflows: vec![info("plates-a", "Plates"), info("plates-b", "Plates")],
+            default_workflow: Some("plates-b".to_string()),
+            is_workflow_required: false,
+            config_url: None,
+        };
+        let form = Form::of(&d);
+        assert_eq!(form.initial, named("plates-b"));
+        for option in &form.options {
+            assert_eq!(form.intent_of(&option.label), Some(option.intent.clone()));
+            assert_eq!(form.label(&option.intent), Some(option.label.clone()));
+        }
     }
 
     #[test]
