@@ -3380,6 +3380,41 @@ mod tests {
         );
     }
 
+    /// The read can carry a conflict recorded earlier, by a paused autosync
+    /// or a refused Get latest. Once the reader undoes the conflicting edit,
+    /// the check finds the update safe, and the header offers Get latest
+    /// again, not Publish, with no row marked.
+    #[wasm_bindgen_test]
+    async fn a_safe_check_takes_back_a_recorded_conflict() {
+        script(vec![(
+            0,
+            Ok(commands::PullPreview {
+                outcome: commands::PullOutcome::CleanUpdate,
+                added: Vec::new(),
+                changed: vec!["a.csv".to_string()],
+                removed: Vec::new(),
+                latest_hash: Some("feedbeef".to_string()),
+            }),
+        )]);
+        let mut recorded = behind("aaa");
+        recorded.header.state = crate::kit::PackageState::PullConflict {
+            files: vec!["a.csv".to_string()],
+        };
+        let el = suspended_screen(recorded).await;
+        sleep_ms(30).await;
+        no_fallback(&el);
+        element_saying(&el, "Newer revision available");
+        button_saying(&el, "Get latest");
+        assert!(
+            !text(&el).contains("conflict in"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert_eq!(summary(&el).as_deref(), Some("1 file change"));
+        assert!(!row_marked(&el, "a.csv"));
+        assert!(!row_marked(&el, "b.csv"));
+    }
+
     /// A check that fails says so and offers Try again; Get latest stays
     /// usable, since the real pull checks again under the lock.
     #[wasm_bindgen_test]
