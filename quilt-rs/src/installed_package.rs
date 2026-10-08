@@ -59,11 +59,14 @@ pub struct PushOutcome {
 pub type PublishOutcome = flow::PublishOutcome<PushOutcome>;
 
 /// Every early return from the dry run means the same thing — nothing for a
-/// pull to do, and so no incoming paths to name.
+/// pull to do, and so no incoming paths or newer revision to name.
 fn nothing_to_pull() -> flow::PullPreview {
     flow::PullPreview {
         outcome: flow::PullOutcome::UpToDate,
         added: Vec::new(),
+        changed: Vec::new(),
+        removed: Vec::new(),
+        latest_hash: None,
     }
 }
 
@@ -1001,14 +1004,25 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             &snapshot.latest_manifest,
         )
         .await?;
+        let flow::IncomingPaths {
+            added,
+            changed,
+            removed,
+        } = flow::incoming_paths(&base, &snapshot.latest_manifest);
         Ok(flow::PullPreview {
-            added: flow::remote_additions(&base, &snapshot.latest_manifest),
             outcome: flow::classify_pull(
                 &snapshot.status,
                 &base,
                 &snapshot.latest_manifest,
                 &identical,
             ),
+            added,
+            changed,
+            removed,
+            // The hash the `latest` tag resolved to — the same one the
+            // snapshot fetched the manifest by and wrote into the lineage's
+            // `latest_hash`.
+            latest_hash: Some(snapshot.latest.hash),
         })
     }
 

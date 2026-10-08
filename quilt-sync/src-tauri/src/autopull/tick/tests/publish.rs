@@ -23,6 +23,9 @@ fn preview(outcome: PullOutcome) -> quilt::flow::PullPreview {
     quilt::flow::PullPreview {
         outcome,
         added: Vec::new(),
+        changed: Vec::new(),
+        removed: Vec::new(),
+        latest_hash: None,
     }
 }
 
