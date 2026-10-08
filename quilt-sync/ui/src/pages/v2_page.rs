@@ -212,11 +212,25 @@ where
 ///
 /// One route serves every package, so a command's result can arrive after the
 /// reader has moved to another one. It is dropped rather than drawn: a reader
-/// cannot tell a stale outcome from a fresh one by its text.
+/// cannot tell a stale outcome from a fresh one by its text. Dropped, not just
+/// hidden: kept, it would come back as fresh news when the reader returns to
+/// the package it was about.
 ///
 /// The lead is the page's and the detail is the engine's: the vocabulary is
 /// UI-owned, and the engine's refusal is the part nothing else knows.
 pub(super) fn outcome_band(outcome: RwSignal<Option<Outcome>>, showing: Signal<String>) -> AnyView {
+    // `try_`: the outcome is the page's and can be gone before this first runs.
+    Effect::new(move |_| {
+        let Some(here) = showing.try_get() else {
+            return;
+        };
+        if outcome
+            .try_with(|o| o.as_ref().is_some_and(|o| o.namespace != here))
+            .unwrap_or(false)
+        {
+            outcome.try_set(None);
+        }
+    });
     let mine = move || outcome.get().filter(|o| o.namespace == showing.get());
     view! {
         <Show when=move || mine().is_some() fallback=|| ()>
@@ -487,6 +501,11 @@ mod tests {
             .set(Some(critical("team/b".into(), "Could not save.", None)));
         sleep_ms(10).await;
         assert!(!alert(), "another package's news is not drawn");
+        assert_eq!(
+            page.outcome.get_untracked(),
+            None,
+            "and is dropped, so it cannot come back as fresh news"
+        );
 
         page.outcome
             .set(Some(critical("team/a".into(), "Could not save.", None)));

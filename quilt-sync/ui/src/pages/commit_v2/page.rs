@@ -613,11 +613,20 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
     // The ignore popup reports through a `Notification`; its failure is this
     // page's news, and its success re-reads the page, which is the report —
     // so a success also takes down a failure an earlier try left up.
+    //
+    // The failure is news about the package the popup was opened for, which
+    // the address may no longer name by the time the write settles.
     let popup_said = RwSignal::new(None::<Notification>);
+    let opened_for = StoredValue::new(String::new());
+    Effect::new(move |_| {
+        if let Some(data) = ignoring.get() {
+            opened_for.set_value(data.namespace);
+        }
+    });
     Effect::new(move |_| match popup_said.get() {
         Some(Notification::Error(detail)) => {
             outcome.set(Some(critical(
-                ns.get_untracked(),
+                opened_for.get_value(),
                 IGNORE_FAILED,
                 Some(detail),
             )));
