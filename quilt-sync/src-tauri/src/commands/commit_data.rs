@@ -459,9 +459,7 @@ async fn get_commit_data_from_model(
         .filter(|f| !status.changes.contains_key(*f))
         .count();
 
-    let counts =
-        super::package_entries::entry_list(namespace, &status, &lineage.paths, &manifest_entries)
-            .counts;
+    let counts = super::package_entries::entry_counts(&status, &lineage.paths, &manifest_entries);
     let changed_bytes = changed_bytes(&status.changes);
 
     // Start from what one-click Publish and autosync would send.

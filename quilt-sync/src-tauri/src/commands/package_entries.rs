@@ -169,3 +169,85 @@ pub fn entry_list(
         truncated,
     }
 }
+
+/// [`entry_list`]'s counts without its rows: what a read needs when it shows
+/// none of them, as the commit page's totals. Classifies every file as
+/// `entry_list` does, so the two cannot disagree; a test holds them together.
+pub fn entry_counts(
+    status: &quilt::lineage::InstalledPackageStatus,
+    installed_paths: &quilt::lineage::LineagePaths,
+    records: &BTreeMap<PathBuf, quilt::manifest::ManifestRow>,
+) -> EntryCounts {
+    let changes = &status.changes;
+    let mut counts = EntryCounts::default();
+    for change in changes.values() {
+        counts.all += 1;
+        counts.changed += 1;
+        if matches!(change, quilt::lineage::Change::Removed(_)) {
+            counts.deleted += 1;
+        }
+    }
+    // Pristine: tracked, unchanged, and listed by the manifest.
+    counts.all += installed_paths
+        .keys()
+        .filter(|p| !changes.contains_key(*p) && records.contains_key(*p))
+        .count();
+    let not_downloaded = records
+        .keys()
+        .filter(|p| !installed_paths.contains_key(*p) && !changes.contains_key(*p))
+        .count();
+    counts.all += not_downloaded;
+    counts.not_downloaded = not_downloaded;
+    counts.ignored = status.ignored_files.len();
+    counts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every kind of file at once: the count-only path and the list agree.
+    #[test]
+    fn entry_counts_match_the_list_s_counts() {
+        let row = || quilt::manifest::ManifestRow::default();
+        let mut status = quilt::lineage::InstalledPackageStatus::default();
+        status.changes.insert(
+            PathBuf::from("new.csv"),
+            quilt::lineage::Change::Added(row()),
+        );
+        status.changes.insert(
+            PathBuf::from("edited.csv"),
+            quilt::lineage::Change::Modified(row()),
+        );
+        status.changes.insert(
+            PathBuf::from("gone.csv"),
+            quilt::lineage::Change::Removed(row()),
+        );
+        status
+            .ignored_files
+            .push((PathBuf::from("x.tmp"), "*.tmp".to_string(), 1));
+        let installed: quilt::lineage::LineagePaths =
+            ["edited.csv", "gone.csv", "kept.csv", "stray.csv"]
+                .into_iter()
+                .map(|p| (PathBuf::from(p), quilt::lineage::PathState::default()))
+                .collect();
+        let records: BTreeMap<_, _> = ["edited.csv", "gone.csv", "kept.csv", "remote.csv"]
+            .into_iter()
+            .map(|p| (PathBuf::from(p), row()))
+            .collect();
+        let namespace = quilt_uri::Namespace::try_from("org/pkg").unwrap();
+
+        let listed = entry_list(&namespace, &status, &installed, &records).counts;
+        assert_eq!(entry_counts(&status, &installed, &records), listed);
+        assert_eq!(
+            listed,
+            EntryCounts {
+                all: 5,
+                changed: 3,
+                not_downloaded: 1,
+                ignored: 1,
+                deleted: 1,
+            }
+        );
+    }
+}
