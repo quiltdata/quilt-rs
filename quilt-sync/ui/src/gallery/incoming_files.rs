@@ -156,32 +156,100 @@ fn header_state(check: &PullCheck) -> PackageState {
     }
 }
 
-/// What *Get latest* does with the files, heading the popover. `whole` is the
-/// sync scope: list new files under individual-file sync, download them under
-/// the whole package. `updates` is whether the list also holds changed or
-/// removed files, which the dry run does not return yet: then under
-/// individual-file sync only the files this copy has are updated. Local
-/// changes the update keeps are named too.
-fn scope_words(check: &PullCheck, whole: bool, updates: bool) -> Option<String> {
+/// How many files of each kind a newer revision brings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Kinds {
+    new: usize,
+    changed: usize,
+    deleted: usize,
+}
+
+impl Kinds {
+    fn of(rows: &[Coming]) -> Self {
+        let n = |c: Change| rows.iter().filter(|r| r.change == c).count();
+        Self {
+            new: n(Change::New),
+            changed: n(Change::Changed),
+            deleted: n(Change::Deleted),
+        }
+    }
+}
+
+/// `it`, or `them`.
+const fn them(n: usize) -> &'static str {
+    if n == 1 { "it" } else { "them" }
+}
+
+/// `one`, or `ones`.
+const fn ones(n: usize) -> &'static str {
+    if n == 1 { "one" } else { "ones" }
+}
+
+/// What *Get latest* does with the files, heading the popover, naming each
+/// operation for the kinds there are: new and changed files are downloaded or
+/// updated, deleted ones removed, never downloaded. `whole` is the sync
+/// scope: under individual-file sync new files are listed, to download when
+/// wanted, and only the files this copy has are updated. Local changes the
+/// update keeps are named too.
+fn scope_words(check: &PullCheck, whole: bool, k: Kinds) -> Option<String> {
     let PullCheck::Ready(preview) = check else {
         return None;
     };
-    let fate = match (preview.added.len(), whole) {
-        _ if updates && whole => "Get latest downloads them.",
-        _ if updates => {
-            "Get latest updates the files you have and lists new ones, to download when you need them."
+    let Kinds {
+        new,
+        changed,
+        deleted,
+    } = k;
+    if new + changed + deleted == 0 {
+        return None;
+    }
+    let fate = if whole {
+        let fetched = new + changed;
+        let download = match (new, changed, deleted) {
+            (_, _, 0) => format!("downloads {}", them(fetched)),
+            (0, _, _) => format!("downloads the changed {}", ones(changed)),
+            (_, 0, _) => format!("downloads the new {}", ones(new)),
+            _ => String::from("downloads the new and changed ones"),
+        };
+        match (fetched, deleted) {
+            (_, 0) => download,
+            (0, _) => format!("removes {}", them(deleted)),
+            _ => format!("{download} and removes the deleted {}", ones(deleted)),
         }
-        (0, _) => return None,
-        (1, true) => "Get latest downloads it.",
-        (_, true) => "Get latest downloads them.",
-        (1, false) => "Get latest adds it to your files, to download when you need it.",
-        (_, false) => "Get latest adds them to your files, to download when you need them.",
+    } else if changed == 0 && deleted == 0 {
+        format!(
+            "adds {} to your files, to download when you need {}",
+            them(new),
+            them(new)
+        )
+    } else {
+        let mut acts = Vec::new();
+        if changed > 0 {
+            acts.push(String::from("updates the files you have"));
+        }
+        if deleted > 0 {
+            acts.push(if changed == 0 && new == 0 {
+                format!("removes {}", them(deleted))
+            } else {
+                format!("removes the deleted {}", ones(deleted))
+            });
+        }
+        let acts = acts.join(" and ");
+        if new > 0 {
+            format!(
+                "{acts}, and lists the new {}, to download when you need {}",
+                ones(new),
+                them(new)
+            )
+        } else {
+            acts
+        }
     };
     let kept = matches!(preview.outcome, PullOutcome::KeepsLocalChanges { .. });
     Some(if kept {
-        format!("{fate} Your changes stay.")
+        format!("Get latest {fate}. Your changes stay.")
     } else {
-        fate.to_string()
+        format!("Get latest {fate}.")
     })
 }
 
@@ -222,8 +290,11 @@ fn coming(check: &PullCheck, extra: &[(&str, Change)]) -> Vec<Coming> {
 /// `3 new files`, or `3 new, 2 changed, 1 deleted` once the dry run returns
 /// changed and removed files too.
 fn counts_words(rows: &[Coming]) -> String {
-    let n = |c: Change| rows.iter().filter(|r| r.change == c).count();
-    let (new, changed, deleted) = (n(Change::New), n(Change::Changed), n(Change::Deleted));
+    let Kinds {
+        new,
+        changed,
+        deleted,
+    } = Kinds::of(rows);
     if changed == 0 && deleted == 0 {
         return if new == 1 {
             String::from("1 new file")
@@ -380,6 +451,7 @@ fn header_summary(
         );
     }
     let counts = counts_words(&rows);
+    let kinds = Kinds::of(&rows);
     let total = rows.len();
     let mut rows = rows;
     rows.truncate(LISTED);
@@ -396,7 +468,7 @@ fn header_summary(
     // would, and it is the sentence the file list's `Differs` marks describe.
     let conflict = conflict_words(check);
     let id = conflict.is_some().then_some(DIFFERS);
-    let scope = conflict.or_else(|| scope_words(check, whole, !extra.is_empty()));
+    let scope = conflict.or_else(|| scope_words(check, whole, kinds));
     Some(
         view! {
             <span class="g-hs">
@@ -763,39 +835,85 @@ mod tests {
         );
     }
 
-    /// The popover's sentence says what Get latest does in the scope's terms.
+    /// The popover's sentence says what Get latest does in the scope's terms,
+    /// naming only operations for kinds there are: a deleted file is removed,
+    /// never downloaded, and no sentence promises new files that are not
+    /// coming.
     #[test]
     fn the_popover_says_what_get_latest_does() {
-        let added = |n: usize| (0..n).map(|i| format!("f{i}")).collect::<Vec<_>>();
-        let keeps = || PullOutcome::KeepsLocalChanges {
-            added: Vec::new(),
-            modified: vec!["a.csv".to_string()],
-            removed: Vec::new(),
+        let clean = ready(PullOutcome::CleanUpdate, Vec::new());
+        let keeps = ready(
+            PullOutcome::KeepsLocalChanges {
+                added: Vec::new(),
+                modified: vec!["a.csv".to_string()],
+                removed: Vec::new(),
+            },
+            Vec::new(),
+        );
+        let k = |new, changed, deleted| Kinds {
+            new,
+            changed,
+            deleted,
         };
-        let three = ready(PullOutcome::CleanUpdate, added(3));
-        assert_eq!(
-            scope_words(&three, false, false).as_deref(),
-            Some("Get latest adds them to your files, to download when you need them.")
-        );
-        assert_eq!(
-            scope_words(&ready(PullOutcome::CleanUpdate, added(1)), true, false).as_deref(),
-            Some("Get latest downloads it.")
-        );
-        assert_eq!(
-            scope_words(&ready(keeps(), added(2)), true, false).as_deref(),
-            Some("Get latest downloads them. Your changes stay.")
-        );
-        assert_eq!(
-            scope_words(&ready(PullOutcome::CleanUpdate, Vec::new()), true, false),
-            None
-        );
-        assert_eq!(
-            scope_words(&three, false, true).as_deref(),
-            Some(
-                "Get latest updates the files you have and lists new ones, to download when \
-                 you need them."
-            )
-        );
+        let cases: Vec<(&PullCheck, bool, Kinds, Option<&str>)> = vec![
+            (
+                &clean,
+                false,
+                k(3, 0, 0),
+                Some("Get latest adds them to your files, to download when you need them."),
+            ),
+            (&clean, true, k(1, 0, 0), Some("Get latest downloads it.")),
+            (
+                &keeps,
+                true,
+                k(2, 0, 0),
+                Some("Get latest downloads them. Your changes stay."),
+            ),
+            (&clean, true, k(0, 0, 0), None),
+            (
+                &clean,
+                false,
+                k(3, 2, 1),
+                Some(
+                    "Get latest updates the files you have and removes the deleted one, and \
+                     lists the new ones, to download when you need them.",
+                ),
+            ),
+            (
+                &clean,
+                false,
+                k(0, 2, 0),
+                Some("Get latest updates the files you have."),
+            ),
+            (&clean, false, k(0, 0, 2), Some("Get latest removes them.")),
+            (
+                &clean,
+                false,
+                k(0, 2, 1),
+                Some("Get latest updates the files you have and removes the deleted one."),
+            ),
+            (
+                &clean,
+                true,
+                k(3, 2, 1),
+                Some("Get latest downloads the new and changed ones and removes the deleted one."),
+            ),
+            (&clean, true, k(0, 2, 0), Some("Get latest downloads them.")),
+            (&clean, true, k(0, 0, 1), Some("Get latest removes it.")),
+            (
+                &clean,
+                true,
+                k(0, 1, 2),
+                Some("Get latest downloads the changed one and removes the deleted ones."),
+            ),
+        ];
+        for (check, whole, kinds, expected) in cases {
+            assert_eq!(
+                scope_words(check, whole, kinds).as_deref(),
+                expected,
+                "{kinds:?}, whole: {whole}"
+            );
+        }
     }
 
     /// The popover counts by kind, and says `new files` while that is all
@@ -858,8 +976,24 @@ mod tests {
             all.extend(summary_words(check, &coming(check, EXTRA)));
             all.extend(conflict_words(check));
             for whole in [false, true] {
-                for updates in [false, true] {
-                    all.extend(scope_words(check, whole, updates));
+                for kinds in [
+                    Kinds {
+                        new: 2,
+                        changed: 0,
+                        deleted: 0,
+                    },
+                    Kinds {
+                        new: 2,
+                        changed: 1,
+                        deleted: 1,
+                    },
+                    Kinds {
+                        new: 0,
+                        changed: 1,
+                        deleted: 2,
+                    },
+                ] {
+                    all.extend(scope_words(check, whole, kinds));
                 }
             }
         }
