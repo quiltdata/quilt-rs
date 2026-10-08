@@ -603,3 +603,10 @@ a.g-nr-open:focus-visible {
   outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
   outline-offset: 2px;
 }
+
+/* Under the popover's list when it is cut, as the file list's cap notice. */
+.g-nr-cut {
+  margin: var(--q-space-2) 0 0;
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+}

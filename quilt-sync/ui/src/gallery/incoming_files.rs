@@ -60,6 +60,9 @@
 //!   under the summary. Not 90vh: the placement slides a surface up to fit,
 //!   and 90vh would cover the summary it hangs from. 360px wide; its first
 //!   line is pinned while the list scrolls under it.
+//! - It lists the first 1,000 files by path and says so under the list when
+//!   there are more, as the file list loads its first 1,000: a list drawn
+//!   whole costs in proportion to its rows. The summary still counts them all.
 //! - It opens on hover and closes 200ms after the pointer leaves the summary
 //!   and the popover both, which is time to cross the gap between them; a
 //!   click pins it until a click outside, Escape or a second click.
@@ -123,12 +126,17 @@ fn three_added() -> Vec<String> {
     ]
 }
 
-/// A revision that adds a run of 300 plates, after the 36 the copy has.
-fn many_added() -> Vec<String> {
-    (37..37 + 300)
-        .map(|i| format!("raw/plate-{i:03}.csv"))
+/// A revision that adds a run of `n` plates, after the 36 the copy has.
+fn plates_added(n: usize) -> Vec<String> {
+    (37..37 + n)
+        .map(|i| format!("raw/plate-{i:04}.csv"))
         .collect()
 }
+
+/// How many files the popover lists: the first by path, as the file list
+/// loads the first 1,000. A list drawn whole costs in proportion to its rows,
+/// and a revision can touch far more files than anyone reads in a popover.
+const LISTED: usize = 1_000;
 
 fn ready(outcome: PullOutcome, added: Vec<String>) -> PullCheck {
     PullCheck::Ready(PullPreview { outcome, added })
@@ -355,7 +363,6 @@ fn header_summary(
     whole: bool,
     extra: &[(&str, Change)],
     opened: bool,
-    differs: &'static str,
 ) -> Option<AnyView> {
     let rows = coming(check, extra);
     let words = summary_words(check, &rows)?;
@@ -373,12 +380,22 @@ fn header_summary(
         );
     }
     let counts = counts_words(&rows);
+    let total = rows.len();
+    let mut rows = rows;
+    rows.truncate(LISTED);
+    let cut = (total > rows.len()).then(|| {
+        format!(
+            "This list covers the first {} of {} by path.",
+            thousands(LISTED),
+            thousands(total)
+        )
+    });
     let open = RwSignal::new(opened);
     let card = HoverCard::new(open, opened);
     // On a conflict the line says what to do instead of what Get latest
     // would, and it is the sentence the file list's `Differs` marks describe.
     let conflict = conflict_words(check);
-    let id = conflict.is_some().then_some(differs);
+    let id = conflict.is_some().then_some(DIFFERS);
     let scope = conflict.or_else(|| scope_words(check, whole, !extra.is_empty()));
     Some(
         view! {
@@ -414,6 +431,7 @@ fn header_summary(
                             {scope.map(|w| format!(" {w}"))}
                         </p>
                         {file_list(rows, Callback::new(|_url: String| ()))}
+                        {cut.map(|words| view! { <p class="g-nr-cut">{words}</p> })}
                     </div>
                 </AnchoredOverlay>
             </span>
@@ -500,9 +518,6 @@ struct Page {
     extra: &'static [(&'static str, Change)],
     /// The popover starts open, as a reader's click leaves it.
     opened: bool,
-    /// The id of the conflict sentence the marked rows point at, unique per
-    /// cell that draws one.
-    differs: &'static str,
 }
 
 impl Page {
@@ -514,7 +529,6 @@ impl Page {
             clean: true,
             extra: &[],
             opened: false,
-            differs: DIFFERS,
         }
     }
 }
@@ -528,7 +542,6 @@ fn page(p: Page) -> AnyView {
         clean,
         extra,
         opened,
-        differs,
     } = p;
     let publish_choice = RwSignal::new(0_usize);
     let scope = RwSignal::new(if whole { "all" } else { "pick" }.to_string());
@@ -538,7 +551,7 @@ fn page(p: Page) -> AnyView {
     } else {
         &[]
     };
-    let summary = header_summary(&check, whole, extra, opened, differs);
+    let summary = header_summary(&check, whole, extra, opened);
 
     view! {
         <div id=name class="g-window" style="width:1024px; --q-frame-height:560px; max-width:100%">
@@ -551,7 +564,7 @@ fn page(p: Page) -> AnyView {
                     />
                     // The conflict cell's rows carry the `Differs` mark, which
                     // the pane's row describes.
-                    <Provider value=DiffersId(differs)>
+                    <Provider value=DiffersId(DIFFERS)>
                         <div class="g-ip-shell">
                             <ContextPaneRegion
                                 resolving=false
@@ -619,7 +632,13 @@ pub fn IncomingFilesScene() -> impl IntoView {
                 })}
             </Cell>
             <Cell full=true label="300 new files — the popover scrolls, the page does not move">
-                {page(Page::new("in-many", ready(PullOutcome::CleanUpdate, many_added())))}
+                {page(Page::new("in-many", ready(PullOutcome::CleanUpdate, plates_added(300))))}
+            </Cell>
+            <Cell full=true label="over the cap, opened — 4,312 new files: the first 1,000 by path, and a line saying so">
+                {page(Page {
+                    opened: true,
+                    ..Page::new("in-capped", ready(PullOutcome::CleanUpdate, plates_added(4_312)))
+                })}
             </Cell>
             <Cell full=true label="still checking — Get latest stays usable">
                 {page(Page::new("in-checking", PullCheck::Loading))}
@@ -644,28 +663,13 @@ pub fn IncomingFilesScene() -> impl IntoView {
                     )
                 })}
             </Cell>
-            <Cell full=true label="a conflict found before the click — the header offers Publish">
-                {page(Page {
-                    clean: false,
-                    ..Page::new(
-                        "in-conflict",
-                        ready(
-                            PullOutcome::Blocked {
-                                conflicts: CONFLICTS.iter().map(ToString::to_string).collect(),
-                            },
-                            three_added(),
-                        ),
-                    )
-                })}
-            </Cell>
-            <Cell full=true label="needs backend work: the conflict, opened — the conflicting files are among the changed ones, and say so">
+            <Cell full=true label="needs backend work: a conflict found before the click, opened — the header offers Publish; the conflicting files are among the changed ones, and say so">
                 {page(Page {
                     clean: false,
                     opened: true,
                     extra: CONFLICT_EXTRA,
-                    differs: "incoming-differing-open",
                     ..Page::new(
-                        "in-conflict-open",
+                        "in-conflict",
                         ready(
                             PullOutcome::Blocked {
                                 conflicts: CONFLICTS.iter().map(ToString::to_string).collect(),
@@ -936,17 +940,33 @@ mod tests {
                 .unwrap()
                 .is_some(),
             container
-                .query_selector("#in-conflict-open .g-nr-rows")
+                .query_selector("#in-conflict .g-nr-rows")
                 .unwrap()
                 .and_then(|ul| ul.text_content())
                 .unwrap_or_default()
                 .matches("Conflict")
                 .count(),
         );
+        let capped = (
+            count("in-capped", ".g-nr-rows li") as usize,
+            container
+                .query_selector("#in-capped .g-nr-surface")
+                .unwrap()
+                .and_then(|e| e.text_content())
+                .unwrap_or_default(),
+        );
         drop(handle);
         container.remove();
 
         let (rows, links, controls, backend_rows, backend_links, stray, conflicts) = found;
+        assert_eq!(capped.0, LISTED, "the popover lists the first 1,000");
+        assert!(
+            capped
+                .1
+                .contains("This list covers the first 1,000 of 4,312 by path."),
+            "and says so: {}",
+            capped.1
+        );
         assert_eq!(conflicts, 2, "each conflicting file says so");
         assert_eq!(rows, 3, "three files listed");
         assert_eq!(links, 3, "each one links to the catalog");
