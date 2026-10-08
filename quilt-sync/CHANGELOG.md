@@ -23,7 +23,7 @@
 
 ### Changed
 
-- **New design preview**: on the commit page, drag the bar under the metadata editor to make it taller. The `›` between the links above the page title has more room (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- **New design preview**: on the commit page, drag the bar under the metadata editor to make it taller. The `›` between the links above the page title has more room (<https://github.com/quiltdata/quilt-rs/pull/1095>)
 
 ### Fixed
 
