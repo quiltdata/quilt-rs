@@ -55,6 +55,8 @@
 //!   activation. `EntryRow`'s box, size and menu columns left a path about
 //!   50px there, so it lists path, labels and link only.
 
+use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use leptos::prelude::*;
@@ -100,6 +102,19 @@ pub fn header_state(read: &PackageState, check: Option<&PullCheck>) -> PackageSt
             files: conflicts.clone(),
         },
         _ => read.clone(),
+    }
+}
+
+/// The files a `Blocked` verdict names, which the file list marks as resolve
+/// mode marks the files that differ. `None` for any other check.
+#[must_use]
+pub fn conflicting(check: Option<&PullCheck>) -> Option<Arc<BTreeSet<String>>> {
+    match check {
+        Some(PullCheck::Ready(PullPreview {
+            outcome: PullOutcome::Blocked { conflicts },
+            ..
+        })) => Some(Arc::new(conflicts.iter().cloned().collect())),
+        _ => None,
     }
 }
 
@@ -655,6 +670,10 @@ mod tests {
                 files: vec!["a.csv".to_string()]
             }
         );
+        assert_eq!(
+            conflicting(Some(&blocked)).map(|s| s.iter().cloned().collect::<Vec<_>>()),
+            Some(vec!["a.csv".to_string()])
+        );
         for check in [
             PullCheck::Loading,
             PullCheck::Failed,
@@ -664,6 +683,7 @@ mod tests {
                 header_state(&PackageState::Behind, Some(&check)),
                 PackageState::Behind
             );
+            assert_eq!(conflicting(Some(&check)), None);
         }
         assert_eq!(
             header_state(&PackageState::Latest, None),

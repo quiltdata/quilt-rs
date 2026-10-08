@@ -136,6 +136,7 @@ mod tests {
                                 view! {
                                     <PackageScreen
                                         read=read
+                                        pull=super::super::tests::never_pulls
                                         resolving=ResolveCommands::app()
                                         revision_message=answered
                                     />
