@@ -180,6 +180,18 @@ const fn them(n: usize) -> &'static str {
     if n == 1 { "it" } else { "them" }
 }
 
+/// Removing deleted files, which touches only those this copy has: a pull
+/// deletes the paths it tracks, and a deleted file never downloaded here has
+/// nothing to remove. `alone` when nothing else is coming.
+fn removes(deleted: usize, alone: bool) -> &'static str {
+    match (alone, deleted == 1) {
+        (true, true) => "removes it if you have it",
+        (true, false) => "removes any of them you have",
+        (false, true) => "removes the deleted one if you have it",
+        (false, false) => "removes the deleted ones you have",
+    }
+}
+
 /// `one`, or `ones`.
 const fn ones(n: usize) -> &'static str {
     if n == 1 { "one" } else { "ones" }
@@ -213,8 +225,8 @@ fn scope_words(check: &PullCheck, whole: bool, k: Kinds) -> Option<String> {
         };
         match (fetched, deleted) {
             (_, 0) => download,
-            (0, _) => format!("removes {}", them(deleted)),
-            _ => format!("{download} and removes the deleted {}", ones(deleted)),
+            (0, _) => removes(deleted, true).to_string(),
+            _ => format!("{download} and {}", removes(deleted, false)),
         }
     } else if changed == 0 && deleted == 0 {
         format!(
@@ -228,11 +240,7 @@ fn scope_words(check: &PullCheck, whole: bool, k: Kinds) -> Option<String> {
             acts.push(String::from("updates the files you have"));
         }
         if deleted > 0 {
-            acts.push(if changed == 0 && new == 0 {
-                format!("removes {}", them(deleted))
-            } else {
-                format!("removes the deleted {}", ones(deleted))
-            });
+            acts.push(removes(deleted, changed == 0 && new == 0).to_string());
         }
         let acts = acts.join(" and ");
         if new > 0 {
@@ -875,8 +883,8 @@ mod tests {
                 false,
                 k(3, 2, 1),
                 Some(
-                    "Get latest updates the files you have and removes the deleted one, and \
-                     lists the new ones, to download when you need them.",
+                    "Get latest updates the files you have and removes the deleted one if you \
+                     have it, and lists the new ones, to download when you need them.",
                 ),
             ),
             (
@@ -885,26 +893,40 @@ mod tests {
                 k(0, 2, 0),
                 Some("Get latest updates the files you have."),
             ),
-            (&clean, false, k(0, 0, 2), Some("Get latest removes them.")),
+            (
+                &clean,
+                false,
+                k(0, 0, 2),
+                Some("Get latest removes any of them you have."),
+            ),
             (
                 &clean,
                 false,
                 k(0, 2, 1),
-                Some("Get latest updates the files you have and removes the deleted one."),
+                Some(
+                    "Get latest updates the files you have and removes the deleted one if you have it.",
+                ),
             ),
             (
                 &clean,
                 true,
                 k(3, 2, 1),
-                Some("Get latest downloads the new and changed ones and removes the deleted one."),
+                Some(
+                    "Get latest downloads the new and changed ones and removes the deleted one if you have it.",
+                ),
             ),
             (&clean, true, k(0, 2, 0), Some("Get latest downloads them.")),
-            (&clean, true, k(0, 0, 1), Some("Get latest removes it.")),
+            (
+                &clean,
+                true,
+                k(0, 0, 1),
+                Some("Get latest removes it if you have it."),
+            ),
             (
                 &clean,
                 true,
                 k(0, 1, 2),
-                Some("Get latest downloads the changed one and removes the deleted ones."),
+                Some("Get latest downloads the changed one and removes the deleted ones you have."),
             ),
         ];
         for (check, whole, kinds, expected) in cases {
