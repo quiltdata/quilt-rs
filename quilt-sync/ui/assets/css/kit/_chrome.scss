@@ -323,6 +323,24 @@ body {
   .g-fp-footer { animation: none; }
 }
 
+/* The incoming-files scene's line at the top of the list box: what the dry run
+ * found, muted like the cap's notice beside it, with `Try again` on the same
+ * line when the check failed. */
+.g-fp-incoming {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  padding: var(--q-space-2) var(--q-space-3);
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+}
+
+.g-fp-incoming > p {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
 /* The gallery scene's all-downloaded tick, in the box's hole before `All 53 files
  * downloaded`. The page's own pane draws it with `file_pane.module.scss`'s
  * `.done`, which this chrome mirrors; keep the two in step. */

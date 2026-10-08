@@ -113,7 +113,7 @@ use crate::kit::PageLayout;
 use crate::kit::icons;
 
 /// The appbar is untouched by this page — §1, no omnibar and no breadcrumb.
-fn appbar_actions() -> AnyView {
+pub(crate) fn appbar_actions() -> AnyView {
     view! {
         <Button leading_visual=icons::sync() on_click=|_| ()>
             "Refresh"

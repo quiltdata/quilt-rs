@@ -66,6 +66,7 @@ mod gallery {
     pub mod file_toolbar;
     pub mod forms;
     pub mod host_row;
+    pub mod incoming_files;
     pub mod installed_package;
     pub mod json_display;
     pub mod list_toolbar;
@@ -328,6 +329,11 @@ const ENTRIES: &[Entry] = &[
         installed_package::InstalledPackageScene
     ),
     entry!(Pages, "Commit page", commit_page::CommitPageScene),
+    entry!(
+        Pages,
+        "Newer revision available",
+        incoming_files::IncomingFilesScene
+    ),
     entry!(Pages, "While loading", page::LoadingScene),
 ];
 
