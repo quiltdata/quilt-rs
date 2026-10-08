@@ -273,6 +273,8 @@ struct Form {
     initial: WorkflowIntent,
     /// Starting on `initial` means nothing is chosen yet; it blocks.
     needs_choice: bool,
+    /// The bucket's workflows file is malformed, in the field's words.
+    invalid: Option<String>,
     choosable: bool,
     words: String,
     missing_settings_workflow: Option<String>,
@@ -298,6 +300,8 @@ impl Form {
             settings_meta: d.settings_user_meta.clone(),
             settings_workflow: d.settings_workflow.clone(),
             words: workflow_words(&view.kind, has_bucket),
+            invalid: matches!(d.workflows, CommitWorkflows::Invalid { .. })
+                .then(|| workflow_words(&view.kind, has_bucket)),
             options,
             initial,
             needs_choice,
@@ -323,6 +327,15 @@ impl Form {
     /// Whether `intent` is the unchosen start a required bucket refuses.
     fn unchosen(&self, intent: &WorkflowIntent) -> bool {
         self.needs_choice && *intent == self.initial
+    }
+
+    /// Why the workflow keeps the revision from being saved, if it does: a
+    /// malformed workflows file refuses every save until it is fixed, and a
+    /// required workflow must be chosen first.
+    fn workflow_problem(&self, intent: &WorkflowIntent) -> Option<String> {
+        self.invalid
+            .clone()
+            .or_else(|| self.unchosen(intent).then(|| CHOOSE_A_WORKFLOW.to_string()))
     }
 }
 
@@ -381,6 +394,39 @@ struct Said {
     detail: Option<String>,
 }
 
+/// The live check's input: the message as it would be sent, the metadata
+/// as typed, and the named workflow, if one is selected.
+type LiveKey = (String, String, Option<String>);
+
+/// One run of the live check, v1's: load the workflow's rules (refreshing
+/// them on the visit's first load), then check the candidate against them.
+async fn check(
+    key: LiveKey,
+    fixed: Option<Form>,
+    first_load: StoredValue<bool>,
+) -> (LiveKey, Vec<CommitViolation>) {
+    let (message, metadata, workflow_id) = key.clone();
+    let (Some(id), Some(fixed)) = (workflow_id, fixed) else {
+        return (key, Vec::new());
+    };
+    let refresh = first_load.try_get_value().unwrap_or(false);
+    first_load.try_set_value(false);
+    let _ = commands::load_workflow_rules(fixed.namespace.clone(), id.clone(), refresh).await;
+    // An emptied editor keeps the previous revision's metadata, so
+    // that is what the check sees, as the commit gate does.
+    let metadata = effective_metadata(&metadata, &fixed.previous_meta);
+    let violations = commands::validate_commit_candidate(
+        fixed.namespace.clone(),
+        id,
+        message,
+        metadata,
+        fixed.namespace,
+    )
+    .await
+    .unwrap_or_default();
+    (key, violations)
+}
+
 // ── The page ──
 
 #[component]
@@ -396,17 +442,28 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
         .get("focus")
         .is_some_and(|f| focuses_message(Some(&f)));
 
+    // Both of the page's reads — the answer, and the live check below — land
+    // in signals, not resources. A resource read under `ByDesign`'s `Suspense`
+    // registers with it, and every refetch would put the loading frame back
+    // over the form: the editor detached, the cursor gone, mid-word. Each read
+    // is numbered, so only the latest one's answer lands.
     let reload = Trigger::new();
     let in_flight = RwSignal::new(false);
-    let data = LocalResource::new(move || {
+    let data = RwSignal::new(None::<(String, Result<CommitData, String>)>);
+    let reads = StoredValue::new(0_u64);
+    Effect::new(move |_| {
         reload.track();
         let namespace = ns.get();
-        async move {
-            in_flight.set(true);
+        reads.update_value(|n| *n += 1);
+        let this = reads.get_value();
+        in_flight.set(true);
+        leptos::task::spawn_local(async move {
             let answer = read(namespace.clone()).await;
-            in_flight.try_set(false);
-            (namespace, answer)
-        }
+            if reads.try_get_value() == Some(this) {
+                in_flight.try_set(false);
+                data.try_set(Some((namespace, answer)));
+            }
+        });
     });
     let answer = move || {
         data.get()
@@ -419,7 +476,19 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
         Some(Ok(d)) => Some(Form::of(&d)),
         _ => None,
     });
+    // One command at a time: a save or publish, or the ignore popup's write
+    // to `.quiltignore`, which must not land under a publish that has read
+    // the files already.
     let running = RwSignal::new(false);
+    // The split button's face. The page's, above the rebuild line: a re-read
+    // rebuilds the column, and *Save without publishing* must not turn back
+    // into *Publish* under the reader's next click. Another package starts
+    // on Publish.
+    let choice = RwSignal::new(0_usize);
+    Effect::new(move |_| {
+        ns.track();
+        choice.set(0);
+    });
     let said = RwSignal::new(None::<Said>);
     let ignoring = RwSignal::new(None::<IgnorePopupData>);
     let goto = RwSignal::new(None::<String>);
@@ -467,32 +536,19 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
     // The first load of this visit refreshes the backend's rules cache, so a
     // config changed since the last visit is read again.
     let first_load = StoredValue::new(true);
-    let validation = LocalResource::new(move || {
+    let validation = RwSignal::new(None::<(LiveKey, Vec<CommitViolation>)>);
+    let checks = StoredValue::new(0_u64);
+    Effect::new(move |_| {
         let key = debounced.get();
         let fixed = form.get();
-        async move {
-            let (message, metadata, workflow_id) = key.clone();
-            let (Some(id), Some(fixed)) = (workflow_id, fixed) else {
-                return (key, Vec::new());
-            };
-            let refresh = first_load.try_get_value().unwrap_or(false);
-            first_load.try_set_value(false);
-            let _ =
-                commands::load_workflow_rules(fixed.namespace.clone(), id.clone(), refresh).await;
-            // An emptied editor keeps the previous revision's metadata, so
-            // that is what the check sees, as the commit gate does.
-            let metadata = effective_metadata(&metadata, &fixed.previous_meta);
-            let violations = commands::validate_commit_candidate(
-                fixed.namespace.clone(),
-                id,
-                message,
-                metadata,
-                fixed.namespace,
-            )
-            .await
-            .unwrap_or_default();
-            (key, violations)
-        }
+        checks.update_value(|n| *n += 1);
+        let this = checks.get_value();
+        leptos::task::spawn_local(async move {
+            let answer = check(key, fixed, first_load).await;
+            if checks.try_get_value() == Some(this) {
+                validation.try_set(Some(answer));
+            }
+        });
     });
     let violations = Memo::new(move |_| match validation.get() {
         Some((key, violations)) if key == live_key.get() => violations,
@@ -596,6 +652,7 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
                 draft,
                 violations,
                 running,
+                choice,
                 run,
                 open_folder,
                 ignoring,
@@ -615,6 +672,7 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
                             notification=popup_said
                             refetch=reload
                             on_close=move || ignoring.set(None)
+                            lock=running
                         />
                     }
                 })
@@ -657,6 +715,7 @@ fn column(
     draft: Draft,
     violations: Memo<Vec<CommitViolation>>,
     running: RwSignal<bool>,
+    choice: RwSignal<usize>,
     run: Callback<bool>,
     open_folder: Callback<()>,
     ignoring: RwSignal<Option<IgnorePopupData>>,
@@ -672,12 +731,7 @@ fn column(
     let blocked = Signal::derive(move || {
         let check = violations
             .with(|v| v.first().map(|v| v.message.clone()))
-            .or_else(|| {
-                draft
-                    .workflow
-                    .with(|w| unchosen.unchosen(w))
-                    .then(|| CHOOSE_A_WORKFLOW.to_string())
-            });
+            .or_else(|| unchosen.workflow_problem(&draft.workflow.read()));
         blocked_reason(
             no_access.as_deref(),
             no_session,
@@ -686,14 +740,14 @@ fn column(
         )
     });
     let w = PrimaryWiring {
-        choice: RwSignal::new(0),
+        choice,
         on_publish: Callback::new(move |()| run.run(true)),
         on_save: Callback::new(move |()| run.run(false)),
         blocked,
         running: running.into(),
     };
 
-    let problem = problem_banner(d, ignoring);
+    let problem = problem_banner(d, ignoring, running);
 
     let message_error =
         Signal::derive(move || violations.with(|v| caption(v, ViolationField::Message)));
@@ -716,6 +770,9 @@ fn column(
     let on_ignore = {
         let (namespace, uri) = (namespace.clone(), uri.clone());
         Callback::new(move |path: String| {
+            if running.get_untracked() {
+                return;
+            }
             ignoring.set(Some(IgnorePopupData {
                 namespace: namespace.clone(),
                 suggested_pattern: path.clone(),
@@ -817,7 +874,11 @@ fn focus_message(focus_ref: NodeRef<leptos::html::Div>) {
 
 /// The problems banner, with *Ignore them* opening the ignore popup on the
 /// first system file and its pattern.
-fn problem_banner(d: &CommitData, ignoring: RwSignal<Option<IgnorePopupData>>) -> Option<AnyView> {
+fn problem_banner(
+    d: &CommitData,
+    ignoring: RwSignal<Option<IgnorePopupData>>,
+    running: RwSignal<bool>,
+) -> Option<AnyView> {
     let junk_to_ignore = d
         .junk
         .as_ref()
@@ -833,6 +894,9 @@ fn problem_banner(d: &CommitData, ignoring: RwSignal<Option<IgnorePopupData>>) -
         let ignore = {
             let (namespace, uri) = (namespace.clone(), uri.clone());
             Callback::new(move |()| {
+                if running.get_untracked() {
+                    return;
+                }
                 if let Some((path, pattern)) = junk_to_ignore.clone() {
                     ignoring.set(Some(IgnorePopupData {
                         namespace: namespace.clone(),
@@ -859,8 +923,20 @@ fn problem_banner(d: &CommitData, ignoring: RwSignal<Option<IgnorePopupData>>) -
 fn workflow_field(fixed: &Form, draft: Draft, violations: Memo<Vec<CommitViolation>>) -> AnyView {
     // The package name is fixed here; a workflow that rejects it says so under
     // the workflow, the field that brought the rule.
-    let workflow_error =
-        Signal::derive(move || violations.with(|v| caption(v, ViolationField::Name)));
+    // An unchosen required workflow says so here too, on the field, not only
+    // in the disabled button's tooltip, which a keyboard or touch never
+    // reaches. A malformed file is already the field's words.
+    let blocking = fixed.clone();
+    let workflow_error = Signal::derive(move || {
+        violations
+            .with(|v| caption(v, ViolationField::Name))
+            .or_else(|| {
+                draft
+                    .workflow
+                    .with(|w| blocking.unchosen(w))
+                    .then(|| CHOOSE_A_WORKFLOW.to_string())
+            })
+    });
     let note = fixed
         .missing_settings_workflow
         .as_deref()
@@ -928,6 +1004,7 @@ fn workflow_field(fixed: &Form, draft: Draft, violations: Memo<Vec<CommitViolati
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pages::commit_v2::SAVE_WITHOUT_PUBLISHING;
     use crate::test_support::{mount, sleep_ms, unmount_earlier};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
@@ -1062,6 +1139,110 @@ mod tests {
             .unwrap()
             .active_element();
         assert_ne!(active, Some(message_input(&el).unchecked_into()));
+    }
+
+    /// The package with a named workflow preselected, so typing runs the
+    /// live check.
+    fn governed(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        Box::pin(async {
+            let mut d = commit_data();
+            d.workflows = CommitWorkflows::Available {
+                workflows: vec![commands::WorkflowInfo {
+                    id: "plates".to_string(),
+                    name: Some("Plates".to_string()),
+                    description: None,
+                    metadata_schema_url: None,
+                    entries_schema_url: None,
+                }],
+                default_workflow: Some("plates".to_string()),
+                is_workflow_required: false,
+                config_url: None,
+            };
+            Ok(d)
+        })
+    }
+
+    /// The page as `/commit` mounts it: under `ByDesign`'s `Suspense`.
+    async fn suspended_page_at(address: &str, read: CommitRead) -> web_sys::Element {
+        unmount_earlier();
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(address))
+            .unwrap();
+        let el = mount(move || {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/commit")
+                            view=move || {
+                                view! {
+                                    <Suspense fallback=|| view! { <p data-fallback>"loading"</p> }>
+                                        <CommitScreen read=read />
+                                    </Suspense>
+                                }
+                            }
+                        />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(80).await;
+        el
+    }
+
+    /// The live check runs after each pause in typing. It must not send the
+    /// page back to the loading frame, which would take the field, and the
+    /// cursor in it, away mid-word.
+    #[wasm_bindgen_test]
+    async fn a_check_while_typing_keeps_the_page() {
+        let el = suspended_page_at("/commit?namespace=org%2Fpkg", governed).await;
+        let input = message_input(&el);
+        input.focus().unwrap();
+        input.set_value("Plate 7");
+        input
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        sleep_ms(700).await;
+        assert!(
+            el.query_selector("[data-fallback]").unwrap().is_none(),
+            "the loading frame came back; markup was {}",
+            el.inner_html()
+        );
+        assert!(input.is_connected(), "the field was rebuilt");
+        let active = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .active_element();
+        assert_eq!(active, Some(input.unchecked_into()), "the cursor stayed");
+    }
+
+    /// *Save without publishing*, once chosen, stays on the button through
+    /// a re-read, so the next click does not publish what was meant to stay.
+    #[wasm_bindgen_test]
+    async fn the_chosen_save_survives_a_re_read() {
+        let el = page_at("/commit?namespace=org%2Fpkg").await;
+        let buttons = |el: &web_sys::Element| {
+            el.query_selector_all("[data-primary-action] button")
+                .unwrap()
+        };
+        // The face, the caret, then the options.
+        let save: web_sys::HtmlElement = buttons(&el).item(3).unwrap().unchecked_into();
+        assert_eq!(save.text_content().unwrap().trim(), SAVE_WITHOUT_PUBLISHING);
+        save.click();
+        sleep_ms(80).await;
+        crate::test_support::element_saying(&el, "Refresh").click();
+        sleep_ms(80).await;
+        let face = buttons(&el).item(0).unwrap();
+        assert_eq!(
+            face.text_content().unwrap().trim(),
+            SAVE_WITHOUT_PUBLISHING,
+            "markup was {}",
+            el.inner_html()
+        );
     }
 
     /// Focus is asked for on arrival, not on every re-read: Refresh — as
@@ -1249,6 +1430,42 @@ mod tests {
             assert_eq!(form.intent_of(&option.label), Some(option.intent.clone()));
             assert_eq!(form.label(&option.intent), Some(option.label.clone()));
         }
+    }
+
+    /// A malformed workflows file refuses every save, and so does an
+    /// unchosen required workflow: both block the primary, in words.
+    #[test]
+    fn a_broken_or_unchosen_workflow_blocks() {
+        let mut d = commit_data();
+        d.workflows = CommitWorkflows::Invalid {
+            reason: "bad yaml".to_string(),
+            config_url: None,
+        };
+        let form = Form::of(&d);
+        assert_eq!(
+            form.workflow_problem(&form.initial).as_deref(),
+            Some("The bucket's workflows file is not valid: bad yaml")
+        );
+
+        let info = |id: &str| commands::WorkflowInfo {
+            id: id.to_string(),
+            name: Some(id.to_string()),
+            description: None,
+            metadata_schema_url: None,
+            entries_schema_url: None,
+        };
+        d.workflows = CommitWorkflows::Available {
+            workflows: vec![info("plates"), info("exports")],
+            default_workflow: None,
+            is_workflow_required: true,
+            config_url: None,
+        };
+        let form = Form::of(&d);
+        assert_eq!(
+            form.workflow_problem(&form.initial).as_deref(),
+            Some(CHOOSE_A_WORKFLOW)
+        );
+        assert_eq!(form.workflow_problem(&named("plates")), None);
     }
 
     #[test]
