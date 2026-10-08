@@ -134,19 +134,25 @@ pub(crate) struct IncomingPaths {
     pub removed: Vec<PathBuf>,
 }
 
-/// Split [`remote_delta`] into its three kinds. The delta is a `BTreeMap`, so
-/// each list comes out sorted by path.
-#[must_use]
-pub(crate) fn incoming_paths(base: &Manifest, latest: &Manifest) -> IncomingPaths {
-    let mut incoming = IncomingPaths::default();
-    for (path, change) in remote_delta(base, latest) {
-        match change {
-            RemoteChange::Added(_) => incoming.added.push(path),
-            RemoteChange::Modified(_) => incoming.changed.push(path),
-            RemoteChange::Removed => incoming.removed.push(path),
+impl IncomingPaths {
+    /// Split a [`remote_delta`] into its three kinds. The delta is a
+    /// `BTreeMap`, so each list comes out sorted by path.
+    ///
+    /// Takes the delta rather than the two manifests so a dry run can build it
+    /// once and hand the same map to [`classify_pull_with_delta`].
+    #[must_use]
+    pub(crate) fn from_delta(delta: &BTreeMap<PathBuf, RemoteChange>) -> Self {
+        let mut incoming = Self::default();
+        for (path, change) in delta {
+            let list = match change {
+                RemoteChange::Added(_) => &mut incoming.added,
+                RemoteChange::Modified(_) => &mut incoming.changed,
+                RemoteChange::Removed => &mut incoming.removed,
+            };
+            list.push(path.clone());
         }
+        incoming
     }
-    incoming
 }
 
 /// Do the local and remote sides of a both-changed path reach the *same*
@@ -286,6 +292,23 @@ pub fn classify_pull(
     latest: &Manifest,
     identical: &Reconciled,
 ) -> PullOutcome {
+    classify_pull_with_delta(status, base, latest, identical, &remote_delta(base, latest))
+}
+
+/// [`classify_pull`] over a [`remote_delta`] the caller already built, for
+/// callers that need the delta for something else too — the dry run splits it
+/// into [`IncomingPaths`], the pull derives its touch set from it — so the
+/// delta is built once rather than once per use.
+///
+/// `delta` must be `remote_delta(base, latest)`.
+#[must_use]
+pub(crate) fn classify_pull_with_delta(
+    status: &InstalledPackageStatus,
+    base: &Manifest,
+    latest: &Manifest,
+    identical: &Reconciled,
+    delta: &BTreeMap<PathBuf, RemoteChange>,
+) -> PullOutcome {
     // Same revision — identical manifests — is the only genuine "nothing to
     // pull". A newer revision that changed *only* the manifest header
     // (message / user_meta) has an empty row delta but is still something to
@@ -294,7 +317,6 @@ pub fn classify_pull(
     if base == latest {
         return PullOutcome::UpToDate;
     }
-    let delta = remote_delta(base, latest);
     if status.changes.is_empty() {
         // Includes the metadata-only case (empty `delta`): the surgical touch
         // set is empty, but the hashes still advance to `latest`.
@@ -397,7 +419,7 @@ mod tests {
             row("also-added.csv", b"4"),
         ]);
         assert_eq!(
-            incoming_paths(&base, &latest),
+            IncomingPaths::from_delta(&remote_delta(&base, &latest)),
             IncomingPaths {
                 added: vec![PathBuf::from("added.csv"), PathBuf::from("also-added.csv")],
                 changed: vec![PathBuf::from("edited.csv")],
@@ -412,7 +434,7 @@ mod tests {
     fn a_changed_path_is_not_an_addition() {
         let base = manifest_of(vec![row("same-name.csv", b"before")]);
         let latest = manifest_of(vec![row("same-name.csv", b"after")]);
-        let incoming = incoming_paths(&base, &latest);
+        let incoming = IncomingPaths::from_delta(&remote_delta(&base, &latest));
         assert_eq!(incoming.added, [] as [PathBuf; 0]);
         assert_eq!(incoming.changed, vec![PathBuf::from("same-name.csv")]);
         assert_eq!(incoming.removed, [] as [PathBuf; 0]);
@@ -434,7 +456,7 @@ mod tests {
             row("x-new", b"7"),
             row("c-new", b"8"),
         ]);
-        let incoming = incoming_paths(&base, &latest);
+        let incoming = IncomingPaths::from_delta(&remote_delta(&base, &latest));
         assert_eq!(
             incoming.added,
             vec![PathBuf::from("c-new"), PathBuf::from("x-new")]
@@ -455,7 +477,10 @@ mod tests {
         let base = manifest_of(vec![row("a", b"1")]);
         let mut latest = manifest_of(vec![row("a", b"1")]);
         latest.header.message = Some("newer revision message".to_string());
-        assert_eq!(incoming_paths(&base, &latest), IncomingPaths::default());
+        assert_eq!(
+            IncomingPaths::from_delta(&remote_delta(&base, &latest)),
+            IncomingPaths::default()
+        );
     }
 
     fn behind(changes: ChangeSet) -> InstalledPackageStatus {

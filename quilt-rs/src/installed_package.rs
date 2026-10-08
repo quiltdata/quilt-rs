@@ -1004,18 +1004,24 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             &snapshot.latest_manifest,
         )
         .await?;
+        // One delta serves both the verdict and the incoming paths: the
+        // autosync tick runs this dry run every tick, so building it twice
+        // would double the path and hash cloning on a large manifest.
+        let delta = flow::remote_delta(&base, &snapshot.latest_manifest);
+        let outcome = flow::classify_pull_with_delta(
+            &snapshot.status,
+            &base,
+            &snapshot.latest_manifest,
+            &identical,
+            &delta,
+        );
         let flow::IncomingPaths {
             added,
             changed,
             removed,
-        } = flow::incoming_paths(&base, &snapshot.latest_manifest);
+        } = flow::IncomingPaths::from_delta(&delta);
         Ok(flow::PullPreview {
-            outcome: flow::classify_pull(
-                &snapshot.status,
-                &base,
-                &snapshot.latest_manifest,
-                &identical,
-            ),
+            outcome,
             added,
             changed,
             removed,
