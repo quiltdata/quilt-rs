@@ -562,13 +562,16 @@ fn junk_summary(junky: &[(std::path::PathBuf, String)]) -> Option<JunkSummary> {
     let mut sorted: Vec<_> = junky.iter().collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
     let (first_path, first_pattern) = sorted.first()?;
+    // A set beside the list, so many distinct names stay a linear scan; the
+    // list keeps path order.
+    let mut seen = std::collections::HashSet::new();
     let mut names: Vec<String> = Vec::new();
     for (path, _) in &sorted {
         let name = path.file_name().map_or_else(
             || path.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
-        if !names.contains(&name) {
+        if seen.insert(name.clone()) {
             names.push(name);
         }
     }
@@ -1547,6 +1550,36 @@ mod tests {
     /// The totals count every change in the package, not the capped list, so
     /// `Publish N files` stays true past the cap. Deletions are changes, but
     /// bring no bytes into the revision.
+    /// Each distinct name once, in path order, however many there are.
+    #[test]
+    fn the_junk_summary_names_each_file_once_in_path_order() {
+        let junky: Vec<_> = [
+            "b/.DS_Store",
+            "a/.DS_Store",
+            "a/x.pyc",
+            "c/x.pyc",
+            "b/y.pyc",
+        ]
+        .into_iter()
+        .map(|p| (std::path::PathBuf::from(p), "*".to_string()))
+        .collect();
+        let junk = junk_summary(&junky).expect("system files");
+        assert_eq!(junk.count, 5);
+        assert_eq!(junk.names, [".DS_Store", "x.pyc", "y.pyc"]);
+        assert_eq!(junk.first_path, "a/.DS_Store");
+        assert_eq!(junk_summary(&[]), None);
+
+        let many: Vec<_> = (0..20_000)
+            .map(|i| {
+                (
+                    std::path::PathBuf::from(format!("gen/m{i:05}.pyc")),
+                    "*.pyc".to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(junk_summary(&many).map(|j| j.names.len()), Some(20_000));
+    }
+
     #[tokio::test]
     async fn commit_data_totals_count_past_the_list_cap() -> Result<(), String> {
         let mut model = mocks::create();
