@@ -255,6 +255,58 @@ pub fn IncomingFilesScene() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    /// Incoming rows add no control: the cell with three of them has as many
+    /// boxes and `[⋯]` menus as the cell over the same files with none, and
+    /// only it shows the group and the rows' label.
+    #[wasm_bindgen_test]
+    async fn incoming_rows_add_no_box_and_no_menu() {
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        let handle = leptos::mount::mount_to(container.clone(), IncomingFilesScene);
+        leptos::task::tick().await;
+
+        let count = |cell: &str, selector: &str| {
+            container
+                .query_selector_all(&format!("#{cell} {selector}"))
+                .unwrap()
+                .length()
+        };
+        let text = |cell: &str| {
+            container
+                .query_selector(&format!("#{cell}"))
+                .unwrap()
+                .unwrap()
+                .text_content()
+                .unwrap_or_default()
+        };
+        let boxes = "input[type=checkbox]";
+        let menus = "[aria-label='More actions for this file']";
+        let (top, nothing) = (text("in-top"), text("in-nothing"));
+        let found = (
+            count("in-top", boxes),
+            count("in-nothing", boxes),
+            count("in-top", menus),
+            count("in-nothing", menus),
+            top.matches("Incoming").count(),
+            top.contains("From the newer revision"),
+            nothing.contains("Incoming"),
+        );
+        drop(handle);
+        container.remove();
+
+        let (top_boxes, nothing_boxes, top_menus, nothing_menus, rows, heading, stray) = found;
+        assert_eq!(top_boxes, nothing_boxes, "an incoming row drew a box");
+        assert_eq!(top_menus, nothing_menus, "an incoming row drew a menu");
+        assert!(top_menus > 0, "the cells draw the installed rows' menus");
+        assert_eq!(rows, 3, "three rows labelled Incoming");
+        assert!(heading, "the group's heading is drawn");
+        assert!(!stray, "a revision that adds nothing draws no incoming row");
+    }
 
     /// A conflict found before the click is the state a failed Get latest
     /// leaves, so the header cannot read differently before and after.
