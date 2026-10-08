@@ -394,14 +394,20 @@ confirm; the file list goes last so a long list scrolls under the form.
 | Metadata                                       [Edit]   |
 | { "assay": "ELISA", "plate": 7 }                        |
 |                                                         |
-| What's included · 3 files · 8.5 MB                      |
-|  data/file-a.csv          Changed   4.2 MB   [...]      |
-|  data/file-b.parquet      New       4.3 MB   [...]      |
-|  data/file-c.json         Deleted   18.4 kB  [...]      |
-| 2 ignored files not included                            |
+| What's included · 3 files · 8.5 MB  2 ignored files not |
+|                                               included  |
+| +-----------------------------------------------------+ |
+| | data/file-a.csv          Changed   4.2 MB   [...]   | |
+| | data/file-b.parquet      New       4.3 MB   [...]   | |
+| | data/file-c.json         Deleted   18.4 kB  [...]   | |
+| +-----------------------------------------------------+ |
 +---------------------------------------------------------+
 ```
 
+- The rows scroll in their own box, which takes the height the form leaves,
+  so the header and its primary stay on screen however long the list is.
+  The box keeps a floor of two rows and a half; when the form leaves less
+  (the editor open in a short window), the whole page scrolls instead.
 - The primary reads `Publish N files`, or `Publish revision` when only
   metadata changed; its caret holds `Save without publishing`. A package
   with no bucket gets `Save revision` with no caret. N and the size count
