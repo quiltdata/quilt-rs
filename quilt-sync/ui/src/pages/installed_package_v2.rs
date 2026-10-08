@@ -25,12 +25,13 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands;
-use crate::kit::readable;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 use crate::routes;
 
 use super::status_watch::StatusWatch;
-use crate::components::appbar::appbar_actions;
+#[cfg(test)]
+use super::v2_page::outcome_band;
+use super::v2_page::{PageHandle, V2Page};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Notification, UnignorePopup, UnignorePopupData,
 };
@@ -59,16 +60,7 @@ use resolve::{ResolveCommands, ResolvePane};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss");
 
-/// What a command reported, and which package it reported about.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Outcome {
-    pub namespace: String,
-    pub variant: BannerVariant,
-    /// The page's own sentence. Never the backend's.
-    pub lead: String,
-    /// The engine's text, when it says something the lead cannot.
-    pub detail: Option<String>,
-}
+pub use super::v2_page::Outcome;
 
 /// The page's half of a command: what it blocks while it runs, where it
 /// reports, what to re-read when it is done, where it goes, and which dialog
@@ -76,9 +68,10 @@ pub struct Outcome {
 ///
 /// # Owned by the page, because a re-read rebuilds the header
 ///
-/// Every re-read — the watcher's news, Refresh, a command's own `reload` —
-/// re-runs the body and builds a new `PageHeader`, disposing everything the old
-/// one owned. So anything that must outlive a re-read lives here: a dialog the
+/// Every re-read that finds news — the watcher's, Refresh, a command's own
+/// `reload` — re-runs the body and builds a new `PageHeader`, disposing
+/// everything the old one owned. (One that finds nothing new rebuilds nothing:
+/// see `v2_page`.) So anything that must outlive a re-read lives here: a dialog the
 /// reader has open stays open, and a navigation asked for by a command that
 /// settles after the rebuild still happens.
 ///
@@ -121,14 +114,7 @@ async fn holding<T>(
     outcome: RwSignal<Option<Outcome>>,
     task: impl std::future::Future<Output = T>,
 ) -> T {
-    busy.set(true);
-    // The band says what the last command said, and this one is now the last:
-    // a failure left up would outlive a retry that succeeds, which says nothing.
-    outcome.set(None);
-    let answer = task.await;
-    // `try_`: the signal is the page's, and the page can be gone by now.
-    busy.try_set(false);
-    answer
+    super::v2_page::hold(busy, outcome, task).await
 }
 
 /// Run a command, hold the page while it runs, and report only what the band
@@ -276,11 +262,17 @@ impl BucketDraft {
 impl Wiring {
     #[must_use]
     pub fn new() -> Self {
+        Self::over(PageHandle::new())
+    }
+
+    /// The header's wiring over the scaffold's lock, band and reload, so the
+    /// page's commands and the scaffold's frame share them.
+    fn over(page: PageHandle) -> Self {
         Self {
-            busy: RwSignal::new(false),
+            busy: page.busy,
             downloading: RwSignal::new(false),
-            outcome: RwSignal::new(None),
-            reload: Trigger::new(),
+            outcome: page.outcome,
+            reload: page.reload,
             goto: RwSignal::new(None),
             replace_to: RwSignal::new(None),
             dialogs: Dialogs {
@@ -1067,17 +1059,6 @@ fn browser_opener(
     })
 }
 
-/// The latest answer, when it was read for the package on screen.
-///
-/// `LocalResource::get` keeps the last answer while a re-read is out. For the
-/// same package that is the point — a re-read keeps the page on screen rather
-/// than flashing its skeleton. For another package it would draw the last
-/// package under this one's address, so an answer read for a different
-/// namespace is not yet an answer.
-fn answer_for<T>(answer: Option<(String, T)>, showing: &str) -> Option<T> {
-    answer.and_then(|(read_for, answer)| (read_for == showing).then_some(answer))
-}
-
 /// Opens a downloaded file in its default application, reporting a failure on
 /// the keyed band. Not `run`, for `catalog_opener`'s reason: opening a file
 /// writes nothing, so it neither takes `busy` nor clears the band.
@@ -1175,8 +1156,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
 }
 
 /// The page's one read: the header, the pane and the pause, for one namespace.
-pub(crate) type PageRead =
-    fn(String) -> Pin<Box<dyn Future<Output = Result<commands::PackagePageData, String>>>>;
+pub(crate) type PageRead = super::v2_page::PageRead<commands::PackagePageData>;
 
 fn read_page(
     namespace: String,
@@ -1218,33 +1198,14 @@ fn PackageScreen(
     // different pause is news again — see `pause_banner`.
     let dismissed: RwSignal<Option<String>> = RwSignal::new(None);
     // Here and not in the header, which every re-read rebuilds — see `Wiring`.
-    let w = Wiring::new();
+    let page = PageHandle::new();
+    let w = Wiring::over(page);
     w.follow(ns.into());
-    let Wiring {
-        outcome, reload, ..
-    } = w;
-    // Whether the one read is out. The main page counts, because it has four;
-    // one read needs a flag.
-    //
-    // It drives Refresh's spinner, so the button reports a read the watcher
-    // started as readily as one the reader asked for — the page is working
-    // either way, and a button that only knows about presses says nothing while
-    // the page refetches under it.
-    let in_flight = RwSignal::new(false);
+    let reload = page.reload;
     // One read for the whole page. Re-runs when the namespace changes, and
     // whenever `reload` fires — the watcher reporting news about this package,
-    // or the failure arm's way out. Each answer carries the package it was
-    // read for; see `answer_for`.
-    let data = LocalResource::new(move || {
-        reload.track();
-        let namespace = ns.get();
-        async move {
-            in_flight.set(true);
-            let answer = read(namespace.clone()).await;
-            in_flight.set(false);
-            (namespace, answer)
-        }
-    });
+    // or the failure arm's way out.
+    let answer = page.read(ns, read);
 
     // Not remembered: another package, or another visit, starts at the
     // default with every folder open, no search and the `All` facet. `ns` is a memo on
@@ -1283,33 +1244,33 @@ fn PackageScreen(
 
     // The newer revision's dry run, after each read that shows the package
     // behind or in conflict: after the page is drawn, so it never holds the
-    // page back. An answered read alone decides, as below.
+    // page back. A settled read alone decides, as below; `in_flight` rather
+    // than the answer, which notifies nothing when a re-read finds the same
+    // data, while a local edit or a moved newer revision can still change what
+    // the check says.
     let incoming = IncomingCheck::new(pull);
     Effect::new(move |_| {
-        if in_flight.get() {
+        if page.in_flight.get() {
             return;
         }
-        let Some((read_for, answer)) = data.get() else {
+        let Some(answered) = answer.get() else {
             return;
         };
-        if read_for != ns.get_untracked() {
-            return;
-        }
-        let asks = answer
+        let asks = answered
             .ok()
             .filter(|d| checks_incoming(&d.header.state))
-            .map(|d| (read_for, d.context.revision.hash));
+            .map(|d| (ns.get_untracked(), d.context.revision.hash));
         incoming.after_read(asks);
     });
 
     // A `resolve=1` the package cannot honour is replaced by the plain address,
-    // so *Back* never re-enters a mode that does not exist. The resource keeps
-    // its last value while it re-reads, so only an answered read decides.
+    // so *Back* never re-enters a mode that does not exist. The answer stays up
+    // while a re-read is out, so only a settled read decides.
     Effect::new(move |_| {
-        if in_flight.get() {
+        if page.in_flight.get() {
             return;
         }
-        let Some((_, Ok(answered))) = data.get() else {
+        let Some(Ok(answered)) = answer.get() else {
             return;
         };
         if let Some(to) = normalized_address(
@@ -1325,98 +1286,45 @@ fn PackageScreen(
         }
     });
 
+    // The outcome band carries only what no other surface says. A navigation
+    // reports by arriving, a dialog holds its own refusal, and a pull posts its
+    // report to the notification stack. What is left is a non-dialog command's
+    // failure, an undo that succeeded (the state label can read the same before
+    // and after, so the re-read is not a report), and a remote set whose
+    // workflow could not be resolved.
+    //
     // `heading` is not reactive and one route serves every package, so it names
     // the page rather than the package; the package's own name is on screen.
     view! {
         <PackageEventListener reload=reload />
         {row_popups(files, w)}
-        <PageLayout
+        <V2Page
             heading="Package"
-            // In the frame's slot — directly under the appbar, pushing the page
-            // down — drawn from the same keyed answer as the body. Nothing
-            // before the first answer: a skeleton here would reserve a band
-            // for news that usually is not there, and the page would settle
-            // by collapsing it.
-            banner=view! {
-                {outcome_band(outcome, ns.into())}
-                {move || match answer_for(data.get(), &ns.get()) {
-                    Some(Ok(d)) => view! {
-                        {pause_banner(d.sync_paused.clone(), dismissed)}
-                        {local_only_band::local_only_band(local_only, &d.header.state)}
-                        {mismatch_band::mismatch_band(
-                            mismatch,
-                            requested.into(),
-                            d.context.revision.clone(),
-                            &d.header.state,
-                        )}
-                    }
-                    .into_any(),
-                    // A failed read still says nothing about a command that ran
-                    // before it; the outcome band above is outside this arm for
-                    // exactly that reason.
-                    Some(Err(_)) | None => ().into_any(),
-                }}
-            }
-                .into_any()
-            actions=appbar_actions(move || reload.notify(), in_flight.into())
-        >
-            // Not a `Suspense`, which draws its fallback again for every
-            // re-read: the watcher's news would blank the header and the list
-            // each time. The last answer for this package stays up instead.
-            {move || match answer_for(data.get(), &ns.get()) {
-                None => package_skeleton(),
-                Some(Ok(d)) => package_body(d, w, asked.into(), resolving, files, incoming),
-                // The page keeps its frame and states the failure in place. A
-                // read that failed for a reason the header could have worded —
-                // no session, a refused role — never reaches here: the command
-                // resolves those to a state, and the header draws them.
-                Some(Err(_)) => package_failure(ns.get(), reload),
-            }}
-        </PageLayout>
-    }
-}
-
-/// What the last command said — the remainder channel.
-///
-/// # It carries only what no other surface says
-///
-/// A navigation reports by arriving, a dialog holds its own refusal, and a
-/// pull posts its report to the notification stack. What is left for this band
-/// is a non-dialog command's failure, an undo that succeeded (the state label
-/// can read the same before and after, so the re-read is not a report), and a
-/// remote set whose workflow could not be resolved.
-///
-/// # Keyed to the package, and dropped whole when it does not match
-///
-/// One route serves every package, so a command's result can arrive after the
-/// reader has moved to another one. It is discarded rather than drawn: a
-/// reader cannot tell a stale outcome from a fresh one by its text. Same rule
-/// the form dialog applies to a stale session.
-///
-/// # The lead is the page's and the detail is the engine's
-///
-/// The split the pause band already makes. The vocabulary is UI-owned, so the
-/// sentence saying what did not happen is written here; the engine's own
-/// refusal text is the part nothing else knows, and follows as the detail.
-fn outcome_band(outcome: RwSignal<Option<Outcome>>, showing: Signal<String>) -> AnyView {
-    let mine = move || outcome.get().filter(|o| o.namespace == showing.get());
-    view! {
-        <Show when=move || mine().is_some() fallback=|| ()>
-            {
-                let said = mine().expect("checked by the guard above");
+            page=page
+            answer=answer
+            showing=ns
+            skeleton=package_skeleton
+            bands=move |d: commands::PackagePageData| {
                 view! {
-                    <Banner
-                        variant=said.variant
-                        on_dismiss=move |_| outcome.set(None)
-                    >
-                        {said.lead}
-                        {said.detail.map(|detail| view! { " " {readable(&detail)} })}
-                    </Banner>
+                    {pause_banner(d.sync_paused.clone(), dismissed)}
+                    {local_only_band::local_only_band(local_only, &d.header.state)}
+                    {mismatch_band::mismatch_band(
+                        mismatch,
+                        requested.into(),
+                        d.context.revision.clone(),
+                        &d.header.state,
+                    )}
                 }
+                .into_any()
             }
-        </Show>
+            body=move |d| package_body(d, w, asked.into(), resolving, files, incoming)
+            // The page keeps its frame and states the failure in place. A read
+            // that failed for a reason the header could have worded — no
+            // session, a refused role — never reaches here: the command resolves
+            // those to a state, and the header draws them.
+            failure=move || package_failure(ns.get(), reload)
+        />
     }
-    .into_any()
 }
 
 /// The band that says autosync has stopped, and why.
@@ -1627,16 +1535,6 @@ mod tests {
                 truncated: false,
             }),
         }
-    }
-
-    /// An answer read for package A is not drawn at package B's address while
-    /// B's read is out; a re-read of the same package keeps the one it has.
-    #[test]
-    fn an_answer_read_for_another_package_is_not_yet_an_answer() {
-        let answer = |ns: &str| Some((ns.to_string(), 1));
-        assert_eq!(answer_for(answer("team/a"), "team/b"), None);
-        assert_eq!(answer_for(answer("team/b"), "team/b"), Some(1));
-        assert_eq!(answer_for(None::<(String, u8)>, "team/b"), None);
     }
 
     /// A popup's failure is news about the package it was opened for, even
@@ -2590,6 +2488,39 @@ mod tests {
         screen_resolving(address, read, ResolveCommands::app()).await
     }
 
+    /// [`screen_at`], mounted as `/installed-package` mounts it: under
+    /// `ByDesign`'s `Suspense`, whose fallback is the loading frame.
+    async fn suspended_screen_at(address: &str, read: PageRead) -> web_sys::Element {
+        crate::test_support::unmount_earlier();
+        READS.with(|r| r.set(0));
+        go_to(address);
+        let el = mount(move || {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/installed-package")
+                            view=move || {
+                                view! {
+                                    <Suspense fallback=|| view! { <p data-fallback>"loading"</p> }>
+                                        <PackageScreen
+                                            read=read
+                                            pull=never_pulls
+                                            resolving=ResolveCommands::app()
+                                            revision_message=mismatch_band::app_revision_message
+                                        />
+                                    </Suspense>
+                                }
+                            }
+                        />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(50).await;
+        el
+    }
+
     /// [`screen_at`], with the resolve mode's commands answered by `resolving`.
     async fn screen_resolving(
         address: &str,
@@ -2750,6 +2681,50 @@ mod tests {
 
         assert_eq!(READS.with(std::cell::Cell::get), 2, "the page re-read");
         assert!(row(), "still listed; markup was {}", el.inner_html());
+    }
+
+    /// Mounted as the route mounts it, a re-read still in flight leaves the
+    /// page up: `ByDesign`'s `Suspense` must not put its loading frame back.
+    #[wasm_bindgen_test]
+    async fn a_re_read_under_by_design_keeps_the_page() {
+        let el = suspended_screen_at(PLAIN, answers_once).await;
+        let row = || {
+            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+                .unwrap()
+        };
+        assert!(row().is_some(), "listed; markup was {}", el.inner_html());
+
+        button_saying(&el, "Refresh").click();
+        sleep_ms(50).await;
+
+        assert_eq!(READS.with(std::cell::Cell::get), 2, "the page re-read");
+        assert!(
+            el.query_selector("[data-fallback]").unwrap().is_none(),
+            "the loading frame came back; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            row().is_some(),
+            "still listed; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// A re-read that answers what is already on screen changes nothing on
+    /// it. The watcher's first event after the page opens is such a re-read.
+    #[wasm_bindgen_test]
+    async fn an_unchanged_re_read_rebuilds_nothing() {
+        let el = suspended_screen_at(PLAIN, settled_read).await;
+        let row = el
+            .query_selector("section[aria-label='Files'] [title='a.csv']")
+            .unwrap()
+            .expect("listed");
+
+        button_saying(&el, "Refresh").click();
+        sleep_ms(50).await;
+
+        assert_eq!(READS.with(std::cell::Cell::get), 2, "the page re-read");
+        assert!(row.is_connected(), "the row was rebuilt");
     }
 
     /// Every package answered as the namespace asked, with one folder of two.

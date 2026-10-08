@@ -25,6 +25,10 @@
 
 - **New design preview**: The package page shows which files a newer revision brings, and whether getting it would conflict, before you click **Get latest** (<https://github.com/quiltdata/quilt-rs/pull/1094>)
 
+### Fixed
+
+- **New design preview**: the package page no longer flashes its loading frame when it refreshes on its own, a second or two after it opens or whenever autosync reports back (<https://github.com/quiltdata/quilt-rs/pull/1093>)
+
 ### quilt-rs
 
 - Updated [from v0.42.1 to v0.43.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.1...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))

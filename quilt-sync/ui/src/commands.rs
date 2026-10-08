@@ -77,7 +77,7 @@ pub struct EntryData {
     pub namespace: Namespace,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitData {
     pub namespace: Namespace,
@@ -137,7 +137,7 @@ pub struct JunkSummary {
     pub first_pattern: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowData {
     pub id: Option<String>,
@@ -424,7 +424,7 @@ pub enum RemoteBanner {
 
 /// The v2 package page's payload. Mirrors
 /// `src-tauri/src/commands/package_page.rs` field for field.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackagePageData {
     pub header: PackageHeaderData,
@@ -591,7 +591,7 @@ pub struct RevisionHistoryRow {
 
 /// The header region: identity, one resolved condition, and what the overflow
 /// menu may offer.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageHeaderData {
     pub namespace: Namespace,
