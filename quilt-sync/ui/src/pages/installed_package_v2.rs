@@ -55,7 +55,7 @@ use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
 use file_pane::{Reach, RowCommand, RowMenu};
 use header::PageHeader;
 pub use header::{MenuCommand, MenuItem, menu_items};
-use incoming::IncomingSummary;
+use incoming::{HoverCard, IncomingSummary};
 use resolve::{ResolveCommands, ResolvePane};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss");
@@ -429,6 +429,11 @@ struct IncomingCheck {
     /// What the last read asked about, for *Try again*.
     asked: StoredValue<Option<(String, String)>>,
     pull: PullRead,
+    /// The summary's popover, open or pinned. Here for the answer's reason:
+    /// the header is drawn again on a re-read whose data differs and when the
+    /// check moves the state, and a popover the reader pinned stays open
+    /// through both.
+    card: HoverCard,
 }
 
 impl IncomingCheck {
@@ -438,6 +443,7 @@ impl IncomingCheck {
             runs: StoredValue::new(0),
             asked: StoredValue::new(None),
             pull,
+            card: HoverCard::new(false),
         }
     }
 
@@ -703,6 +709,7 @@ fn incoming_header(
                 whole=whole
                 catalog=newer.clone()
                 on_retry=Callback::new(move |()| incoming.retry())
+                card=incoming.card
             />
         }
         .into_any();
@@ -1261,6 +1268,11 @@ fn PackageScreen(
             .filter(|d| checks_incoming(&d.header.state))
             .map(|d| (ns.get_untracked(), d.context.revision.hash));
         incoming.after_read(asks);
+    });
+    // A pin names one package's files, so another package starts closed.
+    Effect::new(move |_| {
+        ns.track();
+        incoming.card.close();
     });
 
     // A `resolve=1` the package cannot honour is replaced by the plain address,
@@ -3454,5 +3466,105 @@ mod tests {
             Some("1 file change"),
             "the replaced check's late answer did not land"
         );
+    }
+
+    /// The summary's trigger, to click, and whether its popover is open, by
+    /// the trigger's word and the surface the platform shows.
+    fn popover_open(el: &web_sys::Element) -> bool {
+        let trigger = el
+            .query_selector("[aria-controls][aria-expanded]:not([aria-haspopup])")
+            .unwrap()
+            .expect("the summary's trigger");
+        let surface = el
+            .query_selector("[aria-label='Files coming with the newer revision']")
+            .unwrap()
+            .expect("the summary's popover");
+        let said = trigger.get_attribute("aria-expanded").as_deref() == Some("true");
+        let shown = surface.matches(":popover-open").unwrap_or(false);
+        assert_eq!(said, shown, "the trigger and the surface disagree");
+        said
+    }
+
+    fn pin(el: &web_sys::Element) {
+        el.query_selector("[aria-controls][aria-expanded]:not([aria-haspopup])")
+            .unwrap()
+            .expect("the summary's trigger")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+    }
+
+    /// A popover the reader pinned stays open through the watcher's re-read,
+    /// even one whose data differs and so draws the page's body again, while
+    /// the check finds the same files coming.
+    #[wasm_bindgen_test]
+    async fn a_pinned_popover_stays_open_across_a_re_read() {
+        script(vec![(0, Ok(adds(3))), (0, Ok(adds(3)))]);
+        let el = suspended_screen(behind("aaa")).await;
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
+        pin(&el);
+        sleep_ms(30).await;
+        assert!(popover_open(&el), "the click pins it");
+
+        let mut edited = behind("aaa");
+        if let commands::FilesData::Listed(list) = &mut edited.files {
+            list.entries[0].size = 9;
+        }
+        re_read(&el, edited).await;
+        sleep_ms(30).await;
+        no_fallback(&el);
+        assert_eq!(pulls_asked(), 2, "the re-read checked again");
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
+        assert!(popover_open(&el), "the re-read closed a pinned popover");
+    }
+
+    /// The check moving the header to the conflict state draws the header
+    /// again; a pinned popover over the same file stays open.
+    #[wasm_bindgen_test]
+    async fn a_pinned_popover_stays_open_when_the_header_is_drawn_again() {
+        let changes = |outcome| {
+            Ok(commands::PullPreview {
+                outcome,
+                added: Vec::new(),
+                changed: vec!["a.csv".to_string()],
+                removed: Vec::new(),
+                latest_hash: Some("feedbeef".to_string()),
+            })
+        };
+        script(vec![
+            (0, changes(commands::PullOutcome::CleanUpdate)),
+            (
+                0,
+                changes(commands::PullOutcome::Blocked {
+                    conflicts: vec!["a.csv".to_string()],
+                }),
+            ),
+        ]);
+        let el = suspended_screen(behind("aaa")).await;
+        pin(&el);
+        sleep_ms(30).await;
+        assert!(popover_open(&el), "the click pins it");
+
+        re_read(&el, behind("aaa")).await;
+        sleep_ms(30).await;
+        element_saying(&el, "conflict in 1 file");
+        assert!(popover_open(&el), "drawing the header again closed it");
+    }
+
+    /// A pin belongs to one package: another package's summary starts closed.
+    #[wasm_bindgen_test]
+    async fn a_pin_does_not_follow_to_another_package() {
+        script(vec![(0, Ok(adds(3))), (0, Ok(adds(2)))]);
+        let el = suspended_screen(behind("aaa")).await;
+        pin(&el);
+        sleep_ms(30).await;
+        assert!(popover_open(&el));
+
+        let mut other = behind("bbb");
+        other.header.namespace = "team/other".try_into().unwrap();
+        PAGE.with(|p| *p.borrow_mut() = Some(other));
+        move_to("/installed-package?namespace=team%2Fother");
+        sleep_ms(80).await;
+        assert_eq!(summary(&el).as_deref(), Some("2 file changes"));
+        assert!(!popover_open(&el), "the pin followed to another package");
     }
 }
