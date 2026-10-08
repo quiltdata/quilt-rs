@@ -55,10 +55,18 @@
 //!
 //! - The page does not move: the summary shares the header's one row, and
 //!   the popover takes no room.
-//! - The popover caps, like every overlay, at 60vh (336px at the floor) and
-//!   360px wide; its first line is pinned while the list scrolls under it.
+//! - The popover reaches down to the window's edge, `100vh - 160px`: 400px
+//!   at the floor against the 336 other overlays' 60vh allows, starting 4px
+//!   under the summary. Not 90vh: the placement slides a surface up to fit,
+//!   and 90vh would cover the summary it hangs from. 360px wide; its first
+//!   line is pinned while the list scrolls under it.
+//! - It opens on hover and closes 200ms after the pointer leaves the summary
+//!   and the popover both, which is time to cross the gap between them; a
+//!   click pins it until a click outside, Escape or a second click.
 //!   `EntryRow`'s box, size and menu columns left a path about 50px there, so
 //!   it lists path, labels and link only.
+
+use std::time::Duration;
 
 use leptos::context::Provider;
 use leptos::prelude::*;
@@ -244,6 +252,72 @@ fn summary_words(check: &PullCheck, rows: &[Coming]) -> Option<String> {
     }
 }
 
+/// How long the pointer may be away from the summary and its popover before
+/// a hover-opened popover closes: enough to cross the 4px gap between them.
+const HOVER_GRACE: Duration = Duration::from_millis(200);
+
+/// The summary's popover opens on hover and closes when the pointer leaves
+/// the summary and the popover both; a click pins it open until a click
+/// outside, Escape, or a second click on the summary. The overlay's own
+/// light dismiss does the closing, so a pinned popover unpins when it closes.
+#[derive(Clone, Copy)]
+struct HoverCard {
+    open: RwSignal<bool>,
+    pinned: RwSignal<bool>,
+    timer: StoredValue<Option<TimeoutHandle>>,
+}
+
+impl HoverCard {
+    fn new(open: RwSignal<bool>, pinned: bool) -> Self {
+        let pinned = RwSignal::new(pinned);
+        Effect::new(move |_| {
+            if !open.get() {
+                pinned.set(false);
+            }
+        });
+        Self {
+            open,
+            pinned,
+            timer: StoredValue::new(None),
+        }
+    }
+
+    fn cancel(self) {
+        if let Some(Some(pending)) = self.timer.try_update_value(Option::take) {
+            pending.clear();
+        }
+    }
+
+    fn enter(self) {
+        self.cancel();
+        if !self.open.get_untracked() {
+            self.open.set(true);
+        }
+    }
+
+    fn leave(self) {
+        if self.pinned.get_untracked() {
+            return;
+        }
+        self.cancel();
+        let open = self.open;
+        let pending =
+            set_timeout_with_handle(move || open.try_set(false).map_or((), drop), HOVER_GRACE).ok();
+        self.timer.set_value(pending);
+    }
+
+    fn click(self) {
+        self.cancel();
+        if self.pinned.get_untracked() {
+            self.pinned.set(false);
+            self.open.set(false);
+        } else {
+            self.pinned.set(true);
+            self.open.set(true);
+        }
+    }
+}
+
 /// What a `Blocked` verdict's popover says after the counts.
 fn conflict_words(check: &PullCheck) -> Option<String> {
     let PullCheck::Ready(PullPreview {
@@ -300,6 +374,7 @@ fn header_summary(
     }
     let counts = counts_words(&rows);
     let open = RwSignal::new(opened);
+    let card = HoverCard::new(open, opened);
     // On a conflict the line says what to do instead of what Get latest
     // would, and it is the sentence the file list's `Differs` marks describe.
     let conflict = conflict_words(check);
@@ -316,7 +391,9 @@ fn header_summary(
                                 class="g-hs-trigger"
                                 aria-expanded=move || open.get().to_string()
                                 aria-controls=surface_id
-                                on:click=move |_| open.update(|o| *o = !*o)
+                                on:click=move |_| card.click()
+                                on:mouseenter=move |_| card.enter()
+                                on:mouseleave=move |_| card.leave()
                             >
                                 {words.clone()}
                             </button>
@@ -327,7 +404,11 @@ fn header_summary(
                     aria_label="Files coming with the newer revision"
                     align=Align::Start
                 >
-                    <div class="g-nr-surface">
+                    <div
+                        class="g-nr-surface"
+                        on:mouseenter=move |_| card.enter()
+                        on:mouseleave=move |_| card.leave()
+                    >
                         <p class="g-nr-scope" id=id>
                             <strong>{format!("{}.", capitalised(&counts))}</strong>
                             {scope.map(|w| format!(" {w}"))}
@@ -789,6 +870,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Hovering opens the popover and leaving closes it after the grace; a
+    /// click pins it through a leave, and a second click unpins and closes.
+    #[wasm_bindgen_test]
+    async fn hover_opens_and_a_click_pins() {
+        use crate::gallery::forms::after_a_beat as sleep_ms;
+        let open = RwSignal::new(false);
+        let card = HoverCard::new(open, false);
+        let grace = i32::try_from(HOVER_GRACE.as_millis()).unwrap() + 50;
+
+        card.enter();
+        assert!(open.get_untracked(), "hover opens");
+        card.leave();
+        card.enter();
+        sleep_ms(grace).await;
+        assert!(
+            open.get_untracked(),
+            "coming back within the grace keeps it"
+        );
+        card.leave();
+        sleep_ms(grace).await;
+        assert!(!open.get_untracked(), "leaving closes it");
+
+        card.click();
+        card.leave();
+        sleep_ms(grace).await;
+        assert!(open.get_untracked(), "a click pins it through a leave");
+        card.click();
+        assert!(!open.get_untracked(), "a second click closes it");
     }
 
     /// The popover lists the files with a catalog link each and no other
