@@ -477,3 +477,136 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--q-space-3);
 }
+
+/* The incoming-files scene: after the header's state label, `· 6 file
+ * changes`, dash-underlined like a term with a definition, which opens the
+ * popover; or how the check stands. */
+.g-ph-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  min-width: 0;
+}
+
+.g-hs {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  font-size: var(--q-text-body);
+  white-space: nowrap;
+}
+
+.g-hs-dot,
+.g-hs-muted {
+  color: var(--q-fgColor-muted);
+}
+
+.g-hs-trigger {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--q-fgColor-default);
+  text-decoration: underline dashed var(--q-fgColor-muted);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.g-hs-trigger:hover {
+  text-decoration-color: currentColor;
+}
+
+.g-hs-trigger:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: 2px;
+}
+
+/* As wide as the overlay's 360px cap allows: 360 less its space-3 padding
+ * and border. The rows need a definite width to cut their names. */
+/* The surface's own space-3 padding moves onto this box, so the pointer is
+ * over it everywhere inside the border and leaving it means leaving the
+ * popover. */
+.g-nr-surface {
+  width: 334px;
+  margin: calc(-1 * var(--q-space-3));
+  padding: 0 var(--q-space-3) var(--q-space-3);
+  /* It is the summary's descendant, whose words do not wrap. */
+  white-space: normal;
+}
+
+/* Taller than other popovers, which stop at 60vh: down to the window's edge
+ * from under the header's label, 400px at the 560 floor. Not 90vh: the
+ * placement slides a surface up to fit, and 90vh would cover the label it
+ * hangs from. */
+[popover]:has(> .g-nr-surface) {
+  max-height: calc(100vh - 160px);
+}
+
+/* Pinned: the overlay caps at 60vh (336px at the 560 floor) and scrolls as a
+ * whole, so the counts and what Get latest does stay above a long list. The
+ * negative top cancels the surface's space-3 padding, and the padding put back
+ * covers the rows scrolling under it. */
+.g-nr-scope {
+  position: sticky;
+  top: calc(-1 * var(--q-space-3));
+  z-index: 1;
+  margin: 0 0 var(--q-space-2);
+  padding: var(--q-space-3) 0 var(--q-space-2);
+  background: var(--q-bgColor-default);
+  border-bottom: 1px solid var(--q-borderColor-muted);
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+}
+
+.g-nr-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--q-text-body);
+}
+
+.g-nr-rows > li {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding: var(--q-space-1) 0;
+}
+
+.g-nr-rows > li > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The popover's catalog link, as revision rows draw theirs. */
+.g-nr-open {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--q-fgColor-muted);
+}
+
+.g-nr-open svg {
+  width: 16px;
+  height: 16px;
+}
+
+a.g-nr-open:hover {
+  color: var(--q-fgColor-accent);
+}
+
+a.g-nr-open:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: 2px;
+}
+
+/* Under the popover's list when it is cut, as the file list's cap notice. */
+.g-nr-cut {
+  margin: var(--q-space-2) 0 0;
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+}

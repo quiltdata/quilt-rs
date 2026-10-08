@@ -1490,11 +1490,19 @@ pub fn FilePaneRegion(
     /// `Keeping → The whole package`, which takes the per-file choice away.
     #[prop(optional)]
     whole: bool,
+    /// Files a newer revision would conflict with, found before *Get latest*:
+    /// marked as resolve mode marks the files that differ, and in its place.
+    #[prop(optional)]
+    conflicts: &'static [&'static str],
+    /// No local changes: the package a clean update is about.
+    #[prop(optional)]
+    clean: bool,
 ) -> impl IntoView {
     pane(Pane {
         ticked,
         whole,
-        marked: if marked { MARKED } else { &[] },
+        files: if clean { settled_package() } else { package() },
+        marked: if marked { MARKED } else { conflicts },
         framing: Framing::Page,
         ..Pane::new(name)
     })

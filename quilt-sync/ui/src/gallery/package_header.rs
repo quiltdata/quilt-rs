@@ -229,7 +229,12 @@ fn scene_menu() -> Vec<MenuItem> {
 /// beside the pane's own `Share mine`, which is the real one. The
 /// pane's `BackLink` closes the mode and the header's action comes back with it,
 /// so the pair reads as one control in two states rather than as two controls.
-fn header(state: &PackageState, publish_choice: RwSignal<usize>, action_open: bool) -> AnyView {
+fn header(
+    state: &PackageState,
+    publish_choice: RwSignal<usize>,
+    action_open: bool,
+    summary: Option<AnyView>,
+) -> AnyView {
     let rendered = render(state, Site::PageHeader);
     let action = rendered.action;
     let publishes = !action_open && matches!(action, Some(PackageAction::Publish));
@@ -238,7 +243,13 @@ fn header(state: &PackageState, publish_choice: RwSignal<usize>, action_open: bo
         <PageHeader
             trail=view! { <BackLink href="#packageheader" label="Packages" /> }.into_any()
             title=NAMESPACE
-            label=view! { <StateLabel tone=rendered.tone>{rendered.words}</StateLabel> }.into_any()
+            label=view! {
+                <span class="g-ph-label">
+                    <StateLabel tone=rendered.tone>{rendered.words}</StateLabel>
+                    {summary}
+                </span>
+            }
+                .into_any()
             actions=view! {
                     {publishes
                         .then(|| {
@@ -309,8 +320,12 @@ pub fn PackageHeaderRegion(
     /// pane — so the header drops it rather than drawing a second primary.
     #[prop(optional)]
     action_open: bool,
+    /// After the state label: what a newer revision brings, as the
+    /// incoming-files scene draws it.
+    #[prop(optional)]
+    summary: Option<AnyView>,
 ) -> impl IntoView {
-    header(&state, publish_choice, action_open)
+    header(&state, publish_choice, action_open, summary)
 }
 
 #[component]
@@ -343,7 +358,7 @@ pub fn PackageHeaderScene() -> impl IntoView {
             {states()
                 .into_iter()
                 .map(|(label, state)| {
-                    view! { <Cell full=true label=label>{header(&state, publish_choice, false)}</Cell> }
+                    view! { <Cell full=true label=label>{header(&state, publish_choice, false, None)}</Cell> }
                 })
                 .collect_view()}
         </Scene>
