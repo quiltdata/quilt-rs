@@ -304,8 +304,12 @@ impl Form {
             d.settings_workflow.as_deref(),
         );
         let (options, initial, needs_choice) = workflow_choices(&view);
-        let missing =
-            missing_settings_workflow(&view, d.settings_workflow.as_deref()).map(str::to_string);
+        // Only where there is a bucket to refuse it: a package with no bucket
+        // saves locally, where no workflow is checked, and has no Publish.
+        let missing = has_bucket
+            .then(|| missing_settings_workflow(&view, d.settings_workflow.as_deref()))
+            .flatten()
+            .map(str::to_string);
         let choosable = matches!(d.workflows, CommitWorkflows::Available { .. });
         Self {
             namespace: d.namespace.to_string(),
@@ -615,6 +619,8 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
     });
     let open_folder = Callback::new(move |()| {
         let Some(Ok(d)) = answer() else { return };
+        // This command is now the last one, so an earlier failure is not news.
+        said.set(None);
         leptos::task::spawn_local(async move {
             if let Err(detail) =
                 commands::open_in_file_browser(d.namespace.to_string(), d.uri).await
@@ -1529,6 +1535,21 @@ mod tests {
             Some(METADATA_NOT_JSON)
         );
         assert_eq!(super::super::tests::banned_in(METADATA_NOT_JSON), None);
+    }
+
+    /// The Settings workflow warning speaks of "this bucket" and of
+    /// Publish, so a package with neither gets none.
+    #[test]
+    fn a_package_without_a_bucket_gets_no_workflow_warning() {
+        let mut d = commit_data();
+        d.settings_workflow = Some("wrong-workflow".to_string());
+        assert_eq!(
+            Form::of(&d).missing_settings_workflow.as_deref(),
+            Some("wrong-workflow"),
+            "with a bucket that has no workflows config, it warns"
+        );
+        d.uri = None;
+        assert_eq!(Form::of(&d).missing_settings_workflow, None);
     }
 
     #[test]
