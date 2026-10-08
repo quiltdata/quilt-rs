@@ -1874,8 +1874,7 @@ mod tests {
     use super::{
         CommitViolation, CommitWorkflows, EntryCounts, EntryList, FilesData, KeepingScope,
         KeptReason, PackageContextData, PackageItemData, PackageSize, PullOutcome, PullPreview,
-        ResolveData,
-        RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
+        ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
 
     /// Anchored identically in the backend's `files_data_wire_form_is_verbatim`.

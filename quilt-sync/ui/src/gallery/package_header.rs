@@ -243,13 +243,10 @@ fn header(
         <PageHeader
             trail=view! { <BackLink href="#packageheader" label="Packages" /> }.into_any()
             title=NAMESPACE
-            label=view! {
-                <span class="g-ph-label">
-                    <StateLabel tone=rendered.tone>{rendered.words}</StateLabel>
-                    {summary}
-                </span>
-            }
-                .into_any()
+            label=crate::pages::state_with_summary(
+                view! { <StateLabel tone=rendered.tone>{rendered.words}</StateLabel> }.into_any(),
+                summary,
+            )
             actions=view! {
                     {publishes
                         .then(|| {

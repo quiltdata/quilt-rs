@@ -34,6 +34,7 @@ mod bucket_form;
 pub(crate) mod context_pane;
 pub(crate) mod file_pane;
 mod header;
+pub(crate) mod incoming;
 pub(crate) mod keeping;
 mod local_only_band;
 mod mismatch_band;
