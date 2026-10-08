@@ -23,7 +23,7 @@
 
 ### Added
 
-- **New design preview**: The package page shows which files a newer revision brings, and whether getting it would conflict, before you click **Get latest**
+- **New design preview**: The package page shows which files a newer revision brings, and whether getting it would conflict, before you click **Get latest** (<https://github.com/quiltdata/quilt-rs/pull/1094>)
 
 ### quilt-rs
 

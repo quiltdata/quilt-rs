@@ -23,7 +23,7 @@
 
 ### Changed
 
-- **Breaking:** The pull dry run also returns the paths the newer revision changes and removes, and its hash: `PullPreview` has new `changed`, `removed` and `latest_hash` fields
+- **Breaking:** The pull dry run also returns the paths the newer revision changes and removes, and its hash: `PullPreview` has new `changed`, `removed` and `latest_hash` fields (<https://github.com/quiltdata/quilt-rs/pull/1094>)
 
 ## [v0.42.1] - 2026-10-06
 
