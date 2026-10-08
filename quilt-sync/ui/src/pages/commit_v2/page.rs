@@ -254,6 +254,20 @@ fn unique_labels(options: &mut [WorkflowOption]) {
     }
 }
 
+/// Said under the metadata, and on the primary, when the metadata is not
+/// JSON: the save's parser refuses it whatever the workflow.
+pub(crate) const METADATA_NOT_JSON: &str =
+    "The metadata is not valid JSON. Fix it or clear it to keep the current metadata.";
+
+/// Why the metadata cannot be saved, if it cannot: text that is not JSON.
+/// Blank is fine, and means keep the current metadata, as the save's parser
+/// reads it.
+pub(crate) fn metadata_problem(text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty() && serde_json::from_str::<serde_json::Value>(text).is_err())
+        .then(|| METADATA_NOT_JSON.to_string())
+}
+
 /// What the primary says while a required workflow is still unchosen.
 pub(crate) const CHOOSE_A_WORKFLOW: &str =
     "This bucket requires a workflow. Choose one to publish.";
@@ -729,8 +743,11 @@ fn column(
     let host = d.no_session_host.clone();
     let unchosen = fixed.clone();
     let blocked = Signal::derive(move || {
+        // The checks that need no workflow come with the ones that do: a
+        // local or ungoverned package runs no live check at all.
         let check = violations
             .with(|v| v.first().map(|v| v.message.clone()))
+            .or_else(|| draft.metadata.with(|m| metadata_problem(m)))
             .or_else(|| unchosen.workflow_problem(&draft.workflow.read()));
         blocked_reason(
             no_access.as_deref(),
@@ -834,6 +851,7 @@ fn metadata_field(
     let metadata_error = Signal::derive(move || {
         violations
             .with(|v| caption(v, ViolationField::Metadata))
+            .or_else(|| draft.metadata.with(|m| metadata_problem(m)))
             .or_else(|| user_meta_error.clone())
     });
     let settings_meta = fixed.settings_meta.clone();
@@ -1245,6 +1263,36 @@ mod tests {
         );
     }
 
+    /// Metadata that is not JSON blocks the primary on any package, governed
+    /// or not: every save would be refused by the parser.
+    #[wasm_bindgen_test]
+    async fn invalid_metadata_blocks_without_a_workflow() {
+        let el = page_at("/commit?namespace=org%2Fpkg").await;
+        crate::test_support::element_saying(&el, "Edit").click();
+        sleep_ms(30).await;
+        let editor: web_sys::HtmlTextAreaElement = el
+            .query_selector("textarea")
+            .unwrap()
+            .expect("the metadata editor")
+            .unchecked_into();
+        editor.set_value("{ \"plate\": ");
+        editor
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        sleep_ms(30).await;
+        let face: web_sys::HtmlButtonElement = el
+            .query_selector("[data-primary-action] button")
+            .unwrap()
+            .unwrap()
+            .unchecked_into();
+        assert!(face.disabled(), "markup was {}", el.inner_html());
+        assert!(
+            el.text_content().unwrap().contains(METADATA_NOT_JSON),
+            "the reason is under the field; markup was {}",
+            el.inner_html()
+        );
+    }
+
     /// Focus is asked for on arrival, not on every re-read: Refresh — as
     /// Ignore or a failed publish would — leaves the cursor where it went.
     #[wasm_bindgen_test]
@@ -1466,6 +1514,21 @@ mod tests {
             Some(CHOOSE_A_WORKFLOW)
         );
         assert_eq!(form.workflow_problem(&named("plates")), None);
+    }
+
+    /// Blank keeps the current metadata; any JSON is accepted, as the
+    /// save's parser accepts it; anything else is refused.
+    #[test]
+    fn metadata_must_be_json_or_blank() {
+        assert_eq!(metadata_problem(""), None);
+        assert_eq!(metadata_problem("  \n"), None);
+        assert_eq!(metadata_problem("{\"plate\": 7}"), None);
+        assert_eq!(metadata_problem("[1, 2]"), None);
+        assert_eq!(
+            metadata_problem("{ \"plate\": ").as_deref(),
+            Some(METADATA_NOT_JSON)
+        );
+        assert_eq!(super::super::tests::banned_in(METADATA_NOT_JSON), None);
     }
 
     #[test]
