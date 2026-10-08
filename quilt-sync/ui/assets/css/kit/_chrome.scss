@@ -478,66 +478,91 @@ body {
   gap: var(--q-space-3);
 }
 
-/* The newer revision's section, between the package header and the panes. Its
- * list is capped at about three rows and scrolls, so a revision that brings
- * hundreds of files still leaves the file pane its rows at the window floor. */
-.g-in-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--q-space-2);
-}
-
-.g-in-tally {
-  font-weight: 400;
-  color: var(--q-fgColor-muted);
-}
-
-.g-in-line {
+/* The incoming-files scene: the newer revision's row at the end of `Revision`, its
+ * words beside `Files coming (N)`, the files behind a popover. */
+.g-nr {
   display: flex;
   align-items: center;
-  gap: var(--q-space-3);
+  gap: var(--q-space-2);
+  padding-top: var(--q-space-2);
+  border-top: 1px solid var(--q-borderColor-muted);
+}
+
+.g-nr > p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--q-text-body);
   color: var(--q-fgColor-muted);
 }
 
-.g-in-line > .g-in-toggle {
-  flex: 0 1 auto;
+.g-nr > p.g-nr-danger {
+  color: var(--q-fgColor-danger);
 }
 
-.g-in-rows {
-  max-height: 100px;
-  overflow-y: auto;
+/* As wide as the overlay's 360px cap allows: 360 less its space-3 padding
+ * and border. The rows need a definite width to cut their names. */
+.g-nr-surface {
+  width: 334px;
+}
+
+/* Pinned: the overlay caps at 60vh (336px at the 560 floor) and scrolls as a
+ * whole, so the counts and what Get latest does stay above a long list. The
+ * negative top cancels the surface's space-3 padding, and the padding put back
+ * covers the rows scrolling under it. */
+.g-nr-scope {
+  position: sticky;
+  top: calc(-1 * var(--q-space-3));
+  z-index: 1;
+  margin: calc(-1 * var(--q-space-3)) 0 var(--q-space-2);
+  padding: var(--q-space-3) 0 var(--q-space-2);
+  background: var(--q-bgColor-default);
+  border-bottom: 1px solid var(--q-borderColor-muted);
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+}
+
+.g-nr-rows {
   margin: 0;
   padding: 0;
   list-style: none;
-}
-
-/* The section's one line: a disclosure over the list, read like a heading. */
-.g-in-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--q-space-1);
-  margin: 0;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--q-fgColor-default);
-  font: inherit;
   font-size: var(--q-text-body);
-  font-weight: 600;
-  cursor: pointer;
 }
 
-h3.g-in-toggle {
-  cursor: default;
+.g-nr-rows > li {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding: var(--q-space-1) 0;
 }
 
-.g-in-words {
-  margin: 0;
-  color: var(--q-fgColor-muted);
+.g-nr-rows > li > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.g-in-toggle svg {
+/* The popover's catalog link, as revision rows draw theirs. */
+.g-nr-open {
+  display: inline-flex;
   flex: none;
   width: 16px;
   height: 16px;
+  color: var(--q-fgColor-muted);
+}
+
+.g-nr-open svg {
+  width: 16px;
+  height: 16px;
+}
+
+a.g-nr-open:hover {
+  color: var(--q-fgColor-accent);
+}
+
+a.g-nr-open:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: 2px;
 }

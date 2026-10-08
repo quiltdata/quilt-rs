@@ -2,57 +2,58 @@
 //!
 //! The v1 page names the files a newer revision brings and says up front
 //! whether getting it would conflict. The v2 page said only *Newer revision
-//! available*. This scene draws what it shows instead: a section between the
-//! header and the panes, *Coming with the newer revision*, listing what the
-//! revision brings the way the commit page's *What's included* lists what a
-//! revision sends, and a conflict found before the click.
+//! available*. This scene draws what it shows instead: one row at the end of
+//! the context pane's `Revision`, *Newer revision* beside *Files coming (N)*,
+//! with the files behind a popover, as `Revisions you have` keeps the history.
+//! The popover opens on the counts by kind and what Get latest does with them. Each
+//! file the newer revision holds links to that version in the catalog.
 //!
 //! The header and the panes are the whole-page scene's regions, over fixture
-//! props. The section takes the UI's own `PullCheck`, so the page can hand it
-//! what `package_pull_outcome` returns; the header takes the state that check
+//! props. The row takes the UI's own `PullCheck`, so the page can hand it what
+//! `package_pull_outcome` returns; the header takes the state that check
 //! resolves to. Callbacks are dropped.
 //!
-//! # Why a section and not rows in the file list
+//! # Why the context pane
 //!
-//! The file list is the installed revision: its facets count it, its folders'
-//! checks describe it. Rows for files this copy does not have, mixed into it,
-//! read as part of it — grouped at the top, their heading sat at the same
-//! indent as the root files under it. A section of its own says whose files
-//! these are, and the commit page already has the shape.
+//! The pane is where the page keeps facts about revisions: the one this copy
+//! has, and the ones it had. What the newer one brings sits beside them, and
+//! the popover costs the file list nothing. Two other placements were drawn
+//! and dropped: rows in the file list, whose heading sat at the root files'
+//! indent and so seemed to own them, and a section between the header and the
+//! panes, which cost the file list a line collapsed and five rows open.
 //!
 //! # What the dry run can supply
 //!
 //! `PullPreview` carries a verdict and the paths the newer revision adds.
-//! Nothing else: no sizes, and nothing about the files the revision changes or
-//! removes. So today every row reads `New` and has no size. One cell draws the
-//! section with changed and removed files too, labelled as needing backend
-//! work: the dry run already holds both manifests, so the lists are there to
-//! return. The owner chose on 2026-10-08 to return them when the page is
-//! wired up, so that cell is the target.
+//! Nothing else: no sizes, no hash for the newer revision, and nothing about
+//! the files it changes or removes. The owner chose on 2026-10-08 to have the
+//! dry run return the changed and removed paths and the newer revision's hash
+//! when the page is wired up, so the catalog links here use a fixture hash and
+//! one cell counts changed and removed files, labelled as needing backend
+//! work. A `Deleted` file has no link: the newer revision does not hold it.
 //!
 //! # The header
 //!
-//! It keeps `Newer revision available` and `Get latest`, with no count: the
-//! section counts the files. A `Blocked` verdict resolves it to
-//! `PackageState::PullConflict`, which offers `Publish`, not `Resolve`: the
-//! merge page cannot act until the local changes are published. That is the
-//! state a failed `Get latest` leaves, so the header reads the same before the
-//! click and after it. The conflicting files keep their rows in the file list,
-//! carrying resolve mode's `Differs` mark, described by the section's line.
+//! It keeps `Newer revision available` and `Get latest`, with no count. A
+//! `Blocked` verdict resolves it to `PackageState::PullConflict`, which offers
+//! `Publish`, not `Resolve`: the merge page cannot act until the local changes
+//! are published. That is the state a failed `Get latest` leaves, so the
+//! header reads the same before the click and after it. The conflicting files
+//! keep their rows in the file list, carrying resolve mode's `Differs` mark,
+//! described by the pane's row.
 //!
 //! `Get latest` stays enabled while the check runs and after it fails. The
 //! real pull classifies everything again under the lock, so the dry run
 //! gates nothing; v1 disabled its button and could leave it stuck.
 //!
-//! # At 1024x560
+//! # Measured at 1024x560, in Chromium
 //!
-//! Open, the section takes about 150px and leaves the file list three rows
-//! (about eight without it). So it starts collapsed to one line, about 24px,
-//! and the file list keeps about seven; the owner chose that on 2026-10-08.
-//! Opened, its list is capped at about three rows and scrolls, so a revision
-//! bringing 300 files costs what three files do. The conflict's sentence and
-//! a failed check show while collapsed; what Get latest does with the files
-//! shows when open.
+//! - The file list keeps its eight rows: the popover takes no room.
+//! - The pane ends at about 530px, inside the window. A sentence under
+//!   `Keeping` about what Get latest does with the files ran past the floor,
+//!   so it heads the popover instead, beside the list it is about.
+//! - The overlay caps at 360px, where `EntryRow`'s box, size and menu columns
+//!   left a path about 50px; the popover lists path, label and link only.
 
 use leptos::context::Provider;
 use leptos::prelude::*;
@@ -63,20 +64,43 @@ use crate::commands::PullCheck;
 use crate::commands::PullOutcome;
 use crate::commands::PullPreview;
 use crate::gallery::context_pane::ContextPaneRegion;
+use crate::gallery::context_pane::Extras;
 use crate::gallery::file_pane::FilePaneRegion;
 use crate::gallery::installed_package::appbar_actions;
 use crate::gallery::package_header::PackageHeaderRegion;
+use crate::kit::Align;
+use crate::kit::AnchoredOverlay;
 use crate::kit::Button;
-use crate::kit::Card;
 use crate::kit::DiffersId;
-use crate::kit::EntryRow;
 use crate::kit::PackageState;
 use crate::kit::PageLayout;
+use crate::kit::StateLabel;
+use crate::kit::icons;
+use crate::kit::state_label::StateTone;
 use crate::pages::commit_v2::Change;
 use quilt_sync_ui::util::thousands;
 
+/// The id of the conflict sentence the marked rows' `Differs` points at.
+const DIFFERS: &str = "incoming-differing";
+
 /// The two local files a conflict names. Both are `Changed` in the fixture.
 const CONFLICTS: &[&str] = &["notes/intake-upload.md", "notes/kickoff-thread.md"];
+
+/// The newer revision's hash, which the dry run does not return yet.
+const NEWER: &str = "9f3c1a2b7d4e";
+
+/// The catalog link's name, as revision rows word theirs.
+const OPEN_LABEL: &str = "Open in catalog";
+
+/// `MouseEvent.button` for the middle button, as revision rows read it.
+const MIDDLE_BUTTON: i16 = 1;
+
+/// A file in the newer revision, in the catalog.
+fn catalog_href(path: &str) -> String {
+    format!(
+        "https://quilt-lab.example/b/quilt-lab-plates/packages/user/plate-07/tree/{NEWER}/{path}"
+    )
+}
 
 /// Three files a newer revision adds.
 fn three_added() -> Vec<String> {
@@ -112,49 +136,12 @@ fn header_state(check: &PullCheck) -> PackageState {
     }
 }
 
-/// `1 file` or `3 files`, with the app's separators.
-fn files_word(n: usize) -> String {
-    if n == 1 {
-        String::from("1 file")
-    } else {
-        format!("{} files", thousands(n))
-    }
-}
-
-/// What the heading says after its title: the count, or how the check
-/// stands while it has none.
-fn tally(check: &PullCheck, rows: usize) -> Option<String> {
-    match check {
-        PullCheck::Loading => Some(String::from("checking\u{2026}")),
-        PullCheck::Failed => Some(String::from("couldn't check")),
-        PullCheck::Ready(_) => (rows > 0).then(|| files_word(rows)),
-    }
-}
-
-/// The conflict's sentence, shown whether the section is open or not: it is
-/// the one thing here the reader has to act on, and it describes the rows the
-/// file list marks.
-fn conflict_words(check: &PullCheck) -> Option<String> {
-    let PullCheck::Ready(PullPreview {
-        outcome: PullOutcome::Blocked { conflicts },
-        ..
-    }) = check
-    else {
-        return None;
-    };
-    let them = if conflicts.len() == 1 { "it" } else { "them" };
-    Some(format!(
-        "{} changed here and in the newer revision. Publish your changes, then resolve {them}.",
-        files_word(conflicts.len()),
-    ))
-}
-
-/// What *Get latest* does with the files, shown when the section is open.
-/// `whole` is the sync scope: list new files under individual-file sync,
-/// download them under the whole package. `updates` is whether the list also
-/// holds changed or removed files, which the dry run does not return yet:
-/// then under individual-file sync only the files this copy has are updated.
-/// Local changes the update keeps are named too.
+/// What *Get latest* does with the files, heading the popover. `whole` is the
+/// sync scope: list new files under individual-file sync, download them under
+/// the whole package. `updates` is whether the list also holds changed or
+/// removed files, which the dry run does not return yet: then under
+/// individual-file sync only the files this copy has are updated. Local
+/// changes the update keeps are named too.
 fn scope_words(check: &PullCheck, whole: bool, updates: bool) -> Option<String> {
     let PullCheck::Ready(preview) = check else {
         return None;
@@ -178,120 +165,218 @@ fn scope_words(check: &PullCheck, whole: bool, updates: bool) -> Option<String> 
     })
 }
 
-/// One file the newer revision brings, as the section lists it.
+/// One file the newer revision brings, as the popover lists it.
 #[derive(Clone)]
 struct Coming {
     path: String,
     change: Change,
+    /// Changed here too, differently: a `Blocked` verdict names it.
+    conflict: bool,
 }
 
-/// The section's rows: what the dry run names, as `New`. `extra` stands for
+/// The popover's rows: what the dry run names, as `New`. `extra` stands for
 /// the changed and removed files the dry run does not return yet.
 fn coming(check: &PullCheck, extra: &[(&str, Change)]) -> Vec<Coming> {
     let PullCheck::Ready(preview) = check else {
         return Vec::new();
     };
+    let conflicts: &[String] = match &preview.outcome {
+        PullOutcome::Blocked { conflicts } => conflicts,
+        _ => &[],
+    };
     let mut rows: Vec<Coming> = preview
         .added
         .iter()
-        .map(|path| Coming {
-            path: path.clone(),
-            change: Change::New,
-        })
-        .chain(extra.iter().map(|&(path, change)| Coming {
+        .map(|path| (path.as_str(), Change::New))
+        .chain(extra.iter().copied())
+        .map(|(path, change)| Coming {
             path: path.to_string(),
             change,
-        }))
+            conflict: conflicts.iter().any(|c| c == path),
+        })
         .collect();
     rows.sort_by(|a, b| a.path.cmp(&b.path));
     rows
 }
 
-/// The section between the header and the panes: one line, a disclosure
-/// over the list, collapsed until the reader opens it, so at the window floor
-/// it costs the file list a line rather than half its rows. `None` when there
-/// is nothing to say: no files coming and no conflict.
-fn incoming_section(
+/// `3 new files`, or `3 new, 2 changed, 1 deleted` once the dry run returns
+/// changed and removed files too.
+fn counts_words(rows: &[Coming]) -> String {
+    let n = |c: Change| rows.iter().filter(|r| r.change == c).count();
+    let (new, changed, deleted) = (n(Change::New), n(Change::Changed), n(Change::Deleted));
+    if changed == 0 && deleted == 0 {
+        return if new == 1 {
+            String::from("1 new file")
+        } else {
+            format!("{} new files", thousands(new))
+        };
+    }
+    [(new, "new"), (changed, "changed"), (deleted, "deleted")]
+        .into_iter()
+        .filter(|(k, _)| *k > 0)
+        .map(|(k, word)| format!("{} {word}", thousands(k)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `3 new files` as the start of a sentence.
+fn capitalised(words: &str) -> String {
+    let mut chars = words.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+/// The row's words, and whether they report a conflict, which draws them in
+/// the Danger tone. `None` when there is nothing to say: no files coming and
+/// no conflict.
+fn row_words(check: &PullCheck, rows: &[Coming]) -> Option<(String, bool)> {
+    match check {
+        PullCheck::Loading => Some((String::from("Newer revision: checking\u{2026}"), false)),
+        PullCheck::Failed => Some((String::from("Newer revision: couldn't check."), false)),
+        PullCheck::Ready(PullPreview {
+            outcome: PullOutcome::Blocked { conflicts },
+            ..
+        }) => Some((
+            if conflicts.len() == 1 {
+                String::from("1 file conflicts with yours.")
+            } else {
+                format!("{} files conflict with yours.", thousands(conflicts.len()))
+            },
+            true,
+        )),
+        PullCheck::Ready(_) if rows.is_empty() => None,
+        // The counts head the popover: beside the button, `3 new, 2 changed,
+        // 1 deleted` wrapped to three lines in the pane's 248px.
+        PullCheck::Ready(_) => Some((String::from("Newer revision"), false)),
+    }
+}
+
+/// The row at the end of `Revision`: the newer revision's words beside
+/// `Files coming (N)`, the files behind a popover headed by what Get latest
+/// does with them.
+fn newer_row(
     check: &PullCheck,
     whole: bool,
     extra: &[(&str, Change)],
     opened: bool,
-) -> Option<AnyView> {
+    differs: &'static str,
+) -> Option<Extras> {
     let rows = coming(check, extra);
-    let conflict = conflict_words(check);
-    if matches!(check, PullCheck::Ready(_)) && rows.is_empty() && conflict.is_none() {
-        return None;
-    }
-    let tally = tally(check, rows.len()).map(|t| format!(" · {t}"));
-    let scope = scope_words(check, whole, !extra.is_empty());
+    let (words, danger) = row_words(check, &rows)?;
+    let counts = counts_words(&rows);
     let failed = check.is_failed();
-    let can_open = !rows.is_empty();
-    let open = RwSignal::new(opened && can_open);
-    let rows = StoredValue::new(rows);
-    let title = view! {
-        "Coming with the newer revision"
-        <span class="g-in-tally">{tally}</span>
-    };
+    let count = rows.len();
+    let open = RwSignal::new(opened && count > 0);
+    // In the popover, not under `Keeping`: at the window floor the pane has no
+    // room for a sentence there, and it reads with the list it is about.
+    let scope = scope_words(check, whole, !extra.is_empty());
     // A conflict's sentence is what the marked rows' `Differs` describes.
-    let id = conflict.is_some().then(crate::kit::differs_id);
+    let id = danger.then_some(differs);
+    let newer = view! {
+        <div class="g-nr">
+            <p id=id class=if danger { "g-nr-danger" } else { "" }>{words}</p>
+            {failed.then(|| view! { <Button on_click=|_| ()>"Try again"</Button> })}
+            {(count > 0)
+                .then(|| {
+                    view! {
+                        <AnchoredOverlay
+                            trigger=move |surface_id: String| {
+                                view! {
+                                    <Button
+                                        on_click=move |_| open.update(|o| *o = !*o)
+                                        aria_expanded=open
+                                        aria_controls=surface_id
+                                    >
+                                        {format!("Files coming ({})", thousands(count))}
+                                    </Button>
+                                }
+                                    .into_any()
+                            }
+                            open=open
+                            aria_label="Files coming with the newer revision"
+                            align=Align::End
+                        >
+                            <div class="g-nr-surface">
+                                <p class="g-nr-scope">
+                                    <strong>{format!("{}.", capitalised(&counts))}</strong>
+                                    {scope.map(|w| format!(" {w}"))}
+                                </p>
+                                {file_list(rows, Callback::new(|_url: String| ()))}
+                            </div>
+                        </AnchoredOverlay>
+                    }
+                })}
+        </div>
+    }
+    .into_any();
+    Some(Extras { newer: Some(newer) })
+}
 
-    Some(
-        view! {
-            <section class="g-in-section" aria-label="Coming with the newer revision">
-                <div class="g-in-line">
-                    {if can_open {
-                        view! {
-                            <button
-                                class="g-in-toggle"
-                                aria-expanded=move || open.get().to_string()
-                                on:click=move |_| open.update(|o| *o = !*o)
-                            >
-                                {move || {
-                                    if open.get() {
-                                        crate::kit::icons::chevron_down()
-                                    } else {
-                                        crate::kit::icons::chevron_right()
-                                    }
-                                }}
-                                {title}
-                            </button>
-                        }
-                            .into_any()
+/// The link to a file's newer version in the catalog, drawn as revision rows
+/// draw theirs: a real anchor, so the address can be copied, whose navigation
+/// is cancelled and handed to `open`, which on the page is the browser.
+fn catalog_link(path: &str, open: Callback<String>) -> AnyView {
+    let href = catalog_href(path);
+    let followed = href.clone();
+    let middled = href.clone();
+    view! {
+        <a
+            class="g-nr-open"
+            href=href
+            aria-label=OPEN_LABEL
+            title=OPEN_LABEL
+            on:click=move |ev| {
+                ev.prevent_default();
+                open.run(followed.clone());
+            }
+            on:auxclick=move |ev| {
+                if ev.button() == MIDDLE_BUTTON {
+                    ev.prevent_default();
+                    open.run(middled.clone());
+                }
+            }
+        >
+            {icons::link_external()}
+        </a>
+    }
+    .into_any()
+}
+
+/// The popover's list: the path, its label and its catalog link. `EntryRow`
+/// keeps columns for a box, a size and a menu, which leave a path no room in
+/// the overlay's 360px. No size, because the dry run sends paths only. A
+/// deleted file keeps the link's room, so the labels stay in a column.
+fn file_list(rows: Vec<Coming>, open: Callback<String>) -> AnyView {
+    view! {
+        <ul class="g-nr-rows">
+            {rows
+                .into_iter()
+                .map(|row| {
+                    let link = if row.change == Change::Deleted {
+                        view! { <span class="g-nr-open" /> }.into_any()
                     } else {
-                        view! { <h3 class="g-in-toggle">{title}</h3> }.into_any()
-                    }}
-                    {failed.then(|| view! { <Button on_click=|_| ()>"Try again"</Button> })}
-                </div>
-                {conflict.map(|words| view! { <p class="g-in-words" id=id>{words}</p> })}
-                <Show when=move || open.get()>
-                    {scope.clone().map(|words| view! { <p class="g-in-words">{words}</p> })}
-                    <Card flush=true>
-                        <ul class="g-in-rows">
-                            {rows
-                                .get_value()
-                                .into_iter()
-                                .map(|row| {
-                                    // No size: the dry run sends paths only. No box,
-                                    // no click and no `[⋯]`: the file is not here.
-                                    view! {
-                                        <li>
-                                            <EntryRow
-                                                name=row.path
-                                                state=row.change.words().to_string()
-                                                tone=row.change.tone()
-                                                size=String::new()
-                                            />
-                                        </li>
-                                    }
-                                })
-                                .collect_view()}
-                        </ul>
-                    </Card>
-                </Show>
-            </section>
-        }
-        .into_any(),
-    )
+                        catalog_link(&row.path, open)
+                    };
+                    view! {
+                        <li>
+                            <span title=row.path.clone()>{row.path.clone()}</span>
+                            // A second label beside the first, as `Differs`
+                            // sits beside a file row's own.
+                            {row
+                                .conflict
+                                .then(|| {
+                                    view! { <StateLabel tone=StateTone::Danger>"Conflict"</StateLabel> }
+                                })}
+                            <StateLabel tone=row.change.tone()>{row.change.words()}</StateLabel>
+                            {link}
+                        </li>
+                    }
+                })
+                .collect_view()}
+        </ul>
+    }
+    .into_any()
 }
 
 /// How one cell's page stands.
@@ -304,8 +389,11 @@ struct Page {
     clean: bool,
     /// Changed and removed files the dry run does not return yet.
     extra: &'static [(&'static str, Change)],
-    /// The section starts open, as a reader's click leaves it.
+    /// The popover starts open, as a reader's click leaves it.
     opened: bool,
+    /// The id of the conflict sentence the marked rows point at, unique per
+    /// cell that draws one.
+    differs: &'static str,
 }
 
 impl Page {
@@ -317,6 +405,7 @@ impl Page {
             clean: true,
             extra: &[],
             opened: false,
+            differs: DIFFERS,
         }
     }
 }
@@ -330,6 +419,7 @@ fn page(p: Page) -> AnyView {
         clean,
         extra,
         opened,
+        differs,
     } = p;
     let publish_choice = RwSignal::new(0_usize);
     let scope = RwSignal::new(if whole { "all" } else { "pick" }.to_string());
@@ -339,6 +429,7 @@ fn page(p: Page) -> AnyView {
     } else {
         &[]
     };
+    let extras = newer_row(&check, whole, extra, opened, differs);
 
     view! {
         <div id=name class="g-window" style="width:1024px; --q-frame-height:560px; max-width:100%">
@@ -346,14 +437,14 @@ fn page(p: Page) -> AnyView {
                 <div class="g-ip-page">
                     <PackageHeaderRegion state=state publish_choice=publish_choice />
                     // The conflict cell's rows carry the `Differs` mark, which
-                    // the section's line describes.
-                    <Provider value=DiffersId("incoming-differing")>
-                        {incoming_section(&check, whole, extra, opened)}
+                    // the pane's row describes.
+                    <Provider value=DiffersId(differs)>
                         <div class="g-ip-shell">
                             <ContextPaneRegion
                                 resolving=false
                                 scope=scope
                                 exit=format!("#{name}")
+                                extras=extras.unwrap_or_default()
                             />
                             <FilePaneRegion
                                 name=name
@@ -371,12 +462,21 @@ fn page(p: Page) -> AnyView {
 }
 
 const NOTE: &str = "The page at the 1024×560 floor while a newer revision exists, before Get \
-    latest. A section between the header and the panes lists what the revision brings, as \
-    the commit page's What's included lists what a revision sends. It starts collapsed to one \
-    line, so the file list keeps its rows at the floor; opened, its list holds three rows and \
-    scrolls. Today the dry run returns only the files a revision adds, so every row \
-    reads New; the last cell shows changed and removed files too, which needs backend work. \
-    A conflict resolves the header to the existing conflict state, which offers Publish.";
+    latest. One row at the end of the context pane's Revision, Newer revision beside Files \
+    coming (N), whose popover counts the files by kind, says what Get latest does with them, \
+    and lists them, each linked to its newer version in the catalog. The file list keeps \
+    all its rows. Today the dry run returns only the files a revision adds and no hash for it; \
+    the links use a fixture hash, and the last cell counts changed and removed files too, which \
+    needs backend work. A conflict resolves the header to the existing conflict state, which \
+    offers Publish.";
+
+/// The conflict cell's changed files, once the dry run returns them: the two
+/// it conflicts on, and one more.
+const CONFLICT_EXTRA: &[(&str, Change)] = &[
+    ("notes/intake-upload.md", Change::Changed),
+    ("notes/kickoff-thread.md", Change::Changed),
+    ("raw/plate-12.csv", Change::Changed),
+];
 
 /// The changed and removed files the backend cell stands for.
 const EXTRA: &[(&str, Change)] = &[
@@ -390,27 +490,24 @@ const EXTRA: &[(&str, Change)] = &[
 pub fn IncomingFilesScene() -> impl IntoView {
     view! {
         <Scene title="The installed package page, a newer revision available" note=NOTE>
-            <Cell full=true label="3 new files — the section starts collapsed, one line">
+            <Cell full=true label="3 new files: a row in Revision, the files behind Files coming">
                 {page(Page::new("in-pick", ready(PullOutcome::CleanUpdate, three_added())))}
             </Cell>
-            <Cell full=true label="3 new files, opened, individual-file sync">
+            <Cell full=true label="Files coming, opened — what Get latest does, then each file with its catalog link">
                 {page(Page {
                     opened: true,
                     ..Page::new("in-open", ready(PullOutcome::CleanUpdate, three_added()))
                 })}
             </Cell>
-            <Cell full=true label="3 new files, opened, whole-package sync — Get latest downloads them">
+            <Cell full=true label="whole-package sync, opened — Get latest downloads them">
                 {page(Page {
                     whole: true,
                     opened: true,
                     ..Page::new("in-whole", ready(PullOutcome::CleanUpdate, three_added()))
                 })}
             </Cell>
-            <Cell full=true label="300 new files, opened — the section's list holds three rows and scrolls">
-                {page(Page {
-                    opened: true,
-                    ..Page::new("in-many", ready(PullOutcome::CleanUpdate, many_added()))
-                })}
+            <Cell full=true label="300 new files — the popover scrolls, the page does not move">
+                {page(Page::new("in-many", ready(PullOutcome::CleanUpdate, many_added())))}
             </Cell>
             <Cell full=true label="still checking — Get latest stays usable">
                 {page(Page::new("in-checking", PullCheck::Loading))}
@@ -435,7 +532,7 @@ pub fn IncomingFilesScene() -> impl IntoView {
                     )
                 })}
             </Cell>
-            <Cell full=true label="a conflict found before the click — the header offers Publish, the sentence shows while collapsed">
+            <Cell full=true label="a conflict found before the click — the header offers Publish, the row says which">
                 {page(Page {
                     clean: false,
                     ..Page::new(
@@ -449,10 +546,27 @@ pub fn IncomingFilesScene() -> impl IntoView {
                     )
                 })}
             </Cell>
-            <Cell full=true label="a newer revision that adds no files — no section">
+            <Cell full=true label="needs backend work: the conflict, opened — the conflicting files are among the changed ones, and say so">
+                {page(Page {
+                    clean: false,
+                    opened: true,
+                    extra: CONFLICT_EXTRA,
+                    differs: "incoming-differing-open",
+                    ..Page::new(
+                        "in-conflict-open",
+                        ready(
+                            PullOutcome::Blocked {
+                                conflicts: CONFLICTS.iter().map(ToString::to_string).collect(),
+                            },
+                            three_added(),
+                        ),
+                    )
+                })}
+            </Cell>
+            <Cell full=true label="a newer revision that adds no files — no row">
                 {page(Page::new("in-nothing", ready(PullOutcome::CleanUpdate, Vec::new())))}
             </Cell>
-            <Cell full=true label="needs backend work: changed and removed files listed too, opened — the target">
+            <Cell full=true label="needs backend work: changed and removed files counted too, opened — a deleted file has no link">
                 {page(Page {
                     extra: EXTRA,
                     opened: true,
@@ -494,26 +608,47 @@ mod tests {
         }
     }
 
-    /// The heading counts, or says how the check stands; the sentences say
-    /// what Get latest does in the scope's own terms, and what conflicts.
+    /// The row says how the check stands, counts what is coming, or names the
+    /// conflict; a revision that adds nothing and conflicts with nothing gets
+    /// no row.
     #[test]
-    fn the_section_says_what_the_check_found() {
+    fn the_row_says_what_the_check_found() {
+        let added = |n: usize| (0..n).map(|i| format!("f{i}")).collect::<Vec<_>>();
+        let words = |check: &PullCheck| row_words(check, &coming(check, &[]));
+        assert_eq!(
+            words(&PullCheck::Loading),
+            Some((String::from("Newer revision: checking\u{2026}"), false))
+        );
+        assert_eq!(
+            words(&PullCheck::Failed),
+            Some((String::from("Newer revision: couldn't check."), false))
+        );
+        assert_eq!(
+            words(&ready(PullOutcome::CleanUpdate, added(3))),
+            Some((String::from("Newer revision"), false))
+        );
+        assert_eq!(words(&ready(PullOutcome::CleanUpdate, Vec::new())), None);
+        assert_eq!(
+            words(&ready(
+                PullOutcome::Blocked {
+                    conflicts: added(2)
+                },
+                added(1)
+            )),
+            Some((String::from("2 files conflict with yours."), true))
+        );
+    }
+
+    /// The popover's sentence says what Get latest does in the scope's terms.
+    #[test]
+    fn the_popover_says_what_get_latest_does() {
         let added = |n: usize| (0..n).map(|i| format!("f{i}")).collect::<Vec<_>>();
         let keeps = || PullOutcome::KeepsLocalChanges {
             added: Vec::new(),
             modified: vec!["a.csv".to_string()],
             removed: Vec::new(),
         };
-        assert_eq!(
-            tally(&PullCheck::Loading, 0).as_deref(),
-            Some("checking\u{2026}")
-        );
-        assert_eq!(
-            tally(&PullCheck::Failed, 0).as_deref(),
-            Some("couldn't check")
-        );
         let three = ready(PullOutcome::CleanUpdate, added(3));
-        assert_eq!(tally(&three, 3).as_deref(), Some("3 files"));
         assert_eq!(
             scope_words(&three, false, false).as_deref(),
             Some("Get latest adds them to your files, to download when you need them.")
@@ -537,26 +672,40 @@ mod tests {
                  you need them."
             )
         );
-        assert_eq!(conflict_words(&three), None);
-        assert_eq!(
-            conflict_words(&ready(
-                PullOutcome::Blocked {
-                    conflicts: added(2)
-                },
-                added(1)
-            ))
-            .as_deref(),
-            Some(
-                "2 files changed here and in the newer revision. Publish your changes, then \
-                 resolve them."
-            )
-        );
     }
 
-    /// The v2 vocabulary holds in the section: none of the words the package
-    /// states keep out.
+    /// The popover counts by kind, and says `new files` while that is all
+    /// the dry run returns.
     #[test]
-    fn the_section_uses_no_banned_word() {
+    fn the_row_counts_by_kind() {
+        let row = |change| Coming {
+            path: String::from("a"),
+            change,
+            conflict: false,
+        };
+        assert_eq!(counts_words(&[row(Change::New)]), "1 new file");
+        assert_eq!(
+            counts_words(&[row(Change::New), row(Change::New), row(Change::New)]),
+            "3 new files"
+        );
+        assert_eq!(
+            counts_words(&[
+                row(Change::New),
+                row(Change::Changed),
+                row(Change::Changed),
+                row(Change::Deleted)
+            ]),
+            "1 new, 2 changed, 1 deleted"
+        );
+        assert_eq!(counts_words(&[row(Change::Deleted)]), "1 deleted");
+        assert_eq!(capitalised("3 new files"), "3 new files");
+        assert_eq!(capitalised("new"), "New");
+    }
+
+    /// The v2 vocabulary holds in the row and the popover: none of the words
+    /// the package states keep out.
+    #[test]
+    fn the_words_use_no_banned_word() {
         const BANNED: &[&str] = &[
             "commit", "push", "pull", "remote", "behind", "ahead", "diverged", "dirty", "hash",
         ];
@@ -580,10 +729,9 @@ mod tests {
                 added,
             ),
         ];
-        let mut all = vec![String::from("Coming with the newer revision")];
+        let mut all = vec![String::from("Files coming"), String::from(OPEN_LABEL)];
         for check in &checks {
-            all.extend(tally(check, 2));
-            all.extend(conflict_words(check));
+            all.extend(row_words(check, &coming(check, EXTRA)).map(|(w, _)| w));
             for whole in [false, true] {
                 for updates in [false, true] {
                     all.extend(scope_words(check, whole, updates));
@@ -603,10 +751,11 @@ mod tests {
         }
     }
 
-    /// The section starts collapsed, its rows carry no control, and a revision that adds nothing
-    /// draws no section at all.
+    /// The popover lists the files with a catalog link each and no other
+    /// control; a deleted file has no link; a revision that adds nothing
+    /// draws no row.
     #[wasm_bindgen_test]
-    async fn the_section_lists_without_controls() {
+    async fn the_popover_links_each_file_to_the_catalog() {
         let doc = web_sys::window().unwrap().document().unwrap();
         let container: web_sys::HtmlElement =
             doc.create_element("div").unwrap().dyn_into().unwrap();
@@ -616,27 +765,47 @@ mod tests {
 
         let count = |cell: &str, selector: &str| {
             container
-                .query_selector_all(&format!("#{cell} .g-in-section {selector}"))
+                .query_selector_all(&format!("#{cell} {selector}"))
                 .unwrap()
                 .length()
         };
+        let href = container
+            .query_selector("#in-pick .g-nr-rows a")
+            .unwrap()
+            .and_then(|a| a.get_attribute("href"))
+            .unwrap_or_default();
         let found = (
-            count("in-pick", "li"),
-            count("in-open", "li"),
-            count("in-open", "input"),
-            count("in-open", "li button"),
+            count("in-pick", ".g-nr-rows li"),
+            count("in-pick", ".g-nr-rows a[aria-label='Open in catalog']"),
+            count("in-pick", ".g-nr-rows input, .g-nr-rows button"),
+            count("in-backend", ".g-nr-rows li"),
+            count("in-backend", ".g-nr-rows a"),
             container
-                .query_selector("#in-nothing .g-in-section")
+                .query_selector("#in-nothing .g-nr")
                 .unwrap()
                 .is_some(),
+            container
+                .query_selector("#in-conflict-open .g-nr-rows")
+                .unwrap()
+                .and_then(|ul| ul.text_content())
+                .unwrap_or_default()
+                .matches("Conflict")
+                .count(),
         );
         drop(handle);
         container.remove();
 
-        let (collapsed, rows, inputs, buttons, stray) = found;
-        assert_eq!(collapsed, 0, "the section starts collapsed");
-        assert_eq!(rows, 3, "three rows once opened");
-        assert_eq!((inputs, buttons), (0, 0), "no box and no menu on a row");
-        assert!(!stray, "a revision that adds nothing draws no section");
+        let (rows, links, controls, backend_rows, backend_links, stray, conflicts) = found;
+        assert_eq!(conflicts, 2, "each conflicting file says so");
+        assert_eq!(rows, 3, "three files listed");
+        assert_eq!(links, 3, "each one links to the catalog");
+        assert_eq!(controls, 0, "no box and no button on a file");
+        assert_eq!(
+            (backend_rows, backend_links),
+            (6, 5),
+            "the deleted file has no link"
+        );
+        assert_eq!(href, catalog_href("notes/plate-07-review.md"));
+        assert!(!stray, "a revision that adds nothing draws no row");
     }
 }

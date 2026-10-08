@@ -375,6 +375,26 @@ fn pane(
     held: Held,
     on_page: bool,
 ) -> AnyView {
+    pane_with(open, body, scope, held, on_page, Extras::default())
+}
+
+/// What a newer revision adds to the pane, when the page has one: a block at
+/// the end of `Revision`.
+#[derive(Default)]
+pub struct Extras {
+    pub newer: Option<AnyView>,
+}
+
+/// [`pane`], with a newer revision's [`Extras`].
+fn pane_with(
+    open: RwSignal<bool>,
+    body: AnyView,
+    scope: RwSignal<String>,
+    held: Held,
+    on_page: bool,
+    extras: Extras,
+) -> AnyView {
+    let Extras { newer } = extras;
     let sections = view! {
         <PaneSection label="Revision">
             <RevisionRow message="Add intake folder-upload note" at=ago(2.0 * HOUR) />
@@ -389,6 +409,7 @@ fn pane(
             >
                 {body}
             </AnchoredOverlay>
+            {newer}
         </PaneSection>
         <PaneSection>
             <ChoiceGroup
@@ -537,12 +558,22 @@ pub fn ContextPaneRegion(
     /// with no router behind it does not scroll somebody somewhere else.
     #[prop(into, optional)]
     exit: String,
+    /// A newer revision's lines, when the package is behind.
+    #[prop(optional)]
+    extras: Option<Extras>,
 ) -> impl IntoView {
     let open = RwSignal::new(false);
     if resolving {
         resolve(&exit, compared())
     } else {
-        pane(open, revision_list(), scope, on_page(), true)
+        pane_with(
+            open,
+            revision_list(),
+            scope,
+            on_page(),
+            true,
+            extras.unwrap_or_default(),
+        )
     }
 }
 
