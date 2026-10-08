@@ -83,6 +83,7 @@ mod gallery {
     pub mod segmented_control;
     pub mod select;
     pub mod select_all;
+    pub mod settings_page;
     pub mod skeleton;
     pub mod split_button;
     pub mod state_label;
@@ -329,6 +330,7 @@ const ENTRIES: &[Entry] = &[
         installed_package::InstalledPackageScene
     ),
     entry!(Pages, "Commit page", commit_page::CommitPageScene),
+    entry!(Pages, "Settings page", settings_page::SettingsPageScene),
     entry!(
         Pages,
         "Newer revision available",
@@ -1156,6 +1158,30 @@ mod tests {
         assert!(failed_open, "a failed check opens the metadata editor");
         assert!(!rest_open, "a passing one leaves it folded");
         assert!(failed_blocked && !rest_blocked);
+    }
+
+    /// The two cells that are about an error draw it: the minute field below
+    /// 1, and metadata that is not JSON, whose Save is disabled.
+    #[wasm_bindgen_test]
+    async fn the_settings_scene_draws_its_errors() {
+        use crate::gallery::settings_page::SettingsPageScene;
+
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let container: web_sys::HtmlElement =
+            doc.create_element("div").unwrap().dyn_into().unwrap();
+        doc.body().unwrap().append_child(&container).unwrap();
+        let handle = leptos::mount::mount_to(container.clone(), SettingsPageScene);
+        leptos::task::tick().await;
+        let text = container.text_content().unwrap_or_default();
+        let invalid = container
+            .query_selector_all("input[type=number][aria-invalid=true]")
+            .unwrap()
+            .length();
+        drop(handle);
+        container.remove();
+        assert!(text.contains("At least 1 minute"), "the minute error");
+        assert_eq!(invalid, 1, "only the below-1 cell's field is invalid");
+        assert!(text.contains("Not valid JSON"), "the metadata error");
     }
 
     #[wasm_bindgen_test]

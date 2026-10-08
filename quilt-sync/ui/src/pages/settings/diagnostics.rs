@@ -4,33 +4,7 @@ use crate::commands::{self, LogEnv};
 use crate::components::Notification;
 use crate::components::buttons;
 use crate::kit::{Naming, Select};
-
-const LOG_LEVELS: [&str; 6] = ["Default", "Trace", "Debug", "Info", "Warn", "Error"];
-
-/// The dropdown's label for a saved level (`debug` → `Debug`).
-fn log_level_label(mut level: String) -> String {
-    if let Some(first) = level.get_mut(0..1) {
-        first.make_ascii_uppercase();
-    }
-    if LOG_LEVELS.contains(&level.as_str()) {
-        level
-    } else {
-        LOG_LEVELS[0].to_string()
-    }
-}
-
-/// The line under the dropdown when `QUILT_LOG` is set.
-fn log_env_hint(env: LogEnv) -> Option<String> {
-    match env {
-        LogEnv::Unset => None,
-        LogEnv::Overrides(value) => Some(format!(
-            "Set by the QUILT_LOG environment variable ({value})"
-        )),
-        LogEnv::Ignored(value) => Some(format!(
-            "QUILT_LOG={value:?} is not a log level or a list of directives, so it's ignored"
-        )),
-    }
-}
+use crate::pages::settings_v2::{LOG_LEVELS, log_env_hint, log_level_label};
 
 /// The saved log level. Disabled while a valid `QUILT_LOG` replaces it.
 #[component]
@@ -43,7 +17,7 @@ fn LogLevelField(
     let overridden = matches!(log_env, LogEnv::Overrides(_));
     // Disabled while a save is in flight, so saves land in the order they were chosen.
     let saving = RwSignal::new(false);
-    let env_hint = log_env_hint(log_env);
+    let env_hint = log_env_hint(&log_env);
     Effect::watch(
         move || level.get(),
         move |label, _, _| {
@@ -224,30 +198,5 @@ fn EmailSupportButton(
             }
             disabled=Signal::derive(move || zip_path.get().is_none())
         />
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_saved_level_maps_to_its_label() {
-        assert_eq!(log_level_label("debug".into()), "Debug");
-        assert_eq!(log_level_label("default".into()), "Default");
-        assert_eq!(log_level_label("nonsense".into()), "Default");
-    }
-
-    #[test]
-    fn the_hint_names_the_variable_and_its_value() {
-        assert_eq!(log_env_hint(LogEnv::Unset), None);
-        assert_eq!(
-            log_env_hint(LogEnv::Overrides("quilt_rs=trace".into())).as_deref(),
-            Some("Set by the QUILT_LOG environment variable (quilt_rs=trace)")
-        );
-        assert_eq!(
-            log_env_hint(LogEnv::Ignored("debgu".into())).as_deref(),
-            Some("QUILT_LOG=\"debgu\" is not a log level or a list of directives, so it's ignored")
-        );
     }
 }

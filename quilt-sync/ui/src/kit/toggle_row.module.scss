@@ -14,6 +14,7 @@
 
 .root {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: var(--q-space-2);
   padding: var(--q-space-2) 0;
@@ -29,7 +30,9 @@
   display: flex;
   align-items: flex-start;
   gap: var(--q-space-2);
-  flex: 1 1 auto;
+  /* A zero basis, so the row's wrap (for `.detail`) never drops the trailing
+   * slot under the words; with one growing item the widths are as before. */
+  flex: 1 1 0;
   min-width: 0;
   cursor: pointer;
 }
@@ -103,4 +106,12 @@
 .box_slot {
   flex: none;
   margin-top: 1px;
+}
+
+/* A row of its own under the words, lined up with them: the box's 17px and the
+ * gap. Only a row with a detail wraps. */
+.detail {
+  flex-basis: 100%;
+  min-width: 0;
+  padding-left: calc(17px + var(--q-space-2));
 }

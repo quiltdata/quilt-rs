@@ -454,8 +454,9 @@ fn settings_hint(from_settings: Signal<bool>, href: Option<String>) -> impl Into
     }
 }
 
-/// The metadata control: v1's editor over its fallback textarea.
-fn metadata_editor(
+/// The metadata control: v1's editor over its fallback textarea. Settings'
+/// default metadata uses it too.
+pub(crate) fn metadata_editor(
     id: String,
     described_by: String,
     metadata: RwSignal<String>,
@@ -685,7 +686,7 @@ pub fn CommitPageSkeleton() -> impl IntoView {
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// `package_state.rs`'s list, plus `commits` and `hash`.
@@ -694,7 +695,7 @@ pub(super) mod tests {
         "hash",
     ];
 
-    pub(super) fn banned_in(words: &str) -> Option<&'static str> {
+    pub(crate) fn banned_in(words: &str) -> Option<&'static str> {
         let lower = words.to_lowercase();
         BANNED.iter().copied().find(|bad| {
             lower
