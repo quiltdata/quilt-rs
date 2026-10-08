@@ -323,24 +323,6 @@ body {
   .g-fp-footer { animation: none; }
 }
 
-/* The incoming-files scene's line at the top of the list box: what the dry run
- * found, muted like the cap's notice beside it, with `Try again` on the same
- * line when the check failed. */
-.g-fp-incoming {
-  display: flex;
-  align-items: center;
-  gap: var(--q-space-3);
-  padding: var(--q-space-2) var(--q-space-3);
-  color: var(--q-fgColor-muted);
-  font-size: var(--q-text-body);
-}
-
-.g-fp-incoming > p {
-  margin: 0;
-  flex: 1;
-  min-width: 0;
-}
-
 /* The gallery scene's all-downloaded tick, in the box's hole before `All 53 files
  * downloaded`. The page's own pane draws it with `file_pane.module.scss`'s
  * `.done`, which this chrome mirrors; keep the two in step. */
@@ -494,4 +476,68 @@ body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--q-space-3);
+}
+
+/* The newer revision's section, between the package header and the panes. Its
+ * list is capped at about three rows and scrolls, so a revision that brings
+ * hundreds of files still leaves the file pane its rows at the window floor. */
+.g-in-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+}
+
+.g-in-tally {
+  font-weight: 400;
+  color: var(--q-fgColor-muted);
+}
+
+.g-in-line {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  color: var(--q-fgColor-muted);
+}
+
+.g-in-line > .g-in-toggle {
+  flex: 0 1 auto;
+}
+
+.g-in-rows {
+  max-height: 100px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The section's one line: a disclosure over the list, read like a heading. */
+.g-in-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--q-fgColor-default);
+  font: inherit;
+  font-size: var(--q-text-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+h3.g-in-toggle {
+  cursor: default;
+}
+
+.g-in-words {
+  margin: 0;
+  color: var(--q-fgColor-muted);
+}
+
+.g-in-toggle svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
 }

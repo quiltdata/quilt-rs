@@ -100,9 +100,6 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
-use crate::commands::PullCheck;
-use crate::commands::PullOutcome;
-use crate::commands::PullPreview;
 use crate::differs_caption;
 use crate::kit::Blankslate;
 use crate::kit::Button;
@@ -181,9 +178,6 @@ enum Mark {
     Missing,
     /// Matched by a `.quiltignore` pattern, and shown by exactly one facet.
     Ignored,
-    /// In the newer revision only: neither here nor in the installed one. The
-    /// dry run names it before *Get latest*, by path and nothing else.
-    Incoming,
 }
 
 impl Mark {
@@ -199,9 +193,6 @@ impl Mark {
             Self::New => Some(("New", StateTone::Attention)),
             Self::Deleted => Some(("Deleted", StateTone::Danger)),
             Self::Missing => Some(("Not downloaded", StateTone::Neutral)),
-            // Attention, the header's own tone for `Newer revision available`:
-            // these rows are what that state is about.
-            Self::Incoming => Some(("Incoming", StateTone::Attention)),
         }
     }
 
@@ -311,7 +302,7 @@ pub(crate) struct Kept {
 pub(crate) fn kept() -> Kept {
     let revision: Vec<File> = package()
         .into_iter()
-        .filter(|f| !matches!(f.mark, Mark::New | Mark::Ignored | Mark::Incoming))
+        .filter(|f| !matches!(f.mark, Mark::New | Mark::Ignored))
         .collect();
     let missing = || revision.iter().filter(|f| f.mark == Mark::Missing);
     let total = revision.iter().map(|f| f.bytes).sum::<u64>();
@@ -381,12 +372,7 @@ fn facet_labels(files: &[File]) -> Vec<(&'static str, String, usize)> {
     FACETS
         .iter()
         .map(|facet| {
-            // The installed revision's count: an incoming row is drawn under
-            // `All`, and is not yet one of the package's files.
-            let n = files
-                .iter()
-                .filter(|f| f.mark != Mark::Incoming && (facet.admits)(f.mark))
-                .count();
+            let n = files.iter().filter(|f| (facet.admits)(f.mark)).count();
             (facet.word, format!("{} {n}", facet.word), n)
         })
         .collect()
@@ -446,13 +432,7 @@ fn rows(files: &[File]) -> Vec<Row> {
                 path: f.path.clone(),
                 folder,
                 leaf,
-                // The dry run sends paths only, so an incoming row has no size
-                // to show, and a `0 B` would claim one.
-                size: if f.mark == Mark::Incoming {
-                    String::new()
-                } else {
-                    format_size(f.bytes)
-                },
+                size: format_size(f.bytes),
                 bytes: f.bytes,
                 mark: f.mark,
                 pick,
@@ -548,13 +528,7 @@ fn row(
     let state = r.mark.state();
     let words = state.map(|(words, _)| words.to_string());
     let tone = state.map_or(StateTone::Neutral, |(_, tone)| tone);
-    // Nothing to open, copy or ignore yet: the file is in no revision this
-    // copy has, so its row has no `[⋯]` at all.
-    let actions = if r.mark == Mark::Incoming {
-        Vec::new()
-    } else {
-        menu(r.mark, format!("{} ({})", r.path, r.size), confirm)
-    };
+    let actions = menu(r.mark, format!("{} ({})", r.path, r.size), confirm);
 
     match (r.pick, boxes) {
         (Some(i), true) => view! {
@@ -654,11 +628,6 @@ struct Pane {
     /// Where it is drawn, which decides whether the list is capped or fills.
     framing: Framing,
     body: Body,
-    /// The package is behind: what the dry run has said so far, or `None` for
-    /// a package that is not.
-    incoming: Option<PullCheck>,
-    /// Where the incoming rows sit.
-    placement: Placement,
 }
 
 impl Pane {
@@ -675,136 +644,8 @@ impl Pane {
             running: false,
             framing: Framing::Cell,
             body: Body::Rows,
-            incoming: None,
-            placement: Placement::OnTop,
         }
     }
-}
-
-// ── the newer revision ──────────────────────────────────────
-
-/// Where the files a newer revision brings are drawn in the list.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Placement {
-    /// One group at the top of the list, under its own heading, each row
-    /// showing its whole path.
-    #[default]
-    OnTop,
-    /// Each row in its own folder, among the installed files.
-    InPlace,
-}
-
-/// The heading over [`Placement::OnTop`]'s group.
-const INCOMING_HEADING: &str = "From the newer revision";
-
-/// `1 file` or `3 files`, with the count in the app's own separators.
-fn files_word(n: usize) -> String {
-    if n == 1 {
-        String::from("1 file")
-    } else {
-        format!("{} files", thousands(n))
-    }
-}
-
-/// What the list box's first line says about the dry run, or `None` when it
-/// found nothing worth a line: a revision that adds no files and keeps no
-/// local changes. `whole` is the sync scope, which decides what *Get latest*
-/// does with the files: list them under individual-file sync, download them
-/// under the whole package.
-///
-/// Only the dry run's two facts are worded — the verdict and the added paths.
-/// It does not say which files the newer revision changes or removes, so
-/// nothing here does either.
-fn incoming_words(check: &PullCheck, whole: bool) -> Option<String> {
-    let preview = match check {
-        PullCheck::Loading => {
-            return Some(String::from(
-                "Checking which files the newer revision brings\u{2026}",
-            ));
-        }
-        PullCheck::Failed => {
-            return Some(String::from(
-                "Couldn't check which files the newer revision brings.",
-            ));
-        }
-        PullCheck::Ready(preview) => preview,
-    };
-    if let PullOutcome::Blocked { conflicts } = &preview.outcome {
-        let them = if conflicts.len() == 1 { "it" } else { "them" };
-        return Some(format!(
-            "{} changed here and in the newer revision. Publish your changes, then resolve {them}.",
-            files_word(conflicts.len()),
-        ));
-    }
-    let keeps = matches!(preview.outcome, PullOutcome::KeepsLocalChanges { .. });
-    let n = preview.added.len();
-    if n == 0 {
-        return keeps.then(|| String::from("Get latest keeps your changes."));
-    }
-    let them = if n == 1 { "it" } else { "them" };
-    let fate = if whole {
-        format!("Get latest downloads {them}.")
-    } else {
-        format!("Get latest lists {them} here, to download when you need {them}.")
-    };
-    let kept = if keeps { " Your changes stay." } else { "" };
-    Some(format!(
-        "The newer revision brings {}. {fate}{kept}",
-        files_word(n)
-    ))
-}
-
-/// The files the dry run names, as rows: each added path with no row of its
-/// own already. A path the copy has as a new file of its own is the both-added
-/// case, which the verdict answers; it keeps its one row.
-fn with_incoming(mut files: Vec<File>, check: Option<&PullCheck>) -> Vec<File> {
-    if let Some(PullCheck::Ready(preview)) = check {
-        for path in &preview.added {
-            if !files.iter().any(|f| &f.path == path) {
-                files.push(File::new(path.clone(), 0, Mark::Incoming));
-            }
-        }
-    }
-    files
-}
-
-/// The paths a `Blocked` verdict names, which take resolve mode's mark.
-fn conflicts(check: Option<&PullCheck>) -> Vec<String> {
-    match check {
-        Some(PullCheck::Ready(PullPreview {
-            outcome: PullOutcome::Blocked { conflicts },
-            ..
-        })) => conflicts.clone(),
-        _ => Vec::new(),
-    }
-}
-
-/// The list box's first line about the dry run: the sentence, and *Try again*
-/// beside it when the check failed. Muted like the cap's notice, which shares
-/// the slot, because both describe the list rather than interrupt it.
-fn incoming_line(check: Option<&PullCheck>, whole: bool) -> Option<AnyView> {
-    let check = check?;
-    let words = incoming_words(check, whole)?;
-    let failed = check.is_failed();
-    // A conflict's sentence is what the marked rows' `Differs` describes, so
-    // it carries the id their description points at.
-    let id = matches!(
-        check,
-        PullCheck::Ready(PullPreview {
-            outcome: PullOutcome::Blocked { .. },
-            ..
-        })
-    )
-    .then(crate::kit::differs_id);
-    Some(
-        view! {
-            <div class="g-fp-incoming">
-                <p id=id>{words}</p>
-                {failed.then(|| view! { <Button on_click=|_| ()>"Try again"</Button> })}
-            </div>
-        }
-        .into_any(),
-    )
 }
 
 /// The whole region: the search row, the toolbar, the box, and the footer when
@@ -823,14 +664,7 @@ fn pane(p: Pane) -> AnyView {
         running,
         framing,
         body,
-        incoming,
-        placement,
     } = p;
-
-    let files = with_incoming(files, incoming.as_ref());
-    let conflicting = conflicts(incoming.as_ref());
-    let line = incoming_line(incoming.as_ref(), whole);
-    let on_top = placement == Placement::OnTop;
 
     let labels = facet_labels(&files);
     let selected = labels
@@ -919,10 +753,7 @@ fn pane(p: Pane) -> AnyView {
     // A deleted file has nothing to fetch, so it counts as downloaded, and
     // the words name it.
     let downloaded = {
-        let counted = files
-            .iter()
-            .filter(|f| !matches!(f.mark, Mark::Ignored | Mark::Incoming))
-            .count();
+        let counted = files.iter().filter(|f| f.mark != Mark::Ignored).count();
         let deleted = files.iter().filter(|f| f.mark == Mark::Deleted).count();
         let missing = files.iter().any(|f| f.mark == Mark::Missing);
         (!missing && counted > 0).then_some((counted, deleted))
@@ -934,11 +765,7 @@ fn pane(p: Pane) -> AnyView {
         capped: matches!(body, Body::Capped(_)),
     };
     let footer_shown = Signal::derive(move || boxes && chosen.get().files > 0);
-    let marked: Vec<String> = marked
-        .iter()
-        .map(|&p| p.to_string())
-        .chain(conflicting)
-        .collect();
+    let marked: Vec<String> = marked.iter().map(|&p| p.to_string()).collect();
     let marked = StoredValue::new(marked);
     let empty_package = pickable == 0 && all.with_value(Vec::is_empty);
 
@@ -976,13 +803,8 @@ fn pane(p: Pane) -> AnyView {
         all.with_value(|rs| {
             let mut roots: Vec<AnyView> = Vec::new();
             let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
-            let mut arriving: Vec<usize> = Vec::new();
 
             for i in indices {
-                if on_top && rs[i].mark == Mark::Incoming {
-                    arriving.push(i);
-                    continue;
-                }
                 match (&rs[i].folder, flat) {
                     (Some(folder), false) => match groups.last_mut() {
                         Some((name, members)) if name == folder => members.push(i),
@@ -993,8 +815,6 @@ fn pane(p: Pane) -> AnyView {
             }
 
             view! {
-                {(!arriving.is_empty())
-                    .then(|| incoming_group(arriving, all, picks, marked, boxes, confirm))}
                 {roots}
                 {groups
                     .into_iter()
@@ -1179,7 +999,6 @@ fn pane(p: Pane) -> AnyView {
                         }
                         _ => {
                             view! {
-                                {line}
                                 {match body {
                                     Body::Capped(total) => Some(total),
                                     _ => None,
@@ -1273,40 +1092,6 @@ fn draw(
     row(r, flat, picks, differs, boxes, confirm)
 }
 
-/// [`Placement::OnTop`]'s group: one heading over every incoming row, each
-/// showing its whole path, since the rows come from many folders. No box and
-/// no check — nothing under it can be ticked, and none of it is here.
-fn incoming_group(
-    members: Vec<usize>,
-    all: StoredValue<Vec<Row>>,
-    picks: RwSignal<Vec<bool>>,
-    marked: StoredValue<Vec<String>>,
-    boxes: bool,
-    confirm: Confirm,
-) -> AnyView {
-    let count = members.len();
-    let members = StoredValue::new(members);
-    let children = move || {
-        all.with_value(|rs| {
-            members.with_value(|ms| {
-                ms.iter()
-                    .map(|&i| draw(&rs[i], true, picks, marked, boxes, confirm))
-                    .collect_view()
-            })
-        })
-    };
-    view! {
-        <EntryGroup
-            name=INCOMING_HEADING.to_string()
-            count=Signal::derive(move || count)
-            open=RwSignal::new(true)
-        >
-            {children}
-        </EntryGroup>
-    }
-    .into_any()
-}
-
 /// A heading and its rows. The heading's box is derived from the rows under it
 /// and toggles exactly those, so `Mixed` is a fact about them rather than an
 /// assertion beside them — and a group with nothing selectable carries no box,
@@ -1370,10 +1155,7 @@ fn group(
         && all.with_value(|rs| {
             let mut tracked = rs
                 .iter()
-                .filter(|r| {
-                    r.folder.as_deref() == Some(name.as_str())
-                        && !matches!(r.mark, Mark::Ignored | Mark::Incoming)
-                })
+                .filter(|r| r.folder.as_deref() == Some(name.as_str()) && r.mark != Mark::Ignored)
                 .peekable();
             tracked.peek().is_some() && tracked.all(|r| r.mark.local())
         });
@@ -1497,10 +1279,7 @@ fn entries(files: Vec<File>) -> Vec<crate::commands::EntryData> {
                 Mark::Changed => "modified",
                 Mark::New => "added",
                 Mark::Deleted => "deleted",
-                // Never reached: no live cell draws an incoming row, and the
-                // page read has no such status. After a pull under
-                // individual-file sync the file arrives as this.
-                Mark::Missing | Mark::Incoming => "remote",
+                Mark::Missing => "remote",
             }
             .to_string(),
             ignored_by: (f.mark == Mark::Ignored).then(|| ".DS_Store".to_string()),
@@ -1711,24 +1490,19 @@ pub fn FilePaneRegion(
     /// `Keeping → The whole package`, which takes the per-file choice away.
     #[prop(optional)]
     whole: bool,
-    /// The package is behind, and this is what the dry run has said so far.
-    /// The UI's own `PullCheck`, so the page can hand the pane what it reads.
+    /// Files a newer revision would conflict with, found before *Get latest*:
+    /// marked as resolve mode marks the files that differ, and in its place.
     #[prop(optional)]
-    incoming: Option<PullCheck>,
-    /// Where the incoming rows sit.
-    #[prop(optional)]
-    placement: Placement,
-    /// No local changes: the package a `CleanUpdate` is about.
+    conflicts: &'static [&'static str],
+    /// No local changes: the package a clean update is about.
     #[prop(optional)]
     clean: bool,
 ) -> impl IntoView {
     pane(Pane {
         ticked,
         whole,
-        incoming,
-        placement,
         files: if clean { settled_package() } else { package() },
-        marked: if marked { MARKED } else { &[] },
+        marked: if marked { MARKED } else { conflicts },
         framing: Framing::Page,
         ..Pane::new(name)
     })
@@ -1859,149 +1633,6 @@ mod tests {
     use super::*;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
-
-    /// The line says what the dry run found, in the scope's own terms, and a
-    /// revision that adds nothing and keeps nothing gets no line at all.
-    #[test]
-    fn the_incoming_line_says_what_the_check_found() {
-        let ready = |outcome, added: &[&str]| {
-            PullCheck::Ready(PullPreview {
-                outcome,
-                added: added.iter().map(ToString::to_string).collect(),
-            })
-        };
-        let keeps = || PullOutcome::KeepsLocalChanges {
-            added: Vec::new(),
-            modified: vec!["a.csv".to_string()],
-            removed: Vec::new(),
-        };
-        let cases: Vec<(PullCheck, bool, Option<&str>)> = vec![
-            (
-                PullCheck::Loading,
-                false,
-                Some("Checking which files the newer revision brings\u{2026}"),
-            ),
-            (
-                PullCheck::Failed,
-                false,
-                Some("Couldn't check which files the newer revision brings."),
-            ),
-            (
-                ready(PullOutcome::CleanUpdate, &["a", "b", "c"]),
-                false,
-                Some(
-                    "The newer revision brings 3 files. Get latest lists them here, to \
-                     download when you need them.",
-                ),
-            ),
-            (
-                ready(PullOutcome::CleanUpdate, &["a"]),
-                true,
-                Some("The newer revision brings 1 file. Get latest downloads it."),
-            ),
-            (
-                ready(keeps(), &["a", "b"]),
-                true,
-                Some(
-                    "The newer revision brings 2 files. Get latest downloads them. Your changes stay.",
-                ),
-            ),
-            (
-                ready(keeps(), &[]),
-                false,
-                Some("Get latest keeps your changes."),
-            ),
-            (ready(PullOutcome::CleanUpdate, &[]), false, None),
-            (
-                ready(
-                    PullOutcome::Blocked {
-                        conflicts: vec!["a".to_string(), "b".to_string()],
-                    },
-                    &["c"],
-                ),
-                false,
-                Some(
-                    "2 files changed here and in the newer revision. Publish your changes, \
-                     then resolve them.",
-                ),
-            ),
-        ];
-        for (check, whole, expected) in cases {
-            assert_eq!(
-                incoming_words(&check, whole).as_deref(),
-                expected,
-                "{check:?}, whole: {whole}"
-            );
-        }
-    }
-
-    /// The v2 vocabulary holds on the new line too: none of the words the
-    /// package states keep out.
-    #[test]
-    fn the_incoming_line_uses_no_banned_word() {
-        const BANNED: &[&str] = &[
-            "commit", "push", "pull", "remote", "behind", "ahead", "diverged", "dirty", "hash",
-        ];
-        let added = vec!["a".to_string(), "b".to_string()];
-        let checks = [
-            PullCheck::Loading,
-            PullCheck::Failed,
-            PullCheck::Ready(PullPreview {
-                outcome: PullOutcome::CleanUpdate,
-                added: added.clone(),
-            }),
-            PullCheck::Ready(PullPreview {
-                outcome: PullOutcome::KeepsLocalChanges {
-                    added: Vec::new(),
-                    modified: Vec::new(),
-                    removed: Vec::new(),
-                },
-                added: added.clone(),
-            }),
-            PullCheck::Ready(PullPreview {
-                outcome: PullOutcome::Blocked {
-                    conflicts: added.clone(),
-                },
-                added,
-            }),
-        ];
-        for check in &checks {
-            for whole in [false, true] {
-                let words = incoming_words(check, whole)
-                    .unwrap_or_default()
-                    .to_lowercase();
-                for bad in BANNED {
-                    assert!(
-                        !words
-                            .split_whitespace()
-                            .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == *bad),
-                        "{words:?} contains the banned word {bad:?}"
-                    );
-                }
-            }
-        }
-    }
-
-    /// An added path the copy already has a row for keeps its one row.
-    #[test]
-    fn an_added_path_with_a_row_is_not_drawn_twice() {
-        let check = PullCheck::Ready(PullPreview {
-            outcome: PullOutcome::CleanUpdate,
-            added: vec![
-                "notes/plate-07-rerun.md".to_string(),
-                "qc/flags.json".to_string(),
-            ],
-        });
-        let files = with_incoming(package(), Some(&check));
-        let incoming: Vec<&str> = files
-            .iter()
-            .filter(|f| f.mark == Mark::Incoming)
-            .map(|f| f.path.as_str())
-            .collect();
-        assert_eq!(incoming, vec!["qc/flags.json"]);
-        // And the facets still count the installed revision.
-        assert_eq!(facet_labels(&files)[0].1, facet_labels(&package())[0].1);
-    }
 
     /// The footer says what the press fetches, in files and bytes.
     #[test]
