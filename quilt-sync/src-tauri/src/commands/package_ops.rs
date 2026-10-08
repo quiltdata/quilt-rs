@@ -12,6 +12,7 @@ use quilt_rs::io::remote::WorkflowIntent;
 use quilt_uri::{Host, S3PackageUri};
 
 use crate::Error;
+use crate::autopull::PausedReason;
 use crate::autopull::Watcher;
 use crate::autopull::pull_toast;
 use crate::model;
@@ -411,16 +412,51 @@ async fn package_pull_command(
     // then loses nothing and must not ask.
     let locked = m.lock_package(&installed).await?;
     // The scope the package stores, read under the lock.
-    let scope = m
-        .get_installed_package_lineage(&installed)
-        .await?
-        .sync_scope;
+    let lineage = m.get_installed_package_lineage(&installed).await?;
     // A hand-pressed pull writes working files exactly as the tick's does, so
     // it raises the same in-flight flag — otherwise quitting during one would
     // interrupt it without asking.
-    let _applying = watcher.apply_guard(&namespace);
-    let report = m.locked_package_pull(&locked, None, scope).await?;
-    Ok((namespace, report))
+    let pulled = {
+        let _applying = watcher.apply_guard(&namespace);
+        m.locked_package_pull(&locked, None, lineage.sync_scope)
+            .await
+    };
+    match pulled {
+        Ok(report) => Ok((namespace, report)),
+        Err(err) => {
+            pause_on_conflict(watcher, &namespace, &lineage, &err).await;
+            Err(err)
+        }
+    }
+}
+
+/// A pull the engine refused for a conflict pauses the package the way the
+/// tick's refusal does, so the header shows the conflict now rather than
+/// offering the same pull until the next tick. Only a conflict: it is the one
+/// refusal with a state of its own that the working tree cannot report.
+///
+/// A package with no known deployment is not paused — the tick never works on
+/// one, and a pause is always attributed to the package's own host.
+async fn pause_on_conflict(
+    watcher: &Watcher,
+    namespace: &quilt_uri::Namespace,
+    lineage: &quilt::lineage::PackageLineage,
+    err: &Error,
+) {
+    let Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(conflicts))) = err
+    else {
+        return;
+    };
+    let Some(origin) = lineage
+        .remote_uri
+        .as_ref()
+        .and_then(|remote| remote.origin.as_ref())
+    else {
+        return;
+    };
+    watcher
+        .pause(namespace, origin, PausedReason::pull_conflict(conflicts))
+        .await;
 }
 
 /// Record whether this package keeps its whole contents.
@@ -1011,6 +1047,7 @@ mod tests {
     use crate::autopull::PausedReason;
     use crate::autopull::Watcher;
     use crate::autopull::reporter::LogReporter;
+    use crate::autopull::reporter::test_support::RecordingReporter;
     use crate::model::MockQuiltModel;
     use crate::quilt;
 
@@ -1166,6 +1203,95 @@ mod tests {
             !watcher.inner_for_test().aggregator.apply_in_progress(),
             "and down again once it returns"
         );
+    }
+
+    /// A model whose pull fails with `error`, for a package published to a
+    /// known deployment.
+    fn failing_pull_model(error: impl Fn() -> Error + Send + Sync + 'static) -> MockQuiltModel {
+        let mut model = installed_model();
+        model.expect_get_installed_package_lineage().returning(|_| {
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h0".to_string(),
+                    origin: Some(fixtures::host()),
+                },
+                "h1".to_string(),
+            ))
+        });
+        model
+            .expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        model
+            .expect_locked_package_pull()
+            .times(1)
+            .returning(move |_, _, _| Err(error()));
+        model
+    }
+
+    fn pull_conflict_error() -> Error {
+        Error::Quilt(quilt::Error::PackageOp(
+            quilt::PackageOpError::PullConflict(vec![
+                std::path::PathBuf::from("a.csv"),
+                std::path::PathBuf::from("b.csv"),
+            ]),
+        ))
+    }
+
+    /// A Get latest the engine refused for a conflict pauses the package the
+    /// way the tick does, so the header turns to the conflict at once instead
+    /// of offering the same refused pull until the next tick.
+    #[tokio::test]
+    async fn a_pull_refused_by_a_conflict_pauses_the_package() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let model = failing_pull_model(pull_conflict_error);
+
+        let err = super::package_pull_command(&model, &watcher, "acme/demo")
+            .await
+            .expect_err("a conflict refuses the pull");
+        assert!(
+            matches!(
+                err,
+                Error::Quilt(quilt::Error::PackageOp(
+                    quilt::PackageOpError::PullConflict(_)
+                ))
+            ),
+            "the refusal still reaches the caller: {err:?}"
+        );
+
+        let reason = PausedReason::PullConflict(vec!["a.csv".to_string(), "b.csv".to_string()]);
+        assert_eq!(watcher.paused_reason(&ns).await, Some(reason.clone()));
+        assert_eq!(
+            crate::commands::main_page::conflict_files(watcher.paused_reason(&ns).await.as_ref()),
+            Some(vec!["a.csv".to_string(), "b.csv".to_string()]),
+            "the page reads the pause as the conflict state"
+        );
+        // Announced as the tick announces it: the `autosync-paused` event,
+        // attributed to the package's own deployment.
+        assert_eq!(*reporter.paused.lock().unwrap(), vec![(ns, reason)]);
+        assert_eq!(*reporter.hosts.lock().unwrap(), vec![fixtures::host()]);
+    }
+
+    /// Any other refusal leaves the pause map alone: only a conflict has a
+    /// state of its own the header would otherwise miss.
+    #[tokio::test]
+    async fn a_pull_refused_for_another_reason_pauses_nothing() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let model = failing_pull_model(access_denied_error);
+
+        assert!(
+            super::package_pull_command(&model, &watcher, "acme/demo")
+                .await
+                .is_err()
+        );
+
+        assert_eq!(watcher.paused_reason(&ns).await, None);
+        assert!(reporter.paused.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

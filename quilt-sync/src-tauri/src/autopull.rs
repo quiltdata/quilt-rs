@@ -83,6 +83,14 @@ pub enum PausedReason {
     Other(String),
 }
 
+impl PausedReason {
+    /// The pause for a pull the engine refused because `paths` changed on both
+    /// sides, worded for the banner.
+    pub fn pull_conflict(paths: &[std::path::PathBuf]) -> Self {
+        Self::PullConflict(paths.iter().map(|p| p.display().to_string()).collect())
+    }
+}
+
 /// Public handle to the watcher. Holds an `Arc` so command handlers can
 /// poke `clear_paused` without taking ownership of the background task.
 pub struct Watcher {
@@ -251,6 +259,20 @@ impl Watcher {
 
     pub async fn set_window_mode(&self, mode: WindowMode) {
         *self.inner.window_mode.write().await = mode;
+    }
+
+    /// Pause `namespace` for `reason` and announce it, exactly as the tick does
+    /// when it meets the same refusal — the command layer's way in.
+    ///
+    /// A hand-pressed pull the engine refused for a conflict lands here, so the
+    /// page shows the conflict at once rather than after the next tick. It is
+    /// recorded whether or not autosync runs for the package: the pages read
+    /// the paused map either way, and every route that clears a pause
+    /// ([`Self::clear_paused`] after a manual push / pull / commit / publish /
+    /// reset, [`Self::clear_all_paused`] when autosync is switched on) clears
+    /// this one too.
+    pub async fn pause(&self, namespace: &Namespace, origin: &Host, reason: PausedReason) {
+        tick::pause(&self.inner, namespace, origin, reason).await;
     }
 
     /// Forget a pause for `namespace` — used after the user takes an
