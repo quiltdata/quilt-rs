@@ -239,6 +239,25 @@ impl Profile {
             crate::watch::glob_set(&globs)
                 .map_err(|e| Error::Profile(format!("instrument {}: {e}", i.id)))?;
         }
+        // A relative spool would land wherever the service manager starts the
+        // process (`/` under systemd), and fail or scatter state.
+        if let Some(root) = &profile.observer.spool_root
+            && !root.is_absolute()
+        {
+            return Err(Error::Profile(format!(
+                "observer.spool_root must be absolute, not {}",
+                root.display()
+            )));
+        }
+        // Runs are journalled by instrument id and resumed by looking it up, so
+        // two instruments with one id would resume with the wrong settings.
+        let mut ids = std::collections::BTreeSet::new();
+        if let Some(dup) = profile.instruments.iter().find(|i| !ids.insert(&i.id)) {
+            return Err(Error::Profile(format!(
+                "instrument id {} is used twice",
+                dup.id
+            )));
+        }
         Ok(profile)
     }
 }
@@ -249,6 +268,9 @@ fn reject_unbuilt(value: &serde_json::Value) -> Result<(), Error> {
     let mut found = Vec::new();
     for key in [
         "upload",
+        "observer/status_port",
+        "registry/heartbeat_s",
+        "spool/compaction_interval_s",
         "packager/locus",
         "packager/workflow_intent",
         "packager/metadata_static",
@@ -267,6 +289,9 @@ fn reject_unbuilt(value: &serde_json::Value) -> Result<(), Error> {
             "source/stage_copy",
             "source/watch",
             "packaging/metadata_static",
+            "boundary/suspect_alert_after_s",
+            "boundary/manifest_glob",
+            "boundary/require_all_listed",
         ] {
             if i.pointer(&format!("/{key}")).is_some() {
                 found.push(format!("instruments/{n}/{key}"));
@@ -289,8 +314,8 @@ mod tests {
 
     pub(crate) const MINIMAL: &str = r#"
 schema_version: "1"
-observer: { id: edge-01, placement: beside }
-registry: { url: "https://example.quiltdata.com", credential_ref: quilt-agent/x }
+observer: { id: edge-01, placement: beside, spool_root: /var/lib/quilt-agent }
+registry: { url: "https://example.quiltdata.com", credential_ref: QUILT_AGENT_API_KEY }
 instruments:
   - id: plate-reader-1
     source: { path: /data/plate-reader, dir_cache_ttl_s: 60 }
@@ -333,6 +358,22 @@ instruments:
         let bad = MINIMAL.replace("markers: [\"done.txt\"]", "markers: [\"done[.txt\"]");
         let err = Profile::parse(&bad).unwrap_err().to_string();
         assert!(err.contains("plate-reader-1"), "{err}");
+    }
+
+    #[test]
+    fn a_relative_spool_root_is_refused() {
+        let rel = MINIMAL.replace("spool_root: /var/lib/quilt-agent", "spool_root: spool");
+        let err = Profile::parse(&rel).unwrap_err().to_string();
+        assert!(err.contains("must be absolute"), "{err}");
+    }
+
+    #[test]
+    fn a_duplicate_instrument_id_is_refused() {
+        let instrument = &MINIMAL[MINIMAL.find("  - id: plate-reader-1").expect("instrument")..];
+        let err = Profile::parse(&format!("{MINIMAL}{instrument}"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("used twice"), "{err}");
     }
 
     #[test]

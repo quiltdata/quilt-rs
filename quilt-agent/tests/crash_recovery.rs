@@ -100,8 +100,8 @@ fn profile(source: &Path) -> Profile {
     Profile::parse(&format!(
         r#"
 schema_version: "1"
-observer: {{ id: edge-01, placement: beside }}
-registry: {{ url: "https://example.quiltdata.com", credential_ref: k }}
+observer: {{ id: edge-01, placement: beside, spool_root: /tmp/quilt-agent-test }}
+registry: {{ url: "https://example.quiltdata.com", credential_ref: QUILT_AGENT_API_KEY }}
 instruments:
   - id: reader-1
     source: {{ path: "{}" }}
@@ -289,8 +289,8 @@ async fn a_later_run_of_the_same_package_advances_latest() -> Result<(), Box<dyn
     let yaml = format!(
         r#"
 schema_version: "1"
-observer: {{ id: edge-01, placement: beside }}
-registry: {{ url: "https://example.quiltdata.com", credential_ref: k }}
+observer: {{ id: edge-01, placement: beside, spool_root: /tmp/quilt-agent-test }}
+registry: {{ url: "https://example.quiltdata.com", credential_ref: QUILT_AGENT_API_KEY }}
 instruments:
   - id: reader-1
     source: {{ path: "{}" }}
@@ -344,8 +344,8 @@ async fn an_over_cap_run_is_refused_once() -> Result<(), Box<dyn std::error::Err
     let yaml = format!(
         r#"
 schema_version: "1"
-observer: {{ id: edge-01, placement: beside }}
-registry: {{ url: "https://example.quiltdata.com", credential_ref: k }}
+observer: {{ id: edge-01, placement: beside, spool_root: /tmp/quilt-agent-test }}
+registry: {{ url: "https://example.quiltdata.com", credential_ref: QUILT_AGENT_API_KEY }}
 spool: {{ max_bytes: 1048576 }}
 instruments:
   - id: reader-1
@@ -375,7 +375,7 @@ instruments:
             .await?;
     }
     let journal = std::fs::read_to_string(spool_dir.path().join("journal.jsonl"))?;
-    assert_eq!(journal.matches(r#""event":"refused""#).count(), 1);
+    assert_eq!(journal.matches(r#""refused":"over_cap"#).count(), 1);
     assert_eq!(landed_events(spool_dir.path()).len(), 0);
     Ok(())
 }

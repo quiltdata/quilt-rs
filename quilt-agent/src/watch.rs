@@ -65,13 +65,7 @@ pub fn members(folder: &Path, ignore: &GlobSet) -> Result<Vec<Member>, Error> {
             let Ok(rel) = path.strip_prefix(folder).map(Path::to_path_buf) else {
                 continue;
             };
-            // The sentinel's key is reserved in the landing; a source file
-            // with that name would take it and block the seal.
-            if ignore.is_match(&rel)
-                || rel
-                    .file_name()
-                    .is_some_and(|n| ignore.is_match(n) || n == crate::sentinel::SENTINEL_NAME)
-            {
+            if ignore.is_match(&rel) || rel.file_name().is_some_and(|n| ignore.is_match(n)) {
                 continue;
             }
             // `fs::metadata`, not `DirEntry::metadata`: on Windows the latter
@@ -127,7 +121,6 @@ mod tests {
         std::fs::write(run.join("a.fcs"), b"aaa")?;
         std::fs::write(run.join("sub/b.fcs"), b"bb")?;
         std::fs::write(run.join("Thumbs.db"), b"x")?;
-        std::fs::write(run.join(".quilt-sentinel.json"), b"{}")?;
         std::fs::write(dir.path().join("stray.txt"), b"outside any run")?;
 
         let source = Source {

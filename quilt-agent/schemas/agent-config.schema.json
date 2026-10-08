@@ -11,11 +11,11 @@
     "observer": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "placement"],
+      "required": ["id", "placement", "spool_root"],
       "properties": {
         "id": { "type": "string", "minLength": 1, "description": "Stable observer id, e.g. edge-01." },
         "placement": { "enum": ["on", "beside"] },
-        "spool_root": { "type": "string" },
+        "spool_root": { "type": "string", "description": "Absolute path to the agent's journal and state." },
         "status_port": { "type": "integer", "minimum": 1024, "maximum": 65535, "default": 4781 }
       }
     },
@@ -25,7 +25,7 @@
       "required": ["url", "credential_ref"],
       "properties": {
         "url": { "type": "string", "format": "uri" },
-        "credential_ref": { "type": "string", "description": "Name of the qk_ key in the OS credential store; never the key." },
+        "credential_ref": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "description": "Name of the environment variable holding the qk_ key; never the key." },
         "heartbeat_s": { "type": "integer", "minimum": 30, "default": 300 }
       }
     },

@@ -20,5 +20,7 @@ QUILT_AGENT_API_KEY=qk_... quilt-agent run profile.yaml
 quilt-agent run profile.yaml --bucket-only   # ambient AWS credentials, no registry
 ```
 
+The profile names an absolute `observer.spool_root` and, in
+`registry.credential_ref`, the environment variable that holds the `qk_` key.
 The profile schema is `schemas/agent-config.schema.json`; the sentinel schema is
 `schemas/sentinel.schema.json`. Service wrappers are in `service/`.

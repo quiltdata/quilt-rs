@@ -69,7 +69,7 @@ async fn serve(profile: Profile, bucket_only: bool) -> Result<(), Error> {
         .observer
         .spool_root
         .clone()
-        .unwrap_or_else(|| PathBuf::from("spool"));
+        .ok_or_else(|| Error::Profile("observer.spool_root is required".to_string()))?;
     let spool = Spool::open(&spool_root)?;
     let remote = RemoteS3::new(
         DomainPaths::new(spool_root.join("domain")),
@@ -83,14 +83,11 @@ async fn serve(profile: Profile, bucket_only: bool) -> Result<(), Error> {
             .trim_start_matches("https://")
             .parse()
             .map_err(|e| Error::Profile(format!("registry.url: {e}")))?;
-        // ponytail: an env var stands in for the OS keystore named by
-        // credential_ref; add `keyring` with the installer.
-        let key = std::env::var("QUILT_AGENT_API_KEY").map_err(|_| {
-            Error::Profile(format!(
-                "QUILT_AGENT_API_KEY is unset (the key for {})",
-                profile.registry.credential_ref
-            ))
-        })?;
+        // ponytail: credential_ref names an environment variable; an OS
+        // keystore lookup replaces this with the installer.
+        let var = &profile.registry.credential_ref;
+        let key = std::env::var(var)
+            .map_err(|_| Error::Profile(format!("registry.credential_ref: {var} is unset")))?;
         remote.set_api_key(&host, key);
         Some(host)
     };
@@ -129,7 +126,9 @@ async fn serve(profile: Profile, bucket_only: bool) -> Result<(), Error> {
         agent.pass(SystemTime::now()).await?;
         tokio::select! {
             () = tokio::time::sleep(poll) => {}
-            _ = rx.recv() => tokio::time::sleep(Duration::from_secs(1)).await,
+            // `Some` only: with no watcher the channel is closed and `recv`
+            // returns `None` at once, which would turn polling into a busy loop.
+            Some(()) = rx.recv() => tokio::time::sleep(Duration::from_secs(1)).await,
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("stopping; the journal resumes on next start");
                 return Ok(());

@@ -23,4 +23,8 @@ Restrict the task's ACL to administrators and `<account>`; anyone who can read
 the task definition can read the key. An OS keystore replaces this with the
 installer.
 
+The examples assume the profile's `registry.credential_ref` is
+`QUILT_AGENT_API_KEY` and its `observer.spool_root` is an absolute path the
+service account can write.
+
 Validate a profile before installing: `quilt-agent check profile.yaml`.

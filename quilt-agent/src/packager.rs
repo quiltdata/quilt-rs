@@ -75,25 +75,29 @@ fn membership<'a>(
     landed: &BTreeMap<&'a str, &FileEntry>,
     dataset: Option<&'a Value>,
 ) -> Result<Vec<&'a str>, Error> {
-    let has_part: Vec<&str> = dataset
-        .and_then(|d| d["hasPart"].as_array())
-        .map(|parts| {
-            parts
-                .iter()
-                .filter_map(|p| p.as_str().or_else(|| p["@id"].as_str()))
-                .collect()
-        })
-        .unwrap_or_default();
-    if let Some(p) = has_part.iter().find(|p| !landed.contains_key(*p)) {
-        return Err(Error::Refused(format!(
-            "crate lists a file the observer did not land: {p}"
-        )));
+    // Absent `hasPart` means every landed file. Present means exactly those
+    // files — even an empty list — and an entry we cannot read is a refusal,
+    // never silently dropped: dropping it would publish a different set.
+    let Some(parts) = dataset.and_then(|d| d.get("hasPart")) else {
+        return Ok(landed.keys().copied().collect());
+    };
+    let parts = parts
+        .as_array()
+        .ok_or_else(|| Error::Refused("crate hasPart is not a list".to_string()))?;
+    let mut has_part = Vec::with_capacity(parts.len());
+    for p in parts {
+        let path = p
+            .as_str()
+            .or_else(|| p["@id"].as_str())
+            .ok_or_else(|| Error::Refused(format!("crate hasPart entry is not a path: {p}")))?;
+        if !landed.contains_key(path) {
+            return Err(Error::Refused(format!(
+                "crate lists a file the observer did not land: {path}"
+            )));
+        }
+        has_part.push(path);
     }
-    Ok(if has_part.is_empty() {
-        landed.keys().copied().collect()
-    } else {
-        has_part
-    })
+    Ok(has_part)
 }
 
 /// One manifest row per member, pointing at the landed object version, with
@@ -116,11 +120,14 @@ fn rows(
                 "type": f.checksum.algorithm, "value": f.checksum.value
             }))
             .map_err(|e| Error::Refused(format!("{path}: unsupported checksum: {e}")))?;
-            let mut physical_key = format!("s3://{bucket}/{}", f.key);
-            if let Some(v) = &f.version_id {
-                physical_key.push_str("?versionId=");
-                physical_key.push_str(v);
+            // S3Uri's Display percent-encodes the key and version, so a `?` or
+            // `#` in a filename stays part of the key.
+            let physical_key = quilt_uri::S3Uri {
+                bucket: bucket.to_string(),
+                key: f.key.clone(),
+                version: f.version_id.clone(),
             }
+            .to_string();
             let mut meta = by_id
                 .get(path)
                 .and_then(|e| e.as_object().cloned())
@@ -294,6 +301,36 @@ mod tests {
         let row_meta = rev.manifest.rows[0].meta.as_ref().unwrap();
         assert_eq!(row_meta["dateCreated"], "2026-09-08T09:14:22");
         Ok(())
+    }
+
+    #[test]
+    fn an_empty_has_part_publishes_nothing_and_a_bad_entry_is_refused() {
+        let empty = crate_with("experiment-ID", &[]);
+        assert!(build_with(Some(&empty)).unwrap().manifest.rows.is_empty());
+        let mut bad = crate_with("experiment-ID", &["plate3/A01.fcs"]);
+        bad["@graph"][0]["hasPart"] = json!(["plate3/A01.fcs", 7]);
+        let err = build_with(Some(&bad)).unwrap_err().to_string();
+        assert!(err.contains("not a path"), "{err}");
+    }
+
+    #[test]
+    fn a_key_with_a_question_mark_stays_a_key() {
+        let mut s = example();
+        s.files[0].key = "lab/run/what?.fcs".to_string();
+        s.files[0].path = "plate3/A01.fcs".to_string();
+        let rev = build(
+            &s,
+            KEY,
+            "raw",
+            "f",
+            "{instrument_id}/{folder_name}",
+            &[],
+            None,
+        )
+        .unwrap();
+        let uri = quilt_uri::S3Uri::try_from(rev.manifest.rows[0].physical_key.as_str()).unwrap();
+        assert_eq!(uri.key, "lab/run/what?.fcs");
+        assert_eq!(uri.version.as_deref(), Some("3sL4kqtJ"));
     }
 
     #[test]

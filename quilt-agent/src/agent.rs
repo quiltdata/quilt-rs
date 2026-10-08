@@ -177,7 +177,7 @@ impl<R: Remote + Sync> Agent<R> {
             _ => json!({ "markers": b.markers, "confirm_window_s": instrument.quiet_window_s() }),
         };
         self.spool.record(&Event::Snapshot {
-            run_id: run_id.clone(),
+            run_id,
             instrument_id: instrument.id.clone(),
             folder: folder.to_path_buf(),
             sentinel_id: uuid.to_string(),
@@ -192,15 +192,9 @@ impl<R: Remote + Sync> Agent<R> {
             snapshot_time_utc: now_utc.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             total_bytes,
             members: tracked.members.iter().map(snap_member).collect(),
+            refused: (total_bytes > self.profile.spool.max_bytes)
+                .then(|| format!("over_cap: {total_bytes} bytes > spool.max_bytes")),
         })?;
-        // Recorded after the snapshot, so the folder is known and is refused
-        // once, not again on every pass.
-        if total_bytes > self.profile.spool.max_bytes {
-            self.spool.record(&Event::Refused {
-                run_id,
-                reason: format!("over_cap: {total_bytes} bytes > spool.max_bytes"),
-            })?;
-        }
         Ok(())
     }
 
@@ -260,6 +254,13 @@ impl<R: Remote + Sync> Agent<R> {
             ..HostConfig::default()
         };
 
+        // The sentinel's key is reserved in the landing. A source file at that
+        // path would take it and block the seal; refuse rather than drop it.
+        if members.iter().any(|m| m.path == SENTINEL_NAME) {
+            return Err(Error::Refused(format!(
+                "the run has a file named {SENTINEL_NAME}, which the landing reserves"
+            )));
+        }
         let mut files = Vec::with_capacity(members.len());
         for m in members {
             if let Some(done) = run.verified.get(&m.path) {

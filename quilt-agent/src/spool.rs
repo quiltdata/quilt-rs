@@ -34,6 +34,10 @@ pub enum Event {
         total_bytes: u64,
         /// Relative paths, sizes and mtimes as seen at the boundary.
         members: Vec<SnapMember>,
+        /// Set when the run was refused at capture (over the spool cap). Part of
+        /// the snapshot, so no crash can leave a captured run that skips the cap.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refused: Option<String>,
     },
     /// The run is over the size cap and will not be uploaded.
     Refused { run_id: String, reason: String },
@@ -112,27 +116,24 @@ impl Spool {
     pub fn open(root: &Path) -> Result<Self, Error> {
         std::fs::create_dir_all(root)?;
         let path = root.join("journal.jsonl");
-        // A kill mid-write leaves a line with no newline. Cut it off before
-        // appending, or the next event is glued to it and lost on every read.
-        if let Ok(bytes) = std::fs::read(&path)
-            && let Some(last) = bytes.last()
-            && *last != b'\n'
-        {
-            let keep = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-            OpenOptions::new()
-                .write(true)
-                .open(&path)?
-                .set_len(keep as u64)?;
-        }
         let journal = OpenOptions::new().create(true).append(true).open(&path)?;
         // One agent per spool: a second process would snapshot the same runs.
-        // The OS releases the lock when this process exits, however it exits.
+        // Locked before the tail is touched, so a second start can never cut
+        // a line the running agent is still writing. The OS releases the lock
+        // when this process exits, however it exits.
         journal.try_lock().map_err(|_| {
             Error::Refused(format!(
                 "another quilt-agent is using {}; stop it first",
                 root.display()
             ))
         })?;
+        // A kill mid-write leaves a line with no newline. Cut it off before
+        // appending, or the next event is glued to it and lost on every read.
+        let bytes = std::fs::read(&path)?;
+        if bytes.last().is_some_and(|b| *b != b'\n') {
+            let keep = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+            journal.set_len(keep as u64)?;
+        }
         Ok(Spool {
             root: root.to_path_buf(),
             journal,
@@ -155,13 +156,19 @@ impl Spool {
         let mut runs: BTreeMap<String, Run> = BTreeMap::new();
         for (line_no, line) in BufReader::new(file).lines().enumerate() {
             let line = line?;
-            let Ok(event) = serde_json::from_str::<Event>(&line) else {
-                tracing::warn!("skipping unreadable journal line");
-                continue;
-            };
+            // `open` cuts the only expected bad line, a torn tail. Anything else
+            // is corruption: skipping it could forget a run and land it twice.
+            let event = serde_json::from_str::<Event>(&line).map_err(|e| {
+                Error::Refused(format!("journal line {} is unreadable: {e}", line_no + 1))
+            })?;
             let id = event.run_id().to_string();
             match event {
-                Event::Snapshot { .. } => {
+                Event::Snapshot { ref refused, .. } => {
+                    let state = if refused.is_some() {
+                        RunState::Refused
+                    } else {
+                        RunState::Uploading
+                    };
                     runs.insert(
                         id,
                         Run {
@@ -171,7 +178,7 @@ impl Spool {
                             sealed_at_line: 0,
                             captured_at_line: line_no,
                             landed: None,
-                            state: RunState::Uploading,
+                            state,
                         },
                     );
                 }
@@ -287,6 +294,7 @@ mod tests {
             snapshot_time_utc: at.to_string(),
             total_bytes: 3,
             members: vec![],
+            refused: None,
         }
     }
 
