@@ -29,7 +29,9 @@
 //! `PackageState::PullConflict`, which offers `Publish`, not `Resolve`: the
 //! merge page cannot act until the local changes are published. That is the
 //! state a failed `Get latest` leaves, so the header reads the same before the
-//! click and after it. In the popover the conflicting files carry a
+//! click and after it. A conflict the read recorded earlier gives way to a
+//! check that finds the update safe: the header goes back to `Behind`, since
+//! the conflicting edit was undone. In the popover the conflicting files carry a
 //! `Conflict` label beside their own; in the file list their rows carry
 //! resolve mode's `Differs` mark, which the popover's sentence describes.
 //!
@@ -90,17 +92,30 @@ const MIDDLE_BUTTON: i16 = 1;
 /// and a revision can touch far more files than anyone reads in a popover.
 pub const LISTED: usize = 1_000;
 
-/// What the header resolves to for a check: the conflict state for a
-/// `Blocked` verdict, what the page's read said for everything else.
+/// What the header resolves to for a check.
+///
+/// - A `Blocked` verdict: the conflict state, naming its files.
+/// - A `CleanUpdate` or `KeepsLocalChanges` verdict on a read that says
+///   `PullConflict`: `Behind`. The read's conflict was recorded earlier, by a
+///   paused autosync or a refused *Get latest*; a check that finds none now
+///   means the conflicting edit was undone, so the header offers *Get latest*
+///   again, and a successful one clears the recorded pause.
+/// - Anything else (`UpToDate`, a check still running or failed, or no
+///   check): what the page's read said.
 #[must_use]
 pub fn header_state(read: &PackageState, check: Option<&PullCheck>) -> PackageState {
-    match check {
-        Some(PullCheck::Ready(PullPreview {
-            outcome: PullOutcome::Blocked { conflicts },
-            ..
-        })) => PackageState::PullConflict {
+    let Some(PullCheck::Ready(PullPreview { outcome, .. })) = check else {
+        return read.clone();
+    };
+    match outcome {
+        PullOutcome::Blocked { conflicts } => PackageState::PullConflict {
             files: conflicts.clone(),
         },
+        PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. }
+            if matches!(read, PackageState::PullConflict { .. }) =>
+        {
+            PackageState::Behind
+        }
         _ => read.clone(),
     }
 }
@@ -688,6 +703,50 @@ mod tests {
         assert_eq!(
             header_state(&PackageState::Latest, None),
             PackageState::Latest
+        );
+    }
+
+    /// A recorded conflict, from a paused autosync or a refused Get latest,
+    /// gives way to a check that finds none: the conflicting edit was undone,
+    /// so the header offers Get latest again. A check that has not answered,
+    /// failed, or found the package up to date leaves the read's state.
+    #[test]
+    fn a_safe_check_takes_back_a_recorded_conflict() {
+        let recorded = PackageState::PullConflict {
+            files: vec!["a.csv".to_string()],
+        };
+        let keeps = ready(
+            PullOutcome::KeepsLocalChanges {
+                added: Vec::new(),
+                modified: vec!["b.csv".to_string()],
+                removed: Vec::new(),
+            },
+            three_added(),
+        );
+        for check in [ready(PullOutcome::CleanUpdate, three_added()), keeps] {
+            assert_eq!(header_state(&recorded, Some(&check)), PackageState::Behind);
+            assert_eq!(conflicting(Some(&check)), None);
+        }
+        for check in [
+            PullCheck::Loading,
+            PullCheck::Failed,
+            ready(PullOutcome::UpToDate, Vec::new()),
+        ] {
+            assert_eq!(header_state(&recorded, Some(&check)), recorded);
+        }
+        assert_eq!(header_state(&recorded, None), recorded);
+        let blocked = ready(
+            PullOutcome::Blocked {
+                conflicts: vec!["c.csv".to_string()],
+            },
+            Vec::new(),
+        );
+        assert_eq!(
+            header_state(&recorded, Some(&blocked)),
+            PackageState::PullConflict {
+                files: vec!["c.csv".to_string()]
+            },
+            "a fresh conflict names its own files"
         );
     }
 
