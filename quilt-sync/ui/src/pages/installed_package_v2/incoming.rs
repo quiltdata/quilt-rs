@@ -509,9 +509,11 @@ pub fn IncomingSummary(
     // No popover drawn, no pin: one left standing would reopen on the next
     // answer, which can be about other files.
     Effect::new(move |_| {
+        // The lists themselves, not `coming`'s rows: building those clones and
+        // sorts every path, which `summary` does once already.
         let drawn = check.with(|c| {
-            c.as_ref()
-                .is_some_and(|c| matches!(c, PullCheck::Ready(_)) && !coming(c).is_empty())
+            matches!(c, Some(PullCheck::Ready(p))
+                if !(p.added.is_empty() && p.changed.is_empty() && p.removed.is_empty()))
         });
         if !drawn {
             card.close();
