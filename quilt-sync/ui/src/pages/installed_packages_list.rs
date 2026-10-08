@@ -956,6 +956,9 @@ mod tests {
         PullPreview {
             outcome,
             added: Vec::new(),
+            changed: Vec::new(),
+            removed: Vec::new(),
+            latest_hash: None,
         }
     }
     use leptos::prelude::*;

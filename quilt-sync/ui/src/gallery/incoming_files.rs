@@ -139,7 +139,13 @@ fn plates_added(n: usize) -> Vec<String> {
 const LISTED: usize = 1_000;
 
 fn ready(outcome: PullOutcome, added: Vec<String>) -> PullCheck {
-    PullCheck::Ready(PullPreview { outcome, added })
+    PullCheck::Ready(PullPreview {
+        outcome,
+        added,
+        changed: Vec::new(),
+        removed: Vec::new(),
+        latest_hash: None,
+    })
 }
 
 /// What the header resolves to for a check: the conflict state for a
