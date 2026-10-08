@@ -292,9 +292,9 @@ fn coming(check: &PullCheck) -> Vec<Coming> {
     let PullCheck::Ready(preview) = check else {
         return Vec::new();
     };
-    let conflicts: &[String] = match &preview.outcome {
-        PullOutcome::Blocked { conflicts } => conflicts,
-        _ => &[],
+    let conflicts: BTreeSet<&str> = match &preview.outcome {
+        PullOutcome::Blocked { conflicts } => conflicts.iter().map(String::as_str).collect(),
+        _ => BTreeSet::new(),
     };
     let mut rows: Vec<Coming> = [
         (&preview.added, Change::New),
@@ -304,7 +304,7 @@ fn coming(check: &PullCheck) -> Vec<Coming> {
     .into_iter()
     .flat_map(|(paths, change)| paths.iter().map(move |p| (p.clone(), change)))
     .map(|(path, change)| Coming {
-        conflict: conflicts.contains(&path),
+        conflict: conflicts.contains(path.as_str()),
         path,
         change,
     })
