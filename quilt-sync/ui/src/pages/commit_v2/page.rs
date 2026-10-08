@@ -19,14 +19,15 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, CommitData, CommitViolation, EntryData, JunkSummary, ViolationField};
 use crate::commands::{CommitWorkflows, WorkflowIntent};
-use crate::components::appbar::appbar_actions;
 use crate::components::build_workflow_view;
 use crate::components::workflow_select::{
     WorkflowOption, WorkflowView, WorkflowViewKind, missing_settings_workflow,
     shows_settings_workflow_hint,
 };
 use crate::components::{IgnorePopup, IgnorePopupData, Notification, PreviousWorkflow};
-use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
+use crate::kit::{LoadFailure, PageLayout};
+
+use super::super::v2_page::{PageHandle, V2Page, critical};
 use crate::routes;
 
 use super::super::commit::{
@@ -39,8 +40,7 @@ use super::{
 };
 
 /// The page's one read. A parameter so a test can answer without a Tauri host.
-pub(crate) type CommitRead =
-    fn(String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>>;
+pub(crate) type CommitRead = super::super::v2_page::PageRead<CommitData>;
 
 fn read_commit(namespace: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
     Box::pin(commands::get_commit_data(namespace))
@@ -405,13 +405,6 @@ impl Draft {
 
 const IGNORE_FAILED: &str = "Could not ignore this file.";
 
-/// What the last command said on this page.
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Said {
-    lead: String,
-    detail: Option<String>,
-}
-
 /// The live check's input: the message as it would be sent, the metadata
 /// as typed, and the named workflow, if one is selected.
 type LiveKey = (String, String, Option<String>);
@@ -460,44 +453,26 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
         .get("focus")
         .is_some_and(|f| focuses_message(Some(&f)));
 
-    // Both of the page's reads — the answer, and the live check below — land
-    // in signals, not resources. A resource read under `ByDesign`'s `Suspense`
-    // registers with it, and every refetch would put the loading frame back
-    // over the form: the editor detached, the cursor gone, mid-word. Each read
-    // is numbered, so only the latest one's answer lands.
-    let reload = Trigger::new();
-    let in_flight = RwSignal::new(false);
-    let data = RwSignal::new(None::<(String, Result<CommitData, String>)>);
-    let reads = StoredValue::new(0_u64);
-    Effect::new(move |_| {
-        reload.track();
-        let namespace = ns.get();
-        reads.update_value(|n| *n += 1);
-        let this = reads.get_value();
-        in_flight.set(true);
-        leptos::task::spawn_local(async move {
-            let answer = read(namespace.clone()).await;
-            if reads.try_get_value() == Some(this) {
-                in_flight.try_set(false);
-                data.try_set(Some((namespace, answer)));
-            }
-        });
-    });
-    let answer = move || {
-        data.get()
-            .filter(|(for_ns, _)| *for_ns == ns.get())
-            .map(|(_, answer)| answer)
-    };
+    // The page's frame, its one read, its lock and its band: the shared v2
+    // scaffold, whose rules say why a re-read keeps the form, the cursor in it
+    // and the reader's choices. The live check below lands in a signal for the
+    // same reason the read does: a resource under `ByDesign`'s `Suspense`
+    // would put the loading frame back over the form mid-word.
+    let page = PageHandle::new();
+    let PageHandle {
+        reload, outcome, ..
+    } = page;
+    let answer = page.read(ns, read);
 
     let draft = Draft::new();
-    let form = Memo::new(move |_| match answer() {
+    let form = Memo::new(move |_| match answer.get() {
         Some(Ok(d)) => Some(Form::of(&d)),
         _ => None,
     });
     // One command at a time: a save or publish, or the ignore popup's write
     // to `.quiltignore`, which must not land under a publish that has read
     // the files already.
-    let running = RwSignal::new(false);
+    let running = page.busy;
     // The split button's face. The page's, above the rebuild line: a re-read
     // rebuilds the column, and *Save without publishing* must not turn back
     // into *Publish* under the reader's next click. Another package starts
@@ -507,7 +482,6 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
         ns.track();
         choice.set(0);
     });
-    let said = RwSignal::new(None::<Said>);
     let ignoring = RwSignal::new(None::<IgnorePopupData>);
     let goto = RwSignal::new(None::<String>);
     let navigate = use_navigate();
@@ -578,7 +552,9 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
         if running.get_untracked() {
             return;
         }
-        let Some(Ok(d)) = answer() else { return };
+        let Some(Ok(d)) = answer.get_untracked() else {
+            return;
+        };
         let Some(fixed) = form.get_untracked() else {
             return;
         };
@@ -587,13 +563,14 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
         let workflow = draft.workflow.get_untracked();
         let (namespace, uri) = (d.namespace.clone(), d.uri.clone());
         running.set(true);
-        said.set(None);
+        outcome.set(None);
         leptos::task::spawn_local(async move {
             let ns = namespace.to_string();
             let result = if publish {
-                commands::package_commit_and_push(ns, message, metadata, workflow, uri).await
+                commands::package_commit_and_push(ns.clone(), message, metadata, workflow, uri)
+                    .await
             } else {
-                commands::package_commit(ns, message, metadata, workflow, uri).await
+                commands::package_commit(ns.clone(), message, metadata, workflow, uri).await
             };
             match result {
                 // The command's own notification reports it; arriving is the rest.
@@ -602,14 +579,12 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
                 }
                 Err(detail) => {
                     running.try_set(false);
-                    said.try_set(Some(Said {
-                        lead: if publish {
-                            "Could not publish this revision.".to_string()
-                        } else {
-                            "Could not save this revision.".to_string()
-                        },
-                        detail: Some(detail),
-                    }));
+                    let lead = if publish {
+                        "Could not publish this revision."
+                    } else {
+                        "Could not save this revision."
+                    };
+                    outcome.try_set(Some(critical(ns, lead, Some(detail))));
                     // A publish can save the revision and then fail to send
                     // it; the page has to show what now exists.
                     reload.notify();
@@ -618,17 +593,19 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
         });
     });
     let open_folder = Callback::new(move |()| {
-        let Some(Ok(d)) = answer() else { return };
+        let Some(Ok(d)) = answer.get_untracked() else {
+            return;
+        };
         // This command is now the last one, so an earlier failure is not news.
-        said.set(None);
+        outcome.set(None);
         leptos::task::spawn_local(async move {
-            if let Err(detail) =
-                commands::open_in_file_browser(d.namespace.to_string(), d.uri).await
-            {
-                said.try_set(Some(Said {
-                    lead: "Could not open the folder.".to_string(),
-                    detail: Some(detail),
-                }));
+            let ns = d.namespace.to_string();
+            if let Err(detail) = commands::open_in_file_browser(ns.clone(), d.uri).await {
+                outcome.try_set(Some(critical(
+                    ns,
+                    "Could not open the folder.",
+                    Some(detail),
+                )));
             }
         });
     });
@@ -636,49 +613,51 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
     // The ignore popup reports through a `Notification`; its failure is this
     // page's news, and its success re-reads the page, which is the report —
     // so a success also takes down a failure an earlier try left up.
+    //
+    // The failure is news about the package the popup was opened for, which
+    // the address may no longer name by the time the write settles.
     let popup_said = RwSignal::new(None::<Notification>);
+    let opened_for = StoredValue::new(String::new());
+    Effect::new(move |_| {
+        if let Some(data) = ignoring.get() {
+            opened_for.set_value(data.namespace);
+        }
+    });
     Effect::new(move |_| match popup_said.get() {
-        Some(Notification::Error(detail)) => said.set(Some(Said {
-            lead: IGNORE_FAILED.to_string(),
-            detail: Some(detail),
-        })),
+        Some(Notification::Error(detail)) => {
+            outcome.set(Some(critical(
+                opened_for.get_value(),
+                IGNORE_FAILED,
+                Some(detail),
+            )));
+        }
         Some(Notification::Success(_))
-            if said.with_untracked(|s| s.as_ref().is_some_and(|s| s.lead == IGNORE_FAILED)) =>
+            if outcome.with_untracked(|s| s.as_ref().is_some_and(|s| s.lead == IGNORE_FAILED)) =>
         {
-            said.set(None);
+            outcome.set(None);
         }
         _ => {}
     });
 
-    let body = move || match answer() {
-        None => view! { <CommitPageSkeleton /> }.into_any(),
-        Some(Err(_)) => view! {
-            <LoadFailure
-                words="Could not load this package."
-                on_retry=Callback::new(move |()| reload.notify())
-            />
-        }
-        .into_any(),
-        Some(Ok(d)) => {
-            let Some(fixed) = form.get_untracked() else {
-                return ().into_any();
-            };
-            // Focus is asked for on arrival only: a re-read after Ignore or
-            // a failed publish must not pull the cursor from where it is.
-            let fresh = untrack(|| draft.seed(&d, &fixed));
-            column(
-                &d,
-                fixed,
-                draft,
-                violations,
-                running,
-                choice,
-                run,
-                open_folder,
-                ignoring,
-                focus && fresh,
-            )
-        }
+    let body = move |d: CommitData| {
+        let Some(fixed) = form.get_untracked() else {
+            return ().into_any();
+        };
+        // Focus is asked for on arrival only: a re-read after Ignore or
+        // a failed publish must not pull the cursor from where it is.
+        let fresh = untrack(|| draft.seed(&d, &fixed));
+        column(
+            &d,
+            fixed,
+            draft,
+            violations,
+            running,
+            choice,
+            run,
+            open_folder,
+            ignoring,
+            focus && fresh,
+        )
     };
 
     view! {
@@ -697,29 +676,24 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
                     }
                 })
         }}
-        <PageLayout
+        <V2Page
             heading="New revision"
-            banner=view! {
-                {move || {
-                    said.get()
-                        .map(|news| {
-                            view! {
-                                <Banner
-                                    variant=BannerVariant::Critical
-                                    on_dismiss=Callback::new(move |_| said.set(None))
-                                >
-                                    {news.lead}
-                                    {news.detail.map(|d| format!(" {d}"))}
-                                </Banner>
-                            }
-                        })
-                }}
-            }
+            page=page
+            answer=answer
+            showing=ns
+            skeleton=|| view! { <CommitPageSkeleton /> }.into_any()
+            bands=|_| ().into_any()
+            body=body
+            failure=move || {
+                view! {
+                    <LoadFailure
+                        words="Could not load this package."
+                        on_retry=Callback::new(move |()| reload.notify())
+                    />
+                }
                 .into_any()
-            actions=appbar_actions(move || reload.notify(), in_flight.into())
-        >
-            {body}
-        </PageLayout>
+            }
+        />
     }
 }
 

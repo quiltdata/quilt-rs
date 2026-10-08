@@ -14,6 +14,7 @@ mod remote_package;
 mod settings;
 mod setup;
 mod status_watch;
+mod v2_page;
 
 pub use commit::Commit;
 pub use commit_v2::{CommitV2, CommitV2Skeleton};

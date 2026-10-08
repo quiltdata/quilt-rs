@@ -57,6 +57,10 @@ impl StatusWatch {
     /// A namespace never seen counts as news. There is nothing to seed from — the
     /// package payload carries no fingerprint — and a swallowed first sighting
     /// would be exactly the pull that completed while the page was open.
+    ///
+    /// So the first event after a page opens always re-reads, usually to find
+    /// what the page already shows. A v2 page reads through `v2_page`, which
+    /// drops an answer equal to the one on screen, so that read is not seen.
     pub(super) fn observe(self, event: &commands::PackageStatusEvent) {
         let known = self
             .seen
