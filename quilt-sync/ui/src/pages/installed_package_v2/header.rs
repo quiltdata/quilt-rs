@@ -503,6 +503,10 @@ pub fn PageHeader(
     data: commands::PackageHeaderData,
     w: Wiring,
     #[prop(optional, into)] resolving: Signal<bool>,
+    /// After the state label: what a newer revision brings
+    /// ([`super::incoming::IncomingSummary`]).
+    #[prop(optional)]
+    summary: Option<AnyView>,
 ) -> impl IntoView {
     // The dialogs' flags and `goto` are the page's, not this header's: a
     // re-read rebuilds the header, and must not shut a dialog or drop a
@@ -573,6 +577,7 @@ pub fn PageHeader(
         );
     };
 
+    let state_label = view! { <StateLabel tone=rendered.tone>{rendered.words}</StateLabel> };
     view! {
         <div>
             <kit::PageHeader
@@ -581,8 +586,7 @@ pub fn PageHeader(
                 // switched on, so it lands a reader back where they came from.
                 trail=view! { <BackLink href="/" label="Packages" /> }.into_any()
                 title=namespace
-                label=view! { <StateLabel tone=rendered.tone>{rendered.words}</StateLabel> }
-                    .into_any()
+                label=super::incoming::state_with_summary(state_label.into_any(), summary)
                 actions=view! {
                     {move || {
                         (!resolving.get())

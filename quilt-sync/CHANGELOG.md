@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.9-dev]
+
+### Added
+
+- **New design preview**: The package page shows which files a newer revision brings, and whether getting it would conflict, before you click **Get latest**
+
 ## [v0.22.8] - 2026-10-08
 
 ### Changed

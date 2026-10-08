@@ -790,6 +790,7 @@ mod tests {
                             Signal::stored(false),
                             super::super::ResolveCommands::app(),
                             super::super::tests::idle_files(),
+                            super::super::tests::idle_incoming(),
                         )
                     }}
                 </Router>
