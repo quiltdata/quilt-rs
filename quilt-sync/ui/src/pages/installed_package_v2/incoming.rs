@@ -364,16 +364,24 @@ const HOVER_GRACE: Duration = Duration::from_millis(200);
 /// the summary and the popover both; a click pins it open until a click
 /// outside, Escape, or a second click on the summary. The overlay's own
 /// light dismiss does the closing, so a pinned popover unpins when it closes.
+///
+/// Held by whoever outlives the summary: the page keeps one above its rebuild
+/// line, beside the check, because a re-read whose data differs draws the
+/// header and the summary again, and a card made with them would close a
+/// popover the reader pinned. The gallery, which has no page above it, lets
+/// the summary make its own.
 #[derive(Clone, Copy)]
-struct HoverCard {
+pub struct HoverCard {
     open: RwSignal<bool>,
     pinned: RwSignal<bool>,
     timer: StoredValue<Option<TimeoutHandle>>,
 }
 
 impl HoverCard {
-    fn new(open: RwSignal<bool>, pinned: bool) -> Self {
-        let pinned = RwSignal::new(pinned);
+    /// `opened` starts it open and pinned, as a reader's click leaves it.
+    pub fn new(opened: bool) -> Self {
+        let open = RwSignal::new(opened);
+        let pinned = RwSignal::new(opened);
         Effect::new(move |_| {
             if !open.get() {
                 pinned.set(false);
@@ -426,6 +434,18 @@ impl HoverCard {
             self.open.set(true);
         }
     }
+
+    /// Closed and unpinned: the summary is gone, or another package is on
+    /// screen, and a pin must not reopen on what comes next.
+    pub fn close(self) {
+        self.cancel();
+        if self.pinned.get_untracked() {
+            self.pinned.set(false);
+        }
+        if self.open.get_untracked() {
+            self.open.set(false);
+        }
+    }
 }
 
 /// What a `Blocked` verdict's popover says after the counts.
@@ -476,14 +496,31 @@ pub fn IncomingSummary(
     catalog: Option<Catalog>,
     /// *Try again*, after a failed check.
     on_retry: Callback<()>,
+    /// The popover's open and pinned state, held above whatever draws this
+    /// summary again; without one the summary keeps its own.
+    #[prop(optional)]
+    card: Option<HoverCard>,
     /// The popover starts open and pinned, as a reader's click leaves it.
+    /// Only for a summary that keeps its own card.
     #[prop(optional)]
     opened: bool,
 ) -> impl IntoView {
+    let card = card.unwrap_or_else(|| HoverCard::new(opened));
+    // No popover drawn, no pin: one left standing would reopen on the next
+    // answer, which can be about other files.
+    Effect::new(move |_| {
+        let drawn = check.with(|c| {
+            c.as_ref()
+                .is_some_and(|c| matches!(c, PullCheck::Ready(_)) && !coming(c).is_empty())
+        });
+        if !drawn {
+            card.close();
+        }
+    });
     move || {
         check
             .get()
-            .and_then(|check| summary(&check, whole, catalog.clone(), on_retry, opened))
+            .and_then(|check| summary(&check, whole, catalog.clone(), on_retry, card))
     }
 }
 
@@ -492,7 +529,7 @@ fn summary(
     whole: bool,
     catalog: Option<Catalog>,
     on_retry: Callback<()>,
-    opened: bool,
+    card: HoverCard,
 ) -> Option<AnyView> {
     let rows = coming(check);
     let words = summary_words(check, &rows)?;
@@ -524,8 +561,7 @@ fn summary(
             thousands(total)
         )
     });
-    let open = RwSignal::new(opened);
-    let card = HoverCard::new(open, opened);
+    let open = card.open;
     // On a conflict the line says what to do instead of what Get latest
     // would, and it is the sentence the file list's `Differs` marks describe.
     let conflict = conflict_words(check);
@@ -993,10 +1029,8 @@ mod tests {
     #[wasm_bindgen_test]
     async fn hover_opens_and_a_click_pins() {
         let owner = Owner::new();
-        let (open, card) = owner.with(|| {
-            let open = RwSignal::new(false);
-            (open, HoverCard::new(open, false))
-        });
+        let card = owner.with(|| HoverCard::new(false));
+        let open = card.open;
         let grace = i32::try_from(HOVER_GRACE.as_millis()).unwrap() + 50;
 
         card.enter();
