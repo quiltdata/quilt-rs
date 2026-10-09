@@ -1205,6 +1205,8 @@ const API_KEY: &str = "qk_test-key";
 struct ApiKeyHttpClient {
     vends: AtomicUsize,
     reject: bool,
+    /// Vend credentials expiring this far ahead; `None` uses the fixed fixture time.
+    expires_in: Option<chrono::Duration>,
 }
 
 #[async_trait]
@@ -1235,7 +1237,10 @@ impl HttpClient for ApiKeyHttpClient {
                     access_key_id: "key-access-key".to_string(),
                     secret_access_key: "key-secret-key".to_string(),
                     session_token: "key-session-token".to_string(),
-                    expiration: chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+                    expiration: self.expires_in.map_or_else(
+                        || chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+                        |d| chrono::Utc::now() + d,
+                    ),
                 };
                 Ok(serde_json::from_value(serde_json::to_value(creds)?)?)
             }
@@ -1291,6 +1296,36 @@ async fn test_api_key_vends_without_a_session() -> Res {
     // The key's credentials are never cached to disk.
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
     assert!(auth_io.read_credentials().await?.is_none());
+    Ok(())
+}
+
+/// Two calls share one exchange; a new key vends afresh instead of reusing
+/// the old key's credentials.
+#[test(tokio::test)]
+async fn test_api_key_vends_once_and_rotation_re_vends() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths, storage);
+    let host = fixtures::host();
+    auth.set_api_key(&host, API_KEY.to_string());
+
+    // The fixture's credentials expire at a fixed past instant, so give the
+    // cache something with time left.
+    let client = ApiKeyHttpClient {
+        expires_in: Some(chrono::Duration::hours(1)),
+        ..ApiKeyHttpClient::default()
+    };
+    auth.get_credentials_or_refresh(&client, &host).await?;
+    auth.get_credentials_or_refresh(&client, &host).await?;
+    assert_eq!(client.vends.load(Ordering::SeqCst), 1);
+
+    auth.set_api_key(&host, API_KEY.to_string());
+    auth.get_credentials_or_refresh(&client, &host).await?;
+    assert_eq!(
+        client.vends.load(Ordering::SeqCst),
+        2,
+        "a set key starts with no credentials"
+    );
     Ok(())
 }
 

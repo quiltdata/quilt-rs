@@ -104,9 +104,17 @@ impl std::fmt::Debug for ApiKey {
     }
 }
 
+/// A host's API key and the credentials it last vended. Held in memory only:
+/// a key-backed session leaves nothing on disk.
+#[derive(Debug)]
+struct ApiKeyEntry {
+    key: ApiKey,
+    vended: Option<Credentials>,
+}
+
 /// Per-host API keys. Keyed by host because a key is valid only on the stack
 /// that issued it; sending it to another host's registry would leak it.
-type ApiKeys = Arc<StdMutex<HashMap<Host, ApiKey>>>;
+type ApiKeys = Arc<StdMutex<HashMap<Host, ApiKeyEntry>>>;
 
 /// The active role plus every role the user holds, as the switcher needs
 /// them. `available` includes `current`.
@@ -164,15 +172,53 @@ impl<S: Storage + Send + Sync> Auth<S> {
         self.api_keys
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(host.clone(), ApiKey(key));
+            .insert(
+                host.clone(),
+                ApiKeyEntry {
+                    key: ApiKey(key),
+                    vended: None,
+                },
+            );
     }
 
-    fn api_key_for(&self, host: &Host) -> Option<ApiKey> {
-        self.api_keys
+    /// The key for `host`, and its last vended credentials while they have
+    /// more than a minute left (the same margin the token refresh uses).
+    fn api_key_for(&self, host: &Host) -> Option<(ApiKey, Option<Credentials>)> {
+        let keys = self
+            .api_keys
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(host)
-            .cloned()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let entry = keys.get(host)?;
+        let fresh = entry
+            .vended
+            .as_ref()
+            .filter(|c| c.expires_at > chrono::Utc::now() + chrono::Duration::seconds(60))
+            .map(|c| Credentials {
+                access_key: c.access_key.clone(),
+                secret_key: c.secret_key.clone(),
+                token: c.token.clone(),
+                expires_at: c.expires_at,
+            });
+        Some((entry.key.clone(), fresh))
+    }
+
+    fn remember_vended(&self, host: &Host, key: &ApiKey, creds: &Credentials) {
+        let mut keys = self
+            .api_keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Only if the key is still the one these were vended for: a rotation
+        // in the meantime must not inherit the old key's credentials.
+        if let Some(entry) = keys.get_mut(host)
+            && entry.key.0 == key.0
+        {
+            entry.vended = Some(Credentials {
+                access_key: creds.access_key.clone(),
+                secret_key: creds.secret_key.clone(),
+                token: creds.token.clone(),
+                expires_at: creds.expires_at,
+            });
+        }
     }
 
     /// Get the `Arc<Mutex>` for this host's refresh lock, creating it
@@ -868,11 +914,16 @@ impl<S: Storage + Send + Sync> Auth<S> {
         // *unusual* ones below — no credentials, or a refresh — which stay louder.
         trace!("⏳ Getting or refreshing credentials for {}", host);
 
-        // The SDK caches what the credentials provider returns until it nears
-        // expiry, so vending on every call here costs one request per TTL. A
+        // Vended once per key and reused until a minute before expiry, so a new
+        // S3 client's eager check and its first request share one exchange. A
         // rejected key fails closed: there is no session to fall back to.
-        if let Some(ApiKey(key)) = self.api_key_for(host) {
-            return refresh_credentials(http_client, host, &key).await;
+        if let Some((key, fresh)) = self.api_key_for(host) {
+            if let Some(creds) = fresh {
+                return Ok(creds);
+            }
+            let creds = refresh_credentials(http_client, host, &key.0).await?;
+            self.remember_vended(host, &key, &creds);
+            return Ok(creds);
         }
 
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
