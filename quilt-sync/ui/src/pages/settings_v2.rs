@@ -48,7 +48,6 @@ pub enum Saved {
     Publish,
     Watch,
     Tray,
-    EntirePackageSync,
     DesignPreview,
     LogLevel,
 }
@@ -640,25 +639,18 @@ pub fn StorageCard(
 
 // ── Experimental ──
 
-pub const ENTIRE_PACKAGE_SYNC_SUBLABEL: &str =
-    "Adds a per-package option to sync everything in a package, instead of picking files.";
 pub const DESIGN_PREVIEW_SUBLABEL: &str = "The redesigned QuiltSync, wherever it is ready.";
 
-/// Opt-ins for what is still being designed.
+/// Opt-ins for what is still being designed. Entire-package sync is not one
+/// of them here: the v2 pages offer it whatever v1's flag says, so a row for
+/// it would change nothing a reader of this page can see.
 #[component]
 pub fn ExperimentalCard(
-    entire_package_sync: RwSignal<bool>,
     design_preview: RwSignal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
 ) -> impl IntoView {
     view! {
         <Card title="Experimental">
-            <ToggleRow
-                label="Enable entire-package sync"
-                sublabel=ENTIRE_PACKAGE_SYNC_SUBLABEL
-                checked=entire_package_sync
-                trailing=saved_note(saved, Saved::EntirePackageSync)
-            />
             <ToggleRow
                 label="New design preview"
                 sublabel=DESIGN_PREVIEW_SUBLABEL
@@ -1138,7 +1130,6 @@ mod tests {
             PUBLISHING_USE,
             GLOBAL_SCOPE_WARNING,
             TRAY_SUBLABEL,
-            ENTIRE_PACKAGE_SYNC_SUBLABEL,
             DESIGN_PREVIEW_SUBLABEL,
             TEMPORARY_LOGS,
             EMAIL_INSTEAD,

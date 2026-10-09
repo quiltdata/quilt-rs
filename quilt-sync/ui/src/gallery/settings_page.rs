@@ -248,7 +248,6 @@ fn whole_page() -> AnyView {
                     storage=storage(StorageSize::NotMeasured, false, None)
                     experimental=view! {
                         <ExperimentalCard
-                            entire_package_sync=RwSignal::new(false)
                             design_preview=RwSignal::new(true)
                         />
                     }
@@ -387,7 +386,6 @@ pub fn SettingsPageScene() -> impl IntoView {
             <Cell full=true label="Experimental">
                 {column(view! {
                     <ExperimentalCard
-                        entire_package_sync=RwSignal::new(false)
                         design_preview=RwSignal::new(true)
                     />
                 }
