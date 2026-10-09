@@ -31,7 +31,7 @@
 
 ### Fixed
 
-- The package page notices a newer revision published while the package is already behind within one autosync check, instead of describing the earlier one until you refresh (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- The package page notices a newer revision published while the package is already behind within one autosync check, instead of describing the earlier one until you refresh (<https://github.com/quiltdata/quilt-rs/pull/1102>)
 - **New design preview**: the package page no longer flashes its loading frame when it refreshes on its own, a second or two after it opens or whenever autosync reports back (<https://github.com/quiltdata/quilt-rs/pull/1093>)
 
 ### quilt-rs
