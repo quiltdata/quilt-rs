@@ -452,15 +452,18 @@ struct Entry {
     len: u64,
 }
 
-/// The entries of `dir`, or none if it does not exist.
+/// The entries of `dir`, or none if it does not exist. An entry that goes
+/// while it is read, as a lock-free [`gc_estimate`] can see a finishing
+/// download's staging dir go, is not one.
 async fn list_entries(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<Entry>> {
-    if !storage.exists(dir).await {
+    let Some(mut entries) = read_dir_if_there(storage, dir).await? else {
         return Ok(Vec::new());
-    }
-    let mut entries = storage.read_dir(dir).await?;
+    };
     let mut found = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
-        let metadata = entry.metadata().await?;
+        let Some(metadata) = metadata_if_there(&entry).await? else {
+            continue;
+        };
         found.push(Entry {
             path: entry.path(),
             is_dir: metadata.is_dir(),
@@ -484,19 +487,20 @@ async fn list_dirs(storage: &(impl Storage + Sync), dir: &Path) -> Res<Vec<PathB
 
 /// The visible files of `dir` as `(name, path, length)`, or none if it does
 /// not exist. A hidden file is a write's stranded `.tmp-<uuid>` or the OS's
-/// own, and is left alone.
+/// own, and is left alone; a file that goes while it is read is not one.
 pub(crate) async fn list_files(
     storage: &(impl Storage + Sync),
     dir: &Path,
 ) -> Res<Vec<(String, PathBuf, u64)>> {
-    if !storage.exists(dir).await {
+    let Some(mut entries) = read_dir_if_there(storage, dir).await? else {
         return Ok(Vec::new());
-    }
-    let mut entries = storage.read_dir(dir).await?;
+    };
     let mut files = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let metadata = entry.metadata().await?;
+        let Some(metadata) = metadata_if_there(&entry).await? else {
+            continue;
+        };
         if name.starts_with('.') || !metadata.is_file() {
             continue;
         }
@@ -504,6 +508,29 @@ pub(crate) async fn list_files(
     }
     files.sort();
     Ok(files)
+}
+
+/// `dir`'s entries, or `None` if it is not there. Any other failure to read
+/// it is an error.
+async fn read_dir_if_there(
+    storage: &(impl Storage + Sync),
+    dir: &Path,
+) -> Res<Option<tokio::fs::ReadDir>> {
+    match storage.read_dir(dir).await {
+        Ok(entries) => Ok(Some(entries)),
+        Err(err) if err.is_not_found() => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// `entry`'s own metadata, or `None` if it went since it was listed. Any
+/// other failure to read it is an error.
+async fn metadata_if_there(entry: &tokio::fs::DirEntry) -> Res<Option<std::fs::Metadata>> {
+    match entry.metadata().await {
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err.into()),
+    }
 }
 
 /// Count how many files `entry` holds and their summed length, a file
@@ -523,9 +550,14 @@ async fn sweep_entry(
     let (mut files, mut bytes) = (0, 0);
     let mut dirs = vec![entry.path.clone()];
     while let Some(dir) = dirs.pop() {
-        let mut entries = storage.read_dir(&dir).await?;
+        // Gone since it was listed: a lock-free count races the writers.
+        let Some(mut entries) = read_dir_if_there(storage, &dir).await? else {
+            continue;
+        };
         while let Some(child) = entries.next_entry().await? {
-            let metadata = child.metadata().await?;
+            let Some(metadata) = metadata_if_there(&child).await? else {
+                continue;
+            };
             if metadata.is_dir() {
                 dirs.push(child.path());
             } else {
@@ -1233,6 +1265,27 @@ mod tests {
         let after = domain.measure_storage().await?;
         assert_eq!(after.total_bytes, before.total_bytes - freed.bytes);
         assert!(after.freeable.is_empty());
+        Ok(())
+    }
+
+    /// A dir that goes between its listing and its walk, as a finishing
+    /// download's staging dir does, counts as nothing rather than failing
+    /// the measure.
+    #[test(tokio::test)]
+    async fn a_dir_gone_before_its_walk_counts_nothing() -> Res {
+        let dir = tempfile::TempDir::new()?;
+        let storage = LocalStorage::new();
+        let staging = dir.path().join("staging");
+        std::fs::create_dir_all(staging.join("some-uuid/nested"))?;
+        std::fs::write(staging.join("some-uuid/nested/file"), "1")?;
+        let listed = list_entries(&storage, &staging).await?;
+        std::fs::remove_dir_all(&staging)?;
+
+        for entry in listed {
+            assert_eq!(sweep_entry(&storage, entry, Sweep::Count).await?, (0, 0));
+        }
+        assert!(list_entries(&storage, &staging).await?.is_empty());
+        assert_eq!(list_files(&storage, &staging).await?, Vec::new());
         Ok(())
     }
 
