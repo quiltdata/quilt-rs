@@ -62,7 +62,8 @@
   text-decoration: underline;
 }
 
+// Wide enough to read as a break between the links, not part of either.
 .separator {
-  padding-inline: var(--q-space-1);
+  padding-inline: var(--q-space-2);
   color: var(--q-fgColor-muted);
 }
