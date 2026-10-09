@@ -20,6 +20,8 @@
 //! Nothing else: no sizes. A `Deleted` file has no link: the newer revision
 //! does not hold it. The cells' catalog host and hash are fixtures.
 
+use std::path::Path;
+
 use leptos::context::Provider;
 use leptos::prelude::*;
 
@@ -79,9 +81,20 @@ fn ready(outcome: PullOutcome, added: Vec<String>) -> PullCheck {
     with(outcome, added, &[], &[])
 }
 
-/// A check that found files of every kind.
-fn with(outcome: PullOutcome, added: Vec<String>, changed: &[&str], removed: &[&str]) -> PullCheck {
-    let owned = |paths: &[&str]| paths.iter().map(ToString::to_string).collect();
+/// A check that found files of every kind, each list sorted by path, as the
+/// engine sends them.
+fn with(
+    outcome: PullOutcome,
+    mut added: Vec<String>,
+    changed: &[&str],
+    removed: &[&str],
+) -> PullCheck {
+    let owned = |paths: &[&str]| {
+        let mut paths: Vec<String> = paths.iter().map(ToString::to_string).collect();
+        paths.sort_by(|a, b| Path::new(a).cmp(Path::new(b)));
+        paths
+    };
+    added.sort_by(|a, b| Path::new(a).cmp(Path::new(b)));
     PullCheck::Ready(PullPreview {
         outcome,
         added,

@@ -1490,6 +1490,11 @@ impl PullCheck {
 /// was already fetched to reach the verdict. `latest_hash` is `None` when there
 /// is no newer revision.
 ///
+/// Each of `added`, `changed` and `removed` arrives sorted by path, compared
+/// by component as `Path` compares (`a/b` before `a-b`), and a path is in at
+/// most one of them: the engine reads them out of one ordered map.
+/// The incoming popover merges them on that promise.
+///
 /// The literals are anchored identically in the backend's
 /// `pull_preview_wire_form_is_verbatim`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]

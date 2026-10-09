@@ -58,6 +58,7 @@
 //!   50px there, so it lists path, labels and link only.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -181,13 +182,17 @@ struct Kinds {
 }
 
 impl Kinds {
-    fn of(rows: &[Coming]) -> Self {
-        let n = |c: Change| rows.iter().filter(|r| r.change == c).count();
+    /// The lists' lengths: every file, not only the rows the popover lists.
+    const fn of(preview: &PullPreview) -> Self {
         Self {
-            new: n(Change::New),
-            changed: n(Change::Changed),
-            deleted: n(Change::Deleted),
+            new: preview.added.len(),
+            changed: preview.changed.len(),
+            deleted: preview.removed.len(),
         }
+    }
+
+    const fn total(self) -> usize {
+        self.new + self.changed + self.deleted
     }
 }
 
@@ -286,8 +291,13 @@ struct Coming {
     conflict: bool,
 }
 
-/// The popover's rows: the files the newer revision adds, changes and
-/// removes, by path.
+/// The popover's rows: the first [`LISTED`] files the newer revision adds,
+/// changes and removes, by path.
+///
+/// Each list arrives sorted by path and a path is in at most one, so the
+/// three are merged and only the rows listed are built: a revision touching
+/// far more files costs no more than one touching `LISTED`. Paths compare as
+/// the engine sorts them, by component, so `a/b` comes before `a-b`.
 fn coming(check: &PullCheck) -> Vec<Coming> {
     let PullCheck::Ready(preview) = check else {
         return Vec::new();
@@ -296,30 +306,41 @@ fn coming(check: &PullCheck) -> Vec<Coming> {
         PullOutcome::Blocked { conflicts } => conflicts.iter().map(String::as_str).collect(),
         _ => BTreeSet::new(),
     };
-    let mut rows: Vec<Coming> = [
+    let lists = [
         (&preview.added, Change::New),
         (&preview.changed, Change::Changed),
         (&preview.removed, Change::Deleted),
-    ]
-    .into_iter()
-    .flat_map(|(paths, change)| paths.iter().map(move |p| (p.clone(), change)))
-    .map(|(path, change)| Coming {
-        conflict: conflicts.contains(path.as_str()),
-        path,
-        change,
-    })
-    .collect();
-    rows.sort_by(|a, b| a.path.cmp(&b.path));
+    ];
+    let mut next = [0_usize; 3];
+    let mut rows = Vec::with_capacity(Kinds::of(preview).total().min(LISTED));
+    while rows.len() < LISTED {
+        // The least head; on a tie the earlier list, as a stable sort would.
+        let Some((i, path)) = lists
+            .iter()
+            .zip(next)
+            .enumerate()
+            .filter_map(|(i, ((paths, _), at))| paths.get(at).map(|p| (i, p)))
+            .min_by(|(_, a), (_, b)| Path::new(a).cmp(Path::new(b)))
+        else {
+            break;
+        };
+        next[i] += 1;
+        rows.push(Coming {
+            conflict: conflicts.contains(path.as_str()),
+            path: path.clone(),
+            change: lists[i].1,
+        });
+    }
     rows
 }
 
 /// `3 new files`, or `3 new, 2 changed, 1 deleted`.
-fn counts_words(rows: &[Coming]) -> String {
+fn counts_words(k: Kinds) -> String {
     let Kinds {
         new,
         changed,
         deleted,
-    } = Kinds::of(rows);
+    } = k;
     if changed == 0 && deleted == 0 {
         return if new == 1 {
             String::from("1 new file")
@@ -347,12 +368,14 @@ fn capitalised(words: &str) -> String {
 /// the files coming as a trigger's words. `None` when there is nothing to
 /// say: a revision that brings no files, conflict or not, has no popover, and
 /// the state label says the rest.
-fn summary_words(check: &PullCheck, rows: &[Coming]) -> Option<String> {
+fn summary_words(check: &PullCheck) -> Option<String> {
     match check {
         PullCheck::Loading => Some(String::from("checking\u{2026}")),
         PullCheck::Failed => Some(String::from("couldn't check")),
-        PullCheck::Ready(_) if rows.is_empty() => None,
-        PullCheck::Ready(_) => Some(changes_word(rows.len())),
+        PullCheck::Ready(preview) => match Kinds::of(preview).total() {
+            0 => None,
+            n => Some(changes_word(n)),
+        },
     }
 }
 
@@ -509,12 +532,9 @@ pub fn IncomingSummary(
     // No popover drawn, no pin: one left standing would reopen on the next
     // answer, which can be about other files.
     Effect::new(move |_| {
-        // The lists themselves, not `coming`'s rows: building those clones and
-        // sorts every path, which `summary` does once already.
-        let drawn = check.with(|c| {
-            matches!(c, Some(PullCheck::Ready(p))
-                if !(p.added.is_empty() && p.changed.is_empty() && p.removed.is_empty()))
-        });
+        // The lists' lengths, not `coming`'s rows, which `summary` builds.
+        let drawn =
+            check.with(|c| matches!(c, Some(PullCheck::Ready(p)) if Kinds::of(p).total() > 0));
         if !drawn {
             card.close();
         }
@@ -533,8 +553,7 @@ fn summary(
     on_retry: Callback<()>,
     card: HoverCard,
 ) -> Option<AnyView> {
-    let rows = coming(check);
-    let words = summary_words(check, &rows)?;
+    let words = summary_words(check)?;
     let PullCheck::Ready(preview) = check else {
         let failed = check.is_failed();
         return Some(
@@ -551,11 +570,10 @@ fn summary(
             .into_any(),
         );
     };
-    let counts = counts_words(&rows);
-    let kinds = Kinds::of(&rows);
-    let total = rows.len();
-    let mut rows = rows;
-    rows.truncate(LISTED);
+    let kinds = Kinds::of(preview);
+    let counts = counts_words(kinds);
+    let total = kinds.total();
+    let rows = coming(check);
     let cut = (total > rows.len()).then(|| {
         format!(
             "This list covers the first {} of {} by path.",
@@ -793,7 +811,7 @@ mod tests {
     #[test]
     fn the_summary_says_what_the_check_found() {
         let added = |n: usize| (0..n).map(|i| format!("f{i}")).collect::<Vec<_>>();
-        let words = |check: &PullCheck| summary_words(check, &coming(check));
+        let words = summary_words;
         assert_eq!(
             words(&PullCheck::Loading).as_deref(),
             Some("checking\u{2026}")
@@ -936,28 +954,72 @@ mod tests {
     /// there is.
     #[test]
     fn the_row_counts_by_kind() {
-        let row = |change| Coming {
-            path: String::from("a"),
-            change,
-            conflict: false,
+        let k = |new, changed, deleted| Kinds {
+            new,
+            changed,
+            deleted,
         };
-        assert_eq!(counts_words(&[row(Change::New)]), "1 new file");
-        assert_eq!(
-            counts_words(&[row(Change::New), row(Change::New), row(Change::New)]),
-            "3 new files"
-        );
-        assert_eq!(
-            counts_words(&[
-                row(Change::New),
-                row(Change::Changed),
-                row(Change::Changed),
-                row(Change::Deleted)
-            ]),
-            "1 new, 2 changed, 1 deleted"
-        );
-        assert_eq!(counts_words(&[row(Change::Deleted)]), "1 deleted");
+        assert_eq!(counts_words(k(1, 0, 0)), "1 new file");
+        assert_eq!(counts_words(k(3, 0, 0)), "3 new files");
+        assert_eq!(counts_words(k(1, 2, 1)), "1 new, 2 changed, 1 deleted");
+        assert_eq!(counts_words(k(0, 0, 1)), "1 deleted");
         assert_eq!(capitalised("3 new files"), "3 new files");
         assert_eq!(capitalised("new"), "New");
+    }
+
+    /// Past the cap the popover builds only the rows it lists: the first
+    /// `LISTED` by path, the three kinds interleaved as one sorted list would
+    /// put them, while the counts and the summary still take every file.
+    #[test]
+    fn the_rows_stop_at_the_cap_and_the_counts_do_not() {
+        // 1,200 paths, every third one to each kind, so the kinds interleave.
+        let paths = |rem: usize| {
+            (0..1_200)
+                .filter(|i| i % 3 == rem)
+                .map(|i| format!("p{i:05}"))
+                .collect::<Vec<_>>()
+        };
+        let check = PullCheck::Ready(PullPreview {
+            outcome: PullOutcome::Blocked {
+                conflicts: vec!["p00004".to_string(), "p01100".to_string()],
+            },
+            added: paths(0),
+            changed: paths(1),
+            removed: paths(2),
+            latest_hash: None,
+        });
+        let rows = coming(&check);
+        assert_eq!(rows.len(), LISTED);
+        let kind = |i: usize| [Change::New, Change::Changed, Change::Deleted][i % 3];
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(row.path, format!("p{i:05}"), "row {i} in path order");
+            assert!(row.change == kind(i), "row {i} keeps its kind");
+            assert_eq!(row.conflict, i == 4, "row {i}'s conflict mark");
+        }
+        let PullCheck::Ready(preview) = &check else {
+            unreachable!()
+        };
+        assert_eq!(
+            counts_words(Kinds::of(preview)),
+            "400 new, 400 changed, 400 deleted"
+        );
+        assert_eq!(summary_words(&check).as_deref(), Some("1,200 file changes"));
+
+        // By component, as the engine sorts each list: `a/b` before `a-b`.
+        let nested = ready(PullOutcome::CleanUpdate, vec!["a/b".to_string()]);
+        let PullCheck::Ready(mut nested) = nested else {
+            unreachable!()
+        };
+        nested.changed = vec!["a-b".to_string()];
+        let paths: Vec<String> = coming(&PullCheck::Ready(nested))
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        assert_eq!(paths, ["a/b", "a-b"]);
+        assert_eq!(
+            conflict_words(&check).as_deref(),
+            Some("2 of them conflict with yours. Publish your changes, then resolve them.")
+        );
     }
 
     /// The v2 vocabulary holds in the row and the popover: none of the words
@@ -989,7 +1051,7 @@ mod tests {
         ];
         let mut all = vec![String::from(OPEN_LABEL)];
         for check in &checks {
-            all.extend(summary_words(check, &coming(check)));
+            all.extend(summary_words(check));
             all.extend(conflict_words(check));
             for whole in [false, true] {
                 for kinds in [
