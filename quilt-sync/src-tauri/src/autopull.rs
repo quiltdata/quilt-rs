@@ -311,8 +311,13 @@ impl Watcher {
             }
             paused.remove(namespace);
         }
-        self.inner.aggregator.note_cleared(namespace);
+        // Only the pause: a safe verdict can keep local edits in place, so the
+        // tray's change count is set from the observation, not dropped.
+        self.inner.aggregator.clear_error(namespace);
         if let Some(status) = status {
+            self.inner
+                .aggregator
+                .note_status(namespace, !status.changes.is_empty());
             let mut event = PackageStatusEvent::from_status(namespace, status);
             event.fingerprint = format!("unpaused;{}", event.fingerprint);
             self.inner.reporter.report_status(namespace, event);
@@ -901,5 +906,38 @@ mod tests {
         watcher.clear_paused(&ns).await;
         assert!(rx.borrow().error.is_none());
         assert_eq!(rx.borrow().mode, TrayMode::Idle);
+    }
+
+    /// Taking back a conflict clears only the pause: a safe pull that keeps
+    /// local changes leaves edited files in place, so the tray still counts
+    /// the package as having changes.
+    #[tokio::test]
+    async fn clear_pull_conflict_keeps_the_package_counted_as_changed() {
+        let (tx, rx) = watch::channel(SyncTrayStatus::default());
+        let aggregator = Arc::new(SyncTrayAggregator::new(tx));
+        let watcher =
+            Watcher::new_for_test_with_aggregator(Arc::new(LogReporter), aggregator.clone());
+        let ns: Namespace = ("acme", "demo").into();
+        watcher
+            .pause_for_test(ns.clone(), PausedReason::PullConflict(vec!["a.csv".into()]))
+            .await;
+        aggregator.note_paused(&ns, "conflict");
+        aggregator.note_status(&ns, true);
+        let status = crate::quilt::lineage::InstalledPackageStatus::new(
+            crate::quilt::lineage::UpstreamState::Behind,
+            BTreeMap::from([(
+                std::path::PathBuf::from("a.csv"),
+                crate::quilt::lineage::Change::Modified(
+                    crate::quilt::manifest::ManifestRow::default(),
+                ),
+            )]),
+        );
+
+        assert!(watcher.clear_pull_conflict(&ns, Some(&status)).await);
+
+        let after = rx.borrow().clone();
+        assert!(after.error.is_none());
+        assert_eq!(after.mode, TrayMode::Idle);
+        assert_eq!(after.pending_changes, 1);
     }
 }
