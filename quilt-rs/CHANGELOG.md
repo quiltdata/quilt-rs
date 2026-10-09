@@ -19,11 +19,15 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.43.0-dev]
+## [v0.43.0] - 2026-10-09
+
+### Added
+
+- `InstalledPackage::pull_verdict` returns only the pull dry run's verdict, without collecting the paths (<https://github.com/quiltdata/quilt-rs/pull/1094>)
 
 ### Changed
 
-- **Breaking:** The pull dry run also returns the paths the newer revision changes and removes, and its hash: `PullPreview` has new `changed`, `removed` and `latest_hash` fields. A caller that needs only the verdict uses the new `pull_verdict`, which skips collecting the paths (<https://github.com/quiltdata/quilt-rs/pull/1094>)
+- **Breaking:** `PullPreview` has new `changed`, `removed` and `latest_hash` fields: the paths the newer revision changes and removes, and its hash (<https://github.com/quiltdata/quilt-rs/pull/1094>)
 
 ## [v0.42.1] - 2026-10-06
 
