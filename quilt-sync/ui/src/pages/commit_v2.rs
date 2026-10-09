@@ -380,6 +380,7 @@ pub fn MetadataField(
     // Not a `FormControl`: the name shares its row with `Edit`.
     let control_id = crate::kit::unique_id("metadata");
     let error_id = format!("{control_id}-error");
+    let label_id = format!("{control_id}-label");
     let body_id = format!("{control_id}-body");
     let preview = move || match MetadataPreview::of(&metadata.get()) {
         MetadataPreview::None => {
@@ -393,10 +394,12 @@ pub fn MetadataField(
     let height = RwSignal::new(EDITOR_HEIGHT);
     let editor = {
         let control_id = control_id.clone();
+        let label_id = label_id.clone();
         let error_id = error_id.clone();
         move || {
             metadata_editor(
                 control_id.clone(),
+                label_id.clone(),
                 error_id.clone(),
                 metadata,
                 failing,
@@ -412,15 +415,21 @@ pub fn MetadataField(
                     let control_id = control_id.clone();
                     move || {
                         let label = label.clone();
+                        let label_id = label_id.clone();
                         if editing.get() {
                             view! {
-                                <label class=style::field_name for=control_id.clone()>
+                                <label
+                                    class=style::field_name
+                                    id=label_id
+                                    for=control_id.clone()
+                                >
                                     {label}
                                 </label>
                             }
                                 .into_any()
                         } else {
-                            view! { <span class=style::field_name>{label}</span> }.into_any()
+                            view! { <span class=style::field_name id=label_id>{label}</span> }
+                                .into_any()
                         }
                     }
                 }
@@ -502,6 +511,7 @@ fn keyed_height(height: i32, key: &str) -> Option<i32> {
 /// the box, which crops the editor's context menu.
 fn metadata_editor(
     id: String,
+    labelled_by: String,
     described_by: String,
     metadata: RwSignal<String>,
     invalid: Signal<bool>,
@@ -509,6 +519,7 @@ fn metadata_editor(
 ) -> AnyView {
     let editor_ref = NodeRef::<leptos::html::Div>::new();
     let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
+    let editor_described_by = described_by.clone();
     view! {
         // Its own wrapper: the glue hides the textarea's parent on mount.
         <div>
@@ -524,7 +535,12 @@ fn metadata_editor(
                 on:input=move |ev| metadata.set(event_target_value(&ev))
             />
         </div>
+        // The glue hides the textarea, so the editor a reader sees carries
+        // the field's name and its error too, as a named group.
         <div
+            role="group"
+            aria-labelledby=labelled_by
+            aria-describedby=move || invalid.get().then(|| editor_described_by.clone())
             class=move || invalid.get().then_some(style::invalid)
             style:height=move || format!("{}px", height.get())
         >

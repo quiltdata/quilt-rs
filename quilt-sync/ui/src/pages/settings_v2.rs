@@ -1093,6 +1093,43 @@ mod tests {
         assert_eq!(saves.get_untracked(), 1, "3 is");
     }
 
+    /// The editor a reader sees is named by the field's label and, while the
+    /// JSON fails, described by its error: the glue hides the textarea that
+    /// the label points at.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn the_visible_metadata_editor_is_named_and_described() {
+        let el = crate::test_support::mount(|| {
+            view! {
+                <PublishingCard
+                    template=RwSignal::new(String::new())
+                    workflow=RwSignal::new(String::new())
+                    metadata=RwSignal::new("{\"source\": ".to_string())
+                    dirty=true
+                    on_save=Callback::new(|()| ())
+                />
+            }
+        });
+        leptos::task::tick().await;
+        let group = el
+            .query_selector("[role=group]")
+            .unwrap()
+            .expect("the editor opened itself on the failing JSON");
+        let named_by = group.get_attribute("aria-labelledby").expect("a name");
+        let label = el
+            .query_selector(&format!("#{named_by}"))
+            .unwrap()
+            .expect("the label it points at");
+        assert_eq!(label.text_content().as_deref(), Some("Default metadata"));
+        let described_by = group.get_attribute("aria-describedby").expect("the error");
+        let error = el
+            .query_selector(&format!("#{described_by}"))
+            .unwrap()
+            .expect("the error it points at")
+            .text_content()
+            .unwrap_or_default();
+        assert!(error.contains("Not valid JSON"), "{error}");
+    }
+
     /// v2 vocabulary: no commit, push, pull or remote in the page's words.
     #[test]
     fn no_fixed_string_uses_a_banned_word() {
