@@ -261,6 +261,52 @@ impl Spool {
             .map(|(_, hash)| hash))
     }
 
+    /// The history time for `run_id`'s revision of `package`: its capture time,
+    /// moved to one second past the latest time any earlier-captured run of the
+    /// same package used. History tags have one-second resolution, so two runs
+    /// captured in one second would otherwise share a tag and one would vanish
+    /// from history. Computed from the journal alone, so a replay gets the same
+    /// time and rewrites the same tag.
+    pub fn history_time(
+        &self,
+        package: &str,
+        run_id: &str,
+    ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+        let runs = self.runs()?;
+        let mut order: Vec<&Run> = runs.values().collect();
+        order.sort_by_key(|r| r.captured_at_line);
+        let mut last: Option<chrono::DateTime<chrono::Utc>> = None;
+        for r in order {
+            let Event::Snapshot {
+                run_id: id,
+                snapshot_time_utc,
+                ..
+            } = &r.snapshot
+            else {
+                continue;
+            };
+            let at = chrono::DateTime::parse_from_rfc3339(snapshot_time_utc)
+                .map_err(|e| Error::Refused(format!("snapshot time of {id}: {e}")))?
+                .with_timezone(&chrono::Utc);
+            let same_package = r.landed.as_ref().is_some_and(|(p, _)| p == package);
+            if id == run_id {
+                return Ok(match last {
+                    Some(prev) if at <= prev => prev + chrono::Duration::seconds(1),
+                    _ => at,
+                });
+            }
+            if same_package {
+                last = Some(match last {
+                    Some(prev) if at <= prev => prev + chrono::Duration::seconds(1),
+                    _ => at,
+                });
+            }
+        }
+        Err(Error::Refused(format!(
+            "run {run_id} is not in the journal"
+        )))
+    }
+
     /// The newest snapshot of each folder: the members it froze. A scan uses
     /// it to tell a captured run (still there, maybe grown) from a new run
     /// the instrument wrote at the same path.
@@ -310,6 +356,22 @@ mod tests {
             mtime_local: None,
             version_id: Some("v1".to_string()),
         }
+    }
+
+    /// Two runs of one package captured in the same second get distinct
+    /// history times, and asking again gives the same answer.
+    #[test]
+    fn same_second_runs_get_distinct_history_times() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let mut spool = Spool::open(dir.path())?;
+        spool.record(&snapshot("a", "i", "2026-10-07T00:00:00Z"))?;
+        spool.record(&snapshot("b", "i", "2026-10-07T00:00:00Z"))?;
+        spool.record(&landed("a", "hash-a"))?;
+        let a = spool.history_time("raw:a/b", "a")?;
+        let b = spool.history_time("raw:a/b", "b")?;
+        assert_eq!(b, a + chrono::Duration::seconds(1));
+        assert_eq!(spool.history_time("raw:a/b", "b")?, b, "stable on replay");
+        Ok(())
     }
 
     #[test]

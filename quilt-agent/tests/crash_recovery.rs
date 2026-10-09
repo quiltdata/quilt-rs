@@ -410,3 +410,95 @@ async fn a_new_run_at_a_reused_path_is_captured() -> Result<(), Box<dyn std::err
     assert_eq!(landed_events(spool_dir.path()).len(), 2);
     Ok(())
 }
+
+/// A bucket whose workflow config requires a workflow accepts the agent's
+/// revision: the agent attaches the bucket's default workflow.
+#[tokio::test]
+async fn a_governed_bucket_accepts_the_revision() -> Result<(), Box<dyn std::error::Error>> {
+    let source = tempfile::tempdir()?;
+    let spool_dir = tempfile::tempdir()?;
+    let run = source.path().join("plate");
+    std::fs::create_dir(&run)?;
+    std::fs::write(run.join("a.fcs"), b"aaaa")?;
+    std::fs::write(run.join("done.txt"), b"")?;
+    let remote = Flaky {
+        inner: MockRemote::default(),
+        fail_seal: AtomicBool::new(false),
+    };
+    remote
+        .inner
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://raw/.quilt/workflows/config.yml")?,
+            b"version: \"1\"\nis_workflow_required: true\ndefault_workflow: ingest\nworkflows:\n  ingest:\n    name: Ingest\n".to_vec(),
+        )
+        .await?;
+    let mut agent = Agent::new(
+        profile(source.path()),
+        remote,
+        Spool::open(spool_dir.path())?,
+        None,
+    );
+    let later = SystemTime::now() + Duration::from_secs(3600);
+    agent.pass(SystemTime::now()).await?;
+    agent.pass(later).await?;
+    assert_eq!(landed_events(spool_dir.path()).len(), 1);
+    Ok(())
+}
+
+/// A share that drops off the network makes the whole folder vanish: the run is
+/// retried. A member deleted from a folder that is still there parks the run.
+#[tokio::test]
+async fn an_outage_is_retried_and_a_deleted_member_parks() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = tempfile::tempdir()?;
+    let spool_dir = tempfile::tempdir()?;
+    let journal = spool_dir.path().join("journal.jsonl");
+    let run = source.path().join("plate");
+    std::fs::create_dir(&run)?;
+    std::fs::write(run.join("a.fcs"), b"aaaa")?;
+    std::fs::write(run.join("done.txt"), b"")?;
+    let remote = Flaky {
+        inner: MockRemote::default(),
+        fail_seal: AtomicBool::new(false),
+    };
+    let mut agent = Agent::new(
+        profile(source.path()),
+        remote,
+        Spool::open(spool_dir.path())?,
+        None,
+    );
+    let later = SystemTime::now() + Duration::from_secs(3600);
+    agent.pass(SystemTime::now()).await?;
+    agent.pass(later).await?;
+
+    // As if the process died right after capture: only the snapshot survives.
+    let Agent { remote, spool, .. } = agent;
+    drop(spool);
+    keep_journal_lines(&journal, |l| l.contains(r#""event":"snapshot""#))?;
+    let reopen = |remote| -> Result<_, Box<dyn std::error::Error>> {
+        Ok(Agent::new(
+            profile(source.path()),
+            remote,
+            Spool::open(spool_dir.path())?,
+            None,
+        ))
+    };
+    let mut agent = reopen(remote)?;
+    let run_id = agent.spool.runs()?.keys().next().expect("one run").clone();
+
+    let away = tempfile::tempdir()?;
+    std::fs::rename(&run, away.path().join("plate"))?; // the share is gone
+    agent.resume().await?;
+    assert_eq!(
+        agent.spool.runs()?[&run_id].state,
+        RunState::Uploading,
+        "an outage leaves the run to retry"
+    );
+
+    std::fs::rename(away.path().join("plate"), &run)?; // back, minus a member
+    std::fs::remove_file(run.join("a.fcs"))?;
+    agent.resume().await?;
+    assert_eq!(agent.spool.runs()?[&run_id].state, RunState::Suspect);
+    Ok(())
+}

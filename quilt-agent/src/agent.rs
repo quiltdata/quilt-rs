@@ -349,7 +349,7 @@ impl<R: Remote + Sync> Agent<R> {
         let folder_name = folder
             .file_name()
             .map_or_else(|| run_id.to_string(), |n| n.to_string_lossy().into_owned());
-        let revision = packager::build(
+        let mut revision = packager::build(
             &sentinel,
             sentinel_key,
             bucket,
@@ -358,6 +358,15 @@ impl<R: Remote + Sync> Agent<R> {
             &self.profile.packager.eln_keys,
             crate_json.as_ref(),
         )?;
+        // The bucket's default workflow, as an interactive commit would pick.
+        // Without it a bucket that requires one refuses every retry.
+        revision.manifest.header.workflow = quilt_rs::io::remote::resolve_workflow(
+            &self.remote,
+            self.host.as_ref(),
+            quilt_rs::io::remote::WorkflowIntent::BucketDefault,
+            &s3(bucket, quilt_rs::io::remote::WORKFLOWS_CONFIG_KEY),
+        )
+        .await?;
         let package = S3PackageHandle {
             bucket: bucket.clone(),
             namespace: revision.package_name.as_str().try_into().map_err(|e| {
@@ -372,11 +381,9 @@ impl<R: Remote + Sync> Agent<R> {
         let parent = self
             .spool
             .parent_for(&bucket_package_key(bucket, &revision.package_name), run_id)?;
-        // A time fixed by the run, not the clock, so a replay after a crash
-        // rewrites the same history entry instead of adding a second one.
-        let timestamp = DateTime::parse_from_rfc3339(&sentinel.snapshot_time_utc)
-            .map_err(|e| Error::Refused(format!("sentinel snapshot time: {e}")))?
-            .with_timezone(&Utc);
+        let timestamp = self
+            .spool
+            .history_time(&bucket_package_key(bucket, &revision.package_name), run_id)?;
         let pushed = flow::push_revision(
             &LocalStorage::default(),
             &self.remote,
@@ -414,13 +421,13 @@ impl<R: Remote + Sync> Agent<R> {
         let source = folder.join(&m.path);
         // Checked before and after the upload: bytes that changed in between
         // are not the run the boundary decided on.
-        Self::unchanged(&source, m)?;
+        Self::unchanged(folder, &source, m)?;
         let key = join_key(&[run_prefix, &m.path]);
         let (uri, hash) = self
             .remote
             .upload_file(host_config, &source, &s3(bucket, &key), m.size)
             .await?;
-        Self::unchanged(&source, m)?;
+        Self::unchanged(folder, &source, m)?;
         // ObjectHash serializes as {"type", "value"}, the sentinel's checksum shape.
         let v = serde_json::to_value(&hash)?;
         let checksum = Checksum {
@@ -443,10 +450,13 @@ impl<R: Remote + Sync> Agent<R> {
     /// A member still matches its snapshot. A missing file or a changed size
     /// or mtime is a different run (refused); any other I/O error — a share
     /// that dropped off the network — is transient and retried next pass.
-    fn unchanged(source: &Path, m: &SnapMember) -> Result<(), Error> {
+    fn unchanged(folder: &Path, source: &Path, m: &SnapMember) -> Result<(), Error> {
         let meta = match std::fs::metadata(source) {
             Ok(meta) => meta,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // An unmounted share makes every path look absent. Only a missing
+            // member inside a folder that is still there is a changed run;
+            // a missing folder is an outage, retried next pass.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && folder.is_dir() => {
                 return Err(Error::Refused(format!(
                     "member gone after boundary: {}",
                     m.path
