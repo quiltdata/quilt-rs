@@ -29,6 +29,8 @@
 
 - **New design preview**: on the commit page, the file list scrolls in its own box, so the page title and **Publish** stay on screen however long the list is. Drag the bar under the metadata editor to make it taller. The `›` between the links above the page title has more room (<https://github.com/quiltdata/quilt-rs/pull/1095>)
 
+- Under the hood, a crash report can carry a message from the user, ready for the new *Report a problem* dialog (<https://github.com/quiltdata/quilt-rs/pull/1100>)
+
 ### Fixed
 
 - **New design preview**: the package page no longer flashes its loading frame when it refreshes on its own, a second or two after it opens or whenever autosync reports back (<https://github.com/quiltdata/quilt-rs/pull/1093>)
