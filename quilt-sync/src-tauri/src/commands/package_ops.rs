@@ -588,19 +588,19 @@ async fn take_back_conflict<M: model::QuiltModel>(
         return;
     }
     // The observation the announcement carries, so a page listing packages
-    // shows the state the package is really in.
+    // shows the state the package is really in. Without it the clear could
+    // not be announced, and an open page would keep offering Publish for a
+    // conflict already dropped; so the pause stays for the next dry run.
     let status = match m.locked_package_status(locked, None).await {
-        Ok(status) => Some(status),
+        Ok(status) => status,
         Err(err) => {
             tracing::warn!(
-                "pull dry run: could not read {namespace}'s status to announce the cleared conflict: {err}"
+                "pull dry run: could not read {namespace}'s status, keeping its recorded conflict: {err}"
             );
-            None
+            return;
         }
     };
-    watcher
-        .clear_pull_conflict(namespace, status.as_ref())
-        .await;
+    watcher.clear_pull_conflict(namespace, &status).await;
 }
 
 /// Dry-run classifier for the two-phase Pull affordance: what would
@@ -1434,6 +1434,47 @@ mod tests {
             assert_ne!(event.fingerprint, observed);
             assert_ne!(event.fingerprint, "paused;true");
         }
+    }
+
+    /// Without a status the clear could not be announced, and an open page
+    /// would keep offering Publish for a conflict the backend had dropped. So
+    /// the pause stays, unannounced, for the next dry run to take back.
+    #[tokio::test]
+    async fn a_failed_status_read_keeps_a_recorded_conflict() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        watcher
+            .pause(&ns, &fixtures::host(), conflict_pause())
+            .await;
+        let seen = reporter.statuses.lock().unwrap().len();
+        let mut model = installed_model();
+        model
+            .expect_lock_package()
+            .times(1)
+            .returning(|p| Ok(p.namespace.clone()));
+        model
+            .expect_locked_package_pull_outcome()
+            .times(1)
+            .returning(|_| {
+                Ok(quilt::flow::PullPreview {
+                    outcome: quilt::flow::PullOutcome::CleanUpdate,
+                    added: Vec::new(),
+                    changed: Vec::new(),
+                    removed: Vec::new(),
+                    latest_hash: None,
+                })
+            });
+        model
+            .expect_locked_package_status()
+            .returning(|_, _| Err(Error::General("status unreadable".to_string())));
+
+        super::package_pull_outcome_command(&model, &watcher, "acme/demo")
+            .await
+            .expect("dry run");
+
+        assert_eq!(watcher.paused_reason(&ns).await, Some(conflict_pause()));
+        assert_eq!(statuses_since(&reporter, seen), Vec::new());
     }
 
     /// A dry run that still finds the conflict leaves the pause as it is.

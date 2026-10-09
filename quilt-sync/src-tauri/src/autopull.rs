@@ -297,12 +297,12 @@ impl Watcher {
     /// fingerprint alone would not do, since a pause moves neither the upstream
     /// state nor the tree, so a page may already have acted on that very
     /// observation and would drop the event as old news. The fingerprint is
-    /// therefore marked as the clear's. `None` (the observation could not be
-    /// read) clears without announcing; the next real change re-reads.
+    /// therefore marked as the clear's. The same observation sets the tray's
+    /// change count, since a safe verdict can keep local edits in place.
     pub async fn clear_pull_conflict(
         &self,
         namespace: &Namespace,
-        status: Option<&quilt_rs::lineage::InstalledPackageStatus>,
+        status: &quilt_rs::lineage::InstalledPackageStatus,
     ) -> bool {
         {
             let mut paused = self.inner.paused.write().await;
@@ -314,14 +314,12 @@ impl Watcher {
         // Only the pause: a safe verdict can keep local edits in place, so the
         // tray's change count is set from the observation, not dropped.
         self.inner.aggregator.clear_error(namespace);
-        if let Some(status) = status {
-            self.inner
-                .aggregator
-                .note_status(namespace, !status.changes.is_empty());
-            let mut event = PackageStatusEvent::from_status(namespace, status);
-            event.fingerprint = format!("unpaused;{}", event.fingerprint);
-            self.inner.reporter.report_status(namespace, event);
-        }
+        self.inner
+            .aggregator
+            .note_status(namespace, !status.changes.is_empty());
+        let mut event = PackageStatusEvent::from_status(namespace, status);
+        event.fingerprint = format!("unpaused;{}", event.fingerprint);
+        self.inner.reporter.report_status(namespace, event);
         true
     }
 
@@ -933,7 +931,7 @@ mod tests {
             )]),
         );
 
-        assert!(watcher.clear_pull_conflict(&ns, Some(&status)).await);
+        assert!(watcher.clear_pull_conflict(&ns, &status).await);
 
         let after = rx.borrow().clone();
         assert!(after.error.is_none());
