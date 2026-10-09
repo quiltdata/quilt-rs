@@ -31,11 +31,9 @@ Or build from source (needs Rust 1.97+):
 cargo install quilt-cli
 ```
 
-Prebuilt binaries cover macOS (Apple Silicon and Intel) and Linux x86_64, and
-are attached to every
+Prebuilt binaries cover macOS (Apple Silicon and Intel), Linux x86_64 and
+Windows x86_64, and are attached to every
 [`quilt-cli/v*` release](https://github.com/quiltdata/quilt-rs/releases).
-Windows builds from source only
-([#844](https://github.com/quiltdata/quilt-rs/issues/844)).
 
 ## Quickstart
 
