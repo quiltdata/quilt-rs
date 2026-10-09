@@ -1,0 +1,35 @@
+[package]
+name = "quilt-agent"
+description = "Unattended instrument-to-cloud mover: watches run folders, lands completed runs in S3, and publishes each as a Quilt package revision."
+version = "0.1.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+chrono.workspace = true
+clap.workspace = true
+globset.workspace = true
+hostname = "0.4"
+jsonschema.workspace = true
+notify.workspace = true
+quilt-rs = { path = "../quilt-rs" }
+quilt-uri = { path = "../quilt-uri" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+uuid.workspace = true
+
+[dev-dependencies]
+quilt-rs = { path = "../quilt-rs", features = ["testing"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

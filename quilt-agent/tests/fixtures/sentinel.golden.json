@@ -1,0 +1,32 @@
+{
+  "schema_version": "1",
+  "sentinel_id": "3f1c9a7e-2b47-4b9a-9c1a-6c5d0f2a8e11",
+  "run_id": "20260915T101955Z-8e11c3",
+  "previous_sentinel_id": "b7d2e0c4-9a11-4d6e-8f3b-1e2c9d8a7f60",
+  "observer": { "id": "edge-01", "host": "LAB-EDGE01", "agent_version": "0.1.0", "placement": "beside" },
+  "instrument": { "id": "flow-cytometer-1", "vendor": "Beckman", "model": "CytoFLEX LX" },
+  "source_path": "/mnt/instrument/Data/2026-09-15_plate3",
+  "boundary": {
+    "method": "marker_file",
+    "evidence": "done.txt present; folder stable 120s (window 120s); 1 members",
+    "guessed": false,
+    "decided_at_utc": "2026-09-15T10:17:12Z",
+    "params": { "markers": ["done.txt"], "confirm_window_s": 120 }
+  },
+  "instrument_local_time": "2026-09-15T03:14:07",
+  "observer_time_utc": "2026-09-15T10:19:55Z",
+  "snapshot_time_utc": "2026-09-15T10:17:12Z",
+  "checksum_algorithm": "sha2-256-chunked",
+  "files": [
+    {
+      "path": "plate3/A01.fcs",
+      "key": "lab/flow-cytometer-1/20260915T101955Z-8e11c3/plate3/A01.fcs",
+      "size": 4194304,
+      "checksum": { "algorithm": "sha2-256-chunked", "value": "ZW8vd2pDQnBUS1Z4cFdmM0E4dFh6VzN3c0tWQzRlNzc=" },
+      "mtime_local": "2026-09-15T03:12:41",
+      "version_id": "3sL4kqtJ"
+    }
+  ],
+  "file_count": 1,
+  "total_bytes": 4194304
+}

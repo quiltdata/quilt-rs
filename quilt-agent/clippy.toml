@@ -1,0 +1,18 @@
+# Clippy takes the nearest clippy.toml, not a merge, so the workspace budget is
+# repeated here (see ../clippy.toml).
+future-size-threshold = 19800
+
+# An unattended mover only appends. It must never reconcile a package onto
+# the share or force-write `latest` over a scientist's revision; the workspace
+# denies clippy, so calling any of these fails the build.
+# `push_package` is listed because a first push certifies `latest`
+# unconditionally — publish with `flow::push_revision` instead.
+disallowed-methods = [
+    { path = "quilt_rs::flow::pull", reason = "the agent never pulls" },
+    { path = "quilt_rs::flow::reset_to_latest", reason = "the agent never resets" },
+    { path = "quilt_rs::flow::certify_latest", reason = "the agent never certifies latest" },
+    { path = "quilt_rs::flow::undo_commit", reason = "the agent never rewrites history" },
+    { path = "quilt_rs::flow::push", reason = "certifies latest on a first push; use flow::push_revision" },
+    { path = "quilt_rs::flow::install_package", reason = "the agent never writes to a source" },
+    { path = "quilt_rs::flow::install_paths", reason = "the agent never writes to a source" },
+]

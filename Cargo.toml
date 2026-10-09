@@ -1,6 +1,6 @@
 [workspace]
-members = ["quilt-rs", "quilt-cli", "quilt-sync/src-tauri", "quilt-sync/ui", "quilt-uri"]
-default-members = ["quilt-rs", "quilt-cli", "quilt-sync/src-tauri"]
+members = ["quilt-rs", "quilt-cli", "quilt-agent", "quilt-sync/src-tauri", "quilt-sync/ui", "quilt-uri"]
+default-members = ["quilt-rs", "quilt-cli", "quilt-agent", "quilt-sync/src-tauri"]
 resolver = "2"
 
 [workspace.package]
@@ -42,6 +42,8 @@ gitignores = "4.8"
 hex = "0.4.3"
 http-body = "1.1.0"
 ignore = "0.4"
+globset = "0.4"
+notify = "8.2"
 jsonschema = { version = "0.58.6", default-features = false }
 multibase = "0.9.3"
 multihash = "0.19.5"

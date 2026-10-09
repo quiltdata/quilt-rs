@@ -1,0 +1,503 @@
+//! The durable state between "boundary decided" and "revision published"
+//! is an append-only journal, one fsync'd JSON line per state
+//! change. A run's state is the fold of its events and is never stored
+//! separately, so a `kill -9` at any point resumes from the last line written.
+
+use std::collections::BTreeMap;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
+
+use serde::Deserialize;
+use serde::Serialize;
+
+use crate::Error;
+use crate::sentinel::FileEntry;
+
+/// One journal line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum Event {
+    /// Membership frozen at the boundary; everything a resume needs to finish.
+    Snapshot {
+        run_id: String,
+        instrument_id: String,
+        folder: PathBuf,
+        sentinel_id: String,
+        boundary: serde_json::Value,
+        instrument_local_time: Option<String>,
+        snapshot_time_utc: String,
+        total_bytes: u64,
+        /// Relative paths, sizes and mtimes as seen at the boundary.
+        members: Vec<SnapMember>,
+        /// Set when the run was refused at capture (over the spool cap). Part of
+        /// the snapshot, so no crash can leave a captured run that skips the cap.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refused: Option<String>,
+    },
+    /// The run is over the size cap and will not be uploaded.
+    Refused { run_id: String, reason: String },
+    /// One member uploaded and checked against the snapshot.
+    MemberVerified { run_id: String, file: FileEntry },
+    /// The sentinel is in S3.
+    Sealed {
+        run_id: String,
+        sentinel_key: String,
+        previous_sentinel_id: Option<String>,
+    },
+    /// The revision is published.
+    Landed {
+        run_id: String,
+        package_name: String,
+        top_hash: String,
+        latest_advanced: bool,
+    },
+    /// The source changed after the boundary; the run is parked for an operator.
+    Suspect { run_id: String, reason: String },
+}
+
+impl Event {
+    #[must_use]
+    pub fn run_id(&self) -> &str {
+        match self {
+            Event::Snapshot { run_id, .. }
+            | Event::Refused { run_id, .. }
+            | Event::MemberVerified { run_id, .. }
+            | Event::Sealed { run_id, .. }
+            | Event::Landed { run_id, .. }
+            | Event::Suspect { run_id, .. } => run_id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapMember {
+    pub path: String,
+    pub size: u64,
+    pub mtime_unix: i64,
+}
+
+/// Where a run stands, folded from its events.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RunState {
+    Uploading,
+    Sealed,
+    Landed,
+    Refused,
+    Suspect,
+}
+
+/// A run's folded events.
+#[derive(Debug, Clone)]
+pub struct Run {
+    pub snapshot: Event,
+    pub verified: BTreeMap<String, FileEntry>,
+    pub sealed: Option<(String, Option<String>)>,
+    /// Journal line of the `Sealed` event, for ordering the chain by seal time.
+    pub sealed_at_line: usize,
+    /// Journal line of the `Snapshot`: the order runs were captured in.
+    pub captured_at_line: usize,
+    /// `(package, top_hash)` once landed.
+    pub landed: Option<(String, String)>,
+    pub state: RunState,
+}
+
+#[derive(Debug)]
+pub struct Spool {
+    root: PathBuf,
+    journal: File,
+}
+
+impl Spool {
+    pub fn open(root: &Path) -> Result<Self, Error> {
+        std::fs::create_dir_all(root)?;
+        let path = root.join("journal.jsonl");
+        let journal = OpenOptions::new().create(true).append(true).open(&path)?;
+        // One agent per spool: a second process would snapshot the same runs.
+        // Locked before the tail is touched, so a second start can never cut
+        // a line the running agent is still writing. The OS releases the lock
+        // when this process exits, however it exits.
+        journal.try_lock().map_err(|_| {
+            Error::Refused(format!(
+                "another quilt-agent is using {}; stop it first",
+                root.display()
+            ))
+        })?;
+        // A kill mid-write leaves a line with no newline. Cut it off before
+        // appending, or the next event is glued to it and lost on every read.
+        let bytes = std::fs::read(&path)?;
+        if bytes.last().is_some_and(|b| *b != b'\n') {
+            let keep = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+            journal.set_len(keep as u64)?;
+        }
+        Ok(Spool {
+            root: root.to_path_buf(),
+            journal,
+        })
+    }
+
+    /// Append and fsync one event; it is durable when this returns.
+    pub fn record(&mut self, event: &Event) -> Result<(), Error> {
+        let mut line = serde_json::to_vec(event)?;
+        line.push(b'\n');
+        self.journal.write_all(&line)?;
+        self.journal.sync_data()?;
+        Ok(())
+    }
+
+    /// Every run in the journal, by run id. A torn final line (a kill mid-write)
+    /// is dropped: the event it carried was never acknowledged.
+    pub fn runs(&self) -> Result<BTreeMap<String, Run>, Error> {
+        let file = File::open(self.root.join("journal.jsonl"))?;
+        let mut runs: BTreeMap<String, Run> = BTreeMap::new();
+        for (line_no, line) in BufReader::new(file).lines().enumerate() {
+            let line = line?;
+            // `open` cuts the only expected bad line, a torn tail. Anything else
+            // is corruption: skipping it could forget a run and land it twice.
+            let event = serde_json::from_str::<Event>(&line).map_err(|e| {
+                Error::Refused(format!("journal line {} is unreadable: {e}", line_no + 1))
+            })?;
+            let id = event.run_id().to_string();
+            match event {
+                Event::Snapshot { ref refused, .. } => {
+                    let state = if refused.is_some() {
+                        RunState::Refused
+                    } else {
+                        RunState::Uploading
+                    };
+                    runs.insert(
+                        id,
+                        Run {
+                            snapshot: event,
+                            verified: BTreeMap::new(),
+                            sealed: None,
+                            sealed_at_line: 0,
+                            captured_at_line: line_no,
+                            landed: None,
+                            state,
+                        },
+                    );
+                }
+                Event::MemberVerified { file, .. } => {
+                    if let Some(run) = runs.get_mut(&id) {
+                        run.verified.insert(file.path.clone(), file);
+                    }
+                }
+                Event::Sealed {
+                    sentinel_key,
+                    previous_sentinel_id,
+                    ..
+                } => {
+                    if let Some(run) = runs.get_mut(&id) {
+                        run.sealed = Some((sentinel_key, previous_sentinel_id));
+                        run.sealed_at_line = line_no;
+                        run.state = RunState::Sealed;
+                    }
+                }
+                Event::Landed {
+                    package_name,
+                    top_hash,
+                    ..
+                } => {
+                    if let Some(run) = runs.get_mut(&id) {
+                        run.landed = Some((package_name, top_hash));
+                        run.state = RunState::Landed;
+                    }
+                }
+                Event::Suspect { .. } => {
+                    if let Some(run) = runs.get_mut(&id) {
+                        run.state = RunState::Suspect;
+                    }
+                }
+                Event::Refused { .. } => {
+                    runs.entry(id).and_modify(|r| r.state = RunState::Refused);
+                }
+            }
+        }
+        Ok(runs)
+    }
+
+    /// The last sentinel sealed for `instrument_id`, for the chain.
+    /// Ordered by when it was sealed, not when its run began: a run that
+    /// retried for hours and sealed late is still the newest link.
+    pub fn previous_sentinel(&self, instrument_id: &str) -> Result<Option<String>, Error> {
+        let runs = self.runs()?;
+        Ok(runs
+            .values()
+            .filter(|r| r.sealed.is_some())
+            .filter_map(|r| match &r.snapshot {
+                Event::Snapshot {
+                    instrument_id: i,
+                    sentinel_id,
+                    ..
+                } if i == instrument_id => Some((r.sealed_at_line, sentinel_id.clone())),
+                _ => None,
+            })
+            .max()
+            .map(|(_, id)| id))
+    }
+
+    /// The parent for `run_id`'s revision of `package` (`bucket:name`): the
+    /// newest of this agent's runs of that package captured *before* it. An
+    /// older run retried after a newer one landed must not name the newer
+    /// one as its parent, or its publish would move `latest` backward.
+    pub fn parent_for(&self, package: &str, run_id: &str) -> Result<Option<String>, Error> {
+        let runs = self.runs()?;
+        let Some(mine) = runs.get(run_id).map(|r| r.captured_at_line) else {
+            return Ok(None);
+        };
+        Ok(runs
+            .values()
+            .filter(|r| r.captured_at_line < mine)
+            .filter_map(|r| match &r.landed {
+                Some((p, hash)) if p == package => Some((r.captured_at_line, hash.clone())),
+                _ => None,
+            })
+            .max()
+            .map(|(_, hash)| hash))
+    }
+
+    /// The history time for `run_id`'s revision of `package`: its capture time,
+    /// moved to one second past the latest time any earlier-captured run of the
+    /// same package used. History tags have one-second resolution, so two runs
+    /// captured in one second would otherwise share a tag and one would vanish
+    /// from history. Computed from the journal alone, so a replay gets the same
+    /// time and rewrites the same tag.
+    pub fn history_time(
+        &self,
+        package: &str,
+        run_id: &str,
+    ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
+        let runs = self.runs()?;
+        let mut order: Vec<&Run> = runs.values().collect();
+        order.sort_by_key(|r| r.captured_at_line);
+        let mut last: Option<chrono::DateTime<chrono::Utc>> = None;
+        for r in order {
+            let Event::Snapshot {
+                run_id: id,
+                snapshot_time_utc,
+                ..
+            } = &r.snapshot
+            else {
+                continue;
+            };
+            let at = chrono::DateTime::parse_from_rfc3339(snapshot_time_utc)
+                .map_err(|e| Error::Refused(format!("snapshot time of {id}: {e}")))?
+                .with_timezone(&chrono::Utc);
+            let same_package = r.landed.as_ref().is_some_and(|(p, _)| p == package);
+            if id == run_id {
+                return Ok(match last {
+                    Some(prev) if at <= prev => prev + chrono::Duration::seconds(1),
+                    _ => at,
+                });
+            }
+            if same_package {
+                last = Some(match last {
+                    Some(prev) if at <= prev => prev + chrono::Duration::seconds(1),
+                    _ => at,
+                });
+            }
+        }
+        Err(Error::Refused(format!(
+            "run {run_id} is not in the journal"
+        )))
+    }
+
+    /// The newest snapshot of each folder: the members it froze. A scan uses
+    /// it to tell a captured run (still there, maybe grown) from a new run
+    /// the instrument wrote at the same path.
+    pub fn known_folders(&self) -> Result<BTreeMap<PathBuf, Vec<SnapMember>>, Error> {
+        let mut runs: Vec<Run> = self.runs()?.into_values().collect();
+        runs.sort_by_key(|r| r.captured_at_line);
+        Ok(runs
+            .into_iter()
+            .filter_map(|r| match r.snapshot {
+                Event::Snapshot {
+                    folder, members, ..
+                } => Some((folder, members)),
+                _ => None,
+            })
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    pub(crate) fn snapshot(run_id: &str, instrument: &str, at: &str) -> Event {
+        Event::Snapshot {
+            run_id: run_id.to_string(),
+            instrument_id: instrument.to_string(),
+            folder: PathBuf::from(format!("/data/{run_id}")),
+            sentinel_id: format!("sentinel-{run_id}"),
+            boundary: serde_json::json!({}),
+            instrument_local_time: None,
+            snapshot_time_utc: at.to_string(),
+            total_bytes: 3,
+            members: vec![],
+            refused: None,
+        }
+    }
+
+    fn file(path: &str) -> FileEntry {
+        FileEntry {
+            path: path.to_string(),
+            key: format!("lab/i/r/{path}"),
+            size: 3,
+            checksum: crate::sentinel::Checksum {
+                algorithm: "sha2-256-chunked".to_string(),
+                value: "abc".to_string(),
+            },
+            mtime_local: None,
+            version_id: Some("v1".to_string()),
+        }
+    }
+
+    /// Two runs of one package captured in the same second get distinct
+    /// history times, and asking again gives the same answer.
+    #[test]
+    fn same_second_runs_get_distinct_history_times() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let mut spool = Spool::open(dir.path())?;
+        spool.record(&snapshot("a", "i", "2026-10-07T00:00:00Z"))?;
+        spool.record(&snapshot("b", "i", "2026-10-07T00:00:00Z"))?;
+        spool.record(&landed("a", "hash-a"))?;
+        let a = spool.history_time("raw:a/b", "a")?;
+        let b = spool.history_time("raw:a/b", "b")?;
+        assert_eq!(b, a + chrono::Duration::seconds(1));
+        assert_eq!(spool.history_time("raw:a/b", "b")?, b, "stable on replay");
+        Ok(())
+    }
+
+    #[test]
+    fn a_second_agent_cannot_open_the_same_spool() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let _first = Spool::open(dir.path())?;
+        assert!(Spool::open(dir.path()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn state_is_the_fold_of_events() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let mut spool = Spool::open(dir.path())?;
+        spool.record(&snapshot("r1", "i", "2026-10-07T00:00:00Z"))?;
+        spool.record(&Event::MemberVerified {
+            run_id: "r1".into(),
+            file: file("a"),
+        })?;
+        let r = &spool.runs()?["r1"];
+        assert_eq!(r.state, RunState::Uploading);
+        assert_eq!(r.verified.len(), 1);
+
+        spool.record(&Event::Sealed {
+            run_id: "r1".into(),
+            sentinel_key: "k".into(),
+            previous_sentinel_id: None,
+        })?;
+        assert_eq!(spool.runs()?["r1"].state, RunState::Sealed);
+        Ok(())
+    }
+
+    /// A process killed mid-write leaves a partial last line; the journal still
+    /// reads, and the half-written event never happened.
+    #[test]
+    fn a_torn_last_line_is_dropped() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let mut spool = Spool::open(dir.path())?;
+        spool.record(&snapshot("r1", "i", "2026-10-07T00:00:00Z"))?;
+        drop(spool);
+        let mut f = OpenOptions::new()
+            .append(true)
+            .open(dir.path().join("journal.jsonl"))?;
+        f.write_all(br#"{"event":"sealed","run_id":"r1","sentinel_ke"#)?;
+        let mut spool = Spool::open(dir.path())?;
+        assert_eq!(spool.runs()?["r1"].state, RunState::Uploading);
+        // The first event after reopening is not glued to the torn line.
+        spool.record(&Event::Landed {
+            run_id: "r1".into(),
+            package_name: "a/b".into(),
+            top_hash: "h".into(),
+            latest_advanced: true,
+        })?;
+        assert_eq!(spool.runs()?["r1"].state, RunState::Landed);
+        Ok(())
+    }
+
+    fn landed(run: &str, hash: &str) -> Event {
+        Event::Landed {
+            run_id: run.into(),
+            package_name: "raw:a/b".into(),
+            top_hash: hash.into(),
+            latest_advanced: true,
+        }
+    }
+
+    /// Run A is captured before B; B lands first; A's retry must not take B
+    /// as its parent, or it would move `latest` back to the older run.
+    #[test]
+    fn an_older_run_retried_late_never_parents_on_a_newer_one() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let mut spool = Spool::open(dir.path())?;
+        spool.record(&snapshot("a", "i", "2026-10-07T00:00:00Z"))?;
+        spool.record(&snapshot("b", "i", "2026-10-07T01:00:00Z"))?;
+        spool.record(&landed("b", "hash-b"))?;
+        assert_eq!(spool.parent_for("raw:a/b", "a")?, None);
+        spool.record(&landed("a", "hash-a"))?;
+        assert_eq!(spool.parent_for("raw:a/b", "b")?.as_deref(), Some("hash-a"));
+        spool.record(&snapshot("c", "i", "2026-10-07T02:00:00Z"))?;
+        assert_eq!(spool.parent_for("raw:a/b", "c")?.as_deref(), Some("hash-b"));
+        Ok(())
+    }
+
+    /// A run that seals after a newer run is the newest link; the chain
+    /// must not fork back to the run that started later.
+    #[test]
+    fn chain_follows_seal_order_not_start_order() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let mut spool = Spool::open(dir.path())?;
+        spool.record(&snapshot("old", "i", "2026-10-07T00:00:00Z"))?;
+        spool.record(&snapshot("new", "i", "2026-10-07T01:00:00Z"))?;
+        for run in ["new", "old"] {
+            spool.record(&Event::Sealed {
+                run_id: run.into(),
+                sentinel_key: "k".into(),
+                previous_sentinel_id: None,
+            })?;
+        }
+        assert_eq!(
+            spool.previous_sentinel("i")?.as_deref(),
+            Some("sentinel-old")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn chain_names_the_last_sealed_run_per_instrument() -> Result<(), Error> {
+        let dir = tempfile::tempdir()?;
+        let mut spool = Spool::open(dir.path())?;
+        for (run, at) in [
+            ("r1", "2026-10-07T00:00:00Z"),
+            ("r2", "2026-10-07T01:00:00Z"),
+        ] {
+            spool.record(&snapshot(run, "i", at))?;
+            spool.record(&Event::Sealed {
+                run_id: run.into(),
+                sentinel_key: "k".into(),
+                previous_sentinel_id: None,
+            })?;
+        }
+        spool.record(&snapshot("r3", "i", "2026-10-07T02:00:00Z"))?;
+        assert_eq!(
+            spool.previous_sentinel("i")?.as_deref(),
+            Some("sentinel-r2")
+        );
+        assert_eq!(spool.previous_sentinel("other")?, None);
+        Ok(())
+    }
+}
