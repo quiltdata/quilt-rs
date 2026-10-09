@@ -413,6 +413,9 @@ pub fn AccountsCard<F, Fut>(
     hosts: Vec<AccountHost>,
     /// With the host to sign in to.
     on_sign_in: Callback<String>,
+    /// `(host, role)` when the reader picks another role. Not on the first
+    /// read: only a choice calls it.
+    on_role: Callback<(String, String)>,
     /// Erases the host's credentials. Its `Err` stays in the confirmation.
     sign_out: F,
 ) -> impl IntoView
@@ -434,6 +437,13 @@ where
         .into_iter()
         .map(|account| {
             let confirming = RwSignal::new(false);
+            let role = RwSignal::new(account.role);
+            let role_host = account.host.clone();
+            Effect::watch(
+                move || role.get(),
+                move |picked, _, _| on_role.run((role_host.clone(), picked.clone())),
+                false,
+            );
             let host = account.host.clone();
             let sign_in_host = account.host.clone();
             let sign_out = sign_out.clone();
@@ -455,7 +465,7 @@ where
                 <div>
                     <HostRow
                         host=account.host
-                        role=RwSignal::new(account.role)
+                        role=role
                         roles=account.roles
                         signed_out=account.signed_out
                         on_sign_in=move |_| on_sign_in.run(sign_in_host.clone())
@@ -1083,6 +1093,44 @@ mod tests {
         minutes.set("3".to_string());
         change();
         assert_eq!(saves.get_untracked(), 1, "3 is");
+    }
+
+    /// Picking a role reaches the page with its host; drawing the rows does not.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn a_picked_role_reaches_the_page() {
+        let picked = RwSignal::new(Vec::<(String, String)>::new());
+        let el = crate::test_support::mount(move || {
+            view! {
+                <AccountsCard
+                    hosts=vec![AccountHost {
+                        host: "quilt.test".to_string(),
+                        role: "analyst".to_string(),
+                        roles: vec!["analyst".to_string(), "admin".to_string()],
+                        signed_out: false,
+                    }]
+                    on_sign_in=Callback::new(|_: String| ())
+                    on_role=Callback::new(move |pick| picked.update(|all| all.push(pick)))
+                    sign_out=|_: String| async { Ok(()) }
+                />
+            }
+        });
+        leptos::task::tick().await;
+        assert!(picked.get_untracked().is_empty(), "no call before a choice");
+        let select: web_sys::HtmlSelectElement = wasm_bindgen::JsCast::dyn_into(
+            el.query_selector("select")
+                .unwrap()
+                .expect("the role switcher"),
+        )
+        .unwrap();
+        select.set_value("admin");
+        select
+            .dispatch_event(&web_sys::Event::new("change").unwrap())
+            .unwrap();
+        leptos::task::tick().await;
+        assert_eq!(
+            picked.get_untracked(),
+            vec![("quilt.test".to_string(), "admin".to_string())]
+        );
     }
 
     /// The editor a reader sees is named by the field's label and, while the

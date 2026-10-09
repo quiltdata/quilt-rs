@@ -158,6 +158,7 @@ fn accounts(hosts: Vec<AccountHost>) -> AnyView {
         <AccountsCard
             hosts=hosts
             on_sign_in=Callback::new(|_: String| ())
+            on_role=Callback::new(|_: (String, String)| ())
             sign_out=|_: String| async { Ok(()) }
         />
     }
