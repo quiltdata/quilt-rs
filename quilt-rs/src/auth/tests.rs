@@ -488,6 +488,13 @@ async fn seed_expired_creds_fresh_tokens(auth_io: &AuthIo<Arc<MockStorage>>) -> 
 
 #[test(tokio::test)]
 async fn test_auth_refresh_is_single_flight_across_concurrent_callers() -> Res {
+    test_auth_refresh_is_single_flight_across_concurrent_callers_with_auth(false).await?;
+    test_auth_refresh_is_single_flight_across_concurrent_callers_with_auth(true).await
+}
+
+async fn test_auth_refresh_is_single_flight_across_concurrent_callers_with_auth(
+    api_key: bool,
+) -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
@@ -495,6 +502,9 @@ async fn test_auth_refresh_is_single_flight_across_concurrent_callers() -> Res {
 
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
     seed_expired_creds_fresh_tokens(&auth_io).await?;
+    if api_key {
+        auth.set_api_key(&host, API_KEY.to_string());
+    }
 
     let client = CountingCredsClient {
         cred_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -1060,6 +1070,11 @@ async fn switch_role_maps_a_persistent_401_to_login_required() -> Res {
 /// credentials back over the gap — the flush silently undone.
 #[test(tokio::test)]
 async fn expire_credentials_waits_for_an_in_flight_vend() -> Res {
+    expire_credentials_waits_for_an_in_flight_vend_with_auth(false).await?;
+    expire_credentials_waits_for_an_in_flight_vend_with_auth(true).await
+}
+
+async fn expire_credentials_waits_for_an_in_flight_vend_with_auth(api_key: bool) -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
@@ -1067,6 +1082,9 @@ async fn expire_credentials_waits_for_an_in_flight_vend() -> Res {
 
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
     seed_expired_creds_fresh_tokens(&auth_io).await?;
+    if api_key {
+        auth.set_api_key(&host, API_KEY.to_string());
+    }
 
     let gate = Arc::new(Gate::default());
     let client = CountingCredsClient {
@@ -1109,6 +1127,13 @@ async fn expire_credentials_waits_for_an_in_flight_vend() -> Res {
         auth_io.read_credentials().await?.is_none(),
         "the flush must outlive the vend it was serialized behind"
     );
+    if api_key {
+        assert!(auth.api_key_for(&host).unwrap().1.is_none());
+        let mut client = client;
+        client.gate = None;
+        auth.get_credentials_or_refresh(&client, &host).await?;
+        assert_eq!(client.cred_calls.load(Ordering::SeqCst), 2);
+    }
     Ok(())
 }
 
@@ -1326,6 +1351,9 @@ async fn test_api_key_vends_once_and_rotation_re_vends() -> Res {
         2,
         "a set key starts with no credentials"
     );
+    auth.expire_credentials(&host).await?;
+    auth.get_credentials_or_refresh(&client, &host).await?;
+    assert_eq!(client.vends.load(Ordering::SeqCst), 3);
     Ok(())
 }
 

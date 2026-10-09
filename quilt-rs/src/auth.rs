@@ -575,6 +575,14 @@ impl<S: Storage + Send + Sync> Auth<S> {
     /// holding this host's refresh lock. Carries the same "clear the S3
     /// client cache too" obligation — see that method's docs.
     async fn expire_credentials_locked(&self, host: &Host) -> Res {
+        if let Some(entry) = self
+            .api_keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_mut(host)
+        {
+            entry.vended = None;
+        }
         info!("⏳ Expiring cached credentials for {}", host);
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
         auth_io.delete_credentials().await?;
@@ -917,13 +925,17 @@ impl<S: Storage + Send + Sync> Auth<S> {
         // Vended once per key and reused until a minute before expiry, so a new
         // S3 client's eager check and its first request share one exchange. A
         // rejected key fails closed: there is no session to fall back to.
-        if let Some((key, fresh)) = self.api_key_for(host) {
-            if let Some(creds) = fresh {
+        if self.api_key_for(host).is_some() {
+            let lock = self.refresh_lock_for(host);
+            let _guard = lock.lock().await;
+            if let Some((key, fresh)) = self.api_key_for(host) {
+                if let Some(creds) = fresh {
+                    return Ok(creds);
+                }
+                let creds = refresh_credentials(http_client, host, &key.0).await?;
+                self.remember_vended(host, &key, &creds);
                 return Ok(creds);
             }
-            let creds = refresh_credentials(http_client, host, &key.0).await?;
-            self.remember_vended(host, &key, &creds);
-            return Ok(creds);
         }
 
         let auth_io = AuthIo::new(self.storage.clone(), self.paths.auth_host(host));
