@@ -1040,6 +1040,19 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
     Ok(())
 }
 
+/// The verdict-only dry run answers what the full one does, for the same
+/// package, without the incoming paths.
+#[test(tokio::test)]
+async fn test_pull_verdict_matches_the_full_dry_run() -> Res {
+    let (package, _temp_dirs) = behind_package("{\"version\":\"v0\"}").await?;
+
+    let preview = package.pull_outcome(None).await?;
+    assert_eq!(preview.removed, vec![PathBuf::from("a.txt")]);
+    assert_eq!(package.pull_verdict(None).await?, preview.outcome);
+
+    Ok(())
+}
+
 /// A newer revision that changed only the header still has a hash to link to,
 /// though it brings no paths.
 #[test(tokio::test)]

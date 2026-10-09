@@ -17,18 +17,6 @@ fn pulled(uri: quilt_uri::ManifestUri) -> quilt::flow::PullReport {
     }
 }
 
-/// A dry-run preview carrying just the verdict — the incoming-paths half is not
-/// what the tick routes on.
-fn preview(outcome: PullOutcome) -> quilt::flow::PullPreview {
-    quilt::flow::PullPreview {
-        outcome,
-        added: Vec::new(),
-        changed: Vec::new(),
-        removed: Vec::new(),
-        latest_hash: None,
-    }
-}
-
 /// Shared boilerplate for the publish-branch tests: returns a
 /// `MockQuiltModel` wired with the package list, lineage, package, and
 /// status mocks, plus the namespace and lineage clones for tests that
@@ -479,9 +467,9 @@ async fn run_once_skips_publish_when_behind() -> Result<(), Error> {
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
-        .returning(|_| Ok(preview(PullOutcome::UpToDate)));
+        .returning(|_| Ok(PullOutcome::UpToDate));
     model.expect_locked_package_pull().times(0);
     model.expect_locked_package_publish().times(0);
 
@@ -1093,14 +1081,14 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::Behind, changes));
     // Non-conflicting local work: the pull reconciles cleanly and keeps it.
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(|_| {
-            Ok(preview(PullOutcome::KeepsLocalChanges {
+            Ok(PullOutcome::KeepsLocalChanges {
                 added: vec![std::path::PathBuf::from("file.txt")],
                 modified: Vec::new(),
                 removed: Vec::new(),
-            }))
+            })
         });
     model
         .expect_locked_package_pull()

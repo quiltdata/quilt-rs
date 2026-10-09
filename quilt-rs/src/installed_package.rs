@@ -920,7 +920,8 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// only when the package is genuinely current.
     ///
     /// Network-light — the caller (watcher / UI) uses it for two-phase render
-    /// and routing.
+    /// and routing. A caller that needs only the verdict uses
+    /// [`Self::pull_verdict`], which skips collecting the incoming paths.
     ///
     /// # Errors
     /// For a package with a real remote, propagates tag-resolution, manifest
@@ -929,6 +930,30 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     pub async fn pull_outcome(
         &self,
         host_config_opt: Option<HostConfig>,
+    ) -> Res<flow::PullPreview> {
+        self.pull_dry_run(host_config_opt, true).await
+    }
+
+    /// [`Self::pull_outcome`]'s verdict alone: the same reads and the same
+    /// answer, without collecting the paths the newer revision brings. For a
+    /// caller that only routes on the verdict, such as a background check run
+    /// on every package at an interval.
+    ///
+    /// # Errors
+    /// As [`Self::pull_outcome`].
+    pub async fn pull_verdict(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<flow::PullOutcome> {
+        Ok(self.pull_dry_run(host_config_opt, false).await?.outcome)
+    }
+
+    /// The dry run behind [`Self::pull_outcome`] and [`Self::pull_verdict`].
+    /// With `with_paths` unset the preview's path lists stay empty.
+    async fn pull_dry_run(
+        &self,
+        host_config_opt: Option<HostConfig>,
+        with_paths: bool,
     ) -> Res<flow::PullPreview> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
@@ -1004,9 +1029,8 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             &snapshot.latest_manifest,
         )
         .await?;
-        // One delta serves both the verdict and the incoming paths: the
-        // autosync tick runs this dry run every tick, so building it twice
-        // would double the path and hash cloning on a large manifest.
+        // One delta serves both the verdict and the incoming paths, so building
+        // it twice would double the path and hash cloning on a large manifest.
         let delta = flow::remote_delta(&base, &snapshot.latest_manifest);
         let outcome = flow::classify_pull_with_delta(
             &snapshot.status,
@@ -1019,7 +1043,11 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             added,
             changed,
             removed,
-        } = flow::IncomingPaths::from_delta(&delta);
+        } = if with_paths {
+            flow::IncomingPaths::from_delta(&delta)
+        } else {
+            flow::IncomingPaths::default()
+        };
         Ok(flow::PullPreview {
             outcome,
             added,
@@ -1367,6 +1395,14 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         host_config_opt: Option<HostConfig>,
     ) -> Res<flow::PullPreview> {
         self.package.pull_outcome(host_config_opt).await
+    }
+
+    /// [`InstalledPackage::pull_verdict`], read under the lock.
+    pub async fn pull_verdict(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<flow::PullOutcome> {
+        self.package.pull_verdict(host_config_opt).await
     }
 
     pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {

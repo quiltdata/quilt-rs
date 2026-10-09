@@ -425,13 +425,12 @@ pub(crate) async fn refresh_then_maybe_sync(
         // per Behind tick with a race window between them. Have `flow::pull`
         // return the `PullOutcome` it already computes and route on the pull
         // result alone — same outcome-based routing, half the work.
-        // The preview also names what the revision adds; the tick routes on the
-        // verdict alone and leaves those to the surfaces that report them.
+        // The verdict alone: the tick routes on it and leaves the paths the
+        // revision brings to the surfaces that report them.
         let outcome = model
-            .locked_package_pull_outcome(&locked)
+            .locked_package_pull_verdict(&locked)
             .await
-            .map_err(classify_transient_or_login)?
-            .outcome;
+            .map_err(classify_transient_or_login)?;
         // Post-pull `has_changes`, read from the dry-run outcome we just
         // classified — the truth about kept local work, unlike the pre-pull
         // `has_changes` which is stale-true when the pull trivially resolves
