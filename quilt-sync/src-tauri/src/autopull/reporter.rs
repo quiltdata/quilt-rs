@@ -214,11 +214,10 @@ pub struct SubscriberErrorEvent {
 /// tests and a hypothetical headless daemon wire a logger.
 pub trait StatusReporter: Send + Sync + 'static {
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent);
-    /// `host` is the package's own deployment. The loop skips any package whose
-    /// lineage has no origin, so its pauses always carry one; `None` comes only
-    /// from a hand-pressed pull on a package installed from a plain S3 URI,
-    /// which still pauses and announces but has no deployment to attribute to.
-    fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason);
+    /// `host` is required rather than optional: the loop skips any package whose
+    /// lineage has no origin before doing work, so an outcome it reports always
+    /// concerns a known deployment.
+    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason);
     /// `block` distinguishes the deployment's session *becoming* unusable from
     /// the loop retrying while it stays that way. Only the transition is worth
     /// counting; the retries are a log line.
@@ -272,8 +271,8 @@ impl StatusReporter for LogReporter {
         );
     }
 
-    fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason) {
-        info!("autosync: paused namespace={namespace} host={host:?} reason={reason:?}");
+    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
+        info!("autosync: paused namespace={namespace} host={host} reason={reason:?}");
     }
 
     fn report_login_required(&self, host: Option<&Host>, block: LoginBlock) {
@@ -333,16 +332,11 @@ impl StatusReporter for TelemetryReporter {
         self.inner.report_status(namespace, event);
     }
 
-    fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason) {
-        // Counted only when attributable: the payload's host is required, and a
-        // pause without one is a hand-pressed pull on a package no deployment
-        // owns, not something autosync did on one.
-        if let Some(host) = host {
-            self.emit(MixpanelEvent::AutosyncPaused(AutosyncPausedEvent {
-                host: host.clone(),
-                reason: PausedKind::from(&reason),
-            }));
-        }
+    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
+        self.emit(MixpanelEvent::AutosyncPaused(AutosyncPausedEvent {
+            host: host.clone(),
+            reason: PausedKind::from(&reason),
+        }));
         self.inner.report_paused(namespace, host, reason);
     }
 
@@ -450,8 +444,8 @@ impl StatusReporter for TauriEventReporter {
         }
     }
 
-    fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason) {
-        info!("autosync: paused namespace={namespace} host={host:?} reason={reason:?}");
+    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
+        info!("autosync: paused namespace={namespace} host={host} reason={reason:?}");
         let payload = PausedEvent::from_reason(namespace, &reason);
         if let Err(err) = self.handle.emit(PAUSED_EVENT, &payload) {
             warn!("autosync: failed to emit {PAUSED_EVENT}: {err}");
@@ -798,8 +792,8 @@ pub(crate) mod test_support {
                 .push((namespace.clone(), event));
         }
 
-        fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason) {
-            self.hosts.lock().unwrap().extend(host.cloned());
+        fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
+            self.hosts.lock().unwrap().push(host.clone());
             self.paused
                 .lock()
                 .unwrap()

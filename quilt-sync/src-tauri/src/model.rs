@@ -95,12 +95,25 @@ pub trait QuiltModel {
         package.status(host_config).await
     }
 
-    /// [`Self::package_pull_outcome`], under the held lock.
+    /// Dry-run classifier, under the held lock: what would a pull do right
+    /// now? Delegates to the engine's [`quilt::LockedPackage::pull_outcome`];
+    /// wrapping it on the trait lets the command route on the verdict
+    /// through a `MockQuiltModel` in unit tests without hitting real storage.
     async fn locked_package_pull_outcome(
         &self,
         package: &Self::Locked,
     ) -> Result<quilt::flow::PullPreview, Error> {
         package.pull_outcome().await
+    }
+
+    /// [`Self::locked_package_pull_outcome`]'s verdict alone, without the
+    /// incoming paths: for the autopull tick, which routes on the verdict and
+    /// runs it on every package each tick.
+    async fn locked_package_pull_verdict(
+        &self,
+        package: &Self::Locked,
+    ) -> Result<quilt::flow::PullOutcome, Error> {
+        package.pull_verdict().await
     }
 
     /// Pull the package on the held lock. `scope` is the package's stored
@@ -320,17 +333,6 @@ pub trait QuiltModel {
     ) -> Result<(), Error> {
         package.set_sync_scope(scope).await?;
         Ok(())
-    }
-
-    /// Dry-run classifier: what would `package_pull` do right now? Delegates
-    /// to the engine's [`InstalledPackage::pull_outcome`]; wrapping it on the
-    /// trait lets the autosync tick route on the [`PullOutcome`] through a
-    /// `MockQuiltModel` in unit tests without hitting real storage.
-    async fn package_pull_outcome(
-        &self,
-        package: &quilt::InstalledPackage,
-    ) -> Result<quilt::flow::PullPreview, Error> {
-        Ok(package.pull_outcome(None).await?)
     }
 
     async fn is_package_installed(
@@ -675,6 +677,8 @@ pub trait LockedOps: Send + Sync + Sized {
 
     async fn pull_outcome(&self) -> Result<quilt::flow::PullPreview, Error>;
 
+    async fn pull_verdict(&self) -> Result<quilt::flow::PullOutcome, Error>;
+
     async fn pull(
         &self,
         host_config: Option<HostConfig>,
@@ -716,6 +720,10 @@ impl LockedOps for quilt::LockedPackage {
 
     async fn pull_outcome(&self) -> Result<quilt::flow::PullPreview, Error> {
         Ok(quilt::LockedPackage::pull_outcome(self, None).await?)
+    }
+
+    async fn pull_verdict(&self) -> Result<quilt::flow::PullOutcome, Error> {
+        Ok(quilt::LockedPackage::pull_verdict(self, None).await?)
     }
 
     async fn pull(
@@ -778,6 +786,10 @@ impl LockedOps for quilt_uri::Namespace {
 
     async fn pull_outcome(&self) -> Result<quilt::flow::PullPreview, Error> {
         unreachable!("a mocked model sets its own pull outcome")
+    }
+
+    async fn pull_verdict(&self) -> Result<quilt::flow::PullOutcome, Error> {
+        unreachable!("a mocked model sets its own pull verdict")
     }
 
     async fn pull(
