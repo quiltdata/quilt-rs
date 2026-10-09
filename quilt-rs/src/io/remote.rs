@@ -17,6 +17,8 @@ use tokio_stream::Stream;
 use crate::Error;
 use crate::Res;
 use crate::error::LoginError;
+use crate::error::S3Error;
+use crate::error::S3ErrorKind;
 use crate::object_hash::ObjectHash;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
@@ -131,6 +133,15 @@ pub trait ObjectsStream: Stream<Item = StreamItem> {}
 
 impl<T: Stream<Item = StreamItem>> ObjectsStream for T {}
 
+/// The state an object must be in for a conditional write to land.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PutCondition {
+    /// The key holds no object (`If-None-Match: *`).
+    Absent,
+    /// The key still holds the object with this `ETag` (`If-Match`).
+    ETag(String),
+}
+
 /// This trait encapsulates the S3 operations that Quilt needs to perform.
 pub trait Remote {
     /// Checks if object exists
@@ -158,6 +169,38 @@ pub trait Remote {
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> impl Future<Output = Res>;
+
+    /// Upload only if the key is in the state `condition` names; a lost race
+    /// is an error for which [`Error::is_precondition_failed`] holds.
+    ///
+    /// [`Error::is_precondition_failed`]: crate::Error::is_precondition_failed
+    fn put_object_if(
+        &self,
+        host: Option<&Host>,
+        s3_uri: &S3Uri,
+        contents: impl Into<ByteStream>,
+        condition: PutCondition,
+    ) -> impl Future<Output = Res> {
+        let _ = (host, s3_uri, contents.into(), condition);
+        async {
+            Err(S3Error::new(S3ErrorKind::PutObject(
+                "conditional put unsupported".to_string(),
+            ))
+            .into())
+        }
+    }
+
+    /// The object's bytes and the `ETag` of those same bytes, from one read,
+    /// or `None` when the key holds no object. One read, so the `ETag` can
+    /// guard a later conditional write of what the caller actually saw.
+    fn get_object_with_etag(
+        &self,
+        host: Option<&Host>,
+        s3_uri: &S3Uri,
+    ) -> impl Future<Output = Res<Option<(String, Vec<u8>)>>> + Send {
+        let _ = (host, s3_uri);
+        async { Err(S3Error::new(S3ErrorKind::GetObject("etag unsupported".to_string())).into()) }
+    }
 
     /// Upload file and request checkum from S3
     fn upload_file(

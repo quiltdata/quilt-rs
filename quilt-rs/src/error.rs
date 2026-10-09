@@ -40,6 +40,12 @@ impl S3Error {
         matches!(self.kind, S3ErrorKind::AccessDenied(_))
     }
 
+    /// True when a conditional write found the object in another state.
+    #[must_use]
+    pub fn is_precondition_failed(&self) -> bool {
+        matches!(self.kind, S3ErrorKind::PreconditionFailed(_))
+    }
+
     /// True when the S3 service rejected the credentials themselves rather
     /// than the active role's access to an object.
     #[must_use]
@@ -82,6 +88,11 @@ pub enum S3ErrorKind {
 
     #[error("S3 access denied: {0}")]
     AccessDenied(String),
+
+    /// A conditional write lost: the object was not in the state the caller
+    /// required (`If-None-Match: *` found one, or `If-Match` saw a newer one).
+    #[error("S3 precondition failed: {0}")]
+    PreconditionFailed(String),
 
     #[error("Invalid AWS credentials: {0}")]
     InvalidCredentials(String),
@@ -473,6 +484,12 @@ impl Error {
     #[must_use]
     pub fn is_access_denied(&self) -> bool {
         matches!(self, Error::S3(s3) if s3.is_access_denied())
+    }
+
+    /// Returns `true` if a conditional write lost to the object's current state.
+    #[must_use]
+    pub fn is_precondition_failed(&self) -> bool {
+        matches!(self, Error::S3(s3) if s3.is_precondition_failed())
     }
 
     /// Returns `true` if S3 rejected the credentials themselves.

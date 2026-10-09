@@ -33,6 +33,7 @@ use crate::error::S3ErrorKind;
 use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::HttpClient;
+use crate::io::remote::PutCondition;
 use crate::io::remote::Remote;
 use crate::io::remote::describe_sdk_error;
 use crate::io::remote::host::fetch_host_config;
@@ -90,7 +91,8 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
 /// rather than as a generic failure. Both are wrong about the cause; only one
 /// of them sends the user round the re-login loop.
 ///
-/// Only a denial, a credential failure or a missing object changes the kind.
+/// Only a denial, a credential failure, a missing object or a failed
+/// precondition changes the kind.
 /// Everything else is handed to `fallback`, so a call site keeps the
 /// operation-specific kind it would have produced anyway — a failed put stays
 /// [`S3ErrorKind::PutObject`] rather than collapsing into an undiagnosable
@@ -111,6 +113,12 @@ pub(super) fn classify_s3_error(
         // bucket would send it to write into one that does not exist.
         Some("NoSuchKey" | "NotFound") => S3ErrorKind::NotFound(described.to_string()),
         Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
+        // S3 answers a lost conditional write with 412, or with 409
+        // ConditionalRequestConflict when a concurrent write raced it.
+        Some("PreconditionFailed" | "ConditionalRequestConflict") => {
+            S3ErrorKind::PreconditionFailed(described.to_string())
+        }
+        _ if status == Some(412) => S3ErrorKind::PreconditionFailed(described.to_string()),
         _ if status == Some(403) => S3ErrorKind::AccessDenied(described.to_string()),
         _ => fallback(described.to_string()),
     }
@@ -639,6 +647,64 @@ impl Remote for RemoteS3 {
             .map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::PutObject))?;
 
         Ok(())
+    }
+
+    async fn put_object_if(
+        &self,
+        host: Option<&Host>,
+        s3_uri: &S3Uri,
+        contents: impl Into<ByteStream>,
+        condition: PutCondition,
+    ) -> Res {
+        let request = self
+            .get_client_for_bucket(host, &s3_uri.bucket)
+            .await?
+            .put_object()
+            .bucket(&s3_uri.bucket)
+            .key(&s3_uri.key)
+            .body(contents.into());
+        let request = match condition {
+            PutCondition::Absent => request.if_none_match("*"),
+            PutCondition::ETag(etag) => request.if_match(etag),
+        };
+        request
+            .send()
+            .await
+            .map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::PutObject))?;
+        Ok(())
+    }
+
+    async fn get_object_with_etag(
+        &self,
+        host: Option<&Host>,
+        s3_uri: &S3Uri,
+    ) -> Res<Option<(String, Vec<u8>)>> {
+        let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
+        let object = match client
+            .get_object()
+            .bucket(&s3_uri.bucket)
+            .key(&s3_uri.key)
+            .send()
+            .await
+        {
+            Ok(object) => object,
+            Err(SdkError::ServiceError(err)) if err.err().is_no_such_key() => return Ok(None),
+            Err(err) => return Err(s3_error_or_session_loss(err, host, S3ErrorKind::GetObject)),
+        };
+        // An empty `If-Match` would match nothing and read as a lost race.
+        let Some(etag) = object.e_tag.filter(|e| !e.is_empty()) else {
+            return Err(
+                S3Error::new(S3ErrorKind::GetObject(format!("{s3_uri} returned no ETag"))).into(),
+            );
+        };
+        let body = object
+            .body
+            .collect()
+            .await
+            .map_err(|e| S3Error::new(S3ErrorKind::GetObject(e.to_string())))?
+            .into_bytes()
+            .to_vec();
+        Ok(Some((etag, body)))
     }
 
     async fn resolve_url(&self, host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {

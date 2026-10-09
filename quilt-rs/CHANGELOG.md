@@ -24,6 +24,11 @@
 ### Added
 
 - `Auth::set_api_key` and `RemoteS3::set_api_key` let an unattended client authenticate to a stack with a registry API key (`qk_…`) instead of an interactive session; the key is held in memory only and a rejected key fails closed (<https://github.com/quiltdata/quilt-rs/pull/1079>)
+- `flow::push_revision` publishes a manifest whose entries are already in S3 and moves `latest` only if nobody else has moved it since the caller's parent, so an unattended writer never overwrites a scientist's `latest`; `Remote` gains `put_object_if` and `get_object_with_etag` (with default bodies) for the conditional write. It runs the bucket's workflow gate first, as `push_package` does (<https://github.com/quiltdata/quilt-rs/pull/1080>)
+
+### Changed
+
+- **Breaking:** `S3ErrorKind` has a new variant, `PreconditionFailed`, for a conditional write that lost, so an exhaustive `match` on it needs a new arm (<https://github.com/quiltdata/quilt-rs/pull/1080>)
 
 ## [v0.42.1] - 2026-10-06
 
