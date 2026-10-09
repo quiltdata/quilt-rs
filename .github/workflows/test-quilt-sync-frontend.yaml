@@ -15,6 +15,10 @@ on:
     paths-ignore:
       - "**/*.md"
 
+# Read-only: the token is passed to third-party setup actions.
+permissions:
+  contents: read
+
 concurrency:
   # `event_name` so a scheduled run and a push to main cannot cancel each other.
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
@@ -32,6 +36,7 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust-dev
         with:
+          github-token: ${{ github.token }}
           targets: wasm32-unknown-unknown
 
       - name: Setup Node.js
