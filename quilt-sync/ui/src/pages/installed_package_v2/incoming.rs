@@ -29,11 +29,15 @@
 //! `PackageState::PullConflict`, which offers `Publish`, not `Resolve`: the
 //! merge page cannot act until the local changes are published. That is the
 //! state a failed `Get latest` leaves, so the header reads the same before the
-//! click and after it. A conflict the read recorded earlier gives way to a
-//! check that finds the update safe: the header goes back to `Behind`, since
-//! the conflicting edit was undone. In the popover the conflicting files carry a
-//! `Conflict` label beside their own; in the file list their rows carry
-//! resolve mode's `Differs` mark, which the popover's sentence describes.
+//! click and after it. Only an answer from a run that finished after the
+//! current read moves the state; one kept across a re-read while its rerun is
+//! out still draws the summary and popover, but the state is the read's. A
+//! conflict the read records stays even when a check finds none: the app
+//! clears a pause the dry run no longer finds and announces it, so the header
+//! follows the read after that. In the popover the conflicting files carry a
+//! `Conflict` label beside their own; in the file list the rows of the
+//! header's conflict state, from the read or from the check, carry resolve
+//! mode's `Differs` mark, which the popover's sentence describes.
 //!
 //! `Get latest` stays enabled while the check runs and after it fails. The
 //! real pull classifies everything again under the lock, so the dry run
@@ -95,41 +99,34 @@ pub const LISTED: usize = 1_000;
 
 /// What the header resolves to for a check.
 ///
-/// - A `Blocked` verdict: the conflict state, naming its files.
-/// - A `CleanUpdate` or `KeepsLocalChanges` verdict on a read that says
-///   `PullConflict`: `Behind`. The read's conflict was recorded earlier, by a
-///   paused autosync or a refused *Get latest*; a check that finds none now
-///   means the conflicting edit was undone, so the header offers *Get latest*
-///   again, and a successful one clears the recorded pause.
-/// - Anything else (`UpToDate`, a check still running or failed, or no
-///   check): what the page's read said.
+/// `fresh` says whether the check's answer came from a run that finished
+/// after this read. Only such an answer moves the state:
+///
+/// - A fresh `Blocked` verdict: the conflict state, naming its files.
+/// - Anything else (a verdict that finds no conflict, a check still running
+///   or failed, an answer kept from before this read, or no check): what the
+///   read said. A conflict the read records stays even when the check finds
+///   none: the app clears a pause the dry run no longer finds and announces
+///   it, and the read after that says `Behind`.
 #[must_use]
-pub fn header_state(read: &PackageState, check: Option<&PullCheck>) -> PackageState {
-    let Some(PullCheck::Ready(PullPreview { outcome, .. })) = check else {
-        return read.clone();
-    };
-    match outcome {
-        PullOutcome::Blocked { conflicts } => PackageState::PullConflict {
-            files: conflicts.clone(),
-        },
-        PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. }
-            if matches!(read, PackageState::PullConflict { .. }) =>
-        {
-            PackageState::Behind
-        }
-        _ => read.clone(),
-    }
-}
-
-/// The files a `Blocked` verdict names, which the file list marks as resolve
-/// mode marks the files that differ. `None` for any other check.
-#[must_use]
-pub fn conflicting(check: Option<&PullCheck>) -> Option<Arc<BTreeSet<String>>> {
+pub fn header_state(read: &PackageState, check: Option<&PullCheck>, fresh: bool) -> PackageState {
     match check {
         Some(PullCheck::Ready(PullPreview {
             outcome: PullOutcome::Blocked { conflicts },
             ..
-        })) => Some(Arc::new(conflicts.iter().cloned().collect())),
+        })) if fresh => PackageState::PullConflict {
+            files: conflicts.clone(),
+        },
+        _ => read.clone(),
+    }
+}
+
+/// The files a header's conflict state names, which the file list marks as
+/// resolve mode marks the files that differ. `None` for any other state.
+#[must_use]
+pub fn conflicting(state: &PackageState) -> Option<Arc<BTreeSet<String>>> {
+    match state {
+        PackageState::PullConflict { files } => Some(Arc::new(files.iter().cloned().collect())),
         _ => None,
     }
 }
@@ -735,14 +732,15 @@ mod tests {
             },
             Vec::new(),
         );
+        let state = header_state(&PackageState::Behind, Some(&blocked), true);
         assert_eq!(
-            header_state(&PackageState::Behind, Some(&blocked)),
+            state,
             PackageState::PullConflict {
                 files: vec!["a.csv".to_string()]
             }
         );
         assert_eq!(
-            conflicting(Some(&blocked)).map(|s| s.iter().cloned().collect::<Vec<_>>()),
+            conflicting(&state).map(|s| s.iter().cloned().collect::<Vec<_>>()),
             Some(vec!["a.csv".to_string()])
         );
         for check in [
@@ -750,24 +748,22 @@ mod tests {
             PullCheck::Failed,
             ready(PullOutcome::CleanUpdate, three_added()),
         ] {
-            assert_eq!(
-                header_state(&PackageState::Behind, Some(&check)),
-                PackageState::Behind
-            );
-            assert_eq!(conflicting(Some(&check)), None);
+            let state = header_state(&PackageState::Behind, Some(&check), true);
+            assert_eq!(state, PackageState::Behind);
+            assert_eq!(conflicting(&state), None);
         }
         assert_eq!(
-            header_state(&PackageState::Latest, None),
+            header_state(&PackageState::Latest, None, true),
             PackageState::Latest
         );
     }
 
-    /// A recorded conflict, from a paused autosync or a refused Get latest,
-    /// gives way to a check that finds none: the conflicting edit was undone,
-    /// so the header offers Get latest again. A check that has not answered,
-    /// failed, or found the package up to date leaves the read's state.
+    /// A conflict the read records, from a paused autosync or a refused Get
+    /// latest, stands whatever the check says: the app clears a pause the
+    /// dry run no longer finds, and the read after it says so. Its files are
+    /// the ones the list marks.
     #[test]
-    fn a_safe_check_takes_back_a_recorded_conflict() {
+    fn the_read_s_conflict_stands_whatever_the_check_says() {
         let recorded = PackageState::PullConflict {
             files: vec!["a.csv".to_string()],
         };
@@ -779,18 +775,22 @@ mod tests {
             },
             three_added(),
         );
-        for check in [ready(PullOutcome::CleanUpdate, three_added()), keeps] {
-            assert_eq!(header_state(&recorded, Some(&check)), PackageState::Behind);
-            assert_eq!(conflicting(Some(&check)), None);
-        }
         for check in [
+            ready(PullOutcome::CleanUpdate, three_added()),
+            keeps,
             PullCheck::Loading,
             PullCheck::Failed,
             ready(PullOutcome::UpToDate, Vec::new()),
         ] {
-            assert_eq!(header_state(&recorded, Some(&check)), recorded);
+            for fresh in [true, false] {
+                assert_eq!(header_state(&recorded, Some(&check), fresh), recorded);
+            }
         }
-        assert_eq!(header_state(&recorded, None), recorded);
+        assert_eq!(header_state(&recorded, None, true), recorded);
+        assert_eq!(
+            conflicting(&recorded).map(|s| s.iter().cloned().collect::<Vec<_>>()),
+            Some(vec!["a.csv".to_string()])
+        );
         let blocked = ready(
             PullOutcome::Blocked {
                 conflicts: vec!["c.csv".to_string()],
@@ -798,11 +798,39 @@ mod tests {
             Vec::new(),
         );
         assert_eq!(
-            header_state(&recorded, Some(&blocked)),
+            header_state(&recorded, Some(&blocked), true),
             PackageState::PullConflict {
                 files: vec!["c.csv".to_string()]
             },
             "a fresh conflict names its own files"
+        );
+    }
+
+    /// An answer kept across a re-read, while its rerun is out, speaks to an
+    /// earlier read: it draws the summary, but the state is the read's.
+    #[test]
+    fn a_kept_answer_leaves_the_state_to_the_read() {
+        let blocked = ready(
+            PullOutcome::Blocked {
+                conflicts: vec!["a.csv".to_string()],
+            },
+            Vec::new(),
+        );
+        assert_eq!(
+            header_state(&PackageState::Behind, Some(&blocked), false),
+            PackageState::Behind
+        );
+        let recorded = PackageState::PullConflict {
+            files: vec!["b.csv".to_string()],
+        };
+        assert_eq!(header_state(&recorded, Some(&blocked), false), recorded);
+        assert_eq!(
+            header_state(
+                &recorded,
+                Some(&ready(PullOutcome::CleanUpdate, three_added())),
+                false
+            ),
+            recorded
         );
     }
 

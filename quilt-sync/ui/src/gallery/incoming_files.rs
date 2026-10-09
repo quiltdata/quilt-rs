@@ -139,7 +139,7 @@ fn page(p: Page) -> AnyView {
     } = p;
     let publish_choice = RwSignal::new(0_usize);
     let scope = RwSignal::new(if whole { "all" } else { "pick" }.to_string());
-    let state = header_state(&PackageState::Behind, Some(&check));
+    let state = header_state(&PackageState::Behind, Some(&check), true);
     let conflicts = if matches!(state, PackageState::PullConflict { .. }) {
         CONFLICTS
     } else {

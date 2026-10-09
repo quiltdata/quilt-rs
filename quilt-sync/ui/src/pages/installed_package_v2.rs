@@ -406,6 +406,10 @@ struct IncomingAnswer {
     /// `CurrentRevisionData.hash` of the read that asked.
     holds: String,
     check: commands::PullCheck,
+    /// Whether the run that answered finished after the current read. A
+    /// re-read that keeps the answer clears it, and the next run's answer
+    /// sets it again. Only a fresh answer moves the header's state.
+    fresh: bool,
 }
 
 /// The newer revision's dry run, owned by the page.
@@ -419,8 +423,11 @@ struct IncomingAnswer {
 /// It runs again after every read that shows the package behind or in
 /// conflict, since a local edit can make a conflict while the newer revision
 /// stays the same. While it runs, the last answer for the same package and
-/// the same held revision stays up. Each run is numbered, and only the latest
-/// one's answer lands.
+/// the same held revision stays up, marked stale: it still draws the summary
+/// and the popover, but the header's state is the read's until the new run
+/// answers, so an answer about an earlier read cannot hide a conflict the
+/// re-read records, nor paint one it no longer does. Each run is numbered,
+/// and only the latest one's answer lands.
 #[derive(Clone, Copy)]
 struct IncomingCheck {
     answer: RwSignal<Option<IncomingAnswer>>,
@@ -464,6 +471,13 @@ impl IncomingCheck {
                     && matches!(a.check, commands::PullCheck::Ready(_))
             })
         });
+        if keep {
+            self.answer.update(|a| {
+                if let Some(a) = a {
+                    a.fresh = false;
+                }
+            });
+        }
         self.run(namespace, holds, keep);
     }
 
@@ -482,6 +496,7 @@ impl IncomingCheck {
                 namespace: namespace.clone(),
                 holds: holds.clone(),
                 check: commands::PullCheck::Loading,
+                fresh: true,
             }));
         }
         let Self {
@@ -498,20 +513,23 @@ impl IncomingCheck {
                     namespace,
                     holds,
                     check,
+                    fresh: true,
                 }));
             }
         });
     }
 
-    /// The check for one read's package and held revision: its answer, or
-    /// `Loading` until one lands for that key.
-    fn check_for(self, namespace: String, holds: String) -> Memo<commands::PullCheck> {
+    /// The check for one read's package and held revision, and whether its
+    /// answer is fresh: its answer, or `Loading` until one lands for that key.
+    fn check_for(self, namespace: String, holds: String) -> Memo<(commands::PullCheck, bool)> {
         let answer = self.answer;
         Memo::new(move |_| {
             answer.with(|a| {
                 a.as_ref()
                     .filter(|a| a.namespace == namespace && a.holds == holds)
-                    .map_or(commands::PullCheck::Loading, |a| a.check.clone())
+                    .map_or((commands::PullCheck::Loading, true), |a| {
+                        (a.check.clone(), a.fresh)
+                    })
             })
         })
     }
@@ -670,8 +688,10 @@ fn package_body(
 /// conflict.
 ///
 /// Only a header that is behind or in conflict asks. A `Blocked` verdict
-/// resolves it to the conflict state, whose files the list marks as resolve
-/// mode marks the files that differ. The header is drawn again when the check
+/// from a run that finished after this read resolves it to the conflict
+/// state; the list marks that state's files, whether the read or the check
+/// gave it, as resolve mode marks the files that differ, and resolve mode's
+/// own marks win while it is open. The header is drawn again when the check
 /// moves the state, as a re-read draws it; the summary follows the check by
 /// itself.
 fn incoming_header(
@@ -685,10 +705,14 @@ fn incoming_header(
     let namespace = header.namespace.to_string();
     let check =
         checks_incoming(&header.state).then(|| incoming.check_for(namespace.clone(), holds));
-    let check: Signal<Option<commands::PullCheck>> = Signal::derive(move || check.map(|c| c.get()));
+    let fresh = Signal::derive(move || check.is_none_or(|c| c.with(|(_, fresh)| *fresh)));
+    let check: Signal<Option<commands::PullCheck>> =
+        Signal::derive(move || check.map(|c| c.with(|(check, _)| check.clone())));
     let read_state = header.state.clone();
-    let state = Memo::new(move |_| self::incoming::header_state(&read_state, check.get().as_ref()));
-    let conflicts = Memo::new(move |_| self::incoming::conflicting(check.get().as_ref()));
+    let state = Memo::new(move |_| {
+        self::incoming::header_state(&read_state, check.get().as_ref(), fresh.get())
+    });
+    let conflicts = Memo::new(move |_| state.with(self::incoming::conflicting));
     let row_marks = Memo::new(move |_| marks.differing.get().or_else(|| conflicts.get()));
     let newer = self::incoming::Catalog::new(
         header.uri.as_ref(),
@@ -3392,12 +3416,13 @@ mod tests {
         );
     }
 
-    /// The read can carry a conflict recorded earlier, by a paused autosync
-    /// or a refused Get latest. Once the reader undoes the conflicting edit,
-    /// the check finds the update safe, and the header offers Get latest
-    /// again, not Publish, with no row marked.
+    /// A local edit can appear after a check found the update clean, so Get
+    /// latest pauses on a conflict and the re-read records it. The answer
+    /// kept while the check runs again is about the read before: the header
+    /// takes the recorded conflict at once, and the list marks its file,
+    /// even if the new check never answers.
     #[wasm_bindgen_test]
-    async fn a_safe_check_takes_back_a_recorded_conflict() {
+    async fn a_kept_answer_does_not_hide_a_fresh_conflict() {
         script(vec![(
             0,
             Ok(commands::PullPreview {
@@ -3408,13 +3433,48 @@ mod tests {
                 latest_hash: Some("feedbeef".to_string()),
             }),
         )]);
+        let el = suspended_screen(behind("aaa")).await;
+        element_saying(&el, "Newer revision available");
+        assert!(!row_marked(&el, "a.csv"));
+
+        // The rerun stays pending: nothing more is scripted.
         let mut recorded = behind("aaa");
         recorded.header.state = crate::kit::PackageState::PullConflict {
             files: vec!["a.csv".to_string()],
         };
-        let el = suspended_screen(recorded).await;
-        sleep_ms(30).await;
+        re_read(&el, recorded).await;
         no_fallback(&el);
+        assert_eq!(pulls_asked(), 2, "the check runs again");
+        assert_eq!(summary(&el).as_deref(), Some("1 file change"), "kept");
+        element_saying(&el, "conflict in 1 file");
+        button_saying(&el, "Publish");
+        assert!(row_marked(&el, "a.csv"), "the recorded conflict's row");
+        assert!(!row_marked(&el, "b.csv"));
+    }
+
+    /// The other way round: a kept conflict answer does not paint a conflict
+    /// over a re-read that says only Behind while its rerun is out.
+    #[wasm_bindgen_test]
+    async fn a_kept_conflict_does_not_override_a_fresh_read() {
+        script(vec![(
+            0,
+            Ok(commands::PullPreview {
+                outcome: commands::PullOutcome::Blocked {
+                    conflicts: vec!["a.csv".to_string()],
+                },
+                added: Vec::new(),
+                changed: vec!["a.csv".to_string()],
+                removed: Vec::new(),
+                latest_hash: Some("feedbeef".to_string()),
+            }),
+        )]);
+        let el = suspended_screen(behind("aaa")).await;
+        element_saying(&el, "conflict in 1 file");
+        assert!(row_marked(&el, "a.csv"));
+
+        re_read(&el, behind("aaa")).await;
+        no_fallback(&el);
+        assert_eq!(pulls_asked(), 2, "the check runs again");
         element_saying(&el, "Newer revision available");
         button_saying(&el, "Get latest");
         assert!(
@@ -3422,9 +3482,7 @@ mod tests {
             "markup was {}",
             el.inner_html()
         );
-        assert_eq!(summary(&el).as_deref(), Some("1 file change"));
         assert!(!row_marked(&el, "a.csv"));
-        assert!(!row_marked(&el, "b.csv"));
     }
 
     /// A check that fails says so and offers Try again; Get latest stays
