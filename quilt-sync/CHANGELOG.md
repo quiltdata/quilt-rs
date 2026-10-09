@@ -27,7 +27,7 @@
 
 ### Changed
 
-- Under the hood, the app can measure its local storage, total and what Free up space would free, for the coming settings page (PRLINK)
+- Under the hood, the app can measure its local storage, total and what Free up space would free, for the coming settings page (<https://github.com/quiltdata/quilt-rs/pull/1099>)
 - **New design preview**: on the commit page, the file list scrolls in its own box, so the page title and **Publish** stay on screen however long the list is. Drag the bar under the metadata editor to make it taller. The `›` between the links above the page title has more room (<https://github.com/quiltdata/quilt-rs/pull/1095>)
 
 ### Fixed
