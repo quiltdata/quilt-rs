@@ -24,8 +24,8 @@ The full procedure, including what each workflow job does, is in
   tagged `<crate>/v<version>` from the `CHANGELOG.md` section, and after
   approval of the `release-approval` environment publishes the draft and runs
   `cargo publish`. Don't create the tag or the GitHub Release by hand.
-- **`quilt-cli` also ships prebuilt binaries** for macOS (x86_64, aarch64) and
-  Linux (x86_64-gnu), attached to its draft release before the approval gate,
+- **`quilt-cli` also ships prebuilt binaries** for macOS (x86_64, aarch64),
+  Linux (x86_64-gnu) and Windows (x86_64-msvc), attached to its draft release before the approval gate,
   for `cargo binstall quilt-cli`.
 
 Before running the workflow, drop `-dev` from the crate's `Cargo.toml`

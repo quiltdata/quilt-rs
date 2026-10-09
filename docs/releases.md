@@ -109,10 +109,11 @@ crates.io step needs a re-run; the reverse order is irrecoverable.
 | `x86_64-apple-darwin` | `macos-15` |
 | `aarch64-apple-darwin` | `macos-15` |
 | `x86_64-unknown-linux-gnu` | `ubuntu-24.04` |
+| `x86_64-pc-windows-msvc` | `windows-2025` |
 
 For each, `cargo build -p quilt-cli --release --target <target>`,
 package as `quilt-cli-<target>.tar.gz` (binary inside a directory
-named `quilt-cli-<target>/`), upload to the draft release. `binaries`
+named `quilt-cli-<target>/`; `quilt.exe` on Windows), upload to the draft release. `binaries`
 is a hard dependency for `publish`, so the gate cannot fire until
 every archive is attached — the reviewer can download and run
 `quilt --version` against the actual artifact before approving.

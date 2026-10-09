@@ -175,8 +175,8 @@ Each project has different release approaches:
 - **quilt-uri**, **quilt-rs**: Libraries published to crates.io, plus a
   GitHub Release, by `release-crate.yaml`
 - **quilt-cli**: Published to crates.io by `release-crate.yaml`, which also
-  attaches prebuilt binaries for macOS (x86_64, aarch64) and Linux
-  (x86_64-gnu) to its GitHub Release; install via `cargo binstall quilt-cli`
+  attaches prebuilt binaries for macOS (x86_64, aarch64), Linux (x86_64-gnu)
+  and Windows (x86_64-msvc) to its GitHub Release; install via `cargo binstall quilt-cli`
   or `cargo install quilt-cli`
 - **QuiltSync**: Cross-platform installers on a GitHub Release by
   `release-quilt-sync.yaml`, mirrored to HubSpot (where the auto-updater
