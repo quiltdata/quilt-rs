@@ -284,6 +284,42 @@ impl Watcher {
         self.inner.aggregator.note_cleared(namespace);
     }
 
+    /// Take back a [`PausedReason::PullConflict`] the pull dry run no longer
+    /// finds — the conflicting edit undone, or the lineage advanced by another
+    /// process — and announce it. Returns whether there was one to take back.
+    ///
+    /// Only a conflict: it is the one pause the dry run's verdict speaks to.
+    /// Every other reason, and a login block, stays.
+    ///
+    /// Announced as a status event, because a clear is otherwise silent (see
+    /// [`Self::clear_paused`]) and an open page would keep offering Publish for
+    /// a conflict that is gone. `status` is the package's observation; its
+    /// fingerprint alone would not do, since a pause moves neither the upstream
+    /// state nor the tree, so a page may already have acted on that very
+    /// observation and would drop the event as old news. The fingerprint is
+    /// therefore marked as the clear's. `None` (the observation could not be
+    /// read) clears without announcing; the next real change re-reads.
+    pub async fn clear_pull_conflict(
+        &self,
+        namespace: &Namespace,
+        status: Option<&quilt_rs::lineage::InstalledPackageStatus>,
+    ) -> bool {
+        {
+            let mut paused = self.inner.paused.write().await;
+            if !matches!(paused.get(namespace), Some(PausedReason::PullConflict(_))) {
+                return false;
+            }
+            paused.remove(namespace);
+        }
+        self.inner.aggregator.note_cleared(namespace);
+        if let Some(status) = status {
+            let mut event = PackageStatusEvent::from_status(namespace, status);
+            event.fingerprint = format!("unpaused;{}", event.fingerprint);
+            self.inner.reporter.report_status(namespace, event);
+        }
+        true
+    }
+
     /// Drop the entire paused set. Called when `update_autosync_settings`
     /// flips `enabled` from false to true (M3).
     pub async fn clear_all_paused(&self) {
