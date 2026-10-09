@@ -520,6 +520,13 @@ pub trait QuiltModel {
         Ok(quilt.gc().await?)
     }
 
+    async fn measure_storage(&self) -> Result<quilt::flow::StorageSize, Error> {
+        // See `package_create`: the walk reads every installed manifest and
+        // other commands must not wait on it.
+        let quilt = self.get_quilt().lock().await.clone();
+        Ok(quilt.measure_storage().await?)
+    }
+
     async fn package_home(&self, namespace: &quilt_uri::Namespace) -> Result<PathBuf, Error> {
         let installed_package = self
             .get_installed_package(namespace)
@@ -976,6 +983,18 @@ mod domain_lock_tests {
             let model = Model::create(temp.path());
 
             assert_domain_lock_is_free_while_awaiting(&model, model.gc()).await;
+        });
+    }
+
+    /// Measuring walks all of `.quilt/`; the app must stay usable while it
+    /// does.
+    #[test]
+    fn measure_storage_releases_the_domain_lock_before_it_awaits() {
+        runtime_with_one_blocking_thread().block_on(async {
+            let temp = TempDir::new().expect("temp dir");
+            let model = Model::create(temp.path());
+
+            assert_domain_lock_is_free_while_awaiting(&model, model.measure_storage()).await;
         });
     }
 }

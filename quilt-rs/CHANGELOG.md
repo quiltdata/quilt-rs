@@ -21,6 +21,10 @@
 
 ## [v0.43.0-dev]
 
+### Added
+
+- `LocalDomain::measure_storage` says how many bytes `.quilt/` holds and what `gc` would free now, as a `StorageSize`. Its freeable part, also on its own as `flow::gc_estimate`, is a dry run of `gc` by the same rules that deletes nothing and takes no package locks, so a busy package never stops it (PRLINK)
+
 ### Changed
 
 - **Breaking:** The pull dry run also returns the paths the newer revision changes and removes, and its hash: `PullPreview` has new `changed`, `removed` and `latest_hash` fields. A caller that needs only the verdict uses the new `pull_verdict`, which skips collecting the paths (<https://github.com/quiltdata/quilt-rs/pull/1094>)

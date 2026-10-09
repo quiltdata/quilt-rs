@@ -1861,6 +1861,20 @@ pub async fn run_gc() -> Result<String, String> {
     tauri::invoke_unit("run_gc").await
 }
 
+/// How much local storage holds, and how much Free up space would free.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageSize {
+    pub total_bytes: u64,
+    /// An estimate: Free up space's own report is the exact answer.
+    pub freeable_bytes: u64,
+}
+
+/// Measure local storage, deleting nothing; run only when the user asks.
+pub async fn measure_storage() -> Result<StorageSize, String> {
+    tauri::invoke_unit("measure_storage").await
+}
+
 pub async fn collect_diagnostic_logs() -> Result<String, String> {
     tauri::invoke_unit("collect_diagnostic_logs").await
 }

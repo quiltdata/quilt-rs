@@ -116,7 +116,67 @@ pub async fn gc(
         paths.dot_quilt_dir().display()
     );
     let _held = lock_every_package(paths, storage, lineage, None).await?;
+    let report = sweep(paths, storage, Sweep::Delete).await?;
+    info!("✔️ Collected garbage: {report:?}");
+    Ok(report)
+}
 
+/// What [`gc`] would free now, deleting nothing: the same walk, by the same
+/// rules, with every count and byte it would report.
+///
+/// Takes no package locks, so it never waits on or refuses for a busy
+/// package. A writer meanwhile can change the answer, so it is an estimate;
+/// [`gc`]'s report stays the exact one. A manifest it cannot read fails it,
+/// as it fails gc, rather than count that manifest's objects as unused.
+pub async fn gc_estimate(paths: &DomainPaths, storage: &(impl Storage + Sync)) -> Res<GcReport> {
+    sweep(paths, storage, Sweep::Count).await
+}
+
+/// How much `.quilt/` holds, and how much of it [`gc`] would free.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StorageSize {
+    /// Every file's length under `.quilt/`, summed; a symlink counts as
+    /// itself, not what it points at.
+    pub total_bytes: u64,
+    /// What [`gc_estimate`] says gc would free.
+    pub freeable: GcReport,
+}
+
+/// Measure `.quilt/`: its total size and [`gc_estimate`]'s answer. Takes no
+/// package locks and deletes nothing.
+pub async fn measure_storage(
+    paths: &DomainPaths,
+    storage: &(impl Storage + Sync),
+) -> Res<StorageSize> {
+    let dot_quilt = paths.dot_quilt_dir();
+    let total_bytes = if storage.exists(&dot_quilt).await {
+        let entry = Entry {
+            path: dot_quilt,
+            is_dir: true,
+            len: 0,
+        };
+        sweep_entry(storage, entry, Sweep::Count).await?.1
+    } else {
+        0
+    };
+    let freeable = gc_estimate(paths, storage).await?;
+    Ok(StorageSize {
+        total_bytes,
+        freeable,
+    })
+}
+
+/// Whether a [`sweep`] deletes what it finds or only counts it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sweep {
+    Delete,
+    Count,
+}
+
+/// gc's walk: every object no installed manifest uses, everything in the
+/// `packages/` cache and everything in `staging/`, deleted or only counted.
+/// The caller of a deleting sweep holds every package's lock.
+async fn sweep(paths: &DomainPaths, storage: &(impl Storage + Sync), mode: Sweep) -> Res<GcReport> {
     let mut report = GcReport::default();
 
     let objects = list_files(storage, &paths.objects_dir()).await?;
@@ -126,25 +186,26 @@ pub async fn gc(
         if in_use.contains(&name) {
             continue;
         }
-        debug!("🗑️ Removing unused object {name}");
-        storage.remove_file(&path).await?;
+        if mode == Sweep::Delete {
+            debug!("🗑️ Removing unused object {name}");
+            storage.remove_file(&path).await?;
+        }
         report.objects += 1;
         report.bytes += len;
     }
 
     for bucket in list_entries(storage, &paths.cached_manifests_root()).await? {
-        let (files, bytes) = remove_entry(storage, bucket).await?;
+        let (files, bytes) = sweep_entry(storage, bucket, mode).await?;
         report.cached_manifests += files;
         report.bytes += bytes;
     }
 
     for entry in list_entries(storage, &paths.staging_dir()).await? {
-        let (_, bytes) = remove_entry(storage, entry).await?;
+        let (_, bytes) = sweep_entry(storage, entry, mode).await?;
         report.staging += 1;
         report.bytes += bytes;
     }
 
-    info!("✔️ Collected garbage: {report:?}");
     Ok(report)
 }
 
@@ -445,11 +506,18 @@ pub(crate) async fn list_files(
     Ok(files)
 }
 
-/// Remove `entry`, returning how many files it held and their summed
-/// length; a file counts as one.
-async fn remove_entry(storage: &(impl Storage + Sync), entry: Entry) -> Res<(usize, u64)> {
+/// Count how many files `entry` holds and their summed length, a file
+/// counting as one, and remove it if `mode` deletes. A symlink is not
+/// followed.
+async fn sweep_entry(
+    storage: &(impl Storage + Sync),
+    entry: Entry,
+    mode: Sweep,
+) -> Res<(usize, u64)> {
     if !entry.is_dir {
-        storage.remove_file(&entry.path).await?;
+        if mode == Sweep::Delete {
+            storage.remove_file(&entry.path).await?;
+        }
         return Ok((1, entry.len));
     }
     let (mut files, mut bytes) = (0, 0);
@@ -466,7 +534,9 @@ async fn remove_entry(storage: &(impl Storage + Sync), entry: Entry) -> Res<(usi
             }
         }
     }
-    storage.remove_dir_all(&entry.path).await?;
+    if mode == Sweep::Delete {
+        storage.remove_dir_all(&entry.path).await?;
+    }
     Ok((files, bytes))
 }
 
@@ -1066,5 +1136,115 @@ mod tests {
         for key in ["s3://bucket/objects/x?versionId=1", "file:///tmp/other/x"] {
             assert_eq!(row_objects(&hash, key).count(), 1, "{key}");
         }
+    }
+
+    /// Every file's length under `dir`, summed, read straight off disk.
+    fn bytes_on_disk(dir: &Path) -> Res<u64> {
+        let mut bytes = 0;
+        let mut dirs = vec![dir.to_path_buf()];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(dir)? {
+                let entry = entry?;
+                let metadata = entry.metadata()?;
+                if metadata.is_dir() {
+                    dirs.push(entry.path());
+                } else {
+                    bytes += metadata.len();
+                }
+            }
+        }
+        Ok(bytes)
+    }
+
+    /// An uninstalled package's objects, a cached manifest and a stranded
+    /// staging dir: something of every kind gc frees.
+    async fn domain_with_garbage() -> Res<(LocalDomain, DomainPaths, tempfile::TempDir)> {
+        let (domain, paths, dir) = domain().await?;
+        create(&domain, "acme/kept", &[("shared.txt", "shared")]).await?;
+        create(
+            &domain,
+            "acme/gone",
+            &[("shared.txt", "shared"), ("b.txt", "bb")],
+        )
+        .await?;
+        domain.uninstall_package("acme/gone".try_into()?).await?;
+        let bucket = paths.cached_manifests_dir("bucket");
+        std::fs::create_dir_all(&bucket)?;
+        std::fs::write(bucket.join("1111"), "12345")?;
+        let stranded = paths.staging_dir().join("some-uuid");
+        std::fs::create_dir_all(&stranded)?;
+        std::fs::write(stranded.join("file"), "1")?;
+        Ok((domain, paths, dir))
+    }
+
+    /// The estimate deletes nothing, and is what gc then frees when nothing
+    /// changes in between.
+    #[test(tokio::test)]
+    async fn the_estimate_is_what_gc_then_frees() -> Res {
+        let (domain, paths, _dir) = domain_with_garbage().await?;
+        let objects = object_names(&paths)?;
+        let total = bytes_on_disk(&paths.dot_quilt_dir())?;
+
+        let estimate = gc_estimate(&paths, &LocalStorage::new()).await?;
+
+        assert_eq!(object_names(&paths)?, objects, "nothing is deleted");
+        assert_eq!(bytes_on_disk(&paths.dot_quilt_dir())?, total);
+        assert_eq!(
+            estimate,
+            GcReport {
+                objects: 1,
+                cached_manifests: 1,
+                staging: 1,
+                bytes: 8,
+            }
+        );
+        assert_eq!(domain.gc().await?, estimate);
+        Ok(())
+    }
+
+    /// The estimate takes no locks, so a package busy elsewhere neither stops
+    /// nor holds it up.
+    #[test(tokio::test)]
+    async fn the_estimate_answers_while_a_package_is_busy() -> Res {
+        let (domain, paths, _dir) = domain_with_garbage().await?;
+        let busy: Namespace = "acme/kept".try_into()?;
+        let _held = package_lock::lock(&LocalStorage::new(), &paths, &busy).await?;
+
+        let size = domain.measure_storage().await?;
+
+        assert_eq!(size.freeable.bytes, 8);
+        assert!(
+            matches!(domain.gc().await, Err(Error::PackageBusy(_))),
+            "gc itself still refuses"
+        );
+        Ok(())
+    }
+
+    /// The total is every byte under `.quilt/`, and gc takes exactly what it
+    /// reports off it.
+    #[test(tokio::test)]
+    async fn the_total_is_every_byte_under_dot_quilt() -> Res {
+        let (domain, paths, _dir) = domain_with_garbage().await?;
+
+        let before = domain.measure_storage().await?;
+
+        assert_eq!(before.total_bytes, bytes_on_disk(&paths.dot_quilt_dir())?);
+        let freed = domain.gc().await?;
+        let after = domain.measure_storage().await?;
+        assert_eq!(after.total_bytes, before.total_bytes - freed.bytes);
+        assert!(after.freeable.is_empty());
+        Ok(())
+    }
+
+    /// A domain that has never written anything holds nothing.
+    #[test(tokio::test)]
+    async fn an_empty_domain_measures_nothing() -> Res {
+        let dir = tempfile::TempDir::new()?;
+        let paths = DomainPaths::new(dir.path().to_path_buf());
+
+        let size = measure_storage(&paths, &LocalStorage::new()).await?;
+
+        assert_eq!(size, StorageSize::default());
+        Ok(())
     }
 }
