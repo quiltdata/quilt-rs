@@ -16,8 +16,8 @@ pub fn ToggleRow(
     #[prop(into)] label: String,
     /// One line of explanation under the label. Wraps rather than truncating —
     /// it explains a setting, so losing the end of it defeats the purpose.
-    #[prop(into)]
-    sublabel: String,
+    #[prop(optional, into)]
+    sublabel: Option<String>,
     checked: RwSignal<bool>,
     /// A countdown, or a note like "nothing to publish". Sits *outside* the
     /// label, so clicking it does nothing — a clock is information, not a
@@ -27,6 +27,11 @@ pub fn ToggleRow(
     #[prop(optional)]
     trailing: Option<AnyView>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
+    /// A control of the setting's own under the words, such as Settings'
+    /// `Every [1] minutes`. Outside the label, like `trailing`: a click into a
+    /// field must not flip the box.
+    #[prop(optional)]
+    detail: Option<AnyView>,
 ) -> impl IntoView {
     let is_disabled = Signal::derive(move || disabled.get().unwrap_or(false));
 
@@ -52,10 +57,11 @@ pub fn ToggleRow(
                 />
                 <span class=style::text>
                     <span class=style::label>{label}</span>
-                    <span class=style::sublabel>{sublabel}</span>
+                    {sublabel.map(|words| view! { <span class=style::sublabel>{words}</span> })}
                 </span>
             </label>
             {trailing.map(|slot| view! { <span class=style::trailing>{slot}</span> })}
+            {detail.map(|slot| view! { <div class=style::detail>{slot}</div> })}
         </div>
     }
 }

@@ -3,6 +3,7 @@ use leptos::prelude::*;
 use crate::commands::{self, PublishSettingsData};
 use crate::components::Notification;
 use crate::components::buttons;
+use crate::pages::settings_v2::show_global_scope_warning;
 
 // ── Publish section ──
 
@@ -23,16 +24,6 @@ const DEFAULTS_USE: &str = "Publish and autosync send these defaults. They also 
 const GLOBAL_SCOPE_WARNING: &str = "These settings apply to every bucket. Workflow ids and \
      metadata schemas are defined per bucket — a global override can make commits fail in \
      buckets that don't define it.";
-
-/// Whether the global-scope warning should be shown for the current popup state.
-///
-/// The commit defaults are global (they apply to every bucket), so we warn
-/// whenever the user leans on a per-bucket-sensitive setting: the workflow is
-/// overridden (regardless of the id text), or default metadata is present.
-/// Reflects current state, not dirtiness — a pre-populated override warns too.
-fn show_global_scope_warning(override_selected: bool, metadata: &str) -> bool {
-    override_selected || !metadata.trim().is_empty()
-}
 
 fn apply_placeholders(template: &str, values: &[&str]) -> String {
     debug_assert_eq!(PUBLISH_PLACEHOLDERS.len(), values.len());
@@ -311,33 +302,5 @@ fn PublishSettingsPopup(
                 </div>
             </div>
         </div>
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::show_global_scope_warning;
-
-    #[test]
-    fn override_selected_warns() {
-        // Override selected warns regardless of the id text (even empty).
-        assert!(show_global_scope_warning(true, ""));
-        assert!(show_global_scope_warning(true, "my-workflow"));
-    }
-
-    #[test]
-    fn metadata_non_empty_warns() {
-        // Bucket default + present metadata still warns.
-        assert!(show_global_scope_warning(false, r#"{"source":"desktop"}"#));
-    }
-
-    #[test]
-    fn whitespace_only_metadata_does_not_warn() {
-        assert!(!show_global_scope_warning(false, "   \n\t "));
-    }
-
-    #[test]
-    fn neither_does_not_warn() {
-        assert!(!show_global_scope_warning(false, ""));
     }
 }

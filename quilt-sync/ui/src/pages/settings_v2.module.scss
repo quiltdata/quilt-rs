@@ -1,0 +1,125 @@
+// The page's column of cards. The page's own gap, as on the other v2 pages'
+// regions: each card is a region.
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-4);
+}
+
+// A card's fields, stacked as a form.
+.fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+}
+
+.quiet {
+  margin: 0;
+  color: var(--q-fgColor-muted);
+}
+
+// As `FormControl`'s label, for a control that is not in one.
+.field_name {
+  display: block;
+  margin: 0 0 var(--q-space-1);
+  font-weight: 600;
+}
+
+// As `FormControl`'s error.
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: var(--q-space-1) 0 0;
+  color: var(--q-fgColor-danger);
+}
+
+.error svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+}
+
+// `Every [1] minute`: words and a field on one line, centred on the field.
+.sentence {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  color: var(--q-fgColor-muted);
+}
+
+// Empty until a row saves, and never moves the row: the trailing slot is
+// already sized by the row.
+.saved {
+  color: var(--q-fgColor-muted);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+// A name over its value, and an action at the trailing end, centred on the
+// two lines.
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  padding: var(--q-space-2) 0;
+}
+
+.row_text {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.row_name {
+  font-weight: 600;
+}
+
+.row_value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--q-space-3);
+  min-width: 0;
+}
+
+.row_note {
+  color: var(--q-fgColor-muted);
+  max-width: 70ch;
+}
+
+.row_action {
+  flex: none;
+  color: var(--q-fgColor-muted);
+}
+
+// A path is one line, cut at the end; its title holds the rest.
+.path {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--q-font-mono);
+}
+
+.freed {
+  color: var(--q-fgColor-muted);
+}
+
+// The log level's select at a select's width, not the card's.
+.select {
+  display: block;
+  max-width: 240px;
+}
+
+.sent_list {
+  margin: 0;
+  padding-left: var(--q-space-5);
+  color: var(--q-fgColor-muted);
+}

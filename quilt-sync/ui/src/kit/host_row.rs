@@ -42,6 +42,11 @@ pub fn HostRow(
     #[prop(optional, into)]
     provisional: MaybeProp<bool>,
     on_sign_in: impl Fn(MouseEvent) + 'static,
+    /// Draws *Sign out* beside the role, for a signed-in host. Settings passes
+    /// it and the main page does not: the main page offers what is encouraged,
+    /// Settings holds what is rare or destructive.
+    #[prop(optional)]
+    on_sign_out: Option<Callback<()>>,
 ) -> impl IntoView {
     let switchable = roles.len() > 1;
     let waiting = provisional.get_untracked().unwrap_or(false);
@@ -84,13 +89,22 @@ pub fn HostRow(
                     // A signed-out host has no role to pick, so the only
                     // affordance is getting the session back.
                     view! { <Button on_click=on_sign_in>"Sign in"</Button> }.into_any()
-                } else if switchable {
-                    view! {
-                        <Select naming=Naming::Prefix("Role".to_string()) options=roles selected=role />
-                    }
-                        .into_any()
                 } else {
-                    ().into_any()
+                    let switcher = switchable
+                        .then(|| {
+                            view! {
+                                <Select
+                                    naming=Naming::Prefix("Role".to_string())
+                                    options=roles
+                                    selected=role
+                                />
+                            }
+                        });
+                    let sign_out = on_sign_out
+                        .map(|sign_out| {
+                            view! { <Button on_click=move |_| sign_out.run(())>"Sign out"</Button> }
+                        });
+                    view! { {switcher} {sign_out} }.into_any()
                 }}
             </span>
         </div>
@@ -125,6 +139,41 @@ mod tests {
     use super::*;
     use crate::test_support::mount;
     use wasm_bindgen_test::*;
+
+    /// Sign out is drawn only where a caller asks for it, and never for a
+    /// signed-out host, which has nothing to sign out of.
+    #[wasm_bindgen_test]
+    fn sign_out_is_drawn_only_when_asked() {
+        let saying =
+            |el: &web_sys::Element| el.text_content().unwrap_or_default().contains("Sign out");
+        let plain = mount(|| {
+            view! { <HostRow host="quilt.test" role=RwSignal::new("analyst".to_string()) on_sign_in=|_| {} /> }
+        });
+        assert!(!saying(&plain), "the main page's row has none");
+        let settings = mount(|| {
+            view! {
+                <HostRow
+                    host="quilt.test"
+                    role=RwSignal::new("analyst".to_string())
+                    on_sign_in=|_| {}
+                    on_sign_out=Callback::new(|()| ())
+                />
+            }
+        });
+        assert!(saying(&settings));
+        let gone = mount(|| {
+            view! {
+                <HostRow
+                    host="quilt.test"
+                    role=RwSignal::new(String::new())
+                    signed_out=true
+                    on_sign_in=|_| {}
+                    on_sign_out=Callback::new(|()| ())
+                />
+            }
+        });
+        assert!(!saying(&gone));
+    }
 
     /// A catalog host is a domain, and a long one truncates.
     #[wasm_bindgen_test]
