@@ -790,7 +790,7 @@ pub(crate) async fn run_once(
                 // to be paused, so a denied host costs at most one `/me`
                 // per role switch — not one per tick.
                 let reason = name_denied_role(model, roles, Some(origin), reason).await;
-                pause(inner, &namespace, Some(origin), reason).await;
+                pause(inner, &namespace, origin, reason).await;
             }
             Err(WatchError::Transient(err)) => {
                 bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
@@ -811,16 +811,14 @@ pub(crate) async fn run_once(
 ///
 /// The one place a pause is recorded, whether the tick hit the refusal or a
 /// hand-pressed pull did (see [`Watcher::pause`](crate::autopull::Watcher::pause)).
-/// `origin` attributes the pause to the package's own deployment. The tick
-/// always has one; a hand-pressed pull on a package installed from a plain S3
-/// URI has none, and everything here but the attribution happens regardless
-/// (see [`StatusReporter::report_paused`]).
+/// `origin` is required for the same reason [`StatusReporter::report_paused`]
+/// requires it: a pause is always attributed to the package's own deployment.
 ///
 /// [`StatusReporter::report_paused`]: crate::autopull::reporter::StatusReporter::report_paused
 pub(crate) async fn pause(
     inner: &WatcherInner,
     namespace: &Namespace,
-    origin: Option<&Host>,
+    origin: &Host,
     reason: PausedReason,
 ) {
     inner

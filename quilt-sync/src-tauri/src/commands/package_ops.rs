@@ -435,8 +435,11 @@ async fn package_pull_command(
 /// offering the same pull until the next tick. Only a conflict: it is the one
 /// refusal with a state of its own that the working tree cannot report.
 ///
-/// A package installed from a plain S3 URI has no catalog host but pulls all
-/// the same, so it pauses too; only the host-attributed reporting is skipped.
+/// A package with no known deployment is not paused, and a pause is always
+/// attributed to the package's own host. A remote with no catalog host is
+/// [`misconfigured_remote`](quilt::lineage::PackageLineage::misconfigured_remote):
+/// with no catalog there are no credentials, so no pull on it can reach a
+/// conflict, and every page resolves it to Unknown anyway.
 async fn pause_on_conflict(
     watcher: &Watcher,
     namespace: &quilt_uri::Namespace,
@@ -447,10 +450,15 @@ async fn pause_on_conflict(
     else {
         return;
     };
-    let origin = lineage
+    // No origin is a misconfigured remote (see above): unreachable after a
+    // conflict, and nothing to attribute the pause to.
+    let Some(origin) = lineage
         .remote_uri
         .as_ref()
-        .and_then(|remote| remote.origin.as_ref());
+        .and_then(|remote| remote.origin.as_ref())
+    else {
+        return;
+    };
     watcher
         .pause(namespace, origin, PausedReason::pull_conflict(conflicts))
         .await;
@@ -1205,29 +1213,18 @@ mod tests {
     /// A model whose pull fails with `error`, for a package published to a
     /// known deployment.
     fn failing_pull_model(error: impl Fn() -> Error + Send + Sync + 'static) -> MockQuiltModel {
-        failing_pull_model_from(Some(fixtures::host()), error)
-    }
-
-    /// A model whose pull fails with `error`, for a package whose remote has
-    /// `origin` — `None` for one installed from a plain S3 URI.
-    fn failing_pull_model_from(
-        origin: Option<quilt_uri::Host>,
-        error: impl Fn() -> Error + Send + Sync + 'static,
-    ) -> MockQuiltModel {
         let mut model = installed_model();
-        model
-            .expect_get_installed_package_lineage()
-            .returning(move |_| {
-                Ok(quilt::lineage::PackageLineage::from_remote(
-                    quilt_uri::ManifestUri {
-                        bucket: "bucket".to_string(),
-                        namespace: ("acme", "demo").into(),
-                        hash: "h0".to_string(),
-                        origin: origin.clone(),
-                    },
-                    "h1".to_string(),
-                ))
-            });
+        model.expect_get_installed_package_lineage().returning(|_| {
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h0".to_string(),
+                    origin: Some(fixtures::host()),
+                },
+                "h1".to_string(),
+            ))
+        });
         model
             .expect_lock_package()
             .returning(|p| Ok(p.namespace.clone()));
@@ -1281,50 +1278,6 @@ mod tests {
         // attributed to the package's own deployment.
         assert_eq!(*reporter.paused.lock().unwrap(), vec![(ns, reason)]);
         assert_eq!(*reporter.hosts.lock().unwrap(), vec![fixtures::host()]);
-    }
-
-    /// A package installed from a plain S3 URI has no catalog host, yet it
-    /// pulls all the same, so a conflict on it must pause it too: the page
-    /// reads the paused map, and the tick (which skips such packages) would
-    /// never record it. Only the host-attributed reporting is left out.
-    #[tokio::test]
-    async fn a_pull_refused_by_a_conflict_pauses_a_package_without_a_host() {
-        let ns: quilt_uri::Namespace = ("acme", "demo").into();
-        let reporter = Arc::new(RecordingReporter::default());
-        let watcher = Watcher::new_for_test(reporter.clone());
-        let model = failing_pull_model_from(None, pull_conflict_error);
-
-        assert!(
-            super::package_pull_command(&model, &watcher, "acme/demo")
-                .await
-                .is_err()
-        );
-
-        let reason = PausedReason::PullConflict(vec!["a.csv".to_string(), "b.csv".to_string()]);
-        assert_eq!(watcher.paused_reason(&ns).await, Some(reason.clone()));
-        assert_eq!(
-            crate::commands::main_page::conflict_files(watcher.paused_reason(&ns).await.as_ref()),
-            Some(vec!["a.csv".to_string(), "b.csv".to_string()]),
-            "the page reads the pause as the conflict state"
-        );
-        // Still announced, so an open page refetches; just not attributed.
-        assert_eq!(*reporter.paused.lock().unwrap(), vec![(ns.clone(), reason)]);
-        assert!(reporter.hosts.lock().unwrap().is_empty());
-        assert_eq!(
-            reporter
-                .statuses
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|(_, s)| s.status.as_str())
-                .collect::<Vec<_>>(),
-            vec!["paused"],
-            "the status event goes out regardless of host"
-        );
-
-        // A later successful pull or publish clears it as it clears any pause.
-        watcher.clear_paused(&ns).await;
-        assert_eq!(watcher.paused_reason(&ns).await, None);
     }
 
     /// Any other refusal leaves the pause map alone: only a conflict has a
