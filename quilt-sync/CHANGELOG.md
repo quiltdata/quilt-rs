@@ -19,7 +19,13 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.22.9-dev]
+## [v0.22.10-dev]
+
+### Changed
+
+- Under the hood, a crash report can carry a message from the user, ready for the new *Report a problem* dialog (<https://github.com/quiltdata/quilt-rs/pull/1100>)
+
+## [v0.22.9] - 2026-10-09
 
 ### Added
 
@@ -27,16 +33,15 @@
 
 ### Changed
 
-- **New design preview**: on the commit page, the file list scrolls in its own box, so the page title and **Publish** stay on screen however long the list is. Drag the bar under the metadata editor to make it taller. The `›` between the links above the page title has more room (<https://github.com/quiltdata/quilt-rs/pull/1095>)
-- Under the hood, a crash report can carry a message from the user, ready for the new *Report a problem* dialog (<https://github.com/quiltdata/quilt-rs/pull/1100>)
+- **New design preview**: on the commit page, the file list scrolls in its own box, so the title and **Publish** stay on screen. The metadata editor can be dragged taller (<https://github.com/quiltdata/quilt-rs/pull/1095>)
 
 ### Fixed
 
-- **New design preview**: the package page no longer flashes its loading frame when it refreshes on its own, a second or two after it opens or whenever autosync reports back (<https://github.com/quiltdata/quilt-rs/pull/1093>)
+- **New design preview**: the package page no longer flashes its loading frame when it refreshes on its own (<https://github.com/quiltdata/quilt-rs/pull/1093>)
 
 ### quilt-rs
 
-- Updated [from v0.42.1 to v0.43.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.1...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.42.1 to v0.43.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.1...quilt-rs/v0.43.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.22.8] - 2026-10-08
 
