@@ -48,8 +48,9 @@ pub struct PackageStatusEvent {
     pub namespace: quilt_uri::Namespace,
     pub status: String,
     pub has_changes: bool,
-    /// Digest of the observation this event reports — the upstream state
-    /// and, per changed path, its kind and content hash. Two events with
+    /// Digest of the observation this event reports — the upstream state,
+    /// the newer revision it was computed against and, per changed path, its
+    /// kind and content hash. Two events with
     /// equal fingerprints describe the same working tree and remote, so a
     /// consumer that already acted on one can ignore the other. Assembled
     /// here with `status`/`has_changes` from a single `status` so the three
@@ -77,19 +78,27 @@ impl PackageStatusEvent {
 /// Two recompute results with the same fingerprint produce the same view, so
 /// the second need not be acted on.
 ///
-/// Format: `<upstream>;<hex(path)>:<kind>:<hash>;<hex(path)>:<kind>:<hash>;...`
+/// Format: `<upstream>;<hex(latest)>;<hex(path)>:<kind>:<hash>;<hex(path)>:<kind>:<hash>;...`
+/// `latest` is the newer revision the status was computed against, so a
+/// remote that moves from one newer revision to the next, leaving the package
+/// behind with the same changes, is a new observation.
 /// Paths are walked in `BTreeMap` order (sorted by `PathBuf`), so the output
-/// is deterministic without an explicit sort. The path is the only field that
-/// can hold arbitrary bytes — non-UTF-8 names on Linux, or the `:`/`;`
-/// delimiters (kind is A/M/D, the hash is hex/base64) — so it is **hex-encoded
-/// from its lossless bytes**. Hex is `0-9a-f` only, so it is both lossless and
-/// delimiter-free, keeping the digest **injective**: no two distinct
-/// observations share a fingerprint, so a consumer never skips a real refetch.
-/// (A lossy path string would fold two distinct non-UTF-8 names to the same
-/// `�`; a raw path could serialize a crafted `a:M:<hash>;b` like two entries.)
+/// is deterministic without an explicit sort. A path can hold arbitrary bytes
+/// — non-UTF-8 names on Linux, or the `:`/`;` delimiters (kind is A/M/D, the
+/// hash is hex/base64) — so it is **hex-encoded from its lossless bytes**, and
+/// so is `latest`, which is hex today but is not relied on to stay so. Hex is
+/// `0-9a-f` only, so it is both lossless and delimiter-free, keeping the
+/// digest **injective**: no two distinct observations share a fingerprint, so
+/// a consumer never skips a real refetch. (A lossy path string would fold two
+/// distinct non-UTF-8 names to the same `�`; a raw path could serialize a
+/// crafted `a:M:<hash>;b` like two entries.)
 pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus) -> String {
     let mut out = String::new();
     let _ = write!(out, "{};", status.upstream_state);
+    for b in status.latest_hash.bytes() {
+        let _ = write!(out, "{b:02x}");
+    }
+    out.push(';');
     for (path, change) in &status.changes {
         let (kind, row) = match change {
             quilt::lineage::Change::Added(r) => ("A", r),
@@ -104,19 +113,25 @@ pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus
     out
 }
 
-/// Fingerprint of a clean, up-to-date working tree — the state a package
-/// reaches right after a successful publish, and after a pull that kept no
-/// local work. The mutation paths in the tick don't hold a post-mutation
+/// Fingerprint of a clean, up-to-date working tree whose `latest` is
+/// `latest` — the state a package reaches right after a successful publish,
+/// and after a pull that kept no local work, with the revision it reached as
+/// `latest`. The mutation paths in the tick don't hold a post-mutation
 /// `InstalledPackageStatus` to fingerprint directly, but the observation they
-/// represent is a settled `UpToDate` tree, and this names it. (A pull that
-/// *kept* local changes reads this too; it understates by one changed-path
-/// digest, which the next tick's real observation corrects — a redundant
-/// refetch at worst, never a missed one.)
-pub(crate) fn clean_uptodate_fingerprint() -> String {
-    status_fingerprint(&quilt::lineage::InstalledPackageStatus::new(
-        quilt::lineage::UpstreamState::UpToDate,
-        std::collections::BTreeMap::new(),
-    ))
+/// represent is a settled `UpToDate` tree, and this names it, so the next
+/// tick's observation of that tree matches it. (A pull that *kept* local
+/// changes reads this too; it understates by one changed-path digest, which
+/// the next tick's real observation corrects — a redundant refetch at worst,
+/// never a missed one. So does an empty `latest`, for a publish that did not
+/// become `latest`.)
+pub(crate) fn settled_fingerprint(latest: &str) -> String {
+    status_fingerprint(&quilt::lineage::InstalledPackageStatus {
+        latest_hash: latest.to_string(),
+        ..quilt::lineage::InstalledPackageStatus::new(
+            quilt::lineage::UpstreamState::UpToDate,
+            std::collections::BTreeMap::new(),
+        )
+    })
 }
 
 /// Payload emitted to the UI after autosync publishes a package. The UI
@@ -652,6 +667,56 @@ mod tests {
         let a = fingerprint_of_one_modified(PathBuf::from(OsStr::from_bytes(b"foo\xff")));
         let b = fingerprint_of_one_modified(PathBuf::from(OsStr::from_bytes(b"foo\xfe")));
         assert_ne!(a, b, "non-UTF-8 paths must not collide in the fingerprint");
+    }
+
+    /// A behind package with no local changes whose `latest` is `latest`.
+    fn behind_with_latest(latest: &str) -> quilt::lineage::InstalledPackageStatus {
+        quilt::lineage::InstalledPackageStatus {
+            latest_hash: latest.to_string(),
+            ..quilt::lineage::InstalledPackageStatus::new(
+                quilt::lineage::UpstreamState::Behind,
+                std::collections::BTreeMap::new(),
+            )
+        }
+    }
+
+    #[test]
+    fn fingerprint_names_the_newer_revision() {
+        // The remote moved from one newer revision to the next: still behind,
+        // the same local changes. Without the hash these two collide, and an
+        // open page drops the tick that read the move as old news.
+        let first = status_fingerprint(&behind_with_latest("aaaa"));
+        let next = status_fingerprint(&behind_with_latest("bbbb"));
+        assert_ne!(first, next, "a moved `latest` is a different observation");
+        assert!(
+            first.starts_with("behind;"),
+            "the upstream state still leads, got: {first}"
+        );
+    }
+
+    #[test]
+    fn fingerprint_hex_encodes_the_newer_revision() {
+        // A hash is hex today, but the digest does not lean on that: encoded,
+        // no `latest` can carry a delimiter into the entries after it.
+        let fp = status_fingerprint(&behind_with_latest("feed;beef"));
+        assert!(fp.contains(&hex("feed;beef")), "got: {fp}");
+        assert!(!fp.contains("feed;beef"), "got: {fp}");
+    }
+
+    #[test]
+    fn settled_fingerprint_is_the_settled_observation() {
+        // After its own pull or publish the tick fingerprints the tree it
+        // reached. The next tick observes that tree for real; the two must
+        // match, or every sync would cost an open page one more re-read.
+        let observed = quilt::lineage::InstalledPackageStatus {
+            latest_hash: "cafe".to_string(),
+            ..quilt::lineage::InstalledPackageStatus::new(
+                quilt::lineage::UpstreamState::UpToDate,
+                std::collections::BTreeMap::new(),
+            )
+        };
+        assert_eq!(settled_fingerprint("cafe"), status_fingerprint(&observed));
+        assert_ne!(settled_fingerprint("cafe"), settled_fingerprint(""));
     }
 
     #[test]

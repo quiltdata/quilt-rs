@@ -281,6 +281,12 @@ pub struct PackageHeaderData {
     /// no host, or a roles lookup that failed, which are indistinguishable to the
     /// reader and should be: each one is "the app cannot offer you another role".
     pub role_switch: Option<RoleSwitch>,
+    /// The remote's `latest` hash this read's status was computed against,
+    /// when it read the remote just now; `None` when the read fell back to the
+    /// last-known tip, did not ask the remote, or found no `latest`. The page
+    /// keys its kept dry-run answer on it, so an answer about an earlier newer
+    /// revision is not drawn as this one's.
+    pub newer: Option<String>,
 }
 
 /// The roles a denied reader could switch to, on the host that denied them.
@@ -663,6 +669,9 @@ async fn get_package_page_data_from_model(
 
     // A blocked read counts from tracking alone.
     let status = status_read.as_ref().and_then(|r| r.as_ref().ok());
+    let newer = status
+        .filter(|s| s.latest_refreshed && !s.latest_hash.is_empty())
+        .map(|s| s.latest_hash.clone());
     let keeping = keeping_data(
         &lineage,
         &m.get_installed_package_sizes(&installed, &lineage).await?,
@@ -698,6 +707,7 @@ async fn get_package_page_data_from_model(
             has_local_commit,
             commit_has_parent,
             role_switch,
+            newer,
         },
     })
 }
@@ -2592,6 +2602,39 @@ mod tests {
             "but it DOES have a remote, which is the guard `has_local_commit` \
              could not express — a surface reading that field alone would offer \
              undo where the engine refuses"
+        );
+    }
+
+    /// A behind status whose newer revision is `latest`, read against the
+    /// remote just now or not.
+    fn behind_on(latest: &str, refreshed: bool) -> quilt::lineage::InstalledPackageStatus {
+        quilt::lineage::InstalledPackageStatus {
+            latest_hash: latest.to_string(),
+            latest_refreshed: refreshed,
+            ..quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                quilt::lineage::ChangeSet::new(),
+            )
+        }
+    }
+
+    /// The read names the newer revision its status was computed against, so
+    /// the page can tell an answer about an earlier newer revision from one
+    /// about this one. Only a tip read just now counts: a fallen-back one is
+    /// what the last read already said, and names nothing new.
+    #[tokio::test]
+    async fn the_read_names_the_newer_revision_only_when_it_reached_the_remote() {
+        let roles = RoleCache::default();
+        let fresh = page(&roles, Ok(behind_on("bbbb", true)), None).await;
+        assert_eq!(fresh.header.newer.as_deref(), Some("bbbb"));
+
+        let stale = page(&roles, Ok(behind_on("bbbb", false)), None).await;
+        assert_eq!(stale.header.newer, None, "the remote was not reached");
+
+        let none = page(&roles, Ok(behind_on("", true)), None).await;
+        assert_eq!(
+            none.header.newer, None,
+            "no `latest` tag, no newer revision"
         );
     }
 

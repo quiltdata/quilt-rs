@@ -393,18 +393,42 @@ fn checks_incoming(state: &crate::kit::PackageState) -> bool {
     )
 }
 
-/// The dry run's answer, and what it was asked about.
+/// What a read asks the dry run about, and what its answer is keyed to.
 ///
-/// Keyed twice. By package, because one route serves every package and an
-/// answer can land after the reader moved on. By the revision this copy
+/// Keyed three times. By package, because one route serves every package and
+/// an answer can land after the reader moved on. By the revision this copy
 /// holds, because an answer is the difference from it: once *Get latest*
 /// moves it, the last answer counts files that are no longer coming, even
-/// when the read after it finds a newer revision again.
+/// when the read after it finds a newer revision again. By the newer revision
+/// the read saw, because the remote can move on while this copy holds the
+/// same revision, and the answer about the earlier newer revision would list
+/// its files.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IncomingKey {
+    namespace: String,
+    /// `CurrentRevisionData.hash` of the read.
+    holds: String,
+    /// `PackageHeaderData.newer` of the read: `None` when it did not reach
+    /// the remote.
+    newer: Option<String>,
+}
+
+impl IncomingKey {
+    /// Whether an answer keyed `answer` speaks for this read. A read that did
+    /// not reach the remote knows no newer revision, so it takes the answer
+    /// for the same package and held revision, as it did before the key named
+    /// one; a read that did must see an answer about the same.
+    fn admits(&self, answer: &IncomingKey) -> bool {
+        self.namespace == answer.namespace
+            && self.holds == answer.holds
+            && (self.newer.is_none() || self.newer == answer.newer)
+    }
+}
+
+/// The dry run's answer, and the read it was asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct IncomingAnswer {
-    namespace: String,
-    /// `CurrentRevisionData.hash` of the read that asked.
-    holds: String,
+    key: IncomingKey,
     check: commands::PullCheck,
     /// Whether the run that answered finished after the current read. A
     /// re-read that keeps the answer clears it, and the next run's answer
@@ -422,8 +446,8 @@ struct IncomingAnswer {
 ///
 /// It runs again after every read that shows the package behind or in
 /// conflict, since a local edit can make a conflict while the newer revision
-/// stays the same. While it runs, the last answer for the same package and
-/// the same held revision stays up, marked stale: it still draws the summary
+/// stays the same. While it runs, the last answer the read's key admits
+/// ([`IncomingKey::admits`]) stays up, marked stale: it still draws the summary
 /// and the popover, but the header's state is the read's until the new run
 /// answers, so an answer about an earlier read cannot hide a conflict the
 /// re-read records, nor paint one it no longer does. Each run is numbered,
@@ -434,7 +458,7 @@ struct IncomingCheck {
     /// The number of the latest run. An answer from an earlier one is dropped.
     runs: StoredValue<u64>,
     /// What the last read asked about, for *Try again*.
-    asked: StoredValue<Option<(String, String)>>,
+    asked: StoredValue<Option<IncomingKey>>,
     pull: PullRead,
     /// The summary's popover, open or pinned. Here for the answer's reason:
     /// the header is drawn again on a re-read whose data differs and when the
@@ -454,21 +478,19 @@ impl IncomingCheck {
         }
     }
 
-    /// A read answered. `asks` is its package and the revision it holds when
-    /// it shows the package behind or in conflict, and `None` otherwise: then
-    /// no answer stands, and any still out is dropped when it lands.
-    fn after_read(self, asks: Option<(String, String)>) {
+    /// A read answered. `asks` is its key when it shows the package behind
+    /// or in conflict, and `None` otherwise: then no answer stands, and any
+    /// still out is dropped when it lands.
+    fn after_read(self, asks: Option<IncomingKey>) {
         self.asked.set_value(asks.clone());
-        let Some((namespace, holds)) = asks else {
+        let Some(key) = asks else {
             self.runs.update_value(|n| *n += 1);
             self.answer.set(None);
             return;
         };
         let keep = self.answer.with_untracked(|a| {
             a.as_ref().is_some_and(|a| {
-                a.namespace == namespace
-                    && a.holds == holds
-                    && matches!(a.check, commands::PullCheck::Ready(_))
+                key.admits(&a.key) && matches!(a.check, commands::PullCheck::Ready(_))
             })
         });
         if keep {
@@ -478,23 +500,22 @@ impl IncomingCheck {
                 }
             });
         }
-        self.run(namespace, holds, keep);
+        self.run(key, keep);
     }
 
     /// *Try again*, after a failed check.
     fn retry(self) {
-        if let Some((namespace, holds)) = self.asked.get_value() {
-            self.run(namespace, holds, false);
+        if let Some(key) = self.asked.get_value() {
+            self.run(key, false);
         }
     }
 
-    fn run(self, namespace: String, holds: String, keep: bool) {
+    fn run(self, key: IncomingKey, keep: bool) {
         self.runs.update_value(|n| *n += 1);
         let this = self.runs.get_value();
         if !keep {
             self.answer.set(Some(IncomingAnswer {
-                namespace: namespace.clone(),
-                holds: holds.clone(),
+                key: key.clone(),
                 check: commands::PullCheck::Loading,
                 fresh: true,
             }));
@@ -503,15 +524,14 @@ impl IncomingCheck {
             answer, runs, pull, ..
         } = self;
         leptos::task::spawn_local(async move {
-            let check = match pull(namespace.clone()).await {
+            let check = match pull(key.namespace.clone()).await {
                 Ok(preview) => commands::PullCheck::Ready(preview),
                 Err(_) => commands::PullCheck::Failed,
             };
             // `try_`: the page can be gone by now.
             if runs.try_get_value() == Some(this) {
                 answer.try_set(Some(IncomingAnswer {
-                    namespace,
-                    holds,
+                    key,
                     check,
                     fresh: true,
                 }));
@@ -519,14 +539,14 @@ impl IncomingCheck {
         });
     }
 
-    /// The check for one read's package and held revision, and whether its
-    /// answer is fresh: its answer, or `Loading` until one lands for that key.
-    fn check_for(self, namespace: String, holds: String) -> Memo<(commands::PullCheck, bool)> {
+    /// The check for one read's key, and whether its answer is fresh: its
+    /// answer, or `Loading` until one lands that the key admits.
+    fn check_for(self, key: IncomingKey) -> Memo<(commands::PullCheck, bool)> {
         let answer = self.answer;
         Memo::new(move |_| {
             answer.with(|a| {
                 a.as_ref()
-                    .filter(|a| a.namespace == namespace && a.holds == holds)
+                    .filter(|a| key.admits(&a.key))
                     .map_or((commands::PullCheck::Loading, true), |a| {
                         (a.check.clone(), a.fresh)
                     })
@@ -703,8 +723,13 @@ fn incoming_header(
     incoming: IncomingCheck,
 ) -> (AnyView, Memo<Option<Arc<BTreeSet<String>>>>) {
     let namespace = header.namespace.to_string();
-    let check =
-        checks_incoming(&header.state).then(|| incoming.check_for(namespace.clone(), holds));
+    let check = checks_incoming(&header.state).then(|| {
+        incoming.check_for(IncomingKey {
+            namespace: namespace.clone(),
+            holds,
+            newer: header.newer.clone(),
+        })
+    });
     let fresh = Signal::derive(move || check.is_none_or(|c| c.with(|(_, fresh)| *fresh)));
     let check: Signal<Option<commands::PullCheck>> =
         Signal::derive(move || check.map(|c| c.with(|(check, _)| check.clone())));
@@ -1291,7 +1316,11 @@ fn PackageScreen(
         let asks = answered
             .ok()
             .filter(|d| checks_incoming(&d.header.state))
-            .map(|d| (ns.get_untracked(), d.context.revision.hash));
+            .map(|d| IncomingKey {
+                namespace: ns.get_untracked(),
+                holds: d.context.revision.hash,
+                newer: d.header.newer,
+            });
         incoming.after_read(asks);
     });
     // A pin names one package's files, so another package starts closed.
@@ -1443,8 +1472,9 @@ fn pause_banner(message: Option<String>, dismissed: RwSignal<Option<String>>) ->
 /// # Two streams, because one of them cannot see a pause
 ///
 /// `package-status-changed` carries a fingerprint of the observation — the
-/// upstream state and the changed paths — and [`StatusWatch`] drops an event
-/// that repeats the last one. A pause moves neither: a workflow rejection or a
+/// upstream state, the newer revision and the changed paths — and
+/// [`StatusWatch`] drops an event that repeats the last one. A pause moves
+/// none of them: a workflow rejection or a
 /// refused role stops syncing over a tree that has not changed, so the status
 /// stream reports the same observation and the fingerprint rule correctly calls
 /// it old news. `autosync-paused` is the only thing that says a pause happened,
@@ -1533,6 +1563,7 @@ mod tests {
                 has_local_commit: false,
                 commit_has_parent: false,
                 role_switch: None,
+                newer: None,
             },
             context: commands::PackageContextData {
                 revision: commands::CurrentRevisionData {
@@ -3228,6 +3259,14 @@ mod tests {
         data
     }
 
+    /// [`behind`], read against a remote whose newer revision is `newer`, or
+    /// `None` when the read did not reach the remote.
+    fn behind_on(holds: &str, newer: Option<&str>) -> commands::PackagePageData {
+        let mut data = behind(holds);
+        data.header.newer = newer.map(str::to_string);
+        data
+    }
+
     fn adds(n: usize) -> commands::PullPreview {
         commands::PullPreview {
             outcome: commands::PullOutcome::CleanUpdate,
@@ -3400,6 +3439,43 @@ mod tests {
         );
         sleep_ms(150).await;
         assert_eq!(summary(&el).as_deref(), Some("2 file changes"));
+    }
+
+    /// The remote moves on while this copy holds the same revision. The read
+    /// that sees the move names the new newer revision, so the answer about
+    /// the earlier one is dropped: `checking…` until the rerun lands, never
+    /// the earlier revision's count. A read that names the same one, or none
+    /// because it did not reach the remote, keeps the answer up meanwhile.
+    #[wasm_bindgen_test]
+    async fn a_moved_newer_revision_drops_the_kept_answer() {
+        script(vec![(0, Ok(adds(3)))]);
+        let el = suspended_screen(behind_on("aaa", Some("n1"))).await;
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
+
+        // The same newer revision: kept while the rerun runs.
+        script(vec![(120, Ok(adds(3)))]);
+        re_read(&el, behind_on("aaa", Some("n1"))).await;
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"), "kept");
+        sleep_ms(150).await;
+
+        // The remote moved on, the held revision did not.
+        script(vec![(120, Ok(adds(5)))]);
+        re_read(&el, behind_on("aaa", Some("n2"))).await;
+        assert_eq!(summary(&el), None, "the earlier newer revision's count");
+        assert!(
+            text(&el).contains("checking\u{2026}"),
+            "markup was {}",
+            el.inner_html()
+        );
+        sleep_ms(150).await;
+        assert_eq!(summary(&el).as_deref(), Some("5 file changes"));
+
+        // The remote not reached: nothing new is known, so it stays.
+        script(vec![(120, Ok(adds(5)))]);
+        re_read(&el, behind_on("aaa", None)).await;
+        assert_eq!(summary(&el).as_deref(), Some("5 file changes"), "kept");
+        sleep_ms(150).await;
+        assert_eq!(summary(&el).as_deref(), Some("5 file changes"));
     }
 
     /// A local edit can make a conflict while the newer revision stays the

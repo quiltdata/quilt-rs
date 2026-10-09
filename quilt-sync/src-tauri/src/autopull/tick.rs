@@ -14,7 +14,7 @@ use crate::autopull::activity::ActivityOp;
 use crate::autopull::pull_toast;
 use crate::autopull::reporter::LoginBlock;
 use crate::autopull::reporter::PackageStatusEvent;
-use crate::autopull::reporter::clean_uptodate_fingerprint;
+use crate::autopull::reporter::settled_fingerprint;
 use crate::autopull::reporter::status_fingerprint;
 use crate::autopull::status::SyncTrayAggregator;
 use crate::commands::RoleCache;
@@ -43,7 +43,7 @@ pub(crate) struct RefreshOutcome {
     /// emitted `PackageStatusEvent` so a repeated no-action tick — the same
     /// observation re-reported — collides with the last and is skipped by the
     /// consumer. Set from the observed status, except the mutation-success
-    /// paths, which reach a settled `UpToDate` tree (`clean_uptodate_fingerprint`).
+    /// paths, which reach a settled `UpToDate` tree (`settled_fingerprint`).
     pub fingerprint: String,
     /// When this package's quiet window expires, set **only** by the deferral
     /// branch. Every other outcome leaves it `None`, and `run_once` reads that
@@ -479,12 +479,14 @@ pub(crate) async fn refresh_then_maybe_sync(
                         // `kept_changes` is the intended post-pull state.
                         // `kept_changes` comes from the outcome (post-pull
                         // truth), not the pre-pull `has_changes`.
+                        // The revision the pull reached is `latest` now.
+                        let fingerprint = settled_fingerprint(&report.manifest_uri.hash);
                         Ok(Some(RefreshOutcome {
                             pulled: Some(report),
                             ..RefreshOutcome::observed(
                                 quilt::lineage::UpstreamState::UpToDate,
                                 kept_changes,
-                                clean_uptodate_fingerprint(),
+                                fingerprint,
                             )
                         }))
                     }
@@ -535,14 +537,22 @@ pub(crate) async fn refresh_then_maybe_sync(
             model::publish_locked_with_settings(model, &locked, &installed, publish, status).await
         };
         return match published {
-            Ok((_, message)) => {
+            Ok((outcome, message)) => {
                 info!("autosync: published namespace={namespace}");
+                // The pushed revision is `latest` only when it was certified;
+                // otherwise the next tick reads whatever is, and differs.
+                let push = outcome.push();
+                let latest = if push.certified_latest {
+                    push.manifest_uri.hash.as_str()
+                } else {
+                    ""
+                };
                 Ok(Some(RefreshOutcome {
                     upstream: quilt::lineage::UpstreamState::UpToDate,
                     has_changes: false,
                     published: Some(message),
                     pulled: None,
-                    fingerprint: clean_uptodate_fingerprint(),
+                    fingerprint: settled_fingerprint(latest),
                     publish_arm_at: None,
                 }))
             }

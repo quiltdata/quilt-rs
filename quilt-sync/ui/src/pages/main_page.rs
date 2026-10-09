@@ -4097,8 +4097,9 @@ mod tests {
 
     /// Why `nudge` exists beside `observe`, and the gap it closes.
     ///
-    /// `status_fingerprint` digests the upstream state and the changed paths. A
-    /// package can stop syncing over a tree that has moved neither — a workflow
+    /// `status_fingerprint` digests the upstream state, the newer revision and
+    /// the changed paths. A package can stop syncing over a tree that has moved
+    /// none of them — a workflow
     /// rejection, a refused role — so the status stream reports the same
     /// observation and the fingerprint rule correctly calls it old news. The
     /// `autosync-paused` event is the only thing that says a pause happened and
