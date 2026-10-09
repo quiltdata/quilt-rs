@@ -1,0 +1,1339 @@
+//! What a newer revision brings, said in the header before *Get latest*.
+//!
+//! After the state label, `· 6 file changes`, dash-underlined, opens a
+//! popover listing them. Its pinned first line counts them by kind and says
+//! what Get latest does with them, or, on a conflict, how many conflict and
+//! what to do; each file links to its newer version in the catalog.
+//!
+//! The summary takes the UI's own `PullCheck`, which is what
+//! `package_pull_outcome` returns; the header takes the state that check
+//! resolves to, [`header_state`]. The page and the gallery's *Newer revision
+//! available* scene draw this one component.
+//!
+//! # Why the header
+//!
+//! *Newer revision available* and *conflicts in 2 files* are where the eye
+//! lands, and the files are what they are about, so the summary sits beside
+//! them and the popover costs the page nothing. Three other placements were
+//! drawn and dropped: rows in the file list, whose heading sat at the root
+//! files' indent and so seemed to own them; a section between the header and
+//! the panes, which cost the file list a line collapsed and five rows open;
+//! and a row in the context pane, which a reader would not think to look at
+//! from the header's words, and which said the conflict a second time.
+//!
+//! # The header
+//!
+//! It keeps `Newer revision available` and `Get latest`; the summary after
+//! it is the only count. A revision that brings no files has no summary and
+//! no popover. A `Blocked` verdict resolves the header to
+//! `PackageState::PullConflict`, which offers `Publish`, not `Resolve`: the
+//! merge page cannot act until the local changes are published. That is the
+//! state a failed `Get latest` leaves, so the header reads the same before the
+//! click and after it. Only an answer from a run that finished after the
+//! current read moves the state; one kept across a re-read while its rerun is
+//! out still draws the summary and popover, but the state is the read's. A
+//! conflict the read records stays even when a check finds none: the app
+//! clears a pause the dry run no longer finds and announces it, so the header
+//! follows the read after that. Everything the popover says about a conflict
+//! comes from that header state, never from the answer's own verdict, so a
+//! kept answer cannot say a conflict the header does not, or hide one it
+//! does: the first line counts the state's files, and those files carry a
+//! `Conflict` label beside their own. In the file list the same files carry
+//! resolve mode's `Differs` mark, which the popover's sentence describes;
+//! while no popover is drawn, a sentence only a screen reader reads stands in
+//! for it, so a marked row never names a missing description.
+//!
+//! `Get latest` stays enabled while the check runs and after it fails. The
+//! real pull classifies everything again under the lock, so the dry run
+//! gates nothing.
+//!
+//! # Measured at 1024x560, in Chromium
+//!
+//! - The page does not move: the summary shares the header's one row, and
+//!   the popover takes no room.
+//! - The popover reaches down to the window's edge, `100vh - 160px`: 400px
+//!   at the floor against the 336 other overlays' 60vh allows, starting 4px
+//!   under the summary. Not 90vh: the placement slides a surface up to fit,
+//!   and 90vh would cover the summary it hangs from. 360px wide; its first
+//!   line is pinned while the list scrolls under it.
+//! - It lists the first 1,000 files by path and says so under the list when
+//!   there are more, as the file list loads its first 1,000: a list drawn
+//!   whole costs in proportion to its rows. The summary still counts them all.
+//! - It opens on hover and closes 200ms after the pointer leaves the summary
+//!   and the popover both, which is time to cross the gap between them; a
+//!   click, Enter or Space pins it until a click outside, Escape or a second
+//!   activation. `EntryRow`'s box, size and menu columns left a path about
+//!   50px there, so it lists path, labels and link only.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+
+use leptos::prelude::*;
+use quilt_uri::RevisionPointer;
+use quilt_uri::S3PackageUri;
+
+use crate::commands::PullCheck;
+use crate::commands::PullOutcome;
+use crate::commands::PullPreview;
+use crate::kit::Align;
+use crate::kit::AnchoredOverlay;
+use crate::kit::Button;
+use crate::kit::PackageState;
+use crate::kit::StateLabel;
+use crate::kit::differs_id;
+use crate::kit::icons;
+use crate::kit::state_label::StateTone;
+use crate::pages::commit_v2::Change;
+use crate::util::thousands;
+
+stylance::import_crate_style!(style, "src/pages/installed_package_v2/incoming.module.scss");
+
+/// The catalog link's name, as revision rows word theirs.
+pub const OPEN_LABEL: &str = "Open in catalog";
+
+/// `MouseEvent.button` for the middle button, as revision rows read it.
+const MIDDLE_BUTTON: i16 = 1;
+
+/// How many files the popover lists: the first by path, as the file list
+/// loads the first 1,000. A list drawn whole costs in proportion to its rows,
+/// and a revision can touch far more files than anyone reads in a popover.
+pub const LISTED: usize = 1_000;
+
+/// What the header resolves to for a check.
+///
+/// `fresh` says whether the check's answer came from a run that finished
+/// after this read. Only such an answer moves the state:
+///
+/// - A fresh `Blocked` verdict: the conflict state, naming its files.
+/// - Anything else (a verdict that finds no conflict, a check still running
+///   or failed, an answer kept from before this read, or no check): what the
+///   read said. A conflict the read records stays even when the check finds
+///   none: the app clears a pause the dry run no longer finds and announces
+///   it, and the read after that says `Behind`.
+#[must_use]
+pub fn header_state(read: &PackageState, check: Option<&PullCheck>, fresh: bool) -> PackageState {
+    match check {
+        Some(PullCheck::Ready(PullPreview {
+            outcome: PullOutcome::Blocked { conflicts },
+            ..
+        })) if fresh => PackageState::PullConflict {
+            files: conflicts.clone(),
+        },
+        _ => read.clone(),
+    }
+}
+
+/// The files a header's conflict state names, which the file list marks as
+/// resolve mode marks the files that differ. `None` for any other state.
+#[must_use]
+pub fn conflicting(state: &PackageState) -> Option<Arc<BTreeSet<String>>> {
+    match state {
+        PackageState::PullConflict { files } => Some(Arc::new(files.iter().cloned().collect())),
+        _ => None,
+    }
+}
+
+/// The header's label and the summary after it, on one line.
+pub fn state_with_summary(label: AnyView, summary: Option<AnyView>) -> AnyView {
+    view! { <span class=style::label>{label}{summary}</span> }.into_any()
+}
+
+/// Where the newer revision's files are read, and what opens them.
+///
+/// The package's address, which carries the catalog host, and the opener, so a
+/// caller cannot draw a link it has no way to open: a link this app follows
+/// would replace the running application. The newer revision's hash comes
+/// with the check.
+#[derive(Clone)]
+pub struct Catalog {
+    package: S3PackageUri,
+    open: Callback<String>,
+}
+
+impl Catalog {
+    /// `None` when the package has no catalog host: nothing to link to.
+    #[must_use]
+    pub fn new(package: Option<&S3PackageUri>, open: Callback<String>) -> Option<Self> {
+        let package = package.filter(|p| p.catalog.is_some())?;
+        Some(Self {
+            package: package.clone(),
+            open,
+        })
+    }
+
+    /// A file at the newer revision, in the catalog.
+    fn href(&self, hash: &str, path: &str) -> Option<String> {
+        let newer = S3PackageUri {
+            revision: RevisionPointer::Hash(hash.to_string()),
+            path: None,
+            ..self.package.clone()
+        };
+        crate::util::entry_catalog_url(&newer, path)
+    }
+}
+
+/// How many files of each kind a newer revision brings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Kinds {
+    new: usize,
+    changed: usize,
+    deleted: usize,
+}
+
+impl Kinds {
+    /// The lists' lengths: every file, not only the rows the popover lists.
+    const fn of(preview: &PullPreview) -> Self {
+        Self {
+            new: preview.added.len(),
+            changed: preview.changed.len(),
+            deleted: preview.removed.len(),
+        }
+    }
+
+    const fn total(self) -> usize {
+        self.new + self.changed + self.deleted
+    }
+}
+
+/// `it`, or `them`.
+const fn them(n: usize) -> &'static str {
+    if n == 1 { "it" } else { "them" }
+}
+
+/// Removing deleted files, which touches only those this copy has: a pull
+/// deletes the paths it tracks, and a deleted file never downloaded here has
+/// nothing to remove. `alone` when nothing else is coming.
+fn removes(deleted: usize, alone: bool) -> &'static str {
+    match (alone, deleted == 1) {
+        (true, true) => "removes it if you have it",
+        (true, false) => "removes any of them you have",
+        (false, true) => "removes the deleted one if you have it",
+        (false, false) => "removes the deleted ones you have",
+    }
+}
+
+/// `one`, or `ones`.
+const fn ones(n: usize) -> &'static str {
+    if n == 1 { "one" } else { "ones" }
+}
+
+/// What *Get latest* does with the files, heading the popover, naming each
+/// operation for the kinds there are: new and changed files are downloaded or
+/// updated, deleted ones removed, never downloaded. `whole` is the sync
+/// scope: under individual-file sync new files are listed, to download when
+/// wanted, and only the files this copy has are updated. Local changes the
+/// update keeps are named too.
+fn scope_words(check: &PullCheck, whole: bool, k: Kinds) -> Option<String> {
+    let PullCheck::Ready(preview) = check else {
+        return None;
+    };
+    let Kinds {
+        new,
+        changed,
+        deleted,
+    } = k;
+    if new + changed + deleted == 0 {
+        return None;
+    }
+    let fate = if whole {
+        let fetched = new + changed;
+        let download = match (new, changed, deleted) {
+            (_, _, 0) => format!("downloads {}", them(fetched)),
+            (0, _, _) => format!("downloads the changed {}", ones(changed)),
+            (_, 0, _) => format!("downloads the new {}", ones(new)),
+            _ => String::from("downloads the new and changed ones"),
+        };
+        match (fetched, deleted) {
+            (_, 0) => download,
+            (0, _) => removes(deleted, true).to_string(),
+            _ => format!("{download} and {}", removes(deleted, false)),
+        }
+    } else if changed == 0 && deleted == 0 {
+        format!(
+            "adds {} to your files, to download when you need {}",
+            them(new),
+            them(new)
+        )
+    } else {
+        let mut acts = Vec::new();
+        if changed > 0 {
+            acts.push(String::from("updates the files you have"));
+        }
+        if deleted > 0 {
+            acts.push(removes(deleted, changed == 0 && new == 0).to_string());
+        }
+        let acts = acts.join(" and ");
+        if new > 0 {
+            format!(
+                "{acts}, and lists the new {}, to download when you need {}",
+                ones(new),
+                them(new)
+            )
+        } else {
+            acts
+        }
+    };
+    let kept = matches!(preview.outcome, PullOutcome::KeepsLocalChanges { .. });
+    Some(if kept {
+        format!("Get latest {fate}. Your changes stay.")
+    } else {
+        format!("Get latest {fate}.")
+    })
+}
+
+/// One file the newer revision brings, as the popover lists it.
+#[derive(Clone)]
+struct Coming {
+    path: String,
+    change: Change,
+    /// Changed here too, differently: the header's conflict state names it.
+    conflict: bool,
+}
+
+/// The popover's rows: the first [`LISTED`] files the newer revision adds,
+/// changes and removes, by path.
+///
+/// Each list arrives sorted by path and a path is in at most one, so the
+/// three are merged and only the rows listed are built: a revision touching
+/// far more files costs no more than one touching `LISTED`. Paths compare as
+/// the engine sorts them, by component, so `a/b` comes before `a-b`.
+///
+/// `conflicts` are the header's conflict state's files, which the rows label
+/// whatever the answer's own verdict says.
+fn coming(check: &PullCheck, conflicts: Option<&BTreeSet<String>>) -> Vec<Coming> {
+    let PullCheck::Ready(preview) = check else {
+        return Vec::new();
+    };
+    let lists = [
+        (&preview.added, Change::New),
+        (&preview.changed, Change::Changed),
+        (&preview.removed, Change::Deleted),
+    ];
+    let mut next = [0_usize; 3];
+    let mut rows = Vec::with_capacity(Kinds::of(preview).total().min(LISTED));
+    while rows.len() < LISTED {
+        // The least head; on a tie the earlier list, as a stable sort would.
+        let Some((i, path)) = lists
+            .iter()
+            .zip(next)
+            .enumerate()
+            .filter_map(|(i, ((paths, _), at))| paths.get(at).map(|p| (i, p)))
+            .min_by(|(_, a), (_, b)| Path::new(a).cmp(Path::new(b)))
+        else {
+            break;
+        };
+        next[i] += 1;
+        rows.push(Coming {
+            conflict: conflicts.is_some_and(|c| c.contains(path)),
+            path: path.clone(),
+            change: lists[i].1,
+        });
+    }
+    rows
+}
+
+/// `3 new files`, or `3 new, 2 changed, 1 deleted`.
+fn counts_words(k: Kinds) -> String {
+    let Kinds {
+        new,
+        changed,
+        deleted,
+    } = k;
+    if changed == 0 && deleted == 0 {
+        return if new == 1 {
+            String::from("1 new file")
+        } else {
+            format!("{} new files", thousands(new))
+        };
+    }
+    [(new, "new"), (changed, "changed"), (deleted, "deleted")]
+        .into_iter()
+        .filter(|(k, _)| *k > 0)
+        .map(|(k, word)| format!("{} {word}", thousands(k)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// `3 new files` as the start of a sentence.
+fn capitalised(words: &str) -> String {
+    let mut chars = words.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+/// What the header says after the state label: how the check stands, or
+/// the files coming as a trigger's words. `None` when there is nothing to
+/// say: a revision that brings no files, conflict or not, has no popover, and
+/// the state label says the rest.
+fn summary_words(check: &PullCheck) -> Option<String> {
+    match check {
+        PullCheck::Loading => Some(String::from("checking\u{2026}")),
+        PullCheck::Failed => Some(String::from("couldn't check")),
+        PullCheck::Ready(preview) => match Kinds::of(preview).total() {
+            0 => None,
+            n => Some(changes_word(n)),
+        },
+    }
+}
+
+/// How long the pointer may be away from the summary and its popover before
+/// a hover-opened popover closes: enough to cross the 4px gap between them.
+const HOVER_GRACE: Duration = Duration::from_millis(200);
+
+/// The summary's popover opens on hover and closes when the pointer leaves
+/// the summary and the popover both; a click pins it open until a click
+/// outside, Escape, or a second click on the summary. The overlay's own
+/// light dismiss does the closing, so a pinned popover unpins when it closes.
+///
+/// Held by whoever outlives the summary: the page keeps one above its rebuild
+/// line, beside the check, because a re-read whose data differs draws the
+/// header and the summary again, and a card made with them would close a
+/// popover the reader pinned. The gallery, which has no page above it, lets
+/// the summary make its own.
+#[derive(Clone, Copy)]
+pub struct HoverCard {
+    open: RwSignal<bool>,
+    pinned: RwSignal<bool>,
+    timer: StoredValue<Option<TimeoutHandle>>,
+}
+
+impl HoverCard {
+    /// `opened` starts it open and pinned, as a reader's click leaves it.
+    pub fn new(opened: bool) -> Self {
+        let open = RwSignal::new(opened);
+        let pinned = RwSignal::new(opened);
+        Effect::new(move |_| {
+            if !open.get() {
+                pinned.set(false);
+            }
+        });
+        let timer = StoredValue::new(None::<TimeoutHandle>);
+        on_cleanup(move || {
+            if let Some(Some(pending)) = timer.try_update_value(Option::take) {
+                pending.clear();
+            }
+        });
+        Self {
+            open,
+            pinned,
+            timer,
+        }
+    }
+
+    fn cancel(self) {
+        if let Some(Some(pending)) = self.timer.try_update_value(Option::take) {
+            pending.clear();
+        }
+    }
+
+    fn enter(self) {
+        self.cancel();
+        if !self.open.get_untracked() {
+            self.open.set(true);
+        }
+    }
+
+    fn leave(self) {
+        if self.pinned.get_untracked() {
+            return;
+        }
+        self.cancel();
+        let open = self.open;
+        let pending =
+            set_timeout_with_handle(move || open.try_set(false).map_or((), drop), HOVER_GRACE).ok();
+        self.timer.set_value(pending);
+    }
+
+    fn click(self) {
+        self.cancel();
+        if self.pinned.get_untracked() {
+            self.pinned.set(false);
+            self.open.set(false);
+        } else {
+            self.pinned.set(true);
+            self.open.set(true);
+        }
+    }
+
+    /// Closed and unpinned: the summary is gone, or another package is on
+    /// screen, and a pin must not reopen on what comes next.
+    pub fn close(self) {
+        self.cancel();
+        if self.pinned.get_untracked() {
+            self.pinned.set(false);
+        }
+        if self.open.get_untracked() {
+            self.open.set(false);
+        }
+    }
+}
+
+/// What the popover says after the counts when the header is in the
+/// conflict state: how many of its `n` files conflict, and what to do.
+fn conflict_words(n: usize) -> String {
+    let verb = if n == 1 { "conflicts" } else { "conflict" };
+    format!(
+        "{} of them {verb} with yours. Publish your changes, then resolve {}.",
+        thousands(n),
+        them(n)
+    )
+}
+
+/// The conflict sentence when no popover is drawn to carry it: the check is
+/// still running or failed, or the revision brings no files.
+fn conflict_alone(n: usize) -> String {
+    let files = if n == 1 {
+        "file conflicts"
+    } else {
+        "files conflict"
+    };
+    format!(
+        "{} {files} with yours. Publish your changes, then resolve {}.",
+        thousands(n),
+        them(n)
+    )
+}
+
+/// The popover's first line after the counts. With the header in the
+/// conflict state, `conflicts` names its files, and the line counts them and
+/// says what to do, whatever the answer's own verdict, which can be one kept
+/// from before the read; otherwise it says what Get latest does.
+fn first_line(
+    check: &PullCheck,
+    whole: bool,
+    k: Kinds,
+    conflicts: Option<&BTreeSet<String>>,
+) -> Option<String> {
+    match conflicts {
+        Some(files) => Some(conflict_words(files.len())),
+        None => scope_words(check, whole, k),
+    }
+}
+
+/// Whether the summary draws its popover: an answer that brings files.
+fn draws_popover(check: Option<&PullCheck>) -> bool {
+    matches!(check, Some(PullCheck::Ready(p)) if Kinds::of(p).total() > 0)
+}
+
+/// `1 file change`, `6 file changes`: new, changed and removed files alike.
+fn changes_word(n: usize) -> String {
+    if n == 1 {
+        String::from("1 file change")
+    } else {
+        format!("{} file changes", thousands(n))
+    }
+}
+
+/// The header's summary after the state label: `· checking…`, `· couldn't
+/// check` with *Try again*, or `· 6 file changes`, dash-underlined, which
+/// opens the popover. The popover's pinned first line counts the files by
+/// kind and says what Get latest does with them; then each file, its label,
+/// a *Conflict* label when the header's conflict state names it, and its
+/// catalog link.
+///
+/// `None` in `check` draws nothing: the package is not behind.
+#[component]
+pub fn IncomingSummary(
+    /// The dry run's answer, or how it stands. A memo on the page, so an
+    /// answer equal to the last one draws nothing anew and a popover the reader
+    /// has open stays open.
+    #[prop(into)]
+    check: Signal<Option<PullCheck>>,
+    /// `Keeping → The whole package`.
+    whole: bool,
+    /// The header's conflict state's files, [`conflicting`] of the state the
+    /// header shows; `None` when it shows another. Everything the popover
+    /// says about a conflict comes from these, never from the answer's
+    /// verdict, which can be kept from before the read.
+    #[prop(into)]
+    conflicts: Signal<Option<Arc<BTreeSet<String>>>>,
+    /// Where the files are read; `None` draws no links.
+    #[prop(optional_no_strip)]
+    catalog: Option<Catalog>,
+    /// *Try again*, after a failed check.
+    on_retry: Callback<()>,
+    /// The popover's open and pinned state, held above whatever draws this
+    /// summary again; without one the summary keeps its own.
+    #[prop(optional)]
+    card: Option<HoverCard>,
+    /// The popover starts open and pinned, as a reader's click leaves it.
+    /// Only for a summary that keeps its own card.
+    #[prop(optional)]
+    opened: bool,
+) -> impl IntoView {
+    let card = card.unwrap_or_else(|| HoverCard::new(opened));
+    let id = differs_id();
+    // No popover drawn, no pin: one left standing would reopen on the next
+    // answer, which can be about other files.
+    Effect::new(move |_| {
+        // The lists' lengths, not `coming`'s rows, which `summary` builds.
+        if !check.with(|c| draws_popover(c.as_ref())) {
+            card.close();
+        }
+    });
+    move || {
+        let conflicts = conflicts.get().filter(|files| !files.is_empty());
+        let check = check.get();
+        // The marked rows name the conflict sentence; the popover carries it
+        // when drawn, and this stands in for it when not.
+        let alone = conflicts
+            .as_ref()
+            .filter(|_| !draws_popover(check.as_ref()))
+            .map(|files| view! { <span data-sr-only id=id>{conflict_alone(files.len())}</span> });
+        let drawn = check.and_then(|check| {
+            summary(
+                &check,
+                whole,
+                catalog.clone(),
+                on_retry,
+                card,
+                conflicts.as_deref().map(|files| (files, id)),
+            )
+        });
+        view! { {drawn}{alone} }
+    }
+}
+
+/// `conflicts` is the header's conflict state's files and the id the marked
+/// rows name, which the first line carries.
+fn summary(
+    check: &PullCheck,
+    whole: bool,
+    catalog: Option<Catalog>,
+    on_retry: Callback<()>,
+    card: HoverCard,
+    conflicts: Option<(&BTreeSet<String>, &'static str)>,
+) -> Option<AnyView> {
+    let words = summary_words(check)?;
+    let PullCheck::Ready(preview) = check else {
+        let failed = check.is_failed();
+        return Some(
+            view! {
+                <span class=style::summary>
+                    <span class=style::muted>"\u{b7}"</span>
+                    <span class=style::muted>{words}</span>
+                    {failed
+                        .then(|| {
+                            view! { <Button on_click=move |_| on_retry.run(())>"Try again"</Button> }
+                        })}
+                </span>
+            }
+            .into_any(),
+        );
+    };
+    let kinds = Kinds::of(preview);
+    let counts = counts_words(kinds);
+    let total = kinds.total();
+    let files = conflicts.map(|(files, _)| files);
+    let rows = coming(check, files);
+    let cut = (total > rows.len()).then(|| {
+        format!(
+            "This list covers the first {} of {} by path.",
+            thousands(LISTED),
+            thousands(total)
+        )
+    });
+    let open = card.open;
+    // On the header's conflict the line says what to do instead of what Get
+    // latest would, and it is the sentence the file list's `Differs` marks
+    // describe.
+    let id = conflicts.map(|(_, id)| id);
+    let scope = first_line(check, whole, kinds, files);
+    let links = catalog.zip(preview.latest_hash.clone());
+    Some(
+        view! {
+            <span class=style::summary>
+                <span class=style::muted>"\u{b7}"</span>
+                <AnchoredOverlay
+                    trigger=move |surface_id: String| {
+                        view! {
+                            <button
+                                class=style::trigger
+                                aria-expanded=move || open.get().to_string()
+                                aria-controls=surface_id
+                                on:click=move |_| card.click()
+                                on:mouseenter=move |_| card.enter()
+                                on:mouseleave=move |_| card.leave()
+                            >
+                                {words.clone()}
+                            </button>
+                        }
+                            .into_any()
+                    }
+                    open=open
+                    aria_label="Files coming with the newer revision"
+                    align=Align::Start
+                >
+                    <div
+                        class=style::surface
+                        on:mouseenter=move |_| card.enter()
+                        on:mouseleave=move |_| card.leave()
+                    >
+                        <p class=style::scope id=id>
+                            <strong>{format!("{}.", capitalised(&counts))}</strong>
+                            {scope.map(|w| format!(" {w}"))}
+                        </p>
+                        {file_list(rows, links.as_ref())}
+                        {cut.map(|words| view! { <p class=style::cut>{words}</p> })}
+                    </div>
+                </AnchoredOverlay>
+            </span>
+        }
+        .into_any(),
+    )
+}
+
+/// The link to a file's newer version in the catalog, drawn as revision rows
+/// draw theirs: a real anchor, so the address can be copied, whose navigation
+/// is cancelled and handed to the opener, which on the page is the browser.
+fn catalog_link(href: String, open: Callback<String>) -> AnyView {
+    let followed = href.clone();
+    let middled = href.clone();
+    view! {
+        <a
+            class=style::open
+            href=href
+            aria-label=OPEN_LABEL
+            title=OPEN_LABEL
+            on:click=move |ev| {
+                ev.prevent_default();
+                open.run(followed.clone());
+            }
+            on:auxclick=move |ev| {
+                if ev.button() == MIDDLE_BUTTON {
+                    ev.prevent_default();
+                    open.run(middled.clone());
+                }
+            }
+        >
+            {icons::link_external()}
+        </a>
+    }
+    .into_any()
+}
+
+/// The popover's list: the path, its label and its catalog link. `EntryRow`
+/// keeps columns for a box, a size and a menu, which leave a path no room in
+/// the overlay's 360px. No size, because the dry run sends paths only. A
+/// deleted file keeps the link's room, so the labels stay in a column; with no
+/// catalog, no row keeps it.
+fn file_list(rows: Vec<Coming>, links: Option<&(Catalog, String)>) -> AnyView {
+    view! {
+        <ul class=style::rows>
+            {rows
+                .into_iter()
+                .map(|row| {
+                    let link = links
+                        .map(|(catalog, hash)| {
+                            match catalog.href(hash, &row.path).filter(|_| row.change != Change::Deleted)
+                            {
+                                Some(href) => catalog_link(href, catalog.open),
+                                None => view! { <span class=style::open /> }.into_any(),
+                            }
+                        });
+                    view! {
+                        <li>
+                            <span title=row.path.clone()>{row.path.clone()}</span>
+                            // A second label beside the first, as `Differs`
+                            // sits beside a file row's own.
+                            {row
+                                .conflict
+                                .then(|| {
+                                    view! { <StateLabel tone=StateTone::Danger>"Conflict"</StateLabel> }
+                                })}
+                            <StateLabel tone=row.change.tone()>{row.change.words()}</StateLabel>
+                            {link}
+                        </li>
+                    }
+                })
+                .collect_view()}
+        </ul>
+    }
+    .into_any()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{mount, sleep_ms};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn ready(outcome: PullOutcome, added: Vec<String>) -> PullCheck {
+        PullCheck::Ready(PullPreview {
+            outcome,
+            added,
+            changed: Vec::new(),
+            removed: Vec::new(),
+            latest_hash: Some("9f3c1a2b7d4e".to_string()),
+        })
+    }
+
+    fn three_added() -> Vec<String> {
+        vec![
+            "a.md".to_string(),
+            "b.json".to_string(),
+            "c.csv".to_string(),
+        ]
+    }
+
+    /// A conflict found before the click is the state a failed Get latest
+    /// leaves, so the header cannot read differently before and after.
+    #[test]
+    fn a_blocked_check_resolves_to_the_conflict_state() {
+        let blocked = ready(
+            PullOutcome::Blocked {
+                conflicts: vec!["a.csv".to_string()],
+            },
+            Vec::new(),
+        );
+        let state = header_state(&PackageState::Behind, Some(&blocked), true);
+        assert_eq!(
+            state,
+            PackageState::PullConflict {
+                files: vec!["a.csv".to_string()]
+            }
+        );
+        assert_eq!(
+            conflicting(&state).map(|s| s.iter().cloned().collect::<Vec<_>>()),
+            Some(vec!["a.csv".to_string()])
+        );
+        for check in [
+            PullCheck::Loading,
+            PullCheck::Failed,
+            ready(PullOutcome::CleanUpdate, three_added()),
+        ] {
+            let state = header_state(&PackageState::Behind, Some(&check), true);
+            assert_eq!(state, PackageState::Behind);
+            assert_eq!(conflicting(&state), None);
+        }
+        assert_eq!(
+            header_state(&PackageState::Latest, None, true),
+            PackageState::Latest
+        );
+    }
+
+    /// A conflict the read records, from a paused autosync or a refused Get
+    /// latest, stands whatever the check says: the app clears a pause the
+    /// dry run no longer finds, and the read after it says so. Its files are
+    /// the ones the list marks.
+    #[test]
+    fn the_read_s_conflict_stands_whatever_the_check_says() {
+        let recorded = PackageState::PullConflict {
+            files: vec!["a.csv".to_string()],
+        };
+        let keeps = ready(
+            PullOutcome::KeepsLocalChanges {
+                added: Vec::new(),
+                modified: vec!["b.csv".to_string()],
+                removed: Vec::new(),
+            },
+            three_added(),
+        );
+        for check in [
+            ready(PullOutcome::CleanUpdate, three_added()),
+            keeps,
+            PullCheck::Loading,
+            PullCheck::Failed,
+            ready(PullOutcome::UpToDate, Vec::new()),
+        ] {
+            for fresh in [true, false] {
+                assert_eq!(header_state(&recorded, Some(&check), fresh), recorded);
+            }
+        }
+        assert_eq!(header_state(&recorded, None, true), recorded);
+        assert_eq!(
+            conflicting(&recorded).map(|s| s.iter().cloned().collect::<Vec<_>>()),
+            Some(vec!["a.csv".to_string()])
+        );
+        let blocked = ready(
+            PullOutcome::Blocked {
+                conflicts: vec!["c.csv".to_string()],
+            },
+            Vec::new(),
+        );
+        assert_eq!(
+            header_state(&recorded, Some(&blocked), true),
+            PackageState::PullConflict {
+                files: vec!["c.csv".to_string()]
+            },
+            "a fresh conflict names its own files"
+        );
+    }
+
+    /// An answer kept across a re-read, while its rerun is out, speaks to an
+    /// earlier read: it draws the summary, but the state is the read's.
+    #[test]
+    fn a_kept_answer_leaves_the_state_to_the_read() {
+        let blocked = ready(
+            PullOutcome::Blocked {
+                conflicts: vec!["a.csv".to_string()],
+            },
+            Vec::new(),
+        );
+        assert_eq!(
+            header_state(&PackageState::Behind, Some(&blocked), false),
+            PackageState::Behind
+        );
+        let recorded = PackageState::PullConflict {
+            files: vec!["b.csv".to_string()],
+        };
+        assert_eq!(header_state(&recorded, Some(&blocked), false), recorded);
+        assert_eq!(
+            header_state(
+                &recorded,
+                Some(&ready(PullOutcome::CleanUpdate, three_added())),
+                false
+            ),
+            recorded
+        );
+    }
+
+    /// The header's summary says how the check stands, or counts the file
+    /// changes; a revision that brings no files has none, conflict or not.
+    #[test]
+    fn the_summary_says_what_the_check_found() {
+        let added = |n: usize| (0..n).map(|i| format!("f{i}")).collect::<Vec<_>>();
+        let words = summary_words;
+        assert_eq!(
+            words(&PullCheck::Loading).as_deref(),
+            Some("checking\u{2026}")
+        );
+        assert_eq!(words(&PullCheck::Failed).as_deref(), Some("couldn't check"));
+        assert_eq!(
+            words(&ready(PullOutcome::CleanUpdate, added(6))).as_deref(),
+            Some("6 file changes")
+        );
+        assert_eq!(
+            words(&ready(PullOutcome::CleanUpdate, added(1))).as_deref(),
+            Some("1 file change")
+        );
+        assert_eq!(words(&ready(PullOutcome::CleanUpdate, Vec::new())), None);
+        let PullCheck::Ready(mut mixed) = ready(PullOutcome::CleanUpdate, added(1)) else {
+            unreachable!()
+        };
+        mixed.changed = vec!["g".to_string(), "h".to_string()];
+        mixed.removed = vec!["i".to_string()];
+        assert_eq!(
+            words(&PullCheck::Ready(mixed)).as_deref(),
+            Some("4 file changes"),
+            "new, changed and removed alike"
+        );
+        let blocked = |n| {
+            ready(
+                PullOutcome::Blocked {
+                    conflicts: added(n),
+                },
+                added(3),
+            )
+        };
+        assert_eq!(words(&blocked(2)).as_deref(), Some("3 file changes"));
+        assert_eq!(
+            conflict_words(2),
+            "2 of them conflict with yours. Publish your changes, then resolve them."
+        );
+        assert_eq!(
+            conflict_words(1),
+            "1 of them conflicts with yours. Publish your changes, then resolve it."
+        );
+        assert_eq!(
+            conflict_alone(1),
+            "1 file conflicts with yours. Publish your changes, then resolve it."
+        );
+        assert_eq!(
+            conflict_alone(2),
+            "2 files conflict with yours. Publish your changes, then resolve them."
+        );
+    }
+
+    /// The popover's sentence says what Get latest does in the scope's terms,
+    /// naming only operations for kinds there are: a deleted file is removed,
+    /// never downloaded, and no sentence promises new files that are not
+    /// coming.
+    #[test]
+    fn the_popover_says_what_get_latest_does() {
+        let clean = ready(PullOutcome::CleanUpdate, Vec::new());
+        let keeps = ready(
+            PullOutcome::KeepsLocalChanges {
+                added: Vec::new(),
+                modified: vec!["a.csv".to_string()],
+                removed: Vec::new(),
+            },
+            Vec::new(),
+        );
+        let k = |new, changed, deleted| Kinds {
+            new,
+            changed,
+            deleted,
+        };
+        let cases: Vec<(&PullCheck, bool, Kinds, Option<&str>)> = vec![
+            (
+                &clean,
+                false,
+                k(3, 0, 0),
+                Some("Get latest adds them to your files, to download when you need them."),
+            ),
+            (&clean, true, k(1, 0, 0), Some("Get latest downloads it.")),
+            (
+                &keeps,
+                true,
+                k(2, 0, 0),
+                Some("Get latest downloads them. Your changes stay."),
+            ),
+            (&clean, true, k(0, 0, 0), None),
+            (
+                &clean,
+                false,
+                k(3, 2, 1),
+                Some(
+                    "Get latest updates the files you have and removes the deleted one if you \
+                     have it, and lists the new ones, to download when you need them.",
+                ),
+            ),
+            (
+                &clean,
+                false,
+                k(0, 2, 0),
+                Some("Get latest updates the files you have."),
+            ),
+            (
+                &clean,
+                false,
+                k(0, 0, 2),
+                Some("Get latest removes any of them you have."),
+            ),
+            (
+                &clean,
+                false,
+                k(0, 2, 1),
+                Some(
+                    "Get latest updates the files you have and removes the deleted one if you have it.",
+                ),
+            ),
+            (
+                &clean,
+                true,
+                k(3, 2, 1),
+                Some(
+                    "Get latest downloads the new and changed ones and removes the deleted one if you have it.",
+                ),
+            ),
+            (&clean, true, k(0, 2, 0), Some("Get latest downloads them.")),
+            (
+                &clean,
+                true,
+                k(0, 0, 1),
+                Some("Get latest removes it if you have it."),
+            ),
+            (
+                &clean,
+                true,
+                k(0, 1, 2),
+                Some("Get latest downloads the changed one and removes the deleted ones you have."),
+            ),
+        ];
+        for (check, whole, kinds, expected) in cases {
+            assert_eq!(
+                scope_words(check, whole, kinds).as_deref(),
+                expected,
+                "{kinds:?}, whole: {whole}"
+            );
+        }
+    }
+
+    /// The popover's first line takes the conflict from the header's state,
+    /// never from the answer's verdict: a header in conflict counts its own
+    /// files over a clean answer, or over a verdict naming others, and a
+    /// header that is not says what Get latest does over a `Blocked` answer.
+    #[test]
+    fn the_first_line_follows_the_header_s_conflict() {
+        let clean = ready(PullOutcome::CleanUpdate, three_added());
+        let blocked = ready(
+            PullOutcome::Blocked {
+                conflicts: vec!["a.md".to_string()],
+            },
+            three_added(),
+        );
+        let k = Kinds {
+            new: 3,
+            changed: 0,
+            deleted: 0,
+        };
+        let one: BTreeSet<String> = ["a.md".to_string()].into();
+        let two: BTreeSet<String> = ["a.md", "elsewhere.csv"].map(String::from).into();
+        let says_conflict =
+            "1 of them conflicts with yours. Publish your changes, then resolve it.";
+        let says_get_latest = "Get latest downloads them.";
+        assert_eq!(
+            first_line(&clean, true, k, Some(&one)).as_deref(),
+            Some(says_conflict),
+            "a kept clean answer under a recorded conflict"
+        );
+        assert_eq!(
+            first_line(&blocked, true, k, Some(&one)).as_deref(),
+            Some(says_conflict),
+            "a fresh verdict, which the header took"
+        );
+        assert_eq!(
+            first_line(&blocked, true, k, Some(&two)).as_deref(),
+            Some("2 of them conflict with yours. Publish your changes, then resolve them."),
+            "the header's count, listed or not"
+        );
+        assert_eq!(
+            first_line(&blocked, true, k, None).as_deref(),
+            Some(says_get_latest),
+            "a kept conflict answer under a read that is only behind"
+        );
+        assert_eq!(
+            first_line(&clean, true, k, None).as_deref(),
+            Some(says_get_latest)
+        );
+        assert!(
+            coming(&blocked, None).iter().all(|r| !r.conflict),
+            "no labels without the header's conflict"
+        );
+        let labelled = |set| {
+            coming(&clean, Some(set))
+                .into_iter()
+                .filter(|r| r.conflict)
+                .map(|r| r.path)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(labelled(&one), ["a.md"], "labels over a clean answer");
+        assert_eq!(labelled(&two), ["a.md"], "only the files listed");
+    }
+
+    /// The popover counts by kind, and says `new files` when that is all
+    /// there is.
+    #[test]
+    fn the_row_counts_by_kind() {
+        let k = |new, changed, deleted| Kinds {
+            new,
+            changed,
+            deleted,
+        };
+        assert_eq!(counts_words(k(1, 0, 0)), "1 new file");
+        assert_eq!(counts_words(k(3, 0, 0)), "3 new files");
+        assert_eq!(counts_words(k(1, 2, 1)), "1 new, 2 changed, 1 deleted");
+        assert_eq!(counts_words(k(0, 0, 1)), "1 deleted");
+        assert_eq!(capitalised("3 new files"), "3 new files");
+        assert_eq!(capitalised("new"), "New");
+    }
+
+    /// Past the cap the popover builds only the rows it lists: the first
+    /// `LISTED` by path, the three kinds interleaved as one sorted list would
+    /// put them, while the counts and the summary still take every file.
+    #[test]
+    fn the_rows_stop_at_the_cap_and_the_counts_do_not() {
+        // 1,200 paths, every third one to each kind, so the kinds interleave.
+        let paths = |rem: usize| {
+            (0..1_200)
+                .filter(|i| i % 3 == rem)
+                .map(|i| format!("p{i:05}"))
+                .collect::<Vec<_>>()
+        };
+        let check = PullCheck::Ready(PullPreview {
+            outcome: PullOutcome::Blocked {
+                conflicts: vec!["p00004".to_string(), "p01100".to_string()],
+            },
+            added: paths(0),
+            changed: paths(1),
+            removed: paths(2),
+            latest_hash: None,
+        });
+        let header: BTreeSet<String> = ["p00004", "p01100"].map(String::from).into();
+        let rows = coming(&check, Some(&header));
+        assert_eq!(rows.len(), LISTED);
+        let kind = |i: usize| [Change::New, Change::Changed, Change::Deleted][i % 3];
+        for (i, row) in rows.iter().enumerate() {
+            assert_eq!(row.path, format!("p{i:05}"), "row {i} in path order");
+            assert!(row.change == kind(i), "row {i} keeps its kind");
+            assert_eq!(row.conflict, i == 4, "row {i}'s conflict mark");
+        }
+        let PullCheck::Ready(preview) = &check else {
+            unreachable!()
+        };
+        assert_eq!(
+            counts_words(Kinds::of(preview)),
+            "400 new, 400 changed, 400 deleted"
+        );
+        assert_eq!(summary_words(&check).as_deref(), Some("1,200 file changes"));
+
+        // By component, as the engine sorts each list: `a/b` before `a-b`.
+        let nested = ready(PullOutcome::CleanUpdate, vec!["a/b".to_string()]);
+        let PullCheck::Ready(mut nested) = nested else {
+            unreachable!()
+        };
+        nested.changed = vec!["a-b".to_string()];
+        let paths: Vec<String> = coming(&PullCheck::Ready(nested), None)
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        assert_eq!(paths, ["a/b", "a-b"]);
+        assert!(
+            coming(&check, None).iter().all(|r| !r.conflict),
+            "a verdict alone labels nothing"
+        );
+    }
+
+    /// The v2 vocabulary holds in the row and the popover: none of the words
+    /// the package states keep out.
+    #[test]
+    fn the_words_use_no_banned_word() {
+        const BANNED: &[&str] = &[
+            "commit", "push", "pull", "remote", "behind", "ahead", "diverged", "dirty", "hash",
+        ];
+        let added = vec!["a".to_string(), "b".to_string()];
+        let checks = [
+            PullCheck::Loading,
+            PullCheck::Failed,
+            ready(PullOutcome::CleanUpdate, added.clone()),
+            ready(
+                PullOutcome::KeepsLocalChanges {
+                    added: Vec::new(),
+                    modified: Vec::new(),
+                    removed: Vec::new(),
+                },
+                added.clone(),
+            ),
+            ready(
+                PullOutcome::Blocked {
+                    conflicts: added.clone(),
+                },
+                added,
+            ),
+        ];
+        let mut all = vec![String::from(OPEN_LABEL)];
+        for n in [1, 2] {
+            all.extend([conflict_words(n), conflict_alone(n)]);
+        }
+        for check in &checks {
+            all.extend(summary_words(check));
+            for whole in [false, true] {
+                for kinds in [
+                    Kinds {
+                        new: 2,
+                        changed: 0,
+                        deleted: 0,
+                    },
+                    Kinds {
+                        new: 2,
+                        changed: 1,
+                        deleted: 1,
+                    },
+                    Kinds {
+                        new: 0,
+                        changed: 1,
+                        deleted: 2,
+                    },
+                ] {
+                    all.extend(scope_words(check, whole, kinds));
+                }
+            }
+        }
+        for words in all {
+            let words = words.to_lowercase();
+            for bad in BANNED {
+                assert!(
+                    !words
+                        .split_whitespace()
+                        .any(|w| w.trim_matches(|c: char| !c.is_alphanumeric()) == *bad),
+                    "{words:?} contains the banned word {bad:?}"
+                );
+            }
+        }
+    }
+
+    /// Hovering opens the popover and leaving closes it after the grace; a
+    /// click pins it through a leave, and a second click unpins and closes.
+    #[wasm_bindgen_test]
+    async fn hover_opens_and_a_click_pins() {
+        let owner = Owner::new();
+        let card = owner.with(|| HoverCard::new(false));
+        let open = card.open;
+        let grace = i32::try_from(HOVER_GRACE.as_millis()).unwrap() + 50;
+
+        card.enter();
+        assert!(open.get_untracked(), "hover opens");
+        card.leave();
+        card.enter();
+        sleep_ms(grace).await;
+        assert!(
+            open.get_untracked(),
+            "coming back within the grace keeps it"
+        );
+        card.leave();
+        sleep_ms(grace).await;
+        assert!(!open.get_untracked(), "leaving closes it");
+
+        card.click();
+        card.leave();
+        sleep_ms(grace).await;
+        assert!(open.get_untracked(), "a click pins it through a leave");
+        card.click();
+        assert!(!open.get_untracked(), "a second click closes it");
+        drop(owner);
+    }
+
+    /// Links go to each file at the newer revision on the package's catalog
+    /// host; a deleted file has none, and a package with no catalog host has
+    /// none at all.
+    #[wasm_bindgen_test]
+    fn links_go_to_the_newer_revision_and_need_a_catalog_host() {
+        let check = PullCheck::Ready(PullPreview {
+            outcome: PullOutcome::CleanUpdate,
+            added: vec!["raw/a.csv".to_string()],
+            changed: vec!["b.md".to_string()],
+            removed: vec!["c.md".to_string()],
+            latest_hash: Some("abc123".to_string()),
+        });
+        let draw = |host: Option<&'static str>| {
+            let check = check.clone();
+            mount(move || {
+                let package = crate::util::package_uri(
+                    "lab-bucket",
+                    &"user/plate-07".try_into().unwrap(),
+                    host,
+                );
+                view! {
+                    <IncomingSummary
+                        check=Signal::stored(Some(check))
+                        conflicts=Signal::stored(None)
+                        whole=false
+                        catalog=Catalog::new(Some(&package), Callback::new(|_: String| ()))
+                        on_retry=Callback::new(|()| ())
+                    />
+                }
+            })
+        };
+        let hrefs = |el: &web_sys::Element| {
+            let found = el.query_selector_all("ul a").unwrap();
+            (0..found.length())
+                .map(|i| {
+                    found
+                        .item(i)
+                        .unwrap()
+                        .unchecked_into::<web_sys::Element>()
+                        .get_attribute("href")
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+        };
+        let linked = draw(Some("lab.example"));
+        assert_eq!(
+            hrefs(&linked),
+            vec![
+                "https://lab.example/b/lab-bucket/packages/user/plate-07/tree/abc123/b.md",
+                "https://lab.example/b/lab-bucket/packages/user/plate-07/tree/abc123/raw/a.csv",
+            ],
+            "markup was {}",
+            linked.inner_html()
+        );
+        let bare = draw(None);
+        assert!(hrefs(&bare).is_empty(), "no host, no links");
+        assert_eq!(bare.query_selector_all("ul li").unwrap().length(), 3);
+    }
+}

@@ -170,8 +170,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // apply). Map it to the same `PullConflict` pause the dry-run path
         // produces so both routes agree on the reason the UI renders.
         Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(conflicts))) => {
-            let files = conflicts.iter().map(|p| p.display().to_string()).collect();
-            Err(WatchError::Conflict(PausedReason::PullConflict(files)))
+            Err(WatchError::Conflict(PausedReason::pull_conflict(conflicts)))
         }
         // Workflow rejection (commit- or push-side): user-actionable, so
         // pause rather than retry. Bind the inner `WorkflowValidationError`
@@ -426,13 +425,12 @@ pub(crate) async fn refresh_then_maybe_sync(
         // per Behind tick with a race window between them. Have `flow::pull`
         // return the `PullOutcome` it already computes and route on the pull
         // result alone — same outcome-based routing, half the work.
-        // The preview also names what the revision adds; the tick routes on the
-        // verdict alone and leaves those to the surfaces that report them.
+        // The verdict alone: the tick routes on it and leaves the paths the
+        // revision brings to the surfaces that report them.
         let outcome = model
-            .locked_package_pull_outcome(&locked)
+            .locked_package_pull_verdict(&locked)
             .await
-            .map_err(classify_transient_or_login)?
-            .outcome;
+            .map_err(classify_transient_or_login)?;
         // Post-pull `has_changes`, read from the dry-run outcome we just
         // classified — the truth about kept local work, unlike the pre-pull
         // `has_changes` which is stale-true when the pull trivially resolves
@@ -458,8 +456,9 @@ pub(crate) async fn refresh_then_maybe_sync(
                         fingerprint,
                     )));
                 }
-                let files = conflicts.iter().map(|p| p.display().to_string()).collect();
-                return Err(WatchError::Conflict(PausedReason::PullConflict(files)));
+                return Err(WatchError::Conflict(PausedReason::pull_conflict(
+                    &conflicts,
+                )));
             }
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
                 // Bracket only this call. The classify above reads — it
@@ -790,70 +789,7 @@ pub(crate) async fn run_once(
                 // to be paused, so a denied host costs at most one `/me`
                 // per role switch — not one per tick.
                 let reason = name_denied_role(model, roles, Some(origin), reason).await;
-                inner
-                    .paused
-                    .write()
-                    .await
-                    .insert(namespace.clone(), reason.clone());
-                inner
-                    .reporter
-                    .report_paused(&namespace, origin, reason.clone());
-                // Heuristic status from the refusal reason — flow::pull /
-                // flow::publish don't expose the post-attempt state
-                // directly. The string `"error"` is **reserved** for "we
-                // couldn't talk to the remote" — the UI renders a Login
-                // affordance on that one. Surface autosync refusals as
-                // `"paused"` so the row banner is neutral, and let the UI
-                // pull the message out of the `autosync-paused` event the
-                // reporter emits.
-                let (status, has_changes) = match reason {
-                    PausedReason::PendingChanges => ("behind", true),
-                    PausedReason::PendingCommit => ("ahead", false),
-                    PausedReason::Diverged => ("diverged", false),
-                    PausedReason::PullConflict(ref files) => {
-                        warn!("autosync: paused namespace={namespace} pull conflict={files:?}");
-                        ("paused", true)
-                    }
-                    PausedReason::RoleDenied { ref role } => {
-                        warn!(
-                            "autosync: paused namespace={namespace} access denied for role={role}"
-                        );
-                        ("paused", false)
-                    }
-                    PausedReason::Other(ref msg) => {
-                        warn!("autosync: paused namespace={namespace} error={msg}");
-                        ("paused", false)
-                    }
-                };
-                inner.reporter.report_status(
-                    &namespace,
-                    PackageStatusEvent {
-                        namespace: namespace.clone(),
-                        status: status.to_string(),
-                        has_changes,
-                        // No `InstalledPackageStatus` here — this is a
-                        // heuristic status from a refusal reason. A stable
-                        // digest of what it reports is enough: a package stuck
-                        // paused re-emits the same reason every tick, so the
-                        // same `(status, has_changes)` yields the same
-                        // fingerprint and the consumer skips the repeat. The
-                        // paused *detail* (which files) rides the separate
-                        // `autosync-paused` event, not this one.
-                        fingerprint: format!("{status};{has_changes}"),
-                    },
-                );
-                let aggregator_message = match &reason {
-                    PausedReason::PendingChanges => "pending changes".to_string(),
-                    PausedReason::PendingCommit => "pending commits".to_string(),
-                    PausedReason::Diverged => "diverged".to_string(),
-                    PausedReason::PullConflict(_) => "pull conflict".to_string(),
-                    PausedReason::RoleDenied { role } => role_denied_summary(role),
-                    PausedReason::Other(msg) => msg.clone(),
-                };
-                inner
-                    .aggregator
-                    .note_paused(&namespace, &aggregator_message);
-                inner.aggregator.note_status(&namespace, has_changes);
+                pause(inner, &namespace, origin, reason).await;
             }
             Err(WatchError::Transient(err)) => {
                 bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
@@ -866,6 +802,84 @@ pub(crate) async fn run_once(
     }
 
     Ok(())
+}
+
+/// Pause `namespace` for `reason` and announce it: the paused map the tick
+/// skips on and the pages read, the `autosync-paused` event, a heuristic
+/// status event, and the tray.
+///
+/// The one place a pause is recorded, whether the tick hit the refusal or a
+/// hand-pressed pull did (see [`Watcher::pause`](crate::autopull::Watcher::pause)).
+/// `origin` is required for the same reason [`StatusReporter::report_paused`]
+/// requires it: a pause is always attributed to the package's own deployment.
+///
+/// [`StatusReporter::report_paused`]: crate::autopull::reporter::StatusReporter::report_paused
+pub(crate) async fn pause(
+    inner: &WatcherInner,
+    namespace: &Namespace,
+    origin: &Host,
+    reason: PausedReason,
+) {
+    inner
+        .paused
+        .write()
+        .await
+        .insert(namespace.clone(), reason.clone());
+    inner
+        .reporter
+        .report_paused(namespace, origin, reason.clone());
+    // Heuristic status from the refusal reason — flow::pull /
+    // flow::publish don't expose the post-attempt state
+    // directly. The string `"error"` is **reserved** for "we
+    // couldn't talk to the remote" — the UI renders a Login
+    // affordance on that one. Surface autosync refusals as
+    // `"paused"` so the row banner is neutral, and let the UI
+    // pull the message out of the `autosync-paused` event the
+    // reporter emits.
+    let (status, has_changes) = match reason {
+        PausedReason::PendingChanges => ("behind", true),
+        PausedReason::PendingCommit => ("ahead", false),
+        PausedReason::Diverged => ("diverged", false),
+        PausedReason::PullConflict(ref files) => {
+            warn!("autosync: paused namespace={namespace} pull conflict={files:?}");
+            ("paused", true)
+        }
+        PausedReason::RoleDenied { ref role } => {
+            warn!("autosync: paused namespace={namespace} access denied for role={role}");
+            ("paused", false)
+        }
+        PausedReason::Other(ref msg) => {
+            warn!("autosync: paused namespace={namespace} error={msg}");
+            ("paused", false)
+        }
+    };
+    inner.reporter.report_status(
+        namespace,
+        PackageStatusEvent {
+            namespace: namespace.clone(),
+            status: status.to_string(),
+            has_changes,
+            // No `InstalledPackageStatus` here — this is a
+            // heuristic status from a refusal reason. A stable
+            // digest of what it reports is enough: a package stuck
+            // paused re-emits the same reason every tick, so the
+            // same `(status, has_changes)` yields the same
+            // fingerprint and the consumer skips the repeat. The
+            // paused *detail* (which files) rides the separate
+            // `autosync-paused` event, not this one.
+            fingerprint: format!("{status};{has_changes}"),
+        },
+    );
+    let aggregator_message = match &reason {
+        PausedReason::PendingChanges => "pending changes".to_string(),
+        PausedReason::PendingCommit => "pending commits".to_string(),
+        PausedReason::Diverged => "diverged".to_string(),
+        PausedReason::PullConflict(_) => "pull conflict".to_string(),
+        PausedReason::RoleDenied { role } => role_denied_summary(role),
+        PausedReason::Other(msg) => msg.clone(),
+    };
+    inner.aggregator.note_paused(namespace, &aggregator_message);
+    inner.aggregator.note_status(namespace, has_changes);
 }
 
 #[cfg(test)]

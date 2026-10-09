@@ -12,6 +12,7 @@ use quilt_rs::io::remote::WorkflowIntent;
 use quilt_uri::{Host, S3PackageUri};
 
 use crate::Error;
+use crate::autopull::PausedReason;
 use crate::autopull::Watcher;
 use crate::autopull::pull_toast;
 use crate::model;
@@ -411,16 +412,56 @@ async fn package_pull_command(
     // then loses nothing and must not ask.
     let locked = m.lock_package(&installed).await?;
     // The scope the package stores, read under the lock.
-    let scope = m
-        .get_installed_package_lineage(&installed)
-        .await?
-        .sync_scope;
+    let lineage = m.get_installed_package_lineage(&installed).await?;
     // A hand-pressed pull writes working files exactly as the tick's does, so
     // it raises the same in-flight flag — otherwise quitting during one would
     // interrupt it without asking.
-    let _applying = watcher.apply_guard(&namespace);
-    let report = m.locked_package_pull(&locked, None, scope).await?;
-    Ok((namespace, report))
+    let pulled = {
+        let _applying = watcher.apply_guard(&namespace);
+        m.locked_package_pull(&locked, None, lineage.sync_scope)
+            .await
+    };
+    match pulled {
+        Ok(report) => Ok((namespace, report)),
+        Err(err) => {
+            pause_on_conflict(watcher, &namespace, &lineage, &err).await;
+            Err(err)
+        }
+    }
+}
+
+/// A pull the engine refused for a conflict pauses the package the way the
+/// tick's refusal does, so the header shows the conflict now rather than
+/// offering the same pull until the next tick. Only a conflict: it is the one
+/// refusal with a state of its own that the working tree cannot report.
+///
+/// A package with no known deployment is not paused, and a pause is always
+/// attributed to the package's own host. A remote with no catalog host is
+/// [`misconfigured_remote`](quilt::lineage::PackageLineage::misconfigured_remote):
+/// with no catalog there are no credentials, so no pull on it can reach a
+/// conflict, and every page resolves it to Unknown anyway.
+async fn pause_on_conflict(
+    watcher: &Watcher,
+    namespace: &quilt_uri::Namespace,
+    lineage: &quilt::lineage::PackageLineage,
+    err: &Error,
+) {
+    let Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(conflicts))) = err
+    else {
+        return;
+    };
+    // No origin is a misconfigured remote (see above): unreachable after a
+    // conflict, and nothing to attribute the pause to.
+    let Some(origin) = lineage
+        .remote_uri
+        .as_ref()
+        .and_then(|remote| remote.origin.as_ref())
+    else {
+        return;
+    };
+    watcher
+        .pause(namespace, origin, PausedReason::pull_conflict(conflicts))
+        .await;
 }
 
 /// Record whether this package keeps its whole contents.
@@ -511,15 +552,55 @@ fn pull_success_message(namespace: &str, reported: bool) -> String {
 }
 
 async fn package_pull_outcome_command(
-    m: &model::Model,
+    m: &impl model::QuiltModel,
+    watcher: &Watcher,
     namespace: &str,
 ) -> Result<quilt::flow::PullPreview, Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    let installed = m
-        .get_installed_package(&namespace)
-        .await?
-        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
-    m.package_pull_outcome(&installed).await
+    let installed = installed_package(m, &namespace).await?;
+    // On the lock, as a pull runs: a hand-pressed pull records its conflict
+    // under it (`pause_on_conflict`), so taking a conflict back under it too
+    // cannot undo one recorded after this verdict was reached.
+    let locked = m.lock_package(&installed).await?;
+    let preview = m.locked_package_pull_outcome(&locked).await?;
+    take_back_conflict(m, watcher, &locked, &namespace, &preview.outcome).await;
+    Ok(preview)
+}
+
+/// A recorded conflict the dry run no longer finds is over: the conflicting
+/// edit was undone, or another process advanced the lineage. Left in place, it
+/// would keep the header on the conflict and offer Publish until some other
+/// action cleared it. Only a conflict, and only on a verdict that is not one.
+async fn take_back_conflict<M: model::QuiltModel>(
+    m: &M,
+    watcher: &Watcher,
+    locked: &M::Locked,
+    namespace: &quilt_uri::Namespace,
+    outcome: &quilt::flow::PullOutcome,
+) {
+    if matches!(outcome, quilt::flow::PullOutcome::Blocked { .. }) {
+        return;
+    }
+    if !matches!(
+        watcher.paused_reason(namespace).await,
+        Some(PausedReason::PullConflict(_))
+    ) {
+        return;
+    }
+    // The observation the announcement carries, so a page listing packages
+    // shows the state the package is really in. Without it the clear could
+    // not be announced, and an open page would keep offering Publish for a
+    // conflict already dropped; so the pause stays for the next dry run.
+    let status = match m.locked_package_status(locked, None).await {
+        Ok(status) => status,
+        Err(err) => {
+            tracing::warn!(
+                "pull dry run: could not read {namespace}'s status, keeping its recorded conflict: {err}"
+            );
+            return;
+        }
+    };
+    watcher.clear_pull_conflict(namespace, &status).await;
 }
 
 /// Dry-run classifier for the two-phase Pull affordance: what would
@@ -527,12 +608,16 @@ async fn package_pull_outcome_command(
 /// immediately from local data, then calls this to fill in the Pull button's
 /// enabled state and copy once `latest` is cached. `PullOutcome` derives
 /// `Serialize`, so it crosses the Tauri boundary directly.
+///
+/// A verdict that is not a conflict also takes back a recorded pull-conflict
+/// pause, and announces it (see [`Watcher::clear_pull_conflict`]).
 #[tauri::command]
 pub async fn package_pull_outcome(
     m: tauri::State<'_, model::Model>,
+    watcher: tauri::State<'_, Watcher>,
     namespace: String,
 ) -> Result<quilt::flow::PullPreview, String> {
-    package_pull_outcome_command(&m, &namespace)
+    package_pull_outcome_command(&*m, &watcher, &namespace)
         .await
         .map_err(|e| e.to_string())
 }
@@ -1011,6 +1096,7 @@ mod tests {
     use crate::autopull::PausedReason;
     use crate::autopull::Watcher;
     use crate::autopull::reporter::LogReporter;
+    use crate::autopull::reporter::test_support::RecordingReporter;
     use crate::model::MockQuiltModel;
     use crate::quilt;
 
@@ -1166,6 +1252,296 @@ mod tests {
             !watcher.inner_for_test().aggregator.apply_in_progress(),
             "and down again once it returns"
         );
+    }
+
+    /// A model whose pull fails with `error`, for a package published to a
+    /// known deployment.
+    fn failing_pull_model(error: impl Fn() -> Error + Send + Sync + 'static) -> MockQuiltModel {
+        let mut model = installed_model();
+        model.expect_get_installed_package_lineage().returning(|_| {
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h0".to_string(),
+                    origin: Some(fixtures::host()),
+                },
+                "h1".to_string(),
+            ))
+        });
+        model
+            .expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        model
+            .expect_locked_package_pull()
+            .times(1)
+            .returning(move |_, _, _| Err(error()));
+        model
+    }
+
+    fn pull_conflict_error() -> Error {
+        Error::Quilt(quilt::Error::PackageOp(
+            quilt::PackageOpError::PullConflict(vec![
+                std::path::PathBuf::from("a.csv"),
+                std::path::PathBuf::from("b.csv"),
+            ]),
+        ))
+    }
+
+    /// A Get latest the engine refused for a conflict pauses the package the
+    /// way the tick does, so the header turns to the conflict at once instead
+    /// of offering the same refused pull until the next tick.
+    #[tokio::test]
+    async fn a_pull_refused_by_a_conflict_pauses_the_package() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let model = failing_pull_model(pull_conflict_error);
+
+        let err = super::package_pull_command(&model, &watcher, "acme/demo")
+            .await
+            .expect_err("a conflict refuses the pull");
+        assert!(
+            matches!(
+                err,
+                Error::Quilt(quilt::Error::PackageOp(
+                    quilt::PackageOpError::PullConflict(_)
+                ))
+            ),
+            "the refusal still reaches the caller: {err:?}"
+        );
+
+        let reason = PausedReason::PullConflict(vec!["a.csv".to_string(), "b.csv".to_string()]);
+        assert_eq!(watcher.paused_reason(&ns).await, Some(reason.clone()));
+        assert_eq!(
+            crate::commands::main_page::conflict_files(watcher.paused_reason(&ns).await.as_ref()),
+            Some(vec!["a.csv".to_string(), "b.csv".to_string()]),
+            "the page reads the pause as the conflict state"
+        );
+        // Announced as the tick announces it: the `autosync-paused` event,
+        // attributed to the package's own deployment.
+        assert_eq!(*reporter.paused.lock().unwrap(), vec![(ns, reason)]);
+        assert_eq!(*reporter.hosts.lock().unwrap(), vec![fixtures::host()]);
+    }
+
+    /// Any other refusal leaves the pause map alone: only a conflict has a
+    /// state of its own the header would otherwise miss.
+    #[tokio::test]
+    async fn a_pull_refused_for_another_reason_pauses_nothing() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let model = failing_pull_model(access_denied_error);
+
+        assert!(
+            super::package_pull_command(&model, &watcher, "acme/demo")
+                .await
+                .is_err()
+        );
+
+        assert_eq!(watcher.paused_reason(&ns).await, None);
+        assert!(reporter.paused.lock().unwrap().is_empty());
+    }
+
+    /// A model whose dry run, on the held lock, answers `verdict`, for a
+    /// package that reads as behind with a clean tree.
+    fn dry_run_model(verdict: quilt::flow::PullOutcome) -> MockQuiltModel {
+        let mut model = installed_model();
+        model
+            .expect_lock_package()
+            .times(1)
+            .returning(|p| Ok(p.namespace.clone()));
+        model
+            .expect_locked_package_pull_outcome()
+            .times(1)
+            .returning(move |_| {
+                Ok(quilt::flow::PullPreview {
+                    outcome: verdict.clone(),
+                    added: Vec::new(),
+                    changed: Vec::new(),
+                    removed: Vec::new(),
+                    latest_hash: None,
+                })
+            });
+        model.expect_locked_package_status().returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                quilt::lineage::UpstreamState::Behind,
+                std::collections::BTreeMap::new(),
+            ))
+        });
+        model
+    }
+
+    fn conflict_pause() -> PausedReason {
+        PausedReason::PullConflict(vec!["a.csv".to_string()])
+    }
+
+    /// The status events reported after the first `seen`.
+    fn statuses_since(
+        reporter: &RecordingReporter,
+        seen: usize,
+    ) -> Vec<crate::autopull::reporter::PackageStatusEvent> {
+        reporter.statuses.lock().unwrap()[seen..]
+            .iter()
+            .map(|(_, event)| event.clone())
+            .collect()
+    }
+
+    /// A recorded conflict that the dry run no longer finds — the conflicting
+    /// edit undone, or the lineage advanced by another process — is taken back,
+    /// and the clear announced so an open page re-reads instead of offering
+    /// Publish for a conflict that is gone.
+    #[tokio::test]
+    async fn a_safe_dry_run_takes_back_a_recorded_conflict() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        for verdict in [
+            quilt::flow::PullOutcome::CleanUpdate,
+            quilt::flow::PullOutcome::KeepsLocalChanges {
+                added: Vec::new(),
+                modified: vec![std::path::PathBuf::from("a.csv")],
+                removed: Vec::new(),
+            },
+            quilt::flow::PullOutcome::UpToDate,
+        ] {
+            let reporter = Arc::new(RecordingReporter::default());
+            let watcher = Watcher::new_for_test(reporter.clone());
+            watcher
+                .pause(&ns, &fixtures::host(), conflict_pause())
+                .await;
+            let seen = reporter.statuses.lock().unwrap().len();
+            let model = dry_run_model(verdict.clone());
+
+            let preview = super::package_pull_outcome_command(&model, &watcher, "acme/demo")
+                .await
+                .expect("dry run");
+
+            assert_eq!(preview.outcome, verdict);
+            assert_eq!(watcher.paused_reason(&ns).await, None, "{verdict:?}");
+            let announced = statuses_since(&reporter, seen);
+            assert_eq!(announced.len(), 1, "{verdict:?}: one announcement");
+            let event = &announced[0];
+            assert_eq!(event.namespace, ns);
+            assert_eq!(event.status, "behind");
+            // The pause moved neither the upstream state nor the tree, so the
+            // plain observation would repeat one the page may already have
+            // acted on, and its fingerprint gate would drop the clear.
+            let observed = crate::autopull::reporter::status_fingerprint(
+                &quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::Behind,
+                    std::collections::BTreeMap::new(),
+                ),
+            );
+            assert_ne!(event.fingerprint, observed);
+            assert_ne!(event.fingerprint, "paused;true");
+        }
+    }
+
+    /// Without a status the clear could not be announced, and an open page
+    /// would keep offering Publish for a conflict the backend had dropped. So
+    /// the pause stays, unannounced, for the next dry run to take back.
+    #[tokio::test]
+    async fn a_failed_status_read_keeps_a_recorded_conflict() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        watcher
+            .pause(&ns, &fixtures::host(), conflict_pause())
+            .await;
+        let seen = reporter.statuses.lock().unwrap().len();
+        let mut model = installed_model();
+        model
+            .expect_lock_package()
+            .times(1)
+            .returning(|p| Ok(p.namespace.clone()));
+        model
+            .expect_locked_package_pull_outcome()
+            .times(1)
+            .returning(|_| {
+                Ok(quilt::flow::PullPreview {
+                    outcome: quilt::flow::PullOutcome::CleanUpdate,
+                    added: Vec::new(),
+                    changed: Vec::new(),
+                    removed: Vec::new(),
+                    latest_hash: None,
+                })
+            });
+        model
+            .expect_locked_package_status()
+            .returning(|_, _| Err(Error::General("status unreadable".to_string())));
+
+        super::package_pull_outcome_command(&model, &watcher, "acme/demo")
+            .await
+            .expect("dry run");
+
+        assert_eq!(watcher.paused_reason(&ns).await, Some(conflict_pause()));
+        assert_eq!(statuses_since(&reporter, seen), Vec::new());
+    }
+
+    /// A dry run that still finds the conflict leaves the pause as it is.
+    #[tokio::test]
+    async fn a_blocked_dry_run_keeps_a_recorded_conflict() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        watcher
+            .pause(&ns, &fixtures::host(), conflict_pause())
+            .await;
+        let seen = reporter.statuses.lock().unwrap().len();
+        let model = dry_run_model(quilt::flow::PullOutcome::Blocked {
+            conflicts: vec![std::path::PathBuf::from("a.csv")],
+        });
+
+        super::package_pull_outcome_command(&model, &watcher, "acme/demo")
+            .await
+            .expect("dry run");
+
+        assert_eq!(watcher.paused_reason(&ns).await, Some(conflict_pause()));
+        assert_eq!(statuses_since(&reporter, seen), Vec::new());
+    }
+
+    /// Only a conflict is the dry run's to take back: every other pause has a
+    /// cause the verdict says nothing about.
+    #[tokio::test]
+    async fn a_safe_dry_run_keeps_any_other_pause() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        for reason in [
+            PausedReason::PendingChanges,
+            PausedReason::PendingCommit,
+            PausedReason::Diverged,
+            PausedReason::RoleDenied {
+                role: "reader".to_string(),
+            },
+            PausedReason::Other("workflow rejected".to_string()),
+        ] {
+            let reporter = Arc::new(RecordingReporter::default());
+            let watcher = Watcher::new_for_test(reporter.clone());
+            watcher.pause(&ns, &fixtures::host(), reason.clone()).await;
+            let seen = reporter.statuses.lock().unwrap().len();
+            let model = dry_run_model(quilt::flow::PullOutcome::CleanUpdate);
+
+            super::package_pull_outcome_command(&model, &watcher, "acme/demo")
+                .await
+                .expect("dry run");
+
+            assert_eq!(watcher.paused_reason(&ns).await, Some(reason.clone()));
+            assert_eq!(statuses_since(&reporter, seen), Vec::new(), "{reason:?}");
+        }
+    }
+
+    /// With nothing paused there is nothing to take back or announce.
+    #[tokio::test]
+    async fn a_dry_run_with_no_pause_announces_nothing() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let model = dry_run_model(quilt::flow::PullOutcome::CleanUpdate);
+
+        super::package_pull_outcome_command(&model, &watcher, "acme/demo")
+            .await
+            .expect("dry run");
+
+        assert_eq!(watcher.paused_reason(&ns).await, None);
+        assert!(reporter.statuses.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -1575,6 +1951,39 @@ mod tests {
             })
             .unwrap(),
             r#"{"Blocked":{"conflicts":["x.txt"]}}"#
+        );
+    }
+
+    /// The UI mirrors this exact camelCase JSON in `quilt_sync_ui::commands`'s
+    /// `pull_preview_wire_form_is_verbatim`. If the two drift, the package page
+    /// silently misreads what a newer revision brings at the Tauri boundary.
+    #[test]
+    fn pull_preview_wire_form_is_verbatim() {
+        use std::path::PathBuf;
+
+        use crate::quilt::flow::PullOutcome;
+        use crate::quilt::flow::PullPreview;
+        assert_eq!(
+            serde_json::to_string(&PullPreview {
+                outcome: PullOutcome::CleanUpdate,
+                added: vec![PathBuf::from("a.txt")],
+                changed: vec![PathBuf::from("b.txt")],
+                removed: vec![PathBuf::from("c.txt")],
+                latest_hash: Some("abc123".to_string()),
+            })
+            .unwrap(),
+            r#"{"outcome":"CleanUpdate","added":["a.txt"],"changed":["b.txt"],"removed":["c.txt"],"latestHash":"abc123"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&PullPreview {
+                outcome: PullOutcome::UpToDate,
+                added: vec![],
+                changed: vec![],
+                removed: vec![],
+                latest_hash: None,
+            })
+            .unwrap(),
+            r#"{"outcome":"UpToDate","added":[],"changed":[],"removed":[],"latestHash":null}"#
         );
     }
 

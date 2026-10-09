@@ -1480,18 +1480,31 @@ impl PullCheck {
     }
 }
 
-/// The dry-run verdict plus the paths the incoming revision adds. Mirrors the
-/// engine's `quilt_rs::flow::PullPreview`.
+/// The dry-run verdict, the paths the incoming revision adds, changes and
+/// removes, and that revision's hash. Mirrors the engine's
+/// `quilt_rs::flow::PullPreview`.
 ///
-/// `added` is scope-independent — it names what the revision *holds* that this
-/// copy does not, and whether a pull would fetch it is the sync scope's
-/// business at apply time. It costs nothing: the manifest naming these paths
-/// was already fetched to reach the verdict.
+/// The paths are scope-independent — they name how the revision differs from
+/// the one this copy holds, and whether a pull would fetch a file is the sync
+/// scope's business at apply time. They cost nothing: the manifest naming them
+/// was already fetched to reach the verdict. `latest_hash` is `None` when there
+/// is no newer revision.
+///
+/// Each of `added`, `changed` and `removed` arrives sorted by path, compared
+/// by component as `Path` compares (`a/b` before `a-b`), and a path is in at
+/// most one of them: the engine reads them out of one ordered map.
+/// The incoming popover merges them on that promise.
+///
+/// The literals are anchored identically in the backend's
+/// `pull_preview_wire_form_is_verbatim`.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PullPreview {
     pub outcome: PullOutcome,
     pub added: Vec<String>,
+    pub changed: Vec<String>,
+    pub removed: Vec<String>,
+    pub latest_hash: Option<String>,
 }
 
 pub async fn package_pull_outcome(namespace: String) -> Result<PullPreview, String> {
@@ -1865,8 +1878,8 @@ pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
 mod tests {
     use super::{
         CommitViolation, CommitWorkflows, EntryCounts, EntryList, FilesData, KeepingScope,
-        KeptReason, PackageContextData, PackageItemData, PackageSize, PullOutcome, ResolveData,
-        RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
+        KeptReason, PackageContextData, PackageItemData, PackageSize, PullOutcome, PullPreview,
+        ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
 
     /// Anchored identically in the backend's `files_data_wire_form_is_verbatim`.
@@ -2169,6 +2182,38 @@ mod tests {
             serde_json::from_str::<PullOutcome>(r#"{"Blocked":{"conflicts":["x.txt"]}}"#).unwrap(),
             PullOutcome::Blocked {
                 conflicts: vec!["x.txt".to_string()],
+            }
+        );
+    }
+
+    /// Anchored identically in the backend's `pull_preview_wire_form_is_verbatim`:
+    /// the page names the incoming files and links them from this shape.
+    #[test]
+    fn pull_preview_wire_form_is_verbatim() {
+        assert_eq!(
+            serde_json::from_str::<PullPreview>(
+                r#"{"outcome":"CleanUpdate","added":["a.txt"],"changed":["b.txt"],"removed":["c.txt"],"latestHash":"abc123"}"#
+            )
+            .unwrap(),
+            PullPreview {
+                outcome: PullOutcome::CleanUpdate,
+                added: vec!["a.txt".to_string()],
+                changed: vec!["b.txt".to_string()],
+                removed: vec!["c.txt".to_string()],
+                latest_hash: Some("abc123".to_string()),
+            }
+        );
+        assert_eq!(
+            serde_json::from_str::<PullPreview>(
+                r#"{"outcome":"UpToDate","added":[],"changed":[],"removed":[],"latestHash":null}"#
+            )
+            .unwrap(),
+            PullPreview {
+                outcome: PullOutcome::UpToDate,
+                added: Vec::new(),
+                changed: Vec::new(),
+                removed: Vec::new(),
+                latest_hash: None,
             }
         );
     }

@@ -33,15 +33,6 @@ fn pulled(uri: quilt_uri::ManifestUri) -> quilt::flow::PullReport {
     }
 }
 
-/// A dry-run preview carrying just the verdict — the incoming-paths half is not
-/// what the tick routes on.
-fn preview(outcome: PullOutcome) -> quilt::flow::PullPreview {
-    quilt::flow::PullPreview {
-        outcome,
-        added: Vec::new(),
-    }
-}
-
 mod publish;
 
 /// Hex of an ASCII string, matching the per-byte path encoding in the status
@@ -463,9 +454,9 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
     });
     // Clean tree: the dry-run classifier reports a straight surgical update.
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
     model
         .expect_locked_package_pull()
         .times(1)
@@ -555,9 +546,9 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
         ))
     });
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
     model
         .expect_locked_package_pull()
         .withf(|_, _, scope| *scope == SyncScope::EntirePackage)
@@ -633,9 +624,9 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         ))
     });
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
     // Individual-file scope: the revision's new path is listed and not fetched.
     model
         .expect_locked_package_pull()
@@ -735,14 +726,14 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         });
     // Dry run: the surgical update reconciles cleanly, keeping the local add.
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(|_| {
-            Ok(preview(PullOutcome::KeepsLocalChanges {
+            Ok(PullOutcome::KeepsLocalChanges {
                 added: vec![std::path::PathBuf::from("local.txt")],
                 modified: Vec::new(),
                 removed: Vec::new(),
-            }))
+            })
         });
     // The pull is actually performed.
     model
@@ -841,14 +832,14 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
     // Dry run: the pull reconciles every local change (e.g. identical edit) →
     // KeepsLocalChanges with all-empty lists = nothing kept.
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(|_| {
-            Ok(preview(PullOutcome::KeepsLocalChanges {
+            Ok(PullOutcome::KeepsLocalChanges {
                 added: Vec::new(),
                 modified: Vec::new(),
                 removed: Vec::new(),
-            }))
+            })
         });
     model
         .expect_locked_package_pull()
@@ -942,9 +933,9 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
             ))
         });
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
     model
         .expect_locked_package_pull()
         .times(1)
@@ -985,7 +976,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
     Ok(())
 }
 
-/// An expired session surfacing mid-dry-run (from `package_pull_outcome`) must
+/// An expired session surfacing mid-dry-run (from `pull_verdict`) must
 /// classify as `LoginRequired`, not back off as a `Transient` — so the login
 /// affordance appears this tick instead of one backoff later.
 #[tokio::test]
@@ -1020,7 +1011,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
     // The dry-run itself hits an expired token.
     let host_for_dry_run = host.clone();
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(move |_| {
             Err(Error::from(quilt::Error::Login(
@@ -1097,12 +1088,12 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         });
     // Dry run: a tracked path changed on both sides → the whole pull blocks.
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(|_| {
-            Ok(preview(PullOutcome::Blocked {
+            Ok(PullOutcome::Blocked {
                 conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-            }))
+            })
         });
     // The pull itself must never run when the outcome is Blocked.
     model.expect_locked_package_pull().times(0);
@@ -1325,12 +1316,12 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
             ))
         });
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(|_| {
-            Ok(preview(PullOutcome::Blocked {
+            Ok(PullOutcome::Blocked {
                 conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-            }))
+            })
         });
     model.expect_locked_package_pull().times(0);
 
@@ -1620,11 +1611,11 @@ async fn apply_flag_is_clear_while_the_tick_classifies() -> Result<(), Error> {
     let seen = Arc::new(std::sync::Mutex::new(None));
     let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(move |_| {
             *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
-            Ok(preview(PullOutcome::CleanUpdate))
+            Ok(PullOutcome::CleanUpdate)
         });
     model
         .expect_locked_package_pull()
@@ -1647,9 +1638,9 @@ async fn apply_flag_is_set_while_the_pull_applies() -> Result<(), Error> {
     let mut model = behind_clean_model();
 
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
 
     let seen = Arc::new(std::sync::Mutex::new(None));
     let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
@@ -1676,9 +1667,9 @@ async fn apply_flag_is_cleared_after_the_pull_returns() -> Result<(), Error> {
     let agg = test_aggregator();
     let mut model = behind_clean_model();
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
     model
         .expect_locked_package_pull()
         .times(1)
@@ -1749,12 +1740,12 @@ async fn a_conflict_verdict_reached_while_that_package_was_applying_does_not_pau
             ))
         });
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(|_| {
-            Ok(preview(PullOutcome::Blocked {
+            Ok(PullOutcome::Blocked {
                 conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-            }))
+            })
         });
     model.expect_locked_package_pull().times(0);
 
@@ -1857,13 +1848,13 @@ async fn an_apply_that_finishes_during_the_verdict_still_suppresses_the_pause() 
     let agg_in_verdict = Arc::clone(&agg);
     let ns_in_verdict = ns.clone();
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(move |_| {
             drop(agg_in_verdict.apply_guard(&ns_in_verdict));
-            Ok(preview(PullOutcome::Blocked {
+            Ok(PullOutcome::Blocked {
                 conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-            }))
+            })
         });
     model.expect_locked_package_pull().times(0);
 
@@ -1920,8 +1911,8 @@ fn two_behind_packages(busy: bool) -> MockQuiltModel {
             ))
         });
     model
-        .expect_locked_package_pull_outcome()
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+        .expect_locked_package_pull_verdict()
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
     model
         .expect_locked_package_pull()
         .times(if busy { 1 } else { 2 })
@@ -1982,9 +1973,9 @@ async fn the_pull_holds_its_activity_while_it_applies() -> Result<(), Error> {
     let agg = test_aggregator();
     let mut model = behind_clean_model();
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
 
     let seen = Arc::new(std::sync::Mutex::new(None));
     let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
@@ -2013,9 +2004,9 @@ async fn a_failed_pull_clears_its_activity() -> Result<(), Error> {
     let agg = test_aggregator();
     let mut model = behind_clean_model();
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
-        .returning(|_| Ok(preview(PullOutcome::CleanUpdate)));
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
 
     let seen = Arc::new(std::sync::Mutex::new(None));
     let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
@@ -2078,11 +2069,11 @@ async fn the_classify_shows_no_activity() -> Result<(), Error> {
     });
     let (seen_outcome, agg_outcome) = (Arc::clone(&seen), Arc::clone(&agg));
     model
-        .expect_locked_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(move |_| {
             seen_outcome.lock().unwrap().push(agg_outcome.activity());
-            Ok(preview(PullOutcome::CleanUpdate))
+            Ok(PullOutcome::CleanUpdate)
         });
     model
         .expect_locked_package_pull()
@@ -2141,7 +2132,7 @@ async fn a_tick_with_nothing_to_transfer_never_sets_the_activity() -> Result<(),
                 BTreeMap::new(),
             ))
         });
-    model.expect_locked_package_pull_outcome().times(0);
+    model.expect_locked_package_pull_verdict().times(0);
     model.expect_locked_package_pull().times(0);
     model.expect_locked_package_publish().times(0);
 

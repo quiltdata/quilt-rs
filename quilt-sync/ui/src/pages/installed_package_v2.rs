@@ -9,6 +9,11 @@
 //! list arrives with the same read, classified by the status the header's
 //! state comes from, so the two cannot disagree and the tree is walked once.
 //! In resolve mode it marks the page's one differing set, [`FileMarks`].
+//!
+//! A header that is behind or in conflict names what the newer revision
+//! brings, from the page's own dry run ([`IncomingCheck`]), which runs after
+//! each such read; a conflict it finds resolves the header to the conflict
+//! state and marks the conflicting rows.
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -35,6 +40,7 @@ mod bucket_form;
 pub(crate) mod context_pane;
 pub(crate) mod file_pane;
 mod header;
+pub(crate) mod incoming;
 pub(crate) mod keeping;
 mod local_only_band;
 mod mismatch_band;
@@ -49,6 +55,7 @@ use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
 use file_pane::{Reach, RowCommand, RowMenu};
 use header::PageHeader;
 pub use header::{MenuCommand, MenuItem, menu_items};
+use incoming::{HoverCard, IncomingSummary};
 use resolve::{ResolveCommands, ResolvePane};
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss");
@@ -366,6 +373,168 @@ pub fn differing_marks(
     Memo::new(move |_| if open.get() { set.clone() } else { None })
 }
 
+/// The dry run, for one namespace. A seam, like [`PageRead`], so a test can
+/// answer without a Tauri host.
+pub(crate) type PullRead =
+    fn(String) -> Pin<Box<dyn Future<Output = Result<commands::PullPreview, String>>>>;
+
+fn read_pull_outcome(
+    namespace: String,
+) -> Pin<Box<dyn Future<Output = Result<commands::PullPreview, String>>>> {
+    Box::pin(commands::package_pull_outcome(namespace))
+}
+
+/// Whether a read's header is one the dry run speaks to: a newer revision
+/// available, or the conflict a failed *Get latest* left.
+fn checks_incoming(state: &crate::kit::PackageState) -> bool {
+    matches!(
+        state,
+        crate::kit::PackageState::Behind | crate::kit::PackageState::PullConflict { .. }
+    )
+}
+
+/// The dry run's answer, and what it was asked about.
+///
+/// Keyed twice. By package, because one route serves every package and an
+/// answer can land after the reader moved on. By the revision this copy
+/// holds, because an answer is the difference from it: once *Get latest*
+/// moves it, the last answer counts files that are no longer coming, even
+/// when the read after it finds a newer revision again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct IncomingAnswer {
+    namespace: String,
+    /// `CurrentRevisionData.hash` of the read that asked.
+    holds: String,
+    check: commands::PullCheck,
+    /// Whether the run that answered finished after the current read. A
+    /// re-read that keeps the answer clears it, and the next run's answer
+    /// sets it again. Only a fresh answer moves the header's state.
+    fresh: bool,
+}
+
+/// The newer revision's dry run, owned by the page.
+///
+/// Above the rebuild line, for `Wiring`'s reason: every re-read rebuilds the
+/// header, and an answer held there would go back to `checking…` on each of
+/// the watcher's reports. Signals, not a resource, for the commit page's
+/// reason: a resource read under `ByDesign`'s `Suspense` would put the loading
+/// frame back over the page on every rerun.
+///
+/// It runs again after every read that shows the package behind or in
+/// conflict, since a local edit can make a conflict while the newer revision
+/// stays the same. While it runs, the last answer for the same package and
+/// the same held revision stays up, marked stale: it still draws the summary
+/// and the popover, but the header's state is the read's until the new run
+/// answers, so an answer about an earlier read cannot hide a conflict the
+/// re-read records, nor paint one it no longer does. Each run is numbered,
+/// and only the latest one's answer lands.
+#[derive(Clone, Copy)]
+struct IncomingCheck {
+    answer: RwSignal<Option<IncomingAnswer>>,
+    /// The number of the latest run. An answer from an earlier one is dropped.
+    runs: StoredValue<u64>,
+    /// What the last read asked about, for *Try again*.
+    asked: StoredValue<Option<(String, String)>>,
+    pull: PullRead,
+    /// The summary's popover, open or pinned. Here for the answer's reason:
+    /// the header is drawn again on a re-read whose data differs and when the
+    /// check moves the state, and a popover the reader pinned stays open
+    /// through both.
+    card: HoverCard,
+}
+
+impl IncomingCheck {
+    fn new(pull: PullRead) -> Self {
+        Self {
+            answer: RwSignal::new(None),
+            runs: StoredValue::new(0),
+            asked: StoredValue::new(None),
+            pull,
+            card: HoverCard::new(false),
+        }
+    }
+
+    /// A read answered. `asks` is its package and the revision it holds when
+    /// it shows the package behind or in conflict, and `None` otherwise: then
+    /// no answer stands, and any still out is dropped when it lands.
+    fn after_read(self, asks: Option<(String, String)>) {
+        self.asked.set_value(asks.clone());
+        let Some((namespace, holds)) = asks else {
+            self.runs.update_value(|n| *n += 1);
+            self.answer.set(None);
+            return;
+        };
+        let keep = self.answer.with_untracked(|a| {
+            a.as_ref().is_some_and(|a| {
+                a.namespace == namespace
+                    && a.holds == holds
+                    && matches!(a.check, commands::PullCheck::Ready(_))
+            })
+        });
+        if keep {
+            self.answer.update(|a| {
+                if let Some(a) = a {
+                    a.fresh = false;
+                }
+            });
+        }
+        self.run(namespace, holds, keep);
+    }
+
+    /// *Try again*, after a failed check.
+    fn retry(self) {
+        if let Some((namespace, holds)) = self.asked.get_value() {
+            self.run(namespace, holds, false);
+        }
+    }
+
+    fn run(self, namespace: String, holds: String, keep: bool) {
+        self.runs.update_value(|n| *n += 1);
+        let this = self.runs.get_value();
+        if !keep {
+            self.answer.set(Some(IncomingAnswer {
+                namespace: namespace.clone(),
+                holds: holds.clone(),
+                check: commands::PullCheck::Loading,
+                fresh: true,
+            }));
+        }
+        let Self {
+            answer, runs, pull, ..
+        } = self;
+        leptos::task::spawn_local(async move {
+            let check = match pull(namespace.clone()).await {
+                Ok(preview) => commands::PullCheck::Ready(preview),
+                Err(_) => commands::PullCheck::Failed,
+            };
+            // `try_`: the page can be gone by now.
+            if runs.try_get_value() == Some(this) {
+                answer.try_set(Some(IncomingAnswer {
+                    namespace,
+                    holds,
+                    check,
+                    fresh: true,
+                }));
+            }
+        });
+    }
+
+    /// The check for one read's package and held revision, and whether its
+    /// answer is fresh: its answer, or `Loading` until one lands for that key.
+    fn check_for(self, namespace: String, holds: String) -> Memo<(commands::PullCheck, bool)> {
+        let answer = self.answer;
+        Memo::new(move |_| {
+            answer.with(|a| {
+                a.as_ref()
+                    .filter(|a| a.namespace == namespace && a.holds == holds)
+                    .map_or((commands::PullCheck::Loading, true), |a| {
+                        (a.check.clone(), a.fresh)
+                    })
+            })
+        })
+    }
+}
+
 /// The address's deep-link outcome — a mismatch or the local-only flag —
 /// provided by the page for the addresses it builds.
 ///
@@ -407,6 +576,7 @@ fn package_body(
     asked: Signal<bool>,
     resolving: ResolveCommands,
     files: Files,
+    incoming: IncomingCheck,
 ) -> AnyView {
     let commands::PackagePageData {
         header,
@@ -441,6 +611,14 @@ fn package_body(
     let ns = header.namespace.clone();
     let uri = header.uri.clone();
     let namespace = ns.to_string();
+    let (page_header, row_marks) = incoming_header(
+        header,
+        context.revision.hash.clone(),
+        w,
+        open,
+        marks,
+        incoming,
+    );
     let open_catalog = catalog_opener(namespace.clone(), w.outcome);
     let open_file = file_opener(namespace.clone(), uri.clone(), w.outcome);
     let menu = RowMenu {
@@ -484,7 +662,7 @@ fn package_body(
     };
     view! {
         <div class=style::page>
-            <PageHeader data=header w=w resolving=open />
+            {page_header}
             <div class=style::shell>
                 {pane}
                 <FilePane
@@ -497,12 +675,72 @@ fn package_body(
                     on_retry=files.retry
                     picking=picking
                     menu=menu
-                    differing=marks.differing
+                    differing=row_marks
                 />
             </div>
         </div>
     }
     .into_any()
+}
+
+/// The header, with the dry run's summary after its label, and the file
+/// list's marks: resolve mode's differing set, or the files the check says
+/// conflict.
+///
+/// Only a header that is behind or in conflict asks. A `Blocked` verdict
+/// from a run that finished after this read resolves it to the conflict
+/// state; the list marks that state's files, whether the read or the check
+/// gave it, as resolve mode marks the files that differ, and resolve mode's
+/// own marks win while it is open. The header is drawn again when the check
+/// moves the state, as a re-read draws it; the summary follows the check by
+/// itself.
+fn incoming_header(
+    header: commands::PackageHeaderData,
+    holds: String,
+    w: Wiring,
+    open: Memo<bool>,
+    marks: FileMarks,
+    incoming: IncomingCheck,
+) -> (AnyView, Memo<Option<Arc<BTreeSet<String>>>>) {
+    let namespace = header.namespace.to_string();
+    let check =
+        checks_incoming(&header.state).then(|| incoming.check_for(namespace.clone(), holds));
+    let fresh = Signal::derive(move || check.is_none_or(|c| c.with(|(_, fresh)| *fresh)));
+    let check: Signal<Option<commands::PullCheck>> =
+        Signal::derive(move || check.map(|c| c.with(|(check, _)| check.clone())));
+    let read_state = header.state.clone();
+    let state = Memo::new(move |_| {
+        self::incoming::header_state(&read_state, check.get().as_ref(), fresh.get())
+    });
+    let conflicts = Memo::new(move |_| state.with(self::incoming::conflicting));
+    let row_marks = Memo::new(move |_| marks.differing.get().or_else(|| conflicts.get()));
+    let newer = self::incoming::Catalog::new(
+        header.uri.as_ref(),
+        browser_opener(
+            namespace,
+            w.outcome,
+            "Could not open this file in the catalog.",
+        ),
+    );
+    let whole = marks.scope == commands::KeepingScope::EntirePackage;
+    let header = StoredValue::new(header);
+    let page_header = move || {
+        let mut data = header.get_value();
+        data.state = state.get();
+        let summary = view! {
+            <IncomingSummary
+                check=check
+                conflicts=conflicts
+                whole=whole
+                catalog=newer.clone()
+                on_retry=Callback::new(move |()| incoming.retry())
+                card=incoming.card
+            />
+        }
+        .into_any();
+        view! { <PageHeader data=data w=w resolving=open summary=summary /> }
+    };
+    (view! { {page_header} }.into_any(), row_marks)
 }
 
 /// The file pane's `[Download]`: `package_download_backlog` over the ticked
@@ -824,6 +1062,20 @@ fn download_outcome(namespace: String, asked: usize, skipped: &[String]) -> Opti
 /// takes `busy` nor clears the band. A link cannot be disabled, and one that
 /// silently did nothing while busy would be worse than one that opens.
 fn catalog_opener(namespace: String, outcome: RwSignal<Option<Outcome>>) -> Callback<String> {
+    browser_opener(
+        namespace,
+        outcome,
+        "Could not open this revision in the catalog.",
+    )
+}
+
+/// Opens an address in the browser, reporting a failure on the keyed band
+/// with `lead`. [`catalog_opener`]'s, for any catalog link.
+fn browser_opener(
+    namespace: String,
+    outcome: RwSignal<Option<Outcome>>,
+    lead: &'static str,
+) -> Callback<String> {
     Callback::new(move |url: String| {
         let namespace = namespace.clone();
         leptos::task::spawn_local(async move {
@@ -831,7 +1083,7 @@ fn catalog_opener(namespace: String, outcome: RwSignal<Option<Outcome>>) -> Call
                 outcome.try_set(Some(Outcome {
                     namespace,
                     variant: BannerVariant::Critical,
-                    lead: "Could not open this revision in the catalog.".to_string(),
+                    lead: lead.to_string(),
                     detail: Some(detail),
                 }));
             }
@@ -928,6 +1180,7 @@ pub fn InstalledPackageV2() -> impl IntoView {
     view! {
         <PackageScreen
             read=read_page
+            pull=read_pull_outcome
             resolving=ResolveCommands::app()
             revision_message=mismatch_band::app_revision_message
         />
@@ -948,6 +1201,7 @@ fn read_page(
 #[component]
 fn PackageScreen(
     read: PageRead,
+    pull: PullRead,
     resolving: ResolveCommands,
     revision_message: mismatch_band::RevisionMessage,
 ) -> impl IntoView {
@@ -1020,6 +1274,32 @@ fn PackageScreen(
         unignoring,
     };
 
+    // The newer revision's dry run, after each read that shows the package
+    // behind or in conflict: after the page is drawn, so it never holds the
+    // page back. A settled read alone decides, as below; `in_flight` rather
+    // than the answer, which notifies nothing when a re-read finds the same
+    // data, while a local edit or a moved newer revision can still change what
+    // the check says.
+    let incoming = IncomingCheck::new(pull);
+    Effect::new(move |_| {
+        if page.in_flight.get() {
+            return;
+        }
+        let Some(answered) = answer.get() else {
+            return;
+        };
+        let asks = answered
+            .ok()
+            .filter(|d| checks_incoming(&d.header.state))
+            .map(|d| (ns.get_untracked(), d.context.revision.hash));
+        incoming.after_read(asks);
+    });
+    // A pin names one package's files, so another package starts closed.
+    Effect::new(move |_| {
+        ns.track();
+        incoming.card.close();
+    });
+
     // A `resolve=1` the package cannot honour is replaced by the plain address,
     // so *Back* never re-enters a mode that does not exist. The answer stays up
     // while a re-read is out, so only a settled read decides.
@@ -1074,7 +1354,7 @@ fn PackageScreen(
                 }
                 .into_any()
             }
-            body=move |d| package_body(d, w, asked.into(), resolving, files)
+            body=move |d| package_body(d, w, asked.into(), resolving, files, incoming)
             // The page keeps its frame and states the failure in place. A read
             // that failed for a reason the header could have worded — no
             // session, a refused role — never reaches here: the command resolves
@@ -1503,12 +1783,24 @@ mod tests {
         }
     }
 
+    /// A dry run that never answers, for the tests not about it.
+    pub(super) fn never_pulls(
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Result<commands::PullPreview, String>>>> {
+        Box::pin(std::future::pending())
+    }
+
+    /// The page's dry run at rest.
+    pub(super) fn idle_incoming() -> IncomingCheck {
+        IncomingCheck::new(never_pulls)
+    }
+
     fn body(data: commands::PackagePageData) -> web_sys::Element {
         mount(move || {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(data, w, Signal::stored(false), resolving, idle_files())}</Router>
+                <Router>{package_body(data, w, Signal::stored(false), resolving, idle_files(), idle_incoming())}</Router>
             }
         })
     }
@@ -1743,7 +2035,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files())}</Router>
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files(), idle_incoming())}</Router>
             }
         });
         let aside = el
@@ -1776,7 +2068,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files())}</Router>
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files(), idle_incoming())}</Router>
             }
         });
         let context = el
@@ -1804,7 +2096,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files())}</Router>
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files(), idle_incoming())}</Router>
             }
         });
         let trigger = element_saying(&el, "Revisions you have (1)")
@@ -1830,7 +2122,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files())}</Router>
+                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files(), idle_incoming())}</Router>
             }
         });
         let group = el
@@ -1878,7 +2170,7 @@ mod tests {
                 <Router>
                     {move || {
                         reads.track();
-                        package_body(page_data(), w, Signal::stored(false), ResolveCommands::app(), idle_files())
+                        package_body(page_data(), w, Signal::stored(false), ResolveCommands::app(), idle_files(), idle_incoming())
                     }}
                 </Router>
             }
@@ -2250,6 +2542,7 @@ mod tests {
                                     <Suspense fallback=|| view! { <p data-fallback>"loading"</p> }>
                                         <PackageScreen
                                             read=read
+                                            pull=never_pulls
                                             resolving=ResolveCommands::app()
                                             revision_message=mismatch_band::app_revision_message
                                         />
@@ -2284,6 +2577,7 @@ mod tests {
                                 view! {
                                     <PackageScreen
                                         read=read
+                                        pull=never_pulls
                                         resolving=resolving
                                         revision_message=mismatch_band::app_revision_message
                                     />
@@ -2868,5 +3162,569 @@ mod tests {
 
         assert!(!row_marked(&el, "plate/a.csv"));
         assert!(!row_marked(&el, "plate/c.csv"));
+    }
+
+    // ── The newer revision's dry run, through re-reads ──
+
+    thread_local! {
+        /// What the page read answers now; a test changes it between reads.
+        static PAGE: std::cell::RefCell<Option<commands::PackagePageData>> =
+            const { std::cell::RefCell::new(None) };
+        /// The dry run's answers, in order, each after its delay in ms. An
+        /// empty script never answers.
+        static PULLS: std::cell::RefCell<std::collections::VecDeque<(i32, Result<commands::PullPreview, String>)>> =
+            std::cell::RefCell::default();
+        static PULLS_ASKED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    fn scripted_read(_: String) -> Read {
+        counted(PAGE.with(|p| p.borrow().clone()).expect("a scripted page"))
+    }
+
+    fn scripted_pull(
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Result<commands::PullPreview, String>>>> {
+        PULLS_ASKED.with(|n| n.set(n.get() + 1));
+        match PULLS.with(|p| p.borrow_mut().pop_front()) {
+            Some((delay, answer)) => Box::pin(async move {
+                sleep_ms(delay).await;
+                answer
+            }),
+            None => Box::pin(std::future::pending()),
+        }
+    }
+
+    fn script(pulls: Vec<(i32, Result<commands::PullPreview, String>)>) {
+        PULLS.with(|p| *p.borrow_mut() = pulls.into());
+    }
+
+    fn pulls_asked() -> u32 {
+        PULLS_ASKED.with(std::cell::Cell::get)
+    }
+
+    /// `team/dataset` with a newer revision available, holding `holds`, with
+    /// `a.csv` and `b.csv` listed.
+    fn behind(holds: &str) -> commands::PackagePageData {
+        let mut data = page_data();
+        data.header.state = crate::kit::PackageState::Behind;
+        data.context.revision.hash = holds.to_string();
+        let entry = |path: &str| commands::EntryData {
+            filename: path.to_string(),
+            size: 7,
+            status: "pristine".to_string(),
+            junky_pattern: None,
+            ignored_by: None,
+            namespace: "team/dataset".try_into().unwrap(),
+        };
+        data.files = commands::FilesData::Listed(commands::EntryList {
+            entries: vec![entry("a.csv"), entry("b.csv")],
+            counts: commands::EntryCounts {
+                all: 2,
+                ..commands::EntryCounts::default()
+            },
+            total: 2,
+            truncated: false,
+        });
+        data
+    }
+
+    fn adds(n: usize) -> commands::PullPreview {
+        commands::PullPreview {
+            outcome: commands::PullOutcome::CleanUpdate,
+            added: (0..n).map(|i| format!("new/{i}.csv")).collect(),
+            changed: Vec::new(),
+            removed: Vec::new(),
+            latest_hash: Some("feedbeef".to_string()),
+        }
+    }
+
+    /// The page as `/installed-package` mounts it, under `ByDesign`'s
+    /// `Suspense`, reading `PAGE` and checking through `PULLS`.
+    async fn suspended_screen(page: commands::PackagePageData) -> web_sys::Element {
+        crate::test_support::unmount_earlier();
+        READS.with(|r| r.set(0));
+        PULLS_ASKED.with(|n| n.set(0));
+        PAGE.with(|p| *p.borrow_mut() = Some(page));
+        go_to(PLAIN);
+        let el = mount(move || {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/installed-package")
+                            view=move || {
+                                view! {
+                                    <Suspense fallback=|| view! { <p data-fallback>"loading"</p> }>
+                                        <PackageScreen
+                                            read=scripted_read
+                                            pull=scripted_pull
+                                            resolving=ResolveCommands::app()
+                                            revision_message=mismatch_band::app_revision_message
+                                        />
+                                    </Suspense>
+                                }
+                            }
+                        />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(80).await;
+        el
+    }
+
+    /// The page reads its package again, as the watcher's news does.
+    async fn re_read(el: &web_sys::Element, page: commands::PackagePageData) {
+        PAGE.with(|p| *p.borrow_mut() = Some(page));
+        button_saying(el, "Refresh").click();
+        sleep_ms(30).await;
+    }
+
+    fn text(el: &web_sys::Element) -> String {
+        el.text_content().unwrap_or_default()
+    }
+
+    /// The header's summary trigger, `· N file changes`.
+    fn summary(el: &web_sys::Element) -> Option<String> {
+        el.query_selector("[aria-controls][aria-expanded]:not([aria-haspopup])")
+            .unwrap()
+            .filter(|b| b.text_content().unwrap_or_default().contains("file change"))
+            .and_then(|b| b.text_content())
+    }
+
+    /// Opens the summary's popover with a click and returns its surface.
+    async fn opened_popover(el: &web_sys::Element) -> web_sys::Element {
+        let trigger = el
+            .query_selector("[aria-controls][aria-expanded]:not([aria-haspopup])")
+            .unwrap()
+            .filter(|b| b.text_content().unwrap_or_default().contains("file change"))
+            .unwrap_or_else(|| panic!("the summary; markup was {}", el.inner_html()));
+        if trigger.get_attribute("aria-expanded").as_deref() != Some("true") {
+            trigger.unchecked_ref::<web_sys::HtmlElement>().click();
+            sleep_ms(30).await;
+        }
+        assert_eq!(
+            trigger.get_attribute("aria-expanded").as_deref(),
+            Some("true")
+        );
+        let surface = trigger.get_attribute("aria-controls").unwrap();
+        el.query_selector(&format!("[id='{surface}']"))
+            .unwrap()
+            .expect("the popover's surface")
+    }
+
+    /// The popover's row for `path` carries a *Conflict* label.
+    fn popover_conflict_on(popover: &web_sys::Element, path: &str) -> bool {
+        popover
+            .query_selector(&format!("li span[title='{path}']"))
+            .unwrap()
+            .and_then(|span| span.parent_element())
+            .unwrap_or_else(|| panic!("{path} is listed; markup was {}", popover.inner_html()))
+            .text_content()
+            .unwrap_or_default()
+            .contains("Conflict")
+    }
+
+    fn no_fallback(el: &web_sys::Element) {
+        assert!(
+            el.query_selector("[data-fallback]").unwrap().is_none(),
+            "the loading frame came back; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The watcher's news re-reads the page, which runs the check again; the
+    /// answer for the same package and revision stays up while it runs, so
+    /// the summary does not flash to `checking…`, and the page stays.
+    #[wasm_bindgen_test]
+    async fn a_re_read_with_the_same_newer_revision_keeps_the_answer() {
+        script(vec![(0, Ok(adds(3))), (150, Ok(adds(3)))]);
+        let el = suspended_screen(behind("aaa")).await;
+        assert_eq!(
+            summary(&el).as_deref(),
+            Some("3 file changes"),
+            "markup was {}",
+            el.inner_html()
+        );
+
+        re_read(&el, behind("aaa")).await;
+        no_fallback(&el);
+        assert_eq!(READS.with(std::cell::Cell::get), 2, "the page re-read");
+        assert_eq!(pulls_asked(), 2, "and checked again");
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
+        assert!(!text(&el).contains("checking"), "no flash: {}", text(&el));
+
+        sleep_ms(200).await;
+        no_fallback(&el);
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
+    }
+
+    /// Get latest finishing leaves the package settled, and the read that
+    /// says so drops the summary. A read that finds a newer revision again
+    /// after it never paints the count from before: that answer was a
+    /// difference from the revision this copy no longer holds.
+    #[wasm_bindgen_test]
+    async fn getting_the_latest_drops_the_summary() {
+        script(vec![(0, Ok(adds(3)))]);
+        let el = suspended_screen(behind("aaa")).await;
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
+
+        let mut settled = page_data();
+        settled.context.revision.hash = "bbb".to_string();
+        re_read(&el, settled).await;
+        assert_eq!(summary(&el), None, "markup was {}", el.inner_html());
+        assert!(!text(&el).contains("checking"));
+        assert!(!text(&el).contains("Newer revision available"));
+
+        // Behind again after the settled read: a fresh check.
+        script(vec![(120, Ok(adds(1)))]);
+        re_read(&el, behind("ccc")).await;
+        assert_eq!(summary(&el), None);
+        assert!(
+            text(&el).contains("checking\u{2026}"),
+            "markup was {}",
+            el.inner_html()
+        );
+        sleep_ms(150).await;
+        assert_eq!(summary(&el).as_deref(), Some("1 file change"));
+
+        // Behind again straight after a Get latest, with no settled read
+        // between: the count from before is not painted while the check runs.
+        script(vec![(120, Ok(adds(2)))]);
+        re_read(&el, behind("ddd")).await;
+        assert_eq!(summary(&el), None, "the old count is not painted");
+        assert!(
+            text(&el).contains("checking\u{2026}"),
+            "markup was {}",
+            el.inner_html()
+        );
+        sleep_ms(150).await;
+        assert_eq!(summary(&el).as_deref(), Some("2 file changes"));
+    }
+
+    /// A local edit can make a conflict while the newer revision stays the
+    /// same: the check after the watcher's re-read finds it, the header
+    /// resolves to the conflict state, offering Publish, and the list marks
+    /// the conflicting row.
+    #[wasm_bindgen_test]
+    async fn a_conflict_found_on_a_re_read_switches_to_the_conflict_state() {
+        let changes = |outcome| {
+            Ok(commands::PullPreview {
+                outcome,
+                added: Vec::new(),
+                changed: vec!["a.csv".to_string()],
+                removed: Vec::new(),
+                latest_hash: Some("feedbeef".to_string()),
+            })
+        };
+        script(vec![
+            (0, changes(commands::PullOutcome::CleanUpdate)),
+            (
+                0,
+                changes(commands::PullOutcome::Blocked {
+                    conflicts: vec!["a.csv".to_string()],
+                }),
+            ),
+        ]);
+        let el = suspended_screen(behind("aaa")).await;
+        element_saying(&el, "Newer revision available");
+        assert!(!row_marked(&el, "a.csv"));
+
+        re_read(&el, behind("aaa")).await;
+        sleep_ms(30).await;
+        no_fallback(&el);
+        element_saying(&el, "conflict in 1 file");
+        button_saying(&el, "Publish");
+        assert_eq!(summary(&el).as_deref(), Some("1 file change"));
+        assert!(row_marked(&el, "a.csv"), "the conflicting row is marked");
+        assert!(!row_marked(&el, "b.csv"));
+        let sentence = el
+            .query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+            .unwrap()
+            .expect("the sentence a marked row names");
+        assert!(
+            sentence
+                .text_content()
+                .unwrap_or_default()
+                .contains("1 of them conflicts with yours. Publish your changes, then resolve it."),
+        );
+    }
+
+    /// A local edit can appear after a check found the update clean, so Get
+    /// latest pauses on a conflict and the re-read records it. The answer
+    /// kept while the check runs again is about the read before: the header
+    /// takes the recorded conflict at once, and the list marks its file,
+    /// even if the new check never answers.
+    #[wasm_bindgen_test]
+    async fn a_kept_answer_does_not_hide_a_fresh_conflict() {
+        script(vec![(
+            0,
+            Ok(commands::PullPreview {
+                outcome: commands::PullOutcome::CleanUpdate,
+                added: Vec::new(),
+                changed: vec!["a.csv".to_string()],
+                removed: Vec::new(),
+                latest_hash: Some("feedbeef".to_string()),
+            }),
+        )]);
+        let el = suspended_screen(behind("aaa")).await;
+        element_saying(&el, "Newer revision available");
+        assert!(!row_marked(&el, "a.csv"));
+
+        // The rerun stays pending: nothing more is scripted.
+        let mut recorded = behind("aaa");
+        recorded.header.state = crate::kit::PackageState::PullConflict {
+            files: vec!["a.csv".to_string()],
+        };
+        re_read(&el, recorded).await;
+        no_fallback(&el);
+        assert_eq!(pulls_asked(), 2, "the check runs again");
+        assert_eq!(summary(&el).as_deref(), Some("1 file change"), "kept");
+        element_saying(&el, "conflict in 1 file");
+        button_saying(&el, "Publish");
+        assert!(row_marked(&el, "a.csv"), "the recorded conflict's row");
+        assert!(!row_marked(&el, "b.csv"));
+        let sentence = el
+            .query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+            .unwrap()
+            .expect("the sentence a marked row names");
+        assert!(
+            sentence
+                .text_content()
+                .unwrap_or_default()
+                .contains("1 of them conflicts with yours. Publish your changes, then resolve it."),
+            "markup was {}",
+            el.inner_html()
+        );
+
+        let popover = opened_popover(&el).await;
+        assert!(
+            text(&popover)
+                .contains("1 of them conflicts with yours. Publish your changes, then resolve it."),
+            "the header's conflict, over the kept clean answer; markup was {}",
+            popover.inner_html()
+        );
+        assert!(popover_conflict_on(&popover, "a.csv"));
+    }
+
+    /// A conflict the read records marks its rows while the check is still
+    /// out, before any popover is drawn; the sentence they name is there,
+    /// for a screen reader, standing in for the popover's.
+    #[wasm_bindgen_test]
+    async fn a_recorded_conflict_is_described_before_the_check_answers() {
+        // The check stays pending: nothing is scripted.
+        script(Vec::new());
+        let mut recorded = behind("aaa");
+        recorded.header.state = crate::kit::PackageState::PullConflict {
+            files: vec!["a.csv".to_string()],
+        };
+        let el = suspended_screen(recorded).await;
+        element_saying(&el, "conflict in 1 file");
+        assert!(
+            text(&el).contains("checking"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(row_marked(&el, "a.csv"));
+        let sentence = el
+            .query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+            .unwrap()
+            .expect("the sentence a marked row names");
+        assert!(
+            sentence.has_attribute("data-sr-only"),
+            "and it is not drawn"
+        );
+        assert_eq!(
+            text(&sentence),
+            "1 file conflicts with yours. Publish your changes, then resolve it."
+        );
+    }
+
+    /// The other way round: a kept conflict answer does not paint a conflict
+    /// over a re-read that says only Behind while its rerun is out.
+    #[wasm_bindgen_test]
+    async fn a_kept_conflict_does_not_override_a_fresh_read() {
+        script(vec![(
+            0,
+            Ok(commands::PullPreview {
+                outcome: commands::PullOutcome::Blocked {
+                    conflicts: vec!["a.csv".to_string()],
+                },
+                added: Vec::new(),
+                changed: vec!["a.csv".to_string()],
+                removed: Vec::new(),
+                latest_hash: Some("feedbeef".to_string()),
+            }),
+        )]);
+        let el = suspended_screen(behind("aaa")).await;
+        element_saying(&el, "conflict in 1 file");
+        assert!(row_marked(&el, "a.csv"));
+
+        re_read(&el, behind("aaa")).await;
+        no_fallback(&el);
+        assert_eq!(pulls_asked(), 2, "the check runs again");
+        element_saying(&el, "Newer revision available");
+        button_saying(&el, "Get latest");
+        assert!(
+            !text(&el).contains("conflict in"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(!row_marked(&el, "a.csv"));
+
+        let popover = opened_popover(&el).await;
+        assert!(
+            !text(&popover).contains("conflict"),
+            "the kept verdict's sentence is gone; markup was {}",
+            popover.inner_html()
+        );
+        assert!(!popover_conflict_on(&popover, "a.csv"), "and its label");
+        assert!(
+            el.query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+                .unwrap()
+                .is_none(),
+            "nothing marked, nothing to describe"
+        );
+    }
+
+    /// A check that fails says so and offers Try again; Get latest stays
+    /// usable, since the real pull checks again under the lock.
+    #[wasm_bindgen_test]
+    async fn a_failed_check_offers_try_again() {
+        script(vec![(0, Err("offline".to_string())), (0, Ok(adds(2)))]);
+        let el = suspended_screen(behind("aaa")).await;
+        assert!(
+            text(&el).contains("couldn't check"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(!button_saying(&el, "Get latest").disabled());
+
+        button_saying(&el, "Try again").click();
+        sleep_ms(30).await;
+        assert_eq!(summary(&el).as_deref(), Some("2 file changes"));
+        assert!(!text(&el).contains("couldn't check"));
+        assert_eq!(pulls_asked(), 2);
+    }
+
+    /// Two re-reads in a row: the first one's check answers last, and is
+    /// dropped, because the second replaced it.
+    #[wasm_bindgen_test]
+    async fn a_late_answer_from_a_replaced_check_is_dropped() {
+        script(vec![(0, Ok(adds(3))), (200, Ok(adds(5))), (0, Ok(adds(1)))]);
+        let el = suspended_screen(behind("aaa")).await;
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
+
+        re_read(&el, behind("aaa")).await;
+        re_read(&el, behind("aaa")).await;
+        assert_eq!(pulls_asked(), 3);
+        assert_eq!(summary(&el).as_deref(), Some("1 file change"));
+
+        sleep_ms(250).await;
+        assert_eq!(
+            summary(&el).as_deref(),
+            Some("1 file change"),
+            "the replaced check's late answer did not land"
+        );
+    }
+
+    /// The summary's trigger, to click, and whether its popover is open, by
+    /// the trigger's word and the surface the platform shows.
+    fn popover_open(el: &web_sys::Element) -> bool {
+        let trigger = el
+            .query_selector("[aria-controls][aria-expanded]:not([aria-haspopup])")
+            .unwrap()
+            .expect("the summary's trigger");
+        let surface = el
+            .query_selector("[aria-label='Files coming with the newer revision']")
+            .unwrap()
+            .expect("the summary's popover");
+        let said = trigger.get_attribute("aria-expanded").as_deref() == Some("true");
+        let shown = surface.matches(":popover-open").unwrap_or(false);
+        assert_eq!(said, shown, "the trigger and the surface disagree");
+        said
+    }
+
+    fn pin(el: &web_sys::Element) {
+        el.query_selector("[aria-controls][aria-expanded]:not([aria-haspopup])")
+            .unwrap()
+            .expect("the summary's trigger")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+    }
+
+    /// A popover the reader pinned stays open through the watcher's re-read,
+    /// even one whose data differs and so draws the page's body again, while
+    /// the check finds the same files coming.
+    #[wasm_bindgen_test]
+    async fn a_pinned_popover_stays_open_across_a_re_read() {
+        script(vec![(0, Ok(adds(3))), (0, Ok(adds(3)))]);
+        let el = suspended_screen(behind("aaa")).await;
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
+        pin(&el);
+        sleep_ms(30).await;
+        assert!(popover_open(&el), "the click pins it");
+
+        let mut edited = behind("aaa");
+        if let commands::FilesData::Listed(list) = &mut edited.files {
+            list.entries[0].size = 9;
+        }
+        re_read(&el, edited).await;
+        sleep_ms(30).await;
+        no_fallback(&el);
+        assert_eq!(pulls_asked(), 2, "the re-read checked again");
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
+        assert!(popover_open(&el), "the re-read closed a pinned popover");
+    }
+
+    /// The check moving the header to the conflict state draws the header
+    /// again; a pinned popover over the same file stays open.
+    #[wasm_bindgen_test]
+    async fn a_pinned_popover_stays_open_when_the_header_is_drawn_again() {
+        let changes = |outcome| {
+            Ok(commands::PullPreview {
+                outcome,
+                added: Vec::new(),
+                changed: vec!["a.csv".to_string()],
+                removed: Vec::new(),
+                latest_hash: Some("feedbeef".to_string()),
+            })
+        };
+        script(vec![
+            (0, changes(commands::PullOutcome::CleanUpdate)),
+            (
+                0,
+                changes(commands::PullOutcome::Blocked {
+                    conflicts: vec!["a.csv".to_string()],
+                }),
+            ),
+        ]);
+        let el = suspended_screen(behind("aaa")).await;
+        pin(&el);
+        sleep_ms(30).await;
+        assert!(popover_open(&el), "the click pins it");
+
+        re_read(&el, behind("aaa")).await;
+        sleep_ms(30).await;
+        element_saying(&el, "conflict in 1 file");
+        assert!(popover_open(&el), "drawing the header again closed it");
+    }
+
+    /// A pin belongs to one package: another package's summary starts closed.
+    #[wasm_bindgen_test]
+    async fn a_pin_does_not_follow_to_another_package() {
+        script(vec![(0, Ok(adds(3))), (0, Ok(adds(2)))]);
+        let el = suspended_screen(behind("aaa")).await;
+        pin(&el);
+        sleep_ms(30).await;
+        assert!(popover_open(&el));
+
+        let mut other = behind("bbb");
+        other.header.namespace = "team/other".try_into().unwrap();
+        PAGE.with(|p| *p.borrow_mut() = Some(other));
+        move_to("/installed-package?namespace=team%2Fother");
+        sleep_ms(80).await;
+        assert_eq!(summary(&el).as_deref(), Some("2 file changes"));
+        assert!(!popover_open(&el), "the pin followed to another package");
     }
 }

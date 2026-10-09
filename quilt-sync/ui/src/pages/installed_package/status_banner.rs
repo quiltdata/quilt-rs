@@ -338,6 +338,9 @@ mod tests {
         let check = PullCheck::Ready(PullPreview {
             outcome: PullOutcome::CleanUpdate,
             added: vec!["qc/summary.csv".to_owned(), "qc/flags.json".to_owned()],
+            changed: Vec::new(),
+            removed: Vec::new(),
+            latest_hash: None,
         });
         let copy = behind_description(&check);
         assert!(copy.contains("qc/summary.csv"), "no filename: {copy}");
@@ -361,6 +364,9 @@ mod tests {
         PullPreview {
             outcome,
             added: Vec::new(),
+            changed: Vec::new(),
+            removed: Vec::new(),
+            latest_hash: None,
         }
     }
     use super::{behind_description, paused_banner_copy, remote_state_banner};

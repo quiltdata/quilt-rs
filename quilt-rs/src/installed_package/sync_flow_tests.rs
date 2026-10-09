@@ -903,14 +903,17 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
     Ok(())
 }
 
-/// `pull_outcome` is the network-light dry-run the watcher/UI call before
-/// routing a pull. A `Behind` package whose `latest` manifest is fetchable and
-/// drops a tracked path (with no local changes) classifies as a clean surgical
-/// update — never `UpToDate`.
-#[test(tokio::test)]
-async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
-    let (home, _temp_dir1) = Home::from_temp_dir()?;
-    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+/// A `Behind` package: installed at `INSTALL_HASH` with one tracked `a.txt`,
+/// while the remote `latest` tag has moved to `NEW_HASH`, whose manifest is
+/// `latest_manifest`. No local changes.
+async fn behind_package(
+    latest_manifest: &str,
+) -> Res<(
+    InstalledPackage<LocalStorage, MockRemote>,
+    (tempfile::TempDir, tempfile::TempDir),
+)> {
+    let (home, temp_dir1) = Home::from_temp_dir()?;
+    let (paths, temp_dir2) = DomainPaths::from_temp_dir()?;
     let storage = LocalStorage::new();
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "pull_outcome").into();
@@ -950,19 +953,11 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
         .await?;
 
-    // Installed (base) manifest with one tracked row so the `base → latest`
-    // delta is non-empty.
-    let base_manifest = concat!(
-        "{\"version\":\"v0\",\"message\":\"\",\"user_meta\":null}\n",
-        "{\"logical_key\":\"a.txt\",\"physical_keys\":[\"s3://bkt/a.txt\"],",
-        "\"hash\":{\"type\":\"sha2-256-chunked\",",
-        "\"value\":\"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=\"},",
-        "\"size\":0,\"meta\":null}\n",
-    );
+    // Installed (base) manifest with one tracked row.
     storage
         .write_byte_stream(
             paths.installed_manifest(&namespace, install_hash),
-            ByteStream::from(base_manifest.as_bytes().to_vec()),
+            ByteStream::from(BASE_MANIFEST.as_bytes().to_vec()),
         )
         .await?;
 
@@ -976,15 +971,11 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
             new_hash.as_bytes().to_vec(),
         )
         .await?;
-
-    // The `latest` manifest is fetchable and drops `a.txt` (remote removal),
-    // so the delta is non-empty and — with no local changes — resolves to a
-    // clean surgical update.
     remote
         .put_object(
             None,
             &S3Uri::try_from(format!("s3://{bucket}/.quilt/packages/{new_hash}").as_str())?,
-            b"{\"version\":\"v0\"}".to_vec(),
+            latest_manifest.as_bytes().to_vec(),
         )
         .await?;
 
@@ -996,14 +987,92 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
         storage,
         namespace,
     };
+    Ok((package, (temp_dir1, temp_dir2)))
+}
 
-    let outcome = package.pull_outcome(None).await?.outcome;
+/// What every early return of the dry run answers: nothing to pull, no paths,
+/// and no newer revision to name.
+fn empty_up_to_date() -> flow::PullPreview {
+    flow::PullPreview {
+        outcome: PullOutcome::UpToDate,
+        added: vec![],
+        changed: vec![],
+        removed: vec![],
+        latest_hash: None,
+    }
+}
+
+/// The installed manifest [`behind_package`] starts from: one row, `a.txt`.
+const BASE_MANIFEST: &str = concat!(
+    "{\"version\":\"v0\",\"message\":\"\",\"user_meta\":null}\n",
+    "{\"logical_key\":\"a.txt\",\"physical_keys\":[\"s3://bkt/a.txt\"],",
+    "\"hash\":{\"type\":\"sha2-256-chunked\",",
+    "\"value\":\"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=\"},",
+    "\"size\":0,\"meta\":null}\n",
+);
+
+/// `pull_outcome` is the network-light dry-run the watcher/UI call before
+/// routing a pull. A `Behind` package whose `latest` manifest is fetchable and
+/// drops a tracked path (with no local changes) classifies as a clean surgical
+/// update — never `UpToDate` — and names the dropped path and the newer
+/// revision's hash.
+#[test(tokio::test)]
+async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
+    // The `latest` manifest drops `a.txt` (remote removal), so the delta is
+    // non-empty and — with no local changes — resolves to a clean surgical
+    // update.
+    let (package, _temp_dirs) = behind_package("{\"version\":\"v0\"}").await?;
+
+    let preview = package.pull_outcome(None).await?;
     assert!(
         matches!(
-            outcome,
+            preview.outcome,
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. }
         ),
-        "expected a non-up-to-date outcome, got: {outcome:?}"
+        "expected a non-up-to-date outcome, got: {:?}",
+        preview.outcome
+    );
+    assert_eq!(preview.added, [] as [PathBuf; 0]);
+    assert_eq!(preview.changed, [] as [PathBuf; 0]);
+    assert_eq!(preview.removed, vec![PathBuf::from("a.txt")]);
+    assert_eq!(preview.latest_hash.as_deref(), Some("NEW_HASH"));
+
+    Ok(())
+}
+
+/// The verdict-only dry run answers what the full one does, for the same
+/// package, without the incoming paths.
+#[test(tokio::test)]
+async fn test_pull_verdict_matches_the_full_dry_run() -> Res {
+    let (package, _temp_dirs) = behind_package("{\"version\":\"v0\"}").await?;
+
+    let preview = package.pull_outcome(None).await?;
+    assert_eq!(preview.removed, vec![PathBuf::from("a.txt")]);
+    assert_eq!(package.pull_verdict(None).await?, preview.outcome);
+
+    Ok(())
+}
+
+/// A newer revision that changed only the header still has a hash to link to,
+/// though it brings no paths.
+#[test(tokio::test)]
+async fn test_pull_outcome_metadata_only_names_the_hash_and_no_paths() -> Res {
+    let latest = BASE_MANIFEST.replacen(
+        "\"message\":\"\"",
+        "\"message\":\"newer revision message\"",
+        1,
+    );
+    let (package, _temp_dirs) = behind_package(&latest).await?;
+
+    assert_eq!(
+        package.pull_outcome(None).await?,
+        flow::PullPreview {
+            outcome: PullOutcome::CleanUpdate,
+            added: vec![],
+            changed: vec![],
+            removed: vec![],
+            latest_hash: Some("NEW_HASH".to_string()),
+        }
     );
 
     Ok(())
@@ -1052,10 +1121,7 @@ async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
         namespace,
     };
 
-    assert!(matches!(
-        package.pull_outcome(None).await?.outcome,
-        PullOutcome::UpToDate
-    ));
+    assert_eq!(package.pull_outcome(None).await?, empty_up_to_date());
 
     Ok(())
 }
@@ -1126,10 +1192,7 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
         namespace,
     };
 
-    assert!(matches!(
-        package.pull_outcome(None).await?.outcome,
-        PullOutcome::UpToDate
-    ));
+    assert_eq!(package.pull_outcome(None).await?, empty_up_to_date());
 
     // No `latest` tag was resolved — the divergence was decided from lineage
     // alone, with zero remote calls.
@@ -1192,10 +1255,7 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
         namespace,
     };
 
-    assert!(matches!(
-        package.pull_outcome(None).await?.outcome,
-        PullOutcome::UpToDate
-    ));
+    assert_eq!(package.pull_outcome(None).await?, empty_up_to_date());
 
     Ok(())
 }

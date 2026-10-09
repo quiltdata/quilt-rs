@@ -97,10 +97,11 @@ pub(crate) fn remote_delta(base: &Manifest, latest: &Manifest) -> BTreeMap<PathB
     delta
 }
 
-/// The dry run's verdict, plus **what the incoming revision adds** — the paths
-/// present in `latest` and absent from `base`.
+/// The dry run's verdict, plus **what the incoming revision brings** — the
+/// paths it adds, changes and removes relative to `base` — and which revision
+/// that is.
 ///
-/// A wrapper rather than a field on [`PullOutcome`], whose variants answer
+/// A wrapper rather than fields on [`PullOutcome`], whose variants answer
 /// "would this pull be safe" and cross the wire to the desktop; what a revision
 /// brings is orthogonal to that verdict and true whatever it says.
 ///
@@ -109,20 +110,49 @@ pub(crate) fn remote_delta(base: &Manifest, latest: &Manifest) -> BTreeMap<PathB
 /// business at apply time. It costs nothing — the manifest naming these paths
 /// was already fetched to reach the verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PullPreview {
     pub outcome: PullOutcome,
+    /// In `latest`, absent from `base`. Sorted by path.
     pub added: Vec<PathBuf>,
+    /// In both, with different content. Sorted by path.
+    pub changed: Vec<PathBuf>,
+    /// In `base`, absent from `latest`. Sorted by path.
+    pub removed: Vec<PathBuf>,
+    /// The top hash of the `latest` revision the dry run read — the hash the
+    /// `latest` tag resolved to, which names the revision in catalog URLs.
+    /// `None` whenever there is nothing to pull.
+    pub latest_hash: Option<String>,
 }
 
-/// The paths `latest` holds that `base` does not.
-#[must_use]
-pub(crate) fn remote_additions(base: &Manifest, latest: &Manifest) -> Vec<PathBuf> {
-    latest
-        .rows
-        .iter()
-        .filter(|row| base.get_record(&row.logical_key).is_none())
-        .map(|row| row.logical_key.clone())
-        .collect()
+/// The paths `latest` brings relative to `base`, one list per kind, each
+/// sorted by path.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct IncomingPaths {
+    pub added: Vec<PathBuf>,
+    pub changed: Vec<PathBuf>,
+    pub removed: Vec<PathBuf>,
+}
+
+impl IncomingPaths {
+    /// Split a [`remote_delta`] into its three kinds. The delta is a
+    /// `BTreeMap`, so each list comes out sorted by path.
+    ///
+    /// Takes the delta rather than the two manifests so a dry run can build it
+    /// once and hand the same map to [`classify_pull_with_delta`].
+    #[must_use]
+    pub(crate) fn from_delta(delta: &BTreeMap<PathBuf, RemoteChange>) -> Self {
+        let mut incoming = Self::default();
+        for (path, change) in delta {
+            let list = match change {
+                RemoteChange::Added(_) => &mut incoming.added,
+                RemoteChange::Modified(_) => &mut incoming.changed,
+                RemoteChange::Removed => &mut incoming.removed,
+            };
+            list.push(path.clone());
+        }
+        incoming
+    }
 }
 
 /// Do the local and remote sides of a both-changed path reach the *same*
@@ -262,6 +292,35 @@ pub fn classify_pull(
     latest: &Manifest,
     identical: &Reconciled,
 ) -> PullOutcome {
+    classify_pull_with_delta(status, base, latest, identical, &pull_delta(base, latest))
+}
+
+/// The delta a pull classifies against: [`remote_delta`], except for identical
+/// manifests, which [`classify_pull_with_delta`] calls `UpToDate` before
+/// reading the delta — so their rows are not walked for nothing. Their delta
+/// is empty either way.
+pub(crate) fn pull_delta(base: &Manifest, latest: &Manifest) -> BTreeMap<PathBuf, RemoteChange> {
+    if base == latest {
+        BTreeMap::new()
+    } else {
+        remote_delta(base, latest)
+    }
+}
+
+/// [`classify_pull`] over a [`remote_delta`] the caller already built, for
+/// callers that need the delta for something else too — the dry run splits it
+/// into [`IncomingPaths`], the pull derives its touch set from it — so the
+/// delta is built once rather than once per use.
+///
+/// `delta` must be [`pull_delta`]`(base, latest)`.
+#[must_use]
+pub(crate) fn classify_pull_with_delta(
+    status: &InstalledPackageStatus,
+    base: &Manifest,
+    latest: &Manifest,
+    identical: &Reconciled,
+    delta: &BTreeMap<PathBuf, RemoteChange>,
+) -> PullOutcome {
     // Same revision — identical manifests — is the only genuine "nothing to
     // pull". A newer revision that changed *only* the manifest header
     // (message / user_meta) has an empty row delta but is still something to
@@ -270,7 +329,6 @@ pub fn classify_pull(
     if base == latest {
         return PullOutcome::UpToDate;
     }
-    let delta = remote_delta(base, latest);
     if status.changes.is_empty() {
         // Includes the metadata-only case (empty `delta`): the surgical touch
         // set is empty, but the hashes still advance to `latest`.
@@ -356,30 +414,85 @@ mod tests {
         }
     }
 
-    /// Only the latest-only paths, which is what lets a surface name what an
-    /// unpulled revision brings. A path both sides hold is not news, and a path
-    /// only `base` holds was removed rather than added.
+    /// Each path lands in exactly one list, by how `latest` treats it: gained
+    /// (added), held with different content (changed), or dropped (removed). A
+    /// path both sides hold unchanged is not news and appears nowhere.
     #[test]
-    fn remote_additions_names_only_what_latest_gained() {
-        let base = manifest_of(vec![row("kept.csv", b"1"), row("dropped.csv", b"2")]);
+    fn incoming_paths_sorts_each_path_into_one_kind() {
+        let base = manifest_of(vec![
+            row("kept.csv", b"1"),
+            row("dropped.csv", b"2"),
+            row("edited.csv", b"before"),
+        ]);
         let latest = manifest_of(vec![
             row("kept.csv", b"1"),
+            row("edited.csv", b"after"),
             row("added.csv", b"3"),
             row("also-added.csv", b"4"),
         ]);
         assert_eq!(
-            remote_additions(&base, &latest),
-            vec![PathBuf::from("added.csv"), PathBuf::from("also-added.csv")]
+            IncomingPaths::from_delta(&remote_delta(&base, &latest)),
+            IncomingPaths {
+                added: vec![PathBuf::from("added.csv"), PathBuf::from("also-added.csv")],
+                changed: vec![PathBuf::from("edited.csv")],
+                removed: vec![PathBuf::from("dropped.csv")],
+            }
         );
     }
 
-    /// A path whose *content* changed is a modification, not an addition — the
-    /// comparison is on presence, so a differing hash must not leak in.
+    /// A path whose *content* changed is a change, not an addition — the
+    /// addition test is on presence, so a differing hash must not leak in.
     #[test]
     fn a_changed_path_is_not_an_addition() {
         let base = manifest_of(vec![row("same-name.csv", b"before")]);
         let latest = manifest_of(vec![row("same-name.csv", b"after")]);
-        assert_eq!(remote_additions(&base, &latest), [] as [PathBuf; 0]);
+        let incoming = IncomingPaths::from_delta(&remote_delta(&base, &latest));
+        assert_eq!(incoming.added, [] as [PathBuf; 0]);
+        assert_eq!(incoming.changed, vec![PathBuf::from("same-name.csv")]);
+        assert_eq!(incoming.removed, [] as [PathBuf; 0]);
+    }
+
+    /// Each list comes out sorted by path, whatever order the manifests hold
+    /// their rows in.
+    #[test]
+    fn incoming_paths_are_sorted_by_path() {
+        let base = manifest_of(vec![
+            row("z-gone", b"1"),
+            row("a-gone", b"2"),
+            row("y-edit", b"3"),
+            row("b-edit", b"4"),
+        ]);
+        let latest = manifest_of(vec![
+            row("y-edit", b"5"),
+            row("b-edit", b"6"),
+            row("x-new", b"7"),
+            row("c-new", b"8"),
+        ]);
+        let incoming = IncomingPaths::from_delta(&remote_delta(&base, &latest));
+        assert_eq!(
+            incoming.added,
+            vec![PathBuf::from("c-new"), PathBuf::from("x-new")]
+        );
+        assert_eq!(
+            incoming.changed,
+            vec![PathBuf::from("b-edit"), PathBuf::from("y-edit")]
+        );
+        assert_eq!(
+            incoming.removed,
+            vec![PathBuf::from("a-gone"), PathBuf::from("z-gone")]
+        );
+    }
+
+    /// A metadata-only revision (same rows, new header) brings no paths.
+    #[test]
+    fn a_metadata_only_revision_brings_no_paths() {
+        let base = manifest_of(vec![row("a", b"1")]);
+        let mut latest = manifest_of(vec![row("a", b"1")]);
+        latest.header.message = Some("newer revision message".to_string());
+        assert_eq!(
+            IncomingPaths::from_delta(&remote_delta(&base, &latest)),
+            IncomingPaths::default()
+        );
     }
 
     fn behind(changes: ChangeSet) -> InstalledPackageStatus {

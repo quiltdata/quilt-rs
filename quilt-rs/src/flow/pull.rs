@@ -14,10 +14,10 @@ use crate::flow::Applied;
 use crate::flow::LocalWork;
 use crate::flow::PullOutcome;
 use crate::flow::apply_latest_update;
-use crate::flow::classify_pull;
+use crate::flow::classify_pull_with_delta;
 use crate::flow::identical_to_latest;
+use crate::flow::pull_delta;
 use crate::flow::pull_outcome::RemoteChange;
-use crate::flow::remote_delta;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -298,11 +298,15 @@ pub async fn pull_package(
         &snapshot.latest_manifest,
     )
     .await?;
-    let outcome = classify_pull(
+    // Built once: the classifier reads it for conflicts, and the touch set
+    // below is derived from it.
+    let delta = pull_delta(manifest, &snapshot.latest_manifest);
+    let outcome = classify_pull_with_delta(
         &snapshot.status,
         manifest,
         &snapshot.latest_manifest,
         &identical,
+        &delta,
     );
     match &outcome {
         PullOutcome::UpToDate => {
@@ -348,17 +352,15 @@ pub async fn pull_package(
     // re-lands `base`'s bytes, the path reports as locally modified from then
     // on, and a pull puts it back.
     //
-    // TODO: this second `remote_delta` pass re-derives the partition
-    // `classify_pull` just computed and discarded, and the blanket skip of
-    // user-touched paths is correct only because classify already `Blocked`
-    // every disagreeing both-changed path. Have the classifier return the
-    // per-path disposition (or the delta) so the two derivations cannot
-    // silently desynchronize.
+    // TODO: the blanket skip of user-touched paths is correct only because
+    // classify already `Blocked` every disagreeing both-changed path. Have the
+    // classifier return the per-path disposition so the touch set cannot
+    // silently desynchronize from it.
     //
-    // Kept whole rather than reduced to its keys: the per-path disposition is
-    // what the report is made of, and discarding it here was why a caller could
-    // learn that a package advanced but never what changed inside it.
-    let delta = remote_delta(manifest, &snapshot.latest_manifest);
+    // `delta` is kept whole rather than reduced to its keys: the per-path
+    // disposition is what the report is made of, and discarding it here was why
+    // a caller could learn that a package advanced but never what changed
+    // inside it.
     let touched = touch_set(
         delta.keys().cloned(),
         &lineage.paths,
@@ -458,6 +460,8 @@ mod tests {
     use multihash::Multihash;
 
     use crate::checksum::calculate_hash;
+    use crate::flow::classify_pull;
+    use crate::flow::remote_delta;
     use crate::io::remote::HostChecksums;
     use crate::io::remote::HostConfig;
     use crate::io::remote::mocks::MockRemote;

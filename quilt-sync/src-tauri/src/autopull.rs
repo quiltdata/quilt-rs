@@ -83,6 +83,14 @@ pub enum PausedReason {
     Other(String),
 }
 
+impl PausedReason {
+    /// The pause for a pull the engine refused because `paths` changed on both
+    /// sides, worded for the banner.
+    pub fn pull_conflict(paths: &[std::path::PathBuf]) -> Self {
+        Self::PullConflict(paths.iter().map(|p| p.display().to_string()).collect())
+    }
+}
+
 /// Public handle to the watcher. Holds an `Arc` so command handlers can
 /// poke `clear_paused` without taking ownership of the background task.
 pub struct Watcher {
@@ -253,6 +261,20 @@ impl Watcher {
         *self.inner.window_mode.write().await = mode;
     }
 
+    /// Pause `namespace` for `reason` and announce it, exactly as the tick does
+    /// when it meets the same refusal — the command layer's way in.
+    ///
+    /// A hand-pressed pull the engine refused for a conflict lands here, so the
+    /// page shows the conflict at once rather than after the next tick. It is
+    /// recorded whether or not autosync runs for the package: the pages read
+    /// the paused map either way, and every route that clears a pause
+    /// ([`Self::clear_paused`] after a manual push / pull / commit / publish /
+    /// reset, [`Self::clear_all_paused`] when autosync is switched on) clears
+    /// this one too.
+    pub async fn pause(&self, namespace: &Namespace, origin: &Host, reason: PausedReason) {
+        tick::pause(&self.inner, namespace, origin, reason).await;
+    }
+
     /// Forget a pause for `namespace` — used after the user takes an
     /// explicit action (push / pull / commit / publish / reset / set
     /// remote) that resolves the underlying conflict.
@@ -260,6 +282,45 @@ impl Watcher {
         self.inner.paused.write().await.remove(namespace);
         self.inner.login_blocked.write().await.remove(namespace);
         self.inner.aggregator.note_cleared(namespace);
+    }
+
+    /// Take back a [`PausedReason::PullConflict`] the pull dry run no longer
+    /// finds — the conflicting edit undone, or the lineage advanced by another
+    /// process — and announce it. Returns whether there was one to take back.
+    ///
+    /// Only a conflict: it is the one pause the dry run's verdict speaks to.
+    /// Every other reason, and a login block, stays.
+    ///
+    /// Announced as a status event, because a clear is otherwise silent (see
+    /// [`Self::clear_paused`]) and an open page would keep offering Publish for
+    /// a conflict that is gone. `status` is the package's observation; its
+    /// fingerprint alone would not do, since a pause moves neither the upstream
+    /// state nor the tree, so a page may already have acted on that very
+    /// observation and would drop the event as old news. The fingerprint is
+    /// therefore marked as the clear's. The same observation sets the tray's
+    /// change count, since a safe verdict can keep local edits in place.
+    pub async fn clear_pull_conflict(
+        &self,
+        namespace: &Namespace,
+        status: &quilt_rs::lineage::InstalledPackageStatus,
+    ) -> bool {
+        {
+            let mut paused = self.inner.paused.write().await;
+            if !matches!(paused.get(namespace), Some(PausedReason::PullConflict(_))) {
+                return false;
+            }
+            paused.remove(namespace);
+        }
+        // Only the pause: a safe verdict can keep local edits in place, so the
+        // tray's change count is set from the observation, not dropped.
+        self.inner.aggregator.clear_error(namespace);
+        self.inner
+            .aggregator
+            .note_status(namespace, !status.changes.is_empty());
+        let mut event = PackageStatusEvent::from_status(namespace, status);
+        event.fingerprint = format!("unpaused;{}", event.fingerprint);
+        self.inner.reporter.report_status(namespace, event);
+        true
     }
 
     /// Drop the entire paused set. Called when `update_autosync_settings`
@@ -843,5 +904,38 @@ mod tests {
         watcher.clear_paused(&ns).await;
         assert!(rx.borrow().error.is_none());
         assert_eq!(rx.borrow().mode, TrayMode::Idle);
+    }
+
+    /// Taking back a conflict clears only the pause: a safe pull that keeps
+    /// local changes leaves edited files in place, so the tray still counts
+    /// the package as having changes.
+    #[tokio::test]
+    async fn clear_pull_conflict_keeps_the_package_counted_as_changed() {
+        let (tx, rx) = watch::channel(SyncTrayStatus::default());
+        let aggregator = Arc::new(SyncTrayAggregator::new(tx));
+        let watcher =
+            Watcher::new_for_test_with_aggregator(Arc::new(LogReporter), aggregator.clone());
+        let ns: Namespace = ("acme", "demo").into();
+        watcher
+            .pause_for_test(ns.clone(), PausedReason::PullConflict(vec!["a.csv".into()]))
+            .await;
+        aggregator.note_paused(&ns, "conflict");
+        aggregator.note_status(&ns, true);
+        let status = crate::quilt::lineage::InstalledPackageStatus::new(
+            crate::quilt::lineage::UpstreamState::Behind,
+            BTreeMap::from([(
+                std::path::PathBuf::from("a.csv"),
+                crate::quilt::lineage::Change::Modified(
+                    crate::quilt::manifest::ManifestRow::default(),
+                ),
+            )]),
+        );
+
+        assert!(watcher.clear_pull_conflict(&ns, &status).await);
+
+        let after = rx.borrow().clone();
+        assert!(after.error.is_none());
+        assert_eq!(after.mode, TrayMode::Idle);
+        assert_eq!(after.pending_changes, 1);
     }
 }
