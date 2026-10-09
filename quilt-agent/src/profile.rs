@@ -257,6 +257,28 @@ impl Profile {
                 )));
             }
         }
+        // The agent deletes a request once it is spent, so a control_dir on or
+        // under a share would make it write to the instrument's data.
+        let resolve = |p: &PathBuf| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+        for i in &profile.instruments {
+            let Some(d) = &i.boundary.control_dir else {
+                continue;
+            };
+            let d = resolve(d);
+            if let Some(src) = profile
+                .instruments
+                .iter()
+                .map(|j| resolve(&j.source.path))
+                .find(|src| d.starts_with(src) || src.starts_with(&d))
+            {
+                return Err(Error::Profile(format!(
+                    "instrument {}: control_dir {} overlaps source {}; keep it off the share",
+                    i.id,
+                    d.display(),
+                    src.display()
+                )));
+            }
+        }
         Ok(profile)
     }
 }

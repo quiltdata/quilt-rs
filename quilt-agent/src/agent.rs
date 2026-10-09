@@ -31,6 +31,7 @@ use crate::sentinel::Checksum;
 use crate::sentinel::FileEntry;
 use crate::sentinel::SENTINEL_NAME;
 use crate::sentinel::Sentinel;
+use crate::spool::Captured;
 use crate::spool::Event;
 use crate::spool::RunState;
 use crate::spool::SnapMember;
@@ -97,7 +98,21 @@ impl<R: Remote + Sync> Agent<R> {
         let known = self.spool.known_folders()?;
         let ignore = watch::glob_set(&instrument.source.ignore)?;
         for folder in watch::run_folders(&instrument.source)? {
-            if let Some(captured) = known.get(&folder) {
+            if let Some(Captured {
+                members: captured,
+                at,
+            }) = known.get(&folder)
+            {
+                // A crash between capture and cleanup can leave the request
+                // behind. One written before the capture is spent; one written
+                // after belongs to a new run at this path and is kept.
+                if let (Some(at), Ok(Some(requested))) =
+                    (at, completion_request(instrument, &folder))
+                    // The capture time is whole seconds; allow the second it was cut from.
+                    && requested < *at + std::time::Duration::from_secs(1)
+                {
+                    consume_request(instrument, &folder);
+                }
                 let now: Vec<SnapMember> = watch::members(&folder, &ignore)?
                     .iter()
                     .map(snap_member)

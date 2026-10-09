@@ -509,3 +509,65 @@ instruments:
     assert!(!control.path().join("sample.d.complete").exists());
     Ok(())
 }
+
+/// A request left behind by a crash between capture and cleanup is removed on
+/// the next scan; a request written after the capture is a new run's, and kept.
+#[tokio::test]
+async fn a_leftover_request_is_cleaned_and_a_new_one_kept() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = tempfile::tempdir()?;
+    let control = tempfile::tempdir()?;
+    let spool_dir = tempfile::tempdir()?;
+    let run = source.path().join("sample.d");
+    std::fs::create_dir(&run)?;
+    std::fs::write(run.join("data.ms"), b"spectra")?;
+    let request = control.path().join("sample.d.complete");
+    let yaml = format!(
+        r#"
+schema_version: "1"
+observer: {{ id: edge-01, placement: beside, spool_root: /tmp/quilt-agent-test }}
+registry: {{ url: "https://example.quiltdata.com", credential_ref: QUILT_AGENT_API_KEY }}
+instruments:
+  - id: ms-1
+    source: {{ path: "{}" }}
+    landing: {{ bucket: raw, prefix: lab }}
+    boundary: {{ method: explicit, explicit_source: control_dir, control_dir: "{}", confirm_window_s: 0 }}
+"#,
+        source.path().display(),
+        control.path().display()
+    );
+    let remote = Flaky {
+        inner: MockRemote::default(),
+        fail_seal: AtomicBool::new(false),
+    };
+    let mut agent = Agent::new(
+        Profile::parse(&yaml)?,
+        remote,
+        Spool::open(spool_dir.path())?,
+        None,
+    );
+    let start = SystemTime::now();
+    std::fs::write(&request, b"")?;
+    agent.pass(start).await?;
+    assert_eq!(landed_events(spool_dir.path()).len(), 1);
+
+    // As if the crash came before cleanup: the spent request is back.
+    std::fs::write(&request, b"")?;
+    let old = std::fs::File::options().write(true).open(&request)?;
+    old.set_modified(start - Duration::from_secs(60))?;
+    drop(old);
+    agent.pass(start + Duration::from_secs(10)).await?;
+    assert!(
+        !request.exists(),
+        "a request older than the capture is removed"
+    );
+
+    // A request newer than the capture belongs to the next run: it stays.
+    std::fs::write(&request, b"")?;
+    let new = std::fs::File::options().write(true).open(&request)?;
+    new.set_modified(start + Duration::from_secs(3600))?;
+    drop(new);
+    agent.pass(start + Duration::from_secs(20)).await?;
+    assert!(request.exists(), "a request newer than the capture is kept");
+    Ok(())
+}

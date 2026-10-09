@@ -11,6 +11,7 @@ use std::io::BufReader;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -86,6 +87,13 @@ pub enum RunState {
     Landed,
     Refused,
     Suspect,
+}
+
+/// The newest capture of a folder: what it froze, and when.
+#[derive(Debug, Clone)]
+pub struct Captured {
+    pub members: Vec<SnapMember>,
+    pub at: Option<SystemTime>,
 }
 
 /// A run's folded events.
@@ -275,15 +283,26 @@ impl Spool {
     /// The newest snapshot of each folder: the members it froze. A scan uses
     /// it to tell a captured run (still there, maybe grown) from a new run
     /// the instrument wrote at the same path.
-    pub fn known_folders(&self) -> Result<BTreeMap<PathBuf, Vec<SnapMember>>, Error> {
+    pub fn known_folders(&self) -> Result<BTreeMap<PathBuf, Captured>, Error> {
         let mut runs: Vec<Run> = self.runs()?.into_values().collect();
         runs.sort_by_key(|r| r.captured_at_line);
         Ok(runs
             .into_iter()
             .filter_map(|r| match r.snapshot {
                 Event::Snapshot {
-                    folder, members, ..
-                } => Some((folder, members)),
+                    folder,
+                    members,
+                    snapshot_time_utc,
+                    ..
+                } => Some((
+                    folder,
+                    Captured {
+                        members,
+                        at: chrono::DateTime::parse_from_rfc3339(&snapshot_time_utc)
+                            .ok()
+                            .map(SystemTime::from),
+                    },
+                )),
                 _ => None,
             })
             .collect())
