@@ -15,6 +15,11 @@ runs:
   steps:
     - name: Setup Rust
       uses: moonrepo/setup-rust@v1
+      # cargo-binstall (used to install cargo-cache) queries the GitHub API.
+      # Without a token, shared runner IPs hit the rate limit and it retries
+      # until the job times out.
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       with:
         cache-base: main
         cache-target: ${{ inputs.cache-target }}
