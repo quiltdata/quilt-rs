@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.43.0-dev]
+
+### Added
+
+- In-memory registry API keys let unattended clients authenticate without interactive sessions, with shared refreshes, explicit expiry, and no session fallback (<https://github.com/quiltdata/quilt-rs/pull/1079>)
+
 ## [v0.42.1] - 2026-10-06
 
 ### Added

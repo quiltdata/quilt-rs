@@ -272,6 +272,15 @@ impl RemoteS3 {
         }
     }
 
+    /// Authenticate to `host` with a registry API key (`qk_…`) for unattended
+    /// use; see [`auth::Auth::set_api_key`].
+    pub fn set_api_key(&self, host: &Host, key: String) {
+        self.auth.set_api_key(host, key);
+        // Clients built under a session or an earlier key would keep signing
+        // with the credentials they already hold until those expire.
+        self.clear_client_cache(Some(host));
+    }
+
     pub async fn login(&self, host: &Host, refresh_token: String) -> Res {
         self.auth.login(&self.http, host, refresh_token).await
     }

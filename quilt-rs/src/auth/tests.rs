@@ -488,6 +488,13 @@ async fn seed_expired_creds_fresh_tokens(auth_io: &AuthIo<Arc<MockStorage>>) -> 
 
 #[test(tokio::test)]
 async fn test_auth_refresh_is_single_flight_across_concurrent_callers() -> Res {
+    test_auth_refresh_is_single_flight_across_concurrent_callers_with_auth(false).await?;
+    test_auth_refresh_is_single_flight_across_concurrent_callers_with_auth(true).await
+}
+
+async fn test_auth_refresh_is_single_flight_across_concurrent_callers_with_auth(
+    api_key: bool,
+) -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
@@ -495,6 +502,9 @@ async fn test_auth_refresh_is_single_flight_across_concurrent_callers() -> Res {
 
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
     seed_expired_creds_fresh_tokens(&auth_io).await?;
+    if api_key {
+        auth.set_api_key(&host, API_KEY.to_string());
+    }
 
     let client = CountingCredsClient {
         cred_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -1060,6 +1070,11 @@ async fn switch_role_maps_a_persistent_401_to_login_required() -> Res {
 /// credentials back over the gap — the flush silently undone.
 #[test(tokio::test)]
 async fn expire_credentials_waits_for_an_in_flight_vend() -> Res {
+    expire_credentials_waits_for_an_in_flight_vend_with_auth(false).await?;
+    expire_credentials_waits_for_an_in_flight_vend_with_auth(true).await
+}
+
+async fn expire_credentials_waits_for_an_in_flight_vend_with_auth(api_key: bool) -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
@@ -1067,6 +1082,9 @@ async fn expire_credentials_waits_for_an_in_flight_vend() -> Res {
 
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
     seed_expired_creds_fresh_tokens(&auth_io).await?;
+    if api_key {
+        auth.set_api_key(&host, API_KEY.to_string());
+    }
 
     let gate = Arc::new(Gate::default());
     let client = CountingCredsClient {
@@ -1109,6 +1127,13 @@ async fn expire_credentials_waits_for_an_in_flight_vend() -> Res {
         auth_io.read_credentials().await?.is_none(),
         "the flush must outlive the vend it was serialized behind"
     );
+    if api_key {
+        assert!(auth.api_key_for(&host).unwrap().1.is_none());
+        let mut client = client;
+        client.gate = None;
+        auth.get_credentials_or_refresh(&client, &host).await?;
+        assert_eq!(client.cred_calls.load(Ordering::SeqCst), 2);
+    }
     Ok(())
 }
 
@@ -1195,4 +1220,175 @@ async fn expire_credentials_forces_a_revend_without_touching_tokens() -> Res {
     assert!(auth_io.read_credentials().await?.is_none());
     assert!(auth_io.read_tokens().await?.is_some());
     Ok(())
+}
+
+const API_KEY: &str = "qk_test-key";
+
+/// Answers the credentials endpoint only for the API key, and counts calls, so
+/// a test can see the key was sent and the token files were never consulted.
+#[derive(Default)]
+struct ApiKeyHttpClient {
+    vends: AtomicUsize,
+    reject: bool,
+    /// Vend credentials expiring this far ahead; `None` uses the fixed fixture time.
+    expires_in: Option<chrono::Duration>,
+}
+
+#[async_trait]
+impl HttpClient for ApiKeyHttpClient {
+    async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        auth_token: Option<&str>,
+    ) -> Res<T> {
+        let registry = get_registry();
+        match url {
+            u if u == format!("https://{}/config.json", fixtures::host()) => {
+                let config = QuiltStackConfig {
+                    registry_url: format!("https://{registry}").parse()?,
+                };
+                Ok(serde_json::from_value(serde_json::to_value(config)?)?)
+            }
+            u if u == format!("https://{registry}/api/auth/get_credentials") => {
+                assert_eq!(auth_token, Some(API_KEY));
+                self.vends.fetch_add(1, Ordering::SeqCst);
+                if self.reject {
+                    return Err(Error::Auth(
+                        fixtures::host(),
+                        AuthError::CredentialsRead("401 Unauthorized".to_string()),
+                    ));
+                }
+                let creds = RemoteCredentials {
+                    access_key_id: "key-access-key".to_string(),
+                    secret_access_key: "key-secret-key".to_string(),
+                    session_token: "key-session-token".to_string(),
+                    expiration: self.expires_in.map_or_else(
+                        || chrono::DateTime::from_timestamp(TIMESTAMP, 0).unwrap(),
+                        |d| chrono::Utc::now() + d,
+                    ),
+                };
+                Ok(serde_json::from_value(serde_json::to_value(creds)?)?)
+            }
+            _ => panic!("Unexpected GET URL: {url}"),
+        }
+    }
+
+    async fn head(&self, _url: &str) -> Res<HeaderMap> {
+        unimplemented!()
+    }
+
+    async fn post<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        _form_data: &HashMap<String, String>,
+    ) -> Res<T> {
+        panic!("an API key never refreshes a token, got POST {url}")
+    }
+
+    async fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        _body: &B,
+    ) -> Res<T> {
+        panic!("an API key never posts JSON, got POST {url}")
+    }
+
+    async fn post_json_auth<T: serde::de::DeserializeOwned, B: serde::Serialize + Send + Sync>(
+        &self,
+        url: &str,
+        _body: &B,
+        _auth_token: &str,
+    ) -> Res<T> {
+        panic!("an API key never posts JSON, got POST {url}")
+    }
+}
+
+/// With an API key set, credentials vend with the key and no session on disk
+/// is needed — the unattended path.
+#[test(tokio::test)]
+async fn test_api_key_vends_without_a_session() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths.clone(), storage.clone());
+    let host = fixtures::host();
+    auth.set_api_key(&host, API_KEY.to_string());
+
+    let client = ApiKeyHttpClient::default();
+    let creds = auth.get_credentials_or_refresh(&client, &host).await?;
+
+    assert_eq!(creds.access_key, "key-access-key");
+    assert_eq!(client.vends.load(Ordering::SeqCst), 1);
+    // The key's credentials are never cached to disk.
+    let auth_io = AuthIo::new(storage, paths.auth_host(&host));
+    assert!(auth_io.read_credentials().await?.is_none());
+    Ok(())
+}
+
+/// Two calls share one exchange; a new key vends afresh instead of reusing
+/// the old key's credentials.
+#[test(tokio::test)]
+async fn test_api_key_vends_once_and_rotation_re_vends() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths, storage);
+    let host = fixtures::host();
+    auth.set_api_key(&host, API_KEY.to_string());
+
+    // The fixture's credentials expire at a fixed past instant, so give the
+    // cache something with time left.
+    let client = ApiKeyHttpClient {
+        expires_in: Some(chrono::Duration::hours(1)),
+        ..ApiKeyHttpClient::default()
+    };
+    auth.get_credentials_or_refresh(&client, &host).await?;
+    auth.get_credentials_or_refresh(&client, &host).await?;
+    assert_eq!(client.vends.load(Ordering::SeqCst), 1);
+
+    auth.set_api_key(&host, API_KEY.to_string());
+    auth.get_credentials_or_refresh(&client, &host).await?;
+    assert_eq!(
+        client.vends.load(Ordering::SeqCst),
+        2,
+        "a set key starts with no credentials"
+    );
+    auth.expire_credentials(&host).await?;
+    auth.get_credentials_or_refresh(&client, &host).await?;
+    assert_eq!(client.vends.load(Ordering::SeqCst), 3);
+    Ok(())
+}
+
+/// A rejected key fails closed instead of falling back to a stored session.
+#[test(tokio::test)]
+async fn test_api_key_rejected_fails_closed() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths.clone(), storage.clone());
+    let host = fixtures::host();
+    // A valid interactive session is on disk: a rejected key must not fall
+    // back to it.
+    AuthIo::new(storage, paths.auth_host(&host))
+        .write_credentials(&Credentials {
+            access_key: "session-access-key".to_string(),
+            secret_key: "session-secret-key".to_string(),
+            token: "session-token".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        })
+        .await?;
+    auth.set_api_key(&host, API_KEY.to_string());
+
+    let client = ApiKeyHttpClient {
+        reject: true,
+        ..ApiKeyHttpClient::default()
+    };
+    assert!(
+        auth.get_credentials_or_refresh(&client, &host)
+            .await
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn test_api_key_is_redacted_in_debug() {
+    assert_eq!(format!("{:?}", ApiKey(API_KEY.to_string())), "[REDACTED]");
 }
