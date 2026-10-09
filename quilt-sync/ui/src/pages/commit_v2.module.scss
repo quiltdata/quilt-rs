@@ -1,8 +1,13 @@
-// Tighter than `PageLayout`'s gap: these read as one form.
+// Tighter than `PageLayout`'s gap: these read as one form. It fills the page,
+// so the file list can take what the form leaves and scroll inside it.
+// `min-height: 0` lets it be shorter than its content; when the list's floor
+// does not fit, `PageLayout` scrolls the whole page instead.
 .column {
   display: flex;
   flex-direction: column;
   gap: var(--q-space-4);
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 // A test handle that adds no box.
@@ -85,21 +90,73 @@
   resize: vertical;
 }
 
-// The editor fills its parent, so it needs a height. 150px keeps a failed
-// check's error inside the 560px window. No `overflow` here or above: it crops
-// the editor's context menu.
+// The editor fills its parent, whose height the grip sets. No `overflow` here
+// or above: it crops the editor's context menu.
 .editor {
-  height: 150px;
+  height: 100%;
+}
+
+// A short bar centred on a strip as wide as the editor, so the whole strip
+// takes the drag.
+.grip {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: var(--q-space-3);
+  border-radius: var(--q-radius);
+  cursor: ns-resize;
+  touch-action: none;
+
+  &::before {
+    content: "";
+    width: var(--q-space-8);
+    height: 3px;
+    border-radius: 2px;
+    background: var(--q-borderColor-default);
+  }
+
+  &:hover::before {
+    background: var(--q-fgColor-muted);
+  }
+
+  &:focus-visible {
+    outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+    outline-offset: -2px;
+  }
 }
 
 .invalid {
   --jse-main-border: 1px solid var(--q-borderColor-danger-muted);
 }
 
+// Takes the height the form leaves. The floor is the heading and two rows and
+// a half, the most a banner leaves at 560 (measured in the gallery), so the
+// list stays a list when the editor is open in a short window; below it the
+// page scrolls. On the section, not the box, so a short list's
+// box is no taller than its rows.
 .included {
   display: flex;
   flex-direction: column;
   gap: var(--q-space-2);
+  flex: 1 1 auto;
+  min-height: 116px;
+}
+
+.included_head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--q-space-1) var(--q-space-3);
+}
+
+// The rows' box shrinks to what is left and scrolls; the lines under it stay
+// on screen.
+.rows {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 0;
 }
 
 .included_heading {

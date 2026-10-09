@@ -92,3 +92,9 @@ ul.body {
   display: flex;
   flex-direction: column;
 }
+
+/* A list card scrolls its rows itself; a card of other children leaves that
+ * to a scroller inside it, as the file pane's does. */
+.root.fill > ul.body {
+  overflow-y: auto;
+}

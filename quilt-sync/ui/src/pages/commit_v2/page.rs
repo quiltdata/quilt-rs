@@ -805,16 +805,15 @@ fn column(
     }
 
     view! {
-        <div node_ref=focus_ref>
-            <CommitColumn
-                header=header
-                problem=problem.unwrap_or_else(|| ().into_any())
-                message=message
-                workflow=workflow
-                metadata=metadata
-                included=included
-            />
-        </div>
+        <CommitColumn
+            node_ref=focus_ref
+            header=header
+            problem=problem.unwrap_or_else(|| ().into_any())
+            message=message
+            workflow=workflow
+            metadata=metadata
+            included=included
+        />
     }
     .into_any()
 }
@@ -1083,6 +1082,18 @@ mod tests {
             .expect("the message field")
             .dyn_into()
             .unwrap()
+    }
+
+    /// The column sits directly in the frame's `main`, as in the gallery. A
+    /// wrapper between them takes the content's height, so the list's box
+    /// never gets a bounded height and the whole page scrolls with it.
+    #[wasm_bindgen_test]
+    async fn the_column_is_the_frames_own_child() {
+        let el = page_at("/commit?namespace=org%2Fpkg").await;
+        let column = el
+            .query_selector(&format!("main > .{}", super::super::style::column))
+            .unwrap();
+        assert!(column.is_some(), "markup was {}", el.inner_html());
     }
 
     /// The primary and the list heading count the whole package, not the

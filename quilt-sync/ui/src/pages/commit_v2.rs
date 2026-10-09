@@ -384,10 +384,21 @@ pub fn MetadataField(
         MetadataPreview::Invalid => view! { <span>"Not valid JSON"</span> }.into_any(),
         MetadataPreview::Json(value) => view! { <JsonDisplay value=value /> }.into_any(),
     };
+    // Here rather than in the editor, so a height the reader dragged to
+    // survives `Done` and `Edit`.
+    let height = RwSignal::new(EDITOR_HEIGHT);
     let editor = {
         let control_id = control_id.clone();
         let error_id = error_id.clone();
-        move || metadata_editor(control_id.clone(), error_id.clone(), metadata, failing)
+        move || {
+            metadata_editor(
+                control_id.clone(),
+                error_id.clone(),
+                metadata,
+                failing,
+                height,
+            )
+        }
     };
 
     view! {
@@ -454,12 +465,42 @@ fn settings_hint(from_settings: Signal<bool>, href: Option<String>) -> impl Into
     }
 }
 
-/// The metadata control: v1's editor over its fallback textarea.
+/// The editor's height on opening, and the least it can be dragged to. 150px
+/// keeps a failed check's error inside the 560px window.
+const EDITOR_HEIGHT: i32 = 150;
+
+/// The most the grip drags the editor to: about 30 lines of JSON, and short
+/// of the 900px default window.
+const EDITOR_MAX_HEIGHT: i32 = 600;
+
+/// How far one arrow key moves the editor's lower edge.
+const EDITOR_STEP: i32 = 24;
+
+/// The editor's height after a drag of `dy` from `start`.
+fn dragged_height(start: i32, dy: i32) -> i32 {
+    (start + dy).clamp(EDITOR_HEIGHT, EDITOR_MAX_HEIGHT)
+}
+
+/// The editor's height after `key` on its grip, or `None` for another key.
+fn keyed_height(height: i32, key: &str) -> Option<i32> {
+    match key {
+        "ArrowDown" => Some(dragged_height(height, EDITOR_STEP)),
+        "ArrowUp" => Some(dragged_height(height, -EDITOR_STEP)),
+        "Home" => Some(EDITOR_HEIGHT),
+        "End" => Some(EDITOR_MAX_HEIGHT),
+        _ => None,
+    }
+}
+
+/// The metadata control: v1's editor over its fallback textarea, with a grip
+/// under it that drags it taller. Not CSS `resize`: that needs `overflow` on
+/// the box, which crops the editor's context menu.
 fn metadata_editor(
     id: String,
     described_by: String,
     metadata: RwSignal<String>,
     invalid: Signal<bool>,
+    height: RwSignal<i32>,
 ) -> AnyView {
     let editor_ref = NodeRef::<leptos::html::Div>::new();
     let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
@@ -478,7 +519,10 @@ fn metadata_editor(
                 on:input=move |ev| metadata.set(event_target_value(&ev))
             />
         </div>
-        <div class=move || invalid.get().then_some(style::invalid)>
+        <div
+            class=move || invalid.get().then_some(style::invalid)
+            style:height=move || format!("{}px", height.get())
+        >
             <JsonEditor
                 node_ref=editor_ref
                 textarea_ref=textarea_ref
@@ -486,8 +530,64 @@ fn metadata_editor(
                 class=style::editor
             />
         </div>
+        {editor_grip(height)}
     }
     .into_any()
+}
+
+/// The bar under the editor: drag it, or focus it and use the arrow keys.
+fn editor_grip(height: RwSignal<i32>) -> impl IntoView {
+    // (pointer, its y, height) where the drag began. Only that pointer moves
+    // or ends it, so a second finger cannot take over.
+    let drag = StoredValue::new(None::<(i32, i32, i32)>);
+    let end = move |ev: leptos::ev::PointerEvent| {
+        if drag
+            .get_value()
+            .is_some_and(|(id, _, _)| id == ev.pointer_id())
+        {
+            drag.set_value(None);
+        }
+    };
+    view! {
+        <div
+            class=style::grip
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize the metadata editor"
+            aria-valuemin=EDITOR_HEIGHT
+            aria-valuemax=EDITOR_MAX_HEIGHT
+            aria-valuenow=move || height.get()
+            tabindex="0"
+            on:pointerdown=move |ev: leptos::ev::PointerEvent| {
+                if ev.button() != 0 || drag.get_value().is_some() {
+                    return;
+                }
+                ev.prevent_default();
+                if let Some(grip) = ev
+                    .current_target()
+                    .and_then(|t| wasm_bindgen::JsCast::dyn_into::<web_sys::Element>(t).ok())
+                {
+                    let _ = grip.set_pointer_capture(ev.pointer_id());
+                }
+                drag.set_value(Some((ev.pointer_id(), ev.client_y(), height.get_untracked())));
+            }
+            on:pointermove=move |ev: leptos::ev::PointerEvent| {
+                if let Some((id, y, start)) = drag.get_value()
+                    && id == ev.pointer_id()
+                {
+                    height.set(dragged_height(start, ev.client_y() - y));
+                }
+            }
+            on:pointerup=end
+            on:pointercancel=end
+            on:keydown=move |ev: leptos::ev::KeyboardEvent| {
+                if let Some(next) = keyed_height(height.get_untracked(), &ev.key()) {
+                    ev.prevent_default();
+                    height.set(next);
+                }
+            }
+        ></div>
+    }
 }
 
 /// What the folded metadata shows.
@@ -600,7 +700,9 @@ pub fn IncludedList(
         view! { <p class=style::quiet>{METADATA_ONLY}</p> }.into_any()
     } else {
         view! {
-            <Card flush=true list=true>
+            // A box of its own, so the rows scroll under a header that stays.
+            <div class=style::rows>
+            <Card flush=true list=true fill=true>
                 {files
                     .into_iter()
                     .map(|file| {
@@ -623,32 +725,43 @@ pub fn IncludedList(
                     })
                     .collect_view()}
             </Card>
+            </div>
         }
         .into_any()
     };
     view! {
         <section class=style::included aria-labelledby=labelled_by>
-            <h3 class=style::included_heading id=heading_id>
-                "What's included"
-                <span class=style::tally>{tally}</span>
-            </h3>
+            // The ignored line shares the heading's row: under the box it
+            // took a row from the list in a short window.
+            <div class=style::included_head>
+                <h3 class=style::included_heading id=heading_id>
+                    "What's included"
+                    <span class=style::tally>{tally}</span>
+                </h3>
+                {(ignored > 0)
+                    .then(|| {
+                        view! {
+                            <p class=style::quiet>
+                                {ignored_words(ignored)}
+                            </p>
+                        }
+                    })}
+            </div>
             {rows}
             {cut.map(|words| view! { <p class=style::quiet>{words}</p> })}
-            {(ignored > 0)
-                .then(|| {
-                    view! {
-                        <p class=style::quiet>
-                            {ignored_words(ignored)}
-                        </p>
-                    }
-                })}
         </section>
     }
 }
 
-/// The page's column, in the order the reader confirms.
+/// The page's column, in the order the reader confirms. It must be a direct
+/// child of `PageLayout`'s main: it fills that height, and the list's own
+/// scroll box takes what the form leaves of it. A wrapper between them sizes
+/// to the content, and the whole page scrolls again.
 #[component]
 pub fn CommitColumn(
+    /// For the page to reach the column's fields, in place of a wrapper.
+    #[prop(optional)]
+    node_ref: NodeRef<leptos::html::Div>,
     header: AnyView,
     #[prop(optional)] problem: Option<AnyView>,
     message: AnyView,
@@ -657,7 +770,7 @@ pub fn CommitColumn(
     included: AnyView,
 ) -> impl IntoView {
     view! {
-        <div class=style::column>
+        <div class=style::column node_ref=node_ref>
             {header}
             {problem}
             {message}
@@ -743,6 +856,28 @@ pub(super) mod tests {
         for words in &all {
             assert_eq!(banned_in(words), None, "{words:?}");
         }
+    }
+
+    #[test]
+    fn the_editor_grows_between_its_opening_height_and_its_cap() {
+        assert_eq!(dragged_height(EDITOR_HEIGHT, 90), EDITOR_HEIGHT + 90);
+        assert_eq!(dragged_height(EDITOR_HEIGHT + 30, -90), EDITOR_HEIGHT);
+        assert_eq!(
+            dragged_height(EDITOR_MAX_HEIGHT - 10, 90),
+            EDITOR_MAX_HEIGHT
+        );
+        assert_eq!(
+            keyed_height(EDITOR_MAX_HEIGHT, "ArrowDown"),
+            Some(EDITOR_MAX_HEIGHT)
+        );
+        assert_eq!(keyed_height(EDITOR_HEIGHT, "End"), Some(EDITOR_MAX_HEIGHT));
+        assert_eq!(
+            keyed_height(EDITOR_HEIGHT, "ArrowDown"),
+            Some(EDITOR_HEIGHT + EDITOR_STEP)
+        );
+        assert_eq!(keyed_height(EDITOR_HEIGHT, "ArrowUp"), Some(EDITOR_HEIGHT));
+        assert_eq!(keyed_height(EDITOR_HEIGHT * 2, "Home"), Some(EDITOR_HEIGHT));
+        assert_eq!(keyed_height(EDITOR_HEIGHT, "Enter"), None);
     }
 
     #[test]

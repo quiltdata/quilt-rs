@@ -5,23 +5,32 @@
 //!
 //! # Measured at 1024x560, in Chrome
 //!
-//! | | header ends | message ends | metadata ends | files start | rows on screen |
-//! |---|---:|---:|---:|---:|---:|
-//! | at rest, 4 files | 144 | 217 | 361 | 377 | 4 of 4 |
-//! | 300 files | 144 | 217 | 361 | 377 | **4** of 300 |
-//! | no bucket, so no workflow to pick | 144 | 217 | 349 | 365 | 4 of 4 |
-//! | both values from your publish settings | 144 | 217 | 410 | 426 | 3 of 4 |
-//! | junk banner, signed out | 144 | 283 | 427 | 443 | 2 of 4 |
-//! | no access | 144 | 271 | 415 | 431 | 2 of 4 |
-//! | the metadata editor open | 144 | 217 | 491 | 507 | 0 |
-//! | a failed check | 144 | 217 | 515 | 531 | 0 |
+//! The list's rows scroll in their own box, which takes what the form leaves;
+//! "rows" counts those wholly in sight, in the box and the window.
 //!
-//! - The form stays on the first screen in every cell; a long list scrolls
-//!   under it.
-//! - A failed check's error ends at 515, inside the window. That sets the
-//!   metadata editor's height at 150px; at 220 the error fell to 613.
+//! | | header ends | message ends | metadata ends | box | rows | at 900 tall |
+//! |---|---:|---:|---:|---:|---:|---:|
+//! | at rest, 4 files | 144 | 217 | 361 | 412–527 | 3 of 4 | 4 of 4 |
+//! | 300 files | 144 | 217 | 361 | 412–527 | **3** of 300 | **13** of 300 |
+//! | no bucket, so no workflow to pick | 144 | 217 | 349 | 401–527 | 3 of 4 | 4 of 4 |
+//! | both values from your publish settings | 144 | 217 | 410 | 461–541 | 2 of 4 | 4 of 4 |
+//! | junk banner, signed out | 144 | 283 | 427 | 478–558 | 2 of 4 | 4 of 4 |
+//! | no access | 144 | 271 | 415 | 467–546 | 2 of 4 | 4 of 4 |
+//! | the metadata editor open | 144 | 217 | 503 | 554–634 | 0 | 4 of 4 |
+//! | a failed check | 144 | 217 | 527 | 578–658 | 0 | 4 of 4 |
+//!
+//! - The header, with the primary, never scrolls away: however long the list,
+//!   only its box scrolls. The ignored count shares the heading's row, so it is
+//!   in sight too.
+//! - The box has a floor, two rows and a half under the heading: what a banner
+//!   leaves at 560. Only with the editor open does the floor not fit, and then
+//!   the page scrolls (75px, or 99 with a failed check).
+//! - A failed check's error ends at 527, inside the window. That sets the
+//!   metadata editor's opening height at 150px, which is also the least its
+//!   grip drags it to; at 220 the error fell to 613. The grip is the 12px
+//!   under the editor, and drags it to 600px at most.
 //! - The editor's context menu is not cropped: its one clipping ancestor is
-//!   the page's scroller, and the menu fits in it.
+//!   the page's scroller, and the menu opens upward over the form.
 //!
 //! # Left for the port
 //!
@@ -292,7 +301,7 @@ pub fn CommitPageScene() -> impl IntoView {
             <Cell full=true label="no metadata — the absence muted, and the button reads Add">
                 {page(Fixture { metadata: "", ..Fixture::new("commit-no-metadata") })}
             </Cell>
-            <Cell full=true label="the metadata editor open">
+            <Cell full=true label="the metadata editor open — drag the bar under it, or focus it and use the arrow keys, to make it taller">
                 {page(Fixture { editing: true, ..Fixture::new("commit-expanded") })}
             </Cell>
             <Cell
@@ -340,7 +349,7 @@ pub fn CommitPageScene() -> impl IntoView {
                     ..Fixture::new("commit-signed-out")
                 })}
             </Cell>
-            <Cell full=true label="a long list, 300 files — the form stays on the first screen">
+            <Cell full=true label="a long list, 300 files — the rows scroll in their own box, and the header and form stay">
                 {page(Fixture {
                     primary: Primary::Files(300),
                     files: many_files(),
