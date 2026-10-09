@@ -101,5 +101,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # A prebuilt binary, not EmbarkStudios/cargo-deny-action: that action builds
+      # a Docker image from Docker Hub, and anonymous pulls hit its rate limit.
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
       - name: cargo deny check
-        uses: EmbarkStudios/cargo-deny-action@v2
+        run: cargo deny --all-features check
