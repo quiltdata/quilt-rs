@@ -39,6 +39,7 @@ use crate::kit::PackageState;
 use crate::kit::PageLayout;
 use crate::pages::Catalog;
 use crate::pages::IncomingSummary;
+use crate::pages::conflicting;
 use crate::pages::header_state;
 
 /// The id of the conflict sentence the marked rows' `Differs` points at.
@@ -140,6 +141,7 @@ fn page(p: Page) -> AnyView {
     let publish_choice = RwSignal::new(0_usize);
     let scope = RwSignal::new(if whole { "all" } else { "pick" }.to_string());
     let state = header_state(&PackageState::Behind, Some(&check), true);
+    let conflict_files = conflicting(&state);
     let conflicts = if matches!(state, PackageState::PullConflict { .. }) {
         CONFLICTS
     } else {
@@ -159,6 +161,7 @@ fn page(p: Page) -> AnyView {
                             summary=view! {
                                 <IncomingSummary
                                     check=Signal::stored(Some(check))
+                                    conflicts=Signal::stored(conflict_files)
                                     whole=whole
                                     catalog=catalog()
                                     on_retry=Callback::new(|()| ())

@@ -35,7 +35,7 @@ pub use installed_package_v2::file_pane::{
 // The header's summary of what a newer revision brings, which the gallery's
 // scene draws over fixtures.
 pub use installed_package_v2::incoming::{
-    Catalog, IncomingSummary, LISTED, OPEN_LABEL, header_state, state_with_summary,
+    Catalog, IncomingSummary, LISTED, OPEN_LABEL, conflicting, header_state, state_with_summary,
 };
 // The gallery's header scene draws the page's own overflow menu, inert.
 pub use installed_package_v2::{MenuCommand, MenuItem, menu_items};

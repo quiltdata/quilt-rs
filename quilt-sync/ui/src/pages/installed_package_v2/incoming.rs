@@ -34,10 +34,14 @@
 //! out still draws the summary and popover, but the state is the read's. A
 //! conflict the read records stays even when a check finds none: the app
 //! clears a pause the dry run no longer finds and announces it, so the header
-//! follows the read after that. In the popover the conflicting files carry a
-//! `Conflict` label beside their own; in the file list the rows of the
-//! header's conflict state, from the read or from the check, carry resolve
-//! mode's `Differs` mark, which the popover's sentence describes.
+//! follows the read after that. Everything the popover says about a conflict
+//! comes from that header state, never from the answer's own verdict, so a
+//! kept answer cannot say a conflict the header does not, or hide one it
+//! does: the first line counts the state's files, and those files carry a
+//! `Conflict` label beside their own. In the file list the same files carry
+//! resolve mode's `Differs` mark, which the popover's sentence describes;
+//! while no popover is drawn, a sentence only a screen reader reads stands in
+//! for it, so a marked row never names a missing description.
 //!
 //! `Get latest` stays enabled while the check runs and after it fails. The
 //! real pull classifies everything again under the lock, so the dry run
@@ -284,7 +288,7 @@ fn scope_words(check: &PullCheck, whole: bool, k: Kinds) -> Option<String> {
 struct Coming {
     path: String,
     change: Change,
-    /// Changed here too, differently: a `Blocked` verdict names it.
+    /// Changed here too, differently: the header's conflict state names it.
     conflict: bool,
 }
 
@@ -295,13 +299,12 @@ struct Coming {
 /// three are merged and only the rows listed are built: a revision touching
 /// far more files costs no more than one touching `LISTED`. Paths compare as
 /// the engine sorts them, by component, so `a/b` comes before `a-b`.
-fn coming(check: &PullCheck) -> Vec<Coming> {
+///
+/// `conflicts` are the header's conflict state's files, which the rows label
+/// whatever the answer's own verdict says.
+fn coming(check: &PullCheck, conflicts: Option<&BTreeSet<String>>) -> Vec<Coming> {
     let PullCheck::Ready(preview) = check else {
         return Vec::new();
-    };
-    let conflicts: BTreeSet<&str> = match &preview.outcome {
-        PullOutcome::Blocked { conflicts } => conflicts.iter().map(String::as_str).collect(),
-        _ => BTreeSet::new(),
     };
     let lists = [
         (&preview.added, Change::New),
@@ -323,7 +326,7 @@ fn coming(check: &PullCheck) -> Vec<Coming> {
         };
         next[i] += 1;
         rows.push(Coming {
-            conflict: conflicts.contains(path.as_str()),
+            conflict: conflicts.is_some_and(|c| c.contains(path)),
             path: path.clone(),
             change: lists[i].1,
         });
@@ -468,22 +471,51 @@ impl HoverCard {
     }
 }
 
-/// What a `Blocked` verdict's popover says after the counts.
-fn conflict_words(check: &PullCheck) -> Option<String> {
-    let PullCheck::Ready(PullPreview {
-        outcome: PullOutcome::Blocked { conflicts },
-        ..
-    }) = check
-    else {
-        return None;
-    };
-    let n = conflicts.len();
-    let them = if n == 1 { "it" } else { "them" };
+/// What the popover says after the counts when the header is in the
+/// conflict state: how many of its `n` files conflict, and what to do.
+fn conflict_words(n: usize) -> String {
     let verb = if n == 1 { "conflicts" } else { "conflict" };
-    Some(format!(
-        "{} of them {verb} with yours. Publish your changes, then resolve {them}.",
-        thousands(n)
-    ))
+    format!(
+        "{} of them {verb} with yours. Publish your changes, then resolve {}.",
+        thousands(n),
+        them(n)
+    )
+}
+
+/// The conflict sentence when no popover is drawn to carry it: the check is
+/// still running or failed, or the revision brings no files.
+fn conflict_alone(n: usize) -> String {
+    let files = if n == 1 {
+        "file conflicts"
+    } else {
+        "files conflict"
+    };
+    format!(
+        "{} {files} with yours. Publish your changes, then resolve {}.",
+        thousands(n),
+        them(n)
+    )
+}
+
+/// The popover's first line after the counts. With the header in the
+/// conflict state, `conflicts` names its files, and the line counts them and
+/// says what to do, whatever the answer's own verdict, which can be one kept
+/// from before the read; otherwise it says what Get latest does.
+fn first_line(
+    check: &PullCheck,
+    whole: bool,
+    k: Kinds,
+    conflicts: Option<&BTreeSet<String>>,
+) -> Option<String> {
+    match conflicts {
+        Some(files) => Some(conflict_words(files.len())),
+        None => scope_words(check, whole, k),
+    }
+}
+
+/// Whether the summary draws its popover: an answer that brings files.
+fn draws_popover(check: Option<&PullCheck>) -> bool {
+    matches!(check, Some(PullCheck::Ready(p)) if Kinds::of(p).total() > 0)
 }
 
 /// `1 file change`, `6 file changes`: new, changed and removed files alike.
@@ -499,7 +531,8 @@ fn changes_word(n: usize) -> String {
 /// check` with *Try again*, or `· 6 file changes`, dash-underlined, which
 /// opens the popover. The popover's pinned first line counts the files by
 /// kind and says what Get latest does with them; then each file, its label,
-/// a *Conflict* label when the verdict names it, and its catalog link.
+/// a *Conflict* label when the header's conflict state names it, and its
+/// catalog link.
 ///
 /// `None` in `check` draws nothing: the package is not behind.
 #[component]
@@ -511,6 +544,12 @@ pub fn IncomingSummary(
     check: Signal<Option<PullCheck>>,
     /// `Keeping → The whole package`.
     whole: bool,
+    /// The header's conflict state's files, [`conflicting`] of the state the
+    /// header shows; `None` when it shows another. Everything the popover
+    /// says about a conflict comes from these, never from the answer's
+    /// verdict, which can be kept from before the read.
+    #[prop(into)]
+    conflicts: Signal<Option<Arc<BTreeSet<String>>>>,
     /// Where the files are read; `None` draws no links.
     #[prop(optional_no_strip)]
     catalog: Option<Catalog>,
@@ -526,29 +565,47 @@ pub fn IncomingSummary(
     opened: bool,
 ) -> impl IntoView {
     let card = card.unwrap_or_else(|| HoverCard::new(opened));
+    let id = differs_id();
     // No popover drawn, no pin: one left standing would reopen on the next
     // answer, which can be about other files.
     Effect::new(move |_| {
         // The lists' lengths, not `coming`'s rows, which `summary` builds.
-        let drawn =
-            check.with(|c| matches!(c, Some(PullCheck::Ready(p)) if Kinds::of(p).total() > 0));
-        if !drawn {
+        if !check.with(|c| draws_popover(c.as_ref())) {
             card.close();
         }
     });
     move || {
-        check
-            .get()
-            .and_then(|check| summary(&check, whole, catalog.clone(), on_retry, card))
+        let conflicts = conflicts.get().filter(|files| !files.is_empty());
+        let check = check.get();
+        // The marked rows name the conflict sentence; the popover carries it
+        // when drawn, and this stands in for it when not.
+        let alone = conflicts
+            .as_ref()
+            .filter(|_| !draws_popover(check.as_ref()))
+            .map(|files| view! { <span data-sr-only id=id>{conflict_alone(files.len())}</span> });
+        let drawn = check.and_then(|check| {
+            summary(
+                &check,
+                whole,
+                catalog.clone(),
+                on_retry,
+                card,
+                conflicts.as_deref().map(|files| (files, id)),
+            )
+        });
+        view! { {drawn}{alone} }
     }
 }
 
+/// `conflicts` is the header's conflict state's files and the id the marked
+/// rows name, which the first line carries.
 fn summary(
     check: &PullCheck,
     whole: bool,
     catalog: Option<Catalog>,
     on_retry: Callback<()>,
     card: HoverCard,
+    conflicts: Option<(&BTreeSet<String>, &'static str)>,
 ) -> Option<AnyView> {
     let words = summary_words(check)?;
     let PullCheck::Ready(preview) = check else {
@@ -570,7 +627,8 @@ fn summary(
     let kinds = Kinds::of(preview);
     let counts = counts_words(kinds);
     let total = kinds.total();
-    let rows = coming(check);
+    let files = conflicts.map(|(files, _)| files);
+    let rows = coming(check, files);
     let cut = (total > rows.len()).then(|| {
         format!(
             "This list covers the first {} of {} by path.",
@@ -579,11 +637,11 @@ fn summary(
         )
     });
     let open = card.open;
-    // On a conflict the line says what to do instead of what Get latest
-    // would, and it is the sentence the file list's `Differs` marks describe.
-    let conflict = conflict_words(check);
-    let id = conflict.is_some().then(differs_id);
-    let scope = conflict.or_else(|| scope_words(check, whole, kinds));
+    // On the header's conflict the line says what to do instead of what Get
+    // latest would, and it is the sentence the file list's `Differs` marks
+    // describe.
+    let id = conflicts.map(|(_, id)| id);
+    let scope = first_line(check, whole, kinds, files);
     let links = catalog.zip(preview.latest_hash.clone());
     Some(
         view! {
@@ -874,12 +932,20 @@ mod tests {
         };
         assert_eq!(words(&blocked(2)).as_deref(), Some("3 file changes"));
         assert_eq!(
-            conflict_words(&blocked(2)).as_deref(),
-            Some("2 of them conflict with yours. Publish your changes, then resolve them.")
+            conflict_words(2),
+            "2 of them conflict with yours. Publish your changes, then resolve them."
         );
         assert_eq!(
-            conflict_words(&blocked(1)).as_deref(),
-            Some("1 of them conflicts with yours. Publish your changes, then resolve it.")
+            conflict_words(1),
+            "1 of them conflicts with yours. Publish your changes, then resolve it."
+        );
+        assert_eq!(
+            conflict_alone(1),
+            "1 file conflicts with yours. Publish your changes, then resolve it."
+        );
+        assert_eq!(
+            conflict_alone(2),
+            "2 files conflict with yours. Publish your changes, then resolve them."
         );
     }
 
@@ -978,6 +1044,68 @@ mod tests {
         }
     }
 
+    /// The popover's first line takes the conflict from the header's state,
+    /// never from the answer's verdict: a header in conflict counts its own
+    /// files over a clean answer, or over a verdict naming others, and a
+    /// header that is not says what Get latest does over a `Blocked` answer.
+    #[test]
+    fn the_first_line_follows_the_header_s_conflict() {
+        let clean = ready(PullOutcome::CleanUpdate, three_added());
+        let blocked = ready(
+            PullOutcome::Blocked {
+                conflicts: vec!["a.md".to_string()],
+            },
+            three_added(),
+        );
+        let k = Kinds {
+            new: 3,
+            changed: 0,
+            deleted: 0,
+        };
+        let one: BTreeSet<String> = ["a.md".to_string()].into();
+        let two: BTreeSet<String> = ["a.md", "elsewhere.csv"].map(String::from).into();
+        let says_conflict =
+            "1 of them conflicts with yours. Publish your changes, then resolve it.";
+        let says_get_latest = "Get latest downloads them.";
+        assert_eq!(
+            first_line(&clean, true, k, Some(&one)).as_deref(),
+            Some(says_conflict),
+            "a kept clean answer under a recorded conflict"
+        );
+        assert_eq!(
+            first_line(&blocked, true, k, Some(&one)).as_deref(),
+            Some(says_conflict),
+            "a fresh verdict, which the header took"
+        );
+        assert_eq!(
+            first_line(&blocked, true, k, Some(&two)).as_deref(),
+            Some("2 of them conflict with yours. Publish your changes, then resolve them."),
+            "the header's count, listed or not"
+        );
+        assert_eq!(
+            first_line(&blocked, true, k, None).as_deref(),
+            Some(says_get_latest),
+            "a kept conflict answer under a read that is only behind"
+        );
+        assert_eq!(
+            first_line(&clean, true, k, None).as_deref(),
+            Some(says_get_latest)
+        );
+        assert!(
+            coming(&blocked, None).iter().all(|r| !r.conflict),
+            "no labels without the header's conflict"
+        );
+        let labelled = |set| {
+            coming(&clean, Some(set))
+                .into_iter()
+                .filter(|r| r.conflict)
+                .map(|r| r.path)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(labelled(&one), ["a.md"], "labels over a clean answer");
+        assert_eq!(labelled(&two), ["a.md"], "only the files listed");
+    }
+
     /// The popover counts by kind, and says `new files` when that is all
     /// there is.
     #[test]
@@ -1016,7 +1144,8 @@ mod tests {
             removed: paths(2),
             latest_hash: None,
         });
-        let rows = coming(&check);
+        let header: BTreeSet<String> = ["p00004", "p01100"].map(String::from).into();
+        let rows = coming(&check, Some(&header));
         assert_eq!(rows.len(), LISTED);
         let kind = |i: usize| [Change::New, Change::Changed, Change::Deleted][i % 3];
         for (i, row) in rows.iter().enumerate() {
@@ -1039,14 +1168,14 @@ mod tests {
             unreachable!()
         };
         nested.changed = vec!["a-b".to_string()];
-        let paths: Vec<String> = coming(&PullCheck::Ready(nested))
+        let paths: Vec<String> = coming(&PullCheck::Ready(nested), None)
             .into_iter()
             .map(|r| r.path)
             .collect();
         assert_eq!(paths, ["a/b", "a-b"]);
-        assert_eq!(
-            conflict_words(&check).as_deref(),
-            Some("2 of them conflict with yours. Publish your changes, then resolve them.")
+        assert!(
+            coming(&check, None).iter().all(|r| !r.conflict),
+            "a verdict alone labels nothing"
         );
     }
 
@@ -1078,9 +1207,11 @@ mod tests {
             ),
         ];
         let mut all = vec![String::from(OPEN_LABEL)];
+        for n in [1, 2] {
+            all.extend([conflict_words(n), conflict_alone(n)]);
+        }
         for check in &checks {
             all.extend(summary_words(check));
-            all.extend(conflict_words(check));
             for whole in [false, true] {
                 for kinds in [
                     Kinds {
@@ -1170,6 +1301,7 @@ mod tests {
                 view! {
                     <IncomingSummary
                         check=Signal::stored(Some(check))
+                        conflicts=Signal::stored(None)
                         whole=false
                         catalog=Catalog::new(Some(&package), Callback::new(|_: String| ()))
                         on_retry=Callback::new(|()| ())

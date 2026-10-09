@@ -730,6 +730,7 @@ fn incoming_header(
         let summary = view! {
             <IncomingSummary
                 check=check
+                conflicts=conflicts
                 whole=whole
                 catalog=newer.clone()
                 on_retry=Callback::new(move |()| incoming.retry())
@@ -3291,6 +3292,39 @@ mod tests {
             .and_then(|b| b.text_content())
     }
 
+    /// Opens the summary's popover with a click and returns its surface.
+    async fn opened_popover(el: &web_sys::Element) -> web_sys::Element {
+        let trigger = el
+            .query_selector("[aria-controls][aria-expanded]:not([aria-haspopup])")
+            .unwrap()
+            .filter(|b| b.text_content().unwrap_or_default().contains("file change"))
+            .unwrap_or_else(|| panic!("the summary; markup was {}", el.inner_html()));
+        if trigger.get_attribute("aria-expanded").as_deref() != Some("true") {
+            trigger.unchecked_ref::<web_sys::HtmlElement>().click();
+            sleep_ms(30).await;
+        }
+        assert_eq!(
+            trigger.get_attribute("aria-expanded").as_deref(),
+            Some("true")
+        );
+        let surface = trigger.get_attribute("aria-controls").unwrap();
+        el.query_selector(&format!("[id='{surface}']"))
+            .unwrap()
+            .expect("the popover's surface")
+    }
+
+    /// The popover's row for `path` carries a *Conflict* label.
+    fn popover_conflict_on(popover: &web_sys::Element, path: &str) -> bool {
+        popover
+            .query_selector(&format!("li span[title='{path}']"))
+            .unwrap()
+            .and_then(|span| span.parent_element())
+            .unwrap_or_else(|| panic!("{path} is listed; markup was {}", popover.inner_html()))
+            .text_content()
+            .unwrap_or_default()
+            .contains("Conflict")
+    }
+
     fn no_fallback(el: &web_sys::Element) {
         assert!(
             el.query_selector("[data-fallback]").unwrap().is_none(),
@@ -3450,6 +3484,60 @@ mod tests {
         button_saying(&el, "Publish");
         assert!(row_marked(&el, "a.csv"), "the recorded conflict's row");
         assert!(!row_marked(&el, "b.csv"));
+        let sentence = el
+            .query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+            .unwrap()
+            .expect("the sentence a marked row names");
+        assert!(
+            sentence
+                .text_content()
+                .unwrap_or_default()
+                .contains("1 of them conflicts with yours. Publish your changes, then resolve it."),
+            "markup was {}",
+            el.inner_html()
+        );
+
+        let popover = opened_popover(&el).await;
+        assert!(
+            text(&popover)
+                .contains("1 of them conflicts with yours. Publish your changes, then resolve it."),
+            "the header's conflict, over the kept clean answer; markup was {}",
+            popover.inner_html()
+        );
+        assert!(popover_conflict_on(&popover, "a.csv"));
+    }
+
+    /// A conflict the read records marks its rows while the check is still
+    /// out, before any popover is drawn; the sentence they name is there,
+    /// for a screen reader, standing in for the popover's.
+    #[wasm_bindgen_test]
+    async fn a_recorded_conflict_is_described_before_the_check_answers() {
+        // The check stays pending: nothing is scripted.
+        script(Vec::new());
+        let mut recorded = behind("aaa");
+        recorded.header.state = crate::kit::PackageState::PullConflict {
+            files: vec!["a.csv".to_string()],
+        };
+        let el = suspended_screen(recorded).await;
+        element_saying(&el, "conflict in 1 file");
+        assert!(
+            text(&el).contains("checking"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(row_marked(&el, "a.csv"));
+        let sentence = el
+            .query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+            .unwrap()
+            .expect("the sentence a marked row names");
+        assert!(
+            sentence.has_attribute("data-sr-only"),
+            "and it is not drawn"
+        );
+        assert_eq!(
+            text(&sentence),
+            "1 file conflicts with yours. Publish your changes, then resolve it."
+        );
     }
 
     /// The other way round: a kept conflict answer does not paint a conflict
@@ -3483,6 +3571,20 @@ mod tests {
             el.inner_html()
         );
         assert!(!row_marked(&el, "a.csv"));
+
+        let popover = opened_popover(&el).await;
+        assert!(
+            !text(&popover).contains("conflict"),
+            "the kept verdict's sentence is gone; markup was {}",
+            popover.inner_html()
+        );
+        assert!(!popover_conflict_on(&popover, "a.csv"), "and its label");
+        assert!(
+            el.query_selector(&format!("#{}", crate::kit::DIFFERS_ID))
+                .unwrap()
+                .is_none(),
+            "nothing marked, nothing to describe"
+        );
     }
 
     /// A check that fails says so and offers Try again; Get latest stays
