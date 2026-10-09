@@ -178,6 +178,7 @@ fn scene_payload() -> commands::PackageHeaderData {
         has_local_commit: true,
         commit_has_parent: true,
         role_switch: None,
+        newer: None,
     }
 }
 

@@ -185,6 +185,11 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].1.status, "up_to_date");
         assert!(!statuses[0].1.has_changes);
+        // The pushed revision became `latest`: the next tick observes that.
+        assert_eq!(
+            statuses[0].1.fingerprint,
+            crate::autopull::reporter::settled_fingerprint("h2")
+        );
     }
     assert!(inner.paused.read().await.is_empty());
     Ok(())
@@ -1008,6 +1013,54 @@ async fn run_once_push_only_does_not_pull_behind() -> Result<(), Error> {
     assert_eq!(statuses.len(), 1);
     assert_eq!(statuses[0].1.status, "behind");
     assert!(!statuses[0].1.has_changes);
+    Ok(())
+}
+
+/// What a push-only tick reports for a behind, clean package whose remote
+/// `latest` it read as `latest`.
+async fn push_only_behind_event(latest: &str) -> Result<PackageStatusEvent, Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h1".to_string());
+    let status = quilt::lineage::InstalledPackageStatus {
+        latest_hash: latest.to_string(),
+        latest_refreshed: true,
+        ..quilt::lineage::InstalledPackageStatus::new(UpstreamState::Behind, BTreeMap::new())
+    };
+    let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
+    model.expect_locked_package_pull().times(0);
+    model.expect_locked_package_publish().times(0);
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = make_inner_with_flags(reporter.clone(), false, true);
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    let mut statuses = reporter.statuses.lock().unwrap();
+    assert_eq!(statuses.len(), 1);
+    Ok(statuses.remove(0).1)
+}
+
+/// The remote moves from one newer revision to the next while the package
+/// stays behind with the same changes. Push-only autosync reads the moved tag
+/// each tick; the event must say so, or an open page drops it as old news and
+/// keeps describing the earlier newer revision.
+#[tokio::test]
+async fn a_push_only_tick_reports_a_moved_newer_revision() -> Result<(), Error> {
+    let first = push_only_behind_event("h1").await?;
+    let next = push_only_behind_event("h2").await?;
+    assert_eq!(
+        (first.status.as_str(), next.status.as_str()),
+        ("behind", "behind")
+    );
+    assert_eq!(first.has_changes, next.has_changes);
+    assert_ne!(
+        first.fingerprint, next.fingerprint,
+        "two observations that differ only in `latest` are two observations"
+    );
+    assert_eq!(
+        first.fingerprint,
+        push_only_behind_event("h1").await?.fingerprint,
+        "the same observation re-reported is still old news"
+    );
     Ok(())
 }
 
