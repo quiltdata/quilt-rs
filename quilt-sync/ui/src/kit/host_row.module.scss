@@ -44,8 +44,12 @@
   color: var(--q-fgColor-attention);
 }
 
+/* A role select and Sign out side by side, when Settings draws both. */
 .trailing {
   flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
 }
 
 /* The role has not been asked for yet. A dashed rule under the sub-line and

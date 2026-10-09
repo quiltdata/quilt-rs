@@ -2,12 +2,14 @@
 //!
 //! The gallery draws them over fixtures; the port fills the same props from
 //! `get_settings_data`. Every effect is a callback. [`SettingsColumn`] fixes
-//! the order, most used first: Syncing, Publishing, App, Storage,
+//! the order, most used first: Syncing, Publishing, Accounts, App, Storage,
 //! Experimental, Help, About.
 //!
 //! Toggles, selects and minute fields save as they change, and the row says
 //! *Saved* for a moment ([`Saved`]). Publishing alone has a Save button,
 //! because its metadata must be valid JSON before anything is written.
+
+use std::future::Future;
 
 use leptos::prelude::*;
 
@@ -15,23 +17,27 @@ use crate::commands::LogEnv;
 use crate::kit::BackLink;
 use crate::kit::Banner;
 use crate::kit::BannerVariant;
+use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
+use crate::kit::ConfirmDialog;
 use crate::kit::Dialog;
 use crate::kit::FormControl;
+use crate::kit::HostRow;
 use crate::kit::LoadFailure;
 use crate::kit::Naming;
 use crate::kit::NumberInput;
 use crate::kit::PageHeader;
 use crate::kit::Select;
 use crate::kit::StateTone;
+use crate::kit::Submit;
 use crate::kit::TextArea;
 use crate::kit::TextInput;
 use crate::kit::ToggleRow;
 use crate::util::format_size;
 
-use super::commit_v2::metadata_editor;
+use super::commit_v2::MetadataField;
 
 stylance::import_crate_style!(style, "src/pages/settings_v2.module.scss");
 
@@ -162,6 +168,7 @@ pub fn SettingsColumn(
     header: AnyView,
     syncing: AnyView,
     publishing: AnyView,
+    accounts: AnyView,
     app: AnyView,
     storage: AnyView,
     experimental: AnyView,
@@ -173,6 +180,7 @@ pub fn SettingsColumn(
             {header}
             {syncing}
             {publishing}
+            {accounts}
             {app}
             {storage}
             {experimental}
@@ -185,8 +193,8 @@ pub fn SettingsColumn(
 // ── Syncing ──
 
 pub const WATCH_SUBLABEL: &str = "Package statuses update as soon as you save, add or delete a \
-     file in a package folder. When this is off, changes appear only after you press Refresh. \
-     Turn it off if your system can't watch this many files.";
+     file in a package folder. When this is off, changes appear at the next autosync check, or \
+     when you press Refresh. Turn it off if your system can't watch this many files.";
 
 /// Autosync's two directions with their minutes, and the folder watcher.
 ///
@@ -292,15 +300,18 @@ pub fn PublishingCard(
     dirty: Signal<bool>,
     #[prop(optional, into)] saving: Signal<bool>,
     on_save: Callback<()>,
+    /// The metadata editor open; folded to its one-line preview by default.
+    /// It opens itself when the JSON fails to validate.
+    #[prop(optional)]
+    editing: Option<RwSignal<bool>>,
 ) -> impl IntoView {
+    let editing = editing.unwrap_or_else(|| RwSignal::new(false));
     let error = Signal::derive(move || metadata.with(|text| metadata_error(text)));
     let warn = Signal::derive(move || {
         let named = workflow.with(|id| !id.trim().is_empty());
         metadata.with(|text| show_global_scope_warning(named, text))
     });
     let blocked = Signal::derive(move || !dirty.get() || error.with(Option::is_some));
-    let metadata_id = crate::kit::unique_id("default-metadata");
-    let error_id = format!("{metadata_id}-error");
     let placeholders = format!("Placeholders: {}", PUBLISH_PLACEHOLDERS.join(" "));
 
     view! {
@@ -337,26 +348,16 @@ pub fn PublishingCard(
                             .into_any()
                     }
                 />
-                <div>
-                    <label class=style::field_name for=metadata_id.clone()>
-                        "Default metadata"
-                    </label>
-                    // `inert` while saving, as the other fields are disabled:
-                    // the editor has no disabled state of its own.
-                    <div inert=move || saving.get()>
-                        {metadata_editor(
-                            metadata_id.clone(),
-                            error_id.clone(),
-                            metadata,
-                            Signal::derive(move || error.with(Option::is_some)),
-                        )}
-                    </div>
-                    <Show when=move || error.with(Option::is_some)>
-                        <p class=style::error id=error_id.clone()>
-                            {StateTone::Danger.glyph()}
-                            <span>{move || error.get().unwrap_or_default()}</span>
-                        </p>
-                    </Show>
+                // The commit page's field: a one-line preview with Edit, and
+                // the editor when opened. `inert` while saving, as the other
+                // fields are disabled: the editor has no disabled state.
+                <div inert=move || saving.get()>
+                    <MetadataField
+                        label="Default metadata"
+                        metadata=metadata
+                        editing=editing
+                        error=error
+                    />
                 </div>
                 <Show when=move || warn.get()>
                     <Banner variant=BannerVariant::Warning>{GLOBAL_SCOPE_WARNING}</Banner>
@@ -374,6 +375,100 @@ pub fn PublishingCard(
             </div>
         </Card>
     }
+}
+
+// ── Accounts ──
+
+/// One host the reader has a session at, or had.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccountHost {
+    pub host: String,
+    /// The active role; empty when the role query failed.
+    pub role: String,
+    /// Every role held; more than one draws the switcher.
+    pub roles: Vec<String>,
+    pub signed_out: bool,
+}
+
+pub const NO_ACCOUNTS: &str = "Accounts appear here for each Quilt catalog your packages point \
+     at. Give a package an S3 bucket to connect it to one.";
+
+/// The sentence in the Sign out confirmation.
+#[must_use]
+pub fn sign_out_consequence(host: &str) -> String {
+    format!(
+        "This erases the credentials stored for {host}. To use its packages again, you sign in \
+         again."
+    )
+}
+
+/// Every host, with its role, *Sign in* when signed out, and *Sign out*
+/// behind a confirmation. Settings holds Sign out; the main page's card does
+/// not.
+#[component]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a component's props are owned; the body reads them from there"
+)]
+pub fn AccountsCard<F, Fut>(
+    hosts: Vec<AccountHost>,
+    /// With the host to sign in to.
+    on_sign_in: Callback<String>,
+    /// Erases the host's credentials. Its `Err` stays in the confirmation.
+    sign_out: F,
+) -> impl IntoView
+where
+    F: Fn(String) -> Fut + Clone + 'static,
+    Fut: Future<Output = Result<(), String>> + 'static,
+{
+    if hosts.is_empty() {
+        return view! {
+            <Card title="Accounts">
+                <Blankslate heading="No accounts yet" description=NO_ACCOUNTS />
+            </Card>
+        }
+        .into_any();
+    }
+    // Built here, not inside the card's children: those must be `Send`, and
+    // the sign-out action need not be.
+    let rows: Vec<AnyView> = hosts
+        .into_iter()
+        .map(|account| {
+            let confirming = RwSignal::new(false);
+            let host = account.host.clone();
+            let sign_in_host = account.host.clone();
+            let sign_out = sign_out.clone();
+            let dialog = (!account.signed_out).then(|| {
+                view! {
+                    <ConfirmDialog
+                        open=confirming
+                        title=format!("Sign out of {host}")
+                        consequence=sign_out_consequence(&host)
+                        confirm=Submit::new(
+                            "Sign out",
+                            move || sign_out(host.clone()),
+                        )
+                    />
+                }
+                .into_any()
+            });
+            view! {
+                <div>
+                    <HostRow
+                        host=account.host
+                        role=RwSignal::new(account.role)
+                        roles=account.roles
+                        signed_out=account.signed_out
+                        on_sign_in=move |_| on_sign_in.run(sign_in_host.clone())
+                        on_sign_out=Callback::new(move |()| confirming.set(true))
+                    />
+                    {dialog}
+                </div>
+            }
+            .into_any()
+        })
+        .collect();
+    view! { <Card title="Accounts">{rows}</Card> }.into_any()
 }
 
 // ── App ──
@@ -402,9 +497,12 @@ pub fn AppCard(
 
 // ── Storage ──
 
-/// What the app's own storage measured. Read after the page paints.
+/// What the app's own storage measured. Measured only when asked, and not
+/// remembered: it lives on the page until the reader leaves it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StorageSize {
+    /// Not asked yet: *Check size*.
+    NotMeasured,
     Measuring,
     /// `freeable` is an estimate; *Freed …* after the button is the answer.
     Measured {
@@ -428,7 +526,20 @@ impl StorageSize {
                 format_size(*total),
                 format_size(*freeable)
             )),
-            Self::Failed => None,
+            Self::NotMeasured | Self::Failed => None,
+        }
+    }
+
+    /// The line after *Free up space* freed `freed` bytes, from the sweep's
+    /// own report rather than a second measure. Unmeasured stays unmeasured.
+    #[must_use]
+    pub fn after_freeing(self, freed: u64) -> Self {
+        match self {
+            Self::Measured { total, .. } => Self::Measured {
+                total: total.saturating_sub(freed),
+                freeable: 0,
+            },
+            other => other,
         }
     }
 }
@@ -476,17 +587,24 @@ pub fn StorageCard(
     #[prop(optional, into)]
     freed: Option<String>,
     on_free: Callback<()>,
-    on_measure_again: Callback<()>,
+    /// *Check size*, and *Try again* after a failed measure.
+    on_measure: Callback<()>,
 ) -> impl IntoView {
     let nothing = matches!(size, StorageSize::Measured { freeable: 0, .. });
     let home = match home_dir {
         Some(path) => path_value(path),
         None => view! { <span class=style::quiet>"Not set"</span> }.into_any(),
     };
-    let measured = match size.words() {
-        Some(words) => view! { <span>{words}</span> }.into_any(),
-        None => view! {
-            <LoadFailure words="Could not measure it." on_retry=on_measure_again />
+    // Free up space works unmeasured too; it is disabled only when a measure
+    // said there is nothing to free.
+    let measured = match (&size, size.words()) {
+        (_, Some(words)) => view! { <span>{words}</span> }.into_any(),
+        (StorageSize::Failed, None) => view! {
+            <LoadFailure words="Could not measure it." on_retry=on_measure />
+        }
+        .into_any(),
+        (_, None) => view! {
+            <Button on_click=move |_| on_measure.run(())>"Check size"</Button>
         }
         .into_any(),
     };
@@ -877,6 +995,26 @@ mod tests {
             Some("1.5\u{a0}GB · nothing to free")
         );
         assert_eq!(StorageSize::Failed.words(), None);
+        assert_eq!(StorageSize::NotMeasured.words(), None);
+    }
+
+    #[test]
+    fn freeing_updates_the_line_without_measuring_again() {
+        assert_eq!(
+            StorageSize::Measured {
+                total: 3_200_000_000,
+                freeable: 1_100_000_000
+            }
+            .after_freeing(1_100_000_000),
+            StorageSize::Measured {
+                total: 2_100_000_000,
+                freeable: 0
+            }
+        );
+        assert_eq!(
+            StorageSize::NotMeasured.after_freeing(1_000),
+            StorageSize::NotMeasured
+        );
     }
 
     #[test]
@@ -968,7 +1106,10 @@ mod tests {
             TEMPORARY_LOGS,
             EMAIL_INSTEAD,
             REPORT_SENT,
+            NO_ACCOUNTS,
         ];
+        let consequence = sign_out_consequence("quilt.test");
+        all.push(&consequence);
         all.extend(REPORT_CONTENTS);
         for words in all {
             assert_eq!(banned_in(words), None, "{words:?}");

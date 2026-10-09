@@ -9,10 +9,10 @@
 //! # Measured at 1024x560, in Chromium
 //!
 //! The header ends at 138px and the cards stack 16px apart: Syncing 154–461,
-//! Publishing 477–968, App 984–1116, Storage 1132–1300, Experimental
-//! 1316–1487, Help 1503–1826, About 1842–1953. The first screen shows the
-//! header and Syncing; the page scrolls under the appbar, with no sideways
-//! scroll.
+//! Publishing 477–850 (metadata folded), Accounts 866–1085 (three hosts), App
+//! 1101–1233, Storage 1249–1429, Experimental 1445–1616, Help 1632–1956,
+//! About 1972–2082. The first screen shows the header and Syncing; the page
+//! scrolls under the appbar, with no sideways scroll.
 //!
 //! # Left for the port
 //!
@@ -25,11 +25,12 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::kit::Button;
+use crate::kit::ButtonVariant;
 use crate::kit::PageLayout;
 use crate::pages::settings_v2::{
-    AboutCard, AppCard, ExperimentalCard, HelpCard, PublishingCard, ReportBody, ReportDialog,
-    ReportFooter, ReportState, Saved, SettingsColumn, SettingsHeader, StorageCard, StorageSize,
-    SyncingCard, minutes_shown,
+    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, HelpCard, PublishingCard,
+    ReportBody, ReportDialog, ReportFooter, ReportState, Saved, SettingsColumn, SettingsHeader,
+    StorageCard, StorageSize, SyncingCard, minutes_shown, sign_out_consequence,
 };
 use quilt_sync_ui::commands::LogEnv;
 
@@ -93,6 +94,8 @@ struct Publishing {
     workflow: &'static str,
     metadata: &'static str,
     dirty: bool,
+    /// The metadata editor open.
+    editing: bool,
 }
 
 fn publishing(p: Publishing) -> AnyView {
@@ -103,6 +106,7 @@ fn publishing(p: Publishing) -> AnyView {
             metadata=RwSignal::new(p.metadata.to_string())
             dirty=p.dirty
             on_save=noop()
+            editing=RwSignal::new(p.editing)
         />
     }
     .into_any()
@@ -120,7 +124,7 @@ fn storage(size: StorageSize, freeing: bool, freed: Option<&'static str>) -> Any
                 freeing=freeing
                 freed=words
                 on_free=noop()
-                on_measure_again=noop()
+                on_measure=noop()
             />
         }
         .into_any(),
@@ -131,11 +135,60 @@ fn storage(size: StorageSize, freeing: bool, freed: Option<&'static str>) -> Any
                 size=size
                 freeing=freeing
                 on_free=noop()
-                on_measure_again=noop()
+                on_measure=noop()
             />
         }
         .into_any(),
     }
+}
+
+// ── Accounts ──
+
+fn host(host: &str, role: &str, roles: &[&str], signed_out: bool) -> AccountHost {
+    AccountHost {
+        host: host.to_string(),
+        role: role.to_string(),
+        roles: roles.iter().map(ToString::to_string).collect(),
+        signed_out,
+    }
+}
+
+fn accounts(hosts: Vec<AccountHost>) -> AnyView {
+    view! {
+        <AccountsCard
+            hosts=hosts
+            on_sign_in=Callback::new(|_: String| ())
+            sign_out=|_: String| async { Ok(()) }
+        />
+    }
+    .into_any()
+}
+
+fn several_hosts() -> Vec<AccountHost> {
+    vec![
+        host(
+            "open.quiltdata.com",
+            "analyst",
+            &["analyst", "bench-scientist", "admin"],
+            false,
+        ),
+        host("demo.quiltdata.com", "ReadWriteQuiltV2", &[], false),
+        host("custom.registry.io", "", &[], true),
+    ]
+}
+
+/// The Sign out confirmation drawn inline, as `confirm_dialog.rs` draws its own.
+fn sign_out_inline() -> AnyView {
+    view! {
+        <div class="g-bars g-dialog-inline">
+            <p class="g-consequence">{sign_out_consequence("open.quiltdata.com")}</p>
+            <div class="g-inline g-inline--end">
+                <Button on_click=move |_| ()>"Cancel"</Button>
+                <Button variant=ButtonVariant::Danger on_click=move |_| ()>"Sign out"</Button>
+            </div>
+        </div>
+    }
+    .into_any()
 }
 
 const MEASURED: StorageSize = StorageSize::Measured {
@@ -190,8 +243,9 @@ fn whole_page() -> AnyView {
                     header=view! { <SettingsHeader home_href=format!("#{id}") /> }.into_any()
                     syncing=syncing(Syncing::default())
                     publishing=publishing(Publishing::default())
+                    accounts=accounts(several_hosts())
                     app=view! { <AppCard tray=RwSignal::new(false) /> }.into_any()
-                    storage=storage(MEASURED, false, None)
+                    storage=storage(StorageSize::NotMeasured, false, None)
                     experimental=view! {
                         <ExperimentalCard
                             entire_package_sync=RwSignal::new(false)
@@ -209,7 +263,7 @@ fn whole_page() -> AnyView {
 }
 
 const NOTE: &str = "The settings page v2: one column of cards, most used first — Syncing, \
-    Publishing, App, Storage, Experimental, Help, About. Toggles, selects and minute fields save \
+    Publishing, Accounts, App, Storage, Experimental, Help, About. Toggles, selects and minute fields save \
     as they change and say Saved; Publishing alone has Save. Not routed yet.";
 
 #[component]
@@ -252,7 +306,21 @@ pub fn SettingsPageScene() -> impl IntoView {
                     ..Publishing::default()
                 }))}
             </Cell>
-            <Cell full=true label="Publishing — metadata that is not valid JSON: the error, Save disabled">
+            <Cell full=true label="Publishing — metadata folded to one line, with Edit">
+                {column(publishing(Publishing {
+                    metadata: "{\"source\": \"desktop\", \"lab\": \"plate-reader-2\"}",
+                    ..Publishing::default()
+                }))}
+            </Cell>
+            <Cell full=true label="Publishing — the metadata editor open">
+                {column(publishing(Publishing {
+                    metadata: "{\"source\": \"desktop\"}",
+                    editing: true,
+                    dirty: true,
+                    ..Publishing::default()
+                }))}
+            </Cell>
+            <Cell full=true label="Publishing — metadata that is not valid JSON: the editor opened itself, the error, Save disabled">
                 {column(publishing(Publishing {
                     metadata: "{\"source\": \"desktop\",",
                     dirty: true,
@@ -266,10 +334,28 @@ pub fn SettingsPageScene() -> impl IntoView {
                     ..Publishing::default()
                 }))}
             </Cell>
+            <Cell full=true label="Accounts — several hosts: a role switcher, one role, and one signed out">
+                {column(accounts(several_hosts()))}
+            </Cell>
+            <Cell full=true label="Accounts — one host, one role">
+                {column(accounts(vec![host("open.quiltdata.com", "analyst", &[], false)]))}
+            </Cell>
+            <Cell full=true label="Accounts — signed out: Sign in, and no Sign out">
+                {column(accounts(vec![host("open.quiltdata.com", "", &[], true)]))}
+            </Cell>
+            <Cell full=true label="Accounts — no accounts">
+                {column(accounts(Vec::new()))}
+            </Cell>
+            <Cell wide=true label="Accounts — Sign out asks first (press Sign out in the cells above for the real one)">
+                {sign_out_inline()}
+            </Cell>
             <Cell full=true label="App">
                 {column(view! { <AppCard tray=RwSignal::new(true) /> }.into_any())}
             </Cell>
-            <Cell full=true label="Storage — measuring, after the page paints">
+            <Cell full=true label="Storage — not measured: Check size, and Free up space works anyway">
+                {column(storage(StorageSize::NotMeasured, false, None))}
+            </Cell>
+            <Cell full=true label="Storage — measuring, after Check size">
                 {column(storage(StorageSize::Measuring, false, None))}
             </Cell>
             <Cell full=true label="Storage — measured, some can be freed">
@@ -285,12 +371,15 @@ pub fn SettingsPageScene() -> impl IntoView {
             <Cell full=true label="Storage — freeing">
                 {column(storage(MEASURED, true, None))}
             </Cell>
-            <Cell full=true label="Storage — freed: the sweep's own answer beside the estimate">
+            <Cell full=true label="Storage — freed after a measure: the line updated from the sweep's report, not measured again">
                 {column(storage(
-                    StorageSize::Measured { total: 2_100_000_000, freeable: 0 },
+                    MEASURED.after_freeing(1_100_000_000),
                     false,
                     Some("Freed 1.1\u{a0}GB"),
                 ))}
+            </Cell>
+            <Cell full=true label="Storage — freed without a measure">
+                {column(storage(StorageSize::NotMeasured, false, Some("Freed 1.1\u{a0}GB")))}
             </Cell>
             <Cell full=true label="Storage — the measure failed">
                 {column(storage(StorageSize::Failed, false, None))}
