@@ -5,17 +5,22 @@ inputs:
     description: "Additional targets to install"
     required: false
     default: ""
+  github-token:
+    description: >-
+      Token for cargo-binstall's GitHub API lookups. Pass a read-only token;
+      without one, shared runner IPs can hit the rate limit and hang the step.
+    required: false
+    default: ""
 
 runs:
   using: "composite"
   steps:
     - name: Setup Rust
       uses: moonrepo/setup-rust@v1
-      # cargo-binstall (used to install cargo-cache) queries the GitHub API.
-      # Without a token, shared runner IPs hit the rate limit and it retries
-      # until the job times out.
+      # cargo-binstall (used to install cargo-cache) reads GITHUB_TOKEN.
+      # Opt-in, so release jobs never hand their write token to this action.
       env:
-        GITHUB_TOKEN: ${{ github.token }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       with:
         cache-base: main
         cache-target: debug
