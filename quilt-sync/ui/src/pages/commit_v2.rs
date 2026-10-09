@@ -753,9 +753,15 @@ pub fn IncludedList(
     }
 }
 
-/// The page's column, in the order the reader confirms.
+/// The page's column, in the order the reader confirms. It must be a direct
+/// child of `PageLayout`'s main: it fills that height, and the list's own
+/// scroll box takes what the form leaves of it. A wrapper between them sizes
+/// to the content, and the whole page scrolls again.
 #[component]
 pub fn CommitColumn(
+    /// For the page to reach the column's fields, in place of a wrapper.
+    #[prop(optional)]
+    node_ref: NodeRef<leptos::html::Div>,
     header: AnyView,
     #[prop(optional)] problem: Option<AnyView>,
     message: AnyView,
@@ -764,7 +770,7 @@ pub fn CommitColumn(
     included: AnyView,
 ) -> impl IntoView {
     view! {
-        <div class=style::column>
+        <div class=style::column node_ref=node_ref>
             {header}
             {problem}
             {message}
