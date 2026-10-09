@@ -66,6 +66,7 @@ pub use pull_outcome::Reconciled;
 pub use pull_outcome::classify_pull;
 pub(crate) use pull_outcome::classify_pull_with_delta;
 pub use pull_outcome::identical_to_latest;
+pub(crate) use pull_outcome::pull_delta;
 pub(crate) use pull_outcome::remote_delta;
 pub use push::PushResult;
 pub use push::push_package as push;

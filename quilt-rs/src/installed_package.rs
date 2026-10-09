@@ -1031,7 +1031,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         .await?;
         // One delta serves both the verdict and the incoming paths, so building
         // it twice would double the path and hash cloning on a large manifest.
-        let delta = flow::remote_delta(&base, &snapshot.latest_manifest);
+        let delta = flow::pull_delta(&base, &snapshot.latest_manifest);
         let outcome = flow::classify_pull_with_delta(
             &snapshot.status,
             &base,

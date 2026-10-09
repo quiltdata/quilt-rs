@@ -292,7 +292,19 @@ pub fn classify_pull(
     latest: &Manifest,
     identical: &Reconciled,
 ) -> PullOutcome {
-    classify_pull_with_delta(status, base, latest, identical, &remote_delta(base, latest))
+    classify_pull_with_delta(status, base, latest, identical, &pull_delta(base, latest))
+}
+
+/// The delta a pull classifies against: [`remote_delta`], except for identical
+/// manifests, which [`classify_pull_with_delta`] calls `UpToDate` before
+/// reading the delta — so their rows are not walked for nothing. Their delta
+/// is empty either way.
+pub(crate) fn pull_delta(base: &Manifest, latest: &Manifest) -> BTreeMap<PathBuf, RemoteChange> {
+    if base == latest {
+        BTreeMap::new()
+    } else {
+        remote_delta(base, latest)
+    }
 }
 
 /// [`classify_pull`] over a [`remote_delta`] the caller already built, for
@@ -300,7 +312,7 @@ pub fn classify_pull(
 /// into [`IncomingPaths`], the pull derives its touch set from it — so the
 /// delta is built once rather than once per use.
 ///
-/// `delta` must be `remote_delta(base, latest)`.
+/// `delta` must be [`pull_delta`]`(base, latest)`.
 #[must_use]
 pub(crate) fn classify_pull_with_delta(
     status: &InstalledPackageStatus,

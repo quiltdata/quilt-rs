@@ -16,8 +16,8 @@ use crate::flow::PullOutcome;
 use crate::flow::apply_latest_update;
 use crate::flow::classify_pull_with_delta;
 use crate::flow::identical_to_latest;
+use crate::flow::pull_delta;
 use crate::flow::pull_outcome::RemoteChange;
-use crate::flow::remote_delta;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -300,7 +300,7 @@ pub async fn pull_package(
     .await?;
     // Built once: the classifier reads it for conflicts, and the touch set
     // below is derived from it.
-    let delta = remote_delta(manifest, &snapshot.latest_manifest);
+    let delta = pull_delta(manifest, &snapshot.latest_manifest);
     let outcome = classify_pull_with_delta(
         &snapshot.status,
         manifest,
@@ -461,6 +461,7 @@ mod tests {
 
     use crate::checksum::calculate_hash;
     use crate::flow::classify_pull;
+    use crate::flow::remote_delta;
     use crate::io::remote::HostChecksums;
     use crate::io::remote::HostConfig;
     use crate::io::remote::mocks::MockRemote;
