@@ -26,7 +26,7 @@
 - **New design preview**: a redesigned Settings page. Settings save as you change them, times are in minutes, **Check size** shows how much space the app uses and how much Free up space would free, and **Report a problem** sends what you write with your logs. Sign out of a catalog from its Accounts card
   - <https://github.com/quiltdata/quilt-rs/pull/1099>
   - <https://github.com/quiltdata/quilt-rs/pull/1100>
-  - <https://github.com/quiltdata/quilt-rs/pull/PRNUM>
+  - <https://github.com/quiltdata/quilt-rs/pull/1106>
 
 ### quilt-rs
 
