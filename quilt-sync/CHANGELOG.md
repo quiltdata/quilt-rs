@@ -23,7 +23,12 @@
 
 ### Changed
 
+- Under the hood, the app can measure its local storage, total and what Free up space would free, for the coming settings page (<https://github.com/quiltdata/quilt-rs/pull/1099>)
 - Under the hood, a crash report can carry a message from the user, ready for the new *Report a problem* dialog (<https://github.com/quiltdata/quilt-rs/pull/1100>)
+
+### quilt-rs
+
+- Updated [from v0.43.0 to v0.43.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.43.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.22.9] - 2026-10-09
 

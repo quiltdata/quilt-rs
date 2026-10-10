@@ -307,6 +307,13 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         flow::gc(&self.paths, &self.storage, &lineage).await
     }
 
+    /// How much `.quilt/` holds, and what [`Self::gc`] would free now. See
+    /// [`flow::measure_storage`]: it takes no package locks, deletes nothing,
+    /// and its freeable part is an estimate that gc's report makes exact.
+    pub async fn measure_storage(&self) -> Res<flow::StorageSize> {
+        flow::measure_storage(&self.paths, &self.storage).await
+    }
+
     /// Splices the one entry an install or a create made into the record as
     /// it is now, leaving every other package's entry as another writer may
     /// have changed it meanwhile. The caller holds the package's lock.
