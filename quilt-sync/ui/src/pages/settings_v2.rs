@@ -41,6 +41,9 @@ use super::commit_v2::MetadataField;
 
 stylance::import_crate_style!(style, "src/pages/settings_v2.module.scss");
 
+mod page;
+pub use page::{SettingsV2, SettingsV2Skeleton};
+
 /// A row that saves as it changes, so it can say it did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Saved {
@@ -387,6 +390,8 @@ pub struct AccountHost {
     /// Every role held; more than one draws the switcher.
     pub roles: Vec<String>,
     pub signed_out: bool,
+    /// The role is still being read: the row says *Checking role…*.
+    pub provisional: bool,
 }
 
 pub const NO_ACCOUNTS: &str = "Accounts appear here for each Quilt catalog your packages point \
@@ -401,28 +406,24 @@ pub fn sign_out_consequence(host: &str) -> String {
     )
 }
 
-/// Every host, with its role, *Sign in* when signed out, and *Sign out*
-/// behind a confirmation. Settings holds Sign out; the main page's card does
-/// not.
+/// Every host, with its role, *Sign in* when signed out, and *Sign out*,
+/// which asks [`SignOutDialog`] first. Settings holds Sign out; the main
+/// page's card does not.
 #[component]
 #[allow(
     clippy::needless_pass_by_value,
     reason = "a component's props are owned; the body reads them from there"
 )]
-pub fn AccountsCard<F, Fut>(
+pub fn AccountsCard(
     hosts: Vec<AccountHost>,
     /// With the host to sign in to.
     on_sign_in: Callback<String>,
     /// `(host, role)` when the reader picks another role. Not on the first
     /// read: only a choice calls it.
     on_role: Callback<(String, String)>,
-    /// Erases the host's credentials. Its `Err` stays in the confirmation.
-    sign_out: F,
-) -> impl IntoView
-where
-    F: Fn(String) -> Fut + Clone + 'static,
-    Fut: Future<Output = Result<(), String>> + 'static,
-{
+    /// With the host whose *Sign out* was pressed: open the confirmation.
+    on_sign_out: Callback<String>,
+) -> impl IntoView {
     if hosts.is_empty() {
         return view! {
             <Card title="Accounts">
@@ -431,12 +432,9 @@ where
         }
         .into_any();
     }
-    // Built here, not inside the card's children: those must be `Send`, and
-    // the sign-out action need not be.
     let rows: Vec<AnyView> = hosts
         .into_iter()
         .map(|account| {
-            let confirming = RwSignal::new(false);
             let role = RwSignal::new(account.role);
             let role_host = account.host.clone();
             Effect::watch(
@@ -444,40 +442,73 @@ where
                 move |picked, _, _| on_role.run((role_host.clone(), picked.clone())),
                 false,
             );
-            let host = account.host.clone();
             let sign_in_host = account.host.clone();
-            let sign_out = sign_out.clone();
-            let dialog = (!account.signed_out).then(|| {
-                view! {
-                    <ConfirmDialog
-                        open=confirming
-                        title=format!("Sign out of {host}")
-                        consequence=sign_out_consequence(&host)
-                        confirm=Submit::new(
-                            "Sign out",
-                            move || sign_out(host.clone()),
-                        )
-                    />
-                }
-                .into_any()
-            });
+            let sign_out_host = account.host.clone();
             view! {
-                <div>
-                    <HostRow
-                        host=account.host
-                        role=role
-                        roles=account.roles
-                        signed_out=account.signed_out
-                        on_sign_in=move |_| on_sign_in.run(sign_in_host.clone())
-                        on_sign_out=Callback::new(move |()| confirming.set(true))
-                    />
-                    {dialog}
-                </div>
+                <HostRow
+                    host=account.host
+                    role=role
+                    roles=account.roles
+                    signed_out=account.signed_out
+                    provisional=account.provisional
+                    on_sign_in=move |_| on_sign_in.run(sign_in_host.clone())
+                    on_sign_out=Callback::new(move |()| on_sign_out.run(sign_out_host.clone()))
+                />
             }
             .into_any()
         })
         .collect();
     view! { <Card title="Accounts">{rows}</Card> }.into_any()
+}
+
+/// *Sign out of …*, for the host [`AccountsCard`] asked about.
+///
+/// Apart from the card, so the page can hold it above what it rebuilds: a
+/// re-read redraws the card, and an open confirmation must not close under
+/// the reader.
+#[component]
+pub fn SignOutDialog<F, Fut>(
+    /// The host asked about; `None` while nothing is. Closing the dialog sets
+    /// it back to `None`.
+    host: RwSignal<Option<String>>,
+    /// Erases the host's credentials. Its `Err` stays in the confirmation.
+    sign_out: F,
+    /// The page's lock: the dialog seals while another command runs.
+    #[prop(optional, into)]
+    running: MaybeProp<bool>,
+) -> impl IntoView
+where
+    F: Fn(String) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<(), String>> + 'static,
+{
+    let open = RwSignal::new(false);
+    Effect::new(move |_| {
+        if host.with(Option::is_some) {
+            open.set(true);
+        }
+    });
+    Effect::new(move |was: Option<bool>| {
+        let now = open.get();
+        if was == Some(true) && !now {
+            host.set(None);
+        }
+        now
+    });
+    move || {
+        host.get().map(|asked| {
+            let sign_out = sign_out.clone();
+            let target = asked.clone();
+            view! {
+                <ConfirmDialog
+                    open=open
+                    title=format!("Sign out of {asked}")
+                    consequence=sign_out_consequence(&asked)
+                    confirm=Submit::new("Sign out", move || sign_out(target.clone()))
+                    running=running
+                />
+            }
+        })
+    }
 }
 
 // ── App ──
@@ -613,7 +644,7 @@ pub fn StorageCard(
         }
         .into_any(),
         (_, None) => view! {
-            <Button on_click=move |_| on_measure.run(())>"Check size"</Button>
+            <Button disabled=freeing on_click=move |_| on_measure.run(())>"Check size"</Button>
         }
         .into_any(),
     };
@@ -1107,10 +1138,11 @@ mod tests {
                         role: "analyst".to_string(),
                         roles: vec!["analyst".to_string(), "admin".to_string()],
                         signed_out: false,
+                        provisional: false,
                     }]
                     on_sign_in=Callback::new(|_: String| ())
                     on_role=Callback::new(move |pick| picked.update(|all| all.push(pick)))
-                    sign_out=|_: String| async { Ok(()) }
+                    on_sign_out=Callback::new(|_: String| ())
                 />
             }
         });
@@ -1168,6 +1200,34 @@ mod tests {
             .text_content()
             .unwrap_or_default();
         assert!(error.contains("Not valid JSON"), "{error}");
+    }
+
+    /// A click on the open editor's label lands in the editor. Here, with no
+    /// editor bundle, that is the textarea the label names; in the app the
+    /// label hands focus to the editor that hides it.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn a_click_on_the_metadata_label_focuses_the_editor() {
+        let el = crate::test_support::mount(|| {
+            view! {
+                <PublishingCard
+                    template=RwSignal::new(String::new())
+                    workflow=RwSignal::new(String::new())
+                    metadata=RwSignal::new("{}".to_string())
+                    dirty=false
+                    on_save=Callback::new(|()| ())
+                    editing=RwSignal::new(true)
+                />
+            }
+        });
+        leptos::task::tick().await;
+        crate::test_support::element_saying(&el, "Default metadata").click();
+        let focused = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .active_element()
+            .expect("something has focus");
+        assert_eq!(focused.tag_name(), "TEXTAREA", "{}", el.inner_html());
     }
 
     /// v2 vocabulary: no commit, push, pull or remote in the page's words.

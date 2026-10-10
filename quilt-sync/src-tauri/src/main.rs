@@ -260,6 +260,7 @@ fn main() {
             commands::update_publish_settings,
             commands::update_autosync_settings,
             commands::set_autosync_direction,
+            commands::patch_autosync_settings,
             commands::get_autosync_snapshot,
             commands::get_autopull_activity,
             commands::get_toasts,

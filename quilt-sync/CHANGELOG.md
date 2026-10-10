@@ -21,10 +21,12 @@
 
 ## [v0.22.10-dev]
 
-### Changed
+### Added
 
-- Under the hood, the app can measure its local storage, total and what Free up space would free, for the coming settings page (<https://github.com/quiltdata/quilt-rs/pull/1099>)
-- Under the hood, a crash report can carry a message from the user, ready for the new *Report a problem* dialog (<https://github.com/quiltdata/quilt-rs/pull/1100>)
+- **New design preview**: a redesigned Settings page. Settings save as you change them, times are in minutes, **Check size** shows how much space the app uses and how much Free up space would free, and **Report a problem** sends what you write with your logs. Sign out of a catalog from its Accounts card
+  - <https://github.com/quiltdata/quilt-rs/pull/1099>
+  - <https://github.com/quiltdata/quilt-rs/pull/1100>
+  - <https://github.com/quiltdata/quilt-rs/pull/1106>
 
 ### quilt-rs
 

@@ -14,7 +14,7 @@
 //! About 1972–2082. The first screen shows the header and Syncing; the page
 //! scrolls under the appbar, with no sideways scroll.
 //!
-//! # Left for the port
+//! # Left open
 //!
 //! - The metadata editor repairs JSON it can (a missing `}`) and says so in
 //!   its own green bar, above the page's *Not valid JSON* error. The two
@@ -30,7 +30,7 @@ use crate::kit::PageLayout;
 use crate::pages::settings_v2::{
     AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, HelpCard, PublishingCard,
     ReportBody, ReportDialog, ReportFooter, ReportState, Saved, SettingsColumn, SettingsHeader,
-    StorageCard, StorageSize, SyncingCard, minutes_shown, sign_out_consequence,
+    SignOutDialog, StorageCard, StorageSize, SyncingCard, minutes_shown, sign_out_consequence,
 };
 use quilt_sync_ui::commands::LogEnv;
 
@@ -150,17 +150,21 @@ fn host(host: &str, role: &str, roles: &[&str], signed_out: bool) -> AccountHost
         role: role.to_string(),
         roles: roles.iter().map(ToString::to_string).collect(),
         signed_out,
+        provisional: false,
     }
 }
 
+/// The card, with the real confirmation behind its Sign out.
 fn accounts(hosts: Vec<AccountHost>) -> AnyView {
+    let asked = RwSignal::new(None::<String>);
     view! {
         <AccountsCard
             hosts=hosts
             on_sign_in=Callback::new(|_: String| ())
             on_role=Callback::new(|_: (String, String)| ())
-            sign_out=|_: String| async { Ok(()) }
+            on_sign_out=Callback::new(move |host| asked.set(Some(host)))
         />
+        <SignOutDialog host=asked sign_out=|_: String| async { Ok(()) } />
     }
     .into_any()
 }
@@ -264,7 +268,7 @@ fn whole_page() -> AnyView {
 
 const NOTE: &str = "The settings page v2: one column of cards, most used first — Syncing, \
     Publishing, Accounts, App, Storage, Experimental, Help, About. Toggles, selects and minute fields save \
-    as they change and say Saved; Publishing alone has Save. Not routed yet.";
+    as they change and say Saved; Publishing alone has Save. Routed at /settings under New design preview.";
 
 #[component]
 #[allow(clippy::too_many_lines, reason = "one cell per state, read as a list")]

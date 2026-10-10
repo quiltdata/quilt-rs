@@ -259,7 +259,7 @@ pub struct LoginErrorData {
     pub login_host: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Default, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishSettingsData {
     pub message_template: String,
@@ -303,7 +303,7 @@ impl Default for FsWatcherSettingsData {
 
 /// Opt-ins for behaviour that is not finished being designed. Everything here
 /// is off unless the user went looking for it.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentalSettingsData {
     pub entire_package_sync: bool,
@@ -322,7 +322,7 @@ pub enum LogEnv {
     Ignored(String),
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
     pub version: String,
@@ -342,7 +342,7 @@ pub struct SettingsData {
     pub experimental: ExperimentalSettingsData,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 pub struct ChangelogEntry {
     pub version: String,
     pub date: String,
@@ -1319,6 +1319,27 @@ pub async fn update_autosync_settings(settings: AutosyncSettingsData) -> Result<
     tauri::invoke("update_autosync_settings", &Args { settings }).await
 }
 
+/// Some of autosync's settings; every `None` stays as stored. The pull
+/// interval is the focused one only.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutosyncPatch {
+    pub pull_enabled: Option<bool>,
+    pub push_enabled: Option<bool>,
+    pub pull_interval_secs: Option<u64>,
+    pub idle_timeout_secs: Option<u64>,
+    pub close_to_tray: Option<bool>,
+}
+
+/// Change the autosync settings `patch` names and leave the rest as stored.
+pub async fn patch_autosync_settings(patch: AutosyncPatch) -> Result<(), String> {
+    #[derive(Serialize)]
+    struct Args {
+        patch: AutosyncPatch,
+    }
+    tauri::invoke("patch_autosync_settings", &Args { patch }).await
+}
+
 /// Flip one direction of autosync. `None` leaves a direction alone — the v2 main
 /// page knows two booleans, and `update_autosync_settings` takes all five settings
 /// fields, so writing through that one would mean fetching a payload this page has
@@ -1855,9 +1876,16 @@ pub async fn open_data_dir() -> Result<String, String> {
     tauri::invoke_unit("open_data_dir").await
 }
 
-/// Delete what local storage holds for nothing; `Ok` is the sentence saying
-/// what was freed.
-pub async fn run_gc() -> Result<String, String> {
+/// What Free up space freed: the sentence, and its bytes.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreedSpace {
+    pub message: String,
+    pub freed_bytes: u64,
+}
+
+/// Delete what local storage holds for nothing, and say what was freed.
+pub async fn run_gc() -> Result<FreedSpace, String> {
     tauri::invoke_unit("run_gc").await
 }
 
