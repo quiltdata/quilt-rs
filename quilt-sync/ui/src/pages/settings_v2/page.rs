@@ -36,6 +36,7 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use leptos::prelude::*;
@@ -417,10 +418,16 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
 /// A toggle: its value, what it last wrote, its row, and its write.
 type Toggle = (RwSignal<bool>, StoredValue<bool>, Saved, fn(bool) -> Write);
 
+/// Saves waiting their turn. Shared with the task that runs them, so a save
+/// queued before the reader leaves still runs after the page is gone.
+type Queue = Arc<Mutex<VecDeque<(Option<Saved>, Write)>>>;
+
 /// The ordered queue every save goes on.
 #[derive(Clone, Copy)]
 struct Saves {
-    queue: StoredValue<VecDeque<(Option<Saved>, Write)>>,
+    queue: StoredValue<Queue>,
+    /// The preview's off was saved: time to leave for `/`.
+    leave: RwSignal<bool>,
     /// A save is out, or waiting.
     writing: RwSignal<bool>,
     /// The row that just saved, for its *Saved*.
@@ -441,7 +448,8 @@ const HERE: &str = "settings";
 impl Saves {
     fn new() -> Self {
         Self {
-            queue: StoredValue::new(VecDeque::new()),
+            queue: StoredValue::new(Queue::default()),
+            leave: RwSignal::new(false),
             writing: RwSignal::new(false),
             saved: RwSignal::new(None),
             saved_timer: StoredValue::new(None),
@@ -451,20 +459,27 @@ impl Saves {
 
     /// Queue `write`, and run the queue unless it is running.
     fn push(self, row: Option<Saved>, write: Write, io: SettingsIo, page: PageHandle) {
-        self.queue.update_value(|q| q.push_back((row, write)));
+        let queue = self.queue.get_value();
+        queue.lock().expect("one thread").push_back((row, write));
         if self.writing.get_untracked() {
             return;
         }
         self.writing.set(true);
         leptos::task::spawn_local(async move {
-            while let Some((row, write)) =
-                self.queue.try_update_value(VecDeque::pop_front).flatten()
-            {
+            // The page's signals below are `try_`: it can be gone by now, and
+            // the saves still run.
+            loop {
+                let next = queue.lock().expect("one thread").pop_front();
+                let Some((row, write)) = next else { break };
+                let leaving = write == Write::DesignPreview(false);
                 let result = (io.write)(write).await;
                 match result {
                     Ok(()) => {
                         if let Some(row) = row {
                             self.say_saved(row);
+                        }
+                        if leaving {
+                            self.leave.try_set(true);
                         }
                     }
                     Err(detail) => {
@@ -562,7 +577,6 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
     // ── Saving as each control changes ──
     let save = move |row: Saved, write: Write| saves.push(Some(row), write, io, page);
     let navigate = use_navigate();
-    let goto_home = StoredValue::new(false);
     let toggles: [Toggle; 5] = [
         (fields.pull, written.pull, Saved::Pull, |on| {
             Write::Autosync(AutosyncPatch {
@@ -597,11 +611,6 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 return;
             }
             was.set_value(now);
-            if row == Saved::DesignPreview {
-                // `/` asks again which design is on; this page would stay
-                // the one it is until the reader moved.
-                goto_home.set_value(true);
-            }
             save(row, write(now));
         });
     }
@@ -613,14 +622,12 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         written.log_level.set_value(label.clone());
         save(Saved::LogLevel, Write::LogLevel(label.to_lowercase()));
     });
-    // Off this page once the preview's save has run, unless a save failed:
-    // then the band says so here.
+    // Off this page once the preview's off is saved and the queue has run:
+    // `/` asks again which design is on, and this page would stay the one it
+    // is until the reader moved. A failed save stays here, in the band.
     Effect::new(move |_| {
-        if saves.writing.get() || !goto_home.get_value() {
-            return;
-        }
-        goto_home.set_value(false);
-        if outcome.with_untracked(Option::is_none) {
+        if saves.leave.get() && !saves.writing.get() {
+            saves.leave.set(false);
             navigate("/", NavigateOptions::default());
         }
     });
@@ -785,6 +792,10 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
     let freed = RwSignal::new(None::<String>);
     let measures = StoredValue::new(0_u64);
     let on_measure = Callback::new(move |()| {
+        // A measure beside a sweep would count what it is deleting.
+        if freeing.get_untracked() {
+            return;
+        }
         measures.update_value(|n| *n += 1);
         let this = measures.get_value();
         size.set(StorageSize::Measuring);
@@ -1114,6 +1125,8 @@ mod tests {
         static WRITE_DELAY: Cell<i32> = const { Cell::new(0) };
         static WRITE_FAILS: Cell<bool> = const { Cell::new(false) };
         static ACCOUNT_READS: Cell<usize> = const { Cell::new(0) };
+        static FREE_DELAY: Cell<i32> = const { Cell::new(0) };
+        static MEASURES: Cell<usize> = const { Cell::new(0) };
     }
 
     fn settings() -> SettingsData {
@@ -1173,6 +1186,7 @@ mod tests {
     }
 
     fn stub_measure() -> Answer<commands::StorageSize> {
+        MEASURES.with(|m| m.set(m.get() + 1));
         Box::pin(async {
             Ok(commands::StorageSize {
                 total_bytes: 3_200_000_000,
@@ -1182,7 +1196,11 @@ mod tests {
     }
 
     fn stub_free() -> Answer<FreedSpace> {
-        Box::pin(async {
+        let delay = FREE_DELAY.with(Cell::get);
+        Box::pin(async move {
+            if delay > 0 {
+                sleep_ms(delay).await;
+            }
             Ok(FreedSpace {
                 message: "Freed 1.1 GB: 3 objects".to_string(),
                 freed_bytes: 1_100_000_000,
@@ -1224,6 +1242,8 @@ mod tests {
         WRITE_DELAY.with(|d| d.set(0));
         WRITE_FAILS.with(|f| f.set(false));
         ACCOUNT_READS.with(|r| r.set(0));
+        FREE_DELAY.with(|d| d.set(0));
+        MEASURES.with(|m| m.set(0));
         let el = mount(|| {
             view! {
                 <leptos_router::components::Router>
@@ -1448,6 +1468,44 @@ mod tests {
             line()
         );
         assert!(line().contains("Freed 1.1 GB"), "{}", line());
+    }
+
+    /// Saves queued when the reader leaves still run, in order.
+    #[wasm_bindgen_test]
+    async fn saves_queued_when_the_reader_leaves_still_run() {
+        let el = page(vec![settings()]).await;
+        WRITE_DELAY.with(|d| d.set(40));
+        toggle(&el, WATCH).click();
+        sleep_ms(5).await;
+        toggle(&el, PULL).click();
+        sleep_ms(5).await;
+        unmount_earlier();
+        sleep_ms(150).await;
+        assert_eq!(
+            writes(),
+            vec![
+                Write::Watch(false),
+                Write::Autosync(AutosyncPatch {
+                    pull_enabled: Some(true),
+                    ..AutosyncPatch::default()
+                }),
+            ]
+        );
+    }
+
+    /// No measure runs beside a sweep: it would count what is being deleted.
+    #[wasm_bindgen_test]
+    async fn check_size_waits_for_free_up_space() {
+        let el = page(vec![settings()]).await;
+        FREE_DELAY.with(|d| d.set(60));
+        let storage = el.query_selector("[data-storage]").unwrap().unwrap();
+        button_saying(&storage, "Free up space").click();
+        sleep_ms(10).await;
+        let check = button_saying(&storage, "Check size");
+        assert!(check.disabled(), "Check size is off while freeing");
+        check.click();
+        sleep_ms(100).await;
+        assert_eq!(MEASURES.with(Cell::get), 0);
     }
 
     /// A save's own re-read does not ask the accounts again: each ask takes

@@ -644,7 +644,7 @@ pub fn StorageCard(
         }
         .into_any(),
         (_, None) => view! {
-            <Button on_click=move |_| on_measure.run(())>"Check size"</Button>
+            <Button disabled=freeing on_click=move |_| on_measure.run(())>"Check size"</Button>
         }
         .into_any(),
     };
