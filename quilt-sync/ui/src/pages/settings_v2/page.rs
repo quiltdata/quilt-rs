@@ -24,7 +24,8 @@
 //! # Writes
 //!
 //! A control's save goes on one queue and the queue runs in order, so two
-//! quick changes land as chosen. When it empties the page reads again, and
+//! quick changes land as chosen. The queue is the app's, not the visit's: a
+//! save queued before the reader leaves still runs, before the next visit's. When it empties the page reads again, and
 //! only that read, landed, seeds the controls: a read that went out before a
 //! write would put back the value the write replaced. A seeded value equal to
 //! what the control holds changes nothing.
@@ -36,7 +37,6 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use leptos::prelude::*;
@@ -418,17 +418,35 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
 /// A toggle: its value, what it last wrote, its row, and its write.
 type Toggle = (RwSignal<bool>, StoredValue<bool>, Saved, fn(bool) -> Write);
 
-/// Saves waiting their turn. Shared with the task that runs them, so a save
-/// queued before the reader leaves still runs after the page is gone.
-type Queue = Arc<Mutex<VecDeque<(Option<Saved>, Write)>>>;
+/// One save waiting its turn, with the page that asked for it.
+struct Queued {
+    from: Saves,
+    page: PageHandle,
+    io: SettingsIo,
+    row: Option<Saved>,
+    write: Write,
+}
 
-/// The ordered queue every save goes on.
+thread_local! {
+    /// Every settings save, from any visit, in the order it was made. The
+    /// app's, not a page's: a save queued before the reader leaves still runs,
+    /// and the next visit's saves run after it, so an old one never lands on
+    /// top of a newer choice.
+    static QUEUE: std::cell::RefCell<VecDeque<Queued>> =
+        const { std::cell::RefCell::new(VecDeque::new()) };
+    /// Whether a task is running the queue.
+    static DRAINING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tells one visit's [`Saves`] from another's.
+    static VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// One visit's side of the queue every save goes on.
 #[derive(Clone, Copy)]
 struct Saves {
-    queue: StoredValue<Queue>,
+    visit: u64,
     /// The preview's off was saved: time to leave for `/`.
     leave: RwSignal<bool>,
-    /// A save is out, or waiting.
+    /// A save of this visit's is out, or waiting.
     writing: RwSignal<bool>,
     /// The row that just saved, for its *Saved*.
     saved: RwSignal<Option<Saved>>,
@@ -448,7 +466,10 @@ const HERE: &str = "settings";
 impl Saves {
     fn new() -> Self {
         Self {
-            queue: StoredValue::new(Queue::default()),
+            visit: VISITS.with(|v| {
+                v.set(v.get() + 1);
+                v.get()
+            }),
             leave: RwSignal::new(false),
             writing: RwSignal::new(false),
             saved: RwSignal::new(None),
@@ -459,45 +480,50 @@ impl Saves {
 
     /// Queue `write`, and run the queue unless it is running.
     fn push(self, row: Option<Saved>, write: Write, io: SettingsIo, page: PageHandle) {
-        let queue = self.queue.get_value();
-        queue.lock().expect("one thread").push_back((row, write));
-        if self.writing.get_untracked() {
+        QUEUE.with(|q| {
+            q.borrow_mut().push_back(Queued {
+                from: self,
+                page,
+                io,
+                row,
+                write,
+            });
+        });
+        self.writing.set(true);
+        if DRAINING.with(|d| d.replace(true)) {
             return;
         }
-        self.writing.set(true);
-        leptos::task::spawn_local(async move {
-            // The page's signals below are `try_`: it can be gone by now, and
-            // the saves still run.
-            loop {
-                let next = queue.lock().expect("one thread").pop_front();
-                let Some((row, write)) = next else { break };
-                let leaving = write == Write::DesignPreview(false);
-                let result = (io.write)(write).await;
-                match result {
-                    Ok(()) => {
-                        if let Some(row) = row {
-                            self.say_saved(row);
-                        }
-                        if leaving {
-                            self.leave.try_set(true);
-                        }
-                    }
-                    Err(detail) => {
-                        page.outcome.try_set(Some(critical(
-                            HERE.into(),
-                            SAVE_FAILED,
-                            Some(detail),
-                        )));
-                    }
+        leptos::task::spawn_local(drain());
+    }
+
+    /// One of this visit's saves has run.
+    fn ran(self, page: PageHandle, row: Option<Saved>, leaving: bool, result: Result<(), String>) {
+        match result {
+            Ok(()) => {
+                if let Some(row) = row {
+                    self.say_saved(row);
+                }
+                if leaving {
+                    self.leave.try_set(true);
                 }
             }
-            // Read again, and let only that read seed the controls: mark it
-            // out before the queue says it is done.
-            page.in_flight.try_set(true);
+            Err(detail) => {
+                page.outcome
+                    .try_set(Some(critical(HERE.into(), SAVE_FAILED, Some(detail))));
+            }
+        }
+    }
+
+    /// This visit's last save has run: read again, and let only that read
+    /// seed the controls, so mark it out before saying the saves are done.
+    fn done(self, page: PageHandle) {
+        // `try_set` hands the value back when the page is gone, and a page
+        // that is gone has nothing to read.
+        if page.in_flight.try_set(true).is_none() {
             self.quiet.try_set_value(true);
             page.reload.notify();
-            self.writing.try_set(false);
-        });
+        }
+        self.writing.try_set(false);
     }
 
     fn say_saved(self, row: Saved) {
@@ -519,6 +545,27 @@ impl Saves {
             self.saved_timer.try_set_value(Some(handle));
         }
     }
+}
+
+/// Run the queue until it is empty. A page's signals are reached with
+/// `try_`: the page can be gone, and its saves still run.
+async fn drain() {
+    while let Some(next) = QUEUE.with(|q| q.borrow_mut().pop_front()) {
+        let Queued {
+            from,
+            page,
+            io,
+            row,
+            write,
+        } = next;
+        let leaving = write == Write::DesignPreview(false);
+        let result = (io.write)(write).await;
+        from.ran(page, row, leaving, result);
+        if !QUEUE.with(|q| q.borrow().iter().any(|q| q.from.visit == from.visit)) {
+            from.done(page);
+        }
+    }
+    DRAINING.with(|d| d.set(false));
 }
 
 /// The accounts, read apart from the settings: asking a role takes the host's
@@ -1257,6 +1304,22 @@ mod tests {
         el
     }
 
+    /// The page again, as a second visit, with the stubs as they are.
+    async fn remount() -> web_sys::Element {
+        unmount_earlier();
+        let el = mount(|| {
+            view! {
+                <leptos_router::components::Router>
+                    <Suspense fallback=|| view! { <p data-fallback>"loading"</p> }>
+                        <SettingsScreen io=STUBS />
+                    </Suspense>
+                </leptos_router::components::Router>
+            }
+        });
+        sleep_ms(50).await;
+        el
+    }
+
     fn writes() -> Vec<Write> {
         WRITES.with(|w| w.borrow().clone())
     }
@@ -1491,6 +1554,30 @@ mod tests {
                 }),
             ]
         );
+    }
+
+    /// A new visit's save waits for the saves the last visit left queued,
+    /// so an old one never lands on top of the newer choice.
+    #[wasm_bindgen_test]
+    async fn a_new_visit_saves_after_the_last_one() {
+        let el = page(vec![settings()]).await;
+        WRITE_DELAY.with(|d| d.set(40));
+        toggle(&el, PULL).click();
+        sleep_ms(5).await;
+        toggle(&el, PULL).click();
+        sleep_ms(5).await;
+
+        let again = remount().await;
+        toggle(&again, WATCH).click();
+        sleep_ms(200).await;
+
+        let pull = |on| {
+            Write::Autosync(AutosyncPatch {
+                pull_enabled: Some(on),
+                ..AutosyncPatch::default()
+            })
+        };
+        assert_eq!(writes(), vec![pull(true), pull(false), Write::Watch(false)]);
     }
 
     /// No measure runs beside a sweep: it would count what is being deleted.
