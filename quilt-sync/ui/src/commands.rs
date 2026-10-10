@@ -1879,13 +1879,19 @@ pub async fn collect_diagnostic_logs() -> Result<String, String> {
     tauri::invoke_unit("collect_diagnostic_logs").await
 }
 
-pub async fn send_crash_report(zip_path: String) -> Result<String, String> {
+/// Send the diagnostic zip to Quilt; `message` is what the user wrote about the
+/// problem, if anything.
+pub async fn send_crash_report(
+    zip_path: String,
+    message: Option<String>,
+) -> Result<String, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         zip_path: String,
+        message: Option<String>,
     }
-    tauri::invoke("send_crash_report", &Args { zip_path }).await
+    tauri::invoke("send_crash_report", &Args { zip_path, message }).await
 }
 
 #[cfg(test)]

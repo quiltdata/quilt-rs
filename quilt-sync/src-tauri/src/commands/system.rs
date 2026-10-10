@@ -287,6 +287,7 @@ pub async fn collect_diagnostic_logs(
 #[tauri::command]
 pub async fn send_crash_report(
     zip_path: String,
+    message: Option<String>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
     let zip_path = PathBuf::from(zip_path);
@@ -298,11 +299,12 @@ pub async fn send_crash_report(
     let msg_ok = "Successfully sent crash report".to_string();
     let msg_err = |err: &Error| format!("Failed to send crash report: {err}");
 
-    let result =
-        tokio::task::spawn_blocking(move || diagnostics::send_crash_report(zip_path.as_path()))
-            .await
-            .map_err(|e| Error::General(e.to_string()))
-            .and_then(|r| r);
+    let result = tokio::task::spawn_blocking(move || {
+        diagnostics::send_crash_report(zip_path.as_path(), message.as_deref())
+    })
+    .await
+    .map_err(|e| Error::General(e.to_string()))
+    .and_then(|r| r);
 
     Notify::new(msg_init)
         .on_success(&tracing, MixpanelEvent::CrashReportSent)

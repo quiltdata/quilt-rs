@@ -61,6 +61,7 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
 quilt-uri = { path = "../../quilt-uri", features = ["test-support"] }
+sentry = { version = "0.49.3", features = ["test"] }
 serde_yaml.workspace = true
 serial_test = "4"
 tokio-test.workspace = true
