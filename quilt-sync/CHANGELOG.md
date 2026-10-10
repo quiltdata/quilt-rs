@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.10-dev]
+
+### Changed
+
+- Under the hood, the app can measure its local storage, total and what Free up space would free, for the coming settings page (<https://github.com/quiltdata/quilt-rs/pull/1099>)
+
+### quilt-rs
+
+- Updated [from v0.43.0 to v0.43.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.43.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.22.9] - 2026-10-09
 
 ### Added

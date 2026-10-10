@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.43.1-dev]
+
+### Added
+
+- `LocalDomain::measure_storage` says how many bytes `.quilt/` holds and what `gc` would free now, as a `StorageSize`. Its freeable part, also on its own as `flow::gc_estimate`, is a dry run of `gc` by the same rules that deletes nothing and takes no package locks, so a busy package never stops it (<https://github.com/quiltdata/quilt-rs/pull/1099>)
+
 ## [v0.43.0] - 2026-10-09
 
 ### Added

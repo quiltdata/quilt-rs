@@ -221,6 +221,34 @@ pub async fn run_gc(m: tauri::State<'_, model::Model>) -> Result<String, String>
     run_gc_command(&*m).await
 }
 
+/// How much local storage holds, and how much Free up space would free.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageSize {
+    pub total_bytes: u64,
+    /// An estimate: Free up space's own report is the exact answer.
+    pub freeable_bytes: u64,
+}
+
+async fn measure_storage_command(m: &impl QuiltModel) -> Result<StorageSize, String> {
+    debug!("Measuring local storage");
+    let size = m
+        .measure_storage()
+        .await
+        .map_err(|err| format!("Failed to measure local storage: {}", err.user_facing()))?;
+    Ok(StorageSize {
+        total_bytes: size.total_bytes,
+        freeable_bytes: size.freeable.bytes,
+    })
+}
+
+/// Measure local storage without deleting anything or taking package locks;
+/// run only when the user asks.
+#[tauri::command]
+pub async fn measure_storage(m: tauri::State<'_, model::Model>) -> Result<StorageSize, String> {
+    measure_storage_command(&*m).await
+}
+
 async fn collect_diagnostic_logs_command(
     app_handle: &tauri::AppHandle,
     m: &model::Model,
@@ -656,6 +684,47 @@ mod tests {
                  try again once it finishes"
                     .to_string()
             )
+        );
+    }
+
+    /// Measuring answers with the total and the estimate's bytes.
+    #[tokio::test]
+    async fn measuring_storage_answers_with_the_total_and_what_can_be_freed() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_measure_storage().returning(|| {
+            Ok(quilt::flow::StorageSize {
+                total_bytes: 3_200_000,
+                freeable: quilt::flow::GcReport {
+                    objects: 6,
+                    cached_manifests: 2,
+                    staging: 0,
+                    bytes: 1_100_000,
+                },
+            })
+        });
+
+        assert_eq!(
+            measure_storage_command(&m).await,
+            Ok(StorageSize {
+                total_bytes: 3_200_000,
+                freeable_bytes: 1_100_000,
+            })
+        );
+    }
+
+    /// A failed walk says what failed, in the user's words.
+    #[tokio::test]
+    async fn measuring_storage_that_fails_says_so() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_measure_storage()
+            .returning(|| Err(quilt::Error::Io(std::io::Error::other("disk gone")).into()));
+
+        let Err(message) = measure_storage_command(&m).await else {
+            panic!("a failed walk is an error");
+        };
+        assert!(
+            message.starts_with("Failed to measure local storage: "),
+            "{message}"
         );
     }
 
