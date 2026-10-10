@@ -104,25 +104,50 @@ fn merge_autosync_settings_data(
     }
 }
 
-/// One direction's `enabled` flag, changed; everything else preserved.
+/// Some of autosync's settings, changed; every `None` stays as stored.
 ///
-/// `None` leaves a direction alone. The main page knows two booleans and the
-/// settings file has five fields, so a write from there must merge rather than
-/// replace — sending defaults for the intervals would reset a user's quiet window
-/// from a card that never displayed it.
-fn with_direction(
-    current: &AutosyncSettings,
-    pull: Option<bool>,
-    push: Option<bool>,
-) -> AutosyncSettings {
-    let mut next = current.clone();
-    if let Some(enabled) = pull {
-        next.pull.enabled = enabled;
+/// A page that saves one control at a time writes through this, so a write
+/// never resets a field it does not own: the main page knows two booleans, and
+/// a Settings row knows one value. `pull_interval_secs` is the focused
+/// interval only; the unfocused and closed ones stay as stored, where
+/// `update_autosync_settings` ties unfocused to focused.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AutosyncPatch {
+    pub pull_enabled: Option<bool>,
+    pub push_enabled: Option<bool>,
+    pub pull_interval_secs: Option<u64>,
+    pub idle_timeout_secs: Option<u64>,
+    pub close_to_tray: Option<bool>,
+}
+
+impl AutosyncPatch {
+    /// `current` with this patch applied; an interval of 0 is refused.
+    fn apply(&self, current: &AutosyncSettings) -> Result<AutosyncSettings, String> {
+        if self.pull_interval_secs == Some(0) {
+            return Err("pull_interval_secs must be > 0".to_string());
+        }
+        if self.idle_timeout_secs == Some(0) {
+            return Err("idle_timeout_secs must be > 0".to_string());
+        }
+        let mut next = current.clone();
+        if let Some(enabled) = self.pull_enabled {
+            next.pull.enabled = enabled;
+        }
+        if let Some(enabled) = self.push_enabled {
+            next.push.enabled = enabled;
+        }
+        if let Some(secs) = self.pull_interval_secs {
+            next.pull.focused_secs = secs;
+        }
+        if let Some(secs) = self.idle_timeout_secs {
+            next.push.idle_timeout_secs = secs;
+        }
+        if let Some(on) = self.close_to_tray {
+            next.close_to_tray = on;
+        }
+        Ok(next)
     }
-    if let Some(enabled) = push {
-        next.push.enabled = enabled;
-    }
-    next
 }
 
 /// Whether this transition is the "off -> on" edge that drops the paused set.
@@ -326,6 +351,32 @@ pub async fn set_autosync_direction(
     pull: Option<bool>,
     push: Option<bool>,
 ) -> Result<(), String> {
+    let patch = AutosyncPatch {
+        pull_enabled: pull,
+        push_enabled: push,
+        ..AutosyncPatch::default()
+    };
+    write_autosync_patch(&app_handle, &autosync_settings, &watcher, &patch).await
+}
+
+/// Change some of autosync's settings and leave the rest as stored: the v2
+/// settings page saves each control as it changes.
+#[tauri::command]
+pub async fn patch_autosync_settings(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
+    watcher: tauri::State<'_, Watcher>,
+    patch: AutosyncPatch,
+) -> Result<(), String> {
+    write_autosync_patch(&app_handle, &autosync_settings, &watcher, &patch).await
+}
+
+async fn write_autosync_patch(
+    app_handle: &sync::Mutex<tauri::AppHandle>,
+    autosync_settings: &SharedAutosyncSettings,
+    watcher: &Watcher,
+    patch: &AutosyncPatch,
+) -> Result<(), String> {
     let app_handle = app_handle.lock().await;
     let data_dir = app_handle
         .path()
@@ -334,7 +385,7 @@ pub async fn set_autosync_direction(
 
     let clear = {
         let mut current = autosync_settings.write().await;
-        let next = with_direction(&current, pull, push);
+        let next = patch.apply(&current)?;
         next.save(&data_dir).await.map_err(|e| e.to_string())?;
         let clear = clears_pauses(&current, &next);
         *current = next;
@@ -581,7 +632,12 @@ mod tests {
             },
             close_to_tray: true,
         };
-        let next = with_direction(&current, Some(true), None);
+        let next = AutosyncPatch {
+            pull_enabled: Some(true),
+            ..AutosyncPatch::default()
+        }
+        .apply(&current)
+        .unwrap();
         assert!(next.pull.enabled);
         assert!(next.push.enabled, "the untouched direction is untouched");
         assert_eq!(next.pull.focused_secs, 5);
@@ -589,6 +645,78 @@ mod tests {
         assert_eq!(next.pull.closed_secs, 300);
         assert_eq!(next.push.idle_timeout_secs, 45);
         assert!(next.close_to_tray);
+    }
+
+    /// The settings page's minute field writes the focused interval only:
+    /// the unfocused and closed ones are not its to change.
+    #[test]
+    fn a_pull_interval_patch_leaves_unfocused_and_closed_alone() {
+        let current = AutosyncSettings {
+            pull: PullSettings {
+                enabled: true,
+                focused_secs: 30,
+                unfocused_secs: 120,
+                closed_secs: 600,
+            },
+            push: PushSettings {
+                enabled: false,
+                idle_timeout_secs: 300,
+            },
+            close_to_tray: false,
+        };
+        let next = AutosyncPatch {
+            pull_interval_secs: Some(180),
+            ..AutosyncPatch::default()
+        }
+        .apply(&current)
+        .unwrap();
+        assert_eq!(next.pull.focused_secs, 180);
+        assert_eq!(next.pull.unfocused_secs, 120);
+        assert_eq!(next.pull.closed_secs, 600);
+        assert_eq!(
+            next,
+            AutosyncSettings {
+                pull: PullSettings {
+                    focused_secs: 180,
+                    ..current.pull.clone()
+                },
+                ..current
+            },
+            "and nothing else moves"
+        );
+    }
+
+    #[test]
+    fn a_patch_writes_each_field_it_names() {
+        let next = AutosyncPatch {
+            pull_enabled: Some(true),
+            push_enabled: Some(true),
+            pull_interval_secs: Some(60),
+            idle_timeout_secs: Some(120),
+            close_to_tray: Some(true),
+        }
+        .apply(&AutosyncSettings::default())
+        .unwrap();
+        assert!(next.pull.enabled && next.push.enabled && next.close_to_tray);
+        assert_eq!(next.pull.focused_secs, 60);
+        assert_eq!(next.push.idle_timeout_secs, 120);
+    }
+
+    #[test]
+    fn a_patch_refuses_a_zero_interval() {
+        let current = AutosyncSettings::default();
+        for patch in [
+            AutosyncPatch {
+                pull_interval_secs: Some(0),
+                ..AutosyncPatch::default()
+            },
+            AutosyncPatch {
+                idle_timeout_secs: Some(0),
+                ..AutosyncPatch::default()
+            },
+        ] {
+            assert!(patch.apply(&current).is_err(), "{patch:?}");
+        }
     }
 
     #[test]

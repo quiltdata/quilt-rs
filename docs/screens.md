@@ -674,7 +674,8 @@ nothing is being written, which is the common case.
 
 ### Settings
 
-Application settings and diagnostics.
+Application settings and diagnostics. This is the page when Settings →
+Experimental → **New design preview** is off.
 
 ```text
 +--[appbar]----------------------------------------------+
@@ -733,6 +734,72 @@ Application settings and diagnostics.
 |                                                         |
 +---------------------------------------------------------+
 ```
+
+### Settings (v2)
+
+With *New design preview* on, `/settings` renders this page instead. One
+column of cards, most used first. No Refresh or Settings in the appbar.
+
+```text
++--[appbar]----------------------------------------------+
+| [logo]                                                  |
++---------------------------------------------------------+
+| < Packages                                              |
+| Settings                                                |
+|                                                         |
+| Syncing                                                 |
+|  [x] Get new revisions                          Saved   |
+|      Every [1] minute                                   |
+|  [ ] Publish your changes                               |
+|      After [5] minutes of inactivity                    |
+|  [x] Watch folders for changes                          |
+| Publishing                                              |
+|  Message template  [ Generated from the changes     ]   |
+|  Default workflow  [ Each bucket's default          ]   |
+|  Default metadata                              [Add]    |
+|                                               [Save]    |
+| Accounts                                                |
+|  open.quiltdata.com   Role [analyst v]      [Sign out]  |
+|  custom.registry.io   Signed out             [Sign in]  |
+| App                                                     |
+|  [ ] Keep running in the tray when the window is closed |
+| Storage                                                 |
+|  Where packages live  /home/user/QuiltSync      [Open]  |
+|  App storage          [Check size]     [Free up space]  |
+| Experimental                                            |
+|  [x] New design preview                                 |
+| Help                                                    |
+|  Report a problem              [Report a problem...]    |
+|  Log level  [Default v]                                 |
+|  Logs folder  ...  [Open]     Data folder  ...  [Open]  |
+| About                                                   |
+|  Version  0.22.10                    [Release notes]    |
++---------------------------------------------------------+
+```
+
+- Toggles, the log level and the minute fields save as they change, and
+  the row says *Saved* for a moment. Saves run in the order they were made;
+  then the page reads again. A failed save says so in the band under the
+  appbar, and the control goes back to what is stored.
+- A minute field saves on Enter or leaving it, only a whole number of at
+  least 1. The pull minutes are the interval while the window is focused;
+  the unfocused and closed intervals stay as stored. A stored time that is
+  not whole minutes shows rounded and is written only when changed.
+- Publishing is the one card with **Save**, enabled while the fields differ
+  from what is stored and the metadata is valid JSON. The metadata folds to
+  a preview with `Edit` (`Add` when empty); clicking its label while open
+  puts the cursor in the editor.
+- Accounts are read on their own, so asking each host's role does not hold
+  the page. **Sign in** returns here; **Sign out** asks first. A role pick
+  switches at once.
+- *Check size* measures `.quilt/` and what Free up space would free; the
+  answer stays until you leave the page. **Free up space** works without a
+  measure, and updates a measured line from what it freed.
+- **Report a problem…** opens a dialog: an optional *What went wrong?*, the
+  list of what is sent, **Send to Quilt** (collects the logs, sends them
+  with your text) and **Email instead** (collects the logs, opens your mail
+  app with the text and the zip's path).
+- Turning *New design preview* off saves, then goes to `/`.
 
 ---
 

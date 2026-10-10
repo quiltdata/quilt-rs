@@ -21,6 +21,9 @@ extern "C" {
         initial_value: &str,
     );
 
+    #[wasm_bindgen(js_namespace = ["window"], js_name = "__focusJsonEditor")]
+    fn focus_json_editor_js(target: &web_sys::HtmlElement) -> bool;
+
     #[wasm_bindgen(js_namespace = ["window"], js_name = "__destroyJsonEditor")]
     fn destroy_json_editor_js(target: &web_sys::HtmlElement);
 }
@@ -48,6 +51,15 @@ pub(crate) fn get_json_editor_value(
         .get_untracked()
         .map(|ta| ta.value())
         .unwrap_or_default()
+}
+
+/// Put the cursor in the editor, if it mounted. `false` when it did not, and
+/// the textarea is the field the reader sees.
+pub(crate) fn focus_json_editor(editor_ref: NodeRef<html::Div>) -> bool {
+    editor_ref
+        .get_untracked()
+        .filter(|_| bundle_loaded())
+        .is_some_and(|editor| focus_json_editor_js(&editor))
 }
 
 #[component]

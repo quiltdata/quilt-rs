@@ -168,6 +168,10 @@ pub fn V2Page<T, B, D, F>(
     body: D,
     /// Bands the answer calls for, under the outcome band.
     bands: B,
+    /// The appbar's controls; *Refresh* and Settings by default. Settings
+    /// itself has none.
+    #[prop(optional)]
+    actions: Option<AnyView>,
 ) -> impl IntoView
 where
     T: Clone + PartialEq + Send + Sync + 'static,
@@ -197,7 +201,7 @@ where
                 }}
             }
                 .into_any()
-            actions=appbar_actions(move || reload.notify(), in_flight.into())
+            actions=actions.unwrap_or_else(|| appbar_actions(move || reload.notify(), in_flight.into()))
         >
             {move || match answer.get() {
                 None => skeleton(),

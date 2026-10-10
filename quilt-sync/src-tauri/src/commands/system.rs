@@ -204,20 +204,38 @@ pub async fn open_data_dir(
         .map(open_data_dir_command(&app_handle), msg_ok, msg_err)
 }
 
-async fn run_gc_command(m: &impl QuiltModel) -> Result<String, String> {
+/// What Free up space freed: the report's sentence, and its bytes for a
+/// page that already shows a measured size.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreedSpace {
+    pub message: String,
+    pub freed_bytes: u64,
+}
+
+async fn run_gc_command(m: &impl QuiltModel) -> Result<FreedSpace, String> {
     // Made before the sweep so its line logs first, as everywhere else; the
     // success message is the report's own sentence, known only once it ends.
     let notify = Notify::new("Freeing up space".to_string());
     let result = m.gc().await;
+    let freed_bytes = result
+        .as_ref()
+        .map(|report| report.bytes)
+        .unwrap_or_default();
     let msg_ok = result.as_ref().map(ToString::to_string).unwrap_or_default();
     let msg_err = |err: &Error| format!("Failed to free up space: {}", err.user_facing());
 
-    notify.map(result, msg_ok, msg_err)
+    notify
+        .map(result, msg_ok, msg_err)
+        .map(|message| FreedSpace {
+            message,
+            freed_bytes,
+        })
 }
 
 /// Delete what the domain holds for nothing, answering with what was freed.
 #[tauri::command]
-pub async fn run_gc(m: tauri::State<'_, model::Model>) -> Result<String, String> {
+pub async fn run_gc(m: tauri::State<'_, model::Model>) -> Result<FreedSpace, String> {
     run_gc_command(&*m).await
 }
 
@@ -653,7 +671,7 @@ mod tests {
         );
     }
 
-    /// The toast says what the sweep freed, in the report's own words.
+    /// The answer says what the sweep freed, in the report's own words and bytes.
     #[tokio::test]
     async fn freeing_up_space_answers_with_what_it_freed() {
         let mut m = model::MockQuiltModel::new();
@@ -668,7 +686,10 @@ mod tests {
 
         assert_eq!(
             run_gc_command(&m).await,
-            Ok("Freed 630.2 kB: 6 objects, 2 cached manifests".to_string())
+            Ok(FreedSpace {
+                message: "Freed 630.2 kB: 6 objects, 2 cached manifests".to_string(),
+                freed_bytes: 630_200,
+            })
         );
     }
 
