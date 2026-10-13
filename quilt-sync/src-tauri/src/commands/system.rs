@@ -456,6 +456,19 @@ pub async fn package_file_path(
         .map_err(|err| err.to_string())
 }
 
+/// `url` as the log may hold it. A `mailto:` keeps its address and drops the
+/// rest: its subject and body can carry what the user wrote about a problem,
+/// and the logs are what a later report sends.
+fn loggable_url(url: &str) -> &str {
+    let is_mail = url
+        .get(..7)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("mailto:"));
+    match url.split_once('?') {
+        Some((address, _)) if is_mail => address,
+        _ => url,
+    }
+}
+
 fn open_in_web_browser_command(url: &str) -> Result<(), Error> {
     model::open_in_web_browser(url)?;
     Ok(())
@@ -470,8 +483,9 @@ pub async fn open_in_web_browser(
     // catalog links, documentation, a local directory and `mailto:` alike, so its
     // URL's host is not necessarily a Quilt deployment — and `host` means the
     // deployment an event concerns, never a hostname that appeared nearby.
-    let msg_init = format!("Opening URL {url}");
-    let msg_ok = format!("Successfully opened {url}");
+    let shown = loggable_url(&url);
+    let msg_init = format!("Opening URL {shown}");
+    let msg_ok = format!("Successfully opened {shown}");
     let msg_err = |err: &Error| format!("Failed to open URL: {err}");
 
     Notify::new(msg_init)
@@ -668,6 +682,24 @@ mod tests {
             package_file_path_command(&m, "team/plate", "raw/gone.csv")
                 .await
                 .is_err()
+        );
+    }
+
+    /// A mail link's subject and body stay out of the log; other URLs are
+    /// logged whole.
+    #[test]
+    fn a_mail_link_is_logged_without_its_text() {
+        assert_eq!(
+            loggable_url("mailto:support@quilt.bio?subject=Issue&body=Autosync%20stopped"),
+            "mailto:support@quilt.bio"
+        );
+        assert_eq!(
+            loggable_url("MAILTO:support@quilt.bio?body=x"),
+            "MAILTO:support@quilt.bio"
+        );
+        assert_eq!(
+            loggable_url("https://open.quiltdata.com/b/x?tab=y"),
+            "https://open.quiltdata.com/b/x?tab=y"
         );
     }
 
