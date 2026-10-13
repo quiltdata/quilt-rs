@@ -88,9 +88,11 @@ impl PackageStatusEvent {
 /// hash is hex/base64) — so it is **hex-encoded from its lossless bytes**, and
 /// so is `latest`, which is hex today but is not relied on to stay so. Hex is
 /// `0-9a-f` only, so it is both lossless and delimiter-free, keeping the
-/// digest **injective**: different inputs give different fingerprints, so a
-/// consumer never skips a real refetch, and the same observation always gives
-/// the same one, so a re-report stays inert. (A lossy path string would fold two
+/// digest **injective**: different inputs give different digests, so a
+/// consumer never skips a real refetch, and the same status always gives the
+/// same digest, so a re-report stays inert. That holds for the digest, not for
+/// every event: the announced pull-conflict clear prefixes it with `unpaused;`
+/// on purpose, so its event differs from a plain report of the same status. (A lossy path string would fold two
 /// distinct non-UTF-8 names to the same `�`; a raw path could serialize a
 /// crafted `a:M:<hash>;b` like two entries.)
 pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus) -> String {
