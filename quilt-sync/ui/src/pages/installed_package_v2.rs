@@ -430,18 +430,16 @@ impl IncomingAnswer {
     /// revision. A read that did not reach the remote knows no newer revision,
     /// so it takes any answer for the package and held revision.
     ///
-    /// The answer's newer revision is the one the dry run itself read, which
-    /// can differ from the one the read that asked saw: the remote can move
-    /// between the two reads, or the read that asked did not reach it. Only
-    /// an answer with no revision of its own falls back to the asking read's.
-    /// The asking read itself shows its run's answer whatever it read
-    /// ([`IncomingCheck::check_for`]).
+    /// A finished answer's newer revision is the one the dry run itself read,
+    /// which can differ from the one the read that asked saw: the remote can
+    /// move between the two reads, or the read that asked did not reach it.
+    /// An answer that found nothing to pull names none, so it never speaks for
+    /// a read that names one. Only a check still running or failed falls back
+    /// to the asking read's. The asking read itself shows its run's answer
+    /// whatever it read ([`IncomingCheck::check_for`]).
     fn speaks_for(&self, read: &IncomingKey) -> bool {
         let newer = match &self.check {
-            commands::PullCheck::Ready(commands::PullPreview {
-                latest_hash: Some(hash),
-                ..
-            }) => Some(hash),
+            commands::PullCheck::Ready(preview) => preview.latest_hash.as_ref(),
             _ => self.key.newer.as_ref(),
         };
         self.key.namespace == read.namespace
@@ -3547,6 +3545,31 @@ mod tests {
         );
         sleep_ms(150).await;
         assert_eq!(summary(&el).as_deref(), Some("2 file changes"));
+
+        // An answer that found nothing to pull names no revision: the tag
+        // moved back to the held revision before the dry run. It does not
+        // speak for a later read that names n6 again.
+        let nothing = commands::PullPreview {
+            outcome: commands::PullOutcome::UpToDate,
+            added: Vec::new(),
+            changed: Vec::new(),
+            removed: Vec::new(),
+            latest_hash: None,
+        };
+        script(vec![(0, Ok(nothing))]);
+        re_read(&el, behind_on("ddd", Some("n6"))).await;
+        sleep_ms(30).await;
+        assert!(!text(&el).contains("checking"), "answered: {}", text(&el));
+
+        script(vec![(120, Ok(adds_on(1, "n6")))]);
+        re_read(&el, behind_on("ddd", Some("n6"))).await;
+        assert!(
+            text(&el).contains("checking\u{2026}"),
+            "the no-update answer is not kept for n6; markup was {}",
+            el.inner_html()
+        );
+        sleep_ms(150).await;
+        assert_eq!(summary(&el).as_deref(), Some("1 file change"));
     }
 
     /// A local edit can make a conflict while the newer revision stays the

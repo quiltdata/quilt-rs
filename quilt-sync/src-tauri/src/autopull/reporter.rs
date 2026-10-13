@@ -88,8 +88,9 @@ impl PackageStatusEvent {
 /// hash is hex/base64) — so it is **hex-encoded from its lossless bytes**, and
 /// so is `latest`, which is hex today but is not relied on to stay so. Hex is
 /// `0-9a-f` only, so it is both lossless and delimiter-free, keeping the
-/// digest **injective**: no two distinct observations share a fingerprint, so
-/// a consumer never skips a real refetch. (A lossy path string would fold two
+/// digest **injective**: different inputs give different fingerprints, so a
+/// consumer never skips a real refetch, and the same observation always gives
+/// the same one, so a re-report stays inert. (A lossy path string would fold two
 /// distinct non-UTF-8 names to the same `�`; a raw path could serialize a
 /// crafted `a:M:<hash>;b` like two entries.)
 pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus) -> String {
