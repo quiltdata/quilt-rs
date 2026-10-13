@@ -958,6 +958,13 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                     freed.try_set(Some(done.message));
                 }
                 Err(detail) => {
+                    // The sweep deletes as it goes, so a failure can come
+                    // after some of it: a measured line may be stale now.
+                    size.try_update(|s| {
+                        if matches!(s, StorageSize::Measured { .. }) {
+                            *s = StorageSize::NotMeasured;
+                        }
+                    });
                     outcome.try_set(Some(critical(
                         HERE.into(),
                         "Could not free up space.",
@@ -1072,6 +1079,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                     on_sign_in=on_sign_in
                     on_role=on_role
                     on_sign_out=Callback::new(move |host| asked_sign_out.set(Some(host)))
+                    locked=busy
                 />
             }
             .into_any(),
@@ -1261,6 +1269,7 @@ mod tests {
         static WRITE_FAILS: Cell<bool> = const { Cell::new(false) };
         static ACCOUNT_READS: Cell<usize> = const { Cell::new(0) };
         static FREE_DELAY: Cell<i32> = const { Cell::new(0) };
+        static FREE_FAILS: Cell<bool> = const { Cell::new(false) };
         static MEASURES: Cell<usize> = const { Cell::new(0) };
         static SIGNED_OUT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     }
@@ -1333,9 +1342,13 @@ mod tests {
 
     fn stub_free() -> Answer<FreedSpace> {
         let delay = FREE_DELAY.with(Cell::get);
+        let fails = FREE_FAILS.with(Cell::get);
         Box::pin(async move {
             if delay > 0 {
                 sleep_ms(delay).await;
+            }
+            if fails {
+                return Err("acme/demo is busy".to_string());
             }
             Ok(FreedSpace {
                 message: "Freed 1.1 GB: 3 objects".to_string(),
@@ -1385,6 +1398,7 @@ mod tests {
         WRITE_FAILS.with(|f| f.set(false));
         ACCOUNT_READS.with(|r| r.set(0));
         FREE_DELAY.with(|d| d.set(0));
+        FREE_FAILS.with(|f| f.set(false));
         MEASURES.with(|m| m.set(0));
         SIGNED_OUT.with(|s| s.borrow_mut().clear());
         at("/settings");
@@ -1859,6 +1873,46 @@ mod tests {
             2,
             "the sign-out's read, and only it"
         );
+    }
+
+    /// While a longer command holds the page's lock, the role switcher and
+    /// Sign out take no choice, rather than accept one the page would drop.
+    #[wasm_bindgen_test]
+    async fn the_accounts_wait_for_the_lock() {
+        let el = page(vec![settings()]).await;
+        FREE_DELAY.with(|d| d.set(60));
+        let accounts = el.query_selector("[data-accounts]").unwrap().unwrap();
+        let role = || -> web_sys::HtmlSelectElement {
+            accounts
+                .query_selector("select")
+                .unwrap()
+                .expect("the switcher")
+                .unchecked_into()
+        };
+        assert!(!role().disabled());
+        let storage = el.query_selector("[data-storage]").unwrap().unwrap();
+        button_saying(&storage, "Free up space").click();
+        sleep_ms(10).await;
+        assert!(role().disabled(), "held while freeing");
+        assert!(button_saying(&accounts, "Sign out").disabled());
+        sleep_ms(100).await;
+        assert!(!role().disabled(), "free again");
+    }
+
+    /// A sweep that fails can have deleted part of what it counted, so the
+    /// measured line goes back to Check size.
+    #[wasm_bindgen_test]
+    async fn a_failed_sweep_drops_the_measured_line() {
+        let el = page(vec![settings()]).await;
+        let storage = el.query_selector("[data-storage]").unwrap().unwrap();
+        button_saying(&storage, "Check size").click();
+        sleep_ms(30).await;
+        FREE_FAILS.with(|f| f.set(true));
+        button_saying(&storage, "Free up space").click();
+        sleep_ms(30).await;
+        let line = storage.text_content().unwrap_or_default();
+        assert!(!line.contains("can be freed"), "{line}");
+        button_saying(&storage, "Check size");
     }
 
     /// No measure runs beside a sweep: it would count what is being deleted.

@@ -47,7 +47,12 @@ pub fn HostRow(
     /// Settings holds what is rare or destructive.
     #[prop(optional)]
     on_sign_out: Option<Callback<()>>,
+    /// The page's lock is held: the switcher and *Sign out* take no choice
+    /// until it is free, rather than accept one the page would drop.
+    #[prop(optional, into)]
+    locked: MaybeProp<bool>,
 ) -> impl IntoView {
+    let locked = Signal::derive(move || locked.get().unwrap_or(false));
     let switchable = roles.len() > 1;
     let waiting = provisional.get_untracked().unwrap_or(false);
 
@@ -97,12 +102,17 @@ pub fn HostRow(
                                     naming=Naming::Prefix("Role".to_string())
                                     options=roles
                                     selected=role
+                                    disabled=locked
                                 />
                             }
                         });
                     let sign_out = on_sign_out
                         .map(|sign_out| {
-                            view! { <Button on_click=move |_| sign_out.run(())>"Sign out"</Button> }
+                            view! {
+                                <Button disabled=locked on_click=move |_| sign_out.run(())>
+                                    "Sign out"
+                                </Button>
+                            }
                         });
                     view! { {switcher} {sign_out} }.into_any()
                 }}

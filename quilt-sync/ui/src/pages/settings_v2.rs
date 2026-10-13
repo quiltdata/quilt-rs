@@ -462,6 +462,9 @@ pub fn AccountsCard(
     on_role: Callback<(String, String)>,
     /// With the host whose *Sign out* was pressed: open the confirmation.
     on_sign_out: Callback<String>,
+    /// The page's lock: no role pick or Sign out while another command runs.
+    #[prop(optional, into)]
+    locked: Signal<bool>,
 ) -> impl IntoView {
     if hosts.is_empty() {
         return view! {
@@ -490,6 +493,7 @@ pub fn AccountsCard(
                     roles=account.roles
                     signed_out=account.signed_out
                     provisional=account.provisional
+                    locked=locked
                     on_sign_in=move |_| on_sign_in.run(sign_in_host.clone())
                     on_sign_out=Callback::new(move |()| on_sign_out.run(sign_out_host.clone()))
                 />
