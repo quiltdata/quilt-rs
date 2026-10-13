@@ -28,7 +28,9 @@
 //! save queued before the reader leaves still runs, before the next visit's. When it empties the page reads again, and
 //! only that read, landed, seeds the controls: a read that went out before a
 //! write would put back the value the write replaced. A seeded value equal to
-//! what the control holds changes nothing.
+//! what the control holds changes nothing. Whenever the queue empties, every
+//! open visit reads again, so one opened while an earlier visit's saves ran
+//! is not left with the values from before them.
 //!
 //! Saves are quick and each writes its own setting, so they do not take the
 //! page's lock. A control is held still while its own save is out — a toggle
@@ -449,6 +451,10 @@ thread_local! {
         const { std::cell::RefCell::new(VecDeque::new()) };
     /// Whether a task is running the queue.
     static DRAINING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Counts the times the queue has emptied. Every open visit watches it and
+    /// reads again, so one opened while an earlier visit's saves ran is not
+    /// left with the values from before them. An arc signal: no page owns it.
+    static EMPTIED: ArcRwSignal<u64> = ArcRwSignal::new(0);
     /// Tells one visit's [`Saves`] from another's.
     static VISITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
@@ -567,15 +573,11 @@ impl Saves {
         }
     }
 
-    /// This visit's last save has run: read again, and let only that read
-    /// seed the controls, so mark it out before saying the saves are done.
+    /// This visit's last save has run. The read after it comes when the
+    /// queue empties ([`EMPTIED`]), and only that read may seed the controls,
+    /// so mark it out before saying the saves are done.
     fn done(self, page: PageHandle) {
-        // `try_set` hands the value back when the page is gone, and a page
-        // that is gone has nothing to read.
-        if page.in_flight.try_set(true).is_none() {
-            self.quiet.try_set_value(true);
-            page.reload.notify();
-        }
+        page.in_flight.try_set(true);
         self.writing.try_set(false);
     }
 
@@ -623,6 +625,7 @@ async fn drain() {
         }
     }
     DRAINING.with(|d| d.set(false));
+    EMPTIED.with(|e| e.update(|n| *n += 1));
 }
 
 /// The accounts, read apart from the settings: asking a role takes the host's
@@ -662,6 +665,17 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
     let fields = Fields::new();
     let written = Written::new();
     let saves = Saves::new();
+
+    // The queue has emptied: read again, after this visit's saves or another
+    // visit's. Not on the first run, which is the page's own first read.
+    let emptied = EMPTIED.with(Clone::clone);
+    Effect::new(move |seen: Option<()>| {
+        emptied.track();
+        if seen.is_some() && in_flight.try_set(true).is_none() {
+            saves.quiet.set_value(true);
+            reload.notify();
+        }
+    });
 
     // Seed from a read that has landed, and only while no save is out or
     // waiting: see the module's *Writes*.
@@ -1798,6 +1812,32 @@ mod tests {
             SIGNED_OUT.with(|s| s.borrow().clone()),
             vec!["quilt.test".to_string()]
         );
+    }
+
+    /// A visit opened while an earlier visit's saves still run reads again
+    /// once they have, without saving anything itself: its first read can
+    /// land between them.
+    #[wasm_bindgen_test]
+    async fn a_new_visit_reads_again_when_the_last_ones_saves_have_run() {
+        let mut saved = settings();
+        saved.autosync.pull_enabled = true;
+        saved.fswatcher.enabled = false;
+        // Visit one's read, visit two's read before the saves land, then the
+        // read after.
+        let el = page(vec![settings(), settings(), saved]).await;
+        WRITE_DELAY.with(|d| d.set(40));
+        toggle(&el, PULL).click();
+        sleep_ms(5).await;
+        toggle(&el, WATCH).click();
+        sleep_ms(5).await;
+
+        let again = remount().await;
+        assert!(!toggle(&again, PULL).checked(), "its first read is stale");
+        sleep_ms(200).await;
+
+        assert!(toggle(&again, PULL).checked(), "and the next one is not");
+        assert!(!toggle(&again, WATCH).checked());
+        assert_eq!(writes().len(), 2, "the visit saved nothing itself");
     }
 
     /// No measure runs beside a sweep: it would count what is being deleted.

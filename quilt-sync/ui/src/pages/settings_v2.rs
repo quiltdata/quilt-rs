@@ -1231,6 +1231,8 @@ mod tests {
     /// label hands focus to the editor that hides it.
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn a_click_on_the_metadata_label_focuses_the_editor() {
+        // An earlier test's modal, left open, would make this page inert.
+        crate::test_support::unmount_earlier();
         let el = crate::test_support::mount(|| {
             view! {
                 <PublishingCard
