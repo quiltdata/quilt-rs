@@ -1,42 +1,29 @@
 /*
- * Two columns of regions, or one.
- *
- * Which one is `two_columns.rs`'s decision, from the layout's own width: it
- * moves the regions into place and marks the frame `data-wide`, and this only
- * draws what that says. One breakpoint, in one place.
+ * A page's regions in rows of two, or in one column.
  */
 
-/* Narrow is the default: every region is in the first column, in the page's
- * order, and the second column is empty. */
-.columns {
-  display: flex;
-  flex-direction: column;
+/* The query container. The query styles what is inside it, so the grid is
+ * one box further in. */
+.frame {
+  container-type: inline-size;
+}
+
+/* Narrow is the default: one column, in the children's order. */
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--q-space-4);
 }
 
-.column {
-  display: flex;
-  flex-direction: column;
-  gap: var(--q-space-4);
-  min-width: 0;
-}
-
-/* Narrow, the second column is empty; and a slot the page left empty, as a
- * skeleton does, would still take a gap. Wide, a column of only empty slots
- * stays: it holds the width, so a skeleton's cards draw at the width the
- * loaded page gives them and do not narrow when it arrives. */
-.column:empty,
-.column > :empty {
-  display: none;
-}
-
-.frame[data-wide] .columns {
-  flex-direction: row;
-  /* Each stack is as tall as its own regions, so a tall card on one side
-   * leaves no hole on the other. */
-  align-items: flex-start;
-}
-
-.frame[data-wide] .column {
-  flex: 1 1 0;
+/* Two to a row from a 1024px window. The layout fills the page column, which
+ * is the window less 16px of padding a side; 976 leaves another 16 for a
+ * classic scrollbar, since a page tall enough to need two columns scrolls.
+ * Where scrollbars overlay the page it switches at a 1008px window instead.
+ *
+ * A grid row is as tall as its taller region and both stretch to it, so each
+ * row has one bottom edge. */
+@container (min-width: 976px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }

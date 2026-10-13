@@ -5,35 +5,28 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Story;
 use crate::kit::Card;
-use crate::kit::ColumnItem;
 use crate::kit::TwoColumns;
 
-/// A card of `lines` lines, so the two stacks differ in height.
-fn card(title: &'static str, lines: usize) -> AnyView {
+/// A card of `lines` lines, so a row's two cards differ in what they hold.
+fn card(title: &'static str, lines: usize) -> impl IntoView {
     view! {
         <Card title=title>
             {(1..=lines).map(|n| view! { <div>{format!("Line {n}")}</div> }).collect_view()}
         </Card>
     }
-    .into_any()
 }
 
-/// Five cards, numbered by their narrow place: wide, 1, 2, 5 on the left and
-/// 3, 4 on the right.
+/// Five cards, numbered in reading order.
 fn layout(width: u32) -> AnyView {
     view! {
         <div style=format!("width:{width}px; max-width:100%")>
-            <TwoColumns
-                left=vec![
-                    ColumnItem::new(1, card("1 · left, tall", 6)),
-                    ColumnItem::new(2, card("2 · left", 2)),
-                    ColumnItem::new(5, card("5 · left", 1)),
-                ]
-                right=vec![
-                    ColumnItem::new(3, card("3 · right", 1)),
-                    ColumnItem::new(4, card("4 · right", 2)),
-                ]
-            />
+            <TwoColumns>
+                {card("1 · tall", 6)}
+                {card("2", 2)}
+                {card("3", 1)}
+                {card("4", 3)}
+                {card("5 · alone in its row", 1)}
+            </TwoColumns>
         </div>
     }
     .into_any()
@@ -44,17 +37,15 @@ pub fn TwoColumnsStories() -> impl IntoView {
     view! {
         <Story
             title="TwoColumns"
-            note="A page's regions in two columns from a 1024px window (976px of its own width), \
-                  and in one column below that. The columns stack on their own: a tall card on \
-                  the left leaves no hole on the right. Narrow, each region goes where the page \
-                  numbered it, which need not be left then right — here 3 and 4 come from the \
-                  right between the left's 2 and 5. The regions move in the DOM, so Tab and a \
-                  screen reader follow the order drawn at every width."
+            note="A page's regions two to a row from a 1024px window (976px of its own width), \
+                  and in one column below that, in the same order: left to right, top to \
+                  bottom. A row's two cards share its height, so each row has one bottom edge. \
+                  What is drawn, read and reached by Tab is one order at every width."
         >
-            <Cell full=true label="976px — two columns">
+            <Cell full=true label="976px — rows of two">
                 {layout(976)}
             </Cell>
-            <Cell full=true label="960px — one column, in the page's order">
+            <Cell full=true label="960px — one column, in the same order">
                 {layout(960)}
             </Cell>
         </Story>

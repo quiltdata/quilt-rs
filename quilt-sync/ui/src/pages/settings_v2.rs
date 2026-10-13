@@ -20,7 +20,6 @@ use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
-use crate::kit::ColumnItem;
 use crate::kit::ConfirmDialog;
 use crate::kit::Dialog;
 use crate::kit::FormControl;
@@ -196,12 +195,9 @@ pub fn SettingsHeader(
     }
 }
 
-/// The page's cards: two columns on a wide window, one on a narrow one.
-///
-/// Wide, Syncing and Accounts share the top row — the two the main page's
-/// strip shows — with the rest of the configuration under Publishing and the
-/// app's own cards under Accounts. Narrow, the one column is most used first:
-/// Syncing, Publishing, Accounts, App, Storage, Experimental, Help, About.
+/// The page's cards, in rows of two on a wide window: Syncing and Accounts,
+/// the two the main page's strip shows, then Storage and App, Publishing and
+/// Help, Experimental and About. Narrow, the same order in one column.
 #[component]
 pub fn SettingsLayout(
     header: AnyView,
@@ -217,20 +213,16 @@ pub fn SettingsLayout(
     view! {
         <div class=style::page>
             {header}
-            <TwoColumns
-                left=vec![
-                    ColumnItem::new(1, syncing),
-                    ColumnItem::new(2, publishing),
-                    ColumnItem::new(6, experimental),
-                ]
-                right=vec![
-                    ColumnItem::new(3, accounts),
-                    ColumnItem::new(4, app),
-                    ColumnItem::new(5, storage),
-                    ColumnItem::new(7, help),
-                    ColumnItem::new(8, about),
-                ]
-            />
+            <TwoColumns>
+                {syncing}
+                {accounts}
+                {storage}
+                {app}
+                {publishing}
+                {help}
+                {experimental}
+                {about}
+            </TwoColumns>
         </div>
     }
 }

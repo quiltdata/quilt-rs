@@ -8,17 +8,16 @@
 //!
 //! # Measured in Chromium
 //!
-//! At 1024×560 the header ends at 138px and the cards are two columns of
-//! 488px, 16px apart. Left: Syncing 154–481, Publishing 498–889, Experimental
-//! 906–1008. Right: Accounts 154–373 (three hosts), App 390–541, Storage
-//! 558–738, Help 755–1098, About 1115–1225. The first screen shows Syncing
-//! and Accounts side by side, with App under Accounts.
+//! At 1024×560 the header ends at 138px and the cards are two to a row, 488px
+//! wide and 16px apart; a row's two cards share its height. Rows start at
+//! Syncing | Accounts 154, Storage | App 498, Publishing | Help 694,
+//! Experimental | About 1102. The first screen shows Syncing and Accounts.
 //!
-//! At 1000×560, just under the switch, one column of 968px, most used first:
-//! Syncing 154, Publishing 477, Accounts 866, App 1101, Storage 1249,
-//! Experimental 1445, Help 1573, About 1913. At 640, the same order at 608px;
-//! only the Data folder's path is cut short, with its whole path in the
-//! tooltip. No width scrolls sideways.
+//! At 1000×560, just under the switch, one column of 968px in the same order:
+//! Syncing 154, Accounts 477, Storage 713, App 909, Publishing 1057, Help 1445,
+//! Experimental 1785, About 1913. At 640, the same order at 608px; only the
+//! Data folder's path is cut short, with its whole path in the tooltip. No
+//! width scrolls sideways.
 //!
 //! # Left open
 //!
@@ -277,10 +276,9 @@ fn whole_page(width: u32, height: u32) -> AnyView {
     .into_any()
 }
 
-const NOTE: &str = "The settings page v2. From a 1024px window, two columns: Syncing, Publishing, \
-    Experimental on the left; Accounts, App, Storage, Help, About on the right. Narrower, one column \
-    of cards, most used first — Syncing, Publishing, Accounts, App, Storage, Experimental, Help, \
-    About. Toggles, selects and minute fields save \
+const NOTE: &str = "The settings page v2. From a 1024px window, two cards to a row: Syncing and \
+    Accounts, Storage and App, Publishing and Help, Experimental and About. Narrower, the same \
+    order in one column. Toggles, selects and minute fields save \
     as they change and say Saved; Publishing alone has Save. Routed at /settings under New design preview.";
 
 #[component]
@@ -456,13 +454,13 @@ pub fn SettingsPageScene() -> impl IntoView {
                     on_send=noop()
                 />
             </Cell>
-            <Cell full=true label="The whole page at 1280×900, the window's default size: two columns">
+            <Cell full=true label="The whole page at 1280×900, the window's default size: rows of two">
                 {whole_page(1280, 900)}
             </Cell>
-            <Cell full=true label="At 1024×560, where it turns two columns">
+            <Cell full=true label="At 1024×560, where it turns to rows of two">
                 {whole_page(1024, 560)}
             </Cell>
-            <Cell full=true label="At 1000×560, just under: one column, most used first">
+            <Cell full=true label="At 1000×560, just under: one column, in the same order">
                 {whole_page(1000, 560)}
             </Cell>
             <Cell full=true label="At 640×560, the app's smallest window">
