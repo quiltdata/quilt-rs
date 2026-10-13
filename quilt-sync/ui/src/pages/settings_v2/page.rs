@@ -87,6 +87,9 @@ pub(crate) struct SettingsIo {
     pub accounts: fn() -> Answer<Vec<AccountHostData>>,
     /// One host's role, asked.
     pub settle_account: fn(String) -> Answer<AccountHostData>,
+    /// Erase one host's credentials: `erase_auth`, which also drops the
+    /// host's cached clients.
+    pub sign_out: fn(String) -> Answer<String>,
 }
 
 fn read_settings(_: String) -> Answer<SettingsData> {
@@ -130,6 +133,10 @@ fn settle_account(host: String) -> Answer<AccountHostData> {
     Box::pin(commands::refresh_main_page_account(host))
 }
 
+fn sign_out(host: String) -> Answer<String> {
+    Box::pin(commands::erase_auth(host))
+}
+
 const TAURI: SettingsIo = SettingsIo {
     read: read_settings,
     write: write_setting,
@@ -137,6 +144,7 @@ const TAURI: SettingsIo = SettingsIo {
     free,
     accounts: read_accounts,
     settle_account,
+    sign_out,
 };
 
 /// What `/settings` renders when *New design preview* is on.
@@ -425,6 +433,8 @@ struct Queued {
     io: SettingsIo,
     row: Option<Saved>,
     write: Write,
+    /// Run when the save fails: put back what the page took as stored.
+    undo: Option<Callback<()>>,
 }
 
 thread_local! {
@@ -479,7 +489,18 @@ impl Saves {
     }
 
     /// Queue `write`, and run the queue unless it is running.
-    fn push(self, row: Option<Saved>, write: Write, io: SettingsIo, page: PageHandle) {
+    ///
+    /// A new save is now the last command, so an earlier failure in the band
+    /// is not news any more, as with [`hold`].
+    fn push(
+        self,
+        row: Option<Saved>,
+        write: Write,
+        undo: Option<Callback<()>>,
+        io: SettingsIo,
+        page: PageHandle,
+    ) {
+        page.outcome.set(None);
         QUEUE.with(|q| {
             q.borrow_mut().push_back(Queued {
                 from: self,
@@ -487,6 +508,7 @@ impl Saves {
                 io,
                 row,
                 write,
+                undo,
             });
         });
         self.writing.set(true);
@@ -497,17 +519,30 @@ impl Saves {
     }
 
     /// One of this visit's saves has run.
-    fn ran(self, page: PageHandle, row: Option<Saved>, leaving: bool, result: Result<(), String>) {
+    ///
+    /// `preview` is the *New design preview* value it wrote, if it wrote one:
+    /// the last one saved decides whether the page leaves for `/`.
+    fn ran(
+        self,
+        page: PageHandle,
+        row: Option<Saved>,
+        preview: Option<bool>,
+        undo: Option<Callback<()>>,
+        result: Result<(), String>,
+    ) {
         match result {
             Ok(()) => {
                 if let Some(row) = row {
                     self.say_saved(row);
                 }
-                if leaving {
-                    self.leave.try_set(true);
+                if let Some(on) = preview {
+                    self.leave.try_set(!on);
                 }
             }
             Err(detail) => {
+                if let Some(undo) = undo {
+                    undo.try_run(());
+                }
                 page.outcome
                     .try_set(Some(critical(HERE.into(), SAVE_FAILED, Some(detail))));
             }
@@ -557,10 +592,14 @@ async fn drain() {
             io,
             row,
             write,
+            undo,
         } = next;
-        let leaving = write == Write::DesignPreview(false);
+        let preview = match write {
+            Write::DesignPreview(on) => Some(on),
+            _ => None,
+        };
         let result = (io.write)(write).await;
-        from.ran(page, row, leaving, result);
+        from.ran(page, row, preview, undo, result);
         if !QUEUE.with(|q| q.borrow().iter().any(|q| q.from.visit == from.visit)) {
             from.done(page);
         }
@@ -622,7 +661,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
     });
 
     // ── Saving as each control changes ──
-    let save = move |row: Saved, write: Write| saves.push(Some(row), write, io, page);
+    let save = move |row: Saved, write: Write| saves.push(Some(row), write, None, io, page);
     let navigate = use_navigate();
     let toggles: [Toggle; 5] = [
         (fields.pull, written.pull, Saved::Pull, |on| {
@@ -739,7 +778,16 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             return;
         }
         publishing_saving.set(true);
-        saves.push(None, Write::Publishing(fields.draft()), io, page);
+        // What is sent is what the page takes as stored, so the re-read's
+        // value replaces the draft even where the backend trims it. A failed
+        // save puts the old one back, and the draft stays unsaved.
+        let draft = fields.draft();
+        let before = written.publishing.get_untracked();
+        written.publishing.set(draft.clone());
+        let undo = Callback::new(move |()| {
+            written.publishing.try_set(before.clone());
+        });
+        saves.push(None, Write::Publishing(draft), Some(undo), io, page);
     });
 
     // ── Accounts ──
@@ -828,7 +876,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         });
     });
     let sign_out = move |host: String| async move {
-        hold(busy, outcome, commands::erase_auth(host)).await?;
+        hold(busy, outcome, (io.sign_out)(host)).await?;
         accounts_reload.notify();
         Ok(())
     };
@@ -948,6 +996,8 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
     // ── Folders and release notes ──
     let open_folder = move |open: fn() -> Answer<String>| {
         Callback::new(move |()| {
+            // This command is now the last one, so an earlier failure is not news.
+            outcome.set(None);
             leptos::task::spawn_local(async move {
                 if let Err(detail) = open().await {
                     outcome.try_set(Some(critical(
@@ -1174,6 +1224,7 @@ mod tests {
         static ACCOUNT_READS: Cell<usize> = const { Cell::new(0) };
         static FREE_DELAY: Cell<i32> = const { Cell::new(0) };
         static MEASURES: Cell<usize> = const { Cell::new(0) };
+        static SIGNED_OUT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     }
 
     fn settings() -> SettingsData {
@@ -1272,6 +1323,11 @@ mod tests {
         Box::pin(async { Err("not asked".to_string()) })
     }
 
+    fn stub_sign_out(host: String) -> Answer<String> {
+        SIGNED_OUT.with(|s| s.borrow_mut().push(host));
+        Box::pin(async { Ok("Signed out".to_string()) })
+    }
+
     const STUBS: SettingsIo = SettingsIo {
         read: stub_read,
         write: stub_write,
@@ -1279,6 +1335,7 @@ mod tests {
         free: stub_free,
         accounts: stub_accounts,
         settle_account: stub_settle,
+        sign_out: stub_sign_out,
     };
 
     async fn page(answers: Vec<SettingsData>) -> web_sys::Element {
@@ -1291,6 +1348,8 @@ mod tests {
         ACCOUNT_READS.with(|r| r.set(0));
         FREE_DELAY.with(|d| d.set(0));
         MEASURES.with(|m| m.set(0));
+        SIGNED_OUT.with(|s| s.borrow_mut().clear());
+        at("/settings");
         let el = mount(|| {
             view! {
                 <leptos_router::components::Router>
@@ -1318,6 +1377,25 @@ mod tests {
         });
         sleep_ms(50).await;
         el
+    }
+
+    fn at(path: &str) {
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(path))
+            .unwrap();
+    }
+
+    fn path() -> String {
+        web_sys::window().unwrap().location().pathname().unwrap()
+    }
+
+    fn alert(el: &web_sys::Element) -> Option<String> {
+        el.query_selector("[role=alert]")
+            .unwrap()
+            .map(|a| a.text_content().unwrap_or_default())
     }
 
     fn writes() -> Vec<Write> {
@@ -1580,6 +1658,97 @@ mod tests {
         assert_eq!(writes(), vec![pull(true), pull(false), Write::Watch(false)]);
     }
 
+    /// A save that works after one that failed takes the failure down.
+    #[wasm_bindgen_test]
+    async fn a_retry_takes_the_save_failure_down() {
+        let el = page(vec![settings()]).await;
+        WRITE_FAILS.with(|f| f.set(true));
+        toggle(&el, WATCH).click();
+        sleep_ms(50).await;
+        assert!(alert(&el).is_some_and(|a| a.contains(SAVE_FAILED)));
+
+        WRITE_FAILS.with(|f| f.set(false));
+        toggle(&el, WATCH).click();
+        sleep_ms(50).await;
+        assert_eq!(alert(&el), None, "markup was {}", el.inner_html());
+    }
+
+    const PREVIEW: u32 = 4;
+
+    /// Turning the preview off leaves for `/` once it is saved.
+    #[wasm_bindgen_test]
+    async fn turning_the_preview_off_goes_home() {
+        let el = page(vec![settings()]).await;
+        toggle(&el, PREVIEW).click();
+        sleep_ms(50).await;
+        assert_eq!(path(), "/");
+    }
+
+    /// Off, then on again before the saves ran: the last choice is on, so
+    /// the page stays.
+    #[wasm_bindgen_test]
+    async fn the_preview_back_on_stays_here() {
+        let el = page(vec![settings()]).await;
+        WRITE_DELAY.with(|d| d.set(30));
+        toggle(&el, PREVIEW).click();
+        sleep_ms(5).await;
+        toggle(&el, PREVIEW).click();
+        sleep_ms(120).await;
+        assert_eq!(
+            writes(),
+            vec![Write::DesignPreview(false), Write::DesignPreview(true)]
+        );
+        assert_eq!(path(), "/settings");
+    }
+
+    /// The backend trims what Publishing saves; the re-read's value replaces
+    /// the draft, and Save is off again.
+    #[wasm_bindgen_test]
+    async fn publishing_takes_the_stored_value_after_a_save() {
+        let mut trimmed = settings();
+        trimmed.publish.default_workflow = "release".to_string();
+        let el = page(vec![settings(), trimmed]).await;
+        type_into(&labelled(&el, "Default workflow"), " release ");
+        sleep_ms(10).await;
+        button_saying(&el, "Save").click();
+        sleep_ms(60).await;
+        assert_eq!(labelled(&el, "Default workflow").value(), "release");
+        assert!(
+            button_saying(&el, "Save").disabled(),
+            "nothing left to save"
+        );
+    }
+
+    /// A failed Publishing save keeps the draft, still unsaved.
+    #[wasm_bindgen_test]
+    async fn a_failed_publishing_save_keeps_the_draft() {
+        let el = page(vec![settings()]).await;
+        WRITE_FAILS.with(|f| f.set(true));
+        type_into(&labelled(&el, "Default workflow"), "release");
+        sleep_ms(10).await;
+        button_saying(&el, "Save").click();
+        sleep_ms(60).await;
+        assert_eq!(labelled(&el, "Default workflow").value(), "release");
+        assert!(!button_saying(&el, "Save").disabled(), "still to save");
+    }
+
+    /// Sign out, confirmed, erases that host's credentials through
+    /// `erase_auth`, which also drops its cached clients.
+    #[wasm_bindgen_test]
+    async fn sign_out_erases_the_host() {
+        let el = page(vec![settings()]).await;
+        let accounts = el.query_selector("[data-accounts]").unwrap().unwrap();
+        button_saying(&accounts, "Sign out").click();
+        sleep_ms(20).await;
+        let dialog = el.query_selector("dialog[open]").unwrap().expect("asked");
+        button_saying(&dialog, "Sign out").click();
+        sleep_ms(30).await;
+        assert_eq!(
+            SIGNED_OUT.with(|s| s.borrow().clone()),
+            vec!["quilt.test".to_string()]
+        );
+    }
+
     /// No measure runs beside a sweep: it would count what is being deleted.
     #[wasm_bindgen_test]
     async fn check_size_waits_for_free_up_space() {
@@ -1629,7 +1798,9 @@ mod tests {
     /// Save writes the draft, and is off again once it has.
     #[wasm_bindgen_test]
     async fn publishing_saves_the_draft() {
-        let el = page(vec![settings()]).await;
+        let mut saved = settings();
+        saved.publish.default_workflow = "release".to_string();
+        let el = page(vec![settings(), saved]).await;
         let save = || button_saying(&el, "Save");
         assert!(save().disabled(), "nothing to save");
         type_into(&labelled(&el, "Default workflow"), "release");
