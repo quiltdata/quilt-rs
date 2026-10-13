@@ -134,8 +134,10 @@ pub fn QueueRow(
     let full_namespace = namespace.clone();
     let line = view! {
         {bullet}
-        <span class=style::namespace title=full_namespace>{namespace}</span>
-        {state.map(|state| view! { <span class=style::clause>{state}</span> })}
+        <span class=style::subject>
+            <span class=style::namespace title=full_namespace>{namespace}</span>
+            {state.map(|state| view! { <span class=style::clause>{state}</span> })}
+        </span>
         {verb
             .map(|verb| {
                 view! {
@@ -183,11 +185,13 @@ pub fn QueueRowSkeleton() -> impl IntoView {
                 // A width in px and not a percentage: `.namespace` is `flex: none`,
                 // so the span sizes to this box and a percentage would have nothing
                 // to resolve against — it collapses the column to nothing.
-                <span class=style::namespace>
-                    <SkeletonBox width="120px" />
-                </span>
-                <span class=style::clause>
-                    <SkeletonBox width="55%" />
+                <span class=style::subject>
+                    <span class=style::namespace>
+                        <SkeletonBox width="120px" />
+                    </span>
+                    <span class=style::clause>
+                        <SkeletonBox width="55%" />
+                    </span>
                 </span>
                 <span class=style::action>
                     <SkeletonBox width="76px" height="20px" />

@@ -175,10 +175,16 @@ fn QueueRowStory() -> impl IntoView {
             <Cell full=true label="sub-row — a bare name: no state, no remedy, indented, and the one row that keeps a bullet">
                 <QueueRow namespace="team/rnaseq-batch-2026-07-31" sub=true />
             </Cell>
-            <Cell full=true label="long namespace truncates before the clause does">
+            <Cell full=true label="long namespace — name and clause share the line while both fit">
                 {row(
                     "team/rnaseq-batch-2026-07-31-reprocessed-v2-with-a-very-long-suffix",
                     &PackageState::Diverged,
+                )}
+            </Cell>
+            <Cell wide=true label="narrow · long namespace — the name ellipsises only past a whole line">
+                {row(
+                    "team/rnaseq-batch-2026-07-31-reprocessed-v2-with-a-very-long-suffix",
+                    &PackageState::PendingChanges { files: 2 },
                 )}
             </Cell>
             <Cell wide=true label="narrow — two columns">
