@@ -19,15 +19,15 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.43.1-dev]
+## [v0.44.0] - 2026-10-13
 
 ### Added
 
-- `LocalDomain::measure_storage` says how many bytes `.quilt/` holds and what `gc` would free now, as a `StorageSize`. Its freeable part, also on its own as `flow::gc_estimate`, is a dry run of `gc` by the same rules that deletes nothing and takes no package locks, so a busy package never stops it (<https://github.com/quiltdata/quilt-rs/pull/1099>)
+- `LocalDomain::measure_storage` returns a `StorageSize`: how many bytes `.quilt/` holds and how much `gc` would free. `flow::gc_estimate` returns the freeable part alone; it deletes nothing and takes no package locks (<https://github.com/quiltdata/quilt-rs/pull/1099>)
 
 ### Changed
 
-- **Breaking:** `Error::Yaml` wraps `serde_saphyr::Error`, and `WorkflowsConfig::from_yaml` takes a `&serde_json::Value`. Workflow config is parsed with `serde-saphyr`, replacing the deprecated `serde_yaml` (<https://github.com/quiltdata/quilt-rs/pull/1110>)
+- **Breaking:** workflow config is parsed with `serde-saphyr` instead of the deprecated `serde_yaml`. `Error::Yaml` wraps `serde_saphyr::Error`, and `WorkflowsConfig::from_yaml` takes a `&serde_json::Value` (<https://github.com/quiltdata/quilt-rs/pull/1110>)
 - **Breaking:** `InstalledPackageStatus` has a new `latest_hash` field: the remote's `latest` hash the status was computed against (<https://github.com/quiltdata/quilt-rs/pull/1102>)
 
 ## [v0.43.0] - 2026-10-09
