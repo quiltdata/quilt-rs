@@ -12,7 +12,7 @@ use jsonschema::Validator;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-use serde_yaml::Value as YamlValue;
+use serde_norway::Value as YamlValue;
 
 use super::error::ConfigError;
 use super::validate::compile_config_schema;
@@ -48,7 +48,7 @@ static CONFIG_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
 fn validate_config_document(yaml: &YamlValue) -> Result<(), ConfigError> {
     use std::fmt::Write;
 
-    // `serde_yaml::Value` is `Serialize`, so this reuses serde's own YAML→JSON
+    // `serde_norway::Value` is `Serialize`, so this reuses serde's own YAML→JSON
     // conversion rather than a hand-rolled walker. A YAML document JSON cannot
     // represent (e.g. a non-string mapping key) is itself an invalid config, so
     // route the conversion failure into the same variant rather than letting it
@@ -354,7 +354,7 @@ mod tests {
         // This used to escape as an opaque JSON error; it now surfaces as the
         // same `InvalidWorkflowsConfig` variant a schema violation does, so both
         // malformed-config shapes classify identically everywhere.
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: YamlValue = serde_norway::from_str(
             r"
 1: not-a-string-key
 version: '1'
@@ -374,7 +374,7 @@ version: '1'
     fn test_workflows_config_parse_rich() -> Res<()> {
         // Fixture mirroring a sandbox bucket: several workflows with names and
         // descriptions, a declared default, and the required flag set true.
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: YamlValue = serde_norway::from_str(
             r#"
 version: "1"
 is_workflow_required: true
@@ -419,7 +419,7 @@ schemas:
     #[test]
     fn test_workflows_config_required_defaults_true() -> Res<()> {
         // `is_workflow_required` absent → defaults to true (matches quilt3).
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: YamlValue = serde_norway::from_str(
             r"
 version: '1'
 workflows:
@@ -440,7 +440,7 @@ workflows:
     #[test]
     fn test_workflows_config_required_explicit_false() -> Res<()> {
         // Explicit `is_workflow_required: false` → false.
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: YamlValue = serde_norway::from_str(
             r"
 version: '1'
 is_workflow_required: false
@@ -517,7 +517,7 @@ workflows:
     /// config schema now rejects it, naming the exact path.
     #[test]
     fn test_quoted_is_message_required_rejected_by_config_schema() {
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: YamlValue = serde_norway::from_str(
             r#"
 version: "1"
 workflows:
@@ -545,7 +545,7 @@ workflows:
     /// config is rejected at load with a violation naming the path.
     #[test]
     fn test_list_handle_pattern_rejected_by_config_schema() {
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: YamlValue = serde_norway::from_str(
             r#"
 version: "1"
 workflows:
@@ -569,7 +569,7 @@ workflows:
     fn test_schema_uris_both_one_none_and_unknown() -> Res<()> {
         // A config with three workflows: one declaring both schemas, one
         // declaring only the metadata schema, and one declaring neither.
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: YamlValue = serde_norway::from_str(
             r#"
 version: "1"
 workflows:
@@ -622,7 +622,7 @@ schemas:
         // whose id dangles (no matching `schemas` entry): the metadata link
         // still resolves, the dangling entries link degrades to `None` on its
         // own — a broken reference must not suppress the sibling link.
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: YamlValue = serde_norway::from_str(
             r#"
 version: "1"
 workflows:
@@ -653,7 +653,7 @@ schemas:
         // A workflow declaring a schema id, but no `schemas` section to resolve
         // it against → the dangling reference degrades to `None` (display-only
         // leniency) rather than the hard error the async resolver raises.
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: YamlValue = serde_norway::from_str(
             r"
 version: '1'
 workflows:
@@ -673,7 +673,7 @@ workflows:
     /// annotations the schema declares but quilt3 never asserts — still parses.
     #[test]
     fn test_valid_config_with_format_annotations_parses() -> Res<()> {
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: YamlValue = serde_norway::from_str(
             r#"
 version: "1"
 is_workflow_required: true
