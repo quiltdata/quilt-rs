@@ -61,7 +61,7 @@ use super::super::v2_page::{PageHandle, PageRead, V2Page, critical, hold};
 use super::{
     AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, HelpCard, PublishingCard,
     ReportDialog, ReportState, Saved, SettingsColumn, SettingsHeader, SignOutDialog, StorageCard,
-    StorageSize, SyncingCard, log_level_label, minutes_shown,
+    StorageSize, SyncingCard, log_level_label, minutes_secs, minutes_shown,
 };
 
 use super::style;
@@ -261,14 +261,6 @@ pub(crate) fn report_mailto(version: &str, os: &str, message: &str, zip: &str) -
         urlencoding::encode(&subject),
         urlencoding::encode(&body),
     )
-}
-
-/// The seconds a minutes field holds, if it holds a valid number of them.
-fn secs_of(minutes: &str) -> Option<u64> {
-    match minutes.trim().parse::<u64>() {
-        Ok(n) if n >= 1 => n.checked_mul(60),
-        _ => None,
-    }
 }
 
 // ── The page's state ──
@@ -758,7 +750,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                         row: Saved,
                         write: fn(u64) -> Write| {
         Callback::new(move |()| {
-            let Some(secs) = field.with_untracked(|text| secs_of(text)) else {
+            let Some(secs) = field.with_untracked(|text| minutes_secs(text).ok()) else {
                 return;
             };
             // The field already shows the stored value rounded: equal to that
@@ -826,15 +818,22 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
     let accounts = RwSignal::new(Accounts::Reading);
     let accounts_reload = Trigger::new();
     let account_reads = StoredValue::new(0_u64);
+    // A re-read of the page reads the accounts too, unless it is a save's
+    // own: that is not news about accounts, and asking roles again takes each
+    // host's credential lock. Apart from the accounts' own trigger below, so
+    // a sign-out's or a role switch's read is never swallowed by a save's
+    // quiet one landing in the same moment. Not on the first run: the read
+    // below makes the first.
+    Effect::new(move |seen: Option<()>| {
+        reload.track();
+        let quiet = saves.quiet.get_value();
+        saves.quiet.set_value(false);
+        if seen.is_some() && !quiet {
+            accounts_reload.notify();
+        }
+    });
     Effect::new(move |_| {
         accounts_reload.track();
-        reload.track();
-        // A save's own re-read is not news about accounts, and asking roles
-        // again takes each host's credential lock.
-        if saves.quiet.get_value() {
-            saves.quiet.set_value(false);
-            return;
-        }
         account_reads.update_value(|n| *n += 1);
         let this = account_reads.get_value();
         let current = move || account_reads.try_get_value() == Some(this);
@@ -1838,6 +1837,28 @@ mod tests {
         assert!(toggle(&again, PULL).checked(), "and the next one is not");
         assert!(!toggle(&again, WATCH).checked());
         assert_eq!(writes().len(), 2, "the visit saved nothing itself");
+    }
+
+    /// A sign-out's read of the accounts lands even when a save's quiet
+    /// re-read comes in the same moment.
+    #[wasm_bindgen_test]
+    async fn a_sign_out_is_not_lost_under_a_save() {
+        let el = page(vec![settings()]).await;
+        assert_eq!(ACCOUNT_READS.with(Cell::get), 1);
+        WRITE_DELAY.with(|d| d.set(20));
+        toggle(&el, WATCH).click();
+        let accounts = el.query_selector("[data-accounts]").unwrap().unwrap();
+        button_saying(&accounts, "Sign out").click();
+        sleep_ms(5).await;
+        let dialog = el.query_selector("dialog[open]").unwrap().expect("asked");
+        button_saying(&dialog, "Sign out").click();
+        sleep_ms(100).await;
+        assert_eq!(writes().len(), 1);
+        assert_eq!(
+            ACCOUNT_READS.with(Cell::get),
+            2,
+            "the sign-out's read, and only it"
+        );
     }
 
     /// No measure runs beside a sweep: it would count what is being deleted.

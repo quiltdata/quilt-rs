@@ -81,15 +81,37 @@ pub fn minutes_shown(secs: u64) -> u64 {
     secs.saturating_add(30).checked_div(60).unwrap_or(0).max(1)
 }
 
+/// The seconds the minutes typed stand for, or what is wrong with them. The
+/// one reading of the field: its error and its save cannot disagree.
+pub fn minutes_secs(text: &str) -> Result<u64, &'static str> {
+    const TOO_MANY: &str = "Too many minutes";
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("Enter a number of minutes");
+    }
+    if !text
+        .trim_start_matches(['-', '+'])
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+    {
+        return Err("Whole minutes only");
+    }
+    match text.parse::<i64>() {
+        Ok(n) if n < 1 => Err("At least 1 minute"),
+        Ok(n) => u64::try_from(n)
+            .ok()
+            .and_then(|n| n.checked_mul(60))
+            .ok_or(TOO_MANY),
+        // All digits, so only too long to be a number.
+        Err(_) if text.starts_with('-') => Err("At least 1 minute"),
+        Err(_) => Err(TOO_MANY),
+    }
+}
+
 /// What is wrong with the minutes typed, if anything.
 #[must_use]
 pub fn minutes_error(text: &str) -> Option<&'static str> {
-    match text.trim().parse::<i64>() {
-        Ok(n) if n >= 1 => None,
-        Ok(_) => Some("At least 1 minute"),
-        Err(_) if text.trim().is_empty() => Some("Enter a number of minutes"),
-        Err(_) => Some("Whole minutes only"),
-    }
+    minutes_secs(text).err()
 }
 
 /// The sentence around a minutes field: `Every [1] minute`, `After [5]
@@ -1029,6 +1051,30 @@ mod tests {
         assert_eq!(minutes_error("-3"), Some("At least 1 minute"));
         assert_eq!(minutes_error(""), Some("Enter a number of minutes"));
         assert_eq!(minutes_error("1.5"), Some("Whole minutes only"));
+    }
+
+    /// The field's error and its save read the text the same way: a value
+    /// too large to save says so instead of being dropped.
+    #[test]
+    fn the_error_and_the_save_agree() {
+        assert_eq!(minutes_secs("3"), Ok(180));
+        assert_eq!(
+            minutes_secs(&(u64::MAX / 60).to_string()),
+            Ok(u64::MAX / 60 * 60)
+        );
+        assert_eq!(minutes_secs(&i64::MAX.to_string()), Err("Too many minutes"));
+        assert_eq!(
+            minutes_secs("99999999999999999999999"),
+            Err("Too many minutes")
+        );
+        assert_eq!(
+            minutes_secs("-99999999999999999999999"),
+            Err("At least 1 minute")
+        );
+        assert_eq!(
+            minutes_error(&i64::MAX.to_string()),
+            Some("Too many minutes")
+        );
     }
 
     #[test]
