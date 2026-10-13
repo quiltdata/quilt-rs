@@ -21,8 +21,10 @@
   min-width: 0;
 }
 
-/* The empty second column, and a slot the page left empty, as a skeleton
- * does, would each still take a gap. */
+/* Narrow, the second column is empty; and a slot the page left empty, as a
+ * skeleton does, would still take a gap. Wide, a column of only empty slots
+ * stays: it holds the width, so a skeleton's cards draw at the width the
+ * loaded page gives them and do not narrow when it arrives. */
 .column:empty,
 .column > :empty {
   display: none;
