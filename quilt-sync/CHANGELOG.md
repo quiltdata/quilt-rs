@@ -30,7 +30,7 @@
 
 ### Changed
 
-- Autosync checks for new revisions every minute by default, and never more often. Intervals are whole minutes; one interval applies whether the window is open, in the background or closed to the tray (PRLINK)
+- Autosync checks for new revisions every minute by default, and never more often. Intervals are whole minutes; one interval applies whether the window is open, in the background or closed to the tray (<https://github.com/quiltdata/quilt-rs/pull/1112>)
 
 ### Fixed
 
