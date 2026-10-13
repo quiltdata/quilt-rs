@@ -25,6 +25,10 @@
 
 - `LocalDomain::measure_storage` says how many bytes `.quilt/` holds and what `gc` would free now, as a `StorageSize`. Its freeable part, also on its own as `flow::gc_estimate`, is a dry run of `gc` by the same rules that deletes nothing and takes no package locks, so a busy package never stops it (<https://github.com/quiltdata/quilt-rs/pull/1099>)
 
+### Changed
+
+- **Breaking:** `Error::Yaml` wraps `serde_saphyr::Error`, and `WorkflowsConfig::from_yaml` takes a `&serde_json::Value`. Workflow config is parsed with `serde-saphyr`, replacing the deprecated `serde_yaml` (<https://github.com/quiltdata/quilt-rs/pull/1110>)
+
 ## [v0.43.0] - 2026-10-09
 
 ### Added

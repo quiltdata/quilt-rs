@@ -8,7 +8,6 @@
 use std::collections::BTreeMap;
 
 use serde_json::Value;
-use serde_yaml::Value as YamlValue;
 use tokio::io::AsyncReadExt;
 
 use crate::Error;
@@ -104,7 +103,7 @@ pub(crate) async fn fetch_workflows_config<R: Remote>(
                 .into_async_read()
                 .read_to_end(&mut bytes)
                 .await?;
-            let config = serde_yaml::from_slice::<Option<YamlValue>>(&bytes)?
+            let config = serde_saphyr::from_slice::<Option<Value>>(&bytes)?
                 .map(|yaml| WorkflowsConfig::from_yaml(&yaml))
                 .transpose()?;
             Ok((stream.uri, config))
