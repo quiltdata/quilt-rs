@@ -114,20 +114,81 @@ mod tests {
         );
     }
 
-    /// Narrow is the default and draws by `order`; the container query makes
-    /// two stacks that each keep their own height.
-    #[test]
-    fn the_stylesheet_switches_on_the_layouts_own_width() {
-        assert!(STYLE.contains("container-type: inline-size"));
-        assert!(STYLE.contains("@container (min-width: 976px)"));
+    /// The stylesheet, with its classes renamed to the hashed ones the
+    /// component draws. The test page loads no stylesheet of its own, and this
+    /// one is plain CSS, so it can be loaded as it is.
+    fn load_stylesheet() {
+        let css = STYLE
+            .replace(".columns", "\u{0}")
+            .replace(".frame", &format!(".{}", style::frame))
+            .replace(".column", &format!(".{}", style::column))
+            .replace(".item", &format!(".{}", style::item))
+            .replace('\u{0}', &format!(".{}", style::columns));
+        let doc = web_sys::window().unwrap().document().unwrap();
+        let tag = doc.create_element("style").unwrap();
+        tag.set_text_content(Some(&css));
+        doc.head().unwrap().append_child(&tag).unwrap();
+    }
+
+    /// A card `height` px tall, named by its text.
+    fn card(name: &'static str, height: u32) -> AnyView {
+        view! { <p style=format!("margin:0; height:{height}px")>{name}</p> }.into_any()
+    }
+
+    /// Each card's (left, top), by name, with the layout `width` px wide.
+    fn drawn(width: u32) -> Vec<(String, f64, f64)> {
+        load_stylesheet();
+        let el = mount(move || {
+            view! {
+                <div style=format!("width:{width}px")>
+                    <TwoColumns
+                        left=vec![ColumnItem::new(1, card("a", 300)), ColumnItem::new(3, card("c", 50))]
+                        right=vec![ColumnItem::new(2, card("b", 50)), ColumnItem::new(4, card("d", 50))]
+                    />
+                </div>
+            }
+        });
+        let cards = el.query_selector_all("p").unwrap();
+        let mut out: Vec<_> = (0..cards.length())
+            .map(|i| {
+                let p: web_sys::Element =
+                    wasm_bindgen::JsCast::unchecked_into(cards.get(i).unwrap());
+                let rect = p.get_bounding_client_rect();
+                (p.text_content().unwrap(), rect.left(), rect.top())
+            })
+            .collect();
+        out.sort_by(|x, y| x.0.cmp(&y.0));
+        out
+    }
+
+    /// Under 976px: one column, in the page's order rather than the DOM's.
+    #[wasm_bindgen_test]
+    #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
+    fn narrow_draws_one_column_in_the_pages_order() {
+        let cards = drawn(960);
         assert!(
-            STYLE.contains("display: contents"),
-            "narrow, the stacks add no box"
+            cards.iter().all(|c| c.1 == cards[0].1),
+            "one column: {cards:?}"
         );
-        assert!(STYLE.contains("order: var(--q-narrow-order)"));
-        assert!(
-            STYLE.contains("align-items: flex-start"),
-            "wide, the stacks keep their own heights"
+        let mut by_top = cards.clone();
+        by_top.sort_by(|x, y| x.2.total_cmp(&y.2));
+        let order: Vec<_> = by_top.into_iter().map(|c| c.0).collect();
+        assert_eq!(order, ["a", "b", "c", "d"]);
+    }
+
+    /// From 976px: two columns, each stacking on its own, so the right one
+    /// does not wait for the tall card on the left.
+    #[wasm_bindgen_test]
+    fn wide_draws_two_columns_that_stack_on_their_own() {
+        let cards = drawn(976);
+        let [a, b, c, d] = [&cards[0], &cards[1], &cards[2], &cards[3]];
+        assert!(b.1 > a.1, "b sits right of a: {cards:?}");
+        assert_eq!(
+            (b.2, c.1, d.1),
+            (a.2, a.1, b.1),
+            "b level with a; c under a; d under b"
         );
+        assert!(c.2 >= a.2 + 300.0, "c under the tall a");
+        assert!(d.2 < a.2 + 300.0, "d does not wait for a: {cards:?}");
     }
 }
