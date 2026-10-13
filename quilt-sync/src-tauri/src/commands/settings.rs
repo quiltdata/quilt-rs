@@ -562,7 +562,14 @@ mod tests {
     /// its next load shows.
     #[test]
     fn a_v1_save_runs_in_whole_minutes() {
-        for (typed, runs) in [(0, 60), (30, 60), (45, 60), (90, 120), (150, 180), (300, 300)] {
+        for (typed, runs) in [
+            (0, 60),
+            (30, 60),
+            (45, 60),
+            (90, 120),
+            (150, 180),
+            (300, 300),
+        ] {
             let incoming = AutosyncSettingsData {
                 pull_interval_secs: typed,
                 ..AutosyncSettingsData::from(AutosyncSettings::default())
@@ -711,7 +718,14 @@ mod tests {
 
     #[test]
     fn a_patch_runs_the_interval_in_whole_minutes() {
-        for (typed, runs) in [(0, 60), (30, 60), (45, 60), (90, 120), (150, 180), (300, 300)] {
+        for (typed, runs) in [
+            (0, 60),
+            (30, 60),
+            (45, 60),
+            (90, 120),
+            (150, 180),
+            (300, 300),
+        ] {
             let next = AutosyncPatch {
                 pull_interval_secs: Some(typed),
                 ..AutosyncPatch::default()
