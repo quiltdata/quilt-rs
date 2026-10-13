@@ -36,6 +36,7 @@
 ### Fixed
 
 - When a package is already behind and the remote gets another new revision, the package page shows it within one autosync check, instead of describing the older one until you refresh (<https://github.com/quiltdata/quilt-rs/pull/1102>)
+- **New design preview**: in *Needs your attention*, a package with a long name keeps what is wrong with it in sight, on a second line, instead of cutting it off
 
 ### quilt-rs
 
