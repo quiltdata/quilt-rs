@@ -653,6 +653,7 @@ mod tests {
             has_local_commit: false,
             commit_has_parent: false,
             role_switch: None,
+            newer: None,
         }
     }
 

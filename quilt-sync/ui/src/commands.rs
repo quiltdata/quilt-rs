@@ -614,6 +614,9 @@ pub struct PackageHeaderData {
     /// refusal live here, not on the wire.
     pub commit_has_parent: bool,
     pub role_switch: Option<RoleSwitch>,
+    /// The newer revision this read saw, when it reached the remote; the key
+    /// the page's kept dry-run answer must match.
+    pub newer: Option<String>,
 }
 
 /// The remedy a denial offers. UI-side mirror of

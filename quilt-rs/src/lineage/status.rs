@@ -74,6 +74,11 @@ pub struct InstalledPackageStatus {
     /// be reached and `upstream_state` fell back to the last-known tip, and
     /// for any status not built by [`InstalledPackage::status`](crate::InstalledPackage::status).
     pub latest_refreshed: bool,
+    /// The remote's `latest` hash this status was computed against: fetched
+    /// just now when [`Self::latest_refreshed`], else the last-known tip.
+    /// Empty when none is known. Carried with the verdict so a caller never
+    /// pairs it with another read's tip.
+    pub latest_hash: String,
 }
 
 impl InstalledPackageStatus {
@@ -86,6 +91,7 @@ impl InstalledPackageStatus {
             junky_changes: Vec::new(),
             most_recent_mtime: None,
             latest_refreshed: false,
+            latest_hash: String::new(),
         }
     }
 

@@ -275,6 +275,7 @@ pub async fn create_status(
     status.ignored_files = ignored_files;
     status.junky_changes = junky_changes;
     status.most_recent_mtime = locate_result.most_recent_mtime;
+    status.latest_hash.clone_from(&lineage.latest_hash);
     trace!(
         // `walked` earns its place by distinguishing two readings of "0 changes":
         // nothing changed, or we looked at nothing — a wrong or empty working
@@ -371,6 +372,10 @@ mod tests {
         )
         .await?;
         assert_eq!(status.upstream_state, UpstreamState::Behind);
+        assert_eq!(
+            status.latest_hash, "BBB",
+            "the status names the newer revision it was computed against"
+        );
         Ok(())
     }
 

@@ -490,6 +490,12 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         assert_eq!(statuses[0].0, ns);
         assert_eq!(statuses[0].1.status, "up_to_date");
         assert!(!statuses[0].1.has_changes);
+        // The revision the pull reached is `latest` now: the next tick
+        // observes that, and must find it old news.
+        assert_eq!(
+            statuses[0].1.fingerprint,
+            crate::autopull::reporter::settled_fingerprint("h1")
+        );
     }
     // The mock's report names no files — the metadata-only shape, whose hashes
     // advance and whose files do not. An entry that stands until dismissed must
