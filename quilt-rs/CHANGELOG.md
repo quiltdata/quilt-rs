@@ -27,7 +27,7 @@
 
 ### Changed
 
-- **Breaking:** `Error::Yaml` wraps `serde_norway::Error` instead of `serde_yaml::Error`. Workflow config is now parsed with `serde_norway`, a maintained fork of the deprecated `serde_yaml` (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- **Breaking:** `Error::Yaml` wraps `serde_norway::Error` instead of `serde_yaml::Error`. Workflow config is now parsed with `serde_norway`, a maintained fork of the deprecated `serde_yaml` (<https://github.com/quiltdata/quilt-rs/pull/1110>)
 
 ## [v0.43.0] - 2026-10-09
 
