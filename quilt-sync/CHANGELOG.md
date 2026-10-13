@@ -28,6 +28,10 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1100>
   - <https://github.com/quiltdata/quilt-rs/pull/1106>
 
+### Changed
+
+- Autosync checks for new revisions every minute by default, and never more often. Intervals are whole minutes; one interval applies whether the window is open, in the background or closed to the tray (PRLINK)
+
 ### Fixed
 
 - When a package is already behind and the remote gets another new revision, the package page shows it within one autosync check, instead of describing the older one until you refresh (<https://github.com/quiltdata/quilt-rs/pull/1102>)

@@ -7,6 +7,10 @@ use crate::components::buttons;
 
 // ── Autosync section ──
 
+/// The pull interval runs in whole minutes; the backend rounds what is typed.
+const PULL_INTERVAL_HINT: &str = "Rounded to whole minutes, at least 60 s. One interval \
+     applies whether the window is open, in the background or closed to the tray.";
+
 #[component]
 pub(super) fn AutosyncSection(
     autosync: AutosyncSettingsData,
@@ -185,6 +189,7 @@ fn AutosyncSettingsPopup(
                         prop:value=move || pull_interval_secs.get()
                         on:input=move |ev| pull_interval_secs.set(event_target_value(&ev))
                     />
+                    <p class="field-description">{PULL_INTERVAL_HINT}</p>
                 </div>
 
                 <div class="field">

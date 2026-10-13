@@ -75,7 +75,8 @@ fn saved_note(saved: Signal<Option<Saved>>, row: Saved) -> AnyView {
 
 /// A stored interval in the field's whole minutes: rounded, and never below
 /// one, so a stored 45 s shows 1. The page writes it back only when the
-/// reader edits the field.
+/// reader edits the field. The pull interval already arrives in whole
+/// minutes, because the backend keeps it so; the quiet window may not.
 #[must_use]
 pub fn minutes_shown(secs: u64) -> u64 {
     secs.saturating_add(30).checked_div(60).unwrap_or(0).max(1)
@@ -231,8 +232,9 @@ pub const WATCH_SUBLABEL: &str = "Package statuses update as soon as you save, a
 
 /// Autosync's two directions with their minutes, and the folder watcher.
 ///
-/// A minute field writes only its own interval: the stored unfocused and
-/// closed intervals stay as they are.
+/// A minute field writes only its own interval. The pull minutes are the one
+/// check interval, whether the window is open, in the background or closed to
+/// the tray.
 #[component]
 pub fn SyncingCard(
     pull: RwSignal<bool>,

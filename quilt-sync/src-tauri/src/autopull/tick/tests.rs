@@ -12,7 +12,6 @@ use crate::autopull::AutosyncSettings;
 use crate::autopull::Clocks;
 use crate::autopull::PullSettings;
 use crate::autopull::PushSettings;
-use crate::autopull::WindowMode;
 use crate::autopull::activity::AutopullActivity;
 use crate::autopull::reporter::LogReporter;
 use crate::autopull::reporter::test_support::RecordingReporter;
@@ -53,7 +52,6 @@ fn test_aggregator() -> Arc<crate::autopull::status::SyncTrayAggregator> {
 fn make_inner(settings: AutosyncSettings) -> WatcherInner {
     WatcherInner {
         settings: Arc::new(RwLock::new(settings)),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -472,7 +470,6 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -571,7 +568,6 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -652,7 +648,6 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -757,7 +752,6 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -862,7 +856,6 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -957,7 +950,6 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -1107,7 +1099,6 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -1178,7 +1169,6 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -1334,7 +1324,6 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),

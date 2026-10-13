@@ -38,7 +38,6 @@ mod uri;
 use app::App;
 use autopull::StatusReporter;
 use autopull::Watcher;
-use autopull::WindowMode;
 use autopull::reporter::TauriEventReporter;
 use error::Error;
 use model::Model;
@@ -134,7 +133,6 @@ fn main() {
                     fswatcher::FsWatcherSettings::default(),
                 ))
             });
-            let window_mode = autopull::create_window_mode();
 
             app.manage(Model::create(data_dir));
             app.manage(commands::WorkflowRulesCache::default());
@@ -159,7 +157,6 @@ fn main() {
             let (watcher, status_rx) = Watcher::spawn(
                 app.handle().clone(),
                 autosync_settings.clone(),
-                window_mode.clone(),
                 publish_settings.clone(),
                 reporter.clone(),
             );
@@ -167,7 +164,6 @@ fn main() {
                 app.handle(),
                 fswatcher_settings.clone(),
                 autosync_settings.clone(),
-                window_mode.clone(),
                 &reporter,
             );
             autopull::activity::spawn_forwarder(app.handle().clone(), watcher.subscribe_activity());
@@ -175,13 +171,11 @@ fn main() {
             app.manage(autosync_settings);
             app.manage(fswatcher_settings);
             app.manage(experimental_settings);
-            app.manage(window_mode);
             app.manage(watcher);
             app.manage(quit::QuitGate::default());
 
             // The tray controller needs the autosync settings (for
-            // close_to_tray) and the window-mode state — both are now
-            // in `app.state::<...>()`.
+            // close_to_tray), now in `app.state::<...>()`.
             match tray::TrayController::install(app.handle(), status_rx) {
                 Ok(controller) => {
                     app.manage(controller);
@@ -196,26 +190,6 @@ fn main() {
             uri::setup_deep_link_handler(app.handle());
 
             Ok(())
-        })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Focused(focused) = event {
-                // If the window is hidden, leave window_mode at
-                // WindowMode::Closed — a focus event during the
-                // hide-to-tray transition would otherwise overwrite it.
-                if !window.is_visible().unwrap_or(true) {
-                    return;
-                }
-                let mode = if *focused {
-                    WindowMode::Focused
-                } else {
-                    WindowMode::Unfocused
-                };
-                let handle = window.app_handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    let watcher = handle.state::<Watcher>();
-                    watcher.set_window_mode(mode).await;
-                });
-            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::certify_latest,

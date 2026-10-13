@@ -282,7 +282,7 @@ impl Default for AutosyncSettingsData {
         Self {
             pull_enabled: false,
             push_enabled: false,
-            pull_interval_secs: 30,
+            pull_interval_secs: 60,
             idle_timeout_secs: 300,
             close_to_tray: false,
         }

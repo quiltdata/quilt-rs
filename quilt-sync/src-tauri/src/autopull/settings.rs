@@ -42,8 +42,17 @@ pub struct AutosyncSettings {
 pub struct PullSettings {
     #[serde(default, rename = "pull_enabled")]
     pub enabled: bool,
+    /// The one check interval, whatever the window is doing: open, in the
+    /// background or closed to the tray. Whole minutes, at least one; see
+    /// [`whole_minutes`].
     pub focused_secs: u64,
+    /// Not read and not changed: kept, and written back as found, only so
+    /// QuiltSync 0.22.9 and earlier can read the file.
+    #[serde(default = "default_unfocused_secs")]
     pub unfocused_secs: u64,
+    /// Not read and not changed: kept, and written back as found, only so
+    /// QuiltSync 0.22.9 and earlier can read the file.
+    #[serde(default = "default_closed_secs")]
     pub closed_secs: u64,
 }
 
@@ -51,11 +60,27 @@ impl Default for PullSettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            focused_secs: 30,
-            unfocused_secs: 120,
-            closed_secs: 600,
+            focused_secs: 60,
+            unfocused_secs: default_unfocused_secs(),
+            closed_secs: default_closed_secs(),
         }
     }
+}
+
+const fn default_unfocused_secs() -> u64 {
+    120
+}
+
+const fn default_closed_secs() -> u64 {
+    600
+}
+
+/// A check interval as it runs: rounded to the nearest whole minute, and at
+/// least one minute. 30 s and 45 s run as 60 s, 90 s as 120 s, 150 s as 180 s.
+#[must_use]
+pub const fn whole_minutes(secs: u64) -> u64 {
+    let minutes = secs.saturating_add(30) / 60;
+    if minutes == 0 { 60 } else { minutes * 60 }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -80,6 +105,14 @@ const fn default_idle_timeout_secs() -> u64 {
 }
 
 impl AutosyncSettings {
+    /// These settings with the check interval in whole minutes, the only form
+    /// that is loaded, saved or run.
+    #[must_use]
+    pub fn normalised(mut self) -> Self {
+        self.pull.focused_secs = whole_minutes(self.pull.focused_secs);
+        self
+    }
+
     fn file_path(data_dir: &Path) -> PathBuf {
         data_dir.join(FILE_NAME)
     }
@@ -87,7 +120,7 @@ impl AutosyncSettings {
     pub async fn load(data_dir: &Path) -> Result<Self, Error> {
         let path = Self::file_path(data_dir);
         match tokio::fs::read(&path).await {
-            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Ok(bytes) => Ok(serde_json::from_slice::<Self>(&bytes)?.normalised()),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(err) => Err(Error::from(err)),
         }
@@ -97,7 +130,7 @@ impl AutosyncSettings {
         tokio::fs::create_dir_all(data_dir).await?;
         let path = Self::file_path(data_dir);
         let tmp = path.with_extension("json.tmp");
-        let bytes = serde_json::to_vec_pretty(self)?;
+        let bytes = serde_json::to_vec_pretty(&self.clone().normalised())?;
         tokio::fs::write(&tmp, &bytes).await?;
         tokio::fs::rename(&tmp, &path).await?;
         Ok(())
@@ -121,9 +154,9 @@ mod tests {
         AutosyncSettings {
             pull: PullSettings {
                 enabled: true,
-                focused_secs: 5,
+                focused_secs: 300,
                 unfocused_secs: 60,
-                closed_secs: 300,
+                closed_secs: 900,
             },
             push: PushSettings {
                 enabled: true,
@@ -172,7 +205,7 @@ mod tests {
         let loaded = AutosyncSettings::load(dir.path()).await?;
         assert!(loaded.pull.enabled);
         assert!(!loaded.push.enabled);
-        assert_eq!(loaded.pull.focused_secs, 30);
+        assert_eq!(loaded.pull.focused_secs, 60, "30 s runs as one minute");
         assert_eq!(loaded.pull.unfocused_secs, 120);
         assert_eq!(loaded.pull.closed_secs, 600);
         assert_eq!(loaded.push.idle_timeout_secs, 45);
@@ -201,7 +234,7 @@ mod tests {
         // Other fields preserved verbatim.
         assert!(loaded.pull.enabled);
         assert!(loaded.push.enabled);
-        assert_eq!(loaded.pull.focused_secs, 30);
+        assert_eq!(loaded.pull.focused_secs, 60);
         assert_eq!(loaded.pull.unfocused_secs, 120);
         assert_eq!(loaded.pull.closed_secs, 600);
         Ok(())
@@ -262,6 +295,154 @@ mod tests {
         tokio::fs::write(&path, payload).await?;
         let loaded = AutosyncSettings::load(dir.path()).await?;
         assert!(!loaded.close_to_tray);
+        Ok(())
+    }
+
+    /// The table the owner settled: nearest whole minute, at least one.
+    const NORMALISED: [(u64, u64); 9] = [
+        (0, 60),
+        (1, 60),
+        (30, 60),
+        (45, 60),
+        (89, 60),
+        (90, 120),
+        (150, 180),
+        (300, 300),
+        (u64::MAX, u64::MAX / 60 * 60),
+    ];
+
+    #[test]
+    fn an_interval_runs_in_whole_minutes_at_least_one() {
+        for (stored, runs) in NORMALISED {
+            assert_eq!(whole_minutes(stored), runs, "{stored} s");
+        }
+    }
+
+    #[test]
+    fn the_default_interval_is_one_minute() {
+        let pull = AutosyncSettings::default().pull;
+        assert_eq!(pull.focused_secs, 60);
+        assert_eq!((pull.unfocused_secs, pull.closed_secs), (120, 600));
+    }
+
+    fn file_with_interval(secs: u64) -> String {
+        format!(
+            r#"{{"pull_enabled": true, "push_enabled": false, "focused_secs": {secs},
+                "unfocused_secs": 120, "closed_secs": 600, "idle_timeout_secs": 45}}"#
+        )
+    }
+
+    #[tokio::test]
+    async fn load_normalises_the_interval() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        for (stored, runs) in NORMALISED {
+            tokio::fs::write(dir.path().join(FILE_NAME), file_with_interval(stored)).await?;
+            let loaded = AutosyncSettings::load(dir.path()).await?;
+            assert_eq!(loaded.pull.focused_secs, runs, "{stored} s");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn save_normalises_the_interval() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        for (stored, runs) in NORMALISED {
+            let mut settings = AutosyncSettings::default();
+            settings.pull.focused_secs = stored;
+            settings.save(dir.path()).await?;
+            let bytes = tokio::fs::read(dir.path().join(FILE_NAME)).await?;
+            let on_disk: serde_json::Value = serde_json::from_slice(&bytes)?;
+            assert_eq!(on_disk["focused_secs"], runs, "{stored} s");
+        }
+        Ok(())
+    }
+
+    /// The two retired intervals are not this version's: a load and a save
+    /// write them back exactly as found, odd values included.
+    #[tokio::test]
+    async fn load_then_save_keeps_the_retired_intervals() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        tokio::fs::write(
+            &path,
+            br#"{"pull_enabled": true, "push_enabled": false, "focused_secs": 90,
+                "unfocused_secs": 7, "closed_secs": 1234, "idle_timeout_secs": 45}"#,
+        )
+        .await?;
+        AutosyncSettings::load(dir.path())
+            .await?
+            .save(dir.path())
+            .await?;
+        let on_disk: serde_json::Value = serde_json::from_slice(&tokio::fs::read(&path).await?)?;
+        assert_eq!(on_disk["unfocused_secs"], 7);
+        assert_eq!(on_disk["closed_secs"], 1234);
+        assert_eq!(on_disk["focused_secs"], 120);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_file_without_the_retired_intervals_gets_the_old_defaults() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        tokio::fs::write(
+            dir.path().join(FILE_NAME),
+            br#"{"pull_enabled": true, "focused_secs": 60}"#,
+        )
+        .await?;
+        let loaded = AutosyncSettings::load(dir.path()).await?;
+        assert_eq!(
+            (loaded.pull.unfocused_secs, loaded.pull.closed_secs),
+            (120, 600)
+        );
+        Ok(())
+    }
+
+    /// The settings shape QuiltSync 0.22.9 reads, copied as it shipped: every
+    /// interval required.
+    #[derive(Deserialize)]
+    struct Settings0229 {
+        #[serde(flatten)]
+        pull: Pull0229,
+        #[serde(flatten)]
+        push: Push0229,
+        #[serde(default)]
+        close_to_tray: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct Pull0229 {
+        #[serde(default, rename = "pull_enabled")]
+        enabled: bool,
+        focused_secs: u64,
+        unfocused_secs: u64,
+        closed_secs: u64,
+    }
+
+    #[derive(Deserialize)]
+    struct Push0229 {
+        #[serde(default, rename = "push_enabled")]
+        enabled: bool,
+        #[serde(default = "default_idle_timeout_secs")]
+        idle_timeout_secs: u64,
+    }
+
+    /// A downgrade reads what this version writes, with the same choices.
+    #[tokio::test]
+    async fn quiltsync_0_22_9_reads_a_file_this_version_writes() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        for settings in [AutosyncSettings::default(), nondefault()] {
+            let mut settings = settings;
+            settings.close_to_tray = !settings.close_to_tray;
+            settings.save(dir.path()).await?;
+            let bytes = tokio::fs::read(dir.path().join(FILE_NAME)).await?;
+            let old: Settings0229 = serde_json::from_slice(&bytes)?;
+            assert_eq!(old.pull.enabled, settings.pull.enabled);
+            assert_eq!(old.push.enabled, settings.push.enabled);
+            assert_eq!(old.close_to_tray, settings.close_to_tray);
+            assert_eq!(old.pull.focused_secs, settings.pull.focused_secs);
+            assert_eq!(old.pull.unfocused_secs, settings.pull.unfocused_secs);
+            assert_eq!(old.pull.closed_secs, settings.pull.closed_secs);
+            assert_eq!(old.push.idle_timeout_secs, settings.push.idle_timeout_secs);
+        }
         Ok(())
     }
 }
