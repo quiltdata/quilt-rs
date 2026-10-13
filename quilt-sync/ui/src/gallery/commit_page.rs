@@ -32,6 +32,13 @@
 //! - The editor's context menu is not cropped: its one clipping ancestor is
 //!   the page's scroller, and the menu opens upward over the form.
 //!
+//! # At 640 wide
+//!
+//! The four 640 cells measure as their 1024 rows above, to the pixel: every
+//! field fills the column, the ignored count shares the heading's row, and
+//! nothing scrolls sideways. Only a long namespace costs height, in the
+//! breadcrumb, which wraps to a second line (21px) rather than overflowing.
+//!
 //! # Left for the port
 //!
 //! - The editor's context menu cuts some of its own labels short (`Edit valu`),
@@ -127,6 +134,8 @@ struct Fixture {
     /// (workflow, metadata)
     from_settings: (bool, bool),
     no_workflow: &'static str,
+    /// The window's width; the app's narrowest is 640.
+    width: u32,
 }
 
 impl Fixture {
@@ -145,6 +154,7 @@ impl Fixture {
             metadata_error: None,
             from_settings: (false, false),
             no_workflow: "None",
+            width: 1024,
         }
     }
 }
@@ -163,6 +173,7 @@ fn page(f: Fixture) -> AnyView {
         metadata_error,
         from_settings,
         no_workflow,
+        width,
     } = f;
     let w = PrimaryWiring {
         choice: RwSignal::new(0),
@@ -212,8 +223,9 @@ fn page(f: Fixture) -> AnyView {
     }
     .into_any();
 
+    let frame = format!("width:{width}px; --q-frame-height:560px; max-width:100%");
     view! {
-        <div id=id class="g-window" style="width:1024px; --q-frame-height:560px; max-width:100%">
+        <div id=id class="g-window" style=frame>
             <PageLayout heading="QuiltSync" banner=().into_any() actions=appbar_actions()>
                 <CommitColumn
                     header=view! {
@@ -261,8 +273,9 @@ fn loading() -> AnyView {
     .into_any()
 }
 
-const NOTE: &str = "The commit page v2 at the app's 1024×560 floor, one cell per state: header, \
-    problem, message, workflow, metadata, then the changed files, which scroll under the form.";
+const NOTE: &str = "The commit page v2 at 1024×560, one cell per state: header, \
+    problem, message, workflow, metadata, then the changed files, which scroll under the form. \
+    The cells after the long list are the same page at 640, the window's narrowest.";
 
 const FAILED_CHECK: &str = "The workflow requires an \"operator\" field in the metadata";
 
@@ -358,9 +371,49 @@ pub fn CommitPageScene() -> impl IntoView {
                     ..Fixture::new("commit-long")
                 })}
             </Cell>
+            {narrow_cells()}
             <Cell full=true label="loading">
                 {loading()}
             </Cell>
         </Scene>
     }
+}
+
+/// The same page at 640, the window's narrowest: the states that add a line
+/// or a long one.
+fn narrow_cells() -> AnyView {
+    view! {
+        <Cell full=true label="640 wide, the window's narrowest — at rest">
+            {page(Fixture { width: 640, ..Fixture::new("commit-640-rest") })}
+        </Cell>
+        <Cell full=true label="640 wide — signed out, the banner's button in reach">
+            {page(Fixture {
+                problem: Some(Problem::SignedOut {
+                    host: Some("demo.quiltdata.com".to_string()),
+                }),
+                blocked: Some("Sign in to publish"),
+                width: 640,
+                ..Fixture::new("commit-640-signed-out")
+            })}
+        </Cell>
+        <Cell full=true label="640 wide — the editor open, with a failed check">
+            {page(Fixture {
+                metadata_error: Some(FAILED_CHECK),
+                blocked: Some(FAILED_CHECK),
+                width: 640,
+                ..Fixture::new("commit-640-failed-check")
+            })}
+        </Cell>
+        <Cell full=true label="640 wide — 300 files, long names">
+            {page(Fixture {
+                primary: Primary::Files(300),
+                files: many_files(),
+                ignored: 14,
+                metadata: LONG_METADATA,
+                width: 640,
+                ..Fixture::new("commit-640-long")
+            })}
+        </Cell>
+    }
+    .into_any()
 }
