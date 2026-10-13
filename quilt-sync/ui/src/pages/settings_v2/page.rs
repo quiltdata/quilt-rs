@@ -1458,21 +1458,27 @@ mod tests {
         READS.with(Cell::get)
     }
 
-    /// The toggles in the page's order: pull, publish, watch, tray, preview.
-    fn toggle(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
-        el.query_selector_all("input[type=checkbox]")
-            .unwrap()
-            .item(n)
-            .unwrap_or_else(|| panic!("toggle {n}; markup was {}", el.inner_html()))
+    /// The toggle a reader finds by its label. Not by position: the layout
+    /// moves the cards between its one- and two-column orders with the width.
+    fn toggle(el: &web_sys::Element, label: &str) -> web_sys::HtmlInputElement {
+        let boxes = el.query_selector_all("input[type=checkbox]").unwrap();
+        (0..boxes.length())
+            .map(|i| boxes.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .find(|b| {
+                b.closest("label")
+                    .ok()
+                    .flatten()
+                    .and_then(|l| l.text_content())
+                    .is_some_and(|t| t.trim_start().starts_with(label))
+            })
+            .unwrap_or_else(|| panic!("no toggle {label:?}; markup was {}", el.inner_html()))
             .unchecked_into()
     }
 
-    // In DOM order, which is the wide layout's: the left column (Syncing's
-    // three, then Experimental's preview), then the right (App's tray).
-    const PULL: u32 = 0;
-    const WATCH: u32 = 2;
-    const PREVIEW: u32 = 3;
-    const TRAY: u32 = 4;
+    const PULL: &str = "Get new revisions";
+    const WATCH: &str = "Watch folders for changes";
+    const PREVIEW: &str = "New design preview";
+    const TRAY: &str = "Keep running in the tray";
 
     fn minutes(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
         el.query_selector_all("input[type=number]")

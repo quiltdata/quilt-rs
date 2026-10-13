@@ -129,7 +129,7 @@ impl Page {
     }
 }
 
-/// The page at the 1024×560 floor.
+/// The page at 1024×560, the window's floor when this scene was drawn.
 fn page(p: Page) -> AnyView {
     let Page {
         name,
@@ -191,7 +191,7 @@ fn page(p: Page) -> AnyView {
     .into_any()
 }
 
-const NOTE: &str = "The page at the 1024×560 floor while a newer revision exists, before Get \
+const NOTE: &str = "The page at 1024×560 while a newer revision exists, before Get \
     latest. After the header's state label, · 6 file changes opens a popover that counts the \
     files by kind, says what Get latest does with them, and lists them, each linked to its \
     newer version in the catalog. The file list keeps all its rows. A conflict resolves the \

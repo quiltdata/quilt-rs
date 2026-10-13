@@ -220,7 +220,7 @@ pub fn SelectingScene() -> impl IntoView {
     view! {
         <Scene
             title="The installed package page, picking files"
-            note="Three files ticked at the 1024×560 floor, with the footer up. The \
+            note="Three files ticked at 1024×560, with the footer up. The \
                   busiest this page gets: 220px of list, six rows."
         >
             <Cell full=true label=SELECTING>
@@ -234,7 +234,7 @@ pub fn SelectingScene() -> impl IntoView {
 pub fn InstalledPackageScene() -> impl IntoView {
     view! {
         <Scene title="The installed package page" note=NOTE>
-            <Cell full=true label="1024×560 — the floor, nothing ticked">
+            <Cell full=true label="1024×560 — nothing ticked">
                 {page(1024, 560, PackageState::Behind, "page-floor", 0, false)}
             </Cell>
             <Cell full=true label=SELECTING>
