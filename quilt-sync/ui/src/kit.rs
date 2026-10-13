@@ -83,6 +83,7 @@ pub mod text_area;
 pub mod text_input;
 pub mod toggle_row;
 pub mod tooltip;
+pub mod two_columns;
 pub mod zero_line;
 
 pub use action_menu::ActionMenu;
@@ -176,6 +177,8 @@ pub use toggle_row::ToggleRow;
 pub use toggle_row::ToggleRowSkeleton;
 pub use tooltip::Tooltip;
 pub use tooltip::TooltipHandle;
+pub use two_columns::ColumnItem;
+pub use two_columns::TwoColumns;
 pub use zero_line::ZeroLine;
 pub use zero_line::ZeroLineSkeleton;
 

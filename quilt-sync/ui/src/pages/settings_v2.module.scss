@@ -1,6 +1,5 @@
-// The page's column of cards. The page's own gap, as on the other v2 pages'
-// regions: each card is a region.
-.column {
+// The header over the cards, at the cards' own gap.
+.page {
   display: flex;
   flex-direction: column;
   gap: var(--q-space-4);

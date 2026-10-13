@@ -60,7 +60,7 @@ use crate::kit::{
 use super::super::v2_page::{PageHandle, PageRead, V2Page, critical, hold};
 use super::{
     AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, HelpCard, PublishingCard,
-    ReportDialog, ReportState, Saved, SettingsColumn, SettingsHeader, SignOutDialog, StorageCard,
+    ReportDialog, ReportState, Saved, SettingsHeader, SettingsLayout, SignOutDialog, StorageCard,
     StorageSize, SyncingCard, log_level_label, minutes_secs, minutes_shown,
 };
 
@@ -172,7 +172,7 @@ pub fn SettingsV2Skeleton() -> impl IntoView {
 /// The header, then the first card's rows still being read.
 fn skeleton() -> AnyView {
     view! {
-        <SettingsColumn
+        <SettingsLayout
             header=view! { <SettingsHeader /> }.into_any()
             syncing=view! {
                 <Card title="Syncing" busy=true>
@@ -1114,7 +1114,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             }
         };
         view! {
-            <SettingsColumn
+            <SettingsLayout
                 header=view! { <SettingsHeader /> }.into_any()
                 syncing=view! {
                     <SyncingCard
@@ -1467,9 +1467,12 @@ mod tests {
             .unchecked_into()
     }
 
+    // In DOM order, which is the wide layout's: the left column (Syncing's
+    // three, then Experimental's preview), then the right (App's tray).
     const PULL: u32 = 0;
     const WATCH: u32 = 2;
-    const TRAY: u32 = 3;
+    const PREVIEW: u32 = 3;
+    const TRAY: u32 = 4;
 
     fn minutes(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
         el.query_selector_all("input[type=number]")
@@ -1767,8 +1770,6 @@ mod tests {
         sleep_ms(50).await;
         assert_eq!(alert(&el), None, "markup was {}", el.inner_html());
     }
-
-    const PREVIEW: u32 = 4;
 
     /// Turning the preview off leaves for `/` once it is saved.
     #[wasm_bindgen_test]

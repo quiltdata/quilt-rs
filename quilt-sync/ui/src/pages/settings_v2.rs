@@ -1,9 +1,8 @@
 //! The settings page v2's cards, as views over props.
 //!
 //! The gallery draws them over fixtures; the port fills the same props from
-//! `get_settings_data`. Every effect is a callback. [`SettingsColumn`] fixes
-//! the order, most used first: Syncing, Publishing, Accounts, App, Storage,
-//! Experimental, Help, About.
+//! `get_settings_data`. Every effect is a callback. [`SettingsLayout`] fixes
+//! where each card goes.
 //!
 //! Toggles, selects and minute fields save as they change, and the row says
 //! *Saved* for a moment ([`Saved`]). Publishing alone has a Save button,
@@ -21,6 +20,7 @@ use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
+use crate::kit::ColumnItem;
 use crate::kit::ConfirmDialog;
 use crate::kit::Dialog;
 use crate::kit::FormControl;
@@ -35,6 +35,7 @@ use crate::kit::Submit;
 use crate::kit::TextArea;
 use crate::kit::TextInput;
 use crate::kit::ToggleRow;
+use crate::kit::TwoColumns;
 use crate::util::format_size;
 
 use super::commit_v2::MetadataField;
@@ -195,9 +196,14 @@ pub fn SettingsHeader(
     }
 }
 
-/// The page's one column of cards, most used first.
+/// The page's cards: two columns on a wide window, one on a narrow one.
+///
+/// Wide, Syncing and Accounts share the top row — the two the main page's
+/// strip shows — with the rest of the configuration under Publishing and the
+/// app's own cards under Accounts. Narrow, the one column is most used first:
+/// Syncing, Publishing, Accounts, App, Storage, Experimental, Help, About.
 #[component]
-pub fn SettingsColumn(
+pub fn SettingsLayout(
     header: AnyView,
     syncing: AnyView,
     publishing: AnyView,
@@ -209,16 +215,22 @@ pub fn SettingsColumn(
     about: AnyView,
 ) -> impl IntoView {
     view! {
-        <div class=style::column>
+        <div class=style::page>
             {header}
-            {syncing}
-            {publishing}
-            {accounts}
-            {app}
-            {storage}
-            {experimental}
-            {help}
-            {about}
+            <TwoColumns
+                left=vec![
+                    ColumnItem::new(1, syncing),
+                    ColumnItem::new(2, publishing),
+                    ColumnItem::new(6, experimental),
+                ]
+                right=vec![
+                    ColumnItem::new(3, accounts),
+                    ColumnItem::new(4, app),
+                    ColumnItem::new(5, storage),
+                    ColumnItem::new(7, help),
+                    ColumnItem::new(8, about),
+                ]
+            />
         </div>
     }
 }

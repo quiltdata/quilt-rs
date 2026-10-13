@@ -1,0 +1,58 @@
+/*
+ * Two columns of regions, or one.
+ */
+
+/* The query container. The query styles what is inside it, so the columns are
+ * one box further in. */
+.frame {
+  container-type: inline-size;
+}
+
+/* Narrow is the default: one column, in the order each region names. The
+ * stacks add no box of their own, so their regions are this column's flex
+ * items and `order` can interleave them. */
+.columns {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-4);
+}
+
+.column {
+  display: contents;
+}
+
+.item {
+  order: var(--q-narrow-order);
+  min-width: 0;
+}
+
+/* A slot the page left empty, as a skeleton does, would still take a gap. */
+.item:empty {
+  display: none;
+}
+
+/* Two columns from a 1024px window. The layout fills the page column, which is
+ * the window less 16px of padding a side; 976 leaves another 16 for a classic
+ * scrollbar, since a page tall enough to need two columns scrolls. On a window
+ * with overlay scrollbars it switches at 1008 instead, which nobody can tell. */
+@container (min-width: 976px) {
+  .columns {
+    flex-direction: row;
+    /* Each stack is as tall as its own regions, so a tall card on one side
+     * leaves no hole on the other. */
+    align-items: flex-start;
+  }
+
+  .column {
+    display: flex;
+    flex-direction: column;
+    gap: var(--q-space-4);
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  /* Within a stack the DOM is the order. */
+  .item {
+    order: 0;
+  }
+}

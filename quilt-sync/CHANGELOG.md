@@ -27,6 +27,11 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1099>
   - <https://github.com/quiltdata/quilt-rs/pull/1100>
   - <https://github.com/quiltdata/quilt-rs/pull/1106>
+- **New design preview**: Settings shows its cards in two columns from a 1024px window, with Syncing and Accounts on top, and in one column below that (PR_URL)
+
+### Changed
+
+- The window can be made as narrow as 640px, down from 1024px (PR_URL)
 
 ### Fixed
 
