@@ -120,7 +120,7 @@ pub(super) fn DiagnosticsSection(
                     on_click=move |_| {
                         if let Some(path) = zip_path.get_untracked() {
                             leptos::task::spawn_local(async move {
-                                match commands::send_crash_report(path).await {
+                                match commands::send_crash_report(path, None).await {
                                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
                                     Err(e) => {
                                         notification
