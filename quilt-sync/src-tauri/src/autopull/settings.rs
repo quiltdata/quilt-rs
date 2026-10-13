@@ -47,11 +47,11 @@ pub struct PullSettings {
     /// [`whole_minutes`].
     pub focused_secs: u64,
     /// Not read and not changed: kept, and written back as found, only so
-    /// QuiltSync 0.22.9 and earlier can read the file.
+    /// releases 0.22.9 and earlier can read the file.
     #[serde(default = "default_unfocused_secs")]
     pub unfocused_secs: u64,
     /// Not read and not changed: kept, and written back as found, only so
-    /// QuiltSync 0.22.9 and earlier can read the file.
+    /// releases 0.22.9 and earlier can read the file.
     #[serde(default = "default_closed_secs")]
     pub closed_secs: u64,
 }
@@ -396,7 +396,7 @@ mod tests {
         Ok(())
     }
 
-    /// The settings shape QuiltSync 0.22.9 reads, copied as it shipped: every
+    /// The settings shape release 0.22.9 reads, copied as it shipped: every
     /// interval required.
     #[derive(Deserialize)]
     struct Settings0229 {
