@@ -370,13 +370,18 @@ version: '1'
     #[test]
     fn test_yaml_scalars_keep_their_types() -> Res<()> {
         // Plain `true`/`false` are booleans, a quoted "false" stays a string,
-        // and a plain integer is a number.
+        // and a plain integer is a number. The YAML 1.1 spellings `yes`/`no`/
+        // `on`/`off` are booleans too, as quilt3 (PyYAML) reads them.
         let document: Value = serde_saphyr::from_str(
             r#"
 plain_true: true
 plain_false: false
 quoted_false: "false"
 integer: 42
+yes_flag: yes
+no_flag: no
+on_flag: on
+off_flag: off
 "#,
         )?;
         assert_eq!(
@@ -386,6 +391,10 @@ integer: 42
                 "plain_false": false,
                 "quoted_false": "false",
                 "integer": 42,
+                "yes_flag": true,
+                "no_flag": false,
+                "on_flag": true,
+                "off_flag": false,
             })
         );
 
@@ -405,6 +414,30 @@ workflows:
             "violation must name the offending path, got: {err}"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_merge_keys_are_expanded() -> Res<()> {
+        // A `<<` merge key pulls in the anchored mapping, as quilt3 (PyYAML)
+        // does, so a config that shares settings between workflows passes the
+        // schema and each workflow sees the merged values.
+        let yaml: Value = serde_saphyr::from_str(
+            r#"
+version: "1"
+workflows:
+  base: &base
+    name: Base
+    is_message_required: true
+  derived:
+    <<: *base
+    name: Derived
+"#,
+        )?;
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+        assert_eq!(config.workflows[1].id, "derived");
+        assert_eq!(config.workflows[1].name.as_deref(), Some("Derived"));
+        assert!(config.is_message_required("derived"));
         Ok(())
     }
 

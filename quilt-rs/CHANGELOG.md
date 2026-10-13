@@ -27,7 +27,7 @@
 
 ### Changed
 
-- **Breaking:** `Error::Yaml` wraps `serde_saphyr::Error`, and `WorkflowsConfig::from_yaml` takes a `serde_json::Value`. Workflow config is parsed with `serde-saphyr`, replacing the deprecated `serde_yaml` (<https://github.com/quiltdata/quilt-rs/pull/1110>)
+- **Breaking:** `Error::Yaml` wraps `serde_saphyr::Error`, and `WorkflowsConfig::from_yaml` takes a `&serde_json::Value`. Workflow config is parsed with `serde-saphyr`, replacing the deprecated `serde_yaml` (<https://github.com/quiltdata/quilt-rs/pull/1110>)
 
 ## [v0.43.0] - 2026-10-09
 
