@@ -5,6 +5,12 @@
   gap: var(--q-space-4);
 }
 
+// A test handle that adds no box, so the card inside it is the layout's grid
+// cell and stretches to its row like the others.
+.slot {
+  display: contents;
+}
+
 // A card's fields, stacked as a form.
 .fields {
   display: flex;

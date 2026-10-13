@@ -1142,9 +1142,9 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                     />
                 }
                     .into_any()
-                accounts=view! { <div data-accounts>{accounts_card}</div> }.into_any()
+                accounts=view! { <div class=style::slot data-accounts>{accounts_card}</div> }.into_any()
                 app=view! { <AppCard tray=fields.tray saved=just_saved pending=pending /> }.into_any()
-                storage=view! { <div data-storage>{storage_card}</div> }.into_any()
+                storage=view! { <div class=style::slot data-storage>{storage_card}</div> }.into_any()
                 experimental=view! {
                     <ExperimentalCard
                         design_preview=fields.design_preview
@@ -1815,6 +1815,20 @@ mod tests {
         sleep_ms(60).await;
         assert_eq!(labelled(&el, "Default workflow").value(), "release");
         assert!(!button_saying(&el, "Save").disabled(), "still to save");
+    }
+
+    /// The test handles around Accounts and Storage add no box, so each card
+    /// is a cell of the layout's grid and stretches to its row like the rest.
+    #[wasm_bindgen_test]
+    async fn the_test_handles_leave_the_cards_as_grid_cells() {
+        let el = page(vec![settings()]).await;
+        for hook in ["[data-accounts]", "[data-storage]"] {
+            let slot = el.query_selector(hook).unwrap().unwrap();
+            assert!(slot.class_list().contains(super::style::slot), "{hook}");
+        }
+        assert!(
+            include_str!("../settings_v2.module.scss").contains(".slot {\n  display: contents;")
+        );
     }
 
     /// Sign out, confirmed, erases that host's credentials through
