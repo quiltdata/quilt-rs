@@ -4,30 +4,47 @@
 //!
 //! The columns stack **independently**: a tall region on the left leaves no
 //! hole under a short one on the right. A grid shares row heights between its
-//! columns, so it cannot do that without JavaScript measuring every card.
+//! columns, so it cannot do that.
 //!
 //! # Why the narrow order is the page's to choose
 //!
 //! Narrow, the page is one column, and that column is not "left, then right".
 //! Settings, for one, puts Accounts third in one column but at the top of the
 //! right one when wide. So each region says where it goes in the one column
-//! ([`ColumnItem::new`]), and narrow, the two stacks get `display: contents`
-//! and their regions are drawn by `order`.
+//! ([`ColumnItem::new`]).
 //!
-//! The DOM is the wide order, so narrow, focus and reading order are the left
-//! column, then the right one, wherever `order` draws them. The regions are
-//! independent cards, so nothing reads wrong; only the tab order may jump.
+//! # Why the regions move in the DOM rather than by `order`
+//!
+//! CSS `order` would draw the one column in the page's order and leave focus
+//! and a screen reader in the DOM's, so Tab would go down past Accounts and
+//! come back up for it. Instead the layout moves the regions themselves: wide,
+//! each sits in its own column; narrow, all of them sit in the first column in
+//! the page's order. What is drawn, what is read and what Tab reaches are then
+//! one order at every width.
+//!
+//! Moving an element out of the document drops its focus, so a region holding
+//! focus gets it back after the move. The regions are moved whole, so what is
+//! inside them, and the reactivity drawing it, is untouched.
 //!
 //! # Where it switches
 //!
-//! A container query on the layout's own width rather than a viewport media
-//! query, as on the package page: a gallery cell is not the window, and the
-//! layout should answer for the room it has. See `two_columns.module.scss` for
-//! the number.
+//! At the layout's own width rather than the viewport's, as the package page's
+//! container query does: a gallery cell is not the window, and the layout
+//! should answer for the room it has. A `ResizeObserver` measures it, because
+//! the switch moves elements and CSS cannot; it also sets `data-wide`, so the
+//! stylesheet keys on the same decision instead of a second breakpoint.
 
 use leptos::prelude::*;
+use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::Closure;
 
 stylance::import_crate_style!(style, "src/kit/two_columns.module.scss");
+
+/// The layout's own width from which it is two columns: a 1024px window, less
+/// the page column's 16px padding a side, less 16 for a classic scrollbar,
+/// since a page tall enough to need two columns scrolls. Where scrollbars
+/// overlay the page it switches at a 1008px window, which nobody can tell.
+pub const TWO_COLUMNS_FROM: i32 = 976;
 
 /// One region, and its place in the narrow layout's one column.
 pub struct ColumnItem {
@@ -45,22 +62,64 @@ impl ColumnItem {
     }
 }
 
-fn stack(items: Vec<ColumnItem>) -> impl IntoView {
-    view! {
-        <div class=style::column>
-            {items
-                .into_iter()
-                .map(|item| {
-                    view! {
-                        <div class=style::item style=format!("--q-narrow-order: {}", item.narrow)>
-                            {item.view}
-                        </div>
-                    }
-                })
-                .collect_view()}
-        </div>
+/// A region's wrapper, and where it goes in each arrangement.
+#[derive(Clone, Copy)]
+struct Placed {
+    narrow: u8,
+    right: bool,
+    node: NodeRef<leptos::html::Div>,
+}
+
+fn wrap(items: Vec<ColumnItem>, right: bool, placed: &mut Vec<Placed>) -> Vec<AnyView> {
+    items
+        .into_iter()
+        .map(|item| {
+            let node = NodeRef::new();
+            placed.push(Placed {
+                narrow: item.narrow,
+                right,
+                node,
+            });
+            view! { <div node_ref=node>{item.view}</div> }.into_any()
+        })
+        .collect()
+}
+
+/// Put every region where `wide` says, keeping focus where it was.
+fn arrange(
+    frame: &web_sys::HtmlElement,
+    left: &web_sys::Element,
+    right: &web_sys::Element,
+    placed: &[Placed],
+    wide: bool,
+) {
+    let focused = document()
+        .active_element()
+        .filter(|el| frame.contains(Some(el)));
+    let mut order: Vec<Placed> = placed.to_vec();
+    if !wide {
+        order.sort_by_key(|p| p.narrow);
+    }
+    for p in order {
+        let Some(node) = p.node.get_untracked() else {
+            continue;
+        };
+        let column = if wide && p.right { right } else { left };
+        let _ = column.append_child(&node);
+    }
+    if wide {
+        let _ = frame.set_attribute("data-wide", "");
+    } else {
+        let _ = frame.remove_attribute("data-wide");
+    }
+    if let Some(el) = focused.and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+        && document().active_element().as_ref() != Some(&el)
+    {
+        let _ = el.focus();
     }
 }
+
+type Observing = (web_sys::ResizeObserver, Closure<dyn FnMut()>);
 
 #[component]
 pub fn TwoColumns(
@@ -69,9 +128,54 @@ pub fn TwoColumns(
     /// The right column, top to bottom.
     right: Vec<ColumnItem>,
 ) -> impl IntoView {
+    let mut placed = Vec::new();
+    let left = wrap(left, false, &mut placed);
+    let right = wrap(right, true, &mut placed);
+
+    let frame = NodeRef::<leptos::html::Div>::new();
+    let left_column = NodeRef::<leptos::html::Div>::new();
+    let right_column = NodeRef::<leptos::html::Div>::new();
+    let shown: StoredValue<Option<bool>, LocalStorage> = StoredValue::new_local(None);
+    let update = move || {
+        let (Some(frame), Some(l), Some(r)) = (
+            frame.get_untracked(),
+            left_column.get_untracked(),
+            right_column.get_untracked(),
+        ) else {
+            return;
+        };
+        // Unattached, the frame has no width yet; the observer reports the real one.
+        if !frame.is_connected() {
+            return;
+        }
+        let wide = frame.client_width() >= TWO_COLUMNS_FROM;
+        if shown.get_value() != Some(wide) {
+            arrange(&frame, &l, &r, &placed, wide);
+            shown.set_value(Some(wide));
+        }
+    };
+    let held: StoredValue<Option<Observing>, LocalStorage> = StoredValue::new_local(None);
+    frame.on_load(move |el| {
+        let callback = Closure::<dyn FnMut()>::new(update);
+        if let Ok(observer) = web_sys::ResizeObserver::new(callback.as_ref().unchecked_ref()) {
+            observer.observe(&el);
+            held.set_value(Some((observer, callback)));
+        }
+    });
+    on_cleanup(move || {
+        held.try_update_value(|held| {
+            if let Some((observer, _)) = held.take() {
+                observer.disconnect();
+            }
+        });
+    });
+
     view! {
-        <div class=style::frame>
-            <div class=style::columns>{stack(left)} {stack(right)}</div>
+        <div class=style::frame node_ref=frame>
+            <div class=style::columns>
+                <div class=style::column node_ref=left_column>{left}</div>
+                <div class=style::column node_ref=right_column>{right}</div>
+            </div>
         </div>
     }
 }
@@ -79,64 +183,33 @@ pub fn TwoColumns(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
+    use crate::test_support::{load_module_style, mount, sleep_ms, unmount_earlier};
     use wasm_bindgen_test::*;
 
-    const STYLE: &str = include_str!("two_columns.module.scss");
-
-    /// The DOM is the wide order, and each region carries its narrow place.
-    #[wasm_bindgen_test]
-    fn each_region_carries_its_place_in_the_one_column() {
-        let el = mount(|| {
-            view! {
-                <TwoColumns
-                    left=vec![ColumnItem::new(1, view! { <p>"a"</p> }), ColumnItem::new(3, view! { <p>"c"</p> })]
-                    right=vec![ColumnItem::new(2, view! { <p>"b"</p> })]
-                />
-            }
-        });
-        let items = el.query_selector_all("p").unwrap();
-        let drawn: Vec<(String, String)> = (0..items.length())
-            .map(|i| {
-                let p: web_sys::Element =
-                    wasm_bindgen::JsCast::unchecked_into(items.get(i).unwrap());
-                let place = p.parent_element().unwrap().get_attribute("style").unwrap();
-                (p.text_content().unwrap(), place)
-            })
-            .collect();
-        assert_eq!(
-            drawn,
-            [
-                ("a".into(), "--q-narrow-order: 1".into()),
-                ("c".into(), "--q-narrow-order: 3".into()),
-                ("b".into(), "--q-narrow-order: 2".into()),
-            ]
+    fn load_stylesheet() {
+        load_module_style(
+            include_str!("two_columns.module.scss"),
+            &[
+                ("frame", style::frame),
+                ("columns", style::columns),
+                ("column", style::column),
+            ],
         );
     }
 
-    /// The stylesheet, with its classes renamed to the hashed ones the
-    /// component draws. The test page loads no stylesheet of its own, and this
-    /// one is plain CSS, so it can be loaded as it is.
-    fn load_stylesheet() {
-        let css = STYLE
-            .replace(".columns", "\u{0}")
-            .replace(".frame", &format!(".{}", style::frame))
-            .replace(".column", &format!(".{}", style::column))
-            .replace(".item", &format!(".{}", style::item))
-            .replace('\u{0}', &format!(".{}", style::columns));
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let tag = doc.create_element("style").unwrap();
-        tag.set_text_content(Some(&css));
-        doc.head().unwrap().append_child(&tag).unwrap();
-    }
-
-    /// A card `height` px tall, named by its text.
+    /// A card `height` px tall holding a field, named by its text.
     fn card(name: &'static str, height: u32) -> AnyView {
-        view! { <p style=format!("margin:0; height:{height}px")>{name}</p> }.into_any()
+        view! {
+            <section style=format!("height:{height}px")>
+                <p style="margin:0">{name}</p>
+                <input aria-label=name />
+            </section>
+        }
+        .into_any()
     }
 
-    /// Each card's (left, top), by name, with the layout `width` px wide.
-    fn drawn(width: u32) -> Vec<(String, f64, f64)> {
+    /// Two columns of cards, `a` tall; narrow, they read a, b, c, d.
+    async fn layout(width: u32) -> (web_sys::Element, web_sys::HtmlElement) {
         load_stylesheet();
         let el = mount(move || {
             view! {
@@ -148,47 +221,85 @@ mod tests {
                 </div>
             }
         });
-        let cards = el.query_selector_all("p").unwrap();
-        let mut out: Vec<_> = (0..cards.length())
+        sleep_ms(50).await;
+        let sized: web_sys::HtmlElement = el.first_element_child().unwrap().unchecked_into();
+        (el, sized)
+    }
+
+    /// Each card's name, left and top, in DOM order: what Tab and a screen
+    /// reader follow.
+    fn cards(el: &web_sys::Element) -> Vec<(String, f64, f64)> {
+        let found = el.query_selector_all("p").unwrap();
+        (0..found.length())
             .map(|i| {
-                let p: web_sys::Element =
-                    wasm_bindgen::JsCast::unchecked_into(cards.get(i).unwrap());
+                let p: web_sys::Element = found.get(i).unwrap().unchecked_into();
                 let rect = p.get_bounding_client_rect();
                 (p.text_content().unwrap(), rect.left(), rect.top())
             })
-            .collect();
-        out.sort_by(|x, y| x.0.cmp(&y.0));
-        out
+            .collect()
     }
 
-    /// Under 976px: one column, in the page's order rather than the DOM's.
+    fn names(cards: &[(String, f64, f64)]) -> Vec<&str> {
+        cards.iter().map(|c| c.0.as_str()).collect()
+    }
+
+    /// Under 976px: one column, and the DOM, so Tab, follows what is drawn.
     #[wasm_bindgen_test]
     #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
-    fn narrow_draws_one_column_in_the_pages_order() {
-        let cards = drawn(960);
+    async fn narrow_reads_and_draws_one_column_in_the_pages_order() {
+        let (el, _) = layout(960).await;
+        let drawn = cards(&el);
+        assert_eq!(names(&drawn), ["a", "b", "c", "d"]);
         assert!(
-            cards.iter().all(|c| c.1 == cards[0].1),
-            "one column: {cards:?}"
+            drawn.iter().all(|c| c.1 == drawn[0].1),
+            "one column: {drawn:?}"
         );
-        let mut by_top = cards.clone();
-        by_top.sort_by(|x, y| x.2.total_cmp(&y.2));
-        let order: Vec<_> = by_top.into_iter().map(|c| c.0).collect();
-        assert_eq!(order, ["a", "b", "c", "d"]);
+        assert!(
+            drawn.windows(2).all(|w| w[0].2 < w[1].2),
+            "top to bottom: {drawn:?}"
+        );
     }
 
     /// From 976px: two columns, each stacking on its own, so the right one
-    /// does not wait for the tall card on the left.
+    /// does not wait for the tall card on the left; the DOM reads left, then right.
     #[wasm_bindgen_test]
-    fn wide_draws_two_columns_that_stack_on_their_own() {
-        let cards = drawn(976);
-        let [a, b, c, d] = [&cards[0], &cards[1], &cards[2], &cards[3]];
-        assert!(b.1 > a.1, "b sits right of a: {cards:?}");
+    #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
+    async fn wide_draws_two_columns_that_stack_on_their_own() {
+        let (el, _) = layout(976).await;
+        let drawn = cards(&el);
+        assert_eq!(names(&drawn), ["a", "c", "b", "d"]);
+        let [a, c, b, d] = [&drawn[0], &drawn[1], &drawn[2], &drawn[3]];
+        assert!(b.1 > a.1, "b sits right of a: {drawn:?}");
         assert_eq!(
             (b.2, c.1, d.1),
             (a.2, a.1, b.1),
             "b level with a; c under a; d under b"
         );
         assert!(c.2 >= a.2 + 300.0, "c under the tall a");
-        assert!(d.2 < a.2 + 300.0, "d does not wait for a: {cards:?}");
+        assert!(d.2 < a.2 + 300.0, "d does not wait for a: {drawn:?}");
+    }
+
+    /// Crossing the width moves the cards, and a field being typed in keeps focus.
+    #[wasm_bindgen_test]
+    async fn a_focused_field_keeps_focus_across_the_switch() {
+        // An earlier test's open modal would make this field inert.
+        unmount_earlier();
+        let (el, sized) = layout(960).await;
+        let field: web_sys::HtmlElement = el
+            .query_selector("input[aria-label=d]")
+            .unwrap()
+            .unwrap()
+            .unchecked_into();
+        field.focus().unwrap();
+
+        sized.style().set_property("width", "976px").unwrap();
+        sleep_ms(50).await;
+        assert_eq!(names(&cards(&el)), ["a", "c", "b", "d"], "now wide");
+        assert_eq!(document().active_element(), Some(field.clone().into()));
+
+        sized.style().set_property("width", "960px").unwrap();
+        sleep_ms(50).await;
+        assert_eq!(names(&cards(&el)), ["a", "b", "c", "d"], "narrow again");
+        assert_eq!(document().active_element(), Some(field.into()));
     }
 }

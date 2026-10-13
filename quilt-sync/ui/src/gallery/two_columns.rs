@@ -48,7 +48,8 @@ pub fn TwoColumnsStories() -> impl IntoView {
                   and in one column below that. The columns stack on their own: a tall card on \
                   the left leaves no hole on the right. Narrow, each region goes where the page \
                   numbered it, which need not be left then right — here 3 and 4 come from the \
-                  right between the left's 2 and 5. Tab order is the DOM's, left then right."
+                  right between the left's 2 and 5. The regions move in the DOM, so Tab and a \
+                  screen reader follow the order drawn at every width."
         >
             <Cell full=true label="976px — two columns">
                 {layout(976)}

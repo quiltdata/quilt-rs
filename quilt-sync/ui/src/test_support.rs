@@ -159,3 +159,33 @@ pub(crate) fn describing_tooltip(el: &web_sys::Element) -> Option<web_sys::Eleme
         .filter_map(|id| doc.get_element_by_id(id))
         .find(|named| named.get_attribute("role").as_deref() == Some("tooltip"))
 }
+
+/// Load a component's stylesheet into the test page, which loads none of its own,
+/// so a test can check what is drawn and not only what is in the DOM.
+///
+/// Only for a module that is plain CSS: `classes` maps each of its class names to
+/// the hashed one `stylance` gives the component, and the text is otherwise loaded
+/// as it is. A name is replaced only as a whole word, so `.column` leaves
+/// `.columns` alone.
+pub(crate) fn load_module_style(css: &str, classes: &[(&str, &str)]) {
+    let mut out = String::with_capacity(css.len());
+    let mut rest = css;
+    while let Some(dot) = rest.find('.') {
+        out.push_str(&rest[..=dot]);
+        rest = &rest[dot + 1..];
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+            .unwrap_or(rest.len());
+        let word = &rest[..end];
+        match classes.iter().find(|(name, _)| *name == word) {
+            Some((_, hashed)) => out.push_str(hashed),
+            None => out.push_str(word),
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    let doc = window().document().unwrap();
+    let tag = doc.create_element("style").unwrap();
+    tag.set_text_content(Some(&out));
+    doc.head().unwrap().append_child(&tag).unwrap();
+}
