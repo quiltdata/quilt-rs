@@ -778,7 +778,9 @@ column of cards, most used first. No Refresh or Settings in the appbar.
 ```
 
 - Toggles, the log level and the minute fields save as they change, and
-  the row says *Saved* for a moment. Saves run in the order they were made;
+  the row says *Saved* for a moment. While a control's save is out it is
+  held: a toggle or the log level greyed, a minute field read-only with the
+  cursor still in it. Saves run in the order they were made;
   then the page reads again. A failed save says so in the band under the
   appbar, and the control goes back to what is stored.
 - A minute field saves on Enter or leaving it, only a whole number of at

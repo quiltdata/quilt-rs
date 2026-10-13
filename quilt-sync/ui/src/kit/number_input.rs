@@ -26,6 +26,11 @@ pub fn NumberInput(
     #[prop(optional)]
     min: Option<u32>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
+    /// Takes no typing, but keeps focus and the cursor, which `disabled`
+    /// does not: Settings holds a field still while its save is out, and the
+    /// reader who pressed Enter stays in it.
+    #[prop(optional, into)]
+    readonly: MaybeProp<bool>,
     /// Draws the error border and sets `aria-invalid`; the message is the
     /// caller's.
     #[prop(optional, into)]
@@ -75,6 +80,7 @@ pub fn NumberInput(
             aria-describedby=described_by
             prop:value=move || value.get()
             prop:disabled=move || disabled.get().unwrap_or(false)
+            prop:readOnly=move || readonly.get().unwrap_or(false)
             aria-invalid=move || is_invalid.get().then_some("true")
             on:input=move |ev| value.set(event_target_value(&ev))
             on:change=move |_| commit()

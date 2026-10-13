@@ -55,6 +55,12 @@ pub enum Saved {
     LogLevel,
 }
 
+/// Whether `row`'s own save is out: its control is held still until it
+/// answers, so one setting never has two saves in flight.
+fn saving(pending: Signal<Vec<Saved>>, row: Saved) -> Signal<bool> {
+    Signal::derive(move || pending.with(|rows| rows.contains(&row)))
+}
+
 /// The brief *Saved* beside a row, while the page says that row just saved.
 fn saved_note(saved: Signal<Option<Saved>>, row: Saved) -> AnyView {
     view! {
@@ -99,6 +105,8 @@ fn MinutesSentence(
     name: &'static str,
     minutes: RwSignal<String>,
     on_commit: Option<Callback<()>>,
+    /// While its save is out: no typing, but the cursor stays.
+    held: Signal<bool>,
 ) -> impl IntoView {
     let error = Signal::derive(move || minutes.with(|text| minutes_error(text)));
     let error_id = crate::kit::unique_id("minutes-error");
@@ -116,6 +124,7 @@ fn MinutesSentence(
                 naming=Naming::Hidden(name.to_string())
                 value=minutes
                 min=1
+                readonly=held
                 invalid=Signal::derive(move || error.get().is_some())
                 described_by={
                     let id = error_id.clone();
@@ -210,6 +219,9 @@ pub fn SyncingCard(
     publish_minutes: RwSignal<String>,
     watch: RwSignal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
+    /// The rows whose save is out.
+    #[prop(optional, into)]
+    pending: Signal<Vec<Saved>>,
     /// Enter or leaving the pull minutes, when they are valid.
     #[prop(optional)]
     on_pull_minutes: Option<Callback<()>>,
@@ -220,6 +232,7 @@ pub fn SyncingCard(
             <ToggleRow
                 label="Get new revisions"
                 checked=pull
+                disabled=saving(pending, Saved::Pull)
                 trailing=saved_note(saved, Saved::Pull)
                 detail=view! {
                     <MinutesSentence
@@ -227,6 +240,7 @@ pub fn SyncingCard(
                         name="Minutes between checks for new revisions"
                         minutes=pull_minutes
                         on_commit=on_pull_minutes
+                        held=saving(pending, Saved::Pull)
                     />
                 }
                     .into_any()
@@ -234,6 +248,7 @@ pub fn SyncingCard(
             <ToggleRow
                 label="Publish your changes"
                 checked=publish
+                disabled=saving(pending, Saved::Publish)
                 trailing=saved_note(saved, Saved::Publish)
                 detail=view! {
                     <MinutesSentence
@@ -242,6 +257,7 @@ pub fn SyncingCard(
                         name="Minutes of inactivity before publishing"
                         minutes=publish_minutes
                         on_commit=on_publish_minutes
+                        held=saving(pending, Saved::Publish)
                     />
                 }
                     .into_any()
@@ -250,6 +266,7 @@ pub fn SyncingCard(
                 label="Watch folders for changes"
                 sublabel=WATCH_SUBLABEL
                 checked=watch
+                disabled=saving(pending, Saved::Watch)
                 trailing=saved_note(saved, Saved::Watch)
             />
         </Card>
@@ -522,6 +539,7 @@ pub const TRAY_SUBLABEL: &str = "Closing the window leaves QuiltSync running in 
 pub fn AppCard(
     tray: RwSignal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
+    #[prop(optional, into)] pending: Signal<Vec<Saved>>,
 ) -> impl IntoView {
     view! {
         <Card title="App">
@@ -529,6 +547,7 @@ pub fn AppCard(
                 label="Keep running in the tray when the window is closed"
                 sublabel=TRAY_SUBLABEL
                 checked=tray
+                disabled=saving(pending, Saved::Tray)
                 trailing=saved_note(saved, Saved::Tray)
             />
         </Card>
@@ -689,6 +708,7 @@ pub const DESIGN_PREVIEW_SUBLABEL: &str = "The redesigned QuiltSync, wherever it
 pub fn ExperimentalCard(
     design_preview: RwSignal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
+    #[prop(optional, into)] pending: Signal<Vec<Saved>>,
 ) -> impl IntoView {
     view! {
         <Card title="Experimental">
@@ -696,6 +716,7 @@ pub fn ExperimentalCard(
                 label="New design preview"
                 sublabel=DESIGN_PREVIEW_SUBLABEL
                 checked=design_preview
+                disabled=saving(pending, Saved::DesignPreview)
                 trailing=saved_note(saved, Saved::DesignPreview)
             />
         </Card>
@@ -753,6 +774,7 @@ pub fn HelpCard(
     #[prop(into)] data_dir: String,
     on_open_data: Callback<()>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
+    #[prop(optional, into)] pending: Signal<Vec<Saved>>,
 ) -> impl IntoView {
     // A valid `QUILT_LOG` replaces the saved level, so the choice is moot.
     let overridden = matches!(log_env, LogEnv::Overrides(_));
@@ -785,7 +807,9 @@ pub fn HelpCard(
                                         naming=Naming::FormControl(id)
                                         options=LOG_LEVELS.iter().map(ToString::to_string).collect()
                                         selected=log_level
-                                        disabled=overridden
+                                        disabled=Signal::derive(move || {
+                                            overridden || saving(pending, Saved::LogLevel).get()
+                                        })
                                     />
                                 </span>
                             }

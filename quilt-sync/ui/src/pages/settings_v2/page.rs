@@ -31,7 +31,10 @@
 //! what the control holds changes nothing.
 //!
 //! Saves are quick and each writes its own setting, so they do not take the
-//! page's lock. The commands that run longer do — Free up space, a role
+//! page's lock. A control is held still while its own save is out — a toggle
+//! or the log level disabled, a minutes field read-only so the cursor stays —
+//! so one setting never has two saves in flight, and a failure is never about
+//! a value the reader has since replaced. The commands that run longer do — Free up space, a role
 //! switch, Sign out — and the dialogs read it.
 
 use std::collections::VecDeque;
@@ -460,6 +463,10 @@ struct Saves {
     writing: RwSignal<bool>,
     /// The row that just saved, for its *Saved*.
     saved: RwSignal<Option<Saved>>,
+    /// Rows whose save is out. Their controls are held still meanwhile, so a
+    /// setting never has two saves in flight and a failure is never about a
+    /// value the reader has since replaced.
+    pending: RwSignal<Vec<Saved>>,
     saved_timer: StoredValue<Option<TimeoutHandle>>,
     /// The next re-read is the queue's own, which is not news about accounts.
     quiet: StoredValue<bool>,
@@ -483,6 +490,7 @@ impl Saves {
             leave: RwSignal::new(false),
             writing: RwSignal::new(false),
             saved: RwSignal::new(None),
+            pending: RwSignal::new(Vec::new()),
             saved_timer: StoredValue::new(None),
             quiet: StoredValue::new(false),
         }
@@ -501,6 +509,9 @@ impl Saves {
         page: PageHandle,
     ) {
         page.outcome.set(None);
+        if let Some(row) = row {
+            self.pending.update(|rows| rows.push(row));
+        }
         QUEUE.with(|q| {
             q.borrow_mut().push_back(Queued {
                 from: self,
@@ -530,6 +541,13 @@ impl Saves {
         undo: Option<Callback<()>>,
         result: Result<(), String>,
     ) {
+        if let Some(row) = row {
+            self.pending.try_update(|rows| {
+                if let Some(at) = rows.iter().position(|r| *r == row) {
+                    rows.remove(at);
+                }
+            });
+        }
         match result {
             Ok(()) => {
                 if let Some(row) = row {
@@ -1017,6 +1035,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
 
     // ── The body, rebuilt only when the fixed text changes ──
     let just_saved: Signal<Option<Saved>> = saves.saved.into();
+    let pending: Signal<Vec<Saved>> = saves.pending.into();
     let body = move |f: Fixed| {
         let accounts_card = move || match accounts.get() {
             Accounts::Reading => view! {
@@ -1084,6 +1103,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                         publish_minutes=fields.publish_minutes
                         watch=fields.watch
                         saved=just_saved
+                        pending=pending
                         on_pull_minutes=on_pull_minutes
                         on_publish_minutes=on_publish_minutes
                     />
@@ -1102,10 +1122,14 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 }
                     .into_any()
                 accounts=view! { <div data-accounts>{accounts_card}</div> }.into_any()
-                app=view! { <AppCard tray=fields.tray saved=just_saved /> }.into_any()
+                app=view! { <AppCard tray=fields.tray saved=just_saved pending=pending /> }.into_any()
                 storage=view! { <div data-storage>{storage_card}</div> }.into_any()
                 experimental=view! {
-                    <ExperimentalCard design_preview=fields.design_preview saved=just_saved />
+                    <ExperimentalCard
+                        design_preview=fields.design_preview
+                        saved=just_saved
+                        pending=pending
+                    />
                 }
                     .into_any()
                 help=view! {
@@ -1119,6 +1143,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                         data_dir=f.data_dir
                         on_open_data=on_open_data
                         saved=just_saved
+                        pending=pending
                     />
                 }
                     .into_any()
@@ -1417,6 +1442,7 @@ mod tests {
 
     const PULL: u32 = 0;
     const WATCH: u32 = 2;
+    const TRAY: u32 = 3;
 
     fn minutes(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
         el.query_selector_all("input[type=number]")
@@ -1541,27 +1567,71 @@ mod tests {
         );
     }
 
-    /// Two quick changes land in the order they were made, and a re-read
-    /// out while they run does not put the old value back.
+    /// Quick changes to different settings land in the order they were made.
     #[wasm_bindgen_test]
     async fn saves_land_in_the_order_chosen() {
         let el = page(vec![settings()]).await;
         WRITE_DELAY.with(|d| d.set(30));
-        toggle(&el, PULL).click();
+        toggle(&el, WATCH).click();
         sleep_ms(5).await;
         toggle(&el, PULL).click();
         sleep_ms(5).await;
-        toggle(&el, PULL).click();
+        toggle(&el, TRAY).click();
         sleep_ms(150).await;
 
-        let pull = |on| {
-            Write::Autosync(AutosyncPatch {
-                pull_enabled: Some(on),
-                ..AutosyncPatch::default()
-            })
-        };
-        assert_eq!(writes(), vec![pull(true), pull(false), pull(true)]);
+        assert_eq!(
+            writes(),
+            vec![
+                Write::Watch(false),
+                Write::Autosync(AutosyncPatch {
+                    pull_enabled: Some(true),
+                    ..AutosyncPatch::default()
+                }),
+                Write::Autosync(AutosyncPatch {
+                    close_to_tray: Some(true),
+                    ..AutosyncPatch::default()
+                }),
+            ]
+        );
         assert_eq!(reads(), 2, "one re-read, after the queue ran");
+    }
+
+    /// A toggle is held while its own save is out, so a second click cannot
+    /// queue a second save of the same setting; the others stay free.
+    #[wasm_bindgen_test]
+    async fn a_toggle_is_held_while_its_save_is_out() {
+        let el = page(vec![settings()]).await;
+        WRITE_DELAY.with(|d| d.set(40));
+        toggle(&el, PULL).click();
+        sleep_ms(5).await;
+        assert!(toggle(&el, PULL).disabled(), "held");
+        assert!(!toggle(&el, WATCH).disabled(), "the others are not");
+        toggle(&el, PULL).click();
+        sleep_ms(100).await;
+        assert!(!toggle(&el, PULL).disabled(), "free again");
+        assert_eq!(writes().len(), 1, "one save");
+    }
+
+    /// A minutes field is read-only while its save is out, and the cursor
+    /// stays in it: Enter does not throw the reader out of the field.
+    #[wasm_bindgen_test]
+    async fn a_minutes_field_keeps_the_cursor_while_it_saves() {
+        let el = page(vec![settings()]).await;
+        WRITE_DELAY.with(|d| d.set(40));
+        let field = minutes(&el, 0);
+        field.focus().unwrap();
+        type_into(&field, "3");
+        commit(&field);
+        sleep_ms(5).await;
+        assert!(field.read_only(), "held");
+        let focused = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .active_element();
+        assert_eq!(focused, Some(field.clone().unchecked_into()));
+        sleep_ms(100).await;
+        assert!(!field.read_only(), "free again");
     }
 
     /// A save that fails says so, and the re-read puts the stored value back.
@@ -1642,20 +1712,18 @@ mod tests {
         WRITE_DELAY.with(|d| d.set(40));
         toggle(&el, PULL).click();
         sleep_ms(5).await;
-        toggle(&el, PULL).click();
+        toggle(&el, WATCH).click();
         sleep_ms(5).await;
 
         let again = remount().await;
-        toggle(&again, WATCH).click();
+        toggle(&again, PULL).click();
         sleep_ms(200).await;
 
-        let pull = |on| {
-            Write::Autosync(AutosyncPatch {
-                pull_enabled: Some(on),
-                ..AutosyncPatch::default()
-            })
-        };
-        assert_eq!(writes(), vec![pull(true), pull(false), Write::Watch(false)]);
+        let pull = Write::Autosync(AutosyncPatch {
+            pull_enabled: Some(true),
+            ..AutosyncPatch::default()
+        });
+        assert_eq!(writes(), vec![pull.clone(), Write::Watch(false), pull]);
     }
 
     /// A save that works after one that failed takes the failure down.
@@ -1682,23 +1750,6 @@ mod tests {
         toggle(&el, PREVIEW).click();
         sleep_ms(50).await;
         assert_eq!(path(), "/");
-    }
-
-    /// Off, then on again before the saves ran: the last choice is on, so
-    /// the page stays.
-    #[wasm_bindgen_test]
-    async fn the_preview_back_on_stays_here() {
-        let el = page(vec![settings()]).await;
-        WRITE_DELAY.with(|d| d.set(30));
-        toggle(&el, PREVIEW).click();
-        sleep_ms(5).await;
-        toggle(&el, PREVIEW).click();
-        sleep_ms(120).await;
-        assert_eq!(
-            writes(),
-            vec![Write::DesignPreview(false), Write::DesignPreview(true)]
-        );
-        assert_eq!(path(), "/settings");
     }
 
     /// The backend trims what Publishing saves; the re-read's value replaces
