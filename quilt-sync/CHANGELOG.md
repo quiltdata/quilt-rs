@@ -19,14 +19,10 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.22.10-dev]
+## [v0.22.11-dev]
 
 ### Added
 
-- **New design preview**: a redesigned Settings page. Settings save as you change them, times are in minutes, **Check size** shows how much space the app uses and how much Free up space would free, and **Report a problem** sends what you write with your logs. Sign out of a catalog from its Accounts card
-  - <https://github.com/quiltdata/quilt-rs/pull/1099>
-  - <https://github.com/quiltdata/quilt-rs/pull/1100>
-  - <https://github.com/quiltdata/quilt-rs/pull/1106>
 - **New design preview**: Settings shows its cards in two columns from a 1024px window, with Syncing and Accounts on top, and in one column below that (<https://github.com/quiltdata/quilt-rs/pull/1113>)
 
 ### Changed
@@ -35,12 +31,24 @@
 
 ### Fixed
 
-- When a package is already behind and the remote gets another new revision, the package page shows it within one autosync check, instead of describing the older one until you refresh (<https://github.com/quiltdata/quilt-rs/pull/1102>)
 - **New design preview**: in *Needs your attention*, a package with a long name keeps what is wrong with it in sight, on a second line, instead of cutting it off (<https://github.com/quiltdata/quilt-rs/pull/1113>)
+
+## [v0.22.10] - 2026-10-13
+
+### Added
+
+- **New design preview**: a redesigned Settings page. Settings save as you change them, **Check size** shows how much space the app uses and how much it can free, and **Report a problem** sends a message with your logs
+  - <https://github.com/quiltdata/quilt-rs/pull/1099>
+  - <https://github.com/quiltdata/quilt-rs/pull/1100>
+  - <https://github.com/quiltdata/quilt-rs/pull/1106>
+
+### Fixed
+
+- When a package is behind and the remote gets another revision, the package page shows the newest one and its incoming files, instead of the older one until you refresh (<https://github.com/quiltdata/quilt-rs/pull/1102>)
 
 ### quilt-rs
 
-- Updated [from v0.43.0 to v0.43.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.43.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.43.0 to v0.44.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.43.0...quilt-rs/v0.44.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.22.9] - 2026-10-09
 
