@@ -1692,7 +1692,7 @@ mod tests {
         let mut model = base_commit_model();
         // A sandbox-shaped config: multiple workflows, a declared default, and
         // the required flag set true.
-        let yaml: serde_yaml::Value = serde_yaml::from_str(
+        let yaml: serde_json::Value = serde_saphyr::from_str(
             r#"
 version: "1"
 is_workflow_required: true
@@ -1972,7 +1972,7 @@ workflows:
     async fn test_get_bucket_workflows_available() -> Result<(), String> {
         // `Ok(Some(cfg))` → Available, carrying the bucket's declared workflows.
         let mut model = mocks::create();
-        let yaml: serde_yaml::Value = serde_yaml::from_str(
+        let yaml: serde_json::Value = serde_saphyr::from_str(
             r#"
 version: "1"
 is_workflow_required: true
@@ -2021,7 +2021,7 @@ workflows:
         // link. The schema objects live under their own bucket, taken from the
         // `schemas` section's URLs.
         let mut model = mocks::create();
-        let yaml: serde_yaml::Value = serde_yaml::from_str(
+        let yaml: serde_json::Value = serde_saphyr::from_str(
             r#"
 version: "1"
 default_workflow: alpha

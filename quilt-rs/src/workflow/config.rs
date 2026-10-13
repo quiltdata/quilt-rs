@@ -12,7 +12,6 @@ use jsonschema::Validator;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-use serde_yaml::Value as YamlValue;
 
 use super::error::ConfigError;
 use super::validate::compile_config_schema;
@@ -45,21 +44,11 @@ static CONFIG_VALIDATOR: LazyLock<Validator> = LazyLock::new(|| {
 /// [`ConfigError::InvalidWorkflowsConfig`] (classified as a conflict, not a
 /// transient, by the sync watcher) naming every offending path — so a malformed
 /// config refuses everywhere rather than half-working.
-fn validate_config_document(yaml: &YamlValue) -> Result<(), ConfigError> {
+fn validate_config_document(document: &Value) -> Result<(), ConfigError> {
     use std::fmt::Write;
 
-    // `serde_yaml::Value` is `Serialize`, so this reuses serde's own YAML→JSON
-    // conversion rather than a hand-rolled walker. A YAML document JSON cannot
-    // represent (e.g. a non-string mapping key) is itself an invalid config, so
-    // route the conversion failure into the same variant rather than letting it
-    // escape as an opaque JSON error.
-    let document: Value = serde_json::to_value(yaml).map_err(|err| {
-        ConfigError::InvalidWorkflowsConfig(format!(
-            "workflows/config.yml could not be converted for schema validation: {err}"
-        ))
-    })?;
     let mut message = String::new();
-    for err in CONFIG_VALIDATOR.iter_errors(&document) {
+    for err in CONFIG_VALIDATOR.iter_errors(document) {
         let _ = write!(message, "\n  - {err} (at {})", err.instance_path());
     }
     if message.is_empty() {
@@ -145,11 +134,13 @@ pub struct WorkflowsConfig {
     /// The declared workflows, in file order.
     pub workflows: Vec<WorkflowInfo>,
     /// Retained source, used to resolve schemas exactly as the legacy helpers did.
-    raw: YamlValue,
+    raw: Value,
 }
 
 impl WorkflowsConfig {
-    /// Parse an already-decoded `config.yml` value into the typed view.
+    /// Build the typed view from a `config.yml` document already decoded into a
+    /// JSON value (the YAML is parsed with `serde_saphyr` straight into
+    /// [`serde_json::Value`], which keeps mapping keys in file order).
     ///
     /// Validates the whole document against quilt3's config schema first
     /// (mirroring quilt3's load-time `Draft7Validator`), so a malformed config
@@ -158,35 +149,30 @@ impl WorkflowsConfig {
     /// point every consumer (commit/push enforcement, `resolve_workflow`, the
     /// bucket-workflows selector) reaches, so the check runs exactly once per
     /// loaded config on every path.
-    pub fn from_yaml(yaml: &YamlValue) -> Result<WorkflowsConfig, ConfigError> {
+    pub fn from_yaml(yaml: &Value) -> Result<WorkflowsConfig, ConfigError> {
         validate_config_document(yaml)?;
 
         let default_workflow = yaml
             .get("default_workflow")
-            .and_then(YamlValue::as_str)
+            .and_then(Value::as_str)
             .map(String::from);
         let is_workflow_required = yaml
             .get("is_workflow_required")
-            .and_then(YamlValue::as_bool)
+            .and_then(Value::as_bool)
             .unwrap_or(true);
         let workflows = yaml
             .get("workflows")
-            .and_then(YamlValue::as_mapping)
+            .and_then(Value::as_object)
             .map(|workflows| {
                 workflows
                     .iter()
-                    .filter_map(|(id, entry)| {
-                        Some(WorkflowInfo {
-                            id: id.as_str()?.to_string(),
-                            name: entry
-                                .get("name")
-                                .and_then(YamlValue::as_str)
-                                .map(String::from),
-                            description: entry
-                                .get("description")
-                                .and_then(YamlValue::as_str)
-                                .map(String::from),
-                        })
+                    .map(|(id, entry)| WorkflowInfo {
+                        id: id.clone(),
+                        name: entry.get("name").and_then(Value::as_str).map(String::from),
+                        description: entry
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .map(String::from),
                     })
                     .collect()
             })
@@ -201,7 +187,7 @@ impl WorkflowsConfig {
     }
 
     /// The raw mapping for a named workflow, if declared.
-    fn workflow_entry(&self, workflow_id: &str) -> Option<&YamlValue> {
+    fn workflow_entry(&self, workflow_id: &str) -> Option<&Value> {
         self.raw.get("workflows")?.get(workflow_id)
     }
 
@@ -217,7 +203,7 @@ impl WorkflowsConfig {
     pub(crate) fn handle_pattern(&self, workflow_id: &str) -> Option<String> {
         self.workflow_entry(workflow_id)?
             .get("handle_pattern")
-            .and_then(YamlValue::as_str)
+            .and_then(Value::as_str)
             .map(String::from)
     }
 
@@ -225,7 +211,7 @@ impl WorkflowsConfig {
     pub(crate) fn is_message_required(&self, workflow_id: &str) -> bool {
         self.workflow_entry(workflow_id)
             .and_then(|workflow| workflow.get("is_message_required"))
-            .and_then(YamlValue::as_bool)
+            .and_then(Value::as_bool)
             .unwrap_or(false)
     }
 
@@ -238,9 +224,9 @@ impl WorkflowsConfig {
         key: &str,
     ) -> Result<Option<String>, ConfigError> {
         match self.raw.get("workflows") {
-            Some(YamlValue::Mapping(workflows)) => match workflows.get(workflow_id) {
-                Some(YamlValue::Mapping(workflow)) => match workflow.get(key) {
-                    Some(YamlValue::String(schema_id)) => Ok(Some(schema_id.clone())),
+            Some(Value::Object(workflows)) => match workflows.get(workflow_id) {
+                Some(Value::Object(workflow)) => match workflow.get(key) {
+                    Some(Value::String(schema_id)) => Ok(Some(schema_id.clone())),
                     // Absent key: the workflow simply declares no such schema.
                     None => Ok(None),
                     // Present but not a string (explicit null, mapping, list):
@@ -268,9 +254,9 @@ impl WorkflowsConfig {
         schema_id: &str,
     ) -> Result<S3Uri, ConfigError> {
         match self.raw.get("schemas") {
-            Some(YamlValue::Mapping(schemas)) => match schemas.get(schema_id) {
-                Some(YamlValue::Mapping(schema)) => match schema.get("url") {
-                    Some(YamlValue::String(url)) => Ok(url.parse()?),
+            Some(Value::Object(schemas)) => match schemas.get(schema_id) {
+                Some(Value::Object(schema)) => match schema.get("url") {
+                    Some(Value::String(url)) => Ok(url.parse()?),
                     _ => Err(ConfigError::Workflow(format!(
                         "Schema {schema_id} doesn't have URL"
                     ))),
@@ -332,7 +318,7 @@ impl WorkflowsConfig {
     pub(crate) fn bucket_default_id(&self) -> Result<Option<String>, ConfigError> {
         match self.raw.get("default_workflow") {
             None => Ok(None),
-            Some(YamlValue::String(id)) => Ok(Some(id.clone())),
+            Some(Value::String(id)) => Ok(Some(id.clone())),
             Some(_) => Err(ConfigError::Workflow(
                 "`default_workflow` in workflows/config.yaml must be a string".to_string(),
             )),
@@ -349,12 +335,11 @@ mod tests {
 
     #[test]
     fn test_non_string_mapping_key_is_invalid_config() -> Res<()> {
-        // A YAML mapping whose key is not a string cannot be represented as
-        // JSON, so the schema validator's serde YAML→JSON conversion fails.
-        // This used to escape as an opaque JSON error; it now surfaces as the
-        // same `InvalidWorkflowsConfig` variant a schema violation does, so both
-        // malformed-config shapes classify identically everywhere.
-        let yaml: YamlValue = serde_yaml::from_str(
+        // A YAML mapping key that is not a string (here the integer `1`) is
+        // decoded as the string key "1". The top level of the config schema
+        // allows no extra keys, so the document is still refused as an
+        // `InvalidWorkflowsConfig`, like any other schema violation.
+        let yaml: Value = serde_saphyr::from_str(
             r"
 1: not-a-string-key
 version: '1'
@@ -371,10 +356,113 @@ version: '1'
     }
 
     #[test]
+    fn test_empty_config_document_is_none() -> Res<()> {
+        // An empty `config.yml` (or one holding only comments or `null`)
+        // decodes to `None`, so the fetch path reports "no config".
+        for source in ["", "\n", "# nothing here\n", "null\n"] {
+            let document: Option<Value> = serde_saphyr::from_slice(source.as_bytes())?;
+            assert_eq!(document, None, "source: {source:?}");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_yaml_scalars_keep_their_types() -> Res<()> {
+        // Plain `true`/`false` are booleans, a quoted "false" stays a string,
+        // and a plain integer is a number. The YAML 1.1 spellings `yes`/`no`/
+        // `on`/`off` are booleans too, as quilt3 (PyYAML) reads them.
+        let document: Value = serde_saphyr::from_str(
+            r#"
+plain_true: true
+plain_false: false
+quoted_false: "false"
+integer: 42
+yes_flag: yes
+no_flag: no
+on_flag: on
+off_flag: off
+"#,
+        )?;
+        assert_eq!(
+            document,
+            serde_json::json!({
+                "plain_true": true,
+                "plain_false": false,
+                "quoted_false": "false",
+                "integer": 42,
+                "yes_flag": true,
+                "no_flag": false,
+                "on_flag": true,
+                "off_flag": false,
+            })
+        );
+
+        // The config schema then refuses the quoted string where it wants a bool.
+        let yaml: Value = serde_saphyr::from_str(
+            r#"
+version: "1"
+is_workflow_required: "false"
+workflows:
+  foo:
+    name: Foo
+"#,
+        )?;
+        let err = WorkflowsConfig::from_yaml(&yaml).unwrap_err();
+        assert!(
+            err.to_string().contains("/is_workflow_required"),
+            "violation must name the offending path, got: {err}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_merge_keys_are_expanded() -> Res<()> {
+        // A `<<` merge key pulls in the anchored mapping, as quilt3 (PyYAML)
+        // does, so a config that shares settings between workflows passes the
+        // schema and each workflow sees the merged values.
+        let yaml: Value = serde_saphyr::from_str(
+            r#"
+version: "1"
+workflows:
+  base: &base
+    name: Base
+    is_message_required: true
+  derived:
+    <<: *base
+    name: Derived
+"#,
+        )?;
+        let config = WorkflowsConfig::from_yaml(&yaml)?;
+        assert_eq!(config.workflows[1].id, "derived");
+        assert_eq!(config.workflows[1].name.as_deref(), Some("Derived"));
+        assert!(config.is_message_required("derived"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_duplicate_mapping_key_is_parse_error() {
+        // A key repeated in the same mapping is a parse error rather than one
+        // value silently winning, at the top level and nested alike.
+        for source in [
+            "version: '1'\nversion: '1'\n",
+            "version: '1'\nworkflows:\n  foo:\n    name: A\n  foo:\n    name: B\n",
+        ] {
+            assert!(
+                serde_saphyr::from_str::<Value>(source).is_err(),
+                "duplicate key accepted in: {source:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_workflows_config_parse_rich() -> Res<()> {
         // Fixture mirroring a sandbox bucket: several workflows with names and
         // descriptions, a declared default, and the required flag set true.
-        let yaml: YamlValue = serde_yaml::from_str(
+        // The workflows are not in sorted order, so the assertion below also
+        // checks that they come back in file order.
+        let yaml: Value = serde_saphyr::from_str(
             r#"
 version: "1"
 is_workflow_required: true
@@ -419,7 +507,7 @@ schemas:
     #[test]
     fn test_workflows_config_required_defaults_true() -> Res<()> {
         // `is_workflow_required` absent → defaults to true (matches quilt3).
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: Value = serde_saphyr::from_str(
             r"
 version: '1'
 workflows:
@@ -440,7 +528,7 @@ workflows:
     #[test]
     fn test_workflows_config_required_explicit_false() -> Res<()> {
         // Explicit `is_workflow_required: false` → false.
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: Value = serde_saphyr::from_str(
             r"
 version: '1'
 is_workflow_required: false
@@ -517,7 +605,7 @@ workflows:
     /// config schema now rejects it, naming the exact path.
     #[test]
     fn test_quoted_is_message_required_rejected_by_config_schema() {
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: Value = serde_saphyr::from_str(
             r#"
 version: "1"
 workflows:
@@ -545,7 +633,7 @@ workflows:
     /// config is rejected at load with a violation naming the path.
     #[test]
     fn test_list_handle_pattern_rejected_by_config_schema() {
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: Value = serde_saphyr::from_str(
             r#"
 version: "1"
 workflows:
@@ -569,7 +657,7 @@ workflows:
     fn test_schema_uris_both_one_none_and_unknown() -> Res<()> {
         // A config with three workflows: one declaring both schemas, one
         // declaring only the metadata schema, and one declaring neither.
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: Value = serde_saphyr::from_str(
             r#"
 version: "1"
 workflows:
@@ -622,7 +710,7 @@ schemas:
         // whose id dangles (no matching `schemas` entry): the metadata link
         // still resolves, the dangling entries link degrades to `None` on its
         // own — a broken reference must not suppress the sibling link.
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: Value = serde_saphyr::from_str(
             r#"
 version: "1"
 workflows:
@@ -653,7 +741,7 @@ schemas:
         // A workflow declaring a schema id, but no `schemas` section to resolve
         // it against → the dangling reference degrades to `None` (display-only
         // leniency) rather than the hard error the async resolver raises.
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: Value = serde_saphyr::from_str(
             r"
 version: '1'
 workflows:
@@ -673,7 +761,7 @@ workflows:
     /// annotations the schema declares but quilt3 never asserts — still parses.
     #[test]
     fn test_valid_config_with_format_annotations_parses() -> Res<()> {
-        let yaml: YamlValue = serde_yaml::from_str(
+        let yaml: Value = serde_saphyr::from_str(
             r#"
 version: "1"
 is_workflow_required: true
