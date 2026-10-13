@@ -27,16 +27,16 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1099>
   - <https://github.com/quiltdata/quilt-rs/pull/1100>
   - <https://github.com/quiltdata/quilt-rs/pull/1106>
-- **New design preview**: Settings shows its cards in two columns from a 1024px window, with Syncing and Accounts on top, and in one column below that (PR_URL)
+- **New design preview**: Settings shows its cards in two columns from a 1024px window, with Syncing and Accounts on top, and in one column below that (<https://github.com/quiltdata/quilt-rs/pull/1113>)
 
 ### Changed
 
-- The window can be made as narrow as 640px, down from 1024px (PR_URL)
+- The window can be made as narrow as 640px, down from 1024px (<https://github.com/quiltdata/quilt-rs/pull/1113>)
 
 ### Fixed
 
 - When a package is already behind and the remote gets another new revision, the package page shows it within one autosync check, instead of describing the older one until you refresh (<https://github.com/quiltdata/quilt-rs/pull/1102>)
-- **New design preview**: in *Needs your attention*, a package with a long name keeps what is wrong with it in sight, on a second line, instead of cutting it off
+- **New design preview**: in *Needs your attention*, a package with a long name keeps what is wrong with it in sight, on a second line, instead of cutting it off (<https://github.com/quiltdata/quilt-rs/pull/1113>)
 
 ### quilt-rs
 
