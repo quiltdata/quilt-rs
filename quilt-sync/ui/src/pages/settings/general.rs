@@ -43,7 +43,7 @@ pub(super) fn GeneralSection(
         freeing.set(true);
         leptos::task::spawn_local(async move {
             match commands::run_gc().await {
-                Ok(msg) => notification.set(Some(Notification::Success(msg))),
+                Ok(freed) => notification.set(Some(Notification::Success(freed.message))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
             freeing.set(false);

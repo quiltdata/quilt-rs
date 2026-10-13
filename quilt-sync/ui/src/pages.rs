@@ -66,6 +66,7 @@ pub use merge::Merge;
 pub use not_found::NotFound;
 pub use remote_package::RemotePackage;
 pub use settings::Settings;
+pub use settings_v2::{SettingsV2, SettingsV2Skeleton};
 pub use setup::Setup;
 
 #[cfg(test)]

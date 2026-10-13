@@ -51,7 +51,7 @@ fn App() -> impl IntoView {
                 <Route path=path!("/error") view=pages::Error />
                 <Route path=path!("/merge") view=pages::Merge />
                 <Route path=path!("/remote-package") view=pages::RemotePackage />
-                <Route path=path!("/settings") view=pages::Settings />
+                <Route path=path!("/settings") view=|| view! { <SettingsPage read=read_settings /> } />
                 <Route path=path!("/setup") view=pages::Setup />
             </Routes>
         </Router>
@@ -113,6 +113,22 @@ fn CommitPage(read: SettingsRead) -> impl IntoView {
             v1=|| view! { <pages::Commit /> }.into_any()
             skeleton=|| view! { <pages::CommitV2Skeleton actions=loading_actions() /> }.into_any()
             loading="Loading new revision"
+        />
+    }
+}
+
+/// `/settings`, decided as the other routes are: the v2 page under *New design
+/// preview*, v1 otherwise. Turning the preview off saves, then goes to `/`,
+/// which asks again.
+#[component]
+fn SettingsPage(read: SettingsRead) -> impl IntoView {
+    view! {
+        <ByDesign
+            read=read
+            v2=|| view! { <pages::SettingsV2 /> }.into_any()
+            v1=|| view! { <pages::Settings /> }.into_any()
+            skeleton=|| view! { <pages::SettingsV2Skeleton /> }.into_any()
+            loading="Loading settings"
         />
     }
 }
@@ -523,6 +539,51 @@ mod tests {
     async fn the_commit_route_is_v1_when_settings_cannot_be_read() {
         let el = commit_route(settings_fail).await;
         assert!(draws_v1(&el), "markup was {}", el.inner_html());
+    }
+
+    /// `/settings` as the router draws it, over a stubbed settings read.
+    async fn settings_route(read: SettingsRead) -> Mounted {
+        let el = Mounted::new(move || {
+            view! {
+                <Router>
+                    <SettingsPage read=read />
+                </Router>
+            }
+        });
+        sleep_ms(100).await;
+        el
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_settings_route_is_v2_with_the_preview_on() {
+        let el = settings_route(settings_on).await;
+        assert!(draws_v2(&el), "markup was {}", el.inner_html());
+        assert!(!draws_v1(&el), "markup was {}", el.inner_html());
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_settings_route_is_v1_with_the_preview_off() {
+        let el = settings_route(settings_off).await;
+        assert!(draws_v1(&el), "markup was {}", el.inner_html());
+        assert!(!draws_v2(&el), "markup was {}", el.inner_html());
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_settings_route_waits_on_the_settings_skeleton() {
+        quilt_sync_ui::theme::set_v2(true);
+        let el = settings_route(settings_pending).await;
+        let status = el
+            .query_selector("[data-home-frame] [role=status]")
+            .unwrap()
+            .expect("the frame, still up: the read never answers");
+        assert_eq!(status.text_content().unwrap().trim(), "Loading settings");
+        assert!(
+            el.query_selector("[data-home-frame] [data-v2-page] [aria-busy=true]")
+                .unwrap()
+                .is_some(),
+            "the settings page's skeleton; markup was {}",
+            el.inner_html()
+        );
     }
 
     #[wasm_bindgen_test]

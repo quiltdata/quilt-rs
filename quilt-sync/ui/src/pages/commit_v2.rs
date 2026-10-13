@@ -30,7 +30,7 @@ use crate::kit::Tooltip;
 use crate::kit::Trail;
 use crate::util::format_size;
 
-use super::json_editor::JsonEditor;
+use super::json_editor::{JsonEditor, focus_json_editor};
 
 stylance::import_crate_style!(style, "src/pages/commit_v2.module.scss");
 
@@ -392,6 +392,9 @@ pub fn MetadataField(
     // Here rather than in the editor, so a height the reader dragged to
     // survives `Done` and `Edit`.
     let height = RwSignal::new(EDITOR_HEIGHT);
+    // Here so the label can reach it: the label names the hidden textarea,
+    // and a click on it must land in the editor the reader sees.
+    let editor_ref = NodeRef::<leptos::html::Div>::new();
     let editor = {
         let control_id = control_id.clone();
         let label_id = label_id.clone();
@@ -404,6 +407,7 @@ pub fn MetadataField(
                 metadata,
                 failing,
                 height,
+                editor_ref,
             )
         }
     };
@@ -422,6 +426,11 @@ pub fn MetadataField(
                                     class=style::field_name
                                     id=label_id
                                     for=control_id.clone()
+                                    on:click=move |ev| {
+                                        if focus_json_editor(editor_ref) {
+                                            ev.prevent_default();
+                                        }
+                                    }
                                 >
                                     {label}
                                 </label>
@@ -516,8 +525,8 @@ fn metadata_editor(
     metadata: RwSignal<String>,
     invalid: Signal<bool>,
     height: RwSignal<i32>,
+    editor_ref: NodeRef<leptos::html::Div>,
 ) -> AnyView {
-    let editor_ref = NodeRef::<leptos::html::Div>::new();
     let textarea_ref = NodeRef::<leptos::html::Textarea>::new();
     let editor_described_by = described_by.clone();
     view! {

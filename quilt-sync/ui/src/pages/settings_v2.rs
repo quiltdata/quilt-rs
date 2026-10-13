@@ -41,6 +41,9 @@ use super::commit_v2::MetadataField;
 
 stylance::import_crate_style!(style, "src/pages/settings_v2.module.scss");
 
+mod page;
+pub use page::{SettingsV2, SettingsV2Skeleton};
+
 /// A row that saves as it changes, so it can say it did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Saved {
@@ -50,6 +53,12 @@ pub enum Saved {
     Tray,
     DesignPreview,
     LogLevel,
+}
+
+/// Whether `row`'s own save is out: its control is held still until it
+/// answers, so one setting never has two saves in flight.
+fn saving(pending: Signal<Vec<Saved>>, row: Saved) -> Signal<bool> {
+    Signal::derive(move || pending.with(|rows| rows.contains(&row)))
 }
 
 /// The brief *Saved* beside a row, while the page says that row just saved.
@@ -72,15 +81,37 @@ pub fn minutes_shown(secs: u64) -> u64 {
     secs.saturating_add(30).checked_div(60).unwrap_or(0).max(1)
 }
 
+/// The seconds the minutes typed stand for, or what is wrong with them. The
+/// one reading of the field: its error and its save cannot disagree.
+pub fn minutes_secs(text: &str) -> Result<u64, &'static str> {
+    const TOO_MANY: &str = "Too many minutes";
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("Enter a number of minutes");
+    }
+    if !text
+        .trim_start_matches(['-', '+'])
+        .bytes()
+        .all(|b| b.is_ascii_digit())
+    {
+        return Err("Whole minutes only");
+    }
+    match text.parse::<i64>() {
+        Ok(n) if n < 1 => Err("At least 1 minute"),
+        Ok(n) => u64::try_from(n)
+            .ok()
+            .and_then(|n| n.checked_mul(60))
+            .ok_or(TOO_MANY),
+        // All digits, so only too long to be a number.
+        Err(_) if text.starts_with('-') => Err("At least 1 minute"),
+        Err(_) => Err(TOO_MANY),
+    }
+}
+
 /// What is wrong with the minutes typed, if anything.
 #[must_use]
 pub fn minutes_error(text: &str) -> Option<&'static str> {
-    match text.trim().parse::<i64>() {
-        Ok(n) if n >= 1 => None,
-        Ok(_) => Some("At least 1 minute"),
-        Err(_) if text.trim().is_empty() => Some("Enter a number of minutes"),
-        Err(_) => Some("Whole minutes only"),
-    }
+    minutes_secs(text).err()
 }
 
 /// The sentence around a minutes field: `Every [1] minute`, `After [5]
@@ -96,6 +127,8 @@ fn MinutesSentence(
     name: &'static str,
     minutes: RwSignal<String>,
     on_commit: Option<Callback<()>>,
+    /// While its save is out: no typing, but the cursor stays.
+    held: Signal<bool>,
 ) -> impl IntoView {
     let error = Signal::derive(move || minutes.with(|text| minutes_error(text)));
     let error_id = crate::kit::unique_id("minutes-error");
@@ -113,6 +146,7 @@ fn MinutesSentence(
                 naming=Naming::Hidden(name.to_string())
                 value=minutes
                 min=1
+                readonly=held
                 invalid=Signal::derive(move || error.get().is_some())
                 described_by={
                     let id = error_id.clone();
@@ -207,6 +241,9 @@ pub fn SyncingCard(
     publish_minutes: RwSignal<String>,
     watch: RwSignal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
+    /// The rows whose save is out.
+    #[prop(optional, into)]
+    pending: Signal<Vec<Saved>>,
     /// Enter or leaving the pull minutes, when they are valid.
     #[prop(optional)]
     on_pull_minutes: Option<Callback<()>>,
@@ -217,6 +254,7 @@ pub fn SyncingCard(
             <ToggleRow
                 label="Get new revisions"
                 checked=pull
+                disabled=saving(pending, Saved::Pull)
                 trailing=saved_note(saved, Saved::Pull)
                 detail=view! {
                     <MinutesSentence
@@ -224,6 +262,7 @@ pub fn SyncingCard(
                         name="Minutes between checks for new revisions"
                         minutes=pull_minutes
                         on_commit=on_pull_minutes
+                        held=saving(pending, Saved::Pull)
                     />
                 }
                     .into_any()
@@ -231,6 +270,7 @@ pub fn SyncingCard(
             <ToggleRow
                 label="Publish your changes"
                 checked=publish
+                disabled=saving(pending, Saved::Publish)
                 trailing=saved_note(saved, Saved::Publish)
                 detail=view! {
                     <MinutesSentence
@@ -239,6 +279,7 @@ pub fn SyncingCard(
                         name="Minutes of inactivity before publishing"
                         minutes=publish_minutes
                         on_commit=on_publish_minutes
+                        held=saving(pending, Saved::Publish)
                     />
                 }
                     .into_any()
@@ -247,6 +288,7 @@ pub fn SyncingCard(
                 label="Watch folders for changes"
                 sublabel=WATCH_SUBLABEL
                 checked=watch
+                disabled=saving(pending, Saved::Watch)
                 trailing=saved_note(saved, Saved::Watch)
             />
         </Card>
@@ -387,6 +429,8 @@ pub struct AccountHost {
     /// Every role held; more than one draws the switcher.
     pub roles: Vec<String>,
     pub signed_out: bool,
+    /// The role is still being read: the row says *Checking role…*.
+    pub provisional: bool,
 }
 
 pub const NO_ACCOUNTS: &str = "Accounts appear here for each Quilt catalog your packages point \
@@ -401,28 +445,27 @@ pub fn sign_out_consequence(host: &str) -> String {
     )
 }
 
-/// Every host, with its role, *Sign in* when signed out, and *Sign out*
-/// behind a confirmation. Settings holds Sign out; the main page's card does
-/// not.
+/// Every host, with its role, *Sign in* when signed out, and *Sign out*,
+/// which asks [`SignOutDialog`] first. Settings holds Sign out; the main
+/// page's card does not.
 #[component]
 #[allow(
     clippy::needless_pass_by_value,
     reason = "a component's props are owned; the body reads them from there"
 )]
-pub fn AccountsCard<F, Fut>(
+pub fn AccountsCard(
     hosts: Vec<AccountHost>,
     /// With the host to sign in to.
     on_sign_in: Callback<String>,
     /// `(host, role)` when the reader picks another role. Not on the first
     /// read: only a choice calls it.
     on_role: Callback<(String, String)>,
-    /// Erases the host's credentials. Its `Err` stays in the confirmation.
-    sign_out: F,
-) -> impl IntoView
-where
-    F: Fn(String) -> Fut + Clone + 'static,
-    Fut: Future<Output = Result<(), String>> + 'static,
-{
+    /// With the host whose *Sign out* was pressed: open the confirmation.
+    on_sign_out: Callback<String>,
+    /// The page's lock: no role pick or Sign out while another command runs.
+    #[prop(optional, into)]
+    locked: Signal<bool>,
+) -> impl IntoView {
     if hosts.is_empty() {
         return view! {
             <Card title="Accounts">
@@ -431,12 +474,9 @@ where
         }
         .into_any();
     }
-    // Built here, not inside the card's children: those must be `Send`, and
-    // the sign-out action need not be.
     let rows: Vec<AnyView> = hosts
         .into_iter()
         .map(|account| {
-            let confirming = RwSignal::new(false);
             let role = RwSignal::new(account.role);
             let role_host = account.host.clone();
             Effect::watch(
@@ -444,40 +484,74 @@ where
                 move |picked, _, _| on_role.run((role_host.clone(), picked.clone())),
                 false,
             );
-            let host = account.host.clone();
             let sign_in_host = account.host.clone();
-            let sign_out = sign_out.clone();
-            let dialog = (!account.signed_out).then(|| {
-                view! {
-                    <ConfirmDialog
-                        open=confirming
-                        title=format!("Sign out of {host}")
-                        consequence=sign_out_consequence(&host)
-                        confirm=Submit::new(
-                            "Sign out",
-                            move || sign_out(host.clone()),
-                        )
-                    />
-                }
-                .into_any()
-            });
+            let sign_out_host = account.host.clone();
             view! {
-                <div>
-                    <HostRow
-                        host=account.host
-                        role=role
-                        roles=account.roles
-                        signed_out=account.signed_out
-                        on_sign_in=move |_| on_sign_in.run(sign_in_host.clone())
-                        on_sign_out=Callback::new(move |()| confirming.set(true))
-                    />
-                    {dialog}
-                </div>
+                <HostRow
+                    host=account.host
+                    role=role
+                    roles=account.roles
+                    signed_out=account.signed_out
+                    provisional=account.provisional
+                    locked=locked
+                    on_sign_in=move |_| on_sign_in.run(sign_in_host.clone())
+                    on_sign_out=Callback::new(move |()| on_sign_out.run(sign_out_host.clone()))
+                />
             }
             .into_any()
         })
         .collect();
     view! { <Card title="Accounts">{rows}</Card> }.into_any()
+}
+
+/// *Sign out of …*, for the host [`AccountsCard`] asked about.
+///
+/// Apart from the card, so the page can hold it above what it rebuilds: a
+/// re-read redraws the card, and an open confirmation must not close under
+/// the reader.
+#[component]
+pub fn SignOutDialog<F, Fut>(
+    /// The host asked about; `None` while nothing is. Closing the dialog sets
+    /// it back to `None`.
+    host: RwSignal<Option<String>>,
+    /// Erases the host's credentials. Its `Err` stays in the confirmation.
+    sign_out: F,
+    /// The page's lock: the dialog seals while another command runs.
+    #[prop(optional, into)]
+    running: MaybeProp<bool>,
+) -> impl IntoView
+where
+    F: Fn(String) -> Fut + Clone + Send + Sync + 'static,
+    Fut: Future<Output = Result<(), String>> + 'static,
+{
+    let open = RwSignal::new(false);
+    Effect::new(move |_| {
+        if host.with(Option::is_some) {
+            open.set(true);
+        }
+    });
+    Effect::new(move |was: Option<bool>| {
+        let now = open.get();
+        if was == Some(true) && !now {
+            host.set(None);
+        }
+        now
+    });
+    move || {
+        host.get().map(|asked| {
+            let sign_out = sign_out.clone();
+            let target = asked.clone();
+            view! {
+                <ConfirmDialog
+                    open=open
+                    title=format!("Sign out of {asked}")
+                    consequence=sign_out_consequence(&asked)
+                    confirm=Submit::new("Sign out", move || sign_out(target.clone()))
+                    running=running
+                />
+            }
+        })
+    }
 }
 
 // ── App ──
@@ -491,6 +565,7 @@ pub const TRAY_SUBLABEL: &str = "Closing the window leaves QuiltSync running in 
 pub fn AppCard(
     tray: RwSignal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
+    #[prop(optional, into)] pending: Signal<Vec<Saved>>,
 ) -> impl IntoView {
     view! {
         <Card title="App">
@@ -498,6 +573,7 @@ pub fn AppCard(
                 label="Keep running in the tray when the window is closed"
                 sublabel=TRAY_SUBLABEL
                 checked=tray
+                disabled=saving(pending, Saved::Tray)
                 trailing=saved_note(saved, Saved::Tray)
             />
         </Card>
@@ -613,7 +689,7 @@ pub fn StorageCard(
         }
         .into_any(),
         (_, None) => view! {
-            <Button on_click=move |_| on_measure.run(())>"Check size"</Button>
+            <Button disabled=freeing on_click=move |_| on_measure.run(())>"Check size"</Button>
         }
         .into_any(),
     };
@@ -658,6 +734,7 @@ pub const DESIGN_PREVIEW_SUBLABEL: &str = "The redesigned QuiltSync, wherever it
 pub fn ExperimentalCard(
     design_preview: RwSignal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
+    #[prop(optional, into)] pending: Signal<Vec<Saved>>,
 ) -> impl IntoView {
     view! {
         <Card title="Experimental">
@@ -665,6 +742,7 @@ pub fn ExperimentalCard(
                 label="New design preview"
                 sublabel=DESIGN_PREVIEW_SUBLABEL
                 checked=design_preview
+                disabled=saving(pending, Saved::DesignPreview)
                 trailing=saved_note(saved, Saved::DesignPreview)
             />
         </Card>
@@ -722,6 +800,7 @@ pub fn HelpCard(
     #[prop(into)] data_dir: String,
     on_open_data: Callback<()>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
+    #[prop(optional, into)] pending: Signal<Vec<Saved>>,
 ) -> impl IntoView {
     // A valid `QUILT_LOG` replaces the saved level, so the choice is moot.
     let overridden = matches!(log_env, LogEnv::Overrides(_));
@@ -754,7 +833,9 @@ pub fn HelpCard(
                                         naming=Naming::FormControl(id)
                                         options=LOG_LEVELS.iter().map(ToString::to_string).collect()
                                         selected=log_level
-                                        disabled=overridden
+                                        disabled=Signal::derive(move || {
+                                            overridden || saving(pending, Saved::LogLevel).get()
+                                        })
                                     />
                                 </span>
                             }
@@ -976,6 +1057,30 @@ mod tests {
         assert_eq!(minutes_error("1.5"), Some("Whole minutes only"));
     }
 
+    /// The field's error and its save read the text the same way: a value
+    /// too large to save says so instead of being dropped.
+    #[test]
+    fn the_error_and_the_save_agree() {
+        assert_eq!(minutes_secs("3"), Ok(180));
+        assert_eq!(
+            minutes_secs(&(u64::MAX / 60).to_string()),
+            Ok(u64::MAX / 60 * 60)
+        );
+        assert_eq!(minutes_secs(&i64::MAX.to_string()), Err("Too many minutes"));
+        assert_eq!(
+            minutes_secs("99999999999999999999999"),
+            Err("Too many minutes")
+        );
+        assert_eq!(
+            minutes_secs("-99999999999999999999999"),
+            Err("At least 1 minute")
+        );
+        assert_eq!(
+            minutes_error(&i64::MAX.to_string()),
+            Some("Too many minutes")
+        );
+    }
+
     #[test]
     fn storage_reads_as_its_two_numbers() {
         assert_eq!(
@@ -1107,10 +1212,11 @@ mod tests {
                         role: "analyst".to_string(),
                         roles: vec!["analyst".to_string(), "admin".to_string()],
                         signed_out: false,
+                        provisional: false,
                     }]
                     on_sign_in=Callback::new(|_: String| ())
                     on_role=Callback::new(move |pick| picked.update(|all| all.push(pick)))
-                    sign_out=|_: String| async { Ok(()) }
+                    on_sign_out=Callback::new(|_: String| ())
                 />
             }
         });
@@ -1168,6 +1274,36 @@ mod tests {
             .text_content()
             .unwrap_or_default();
         assert!(error.contains("Not valid JSON"), "{error}");
+    }
+
+    /// A click on the open editor's label lands in the editor. Here, with no
+    /// editor bundle, that is the textarea the label names; in the app the
+    /// label hands focus to the editor that hides it.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn a_click_on_the_metadata_label_focuses_the_editor() {
+        // An earlier test's modal, left open, would make this page inert.
+        crate::test_support::unmount_earlier();
+        let el = crate::test_support::mount(|| {
+            view! {
+                <PublishingCard
+                    template=RwSignal::new(String::new())
+                    workflow=RwSignal::new(String::new())
+                    metadata=RwSignal::new("{}".to_string())
+                    dirty=false
+                    on_save=Callback::new(|()| ())
+                    editing=RwSignal::new(true)
+                />
+            }
+        });
+        leptos::task::tick().await;
+        crate::test_support::element_saying(&el, "Default metadata").click();
+        let focused = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .active_element()
+            .expect("something has focus");
+        assert_eq!(focused.tag_name(), "TEXTAREA", "{}", el.inner_html());
     }
 
     /// v2 vocabulary: no commit, push, pull or remote in the page's words.

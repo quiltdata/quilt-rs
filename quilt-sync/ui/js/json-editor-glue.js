@@ -42,6 +42,15 @@ window.__getJsonEditorValue = function (target) {
   return content.text ?? "";
 };
 
+// Whether there was an editor to focus: the field's label points at the
+// hidden textarea, so a click on it focuses this instead.
+window.__focusJsonEditor = function (target) {
+  const editor = target && editors.get(target);
+  if (!editor) return false;
+  editor.focus();
+  return true;
+};
+
 window.__destroyJsonEditor = function (target) {
   const editor = target && editors.get(target);
   if (editor) {

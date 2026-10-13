@@ -123,3 +123,14 @@
   padding-left: var(--q-space-5);
   color: var(--q-fgColor-muted);
 }
+
+// One version in Release notes.
+.release + .release {
+  margin-top: var(--q-space-4);
+}
+
+.release_body {
+  margin: var(--q-space-2) 0 0;
+  white-space: pre-wrap;
+  font: inherit;
+}
