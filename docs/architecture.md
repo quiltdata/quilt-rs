@@ -87,7 +87,7 @@ module inside `quilt-rs` — its own error type, no dependency on the
 `Remote` trait — so the eventual crate lift is mechanical rather than a
 redesign. `object_hash` and `workflow` are staged this way today;
 `workflow` is already pure and I/O-free (its `jsonschema` / `regex` /
-`serde_norway` dependency set builds for `wasm32`), with extraction waiting
+`serde_saphyr` dependency set builds for `wasm32`), with extraction waiting
 on a concrete second consumer.
 
 The extraction case rests on:

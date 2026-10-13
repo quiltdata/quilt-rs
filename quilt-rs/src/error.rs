@@ -424,7 +424,7 @@ pub enum Error {
     WorkflowValidation(#[from] WorkflowValidationError),
 
     #[error("YAML error: {0}")]
-    Yaml(#[from] serde_norway::Error),
+    Yaml(#[from] serde_saphyr::Error),
 }
 
 /// Map a workflow config error onto the existing `Error` variants so the
