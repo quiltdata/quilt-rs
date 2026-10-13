@@ -402,7 +402,7 @@ fn checks_incoming(state: &crate::kit::PackageState) -> bool {
 /// when the read after it finds a newer revision again. By the newer revision
 /// the read saw, because the remote can move on while this copy holds the
 /// same revision, and the answer about the earlier newer revision would list
-/// its files.
+/// its files. [`IncomingAnswer::speaks_for`] compares them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct IncomingKey {
     namespace: String,
@@ -411,18 +411,6 @@ struct IncomingKey {
     /// `PackageHeaderData.newer` of the read: `None` when it did not reach
     /// the remote.
     newer: Option<String>,
-}
-
-impl IncomingKey {
-    /// Whether an answer keyed `answer` speaks for this read. A read that did
-    /// not reach the remote knows no newer revision, so it takes the answer
-    /// for the same package and held revision, as it did before the key named
-    /// one; a read that did must see an answer about the same.
-    fn admits(&self, answer: &IncomingKey) -> bool {
-        self.namespace == answer.namespace
-            && self.holds == answer.holds
-            && (self.newer.is_none() || self.newer == answer.newer)
-    }
 }
 
 /// The dry run's answer, and the read it was asked for.
@@ -436,6 +424,31 @@ struct IncomingAnswer {
     fresh: bool,
 }
 
+impl IncomingAnswer {
+    /// Whether this answer speaks for `read`: the same package and held
+    /// revision, and, when the read reached the remote, the same newer
+    /// revision. A read that did not reach the remote knows no newer revision,
+    /// so it takes any answer for the package and held revision.
+    ///
+    /// The newer revision is the one the read that asked saw, or the one the
+    /// dry run itself read. They differ when the remote moved between the two
+    /// reads, or when the read that asked did not reach the remote; then the
+    /// answer is about the dry run's revision, and the next read that names it
+    /// keeps it.
+    fn speaks_for(&self, read: &IncomingKey) -> bool {
+        let answered = match &self.check {
+            commands::PullCheck::Ready(preview) => preview.latest_hash.as_ref(),
+            _ => None,
+        };
+        self.key.namespace == read.namespace
+            && self.key.holds == read.holds
+            && read
+                .newer
+                .as_ref()
+                .is_none_or(|n| self.key.newer.as_ref() == Some(n) || answered == Some(n))
+    }
+}
+
 /// The newer revision's dry run, owned by the page.
 ///
 /// Above the rebuild line, for `Wiring`'s reason: every re-read rebuilds the
@@ -446,8 +459,8 @@ struct IncomingAnswer {
 ///
 /// It runs again after every read that shows the package behind or in
 /// conflict, since a local edit can make a conflict while the newer revision
-/// stays the same. While it runs, the last answer the read's key admits
-/// ([`IncomingKey::admits`]) stays up, marked stale: it still draws the summary
+/// stays the same. While it runs, the last answer that speaks for the read
+/// ([`IncomingAnswer::speaks_for`]) stays up, marked stale: it still draws the summary
 /// and the popover, but the header's state is the read's until the new run
 /// answers, so an answer about an earlier read cannot hide a conflict the
 /// re-read records, nor paint one it no longer does. Each run is numbered,
@@ -490,7 +503,7 @@ impl IncomingCheck {
         };
         let keep = self.answer.with_untracked(|a| {
             a.as_ref().is_some_and(|a| {
-                key.admits(&a.key) && matches!(a.check, commands::PullCheck::Ready(_))
+                a.speaks_for(&key) && matches!(a.check, commands::PullCheck::Ready(_))
             })
         });
         if keep {
@@ -540,13 +553,13 @@ impl IncomingCheck {
     }
 
     /// The check for one read's key, and whether its answer is fresh: its
-    /// answer, or `Loading` until one lands that the key admits.
+    /// answer, or `Loading` until one lands that speaks for the read.
     fn check_for(self, key: IncomingKey) -> Memo<(commands::PullCheck, bool)> {
         let answer = self.answer;
         Memo::new(move |_| {
             answer.with(|a| {
                 a.as_ref()
-                    .filter(|a| key.admits(&a.key))
+                    .filter(|a| a.speaks_for(&key))
                     .map_or((commands::PullCheck::Loading, true), |a| {
                         (a.check.clone(), a.fresh)
                     })
@@ -3268,12 +3281,17 @@ mod tests {
     }
 
     fn adds(n: usize) -> commands::PullPreview {
+        adds_on(n, "feedbeef")
+    }
+
+    /// [`adds`], from a dry run that read `newer` as the newer revision.
+    fn adds_on(n: usize, newer: &str) -> commands::PullPreview {
         commands::PullPreview {
             outcome: commands::PullOutcome::CleanUpdate,
             added: (0..n).map(|i| format!("new/{i}.csv")).collect(),
             changed: Vec::new(),
             removed: Vec::new(),
-            latest_hash: Some("feedbeef".to_string()),
+            latest_hash: Some(newer.to_string()),
         }
     }
 
@@ -3476,6 +3494,39 @@ mod tests {
         assert_eq!(summary(&el).as_deref(), Some("5 file changes"), "kept");
         sleep_ms(150).await;
         assert_eq!(summary(&el).as_deref(), Some("5 file changes"));
+    }
+
+    /// The dry run can read a newer revision than the read that asked for it:
+    /// the remote moved between the two, or the read did not reach the
+    /// remote. Its answer is about the revision it read, so the next read that
+    /// names that revision keeps it up while the rerun runs, with no
+    /// `checking…`.
+    #[wasm_bindgen_test]
+    async fn an_answer_is_also_keyed_on_the_revision_it_read() {
+        // The remote moved between the read and the dry run.
+        script(vec![(0, Ok(adds_on(3, "n2")))]);
+        let el = suspended_screen(behind_on("aaa", Some("n1"))).await;
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
+
+        script(vec![(120, Ok(adds_on(3, "n2")))]);
+        re_read(&el, behind_on("aaa", Some("n2"))).await;
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"), "kept");
+        assert!(!text(&el).contains("checking"), "no flash: {}", text(&el));
+        sleep_ms(150).await;
+        assert_eq!(summary(&el).as_deref(), Some("3 file changes"));
+
+        // A read that did not reach the remote, then one that did.
+        script(vec![(0, Ok(adds_on(4, "n3")))]);
+        re_read(&el, behind_on("bbb", None)).await;
+        sleep_ms(30).await;
+        assert_eq!(summary(&el).as_deref(), Some("4 file changes"));
+
+        script(vec![(120, Ok(adds_on(4, "n3")))]);
+        re_read(&el, behind_on("bbb", Some("n3"))).await;
+        assert_eq!(summary(&el).as_deref(), Some("4 file changes"), "kept");
+        assert!(!text(&el).contains("checking"), "no flash: {}", text(&el));
+        sleep_ms(150).await;
+        assert_eq!(summary(&el).as_deref(), Some("4 file changes"));
     }
 
     /// A local edit can make a conflict while the newer revision stays the
