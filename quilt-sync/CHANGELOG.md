@@ -28,6 +28,7 @@
 ### Changed
 
 - The window can be made as narrow as 640px, down from 1024px (<https://github.com/quiltdata/quilt-rs/pull/1113>)
+- **New design preview**: Settings shows your publish defaults read-only and edits them in a popup, with Reset to defaults; the Help card is now Troubleshooting (<https://github.com/quiltdata/quilt-rs/pull/1116>)
 
 ### Fixed
 
