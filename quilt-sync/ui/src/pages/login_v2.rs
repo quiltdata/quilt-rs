@@ -179,19 +179,21 @@ fn browser_sign_in(
             return;
         }
         running.set(Some(SignIn::Browser));
+        // Taken now: the page can be gone, or on another address, by the answer.
+        let here = key.get_untracked();
         leptos::task::spawn_local(async move {
             let back = (!data.back.is_empty()).then_some(data.back);
             let opened = hold(busy, outcome, commands::login_oauth(data.host, back)).await;
             running.try_set(None);
             outcome.try_set(Some(match opened {
                 Ok(_) => Outcome {
-                    namespace: key.get_untracked(),
+                    namespace: here.clone(),
                     variant: BannerVariant::Success,
                     lead: "Continue logging in in your browser.".to_string(),
                     detail: None,
                 },
                 Err(e) => critical(
-                    key.get_untracked(),
+                    here.clone(),
                     "Could not open the browser to log in.",
                     Some(e),
                 ),
@@ -219,6 +221,7 @@ fn code_sign_in(
             return;
         }
         running.set(Some(SignIn::Code));
+        let here = key.get_untracked();
         let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
             let signed_in = hold(busy, outcome, commands::login(data.host, typed)).await;
@@ -226,11 +229,7 @@ fn code_sign_in(
             match signed_in {
                 Ok(_) => navigate(after_login(&data.back), NavigateOptions::default()),
                 Err(e) => {
-                    outcome.try_set(Some(critical(
-                        key.get_untracked(),
-                        "Could not log in.",
-                        Some(e),
-                    )));
+                    outcome.try_set(Some(critical(here.clone(), "Could not log in.", Some(e))));
                 }
             }
         });
@@ -261,10 +260,11 @@ pub(crate) fn LoginScreen(read: PageRead<LoginData>) -> impl IntoView {
         let Some(Ok(data)) = answer.get_untracked() else {
             return;
         };
+        let here = key.get_untracked();
         leptos::task::spawn_local(async move {
             if let Err(e) = commands::open_in_web_browser(data.catalog_url).await {
                 outcome.try_set(Some(critical(
-                    key.get_untracked(),
+                    here.clone(),
                     "Could not open the catalog.",
                     Some(e),
                 )));

@@ -10,6 +10,7 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands::{self, LoginErrorData};
+use crate::components::appbar::appbar_actions;
 use crate::kit::{
     BannerVariant, Blankslate, Button, ButtonVariant, LoadFailure, PageLayout, SkeletonText,
     readable,
@@ -97,8 +98,15 @@ pub fn ErrorV2Skeleton(actions: AnyView) -> impl IntoView {
 pub fn NotFoundV2() -> impl IntoView {
     let navigate = use_navigate();
     let on_home = Callback::new(move |()| navigate("/", NavigateOptions::default()));
+    // Nothing is read here, so Refresh reloads the window, as v1's does.
+    let actions = appbar_actions(
+        || {
+            let _ = web_sys::window().map(|w| w.location().reload());
+        },
+        Signal::stored(false),
+    );
     view! {
-        <PageLayout heading="Page not found">
+        <PageLayout heading="Page not found" actions=actions>
             <ErrorSlate
                 title="Page not found"
                 message="The page you are looking for does not exist."
@@ -132,16 +140,18 @@ pub(crate) fn open_dot_quilt(
 ) -> Callback<()> {
     Callback::new(move |()| {
         outcome.set(None);
+        // Taken now: the page can be gone, or on another address, by the answer.
+        let here = here.get_untracked();
         leptos::task::spawn_local(async move {
             let said = match commands::debug_dot_quilt().await {
                 Ok(_) => Outcome {
-                    namespace: here.get_untracked(),
+                    namespace: here.clone(),
                     variant: BannerVariant::Success,
                     lead: "Opened the .quilt directory.".to_string(),
                     detail: None,
                 },
                 Err(e) => critical(
-                    here.get_untracked(),
+                    here.clone(),
                     "Could not open the .quilt directory.",
                     Some(e),
                 ),
@@ -311,6 +321,8 @@ mod tests {
         let el = mount(|| view! { <Router><NotFoundV2 /></Router> });
         element_saying(&el, "Page not found");
         button_saying(&el, "Go home");
+        button_saying(&el, "Settings");
+        assert!(!button_saying(&el, "Refresh").disabled());
         assert!(el.query_selector("[data-v2-page]").unwrap().is_some());
     }
 
