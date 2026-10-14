@@ -19,25 +19,27 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.22.11-dev]
+## [v0.22.11] - 2026-10-14
 
 ### Added
 
-- **New design preview**: Settings shows its cards two to a row from a 1024px window, with Syncing and Accounts on top, and in one column below that (<https://github.com/quiltdata/quilt-rs/pull/1113>)
-- **New design preview**: a file's *More actions* menu on the package page offers **Reveal in folder** (<https://github.com/quiltdata/quilt-rs/pull/1117>)
-- **New design preview**: a file's *More actions* menu on the commit page offers **Open file**, **Reveal in folder** and **Copy path**, except for a deleted file (<https://github.com/quiltdata/quilt-rs/pull/1119>)
+- **New design preview**: a file's *More actions* menu offers **Reveal in folder** on the package page, and **Open file**, **Reveal in folder** and **Copy path** on the commit page
+  - <https://github.com/quiltdata/quilt-rs/pull/1117>
+  - <https://github.com/quiltdata/quilt-rs/pull/1119>
 
 ### Changed
 
 - The window can be made as narrow as 640px, down from 1024px (<https://github.com/quiltdata/quilt-rs/pull/1113>)
-- Autosync checks for new revisions every minute by default, and never more often. Intervals are whole minutes; one interval applies whether the window is open, in the background or closed to the tray (<https://github.com/quiltdata/quilt-rs/pull/1112>)
-- **New design preview**: on a wide window the commit page puts the files beside the message, workflow and metadata, and the list scrolls in its own box; with only metadata changed, that column says so. The metadata preview shows one line per field, with *Edit* right after its name (<https://github.com/quiltdata/quilt-rs/pull/1120>)
-- **New design preview**: Settings shows your publish defaults read-only and edits them in a popup, with Reset to defaults; the Help card is now Troubleshooting (<https://github.com/quiltdata/quilt-rs/pull/1116>)
-- **New design preview**: in Settings, the Syncing minutes and the log level sit at the right edge of their rows, like the other controls (<https://github.com/quiltdata/quilt-rs/pull/1121>)
+- Autosync checks for new revisions once a minute by default. The interval is in whole minutes and is the same whether the window is open, in the background or closed to the tray (<https://github.com/quiltdata/quilt-rs/pull/1112>)
+- **New design preview**: Settings puts its cards in two columns on a wide window, edits your publish defaults in a popup with **Reset to defaults**, and renames Help to Troubleshooting
+  - <https://github.com/quiltdata/quilt-rs/pull/1113>
+  - <https://github.com/quiltdata/quilt-rs/pull/1116>
+  - <https://github.com/quiltdata/quilt-rs/pull/1121>
+- **New design preview**: on a wide window the commit page shows the files beside the message, workflow and metadata, and the metadata preview shows one line per field (<https://github.com/quiltdata/quilt-rs/pull/1120>)
 
 ### Fixed
 
-- **New design preview**: in *Needs your attention*, a package with a long name keeps what is wrong with it in sight, on a second line, instead of cutting it off (<https://github.com/quiltdata/quilt-rs/pull/1113>)
+- **New design preview**: in *Needs your attention*, a long package name no longer hides what is wrong with the package (<https://github.com/quiltdata/quilt-rs/pull/1113>)
 
 ## [v0.22.10] - 2026-10-13
 
