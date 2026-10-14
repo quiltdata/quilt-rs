@@ -1869,6 +1869,7 @@ mod tests {
 
     /// The backend's cache, as [`cached_rules`] keeps it, where only
     /// `other-bucket`'s rules refuse [`EDITED`].
+    #[allow(clippy::needless_pass_by_value, reason = "the seam's signature")]
     fn other_bucket_refuses_edits(
         _: String,
         _: String,
