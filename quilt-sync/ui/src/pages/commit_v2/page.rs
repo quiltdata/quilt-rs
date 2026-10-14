@@ -1096,6 +1096,27 @@ mod tests {
         assert!(column.is_some(), "markup was {}", el.inner_html());
     }
 
+    /// On the routed page too, the files section is the two-column layout's
+    /// own child, and the layout the column's: a wrapper anywhere in that
+    /// chain takes the content's height, and the list's box stops scrolling
+    /// on its own.
+    #[wasm_bindgen_test]
+    async fn the_files_fill_a_column_of_their_own() {
+        let el = page_at("/commit?namespace=org%2Fpkg").await;
+        let section = el
+            .query_selector(&format!(
+                "main > .{} > div > section",
+                super::super::style::column
+            ))
+            .unwrap();
+        let text = section.and_then(|s| s.text_content()).unwrap_or_default();
+        assert!(
+            text.contains("What's included"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
     /// The primary and the list heading count the whole package, not the
     /// three rows the capped list sent.
     #[wasm_bindgen_test]

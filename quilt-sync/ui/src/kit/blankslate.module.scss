@@ -18,6 +18,12 @@
   color: var(--q-fgColor-muted);
 }
 
+/* Muted like the description; the glyph sets its own size. */
+.visual {
+  display: flex;
+  color: var(--q-fgColor-muted);
+}
+
 /* An `h3`; the UA's margin is not wanted, the stack's gap owns the spacing. */
 .heading {
   margin: 0;

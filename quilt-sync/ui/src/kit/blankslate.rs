@@ -33,6 +33,9 @@ pub fn Blankslate(
     /// what this says, and the one thing that differs is how much room it takes.
     #[prop(optional)]
     compact: bool,
+    /// A muted glyph above the heading.
+    #[prop(optional)]
+    visual: Option<AnyView>,
 ) -> impl IntoView {
     let class = if compact {
         format!("{} {}", style::root, style::compact)
@@ -42,10 +45,35 @@ pub fn Blankslate(
 
     view! {
         <div class=class>
+            {visual.map(|visual| view! { <span class=style::visual>{visual}</span> })}
             // `h3`: a blankslate stands where a card's rows would, under its `h2`.
             <h3 class=style::heading>{heading}</h3>
             <span class=style::description>{description}</span>
             {primary_action}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::mount;
+    use wasm_bindgen_test::*;
+
+    /// The visual comes first, above the heading.
+    #[wasm_bindgen_test]
+    fn the_visual_leads() {
+        let el = mount(|| {
+            view! {
+                <Blankslate
+                    heading="Nothing"
+                    description="Nothing here."
+                    visual=view! { <svg data-glyph="" /> }.into_any()
+                />
+            }
+        });
+        let root = el.first_element_child().unwrap();
+        let first = root.first_element_child().unwrap();
+        assert!(first.query_selector("[data-glyph]").unwrap().is_some());
     }
 }

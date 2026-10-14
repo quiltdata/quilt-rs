@@ -3,13 +3,14 @@
 //! The gallery draws them over fixtures, and [`CommitV2`] fills the same
 //! props from `get_commit_data`. Every effect is a callback.
 //! [`CommitColumn`] fixes the order: header, problem, message, workflow,
-//! metadata, then the files, last so a long list scrolls under the form.
+//! metadata, then the files. Wide, the files are a column beside the form.
 //! v2 vocabulary only; a test holds the fixed strings to the banned words.
 
 use leptos::prelude::*;
 
 use crate::kit::Banner;
 use crate::kit::BannerVariant;
+use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
@@ -28,6 +29,8 @@ use crate::kit::StateTone;
 use crate::kit::TextInput;
 use crate::kit::Tooltip;
 use crate::kit::Trail;
+use crate::kit::TwoColumns;
+use crate::kit::icons;
 use crate::util::format_size;
 
 use super::json_editor::{JsonEditor, focus_json_editor};
@@ -742,7 +745,8 @@ pub struct IncludedFile {
     pub change: Change,
 }
 
-pub const METADATA_ONLY: &str = "No file changes. This revision only updates metadata.";
+pub const NO_FILE_CHANGES: &str = "No file changes";
+pub const METADATA_ONLY: &str = "This revision only updates metadata.";
 
 fn files_words(n: usize) -> String {
     if n == 1 {
@@ -792,7 +796,14 @@ pub fn IncludedList(
     let labelled_by = heading_id.clone();
     let tally = (count > 0).then(|| format!(" · {} · {}", files_words(count), format_size(total)));
     let rows = if files.is_empty() {
-        view! { <p class=style::quiet>{METADATA_ONLY}</p> }.into_any()
+        view! {
+            <Blankslate
+                visual=icons::file()
+                heading=NO_FILE_CHANGES
+                description=METADATA_ONLY
+            />
+        }
+        .into_any()
     } else {
         view! {
             // A box of its own, so the rows scroll under a header that stays.
@@ -814,6 +825,7 @@ pub fn IncludedList(
                                     tone=file.change.tone()
                                     size=format_size(file.size)
                                     actions=vec![ignore]
+                                    plain=true
                                 />
                             </li>
                         }
@@ -848,10 +860,13 @@ pub fn IncludedList(
     }
 }
 
-/// The page's column, in the order the reader confirms. It must be a direct
-/// child of `PageLayout`'s main: it fills that height, and the list's own
-/// scroll box takes what the form leaves of it. A wrapper between them sizes
-/// to the content, and the whole page scrolls again.
+/// The page's column, in the order the reader confirms. The header and the
+/// banner span it; under them the form and the files are two columns on a
+/// wide page and one column on a narrow one.
+///
+/// It must be a direct child of `PageLayout`'s main: it fills that height,
+/// and the list's own scroll box takes what is left of it. A wrapper between
+/// them sizes to the content, and the whole page scrolls again.
 #[component]
 pub fn CommitColumn(
     /// For the page to reach the column's fields, in place of a wrapper.
@@ -868,10 +883,11 @@ pub fn CommitColumn(
         <div class=style::column node_ref=node_ref>
             {header}
             {problem}
-            {message}
-            {workflow}
-            {metadata}
-            {included}
+            // Two columns from about a 1024px window, as on Settings.
+            <TwoColumns min_column=480 fill_height=true>
+                <div class=style::form>{message} {workflow} {metadata}</div>
+                {included}
+            </TwoColumns>
         </div>
     }
 }
@@ -889,6 +905,118 @@ pub fn CommitPageSkeleton() -> impl IntoView {
             <SkeletonBox width="100%" height="var(--q-control-height)" />
             <SkeletonBox width="200px" height="16px" />
         </div>
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use crate::test_support::{load_module_style, mount, sleep_ms};
+    use wasm_bindgen_test::*;
+
+    stylance::import_crate_style!(columns, "src/kit/two_columns.module.scss");
+
+    /// The kit's spacing tokens, which the test page does not load.
+    const TOKENS: &str = "--q-space-3:12px; --q-space-4:16px";
+
+    fn region(name: &'static str, height: u32) -> AnyView {
+        view! { <div data-region=name style=format!("height:{height}px")></div> }.into_any()
+    }
+
+    /// The column with stand-in regions, `width` px wide.
+    async fn column(width: u32) -> web_sys::Element {
+        load_module_style(
+            include_str!("../kit/two_columns.module.scss"),
+            &[
+                ("grid", columns::grid),
+                ("tight", columns::tight),
+                ("fill", columns::fill),
+            ],
+        );
+        let el = mount(move || {
+            view! {
+                <div style=format!(
+                    "{TOKENS}; width:{width}px; height:600px; display:flex; flex-direction:column",
+                )>
+                    <CommitColumn
+                        header=region("header", 60)
+                        problem=region("problem", 40)
+                        message=region("message", 60)
+                        workflow=region("workflow", 60)
+                        metadata=region("metadata", 60)
+                        included=region("included", 100)
+                    />
+                </div>
+            }
+        });
+        sleep_ms(0).await;
+        el
+    }
+
+    fn rect(el: &web_sys::Element, name: &str) -> web_sys::DomRect {
+        el.query_selector(&format!("[data-region={name}]"))
+            .unwrap()
+            .unwrap()
+            .get_bounding_client_rect()
+    }
+
+    /// Wide: the files beside the form, and the header and the banner across
+    /// both.
+    #[wasm_bindgen_test]
+    #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
+    async fn wide_puts_the_files_beside_the_form() {
+        let el = column(1200).await;
+        let (message, included) = (rect(&el, "message"), rect(&el, "included"));
+        assert_eq!(included.top(), message.top(), "side by side");
+        assert!(included.left() > message.right(), "files on the right");
+        assert_eq!(rect(&el, "header").width(), 1200.0, "the header spans");
+        assert_eq!(rect(&el, "problem").width(), 1200.0, "the banner spans");
+    }
+
+    /// Narrow: one column, the files last.
+    #[wasm_bindgen_test]
+    #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
+    async fn narrow_puts_the_files_last() {
+        let el = column(800).await;
+        let (metadata, included) = (rect(&el, "metadata"), rect(&el, "included"));
+        assert!(
+            included.top() >= metadata.bottom(),
+            "the files under the form"
+        );
+        assert_eq!(included.left(), metadata.left(), "one column");
+    }
+
+    /// With no file changes, a blank state with a glyph says so.
+    #[wasm_bindgen_test]
+    fn metadata_only_is_a_blank_state() {
+        let el = mount(|| {
+            view! { <IncludedList files=Vec::new() ignored=0 on_ignore=Callback::new(|_| ()) /> }
+        });
+        let text = el.text_content().unwrap_or_default();
+        assert!(text.contains(NO_FILE_CHANGES), "{text}");
+        assert!(text.contains(METADATA_ONLY), "{text}");
+        assert!(el.query_selector("svg").unwrap().is_some(), "the glyph");
+    }
+
+    /// The rows have no checkboxes, so they start with the path.
+    #[wasm_bindgen_test]
+    fn rows_start_with_the_path() {
+        let el = mount(|| {
+            let files = vec![IncludedFile {
+                path: "data/a.csv".to_string(),
+                size: 10,
+                change: Change::New,
+            }];
+            view! { <IncludedList files=files ignored=0 on_ignore=Callback::new(|_| ()) /> }
+        });
+        let row = el
+            .query_selector("li")
+            .unwrap()
+            .and_then(|li| li.first_element_child())
+            .unwrap();
+        let main = row.first_element_child().unwrap();
+        let first = main.first_element_child().unwrap();
+        assert_eq!(first.text_content().as_deref(), Some("data/a.csv"));
     }
 }
 
@@ -915,6 +1043,7 @@ pub(crate) mod tests {
     fn no_fixed_string_uses_a_banned_word() {
         let mut all = vec![
             SAVE_WITHOUT_PUBLISHING.to_string(),
+            NO_FILE_CHANGES.to_string(),
             METADATA_ONLY.to_string(),
             "New revision".to_string(),
             "Ignore them".to_string(),
