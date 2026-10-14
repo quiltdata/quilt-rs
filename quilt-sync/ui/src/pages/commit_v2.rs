@@ -932,6 +932,7 @@ mod layout_tests {
     stylance::import_crate_style!(columns, "src/kit/two_columns.module.scss");
     stylance::import_crate_style!(card, "src/kit/card.module.scss");
     stylance::import_crate_style!(form_control, "src/kit/form_control.module.scss");
+    stylance::import_crate_style!(text_input, "src/kit/text_input.module.scss");
 
     /// The kit's spacing tokens, which the test page does not load.
     const TOKENS: &str = "--q-space-3:12px; --q-space-4:16px";
@@ -1107,6 +1108,13 @@ mod layout_tests {
                 ("error", form_control::error),
             ],
         );
+        load_module_style(
+            include_str!("../kit/text_input.module.scss"),
+            &[("root", text_input::root), ("invalid", text_input::invalid)],
+        );
+        // The app's baseline (modern-normalize) zeroes a control's margin,
+        // which browsers otherwise set differently on each platform.
+        load_module_style("input { margin: 0; }", &[]);
         let el = mount(|| {
             let files = vec![IncludedFile {
                 path: "data/a.csv".to_string(),
@@ -1150,7 +1158,7 @@ mod layout_tests {
             .unwrap()
             .get_bounding_client_rect()
             .top();
-        assert_eq!(top("input"), card, "{}", el.inner_html());
+        assert_eq!(top("input"), card, "the input's top, then the card's");
     }
 
     /// The editor's toggle sits right after the field's name and says what
