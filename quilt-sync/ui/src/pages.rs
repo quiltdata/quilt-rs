@@ -61,7 +61,7 @@ pub use main_page::MainPageSkeleton;
 pub use main_page::queue::action_href;
 // The page's layout classes, so the gallery's whole-page scenes lay their fixture
 // rows out by the page's own rules rather than a copy of them.
-pub use main_page::{list_region_class, rows_class, strip_class};
+pub use main_page::{StateStrip, list_region_class, rows_class};
 pub use merge::Merge;
 pub use not_found::NotFound;
 pub use remote_package::RemotePackage;

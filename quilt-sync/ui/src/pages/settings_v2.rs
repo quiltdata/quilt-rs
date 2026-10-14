@@ -218,7 +218,8 @@ pub fn SettingsLayout(
     view! {
         <div class=style::page>
             {header}
-            <TwoColumns>
+            // Two columns from about a 1024px window.
+            <TwoColumns min_column=480>
                 {syncing}
                 {accounts}
                 {storage}
