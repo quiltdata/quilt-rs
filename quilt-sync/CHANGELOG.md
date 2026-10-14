@@ -24,6 +24,7 @@
 ### Added
 
 - **New design preview**: the commit page's *More actions* menu offers **Change bucket**, or **Show remote** once the package is published, and **Remove** (<https://github.com/quiltdata/quilt-rs/pull/1122>)
+- **New design preview**: a recent file's *More actions* menu on the main page offers **Open file**, **Reveal in folder**, **Copy URI**, and **Open in catalog** once the package is published (<https://github.com/quiltdata/quilt-rs/pull/1126>)
 
 ## [v0.22.11] - 2026-10-14
 
