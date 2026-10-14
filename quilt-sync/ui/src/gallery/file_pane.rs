@@ -476,6 +476,9 @@ impl Confirm {
 /// something on disk, and `Stop keeping` wants bytes to delete, which a
 /// `Deleted` or `Missing` row has none of.
 ///
+/// Rules split it as the package page's does: the local file, its address,
+/// `.quiltignore`, then `Stop keeping` under its danger rule.
+///
 /// `Stop ignoring` is not in §3's list at all, although the `Ignored` facet is
 /// the view that reaches it and v1 has the popup. A menu that can ignore and
 /// cannot un-ignore is a one-way door.
@@ -485,13 +488,21 @@ fn menu(mark: Mark, subject: String, confirm: Confirm) -> Vec<MenuAction> {
         items.push(MenuAction::new("Open file", Callback::new(|()| ())));
         items.push(MenuAction::new("Reveal in folder", Callback::new(|()| ())));
     }
-    items.push(MenuAction::new("Open in catalog", Callback::new(|()| ())));
-    items.push(MenuAction::new("Copy URI", Callback::new(|()| ())));
-    items.push(if mark == Mark::Ignored {
-        MenuAction::new("Stop ignoring", Callback::new(|()| ()))
+    let catalog = MenuAction::new("Open in catalog", Callback::new(|()| ()));
+    items.push(if items.is_empty() {
+        catalog
     } else {
-        MenuAction::new("Ignore", Callback::new(|()| ()))
+        catalog.separated()
     });
+    items.push(MenuAction::new("Copy URI", Callback::new(|()| ())));
+    items.push(
+        if mark == Mark::Ignored {
+            MenuAction::new("Stop ignoring", Callback::new(|()| ()))
+        } else {
+            MenuAction::new("Ignore", Callback::new(|()| ()))
+        }
+        .separated(),
+    );
     if matches!(mark, Mark::Here | Mark::Changed | Mark::New) {
         items.push(
             MenuAction::new(

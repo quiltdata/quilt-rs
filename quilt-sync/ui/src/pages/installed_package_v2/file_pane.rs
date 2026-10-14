@@ -477,6 +477,16 @@ impl RowCommand {
         }
     }
 
+    /// Which of the menu's groups it sits in: the local file, its address, then
+    /// `.quiltignore`. A rule goes between two groups.
+    const fn group(&self) -> u8 {
+        match self {
+            Self::Open(_) | Self::Reveal(_) => 0,
+            Self::OpenInCatalog(_) | Self::CopyUri(_) | Self::CopyPath(_) => 1,
+            Self::Ignore(_) | Self::StopIgnoring { .. } => 2,
+        }
+    }
+
     /// Whether it leads to an edit of `.quiltignore`, and so waits for the
     /// page's lock. The others write nothing, as the row's own open does not.
     const fn edits_ignore(&self) -> bool {
@@ -506,7 +516,18 @@ pub struct RowMenu {
 /// The header's words for a command held back by the lock.
 const BUSY: &str = "Something else is running";
 
-/// A row's `[⋯]` items, following the lock while the menu is open.
+/// Whether each command starts a group after another, and so sits below a
+/// rule. The first item never does, and a group a row lacks draws no rule.
+fn group_starts(commands: &[RowCommand]) -> Vec<bool> {
+    commands
+        .iter()
+        .enumerate()
+        .map(|(i, command)| i > 0 && commands[i - 1].group() != command.group())
+        .collect()
+}
+
+/// A row's `[⋯]` items, following the lock while the menu is open, grouped
+/// as [`group_starts`] says.
 fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
     let Some(RowMenu {
         reach,
@@ -517,16 +538,19 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
         return Signal::stored(Vec::new());
     };
     let commands = row_commands(&r.path, r.place, r.ignored_by.as_deref(), reach);
+    let starts = group_starts(&commands);
     Signal::derive(move || {
         let busy = busy.get();
         commands
             .iter()
-            .map(|command| {
+            .zip(&starts)
+            .map(|(command, &starts)| {
                 let run = command.clone();
                 let action = MenuAction::new(
                     command.label(),
                     Callback::new(move |()| on_command.run(run.clone())),
                 );
+                let action = if starts { action.separated() } else { action };
                 if busy && command.edits_ignore() {
                     action.disabled(BUSY)
                 } else {
@@ -537,8 +561,8 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
     })
 }
 
-/// The items a row offers, in their fixed order: open, reveal, catalog, copy,
-/// then the `.quiltignore` item. v1's entries form gates its buttons the same
+/// The items a row offers, in their fixed order and three groups: open and
+/// reveal; catalog and copy; then the `.quiltignore` item. v1's entries form gates its buttons the same
 /// way, but Ignore is on every row: the pane does not read `junky_pattern`, and
 /// the popup is prefilled with the path instead.
 fn row_commands(
@@ -1602,6 +1626,60 @@ mod menu_tests {
         assert_eq!(all("remote"), ["Open in catalog", "Copy URI", "Ignore"]);
     }
 
+    /// Each row's items with a `|` where a rule goes.
+    fn grouped(status: &str, ignored_by: Option<&str>, remote: bool) -> String {
+        let commands = row_commands(
+            "raw/a.csv",
+            Place::of(status),
+            ignored_by,
+            Reach {
+                remote,
+                catalog: remote,
+            },
+        );
+        commands
+            .iter()
+            .zip(group_starts(&commands))
+            .map(|(c, starts)| {
+                if starts {
+                    format!("| {}", c.label())
+                } else {
+                    c.label().to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The local file, its address, and `.quiltignore`, each its own group; a
+    /// group a row lacks draws no rule, and none leads or trails.
+    #[test]
+    fn rules_fall_between_the_groups_a_row_has() {
+        assert_eq!(
+            grouped("pristine", None, true),
+            "Open file, Reveal in folder, | Open in catalog, Copy URI, | Ignore"
+        );
+        assert_eq!(
+            grouped("modified", None, true),
+            "Open file, Reveal in folder, | Copy URI, | Ignore"
+        );
+        assert_eq!(
+            grouped("added", None, false),
+            "Open file, Reveal in folder, | Copy path, | Ignore"
+        );
+        assert_eq!(grouped("deleted", None, true), "Copy URI, | Ignore");
+        assert_eq!(
+            grouped("remote", None, true),
+            "Open in catalog, Copy URI, | Ignore"
+        );
+        assert_eq!(
+            grouped("pristine", None, false),
+            "Open file, Reveal in folder, | Ignore"
+        );
+        assert_eq!(grouped("deleted", None, false), "Ignore");
+        assert_eq!(grouped("pristine", Some("*.tmp"), true), "Stop ignoring");
+    }
+
     /// An ignored row offers only the way back, whatever its status.
     #[test]
     fn an_ignored_row_offers_only_stop_ignoring() {
@@ -1782,6 +1860,13 @@ mod menu_pane_tests {
                 "Copy URI",
                 "Ignore"
             ]
+        );
+        assert_eq!(
+            el.query_selector_all("[popover] [role='separator']")
+                .unwrap()
+                .length(),
+            2,
+            "a rule between each of the three groups",
         );
         item(&items, "Copy URI").click();
         assert_eq!(
