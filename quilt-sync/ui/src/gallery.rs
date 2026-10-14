@@ -85,6 +85,7 @@ mod gallery {
     pub mod select_all;
     pub mod settings_page;
     pub mod skeleton;
+    pub mod small_pages;
     pub mod split_button;
     pub mod state_label;
     pub mod state_strip;
@@ -333,6 +334,7 @@ const ENTRIES: &[Entry] = &[
     ),
     entry!(Pages, "Commit page", commit_page::CommitPageScene),
     entry!(Pages, "Settings page", settings_page::SettingsPageScene),
+    entry!(Pages, "Small pages", small_pages::SmallPagesScene),
     entry!(
         Pages,
         "Newer revision available",

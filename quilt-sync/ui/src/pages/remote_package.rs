@@ -17,28 +17,7 @@ pub fn RemotePackage() -> impl IntoView {
         async move {
             let result = commands::handle_remote_package(uri).await?;
 
-            // Navigate to the installed package page
-            let ns = &result.namespace;
-            let base = crate::routes::package_page_href(ns);
-            let outcome = match &result.banner {
-                Some(commands::RemoteBanner::DifferentVersion {
-                    requested_hash,
-                    requested_bucket,
-                    requested_origin,
-                    ..
-                }) => Some(crate::routes::DeepLinkOutcome::Mismatch(
-                    crate::routes::RevisionMismatch {
-                        hash: requested_hash.clone(),
-                        bucket: requested_bucket.clone(),
-                        catalog: requested_origin.as_ref().map(ToString::to_string),
-                    },
-                )),
-                Some(commands::RemoteBanner::LocalOnly) => {
-                    Some(crate::routes::DeepLinkOutcome::LocalOnly)
-                }
-                None => None,
-            };
-            let path = crate::routes::keeping_outcome(base, outcome.as_ref());
+            let path = package_target(&result);
             // Replace, so Back from the package page cannot land here and re-run it.
             navigate(
                 &path,
@@ -68,6 +47,29 @@ pub fn RemotePackage() -> impl IntoView {
             </Suspense>
         </Layout>
     }
+}
+
+/// The package page a handled deep link lands on, keeping what the link asked
+/// for that the package does not have.
+pub(crate) fn package_target(result: &commands::RemotePackageResult) -> String {
+    let base = crate::routes::package_page_href(&result.namespace);
+    let outcome = match &result.banner {
+        Some(commands::RemoteBanner::DifferentVersion {
+            requested_hash,
+            requested_bucket,
+            requested_origin,
+            ..
+        }) => Some(crate::routes::DeepLinkOutcome::Mismatch(
+            crate::routes::RevisionMismatch {
+                hash: requested_hash.clone(),
+                bucket: requested_bucket.clone(),
+                catalog: requested_origin.as_ref().map(ToString::to_string),
+            },
+        )),
+        Some(commands::RemoteBanner::LocalOnly) => Some(crate::routes::DeepLinkOutcome::LocalOnly),
+        None => None,
+    };
+    crate::routes::keeping_outcome(base, outcome.as_ref())
 }
 
 #[cfg(test)]

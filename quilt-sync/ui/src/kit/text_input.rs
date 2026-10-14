@@ -29,6 +29,10 @@ pub fn TextInput(
     #[prop(optional, into)]
     placeholder: String,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
+    /// Shown and focusable but not typed into: a value another control
+    /// chooses, such as a folder picker's.
+    #[prop(optional)]
+    readonly: bool,
     /// Draws the error border and sets `aria-invalid`. The *message* is `FormControl`'s, because
     /// only the caller knows what is wrong; this only knows that something is.
     #[prop(optional, into)]
@@ -58,6 +62,7 @@ pub fn TextInput(
             aria-describedby=described_by
             placeholder=placeholder
             autofocus=autofocus
+            readonly=readonly
             prop:value=move || value.get()
             prop:disabled=move || is_disabled.get()
             aria-invalid=move || is_invalid.get().then_some("true")

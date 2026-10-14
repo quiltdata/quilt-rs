@@ -57,6 +57,10 @@ pub fn PageLayout(
     /// kinds exist and who dismisses them.
     #[prop(optional)]
     banner: Option<AnyView>,
+    /// The logo navigates in place of this page's history entry, for a page
+    /// whose mount is its operation.
+    #[prop(optional)]
+    replace: bool,
     children: Children,
 ) -> impl IntoView {
     view! {
@@ -65,7 +69,7 @@ pub fn PageLayout(
         // reader still visits v1's pages.
         <div class=style::root data-v2-page>
             <h1 data-sr-only>{heading}</h1>
-            <Appbar actions=actions />
+            <Appbar actions=actions replace=replace />
             {banner
                 .map(|banner| {
                     view! { <div class=style::notice>{banner}</div> }

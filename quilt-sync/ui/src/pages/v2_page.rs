@@ -34,7 +34,7 @@ use std::pin::Pin;
 
 use leptos::prelude::*;
 
-use crate::components::appbar::appbar_actions;
+use crate::components::appbar::{appbar_actions, transit_appbar_actions};
 use crate::kit::readable;
 use crate::kit::{Banner, BannerVariant, PageLayout};
 
@@ -180,6 +180,11 @@ pub fn V2Page<T, B, D, F>(
     /// itself has none.
     #[prop(optional)]
     actions: Option<AnyView>,
+    /// The page's mount is its operation, so a reload or a Back onto it would
+    /// run it again: *Refresh* is drawn disabled and every way out of the
+    /// appbar replaces this history entry. Wins over `actions`.
+    #[prop(optional)]
+    transit: bool,
 ) -> impl IntoView
 where
     T: Clone + PartialEq + Send + Sync + 'static,
@@ -209,7 +214,12 @@ where
                 }}
             }
                 .into_any()
-            actions=actions.unwrap_or_else(|| appbar_actions(move || reload.notify(), in_flight.into()))
+            actions=if transit {
+                transit_appbar_actions()
+            } else {
+                actions.unwrap_or_else(|| appbar_actions(move || reload.notify(), in_flight.into()))
+            }
+            replace=transit
         >
             {move || match answer.get() {
                 None => skeleton(),

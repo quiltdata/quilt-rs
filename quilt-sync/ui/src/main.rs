@@ -41,18 +41,18 @@ fn App() -> impl IntoView {
         <components::AutopullActivityFeed />
         <components::QuitPrompt />
         <Router>
-            <Routes fallback=|| view! { <pages::NotFound /> }>
+            <Routes fallback=|| view! { <NotFoundPage read=read_settings /> }>
                 <Route path=path!("/") view=|| view! { <Home /> } />
                 <Route path=path!("/commit") view=|| view! { <CommitPage read=read_settings /> } />
                 <Route path=path!("/installed-package") view=|| view! { <PackagePage read=read_settings /> } />
                 <Route path=path!("/installed-packages-list") view=pages::InstalledPackagesList />
-                <Route path=path!("/login") view=pages::Login />
+                <Route path=path!("/login") view=|| view! { <LoginPage read=read_settings /> } />
                 <Route path=path!("/main") view=pages::MainPage />
-                <Route path=path!("/error") view=pages::Error />
+                <Route path=path!("/error") view=|| view! { <ErrorPage read=read_settings /> } />
                 <Route path=path!("/merge") view=pages::Merge />
-                <Route path=path!("/remote-package") view=pages::RemotePackage />
+                <Route path=path!("/remote-package") view=|| view! { <RemotePackagePage read=read_settings /> } />
                 <Route path=path!("/settings") view=|| view! { <SettingsPage read=read_settings /> } />
-                <Route path=path!("/setup") view=pages::Setup />
+                <Route path=path!("/setup") view=|| view! { <SetupPage read=read_settings /> } />
             </Routes>
         </Router>
     }
@@ -133,6 +133,79 @@ fn SettingsPage(read: SettingsRead) -> impl IntoView {
     }
 }
 
+/// `/login`, decided as the other routes are. Every way here is a link from a
+/// page that needs a session, so the login page is the one beside it.
+#[component]
+fn LoginPage(read: SettingsRead) -> impl IntoView {
+    view! {
+        <ByDesign
+            read=read
+            v2=|| view! { <pages::LoginV2 /> }.into_any()
+            v1=|| view! { <pages::Login /> }.into_any()
+            skeleton=|| view! { <pages::LoginV2Skeleton actions=loading_actions() /> }.into_any()
+            loading="Loading login"
+        />
+    }
+}
+
+/// `/setup`, decided as the other routes are.
+#[component]
+fn SetupPage(read: SettingsRead) -> impl IntoView {
+    view! {
+        <ByDesign
+            read=read
+            v2=|| view! { <pages::SetupV2 /> }.into_any()
+            v1=|| view! { <pages::Setup /> }.into_any()
+            skeleton=|| view! { <pages::SetupV2Skeleton actions=loading_actions() /> }.into_any()
+            loading="Loading setup"
+        />
+    }
+}
+
+/// `/error`, decided as the other routes are.
+#[component]
+fn ErrorPage(read: SettingsRead) -> impl IntoView {
+    view! {
+        <ByDesign
+            read=read
+            v2=|| view! { <pages::ErrorV2 /> }.into_any()
+            v1=|| view! { <pages::Error /> }.into_any()
+            skeleton=|| view! { <pages::ErrorV2Skeleton actions=loading_actions() /> }.into_any()
+            loading="Loading error"
+        />
+    }
+}
+
+/// `/remote-package`, decided as the other routes are. Either page runs the
+/// deep link as it mounts, which is after the decision, so the link runs once.
+#[component]
+fn RemotePackagePage(read: SettingsRead) -> impl IntoView {
+    view! {
+        <ByDesign
+            read=read
+            v2=|| view! { <pages::RemotePackageV2 /> }.into_any()
+            v1=|| view! { <pages::RemotePackage /> }.into_any()
+            skeleton=|| view! { <pages::RemotePackageV2Skeleton /> }.into_any()
+            loading="Opening link"
+        />
+    }
+}
+
+/// An address no route matches, decided as the routes are. The v2 page reads
+/// nothing, so it is its own first paint.
+#[component]
+fn NotFoundPage(read: SettingsRead) -> impl IntoView {
+    view! {
+        <ByDesign
+            read=read
+            v2=|| view! { <pages::NotFoundV2 /> }.into_any()
+            v1=|| view! { <pages::NotFound /> }.into_any()
+            skeleton=|| view! { <pages::NotFoundV2 /> }.into_any()
+            loading="Loading"
+        />
+    }
+}
+
 /// The settings read a route decides its generation from.
 type SettingsRead = fn() -> Pin<Box<dyn Future<Output = Result<commands::SettingsData, String>>>>;
 
@@ -152,8 +225,7 @@ fn read_settings() -> Pin<Box<dyn Future<Output = Result<commands::SettingsData,
 /// one read of the preference the app already makes, and `/` is where every
 /// session starts, so the marker is set before any other route can be reached
 /// and updated whenever the reader comes back having changed it. A launch by
-/// deep link starts on `/remote-package` instead, and hands over to
-/// `/installed-package`, which sets it there.
+/// deep link starts on `/remote-package` instead, which is decided here too.
 #[component]
 fn ByDesign(
     read: SettingsRead,
@@ -605,6 +677,55 @@ mod tests {
             "the commit page's skeleton; markup was {}",
             el.inner_html()
         );
+    }
+
+    /// A route component, drawn over a settings read.
+    type RouteView = fn(SettingsRead) -> AnyView;
+
+    /// A route as the router draws it, over a stubbed settings read.
+    async fn route(page: RouteView, read: SettingsRead) -> Mounted {
+        let el = Mounted::new(move || view! { <Router>{page(read)}</Router> });
+        sleep_ms(100).await;
+        el
+    }
+
+    /// The routes ported last, each as `ByDesign` draws it.
+    fn small_routes() -> [(&'static str, RouteView); 5] {
+        [
+            ("/login", |read| {
+                view! { <LoginPage read=read /> }.into_any()
+            }),
+            ("/setup", |read| {
+                view! { <SetupPage read=read /> }.into_any()
+            }),
+            ("/error", |read| {
+                view! { <ErrorPage read=read /> }.into_any()
+            }),
+            ("/remote-package", |read| {
+                view! { <RemotePackagePage read=read /> }.into_any()
+            }),
+            ("no route", |read| {
+                view! { <NotFoundPage read=read /> }.into_any()
+            }),
+        ]
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_small_routes_are_v2_with_the_preview_on() {
+        for (name, page) in small_routes() {
+            let el = route(page, settings_on).await;
+            assert!(draws_v2(&el), "{name}: markup was {}", el.inner_html());
+            assert!(!draws_v1(&el), "{name}: markup was {}", el.inner_html());
+        }
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_small_routes_are_v1_with_the_preview_off() {
+        for (name, page) in small_routes() {
+            let el = route(page, settings_off).await;
+            assert!(draws_v1(&el), "{name}: markup was {}", el.inner_html());
+            assert!(!draws_v2(&el), "{name}: markup was {}", el.inner_html());
+        }
     }
 
     #[test]

@@ -1,0 +1,29 @@
+// The card at a form's width, centred in the page column.
+.page {
+  width: 100%;
+  max-width: 560px;
+  margin-inline: auto;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-4);
+}
+
+.quiet {
+  margin: 0;
+  color: var(--q-fgColor-muted);
+}
+
+// The field takes the row; the button sits on the field's line, under the label.
+.choose {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--q-space-2);
+}
+
+.choose > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
