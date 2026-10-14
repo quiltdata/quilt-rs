@@ -25,6 +25,7 @@
 
 - **New design preview**: Settings shows its cards two to a row from a 1024px window, with Syncing and Accounts on top, and in one column below that (<https://github.com/quiltdata/quilt-rs/pull/1113>)
 - **New design preview**: a file's *More actions* menu on the package page offers **Reveal in folder** (<https://github.com/quiltdata/quilt-rs/pull/1117>)
+- **New design preview**: a file's *More actions* menu on the commit page offers **Open file**, **Reveal in folder** and **Copy path**, except for a deleted file (<https://github.com/quiltdata/quilt-rs/pull/1119>)
 
 ### Changed
 
