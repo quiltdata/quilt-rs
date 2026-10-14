@@ -30,6 +30,7 @@
 
 - The window can be made as narrow as 640px, down from 1024px (<https://github.com/quiltdata/quilt-rs/pull/1113>)
 - Autosync checks for new revisions every minute by default, and never more often. Intervals are whole minutes; one interval applies whether the window is open, in the background or closed to the tray (<https://github.com/quiltdata/quilt-rs/pull/1112>)
+- **New design preview**: on a wide window the commit page puts the files beside the message, workflow and metadata, and the list scrolls in its own box; with only metadata changed, that column says so (<https://github.com/quiltdata/quilt-rs/pull/1120>)
 - **New design preview**: Settings shows your publish defaults read-only and edits them in a popup, with Reset to defaults; the Help card is now Troubleshooting (<https://github.com/quiltdata/quilt-rs/pull/1116>)
 
 ### Fixed
