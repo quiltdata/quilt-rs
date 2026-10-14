@@ -827,9 +827,10 @@ fn file_downloader(namespace: String, w: Wiring, files: Files) -> Callback<Vec<S
 
 /// Runs what a row's `[⋯]` chose.
 ///
-/// Opening, revealing and copying write nothing, so they take no lock, as `file_opener`
-/// does not; the two `.quiltignore` items open popups whose state is the
-/// page's ([`row_popups`]), and the menu holds them back while the lock is held.
+/// Opening, revealing and copying write nothing, so they take no lock, as
+/// `file_opener` does not; the two `.quiltignore` items open popups whose state
+/// is the page's ([`row_popups`]), and the menu holds them back while the lock
+/// is held.
 fn row_runner(
     namespace: String,
     uri: Option<quilt_uri::S3PackageUri>,
