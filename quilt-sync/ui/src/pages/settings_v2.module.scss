@@ -45,12 +45,11 @@
   margin-top: 3px;
 }
 
-// `Every [1] minute`: words and a field on one line, centred on the field.
-.sentence {
+// A row's own control at its trailing end, its *Saved* note before it.
+.control {
   display: inline-flex;
   align-items: center;
   gap: var(--q-space-2);
-  color: var(--q-fgColor-muted);
 }
 
 // Empty until a row saves, and never moves the row: the trailing slot is
@@ -144,12 +143,6 @@
 
 .freed {
   color: var(--q-fgColor-muted);
-}
-
-// The log level's select at a select's width, not the card's.
-.select {
-  display: block;
-  max-width: 240px;
 }
 
 .sent_list {

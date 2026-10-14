@@ -115,3 +115,9 @@
   min-width: 0;
   padding-left: calc(17px + var(--q-space-2));
 }
+
+/* A detail with nothing in it, such as an error that is not showing, takes no
+ * line and no gap. */
+.detail:not(:has(*)) {
+  display: none;
+}
