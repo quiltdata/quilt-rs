@@ -22,13 +22,18 @@ const INDENT_CH: f64 = 2.0;
 /// The catalog's reserve: a separator, a `<…N>`, and the braces' spaces.
 const RESERVED_CH: f64 = 2.0 + 4.0 + 4.0;
 
-/// How many levels start open.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// How many levels start open. By default the root, so its fields show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Expanded {
-    #[default]
     None,
     Levels(usize),
     All,
+}
+
+impl Default for Expanded {
+    fn default() -> Self {
+        Self::Levels(1)
+    }
 }
 
 impl Expanded {
@@ -356,6 +361,7 @@ mod tests {
                         "E": [1, {"b": ["c", {"d": "e"}]}, "a"],
                     })
                     chars=62.0
+                    expanded=Expanded::None
                 />
             }
         });
@@ -372,7 +378,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn the_button_opens_the_branch() {
-        let el = mount(|| view! { <JsonDisplay value=json!({"plate": 7}) chars=80.0 /> });
+        let el = mount(|| {
+            view! { <JsonDisplay value=json!({"plate": 7}) chars=80.0 expanded=Expanded::None /> }
+        });
         assert!(!text(&el).contains("plate: 7\n"), "{}", text(&el));
         let button: web_sys::HtmlElement = el
             .query_selector("button")
@@ -396,6 +404,23 @@ mod tests {
             "one field and the closing brace: {}",
             el.inner_html()
         );
+    }
+
+    /// By default the root is open: its fields are lines of their own.
+    #[wasm_bindgen_test]
+    fn the_root_starts_open() {
+        let el =
+            mount(|| view! { <JsonDisplay value=json!({"plate": 7, "assay": "x"}) chars=80.0 /> });
+        let button = el.query_selector("button").unwrap().expect("a toggle");
+        assert_eq!(
+            button.get_attribute("aria-expanded").as_deref(),
+            Some("true")
+        );
+        let lines = el
+            .query_selector_all("[class*='inner'] > *")
+            .unwrap()
+            .length();
+        assert_eq!(lines, 3, "two fields and the closing brace");
     }
 
     #[wasm_bindgen_test]

@@ -35,6 +35,7 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1113>
   - <https://github.com/quiltdata/quilt-rs/pull/1116>
   - <https://github.com/quiltdata/quilt-rs/pull/1121>
+- **New design preview**: on a wide window the commit page shows the files beside the message, workflow and metadata, and the metadata preview shows one line per field (<https://github.com/quiltdata/quilt-rs/pull/1120>)
 
 ### Fixed
 
