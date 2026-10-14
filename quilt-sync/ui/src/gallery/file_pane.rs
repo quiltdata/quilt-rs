@@ -87,9 +87,9 @@
 //!   drawn with them the toolbar has to wait. So the loading cell skeletonises
 //!   the toolbar, and the rule has an exception the design has to record.
 //! - **The `[⋯]` cannot be one list.** §6 owes this: gated by where the file is,
-//!   the menu is four different menus, and two of its items only exist for one
-//!   state each — *Open file* wants a local file and *Stop keeping* wants bytes
-//!   to delete. An ignored row needs *Stop ignoring*, which §3's list does not
+//!   the menu is four different menus, and three of its items only exist for
+//!   one state each — *Open file* and *Reveal in folder* want a local file and
+//!   *Stop keeping* wants bytes to delete. An ignored row needs *Stop ignoring*, which §3's list does not
 //!   have at all although the `Ignored` facet is the view that reaches it.
 //! - **A facet at zero has to stay.** It is the same argument that keeps the
 //!   facets out of a `Select`: a segment that vanishes when it is empty teaches
@@ -476,7 +476,7 @@ impl Confirm {
 /// something on disk, and `Stop keeping` wants bytes to delete, which a
 /// `Deleted` or `Missing` row has none of.
 ///
-/// Rules split it as the package page's does: the local file, its address,
+/// Rules split it as the package page does: the local file, its address,
 /// `.quiltignore`, then `Stop keeping` under its danger rule.
 ///
 /// `Stop ignoring` is not in §3's list at all, although the `Ignored` facet is
