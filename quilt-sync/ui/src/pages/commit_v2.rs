@@ -8,6 +8,7 @@
 
 use leptos::prelude::*;
 
+use crate::kit::ActionMenu;
 use crate::kit::Banner;
 use crate::kit::BannerVariant;
 use crate::kit::Blankslate;
@@ -32,6 +33,7 @@ use crate::kit::TwoColumns;
 use crate::kit::icons;
 use crate::util::format_size;
 
+use super::installed_package_v2::{MenuCommand, MenuItem, remote_item, remove_item};
 use super::json_editor::{JsonEditor, focus_json_editor};
 use super::row_menu::{RowCommand, menu_actions};
 
@@ -115,8 +117,23 @@ fn primary_face(primary: Primary, w: PrimaryWiring) -> AnyView {
     }
 }
 
-/// The page's header. No state label and no `[⋯]`: both would be about the
-/// package, not the revision being written.
+/// The header's `[⋯]`: the package page's bucket item, then Remove below a
+/// rule. Of the package page's other items, *Create new revision* is this
+/// page, and undoing a revision belongs on the package page, where the files
+/// it restores are in view.
+#[must_use]
+pub fn header_menu(remote_locked: bool, busy: bool) -> Vec<MenuItem> {
+    vec![
+        remote_item(remote_locked, busy),
+        MenuItem {
+            separated: true,
+            ..remove_item(busy)
+        },
+    ]
+}
+
+/// The page's header. No state label: it would be about the package, not the
+/// revision being written.
 #[component]
 pub fn CommitHeader(
     #[prop(into)] namespace: String,
@@ -124,11 +141,27 @@ pub fn CommitHeader(
     primary: Primary,
     w: PrimaryWiring,
     on_open_folder: Callback<()>,
+    /// The package has been pushed, so `[⋯]` offers *Show remote* in place
+    /// of *Change bucket*.
+    remote_locked: bool,
+    /// The command chosen in `[⋯]`.
+    on_menu: Callback<MenuCommand>,
     /// The trail's first crumb; `/` by default.
     #[prop(optional, into)]
     home_href: Option<String>,
 ) -> impl IntoView {
     let blocked = w.blocked;
+    let running = w.running;
+    // Derived, so the items follow the lock while the menu is open.
+    let menu = Signal::derive(move || {
+        header_menu(remote_locked, running.get())
+            .into_iter()
+            .map(|item| {
+                let command = item.command.clone();
+                item.action(Callback::new(move |()| on_menu.run(command.clone())))
+            })
+            .collect()
+    });
     let home_href = home_href.unwrap_or_else(|| "/".to_string());
     // The reason is also on the page: a disabled button takes no focus, and
     // touch shows no tooltip.
@@ -171,6 +204,7 @@ pub fn CommitHeader(
                 <Button disabled=w.running on_click=move |_| on_open_folder.run(())>
                     "Open folder"
                 </Button>
+                <ActionMenu aria_label="More actions for this package" actions=menu />
             }
                 .into_any()
         />
@@ -1285,6 +1319,34 @@ pub(crate) mod tests {
         for words in &all {
             assert_eq!(banned_in(words), None, "{words:?}");
         }
+    }
+
+    /// Before the first publish the bucket can change; after, it can only be
+    /// shown. Remove follows below a rule, and both wait for the page's lock.
+    #[test]
+    fn the_header_menu_offers_the_bucket_then_remove() {
+        let words = |items: Vec<MenuItem>| -> Vec<(String, bool, bool)> {
+            items
+                .into_iter()
+                .map(|i| (i.label, i.separated, i.disabled.is_some()))
+                .collect()
+        };
+        let menu = |label: &str, busy: bool| {
+            vec![
+                (label.to_string(), false, busy),
+                ("Remove".to_string(), true, busy),
+            ]
+        };
+        assert_eq!(
+            words(header_menu(false, false)),
+            menu("Change bucket", false)
+        );
+        assert_eq!(words(header_menu(true, false)), menu("Show remote", false));
+        assert_eq!(words(header_menu(false, true)), menu("Change bucket", true));
+        let items = header_menu(true, false);
+        assert_eq!(items[0].command, MenuCommand::Remote);
+        assert_eq!(items[1].command, MenuCommand::Remove);
+        assert_eq!(items[1].tone, crate::kit::ActionTone::Danger);
     }
 
     #[test]

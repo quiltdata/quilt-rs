@@ -82,6 +82,9 @@ pub struct EntryData {
 pub struct CommitData {
     pub namespace: Namespace,
     pub uri: Option<S3PackageUri>,
+    /// The package has been pushed, so its remote is pinned to its push
+    /// history and can only be shown.
+    pub remote_locked: bool,
     pub status: String,
     pub message: String,
     /// The current revision's metadata: what an emptied editor keeps.

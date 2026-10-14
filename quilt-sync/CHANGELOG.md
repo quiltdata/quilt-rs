@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.12-dev]
+
+### Added
+
+- **New design preview**: the commit page's *More actions* menu offers **Change bucket**, or **Show remote** once the package is published, and **Remove** (<https://github.com/quiltdata/quilt-rs/pull/1122>)
+
 ## [v0.22.11] - 2026-10-14
 
 ### Added

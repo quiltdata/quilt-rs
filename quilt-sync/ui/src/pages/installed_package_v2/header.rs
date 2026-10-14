@@ -71,6 +71,9 @@
 //! back to `Publish`, and a failure to read or write says nothing: the cost of
 //! losing it is one extra click.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use leptos::prelude::*;
 
 use crate::commands;
@@ -130,6 +133,50 @@ pub struct MenuItem {
     pub disabled: Option<String>,
 }
 
+impl MenuItem {
+    /// The item as the menu draws it, running `on_select` when chosen.
+    #[must_use]
+    pub fn action(self, on_select: Callback<()>) -> MenuAction {
+        MenuAction {
+            label: self.label,
+            tone: self.tone,
+            disabled: self.disabled,
+            on_select,
+            separated: self.separated,
+        }
+    }
+}
+
+/// The bucket's item. A pushed package is pinned to its push history, so the
+/// bucket can be shown and not changed. Same command, honest label.
+#[must_use]
+pub(crate) fn remote_item(remote_locked: bool, busy: bool) -> MenuItem {
+    MenuItem {
+        command: MenuCommand::Remote,
+        label: if remote_locked {
+            "Show remote"
+        } else {
+            "Change bucket"
+        }
+        .to_string(),
+        tone: ActionTone::Default,
+        separated: false,
+        disabled: busy.then(|| BUSY.to_string()),
+    }
+}
+
+/// Remove, which [`RemoveDialog`] confirms.
+#[must_use]
+pub(crate) fn remove_item(busy: bool) -> MenuItem {
+    MenuItem {
+        command: MenuCommand::Remove,
+        label: "Remove".to_string(),
+        tone: ActionTone::Danger,
+        separated: false,
+        disabled: busy.then(|| BUSY.to_string()),
+    }
+}
+
 /// Why undo is unavailable, when it is. `None` means it is available.
 fn undo_blocked(data: &commands::PackageHeaderData) -> Option<&'static str> {
     // Order is the engine's: no commit, then the remote guard it applies
@@ -173,20 +220,7 @@ pub fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuIte
         });
     }
 
-    // A pushed package is pinned to its push history, so the bucket can be
-    // shown and not changed. Same command, honest label.
-    items.push(MenuItem {
-        command: MenuCommand::Remote,
-        label: if data.remote_locked {
-            "Show remote"
-        } else {
-            "Change bucket"
-        }
-        .to_string(),
-        tone: ActionTone::Default,
-        separated: false,
-        disabled: refused(),
-    });
+    items.push(remote_item(data.remote_locked, busy));
 
     items.push(MenuItem {
         command: MenuCommand::Undo,
@@ -199,13 +233,7 @@ pub fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuIte
         disabled: undo_blocked(data).map(ToString::to_string).or_else(refused),
     });
 
-    items.push(MenuItem {
-        command: MenuCommand::Remove,
-        label: "Remove".to_string(),
-        tone: ActionTone::Danger,
-        separated: false,
-        disabled: refused(),
-    });
+    items.push(remove_item(busy));
 
     items
 }
@@ -227,7 +255,7 @@ fn menu(
         .map(|item| {
             let ns = ns.clone();
             let commit_to = commit_to.clone();
-            let on_select = match item.command {
+            let on_select = match item.command.clone() {
                 MenuCommand::NewRevision => {
                     Callback::new(move |()| goto.set(Some(commit_to.clone())))
                 }
@@ -244,20 +272,11 @@ fn menu(
                 }),
                 MenuCommand::Remote => Callback::new(move |()| bucket_open.set(true)),
                 MenuCommand::Undo => Callback::new(move |()| undo_open.set(true)),
-                MenuCommand::Remove => Callback::new(move |()| {
-                    // Checked each time it opens: an unchecked box from an
-                    // earlier opening is not this one's answer.
-                    w.dialogs.remove_prune.set(true);
-                    remove_open.set(true);
-                }),
+                MenuCommand::Remove => {
+                    Callback::new(move |()| ask_to_remove(remove_open, w.dialogs.remove_prune))
+                }
             };
-            MenuAction {
-                label: item.label,
-                tone: item.tone,
-                disabled: item.disabled,
-                on_select,
-                separated: item.separated,
-            }
+            item.action(on_select)
         })
         .collect()
 }
@@ -434,10 +453,7 @@ fn danger_dialogs(
         dialogs,
         ..
     } = w;
-    let prune = dialogs.remove_prune;
     let ns_undo = data.namespace.to_string();
-    let ns_remove = data.namespace.to_string();
-    let uri_remove = data.uri.clone();
     view! {
         <ConfirmDialog
             open=undo_open
@@ -462,8 +478,86 @@ fn danger_dialogs(
             })
             running=busy
         />
-        <ConfirmDialog
+        <RemoveDialog
             open=remove_open
+            prune=dialogs.remove_prune
+            namespace=data.namespace.to_string()
+            uri=data.uri.clone()
+            busy=busy
+            outcome=outcome
+            goto=goto
+        />
+    }
+}
+
+/// The set-remote dialog, over the page's draft, lock, band and re-read.
+fn bucket_dialog(
+    data: &commands::PackageHeaderData,
+    w: Wiring,
+    open: RwSignal<bool>,
+) -> impl IntoView + use<> {
+    view! {
+        <BucketDialog
+            open=open
+            namespace=data.namespace.to_string()
+            uri=data.uri.clone()
+            locked=data.remote_locked
+            draft=w.dialogs.bucket_draft.get_value()
+            busy=w.busy
+            outcome=w.outcome
+            reload=w.reload
+        />
+    }
+}
+
+/// Open Remove's confirmation. Its box is checked each time it opens: an
+/// unchecked box from an earlier opening is not this one's answer.
+pub(crate) fn ask_to_remove(open: RwSignal<bool>, prune: RwSignal<bool>) {
+    prune.set(true);
+    open.set(true);
+}
+
+/// Remove's command: namespace, remote and prune in, the backend's report
+/// out. A parameter so a test can answer without a Tauri host.
+pub(crate) type Uninstall = fn(
+    String,
+    Option<quilt_uri::S3PackageUri>,
+    bool,
+) -> Pin<Box<dyn Future<Output = Result<String, String>>>>;
+
+fn uninstall_package(
+    namespace: String,
+    uri: Option<quilt_uri::S3PackageUri>,
+    prune: bool,
+) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+    Box::pin(commands::package_uninstall(namespace, uri, prune))
+}
+
+/// Remove's confirmation. It holds `busy` while it runs and goes home once it
+/// succeeds; a refusal stays in the dialog.
+#[component]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a component's props are owned; the body reads it from there"
+)]
+pub(crate) fn RemoveDialog(
+    open: RwSignal<bool>,
+    /// *Also delete downloaded files from disk*. The page's, so a re-read does
+    /// not tick a box the reader just cleared.
+    prune: RwSignal<bool>,
+    namespace: String,
+    uri: Option<quilt_uri::S3PackageUri>,
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    goto: RwSignal<Option<String>>,
+    /// `package_uninstall` unless a test says otherwise.
+    #[prop(optional_no_strip)]
+    uninstall: Option<Uninstall>,
+) -> impl IntoView {
+    let uninstall = uninstall.unwrap_or(uninstall_package);
+    view! {
+        <ConfirmDialog
+            open=open
             title="Remove this package"
             // No promise about the object store: a commit never pushed is named
             // only by the manifests uninstall deletes, so it is lost either way.
@@ -471,13 +565,13 @@ fn danger_dialogs(
                          that were never pushed."
             option=ConfirmOption::new("Also delete downloaded files from disk", prune)
             confirm=Submit::new("Remove", move || {
-                let ns = ns_remove.clone();
-                let uri = uri_remove.clone();
+                let ns = namespace.clone();
+                let uri = uri.clone();
                 let prune = prune.get_untracked();
                 async move {
                     // What the prune freed arrives as a toast, which outlives
                     // the move home.
-                    holding(busy, outcome, commands::package_uninstall(ns, uri, prune)).await?;
+                    holding(busy, outcome, uninstall(ns, uri, prune)).await?;
                     // Home, not a refetch: the package this page is about is gone, so
                     // re-reading it would ask for something that no longer exists.
                     // Remove's success is arriving on the package list.
@@ -624,7 +718,7 @@ pub fn PageHeader(
                 }
                     .into_any()
             />
-            <BucketDialog open=bucket_open data=data.clone() w=w />
+            {bucket_dialog(&data, w, bucket_open)}
             {role_dialog}
             {danger_dialogs(&data, w, goto, undo_open, remove_open)}
         </div>

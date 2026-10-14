@@ -51,11 +51,13 @@ mod revision_history;
 mod role_dialog;
 
 use crate::kit::PageHeaderSkeleton;
+pub(crate) use bucket_form::BucketDialog;
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
 use file_pane::{Reach, RowMenu};
 use header::PageHeader;
 pub use header::{MenuCommand, MenuItem, menu_items};
+pub(crate) use header::{RemoveDialog, Uninstall, ask_to_remove, remote_item, remove_item};
 use incoming::{HoverCard, IncomingSummary};
 use resolve::{ResolveCommands, ResolvePane};
 
@@ -245,10 +247,13 @@ pub struct BucketDraft {
     /// The package the draft was filled for. One route serves every package,
     /// so a draft left from another one is refilled rather than shown.
     pub namespace: RwSignal<Option<String>>,
+    /// A save was refused. It can fail after the remote is set, so the page
+    /// is read again when the dialog closes.
+    pub refused: RwSignal<bool>,
 }
 
 impl BucketDraft {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             host: RwSignal::new(String::new()),
             bucket: RwSignal::new(String::new()),
@@ -256,6 +261,7 @@ impl BucketDraft {
             workflow_for: RwSignal::new(None),
             workflows: RwSignal::new(None),
             namespace: RwSignal::new(None),
+            refused: RwSignal::new(false),
         }
     }
 }

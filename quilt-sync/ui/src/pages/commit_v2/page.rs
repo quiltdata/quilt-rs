@@ -4,6 +4,11 @@
 //! after a failed publish, rebuilds the column, and what the reader typed must
 //! survive that. It is seeded once per package from the first answer.
 //!
+//! A bucket changed from `[⋯]` re-reads the page too, and the new answer brings
+//! the new bucket's workflows. The draft keeps the message, and the metadata if
+//! the reader edited it; the workflow and untouched metadata start over from
+//! the new answer.
+//!
 //! Live validation is v1's — the rules load, the candidate check, the 400ms
 //! debounce, the keyed answer — with one difference: every violation shows at
 //! once and blocks the primary. This page is the review before a publish, so
@@ -27,7 +32,9 @@ use crate::components::workflow_select::{
 use crate::components::{IgnorePopup, IgnorePopupData, Notification, PreviousWorkflow};
 use crate::kit::{LoadFailure, PageLayout};
 
-use super::super::installed_package_v2::run_reading;
+use super::super::installed_package_v2::{
+    BucketDialog, BucketDraft, MenuCommand, RemoveDialog, Uninstall, ask_to_remove, run_reading,
+};
 use super::super::row_menu::RowCommand;
 use super::super::v2_page::{Outcome, PageHandle, V2Page, critical};
 use crate::routes;
@@ -280,6 +287,7 @@ pub(crate) const CHOOSE_A_WORKFLOW: &str =
 #[derive(Clone, Debug, PartialEq)]
 struct Form {
     namespace: String,
+    remote: Remote,
     placeholder: String,
     previous_meta: String,
     settings_meta: Option<String>,
@@ -315,6 +323,7 @@ impl Form {
         let choosable = matches!(d.workflows, CommitWorkflows::Available { .. });
         Self {
             namespace: d.namespace.to_string(),
+            remote: remote_of(d),
             placeholder: d.message.clone(),
             previous_meta: d.user_meta.clone(),
             settings_meta: d.settings_user_meta.clone(),
@@ -370,6 +379,23 @@ struct Draft {
     editing: RwSignal<bool>,
     /// The package the draft was seeded for.
     seeded: StoredValue<Option<String>>,
+    /// The remote it was seeded for.
+    remote: StoredValue<Remote>,
+    /// The metadata it was seeded with: the reader edited it if it differs.
+    started: StoredValue<String>,
+}
+
+/// A package's remote: catalog and bucket, without the revision it points at,
+/// which a save moves.
+type Remote = Option<(Option<String>, String)>;
+
+fn remote_of(d: &CommitData) -> Remote {
+    d.uri.as_ref().map(|u| {
+        (
+            u.catalog.as_ref().map(ToString::to_string),
+            u.bucket.clone(),
+        )
+    })
 }
 
 impl Draft {
@@ -380,63 +406,198 @@ impl Draft {
             workflow: RwSignal::new(WorkflowIntent::BucketDefault),
             editing: RwSignal::new(false),
             seeded: StoredValue::new(None),
+            remote: StoredValue::new(None),
+            started: StoredValue::new(String::new()),
         }
     }
 
     /// Start from the answer's values, once per package. A re-read keeps
-    /// the draft, unless the workflow it holds is no longer offered.
+    /// the draft, unless the workflow it holds is no longer offered. A
+    /// re-read on another remote keeps only what the reader typed.
     /// Whether this answer seeded it: the first for this package.
     fn seed(self, d: &CommitData, form: &Form) -> bool {
+        let remote = remote_of(d);
         if self.seeded.get_value().as_deref() == Some(form.namespace.as_str()) {
-            if self.workflow.with(|w| form.label(w).is_none()) {
+            if self.remote.get_value() != remote {
+                self.remote.set_value(remote);
+                self.workflow.set(form.initial.clone());
+                if self.metadata.with(|m| *m == self.started.get_value()) {
+                    self.start_metadata(d);
+                }
+            } else if self.workflow.with(|w| form.label(w).is_none()) {
                 self.workflow.set(form.initial.clone());
             }
             return false;
         }
         self.seeded.set_value(Some(form.namespace.clone()));
+        self.remote.set_value(remote);
         self.message.set(String::new());
-        self.metadata.set(starting_metadata(
-            d.settings_user_meta.as_deref(),
-            &d.user_meta,
-        ));
+        self.start_metadata(d);
         self.workflow.set(form.initial.clone());
         self.editing.set(false);
         true
+    }
+
+    fn start_metadata(self, d: &CommitData) {
+        let start = starting_metadata(d.settings_user_meta.as_deref(), &d.user_meta);
+        self.started.set_value(start.clone());
+        self.metadata.set(start);
+    }
+}
+
+/// The header's `[⋯]` and the dialogs behind it. The page's, above the
+/// rebuild line, so a re-read keeps a dialog open and what was typed in it.
+#[derive(Clone, Copy)]
+struct HeaderMenu {
+    page: PageHandle,
+    bucket: RwSignal<bool>,
+    draft: BucketDraft,
+    remove: RwSignal<bool>,
+    /// Remove's *Also delete downloaded files from disk*.
+    prune: RwSignal<bool>,
+    /// Where Remove goes once it succeeds.
+    goto: RwSignal<Option<String>>,
+    /// `package_uninstall` unless a test says otherwise.
+    uninstall: Option<Uninstall>,
+    /// Notified once the bucket dialog has set the remote.
+    saved: Trigger,
+}
+
+impl HeaderMenu {
+    fn new(page: PageHandle, goto: RwSignal<Option<String>>, uninstall: Option<Uninstall>) -> Self {
+        Self {
+            page,
+            bucket: RwSignal::new(false),
+            draft: BucketDraft::new(),
+            remove: RwSignal::new(false),
+            prune: RwSignal::new(true),
+            goto,
+            uninstall,
+            saved: Trigger::new(),
+        }
+    }
+
+    /// Once the remote is set, read the page again and hold the lock until
+    /// that read lands. The answer on screen is the old bucket's, and a save
+    /// before the draft takes the new one's defaults would send the old ones.
+    fn hold_through_read(self) {
+        let PageHandle {
+            busy,
+            reload,
+            landed,
+            ..
+        } = self.page;
+        // The count of landed reads when the re-read was asked for.
+        let asked = RwSignal::new(None::<u64>);
+        Effect::new(move |first: Option<()>| {
+            self.saved.track();
+            if first.is_some() {
+                busy.set(true);
+                asked.set(Some(landed.get_untracked()));
+                reload.notify();
+            }
+        });
+        Effect::new(move |_| {
+            if asked.get().is_some_and(|asked| landed.get() > asked) {
+                asked.set(None);
+                busy.set(false);
+            }
+        });
+    }
+
+    /// Opens the chosen command's dialog. The dialogs wait for the page's
+    /// lock, as the items do.
+    fn on_menu(self) -> Callback<MenuCommand> {
+        Callback::new(move |command| match command {
+            MenuCommand::Remote => self.bucket.set(true),
+            MenuCommand::Remove => ask_to_remove(self.remove, self.prune),
+            // Not on this page's menu.
+            MenuCommand::NewRevision | MenuCommand::OpenInCatalog(_) | MenuCommand::Undo => {}
+        })
+    }
+
+    /// The dialogs, for one answer. Changing the bucket re-reads the page;
+    /// a refusal of either stays in its dialog.
+    fn dialogs(self, d: &CommitData) -> AnyView {
+        let PageHandle { busy, outcome, .. } = self.page;
+        view! {
+            <BucketDialog
+                open=self.bucket
+                namespace=d.namespace.to_string()
+                uri=d.uri.clone()
+                locked=d.remote_locked
+                draft=self.draft
+                busy=busy
+                outcome=outcome
+                reload=self.saved
+            />
+            <RemoveDialog
+                open=self.remove
+                prune=self.prune
+                namespace=d.namespace.to_string()
+                uri=d.uri.clone()
+                busy=busy
+                outcome=outcome
+                goto=self.goto
+                uninstall=self.uninstall
+            />
+        }
+        .into_any()
     }
 }
 
 const IGNORE_FAILED: &str = "Could not ignore this file.";
 
-/// The live check's input: the message as it would be sent, the metadata
-/// as typed, and the named workflow, if one is selected.
-type LiveKey = (String, String, Option<String>);
+/// How long typing pauses before the live check runs.
+const CHECK_PAUSE_MS: u64 = 400;
 
-/// One run of the live check, v1's: load the workflow's rules (refreshing
-/// them on the visit's first load), then check the candidate against them.
+/// The live check's input: the message as it would be sent, the metadata
+/// as typed, the named workflow, if one is selected, and the remote whose
+/// rules apply. A result for another remote is not this one's.
+type LiveKey = (String, String, Option<String>, Remote);
+
+/// The live check's backend: namespace, workflow id, whether to drop the
+/// package's cached rules first, message and metadata in, the violations out.
+/// A parameter so a test can answer without a Tauri host.
+pub(crate) type RulesCheck =
+    fn(String, String, bool, String, String) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>>;
+
+/// v1's: load the workflow's rules, then check the candidate against them.
+fn check_rules(
+    namespace: String,
+    id: String,
+    refresh: bool,
+    message: String,
+    metadata: String,
+) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>> {
+    Box::pin(async move {
+        let _ = commands::load_workflow_rules(namespace.clone(), id.clone(), refresh).await;
+        commands::validate_commit_candidate(namespace.clone(), id, message, metadata, namespace)
+            .await
+            .unwrap_or_default()
+    })
+}
+
+/// One run of the live check. The backend caches rules by package and
+/// workflow id, not by bucket, so it is told to read them again on the
+/// visit's first check and after the remote changes: two buckets can name
+/// the same workflow and hold different rules for it.
 async fn check(
     key: LiveKey,
     fixed: Option<Form>,
-    first_load: StoredValue<bool>,
+    rules: RulesCheck,
+    loaded_for: StoredValue<Option<Remote>>,
 ) -> (LiveKey, Vec<CommitViolation>) {
-    let (message, metadata, workflow_id) = key.clone();
+    let (message, metadata, workflow_id, remote) = key.clone();
     let (Some(id), Some(fixed)) = (workflow_id, fixed) else {
         return (key, Vec::new());
     };
-    let refresh = first_load.try_get_value().unwrap_or(false);
-    first_load.try_set_value(false);
-    let _ = commands::load_workflow_rules(fixed.namespace.clone(), id.clone(), refresh).await;
+    let refresh = loaded_for.try_get_value() != Some(Some(remote.clone()));
+    loaded_for.try_set_value(Some(remote));
     // An emptied editor keeps the previous revision's metadata, so
     // that is what the check sees, as the commit gate does.
     let metadata = effective_metadata(&metadata, &fixed.previous_meta);
-    let violations = commands::validate_commit_candidate(
-        fixed.namespace.clone(),
-        id,
-        message,
-        metadata,
-        fixed.namespace,
-    )
-    .await
-    .unwrap_or_default();
+    let violations = rules(fixed.namespace, id, refresh, message, metadata).await;
     (key, violations)
 }
 
@@ -447,7 +608,15 @@ async fn check(
     clippy::too_many_lines,
     reason = "the page's wiring in one place: the read, the draft, validation and the commands"
 )]
-fn CommitScreen(read: CommitRead) -> impl IntoView {
+fn CommitScreen(
+    read: CommitRead,
+    /// `package_uninstall` unless a test says otherwise.
+    #[prop(optional_no_strip)]
+    uninstall: Option<Uninstall>,
+    /// [`check_rules`] unless a test says otherwise.
+    #[prop(optional_no_strip)]
+    rules: Option<RulesCheck>,
+) -> impl IntoView {
     let query = use_query_map();
     let ns = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
     let focus = query
@@ -492,6 +661,8 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
             navigate(&to, NavigateOptions::default());
         }
     });
+    let menu = HeaderMenu::new(page, goto, uninstall);
+    menu.hold_through_read();
 
     // ── Live validation, v1's ──
     let workflow_id = Memo::new(move |_| match draft.workflow.get() {
@@ -504,6 +675,7 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
             effective_message(&draft.message.get(), &placeholder.unwrap_or_default()),
             draft.metadata.get(),
             workflow_id.get(),
+            form.with(|f| f.as_ref().and_then(|f| f.remote.clone())),
         )
     });
     let debounced = RwSignal::new(live_key.get_untracked());
@@ -516,9 +688,10 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
         if let Some(handle) = timer.get_value() {
             handle.clear();
         }
-        if let Ok(handle) =
-            set_timeout_with_handle(move || debounced.set(key), Duration::from_millis(400))
-        {
+        if let Ok(handle) = set_timeout_with_handle(
+            move || debounced.set(key),
+            Duration::from_millis(CHECK_PAUSE_MS),
+        ) {
             timer.set_value(Some(handle));
         }
     });
@@ -527,9 +700,9 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
             handle.clear();
         }
     });
-    // The first load of this visit refreshes the backend's rules cache, so a
-    // config changed since the last visit is read again.
-    let first_load = StoredValue::new(true);
+    // The remote the backend's rules were last read for; see `check`.
+    let loaded_for = StoredValue::new(None::<Remote>);
+    let rules = rules.unwrap_or(check_rules);
     let validation = RwSignal::new(None::<(LiveKey, Vec<CommitViolation>)>);
     let checks = StoredValue::new(0_u64);
     Effect::new(move |_| {
@@ -538,7 +711,7 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
         checks.update_value(|n| *n += 1);
         let this = checks.get_value();
         leptos::task::spawn_local(async move {
-            let answer = check(key, fixed, first_load).await;
+            let answer = check(key, fixed, rules, loaded_for).await;
             if checks.try_get_value() == Some(this) {
                 validation.try_set(Some(answer));
             }
@@ -659,6 +832,7 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
             open_folder,
             ignoring,
             outcome,
+            &menu,
             focus && fresh,
         )
     };
@@ -717,6 +891,7 @@ fn column(
     open_folder: Callback<()>,
     ignoring: RwSignal<Option<IgnorePopupData>>,
     outcome: RwSignal<Option<Outcome>>,
+    menu: &HeaderMenu,
     focus: bool,
 ) -> AnyView {
     let has_bucket = d.uri.as_ref().is_some_and(|u| u.catalog.is_some());
@@ -804,7 +979,10 @@ fn column(
             primary=primary(has_bucket, d.counts.changed)
             w=w
             on_open_folder=open_folder
+            remote_locked=d.remote_locked
+            on_menu=menu.on_menu()
         />
+        {menu.dialogs(d)}
     }
     .into_any();
 
@@ -1033,6 +1211,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
+            remote_locked: false,
             status: "up_to_date".to_string(),
             message: "Updated 1203 files".to_string(),
             user_meta: "{\"plate\": 7}".to_string(),
@@ -1332,6 +1511,478 @@ mod tests {
             Some(message_input(&el).unchecked_into()),
             "the re-read left the focus alone"
         );
+    }
+
+    /// The header's `[⋯]` trigger, and the list it opens.
+    const MENU: &str = "[aria-label='More actions for this package']";
+
+    /// Choose `label` in the header's `[⋯]`, the way a reader does.
+    async fn choose_in_menu(el: &web_sys::Element, label: &str) {
+        el.query_selector(MENU)
+            .unwrap()
+            .expect("the header's menu")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        leptos::task::tick().await;
+        let items = el
+            .query_selector_all(&format!("[popover]{MENU} button"))
+            .unwrap();
+        (0..items.length())
+            .map(|i| {
+                items
+                    .item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::HtmlElement>()
+            })
+            .find(|b| b.text_content().unwrap_or_default().trim() == label)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no menu item says {label:?}; markup was {}",
+                    el.inner_html()
+                )
+            })
+            .click();
+        // The dialog opens from an effect, on the next tick.
+        sleep_ms(20).await;
+    }
+
+    fn removed(
+        _: String,
+        _: Option<quilt_uri::S3PackageUri>,
+        _: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+        Box::pin(async { Ok(String::new()) })
+    }
+
+    /// Remove asks first, in the package page's dialog, and a confirmed
+    /// success goes to the main page: the package this page is about is gone.
+    #[wasm_bindgen_test]
+    async fn remove_asks_then_goes_to_the_main_page() {
+        unmount_earlier();
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(
+                &wasm_bindgen::JsValue::NULL,
+                "",
+                Some("/commit?namespace=org%2Fpkg"),
+            )
+            .unwrap();
+        let el = mount(|| {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/commit")
+                            view=|| view! { <CommitScreen read=answered uninstall=Some(removed) /> }
+                        />
+                        <Route path=path!("/") view=|| view! { "the main page" } />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(80).await;
+
+        choose_in_menu(&el, "Remove").await;
+        let dialog = el
+            .query_selector("dialog[open]")
+            .unwrap()
+            .unwrap_or_else(|| panic!("the confirmation; markup was {}", el.inner_html()));
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Remove this package"),
+            "markup was {}",
+            dialog.inner_html()
+        );
+
+        crate::test_support::button_saying(&dialog, "Remove").click();
+        sleep_ms(80).await;
+        assert!(
+            el.text_content()
+                .unwrap_or_default()
+                .contains("the main page"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    thread_local! {
+        /// How many times [`rebucketed`] was read.
+        static READS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    /// The package on `team-bucket`, then, from the second read on, on
+    /// `other-bucket`, whose default workflow and settings metadata differ.
+    fn rebucketed(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        let read = READS.get();
+        READS.set(read + 1);
+        let info = |id: &str, name: &str| commands::WorkflowInfo {
+            id: id.to_string(),
+            name: Some(name.to_string()),
+            description: None,
+            metadata_schema_url: None,
+            entries_schema_url: None,
+        };
+        let mut d = commit_data();
+        let (default, bucket) = if read == 0 {
+            ("plates", "team-bucket")
+        } else {
+            d.settings_user_meta = Some("{\"assay\": \"ELISA\"}".to_string());
+            ("exports", "other-bucket")
+        };
+        d.uri = Some(
+            quilt_uri::S3PackageUri::try_from(
+                format!("quilt+s3://{bucket}#package=org/pkg&catalog=quilt.test").as_str(),
+            )
+            .unwrap(),
+        );
+        d.workflows = CommitWorkflows::Available {
+            workflows: vec![info("plates", "Plates"), info("exports", "Exports")],
+            default_workflow: Some(default.to_string()),
+            is_workflow_required: false,
+            config_url: None,
+        };
+        Box::pin(async move { Ok(d) })
+    }
+
+    /// A re-read on another bucket keeps the typed message, and the fields
+    /// the reader left alone take the new bucket's defaults.
+    #[wasm_bindgen_test]
+    async fn a_new_bucket_keeps_the_message_and_resets_untouched_fields() {
+        READS.set(0);
+        let el = suspended_page_at("/commit?namespace=org%2Fpkg", rebucketed).await;
+        let input = message_input(&el);
+        input.set_value("Plate 7");
+        input
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        // Not the bucket dialog's, which is in the document while closed.
+        let workflow = |el: &web_sys::Element| {
+            let all = el.query_selector_all("select").unwrap();
+            (0..all.length())
+                .map(|i| {
+                    all.item(i)
+                        .unwrap()
+                        .unchecked_into::<web_sys::HtmlSelectElement>()
+                })
+                .find(|s| s.closest("dialog").unwrap().is_none())
+                .expect("the workflow select")
+                .value()
+        };
+        assert!(workflow(&el).starts_with("Plates"), "{}", workflow(&el));
+
+        crate::test_support::element_saying(&el, "Refresh").click();
+        sleep_ms(80).await;
+
+        assert_eq!(message_input(&el).value(), "Plate 7");
+        assert!(workflow(&el).starts_with("Exports"), "{}", workflow(&el));
+        assert!(
+            el.text_content().unwrap_or_default().contains("ELISA"),
+            "the new settings metadata; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    thread_local! {
+        /// The bucket [`on_two_buckets`] answered last.
+        static BUCKET: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+        /// The bucket whose rules [`cached_rules`] holds.
+        static CACHED: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+    }
+
+    /// The package on `team-bucket`, then on `other-bucket`. Both name the
+    /// same workflow.
+    fn on_two_buckets(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        let read = READS.get();
+        READS.set(read + 1);
+        let bucket = if read == 0 {
+            "team-bucket"
+        } else {
+            "other-bucket"
+        };
+        BUCKET.set(bucket);
+        let mut d = commit_data();
+        d.uri = Some(
+            quilt_uri::S3PackageUri::try_from(
+                format!("quilt+s3://{bucket}#package=org/pkg&catalog=quilt.test").as_str(),
+            )
+            .unwrap(),
+        );
+        d.workflows = CommitWorkflows::Available {
+            workflows: vec![commands::WorkflowInfo {
+                id: "plates".to_string(),
+                name: Some("Plates".to_string()),
+                description: None,
+                metadata_schema_url: None,
+                entries_schema_url: None,
+            }],
+            default_workflow: Some("plates".to_string()),
+            is_workflow_required: false,
+            config_url: None,
+        };
+        Box::pin(async move { Ok(d) })
+    }
+
+    /// The backend's cache, keyed as it is by package and workflow: rules
+    /// are read for the current bucket only when asked to refresh, or when
+    /// none are held. `team-bucket`'s refuse every candidate.
+    fn cached_rules(
+        _: String,
+        _: String,
+        refresh: bool,
+        _: String,
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>> {
+        if refresh || CACHED.get().is_empty() {
+            CACHED.set(BUCKET.get());
+        }
+        let violations = if CACHED.get() == "team-bucket" {
+            vec![CommitViolation {
+                field: ViolationField::Metadata,
+                message: "team-bucket's rules refuse this".to_string(),
+            }]
+        } else {
+            Vec::new()
+        };
+        Box::pin(async move { violations })
+    }
+
+    /// Past the live check's pause, with time for the check to land.
+    fn past_the_pause() -> i32 {
+        i32::try_from(CHECK_PAUSE_MS).unwrap() + 200
+    }
+
+    /// Two buckets can name the same workflow and hold different rules for
+    /// it. After the bucket changes, the check runs on the new bucket's.
+    #[wasm_bindgen_test]
+    async fn a_new_bucket_s_rules_apply_to_the_same_workflow() {
+        READS.set(0);
+        CACHED.set("");
+        unmount_earlier();
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(
+                &wasm_bindgen::JsValue::NULL,
+                "",
+                Some("/commit?namespace=org%2Fpkg"),
+            )
+            .unwrap();
+        let el = mount(|| {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/commit")
+                            view=|| {
+                                view! { <CommitScreen read=on_two_buckets rules=Some(cached_rules) /> }
+                            }
+                        />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(past_the_pause()).await;
+        let refused = |el: &web_sys::Element| {
+            el.text_content()
+                .unwrap_or_default()
+                .contains("team-bucket's rules refuse this")
+        };
+        assert!(
+            refused(&el),
+            "the first bucket's rules; markup was {}",
+            el.inner_html()
+        );
+
+        crate::test_support::element_saying(&el, "Refresh").click();
+        sleep_ms(past_the_pause()).await;
+
+        assert_eq!(BUCKET.get(), "other-bucket");
+        assert_eq!(CACHED.get(), "other-bucket", "the rules were read again");
+        assert!(!refused(&el), "markup was {}", el.inner_html());
+    }
+
+    /// [`on_two_buckets`], with every read after the first slow to land.
+    fn slow_after_first(ns: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        let first = READS.get() == 0;
+        let answer = on_two_buckets(ns);
+        Box::pin(async move {
+            if !first {
+                sleep_ms(300).await;
+            }
+            answer.await
+        })
+    }
+
+    /// Once the remote is set, the lock holds until the re-read lands: the
+    /// answer on screen until then is the old bucket's, and a save in that
+    /// window would send its defaults.
+    #[wasm_bindgen_test]
+    async fn a_set_remote_holds_the_lock_until_the_re_read_lands() {
+        READS.set(0);
+        let owner = Owner::new();
+        let (page, answer, menu) = owner.with(|| {
+            let page = PageHandle::new();
+            let ns = Memo::new(|_| "org/pkg".to_string());
+            let answer = page.read(ns, slow_after_first);
+            let menu = HeaderMenu::new(page, RwSignal::new(None), None);
+            menu.hold_through_read();
+            (page, answer, menu)
+        });
+        let bucket = move || match answer.get_untracked() {
+            Some(Ok(d)) => d.uri.map(|u| u.bucket),
+            _ => None,
+        };
+        sleep_ms(50).await;
+        assert_eq!(bucket().as_deref(), Some("team-bucket"));
+
+        menu.saved.notify();
+        sleep_ms(100).await;
+        assert!(page.busy.get_untracked(), "held while the re-read is out");
+        assert_eq!(bucket().as_deref(), Some("team-bucket"));
+
+        sleep_ms(400).await;
+        assert_eq!(bucket().as_deref(), Some("other-bucket"));
+        assert!(!page.busy.get_untracked(), "released once it landed");
+        drop(owner);
+    }
+
+    /// [`on_two_buckets`]'s first answer, then a failure.
+    fn fails_after_first(ns: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        if READS.get() == 0 {
+            on_two_buckets(ns)
+        } else {
+            READS.set(READS.get() + 1);
+            Box::pin(async { Err("connection reset".to_string()) })
+        }
+    }
+
+    /// A re-read that lands at once, or fails, releases the lock too.
+    #[wasm_bindgen_test]
+    async fn a_quick_or_failed_re_read_releases_the_lock() {
+        for read in [on_two_buckets as CommitRead, fails_after_first] {
+            READS.set(0);
+            let owner = Owner::new();
+            let (page, menu) = owner.with(|| {
+                let page = PageHandle::new();
+                let ns = Memo::new(|_| "org/pkg".to_string());
+                let _answer = page.read(ns, read);
+                let menu = HeaderMenu::new(page, RwSignal::new(None), None);
+                menu.hold_through_read();
+                (page, menu)
+            });
+            sleep_ms(50).await;
+
+            menu.saved.notify();
+            sleep_ms(50).await;
+
+            assert_eq!(READS.get(), 2, "read again");
+            assert!(!page.busy.get_untracked(), "released");
+            drop(owner);
+        }
+    }
+
+    const EDITED: &str = "{\"edited\": true}";
+
+    /// The backend's cache, as [`cached_rules`] keeps it, where only
+    /// `other-bucket`'s rules refuse [`EDITED`].
+    #[allow(clippy::needless_pass_by_value, reason = "the seam's signature")]
+    fn other_bucket_refuses_edits(
+        _: String,
+        _: String,
+        refresh: bool,
+        _: String,
+        metadata: String,
+    ) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>> {
+        if refresh || CACHED.get().is_empty() {
+            CACHED.set(BUCKET.get());
+        }
+        let violations = if CACHED.get() == "other-bucket" && metadata == EDITED {
+            vec![CommitViolation {
+                field: ViolationField::Metadata,
+                message: "other-bucket's rules refuse this".to_string(),
+            }]
+        } else {
+            Vec::new()
+        };
+        Box::pin(async move { violations })
+    }
+
+    /// Edited metadata survives a bucket change, and the new bucket's rules
+    /// judge it: when they refuse it, the field says so and Publish is off.
+    #[wasm_bindgen_test]
+    async fn edited_metadata_survives_a_bucket_change_and_meets_its_rules() {
+        READS.set(0);
+        CACHED.set("");
+        unmount_earlier();
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(
+                &wasm_bindgen::JsValue::NULL,
+                "",
+                Some("/commit?namespace=org%2Fpkg"),
+            )
+            .unwrap();
+        let el = mount(|| {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/commit")
+                            view=|| {
+                                view! {
+                                    <CommitScreen
+                                        read=on_two_buckets
+                                        rules=Some(other_bucket_refuses_edits)
+                                    />
+                                }
+                            }
+                        />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(80).await;
+        crate::test_support::element_saying(&el, "Edit").click();
+        sleep_ms(30).await;
+        let editor = |el: &web_sys::Element| -> web_sys::HtmlTextAreaElement {
+            el.query_selector("textarea")
+                .unwrap()
+                .expect("the metadata editor")
+                .unchecked_into()
+        };
+        editor(&el).set_value(EDITED);
+        editor(&el)
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        sleep_ms(past_the_pause()).await;
+        let face = |el: &web_sys::Element| -> web_sys::HtmlButtonElement {
+            el.query_selector("[data-primary-action] button")
+                .unwrap()
+                .unwrap()
+                .unchecked_into()
+        };
+        assert!(!face(&el).disabled(), "team-bucket's rules take it");
+
+        crate::test_support::element_saying(&el, "Refresh").click();
+        sleep_ms(past_the_pause()).await;
+
+        assert_eq!(BUCKET.get(), "other-bucket");
+        assert_eq!(editor(&el).value(), EDITED, "the edit survived");
+        assert!(
+            el.text_content()
+                .unwrap_or_default()
+                .contains("other-bucket's rules refuse this"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(face(&el).disabled(), "Publish is off");
     }
 
     fn entry(path: &str, status: &str) -> EntryData {
