@@ -1095,7 +1095,6 @@ mod layout_tests {
     /// The message field's border and the file box's border start on one
     /// line: a field's label and the files' heading leave the same room.
     #[wasm_bindgen_test]
-    #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
     async fn the_message_and_the_files_line_up() {
         load_styles();
         load_module_style(
@@ -1158,7 +1157,12 @@ mod layout_tests {
             .unwrap()
             .get_bounding_client_rect()
             .top();
-        assert_eq!(top("input"), card, "the input's top, then the card's");
+        // Within a pixel: fonts differ by platform, and so does the fraction.
+        let (input, card) = (top("input"), card);
+        assert!(
+            (input - card).abs() < 1.0,
+            "the input's top {input}, the card's {card}"
+        );
     }
 
     /// The editor's toggle sits right after the field's name and says what
