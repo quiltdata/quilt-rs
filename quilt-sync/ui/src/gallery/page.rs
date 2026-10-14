@@ -126,6 +126,7 @@ pub fn PageScene() -> impl IntoView {
             </div>
         </Scene>
         <CheckingScene />
+        <NarrowScene />
         <Scene
             title="Scene · the appbar alone"
             note="The two chrome buttons on the brand background, with nothing else on \
@@ -226,6 +227,42 @@ fn CheckingScene() -> impl IntoView {
                         <PackagesRegion view_name="checked-view" />
                     </PageLayout>
                 </div>
+            </div>
+        </Scene>
+    }
+}
+
+/// The busy day at the window's narrowest and at the old floor.
+///
+/// # Measured at 640 and 1024, in Chrome
+///
+/// Nothing scrolls sideways at either width. At 640 the strip's two cards no longer
+/// fit one row (`flex: 1 1 300px` asks for 612px of the 608 the page gives) and it
+/// stacks: 343px against 170 at 1024. The queue is 550 and 535, a queue row's name and
+/// clause sharing a line until they do not fit and then taking two. The list keeps its
+/// 160px floor at both, so the page scrolls, 609px at 640 and 422 at 1024.
+#[component]
+fn NarrowScene() -> impl IntoView {
+    view! {
+        <Scene
+            title="Scene · the whole page, 640 and 1024 wide"
+            note="The busy day at 640, the window's narrowest, then at 1024. Two hosts, \
+                  a long namespace in the roster, both expanders live: nothing may \
+                  scroll sideways or be cut at either width."
+        >
+            <div id="main-640" class="g-window" style="width:640px; max-width:100%">
+                <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                    <StateStripRegion />
+                    <QueueRegion />
+                    <PackagesRegion view_name="narrow-640-view" />
+                </PageLayout>
+            </div>
+            <div id="main-1024" class="g-window" style="width:1024px; max-width:100%">
+                <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                    <StateStripRegion />
+                    <QueueRegion />
+                    <PackagesRegion view_name="narrow-1024-view" />
+                </PageLayout>
             </div>
         </Scene>
     }

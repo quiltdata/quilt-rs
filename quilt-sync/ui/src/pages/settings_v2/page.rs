@@ -60,7 +60,7 @@ use crate::kit::{
 use super::super::v2_page::{PageHandle, PageRead, V2Page, critical, hold};
 use super::{
     AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, HelpCard, PublishingCard,
-    ReportDialog, ReportState, Saved, SettingsColumn, SettingsHeader, SignOutDialog, StorageCard,
+    ReportDialog, ReportState, Saved, SettingsHeader, SettingsLayout, SignOutDialog, StorageCard,
     StorageSize, SyncingCard, log_level_label, minutes_secs, minutes_shown,
 };
 
@@ -172,7 +172,7 @@ pub fn SettingsV2Skeleton() -> impl IntoView {
 /// The header, then the first card's rows still being read.
 fn skeleton() -> AnyView {
     view! {
-        <SettingsColumn
+        <SettingsLayout
             header=view! { <SettingsHeader /> }.into_any()
             syncing=view! {
                 <Card title="Syncing" busy=true>
@@ -1114,7 +1114,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             }
         };
         view! {
-            <SettingsColumn
+            <SettingsLayout
                 header=view! { <SettingsHeader /> }.into_any()
                 syncing=view! {
                     <SyncingCard
@@ -1142,9 +1142,9 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                     />
                 }
                     .into_any()
-                accounts=view! { <div data-accounts>{accounts_card}</div> }.into_any()
+                accounts=view! { <div class=style::slot data-accounts>{accounts_card}</div> }.into_any()
                 app=view! { <AppCard tray=fields.tray saved=just_saved pending=pending /> }.into_any()
-                storage=view! { <div data-storage>{storage_card}</div> }.into_any()
+                storage=view! { <div class=style::slot data-storage>{storage_card}</div> }.into_any()
                 experimental=view! {
                     <ExperimentalCard
                         design_preview=fields.design_preview
@@ -1458,18 +1458,27 @@ mod tests {
         READS.with(Cell::get)
     }
 
-    /// The toggles in the page's order: pull, publish, watch, tray, preview.
-    fn toggle(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
-        el.query_selector_all("input[type=checkbox]")
-            .unwrap()
-            .item(n)
-            .unwrap_or_else(|| panic!("toggle {n}; markup was {}", el.inner_html()))
+    /// The toggle a reader finds by its label. Not by position: the layout
+    /// moves the cards between its one- and two-column orders with the width.
+    fn toggle(el: &web_sys::Element, label: &str) -> web_sys::HtmlInputElement {
+        let boxes = el.query_selector_all("input[type=checkbox]").unwrap();
+        (0..boxes.length())
+            .map(|i| boxes.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .find(|b| {
+                b.closest("label")
+                    .ok()
+                    .flatten()
+                    .and_then(|l| l.text_content())
+                    .is_some_and(|t| t.trim_start().starts_with(label))
+            })
+            .unwrap_or_else(|| panic!("no toggle {label:?}; markup was {}", el.inner_html()))
             .unchecked_into()
     }
 
-    const PULL: u32 = 0;
-    const WATCH: u32 = 2;
-    const TRAY: u32 = 3;
+    const PULL: &str = "Get new revisions";
+    const WATCH: &str = "Watch folders for changes";
+    const PREVIEW: &str = "New design preview";
+    const TRAY: &str = "Keep running in the tray";
 
     fn minutes(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
         el.query_selector_all("input[type=number]")
@@ -1768,8 +1777,6 @@ mod tests {
         assert_eq!(alert(&el), None, "markup was {}", el.inner_html());
     }
 
-    const PREVIEW: u32 = 4;
-
     /// Turning the preview off leaves for `/` once it is saved.
     #[wasm_bindgen_test]
     async fn turning_the_preview_off_goes_home() {
@@ -1808,6 +1815,20 @@ mod tests {
         sleep_ms(60).await;
         assert_eq!(labelled(&el, "Default workflow").value(), "release");
         assert!(!button_saying(&el, "Save").disabled(), "still to save");
+    }
+
+    /// The test handles around Accounts and Storage add no box, so each card
+    /// is a cell of the layout's grid and stretches to its row like the rest.
+    #[wasm_bindgen_test]
+    async fn the_test_handles_leave_the_cards_as_grid_cells() {
+        let el = page(vec![settings()]).await;
+        for hook in ["[data-accounts]", "[data-storage]"] {
+            let slot = el.query_selector(hook).unwrap().unwrap();
+            assert!(slot.class_list().contains(super::style::slot), "{hook}");
+        }
+        assert!(
+            include_str!("../settings_v2.module.scss").contains(".slot {\n  display: contents;")
+        );
     }
 
     /// Sign out, confirmed, erases that host's credentials through

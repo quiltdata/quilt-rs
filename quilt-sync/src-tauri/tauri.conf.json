@@ -64,7 +64,7 @@
         "title": "QuiltSync",
         "width": 1280,
         "height": 900,
-        "minWidth": 1024,
+        "minWidth": 640,
         "minHeight": 560,
         "useHttpsScheme": true
       }

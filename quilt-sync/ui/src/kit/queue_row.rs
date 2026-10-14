@@ -134,8 +134,10 @@ pub fn QueueRow(
     let full_namespace = namespace.clone();
     let line = view! {
         {bullet}
-        <span class=style::namespace title=full_namespace>{namespace}</span>
-        {state.map(|state| view! { <span class=style::clause>{state}</span> })}
+        <span class=style::subject>
+            <span class=style::namespace title=full_namespace>{namespace}</span>
+            {state.map(|state| view! { <span class=style::clause>{state}</span> })}
+        </span>
         {verb
             .map(|verb| {
                 view! {
@@ -183,11 +185,13 @@ pub fn QueueRowSkeleton() -> impl IntoView {
                 // A width in px and not a percentage: `.namespace` is `flex: none`,
                 // so the span sizes to this box and a percentage would have nothing
                 // to resolve against — it collapses the column to nothing.
-                <span class=style::namespace>
-                    <SkeletonBox width="120px" />
-                </span>
-                <span class=style::clause>
-                    <SkeletonBox width="55%" />
+                <span class=style::subject>
+                    <span class=style::namespace>
+                        <SkeletonBox width="120px" />
+                    </span>
+                    <span class=style::clause>
+                        <SkeletonBox width="55%" />
+                    </span>
                 </span>
                 <span class=style::action>
                     <SkeletonBox width="76px" height="20px" />
@@ -201,7 +205,7 @@ pub fn QueueRowSkeleton() -> impl IntoView {
 mod tests {
     use super::*;
     use crate::kit::PackageAction;
-    use crate::test_support::mount;
+    use crate::test_support::{element_saying, mount};
     use wasm_bindgen_test::*;
 
     /// The row is the link, so the whole of it goes to the page that fixes the state
@@ -322,6 +326,76 @@ mod tests {
         assert_eq!(
             span.get_attribute("title").as_deref(),
             Some("a-long-owner-name/a-much-longer-package-name-than-the-column")
+        );
+    }
+
+    /// A queue row `width` px wide, with its stylesheet loaded: the name's and
+    /// the clause's boxes.
+    async fn drawn(width: u32, name: &'static str) -> (web_sys::DomRect, web_sys::HtmlElement) {
+        crate::test_support::load_module_style(
+            include_str!("queue_row.module.scss"),
+            &[
+                ("root", style::root),
+                ("line", style::line),
+                ("linked", style::linked),
+                ("success", style::success),
+                ("neutral", style::neutral),
+                ("attention", style::attention),
+                ("danger", style::danger),
+                ("detail", style::detail),
+                ("bullet", style::bullet),
+                ("dot", style::dot),
+                ("subject", style::subject),
+                ("namespace", style::namespace),
+                ("clause", style::clause),
+                ("action", style::action),
+                ("sub", style::sub),
+            ],
+        );
+        let el = mount(move || {
+            view! {
+                <div style=format!("width:{width}px")>
+                    <QueueRow
+                        namespace=name
+                        state="has conflicts in 2 files"
+                        tone=StateTone::Danger
+                        remedy=Some(Remedy {
+                            action: PackageAction::Publish,
+                            href: "/installed-package".to_string(),
+                        })
+                    />
+                </div>
+            }
+        });
+        crate::test_support::sleep_ms(0).await;
+        let name = element_saying(&el, name).get_bounding_client_rect();
+        (name, element_saying(&el, "has conflicts in 2 files"))
+    }
+
+    /// The clause stays beside a name it fits beside.
+    #[wasm_bindgen_test]
+    async fn the_clause_sits_beside_a_short_name() {
+        let (name, clause) = drawn(560, "org/dataset-c").await;
+        let line = clause.get_bounding_client_rect();
+        assert!(line.left() >= name.right(), "beside the name");
+        assert!(line.top() < name.bottom(), "on its line");
+    }
+
+    /// A name that leaves no room puts the clause on a line of its own, whole.
+    #[wasm_bindgen_test]
+    async fn the_clause_moves_under_a_long_name_whole() {
+        let (name, clause) = drawn(
+            420,
+            "a-team-with-a-long-name/another-analysis-package-whose-name-runs-on",
+        )
+        .await;
+        let line = clause.get_bounding_client_rect();
+        assert!(line.top() >= name.bottom(), "under the name");
+        assert!(
+            clause.scroll_width() <= clause.client_width(),
+            "and not cut: {} of {}",
+            clause.client_width(),
+            clause.scroll_width()
         );
     }
 }

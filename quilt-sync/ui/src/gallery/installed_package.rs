@@ -13,8 +13,9 @@
 //! the layout was first drawn, four rows of list survived, which is what v1
 //! manages. Nothing has re-measured it since the regions were built.
 //!
-//! The first two cells are that measurement, at `tauri.conf.json`'s own
-//! `minWidth`/`minHeight` of 1024×560, with and without the footer — because the
+//! The first two cells are that measurement, at 1024×560, `tauri.conf.json`'s
+//! `minWidth`/`minHeight` when it was taken (the minimum width is now 640, which
+//! the last three cells measure), with and without the footer — because the
 //! footer is the difference between the resting page and the page you are
 //! actually picking files on.
 //!
@@ -94,6 +95,22 @@
 //! 300 it took stacked in a column, and every pixel of that is a row of the list
 //! under it.
 //!
+//! # At 640, the window's narrowest
+//!
+//! Measured in Chrome at 640x560: stacked, as at 760. Nothing scrolls sideways,
+//! a long namespace ellipsises on its own line above the state label and the
+//! header's buttons, and the file rows cut their names, not the size column.
+//!
+//! | | context pane | list box | page scrolls |
+//! |---|---:|---:|---:|
+//! | nothing ticked | 179px | 159px · four rows | 57px |
+//! | three ticked | 179px | 110px · three rows | 57px |
+//! | resolve mode | 401px | 159px, below the fold | 278px |
+//!
+//! Resolve mode is the costly one: its pane is a column of choices, not two
+//! blocks side by side, so stacked above the files it fills the window and the
+//! marked rows are a scroll away.
+//!
 //! The context pane comes first in the DOM, so reading and focus order is
 //! context, then files, at every width. Wide, `order` draws the files on the
 //! leading side; stacked, the order resets and what you see is DOM order.
@@ -136,6 +153,11 @@ fn page(
 ) -> AnyView {
     let publish_choice = RwSignal::new(0_usize);
     let scope = RwSignal::new("pick".to_string());
+    let differs = if width < 800 {
+        "resolve-differing-narrow"
+    } else {
+        "resolve-differing-page"
+    };
 
     view! {
         <div
@@ -154,9 +176,9 @@ fn page(
                     />
                     // The pane's sentence and the rows it describes, under one id
                     // of their own: the context pane's scene draws the same pane.
-                    // Only the resolve frame draws either, so the five frames can
-                    // share it.
-                    <Provider value=DiffersId("resolve-differing-page")>
+                    // Only the resolve frames draw either, one per width, so the
+                    // frames of a width can share it.
+                    <Provider value=DiffersId(differs)>
                         <div class="g-ip-shell">
                             <ContextPaneRegion
                                 resolving=resolving
@@ -173,13 +195,15 @@ fn page(
     .into_any()
 }
 
-const NOTE: &str = "The page at its own floor, 1024×560, which is where the vertical bet \
+const NOTE: &str = "The page at 1024×560, the floor it was designed at, which is where the vertical bet \
     is settled. It is won: 269px of list resting and 220 with the footer up — eight rows \
     and six, against the four §1 measured when the layout was first drawn and the four v1 \
     manages. The header is what paid for it, at 60px against the 108 budgeted. The third \
     cell is the 900px default for comparison, the fourth is 760px wide where the shell \
-    stacks itself, and the last is resolve mode, the app's own resolve pane beside the \
-    marked rows, so the rows and the sentence naming them are finally on screen together.";
+    stacks itself, and the fifth is resolve mode, the app's own resolve pane beside the \
+    marked rows, so the rows and the sentence naming them are finally on screen together. \
+    The last three are the window's narrowest, 640 wide: resting, picking files and \
+    resolving.";
 
 /// Shared by [`InstalledPackageScene`] and [`SelectingScene`], so the frame
 /// reads the same wherever it is drawn.
@@ -196,7 +220,7 @@ pub fn SelectingScene() -> impl IntoView {
     view! {
         <Scene
             title="The installed package page, picking files"
-            note="Three files ticked at the 1024×560 floor, with the footer up. The \
+            note="Three files ticked at 1024×560, with the footer up. The \
                   busiest this page gets: 220px of list, six rows."
         >
             <Cell full=true label=SELECTING>
@@ -210,7 +234,7 @@ pub fn SelectingScene() -> impl IntoView {
 pub fn InstalledPackageScene() -> impl IntoView {
     view! {
         <Scene title="The installed package page" note=NOTE>
-            <Cell full=true label="1024×560 — the floor, nothing ticked">
+            <Cell full=true label="1024×560 — nothing ticked">
                 {page(1024, 560, PackageState::Behind, "page-floor", 0, false)}
             </Cell>
             <Cell full=true label=SELECTING>
@@ -224,6 +248,15 @@ pub fn InstalledPackageScene() -> impl IntoView {
             </Cell>
             <Cell full=true label="1024×560 — resolve mode: the pane swapped, the rows marked, no primary in the header">
                 {page(1024, 560, PackageState::Diverged, "page-resolve", 0, true)}
+            </Cell>
+            <Cell full=true label="640×560 — the window's narrowest, stacked">
+                {page(640, 560, PackageState::Behind, "page-640", 0, false)}
+            </Cell>
+            <Cell full=true label="640×560 — three ticked, the footer up">
+                {page(640, 560, PackageState::Behind, "page-640-selecting", 3, false)}
+            </Cell>
+            <Cell full=true label="640×560 — resolve mode">
+                {page(640, 560, PackageState::Diverged, "page-640-resolve", 0, true)}
             </Cell>
         </Scene>
     }
