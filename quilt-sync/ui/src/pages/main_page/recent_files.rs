@@ -13,14 +13,12 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use quilt_uri::Namespace;
 use quilt_uri::S3PackageUri;
 
 use super::super::main_page::rows_class;
-use crate::commands;
 use crate::commands::MainPageFileData;
 use crate::kit::Blankslate;
 use crate::kit::Card;
@@ -31,6 +29,7 @@ use crate::kit::GroupHeading;
 use super::GROUP_NONE;
 use super::GROUP_PACKAGE;
 use super::package_page_href;
+use crate::pages::row_menu::{Ran, RowCommand, carry_out, local_path, menu_actions};
 
 /// The card, on one payload — no title, because the list toolbar's toggle above
 /// it names the view; see `Card::title`'s own doc for why. Draws flat by
@@ -51,9 +50,9 @@ pub fn RecentFilesRegion(
     /// namespace — what a row's Copy action addresses.
     ///
     /// A package with no bucket has no such address, so it is absent here and
-    /// its rows draw no Copy button. Absent, not inert: a button that cannot do
-    /// its job is worse than no button. The feed's own payload carries no
-    /// bucket, which is why this comes from the caller rather than from `files`.
+    /// its rows offer neither Copy URI nor Open in catalog. The feed's own
+    /// payload carries no bucket, which is why this comes from the caller
+    /// rather than from `files`.
     #[prop(optional)]
     addresses: HashMap<Namespace, S3PackageUri>,
 ) -> impl IntoView {
@@ -187,7 +186,7 @@ struct Copied {
 /// clipboard anything else may own by then.
 const CONFIRM_FOR: Duration = Duration::from_millis(1_500);
 
-/// What the card says about the last copy: the row's check and the live region's
+/// What the card says about the last copy: the row's mark and the live region's
 /// words, plus the stamp that decides which request may set them.
 ///
 /// The stamp is `components/toasts.rs`'s pattern. Every click takes a fresh one,
@@ -244,33 +243,76 @@ impl CopyState {
     }
 }
 
-/// Put one file's `quilt+s3` address on the clipboard and report what happened.
-///
-/// Only a copy the backend confirmed draws a check. A row that marked itself on
-/// click would be lying in the one case that matters — the clipboard refusing.
-fn copy_uri(package: &S3PackageUri, path: &str, state: CopyState) {
-    let uri = crate::util::file_uri(package, path);
-    let text = uri.display();
-    let mark = Copied {
-        uri: text.clone(),
-        path: path.to_string(),
-    };
-    let stamp = state.bump();
+/// Runs what a row's `[⋯]` or a click on the row chose. A failure is logged,
+/// never rendered: the words a reader sees come only from the kit. A copy
+/// reports on the row and the card's live region, and only one the backend
+/// confirmed draws a mark; a row that marked itself on click would be wrong in
+/// the case that matters, the clipboard refusing.
+fn run_command(
+    command: RowCommand,
+    namespace: Namespace,
+    address: Option<S3PackageUri>,
+    state: CopyState,
+) {
+    let copying = matches!(command, RowCommand::CopyUri(_));
+    let stamp = if copying { state.bump() } else { 0 };
     spawn_local(async move {
-        match commands::copy_to_clipboard(text, Some(uri)).await {
-            Ok(_) => {
-                let words = format!("Copied the address of {}", mark.path);
-                state.settle(stamp, Some(mark), words);
+        let ran = carry_out(
+            &command,
+            &namespace.to_string(),
+            address.as_ref(),
+            local_path,
+        )
+        .await;
+        match ran {
+            Ran::Done => {}
+            Ran::Copied(uri) => {
+                let path = command.path().to_string();
+                let words = format!("Copied the address of {path}");
+                state.settle(stamp, Some(Copied { uri, path }), words);
             }
-            Err(err) => {
-                // The words are the kit's; the backend's own text is logged and
-                // never rendered. A refusal says so rather than looking like a
-                // click that went nowhere.
-                web_sys::console::error_1(&format!("copy_to_clipboard failed: {err}").into());
-                state.settle(stamp, None, "Could not copy the address".to_string());
+            Ran::Failed { lead, detail } => {
+                web_sys::console::error_1(&format!("{lead} {detail}").into());
+                if copying {
+                    state.settle(stamp, None, "Could not copy the address".to_string());
+                }
             }
         }
     });
+}
+
+/// The address a row's commands run on: the package's, pinned to the revision
+/// it holds when that revision is published, as the package page pins its
+/// own. The catalog link opens that revision. *Copy URI* still copies the
+/// package's address at `Latest`, since `clipped` builds it there.
+fn held_address(address: Option<&S3PackageUri>, published: Option<&str>) -> Option<S3PackageUri> {
+    address.map(|address| match published {
+        Some(hash) => S3PackageUri {
+            revision: quilt_uri::RevisionPointer::Hash(hash.to_string()),
+            ..address.clone()
+        },
+        None => address.clone(),
+    })
+}
+
+/// The items a row's `[⋯]` offers: open and reveal; then the catalog and the
+/// copy, which need the package's address. The catalog link also needs a
+/// catalog host and a published revision, or it could name one the catalog
+/// lacks. No *Ignore*: it edits the package's `.quiltignore` under the package
+/// page's lock, which this page does not hold.
+fn row_commands(path: &str, address: Option<&S3PackageUri>, published: bool) -> Vec<RowCommand> {
+    let path = path.to_string();
+    let mut commands = vec![
+        RowCommand::Open(path.clone()),
+        RowCommand::Reveal(path.clone()),
+    ];
+    if let Some(address) = address {
+        if published && address.catalog.is_some() {
+            commands.push(RowCommand::OpenInCatalog(path.clone()));
+        }
+        commands.push(RowCommand::CopyUri(path));
+    }
+    commands
 }
 
 /// One run of feed rows under one heading — the feed's counterpart to the
@@ -336,76 +378,46 @@ fn file_group(
             <For
                 each=move || files.get()
                 key=|f: &MainPageFileData| (f.namespace.clone(), f.path.clone())
-                children=move |f| file_row(&f, &addresses, state)
+                children=move |f| {
+                    let address = addresses.get(&f.namespace).cloned();
+                    let run_with = held_address(address.as_ref(), f.published_hash.as_deref());
+                    let namespace = f.namespace.clone();
+                    let on_command = Callback::new(move |command| {
+                        run_command(command, namespace.clone(), run_with.clone(), state);
+                    });
+                    file_row(&f, address.as_ref(), on_command, state.copied)
+                }
             />
         </ul>
     }
     .into_any()
 }
 
-/// One file, wherever it is drawn — a flat row or a row under a `GroupHeading`.
+/// One file, wherever it is drawn: a flat row or a row under a `GroupHeading`.
 /// Pulled out so the two call sites in [`RecentFilesRegion`] draw the identical
-/// row rather than two copies of the same closures drifting apart.
+/// row. `on_command` runs both the row's own open and its `[⋯]`'s items.
 fn file_row(
     f: &MainPageFileData,
-    addresses: &HashMap<Namespace, S3PackageUri>,
-    state: CopyState,
+    address: Option<&S3PackageUri>,
+    on_command: Callback<RowCommand>,
+    copied: RwSignal<Option<Copied>>,
 ) -> impl IntoView + use<> {
-    let namespace = f.namespace.clone();
-    // `None` for a package with no bucket: no address, so no button.
-    let on_copy_uri: Option<Callback<MouseEvent>> = addresses.get(&f.namespace).map(|package| {
-        let package = package.clone();
-        let path = f.path.clone();
-        Callback::new(move |_| copy_uri(&package, &path, state))
-    });
-    let uri = addresses
-        .get(&f.namespace)
-        .map(|package| crate::util::file_uri(package, &f.path).display());
+    let commands = row_commands(&f.path, address, f.published_hash.is_some());
+    let uri = address.map(|package| crate::util::file_uri(package, &f.path).display());
     let is_copied = Signal::derive(move || {
-        uri.as_ref().is_some_and(|uri| {
-            state
-                .copied
-                .with(|c| c.as_ref().is_some_and(|c| &c.uri == uri))
-        })
+        uri.as_ref()
+            .is_some_and(|uri| copied.with(|c| c.as_ref().is_some_and(|c| &c.uri == uri)))
     });
-    let open_ns = namespace.clone();
-    let open_path = f.path.clone();
-    let reveal_ns = namespace.clone();
-    let reveal_path = f.path.clone();
+    let open = RowCommand::Open(f.path.clone());
     view! {
         <li>
         <FileRow
             path=f.path.clone()
-            package=namespace.to_string()
-            package_href=package_page_href(&namespace)
+            package=f.namespace.to_string()
+            package_href=package_page_href(&f.namespace)
             at=f.changed_at
-            on_open=move |_| {
-                let (ns, path) = (open_ns.clone(), open_path.clone());
-                leptos::task::spawn_local(async move {
-                    if let Err(err) =
-                        commands::open_in_default_application(ns.to_string(), path, None).await
-                    {
-                        // Logged, never rendered: the words a
-                        // user reads come only from the kit.
-                        web_sys::console::error_1(
-                            &format!("open_in_default_application failed: {err}").into(),
-                        );
-                    }
-                });
-            }
-            on_reveal=move |_| {
-                let (ns, path) = (reveal_ns.clone(), reveal_path.clone());
-                leptos::task::spawn_local(async move {
-                    if let Err(err) =
-                        commands::reveal_in_file_browser(ns.to_string(), path, None).await
-                    {
-                        web_sys::console::error_1(
-                            &format!("reveal_in_file_browser failed: {err}").into(),
-                        );
-                    }
-                });
-            }
-            on_copy_uri=on_copy_uri
+            on_open=move |_| on_command.run(open.clone())
+            actions=menu_actions(&commands, on_command)
             copied=is_copied
         />
         </li>
@@ -430,6 +442,7 @@ mod tests {
             path: path.to_string(),
             namespace: ns(namespace),
             changed_at,
+            published_hash: Some("abc123".to_string()),
         }
     }
 
@@ -473,15 +486,153 @@ mod tests {
         HashMap::from([(namespace, uri)])
     }
 
-    /// Every action button in the feed, by its accessible name.
-    fn action_names(el: &web_sys::Element) -> Vec<String> {
-        let buttons = el.query_selector_all("button[aria-label]").unwrap();
-        (0..buttons.length())
-            .map(|i| {
-                let b: web_sys::Element = buttons.item(i).unwrap().dyn_into().unwrap();
-                b.get_attribute("aria-label").unwrap_or_default()
+    const TRIGGER: &str = "button[aria-label='More actions for this file']";
+
+    /// Open the first row's `[⋯]` and answer its items.
+    async fn open_menu(el: &web_sys::Element) -> Vec<web_sys::HtmlElement> {
+        el.query_selector(TRIGGER)
+            .unwrap()
+            .expect("a row's [⋯]")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        leptos::task::tick().await;
+        let found = el.query_selector_all("[popover] button").unwrap();
+        (0..found.length())
+            .map(|i| found.item(i).unwrap().unchecked_into())
+            .collect()
+    }
+
+    fn item(items: &[web_sys::HtmlElement], words: &str) -> web_sys::HtmlElement {
+        items
+            .iter()
+            .find(|b| b.text_content().unwrap_or_default() == words)
+            .unwrap_or_else(|| panic!("no item {words}"))
+            .clone()
+    }
+
+    /// A row's items, each marked `|` where a rule goes above it.
+    fn menu(path: &str, address: Option<&S3PackageUri>, published: bool) -> Vec<String> {
+        let commands = row_commands(path, address, published);
+        commands
+            .iter()
+            .zip(crate::pages::row_menu::group_starts(&commands))
+            .map(|(command, starts)| {
+                let rule = if starts { "| " } else { "" };
+                format!("{rule}{}", command.label())
             })
             .collect()
+    }
+
+    fn with_catalog() -> S3PackageUri {
+        crate::util::package_uri("team-bucket", &ns("user/alpha"), Some("quilt.test"))
+    }
+
+    #[test]
+    fn a_published_package_with_a_catalog_offers_every_item() {
+        assert_eq!(
+            menu("one.csv", Some(&with_catalog()), true),
+            [
+                "Open file",
+                "Reveal in folder",
+                "| Open in catalog",
+                "Copy URI"
+            ]
+        );
+    }
+
+    /// An unpublished revision may hold files the catalog lacks, so none of the
+    /// package's rows link there.
+    #[test]
+    fn a_package_ahead_of_its_remote_offers_no_catalog_link() {
+        assert_eq!(
+            menu("one.csv", Some(&with_catalog()), false),
+            ["Open file", "Reveal in folder", "| Copy URI"]
+        );
+    }
+
+    #[test]
+    fn a_bucket_with_no_catalog_host_offers_no_catalog_link() {
+        let bucket_only = crate::util::package_uri("team-bucket", &ns("user/alpha"), None);
+        assert_eq!(
+            menu("one.csv", Some(&bucket_only), true),
+            ["Open file", "Reveal in folder", "| Copy URI"]
+        );
+    }
+
+    /// A local-only package has no `quilt+s3` address: no bucket to name.
+    #[test]
+    fn a_package_with_no_bucket_offers_only_the_local_file() {
+        assert_eq!(
+            menu("one.csv", None, false),
+            ["Open file", "Reveal in folder"]
+        );
+        assert_eq!(
+            menu("one.csv", None, true),
+            ["Open file", "Reveal in folder"]
+        );
+    }
+
+    /// A package behind its remote links to the revision it holds, as the
+    /// package page does, not to the remote's latest. Its copied address still
+    /// names the package at `Latest`.
+    #[wasm_bindgen_test]
+    async fn the_catalog_link_names_the_held_revision_and_the_copy_does_not() {
+        let held = held_address(Some(&with_catalog()), Some("abc123")).expect("an address");
+        let link = crate::util::entry_catalog_url(&held, "one.csv").expect("a catalog link");
+        let latest = crate::util::entry_catalog_url(&with_catalog(), "one.csv").unwrap();
+        assert!(link.contains("abc123"), "got {link}");
+        assert_ne!(link, latest);
+
+        let (copied, _) = crate::pages::row_menu::clipped(
+            &RowCommand::CopyUri("one.csv".to_string()),
+            "user/alpha",
+            Some(&held),
+            local_path,
+        )
+        .await
+        .unwrap()
+        .expect("an address");
+        assert_eq!(
+            copied,
+            crate::util::file_uri(&with_catalog(), "one.csv").display()
+        );
+        assert_eq!(
+            held_address(Some(&with_catalog()), None),
+            Some(with_catalog())
+        );
+    }
+
+    /// An item hands its command on, and so does a click on the row; neither
+    /// does the other's.
+    #[wasm_bindgen_test]
+    async fn choosing_an_item_hands_its_command_on() {
+        let chosen = RwSignal::new(Vec::<RowCommand>::new());
+        let el = mount(move || {
+            let on_command = Callback::new(move |c| chosen.update(|all| all.push(c)));
+            let f = file("raw/one.csv", "user/alpha", 1_000.0);
+            view! {
+                <leptos_router::components::Router>
+                    {file_row(&f, Some(&with_catalog()), on_command, RwSignal::new(None))}
+                </leptos_router::components::Router>
+            }
+        });
+
+        item(&open_menu(&el).await, "Open in catalog").click();
+        assert_eq!(
+            chosen.get_untracked(),
+            [RowCommand::OpenInCatalog("raw/one.csv".to_string())]
+        );
+
+        el.query_selector("li [class*=path]")
+            .unwrap()
+            .expect("the path")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        assert_eq!(
+            chosen.get_untracked().last(),
+            Some(&RowCommand::Open("raw/one.csv".to_string()))
+        );
+        assert_eq!(chosen.get_untracked().len(), 2);
     }
 
     #[wasm_bindgen_test]
@@ -668,39 +819,6 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
-    fn a_package_with_an_address_offers_the_copy_action() {
-        let el = mount_feed_addressed(
-            vec![file("one.csv", "user/alpha", 1_000.0)],
-            GROUP_NONE,
-            addressed("user/alpha"),
-        );
-
-        assert!(
-            action_names(&el).iter().any(|n| n == "Copy Quilt+S3 URI"),
-            "got: {:?}",
-            action_names(&el)
-        );
-    }
-
-    #[wasm_bindgen_test]
-    fn a_package_with_no_bucket_offers_no_copy_action_at_all() {
-        // Absent, not inert. A local-only package has no `quilt+s3` address —
-        // there is no bucket to name — and a button that cannot do its job is
-        // worse than no button.
-        let el = mount_feed(vec![file("one.csv", "user/alpha", 1_000.0)]);
-
-        assert!(
-            !action_names(&el).iter().any(|n| n == "Copy Quilt+S3 URI"),
-            "got: {:?}",
-            action_names(&el)
-        );
-        assert!(
-            action_names(&el).iter().any(|n| n == "Reveal in directory"),
-            "and the actions that do work are still there"
-        );
-    }
-
     /// The card's live region exists before any copy and is empty — a region
     /// created by the event it is meant to announce never fires.
     #[wasm_bindgen_test]
@@ -749,24 +867,17 @@ mod tests {
     }
 
     /// A refused clipboard says so. Silence would be indistinguishable from a
-    /// click that never registered — and there is no Tauri bridge in this
+    /// click that never registered, and there is no Tauri bridge in this
     /// harness, so every copy here refuses.
     #[wasm_bindgen_test]
-    async fn a_copy_that_fails_says_so_and_draws_no_check() {
+    async fn a_copy_that_fails_says_so_and_draws_no_mark() {
         let el = mount_feed_addressed(
             vec![file("one.csv", "user/alpha", 1_000.0)],
             GROUP_NONE,
             addressed("user/alpha"),
         );
-        let button: web_sys::HtmlElement = el
-            .query_selector("button[aria-label='Copy Quilt+S3 URI']")
-            .unwrap()
-            .expect("the copy button")
-            .dyn_into()
-            .unwrap();
-        let before = button.inner_html();
 
-        button.click();
+        item(&open_menu(&el).await, "Copy URI").click();
         sleep_ms(50).await;
 
         let region = el
@@ -777,10 +888,9 @@ mod tests {
             region.text_content().unwrap_or_default(),
             "Could not copy the address"
         );
-        assert_eq!(
-            button.inner_html(),
-            before,
-            "and the glyph does not claim a copy that did not happen"
+        assert!(
+            !el.text_content().unwrap_or_default().contains("Copied"),
+            "and the row does not claim a copy that did not happen"
         );
     }
 }

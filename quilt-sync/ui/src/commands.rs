@@ -1063,6 +1063,10 @@ pub struct MainPageFileData {
     /// Epoch milliseconds. Never re-sorted or re-capped on this side — see
     /// `pages::main_page::recent_files::RecentFilesRegion`.
     pub changed_at: f64,
+    /// The revision the package holds, when its remote has it and the package
+    /// has no unpublished revision; the catalog link names it. `None`
+    /// otherwise. Read from the lineage alone.
+    pub published_hash: Option<String>,
 }
 
 /// Payload of `get_main_page_recent_files`: §3.2's flat feed, already newest
@@ -2338,7 +2342,7 @@ mod tests {
     #[test]
     fn main_page_recent_files_data_wire_form_is_verbatim() {
         let data = serde_json::from_str::<super::MainPageRecentFilesData>(
-            r#"{"files":[{"path":"a/one.csv","namespace":"user/alpha","changedAt":1000.0}]}"#,
+            r#"{"files":[{"path":"a/one.csv","namespace":"user/alpha","changedAt":1000.0,"publishedHash":"abc123"}]}"#,
         )
         .unwrap();
         assert_eq!(data.files.len(), 1);
@@ -2346,6 +2350,7 @@ mod tests {
         assert_eq!(file.path, "a/one.csv");
         assert_eq!(file.namespace.to_string(), "user/alpha");
         assert!((file.changed_at - 1000.0).abs() < f64::EPSILON);
+        assert_eq!(file.published_hash.as_deref(), Some("abc123"));
     }
 
     /// The mirror struct must deserialize the heavy phase's two never-before-seen

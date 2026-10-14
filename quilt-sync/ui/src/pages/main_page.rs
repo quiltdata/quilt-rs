@@ -2036,6 +2036,7 @@ mod tests {
                 path: "readings/plate-07.csv".to_string(),
                 namespace: ns("user/plate-07"),
                 changed_at: 1_700_000_000_000.0,
+                published_hash: Some("abc123".to_string()),
             }],
         }
     }
@@ -2046,6 +2047,7 @@ mod tests {
             path: path.to_string(),
             namespace: ns(namespace),
             changed_at,
+            published_hash: Some("abc123".to_string()),
         }
     }
 
