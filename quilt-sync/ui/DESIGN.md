@@ -377,6 +377,12 @@ its contents are not, so the bar reaches both window edges and the logo still
 lines up with the regions beneath it. The gap between regions is 24px and is set
 in exactly one place.
 
+The window is at least 640px wide. A page with more regions than one column
+carries well, such as Settings, draws them two to a row from a 1024px window
+and in one column below it, with the kit's `TwoColumns`. Both are the same
+order, left to right and top to bottom, so what is drawn, read and reached by
+Tab never disagree, and a row's two cards share its height.
+
 ### Named Rules
 
 **The Regions Carry No Margin Rule.** A region never spaces itself. The page

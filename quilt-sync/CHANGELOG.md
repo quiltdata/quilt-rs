@@ -19,6 +19,20 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.22.11-dev]
+
+### Added
+
+- **New design preview**: Settings shows its cards two to a row from a 1024px window, with Syncing and Accounts on top, and in one column below that (<https://github.com/quiltdata/quilt-rs/pull/1113>)
+
+### Changed
+
+- The window can be made as narrow as 640px, down from 1024px (<https://github.com/quiltdata/quilt-rs/pull/1113>)
+
+### Fixed
+
+- **New design preview**: in *Needs your attention*, a package with a long name keeps what is wrong with it in sight, on a second line, instead of cutting it off (<https://github.com/quiltdata/quilt-rs/pull/1113>)
+
 ## [v0.22.10] - 2026-10-13
 
 ### Added

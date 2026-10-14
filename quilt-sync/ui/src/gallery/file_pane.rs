@@ -58,7 +58,8 @@
 //! - **The third toolbar row belongs to the minimum window, and only to it.**
 //!   The toolbar's content is 716px against the pane's 700, and the pane is the
 //!   window less 324 — `page_layout`'s 32, the context pane's 280 and the gap.
-//!   So it wraps at a **1024** window, which is the app's `minWidth`, and stops
+//!   So it wraps at a **1024** window, the app's `minWidth` when this was
+//!   measured (now 640, where the pane stacks under the context pane), and stops
 //!   wrapping at **1040**: sixteen pixels of window buy the row back. Accepted
 //!   on 2026-09-18 for that reason — the cost lands on the narrowest window
 //!   rather than on the shipping one.

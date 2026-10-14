@@ -2,17 +2,22 @@
 //!
 //! Every card is `pages::settings_v2`'s own, over fixture props, so the port
 //! and this scene cannot drift. Callbacks are dropped. Cards are drawn at the
-//! page column's width; the last cell is the whole page at the app's 1024×560
-//! floor. Its appbar has no actions: Refresh and Settings belong to the
+//! page column's width; the last cells are the whole page at four window
+//! sizes. Its appbar has no actions: Refresh and Settings belong to the
 //! pages that list packages.
 //!
-//! # Measured at 1024x560, in Chromium
+//! # Measured in Chromium
 //!
-//! The header ends at 138px and the cards stack 16px apart: Syncing 154–461,
-//! Publishing 477–850 (metadata folded), Accounts 866–1085 (three hosts), App
-//! 1101–1233, Storage 1249–1429, Experimental 1445–1616, Help 1632–1956,
-//! About 1972–2082. The first screen shows the header and Syncing; the page
-//! scrolls under the appbar, with no sideways scroll.
+//! At 1024×560 the header ends at 138px and the cards are two to a row, 488px
+//! wide and 16px apart; a row's two cards share its height. Rows start at
+//! Syncing | Accounts 154, Storage | App 498, Publishing | Help 694,
+//! Experimental | About 1102. The first screen shows Syncing and Accounts.
+//!
+//! At 1000×560, just under the switch, one column of 968px in the same order:
+//! Syncing 154, Accounts 477, Storage 713, App 909, Publishing 1057, Help 1445,
+//! Experimental 1785, About 1913. At 640, the same order at 608px; only the
+//! Data folder's path is cut short, with its whole path in the tooltip. No
+//! width scrolls sideways.
 //!
 //! # Left open
 //!
@@ -29,7 +34,7 @@ use crate::kit::ButtonVariant;
 use crate::kit::PageLayout;
 use crate::pages::settings_v2::{
     AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, HelpCard, PublishingCard,
-    ReportBody, ReportDialog, ReportFooter, ReportState, Saved, SettingsColumn, SettingsHeader,
+    ReportBody, ReportDialog, ReportFooter, ReportState, Saved, SettingsHeader, SettingsLayout,
     SignOutDialog, StorageCard, StorageSize, SyncingCard, minutes_shown, sign_out_consequence,
 };
 use quilt_sync_ui::commands::LogEnv;
@@ -239,13 +244,18 @@ fn report(message: &'static str, state: ReportState) -> AnyView {
 
 // ── The whole page ──
 
-fn whole_page() -> AnyView {
-    let id = "settings-page";
+fn whole_page(width: u32, height: u32) -> AnyView {
+    let id = format!("settings-page-{width}");
+    let home = format!("#{id}");
     view! {
-        <div id=id class="g-window" style="width:1024px; --q-frame-height:560px; max-width:100%">
+        <div
+            id=id
+            class="g-window"
+            style=format!("width:{width}px; --q-frame-height:{height}px; max-width:100%")
+        >
             <PageLayout heading="QuiltSync" banner=().into_any()>
-                <SettingsColumn
-                    header=view! { <SettingsHeader home_href=format!("#{id}") /> }.into_any()
+                <SettingsLayout
+                    header=view! { <SettingsHeader home_href=home /> }.into_any()
                     syncing=syncing(Syncing::default())
                     publishing=publishing(Publishing::default())
                     accounts=accounts(several_hosts())
@@ -266,8 +276,9 @@ fn whole_page() -> AnyView {
     .into_any()
 }
 
-const NOTE: &str = "The settings page v2: one column of cards, most used first — Syncing, \
-    Publishing, Accounts, App, Storage, Experimental, Help, About. Toggles, selects and minute fields save \
+const NOTE: &str = "The settings page v2. From a 1024px window, two cards to a row: Syncing and \
+    Accounts, Storage and App, Publishing and Help, Experimental and About. Narrower, the same \
+    order in one column. Toggles, selects and minute fields save \
     as they change and say Saved; Publishing alone has Save. Routed at /settings under New design preview.";
 
 #[component]
@@ -443,8 +454,17 @@ pub fn SettingsPageScene() -> impl IntoView {
                     on_send=noop()
                 />
             </Cell>
-            <Cell full=true label="The whole page at 1024×560, the app's smallest window">
-                {whole_page()}
+            <Cell full=true label="The whole page at 1280×900, the window's default size: rows of two">
+                {whole_page(1280, 900)}
+            </Cell>
+            <Cell full=true label="At 1024×560, where it turns to rows of two">
+                {whole_page(1024, 560)}
+            </Cell>
+            <Cell full=true label="At 1000×560, just under: one column, in the same order">
+                {whole_page(1000, 560)}
+            </Cell>
+            <Cell full=true label="At 640×560, the app's smallest window">
+                {whole_page(640, 560)}
             </Cell>
         </Scene>
     }

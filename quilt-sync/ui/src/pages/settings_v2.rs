@@ -1,9 +1,8 @@
 //! The settings page v2's cards, as views over props.
 //!
 //! The gallery draws them over fixtures; the port fills the same props from
-//! `get_settings_data`. Every effect is a callback. [`SettingsColumn`] fixes
-//! the order, most used first: Syncing, Publishing, Accounts, App, Storage,
-//! Experimental, Help, About.
+//! `get_settings_data`. Every effect is a callback. [`SettingsLayout`] fixes
+//! where each card goes.
 //!
 //! Toggles, selects and minute fields save as they change, and the row says
 //! *Saved* for a moment ([`Saved`]). Publishing alone has a Save button,
@@ -35,6 +34,7 @@ use crate::kit::Submit;
 use crate::kit::TextArea;
 use crate::kit::TextInput;
 use crate::kit::ToggleRow;
+use crate::kit::TwoColumns;
 use crate::util::format_size;
 
 use super::commit_v2::MetadataField;
@@ -195,9 +195,11 @@ pub fn SettingsHeader(
     }
 }
 
-/// The page's one column of cards, most used first.
+/// The page's cards, in rows of two on a wide window: Syncing and Accounts,
+/// the two the main page's strip shows, then Storage and App, Publishing and
+/// Help, Experimental and About. Narrow, the same order in one column.
 #[component]
-pub fn SettingsColumn(
+pub fn SettingsLayout(
     header: AnyView,
     syncing: AnyView,
     publishing: AnyView,
@@ -209,16 +211,18 @@ pub fn SettingsColumn(
     about: AnyView,
 ) -> impl IntoView {
     view! {
-        <div class=style::column>
+        <div class=style::page>
             {header}
-            {syncing}
-            {publishing}
-            {accounts}
-            {app}
-            {storage}
-            {experimental}
-            {help}
-            {about}
+            <TwoColumns>
+                {syncing}
+                {accounts}
+                {storage}
+                {app}
+                {publishing}
+                {help}
+                {experimental}
+                {about}
+            </TwoColumns>
         </div>
     }
 }

@@ -1,0 +1,29 @@
+/*
+ * A page's regions in rows of two, or in one column.
+ */
+
+/* The query container. The query styles what is inside it, so the grid is
+ * one box further in. */
+.frame {
+  container-type: inline-size;
+}
+
+/* Narrow is the default: one column, in the children's order. */
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--q-space-4);
+}
+
+/* Two to a row from a 1024px window. The layout fills the page column, which
+ * is the window less 16px of padding a side; 976 leaves another 16 for a
+ * classic scrollbar, since a page tall enough to need two columns scrolls.
+ * Where scrollbars overlay the page it switches at a 1008px window instead.
+ *
+ * A grid row is as tall as its taller region and both stretch to it, so each
+ * row has one bottom edge. */
+@container (min-width: 976px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

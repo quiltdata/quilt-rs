@@ -90,6 +90,7 @@ mod gallery {
     pub mod state_strip;
     pub mod toggle_row;
     pub mod tooltip;
+    pub mod two_columns;
     pub mod unchecked;
 }
 
@@ -239,6 +240,7 @@ const ENTRIES: &[Entry] = &[
     entry!(Core, "StateLabel", state_label::StateLabelStories),
     entry!(Core, "ToggleRow", toggle_row::ToggleRowStories),
     entry!(Core, "Tooltip", tooltip::TooltipStories),
+    entry!(Core, "TwoColumns", two_columns::TwoColumnsStories),
     entry!(Combined, "File list", file_list::FileListStories),
     entry!(
         Combined,
