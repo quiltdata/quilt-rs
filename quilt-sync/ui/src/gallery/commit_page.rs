@@ -239,7 +239,7 @@ fn page(f: Fixture) -> AnyView {
                         <IncludedList
                             files=files
                             ignored=ignored
-                            on_ignore=Callback::new(|_: String| ())
+                            on_command=Callback::new(|_| ())
                         />
                     }
                         .into_any()

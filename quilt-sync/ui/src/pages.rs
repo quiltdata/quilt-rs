@@ -11,6 +11,7 @@ mod main_page;
 mod merge;
 mod not_found;
 mod remote_package;
+pub mod row_menu;
 mod settings;
 // Not routed yet: the gallery draws these cards, and the port routes them.
 pub mod settings_v2;

@@ -27,7 +27,9 @@ use crate::components::workflow_select::{
 use crate::components::{IgnorePopup, IgnorePopupData, Notification, PreviousWorkflow};
 use crate::kit::{LoadFailure, PageLayout};
 
-use super::super::v2_page::{PageHandle, V2Page, critical};
+use super::super::installed_package_v2::run_reading;
+use super::super::row_menu::RowCommand;
+use super::super::v2_page::{Outcome, PageHandle, V2Page, critical};
 use crate::routes;
 
 use super::super::commit::{
@@ -656,6 +658,7 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
             run,
             open_folder,
             ignoring,
+            outcome,
             focus && fresh,
         )
     };
@@ -713,6 +716,7 @@ fn column(
     run: Callback<bool>,
     open_folder: Callback<()>,
     ignoring: RwSignal<Option<IgnorePopupData>>,
+    outcome: RwSignal<Option<Outcome>>,
     focus: bool,
 ) -> AnyView {
     let has_bucket = d.uri.as_ref().is_some_and(|u| u.catalog.is_some());
@@ -764,25 +768,30 @@ fn column(
 
     let metadata = metadata_field(d, &fixed, draft, violations);
 
-    let on_ignore = {
+    // Ignore opens the popup, which writes `.quiltignore`, so it waits for the
+    // lock; the rest write nothing.
+    let on_command = {
         let (namespace, uri) = (namespace.clone(), uri.clone());
-        Callback::new(move |path: String| {
-            if running.get_untracked() {
-                return;
+        Callback::new(move |command: RowCommand| match command {
+            RowCommand::Ignore(path) => {
+                if running.get_untracked() {
+                    return;
+                }
+                ignoring.set(Some(IgnorePopupData {
+                    namespace: namespace.clone(),
+                    suggested_pattern: path.clone(),
+                    path,
+                    uri: uri.clone(),
+                }));
             }
-            ignoring.set(Some(IgnorePopupData {
-                namespace: namespace.clone(),
-                suggested_pattern: path.clone(),
-                path,
-                uri: uri.clone(),
-            }));
+            command => run_reading(command, namespace.clone(), uri.clone(), outcome),
         })
     };
     let included = view! {
         <IncludedList
             files=included_files(&d.entries)
             ignored=d.counts.ignored
-            on_ignore=on_ignore
+            on_command=on_command
             totals=(d.counts.changed, d.changed_bytes)
         />
     }

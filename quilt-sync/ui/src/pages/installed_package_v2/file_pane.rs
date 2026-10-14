@@ -75,6 +75,7 @@ use crate::kit::{
     GroupSelection, ListToolbar, LoadFailure, MenuAction, Naming, SearchInput, Segment,
     SegmentedControl, Select, SelectAll, SkeletonBox, SkeletonText,
 };
+use crate::pages::row_menu::{RowCommand, menu_actions};
 use crate::util::{format_size, thousands};
 
 use super::keeping::with_deleted_here;
@@ -423,77 +424,6 @@ fn offered(rows: &[Row]) -> Vec<String> {
         .collect()
 }
 
-/// One command a row's `[⋯]` offers, naming the row it acts on. The pane only
-/// decides which apply; the page runs them, since opening, copying and the
-/// `.quiltignore` popups are the page's.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RowCommand {
-    /// Open the local file in its default application.
-    Open(String),
-    /// Show the local file in the system's file browser.
-    Reveal(String),
-    OpenInCatalog(String),
-    /// The file's `quilt+s3` address, as `util::file_uri` builds it.
-    CopyUri(String),
-    /// A `New` file's full path on disk: no revision holds it, so it has no
-    /// address that resolves. Carries its path inside the package; the page
-    /// resolves where that is.
-    CopyPath(String),
-    /// Open the ignore popup with this path as the pattern.
-    Ignore(String),
-    /// Open the unignore popup for the pattern that matched this path.
-    StopIgnoring {
-        path: String,
-        pattern: String,
-    },
-}
-
-impl RowCommand {
-    /// The item's words.
-    #[must_use]
-    pub const fn label(&self) -> &'static str {
-        match self {
-            Self::Open(_) => "Open file",
-            Self::Reveal(_) => "Reveal in folder",
-            Self::OpenInCatalog(_) => "Open in catalog",
-            Self::CopyUri(_) => "Copy URI",
-            Self::CopyPath(_) => "Copy path",
-            Self::Ignore(_) => "Ignore",
-            Self::StopIgnoring { .. } => "Stop ignoring",
-        }
-    }
-
-    /// The row it acts on.
-    #[must_use]
-    pub fn path(&self) -> &str {
-        match self {
-            Self::Open(path)
-            | Self::Reveal(path)
-            | Self::OpenInCatalog(path)
-            | Self::CopyUri(path)
-            | Self::CopyPath(path)
-            | Self::Ignore(path)
-            | Self::StopIgnoring { path, .. } => path,
-        }
-    }
-
-    /// Which of the menu's groups it sits in: the local file, its address, then
-    /// `.quiltignore`. A rule goes between two groups.
-    const fn group(&self) -> u8 {
-        match self {
-            Self::Open(_) | Self::Reveal(_) => 0,
-            Self::OpenInCatalog(_) | Self::CopyUri(_) | Self::CopyPath(_) => 1,
-            Self::Ignore(_) | Self::StopIgnoring { .. } => 2,
-        }
-    }
-
-    /// Whether it leads to an edit of `.quiltignore`, and so waits for the
-    /// page's lock. The others write nothing, as the row's own open does not.
-    const fn edits_ignore(&self) -> bool {
-        matches!(self, Self::Ignore(_) | Self::StopIgnoring { .. })
-    }
-}
-
 /// What the package can be reached by, which some items need.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reach {
@@ -516,18 +446,7 @@ pub struct RowMenu {
 /// The header's words for a command held back by the lock.
 const BUSY: &str = "Something else is running";
 
-/// Whether each command starts a group after another, and so sits below a
-/// rule. The first item never does, and a group a row lacks draws no rule.
-fn group_starts(commands: &[RowCommand]) -> Vec<bool> {
-    commands
-        .iter()
-        .enumerate()
-        .map(|(i, command)| i > 0 && commands[i - 1].group() != command.group())
-        .collect()
-}
-
-/// A row's `[⋯]` items, following the lock while the menu is open, grouped
-/// as [`group_starts`] says.
+/// A row's `[⋯]` items, following the lock while the menu is open.
 fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
     let Some(RowMenu {
         reach,
@@ -538,19 +457,12 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
         return Signal::stored(Vec::new());
     };
     let commands = row_commands(&r.path, r.place, r.ignored_by.as_deref(), reach);
-    let starts = group_starts(&commands);
     Signal::derive(move || {
         let busy = busy.get();
-        commands
-            .iter()
-            .zip(&starts)
-            .map(|(command, &starts)| {
-                let run = command.clone();
-                let action = MenuAction::new(
-                    command.label(),
-                    Callback::new(move |()| on_command.run(run.clone())),
-                );
-                let action = if starts { action.separated() } else { action };
+        menu_actions(&commands, on_command)
+            .into_iter()
+            .zip(&commands)
+            .map(|(action, command)| {
                 if busy && command.edits_ignore() {
                     action.disabled(BUSY)
                 } else {
@@ -1582,6 +1494,7 @@ mod facet_tests {
 #[cfg(test)]
 mod menu_tests {
     use super::*;
+    use crate::pages::row_menu::group_starts;
 
     fn labels(
         status: &str,

@@ -17,7 +17,6 @@ use crate::kit::Card;
 use crate::kit::EntryRow;
 use crate::kit::FormControl;
 use crate::kit::JsonDisplay;
-use crate::kit::MenuAction;
 use crate::kit::Naming;
 use crate::kit::PageHeader;
 use crate::kit::PageHeaderSkeleton;
@@ -34,6 +33,7 @@ use crate::kit::icons;
 use crate::util::format_size;
 
 use super::json_editor::{JsonEditor, focus_json_editor};
+use super::row_menu::{RowCommand, menu_actions};
 
 stylance::import_crate_style!(style, "src/pages/commit_v2.module.scss");
 
@@ -771,6 +771,22 @@ fn ignored_words(n: usize) -> String {
     }
 }
 
+/// The items a row's `[⋯]` offers. Every file here differs from the published
+/// one, so its address would name other bytes: there is no catalog item and no
+/// *Copy URI*, and *Copy path* copies where the file is on disk. A deleted file
+/// has nothing on disk to open, reveal or copy.
+fn row_commands(file: &IncludedFile) -> Vec<RowCommand> {
+    let path = file.path.clone();
+    let mut commands = Vec::new();
+    if file.change != Change::Deleted {
+        commands.push(RowCommand::Open(path.clone()));
+        commands.push(RowCommand::Reveal(path.clone()));
+        commands.push(RowCommand::CopyPath(path.clone()));
+    }
+    commands.push(RowCommand::Ignore(path));
+    commands
+}
+
 /// The changed files, then how many ignored files are left out. No facets and
 /// no search: narrowing what will be published only hides some of it.
 #[component]
@@ -781,8 +797,8 @@ fn ignored_words(n: usize) -> String {
 pub fn IncludedList(
     files: Vec<IncludedFile>,
     ignored: usize,
-    /// A row's `[⋯]` → `Ignore`, with its path.
-    on_ignore: Callback<String>,
+    /// What a row's `[⋯]` chose.
+    on_command: Callback<RowCommand>,
     /// The heading's `(files, bytes)` when `files` is not all of them: the
     /// page's list is capped, its totals are not. Counted from `files` by
     /// default.
@@ -812,11 +828,7 @@ pub fn IncludedList(
                 {files
                     .into_iter()
                     .map(|file| {
-                        let path = file.path.clone();
-                        let ignore = MenuAction::new(
-                            "Ignore",
-                            Callback::new(move |()| on_ignore.run(path.clone())),
-                        );
+                        let actions = menu_actions(&row_commands(&file), on_command);
                         view! {
                             <li>
                                 <EntryRow
@@ -824,7 +836,7 @@ pub fn IncludedList(
                                     state=file.change.words().to_string()
                                     tone=file.change.tone()
                                     size=format_size(file.size)
-                                    actions=vec![ignore]
+                                    actions=actions
                                     plain=true
                                 />
                             </li>
@@ -1042,7 +1054,7 @@ mod layout_tests {
                         workflow=region("workflow", 60)
                         metadata=region("metadata", 60)
                         included=view! {
-                            <IncludedList files=files ignored=0 on_ignore=Callback::new(|_| ()) />
+                            <IncludedList files=files ignored=0 on_command=Callback::new(|_| ()) />
                         }
                             .into_any()
                     />
@@ -1079,7 +1091,7 @@ mod layout_tests {
     #[wasm_bindgen_test]
     fn metadata_only_is_a_blank_state() {
         let el = mount(|| {
-            view! { <IncludedList files=Vec::new() ignored=0 on_ignore=Callback::new(|_| ()) /> }
+            view! { <IncludedList files=Vec::new() ignored=0 on_command=Callback::new(|_| ()) /> }
         });
         let text = el.text_content().unwrap_or_default();
         assert!(text.contains(NO_FILE_CHANGES), "{text}");
@@ -1096,7 +1108,7 @@ mod layout_tests {
                 size: 10,
                 change: Change::New,
             }];
-            view! { <IncludedList files=files ignored=0 on_ignore=Callback::new(|_| ()) /> }
+            view! { <IncludedList files=files ignored=0 on_command=Callback::new(|_| ()) /> }
         });
         let row = el
             .query_selector("li")
@@ -1208,6 +1220,96 @@ pub(crate) mod tests {
     fn the_primary_counts_its_files() {
         assert_eq!(Primary::Files(1).label(), "Publish 1 file");
         assert_eq!(Primary::Files(12).label(), "Publish 12 files");
+    }
+
+    fn file(change: Change) -> IncludedFile {
+        IncludedFile {
+            path: "raw/a.csv".to_string(),
+            size: 4_100,
+            change,
+        }
+    }
+
+    /// A row's items with a `|` where a rule goes.
+    fn grouped(change: Change) -> String {
+        menu_actions(&row_commands(&file(change)), Callback::new(|_| ()))
+            .iter()
+            .map(|a| {
+                if a.separated {
+                    format!("| {}", a.label)
+                } else {
+                    a.label.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The local file, where it is, then `.quiltignore`; a deleted file has
+    /// only the last, with no rule above it.
+    #[test]
+    fn rules_fall_between_the_groups_a_row_has() {
+        let local = "Open file, Reveal in folder, | Copy path, | Ignore";
+        assert_eq!(grouped(Change::Changed), local);
+        assert_eq!(grouped(Change::New), local);
+        assert_eq!(grouped(Change::Deleted), "Ignore");
+    }
+
+    async fn open_items(el: &web_sys::Element) -> Vec<web_sys::HtmlElement> {
+        use wasm_bindgen::JsCast;
+        el.query_selector("button[aria-label='More actions for this file']")
+            .unwrap()
+            .expect("the row's [⋯]")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        leptos::task::tick().await;
+        let found = el.query_selector_all("[popover] button").unwrap();
+        (0..found.length())
+            .map(|i| found.item(i).unwrap().unchecked_into())
+            .collect()
+    }
+
+    /// The row's `[⋯]` lists its items, and each hands the page its command.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn a_row_s_menu_hands_the_chosen_command_to_the_page() {
+        let chosen = RwSignal::new(None);
+        let el = crate::test_support::mount(move || {
+            view! {
+                <IncludedList
+                    files=vec![file(Change::New)]
+                    ignored=0
+                    on_command=Callback::new(move |c| chosen.set(Some(c)))
+                />
+            }
+        });
+        let words: Vec<String> = open_items(&el)
+            .await
+            .iter()
+            .map(|b| b.text_content().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            words,
+            ["Open file", "Reveal in folder", "Copy path", "Ignore"]
+        );
+        assert_eq!(
+            el.query_selector_all("[popover] [role='separator']")
+                .unwrap()
+                .length(),
+            2,
+        );
+        let path = || "raw/a.csv".to_string();
+        for (i, command) in [
+            RowCommand::Open(path()),
+            RowCommand::Reveal(path()),
+            RowCommand::CopyPath(path()),
+            RowCommand::Ignore(path()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            open_items(&el).await[i].click();
+            assert_eq!(chosen.get_untracked(), Some(command));
+        }
     }
 
     #[test]
