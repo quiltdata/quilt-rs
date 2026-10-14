@@ -32,7 +32,7 @@ use crate::components::workflow_select::{WorkflowView, WorkflowViewKind};
 use crate::kit::{BannerVariant, FormControl, FormDialog, Naming, Select, Submit, TextInput};
 use crate::util;
 
-use super::{Outcome, Wiring, holding};
+use super::{BucketDraft, Outcome, holding};
 
 const HOST_INVALID: &str = "Enter a valid hostname";
 const BUCKET_MISSING: &str = "Enter an S3 bucket name";
@@ -93,7 +93,9 @@ fn read_workflows(
     Box::pin(commands::get_bucket_workflows(host, bucket))
 }
 
-/// The set-remote dialog, in both of its shapes.
+/// The set-remote dialog, in both of its shapes. The package page and the
+/// commit page each hold its flag and draft, and lend it their lock, band and
+/// re-read.
 #[component]
 #[allow(
     clippy::needless_pass_by_value,
@@ -103,10 +105,19 @@ fn read_workflows(
     clippy::too_many_lines,
     reason = "declarative Leptos view; length is markup, not logic complexity"
 )]
-pub(super) fn BucketDialog(
+pub(crate) fn BucketDialog(
     open: RwSignal<bool>,
-    data: commands::PackageHeaderData,
-    w: Wiring,
+    namespace: String,
+    uri: Option<quilt_uri::S3PackageUri>,
+    /// The package has been pushed: the read-only shape.
+    locked: bool,
+    /// What the reader has typed, held by the page so a re-read that rebuilds
+    /// this dialog finds it.
+    draft: BucketDraft,
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    /// Notified once the remote is set.
+    reload: Trigger,
     /// `get_bucket_workflows` unless a test says otherwise.
     #[prop(optional)]
     workflows: Option<WorkflowRead>,
@@ -124,26 +135,9 @@ pub(super) fn BucketDialog(
 
     // `busy` is held for the command and seals the dialog, because a re-read
     // rebuilds this dialog and its own seal goes with the old one.
-    let Wiring {
-        busy,
-        outcome,
-        reload,
-        dialogs,
-        ..
-    } = w;
-    let draft = dialogs.bucket_draft.get_value();
-    let locked = data.remote_locked;
-    let ns = data.namespace.to_string();
-    let current_host = data
-        .uri
-        .as_ref()
-        .and_then(util::host_str)
-        .unwrap_or_default();
-    let current_bucket = data
-        .uri
-        .as_ref()
-        .and_then(util::bucket_str)
-        .unwrap_or_default();
+    let ns = namespace;
+    let current_host = uri.as_ref().and_then(util::host_str).unwrap_or_default();
+    let current_bucket = uri.as_ref().and_then(util::bucket_str).unwrap_or_default();
 
     // The page's, so a re-read that rebuilds this dialog finds them as the
     // reader left them. The field errors are this dialog's: the rebuilt one
@@ -489,6 +483,7 @@ pub(super) fn BucketDialog(
 
 #[cfg(test)]
 mod tests {
+    use super::super::Wiring;
     use super::*;
     use crate::kit;
     use crate::test_support::{element_saying, mount, sleep_ms};
@@ -512,7 +507,18 @@ mod tests {
     fn mount_dialog(data: commands::PackageHeaderData) -> web_sys::Element {
         mount(move || {
             let w = Wiring::new();
-            view! { <BucketDialog open=RwSignal::new(true) data=data w=w /> }
+            view! {
+                <BucketDialog
+                    open=RwSignal::new(true)
+                    namespace=data.namespace.to_string()
+                    uri=data.uri
+                    locked=data.remote_locked
+                    draft=w.dialogs.bucket_draft.get_value()
+                    busy=w.busy
+                    outcome=w.outcome
+                    reload=w.reload
+                />
+            }
         })
     }
 
@@ -732,11 +738,17 @@ mod tests {
         mount(move || {
             view! {
                 {move || {
+                    let data = header.get();
                     view! {
                         <BucketDialog
                             open=w.dialogs.bucket
-                            data=header.get()
-                            w=w
+                            namespace=data.namespace.to_string()
+                            uri=data.uri
+                            locked=data.remote_locked
+                            draft=w.dialogs.bucket_draft.get_value()
+                            busy=w.busy
+                            outcome=w.outcome
+                            reload=w.reload
                             workflows=read
                         />
                     }

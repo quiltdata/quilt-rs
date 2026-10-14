@@ -128,6 +128,8 @@ struct Fixture {
     problem: Option<Problem>,
     blocked: Option<&'static str>,
     editing: bool,
+    /// Published before, so the header's `[⋯]` shows the remote.
+    remote_locked: bool,
     workflows: bool,
     metadata: &'static str,
     metadata_error: Option<&'static str>,
@@ -149,6 +151,7 @@ impl Fixture {
             problem: None,
             blocked: None,
             editing: false,
+            remote_locked: false,
             workflows: true,
             metadata: METADATA,
             metadata_error: None,
@@ -157,6 +160,24 @@ impl Fixture {
             width: 1024,
         }
     }
+}
+
+/// The header, with every link on the cell itself so a click does not move
+/// the page.
+fn header(id: &str, primary: Primary, w: PrimaryWiring, remote_locked: bool) -> AnyView {
+    view! {
+        <CommitHeader
+            namespace=NAMESPACE
+            package_href=format!("#{id}")
+            home_href=format!("#{id}")
+            primary=primary
+            w=w
+            on_open_folder=Callback::new(|()| ())
+            remote_locked=remote_locked
+            on_menu=Callback::new(|_| ())
+        />
+    }
+    .into_any()
 }
 
 fn page(f: Fixture) -> AnyView {
@@ -168,6 +189,7 @@ fn page(f: Fixture) -> AnyView {
         problem,
         blocked,
         editing,
+        remote_locked,
         workflows,
         metadata,
         metadata_error,
@@ -228,18 +250,7 @@ fn page(f: Fixture) -> AnyView {
         <div id=id class="g-window" style=frame>
             <PageLayout heading="QuiltSync" banner=().into_any() actions=appbar_actions()>
                 <CommitColumn
-                    header=view! {
-                        <CommitHeader
-                            namespace=NAMESPACE
-                            // The cell itself, so a click does not move the page.
-                            package_href=format!("#{id}")
-                            home_href=format!("#{id}")
-                            primary=primary
-                            w=w
-                            on_open_folder=Callback::new(|()| ())
-                        />
-                    }
-                        .into_any()
+                    header=header(id, primary, w, remote_locked)
                     problem=problem.unwrap_or_else(|| ().into_any())
                     message=view! {
                         <MessageField value=RwSignal::new(String::new()) placeholder=GENERATED />
@@ -285,6 +296,9 @@ pub fn CommitPageScene() -> impl IntoView {
         <Scene title="The commit page v2" note=NOTE>
             <Cell full=true label="files changed, at rest">
                 {page(Fixture::new("commit-rest"))}
+            </Cell>
+            <Cell full=true label="published before — the header's [⋯] offers Show remote, not Change bucket">
+                {page(Fixture { remote_locked: true, ..Fixture::new("commit-published") })}
             </Cell>
             <Cell
                 full=true

@@ -4,6 +4,11 @@
 //! after a failed publish, rebuilds the column, and what the reader typed must
 //! survive that. It is seeded once per package from the first answer.
 //!
+//! A bucket changed from `[⋯]` re-reads the page too, and the new answer brings
+//! the new bucket's workflows. The draft keeps the message, and the metadata if
+//! the reader edited it; the workflow and untouched metadata start over from
+//! the new answer.
+//!
 //! Live validation is v1's — the rules load, the candidate check, the 400ms
 //! debounce, the keyed answer — with one difference: every violation shows at
 //! once and blocks the primary. This page is the review before a publish, so
@@ -27,7 +32,9 @@ use crate::components::workflow_select::{
 use crate::components::{IgnorePopup, IgnorePopupData, Notification, PreviousWorkflow};
 use crate::kit::{LoadFailure, PageLayout};
 
-use super::super::installed_package_v2::run_reading;
+use super::super::installed_package_v2::{
+    BucketDialog, BucketDraft, MenuCommand, RemoveDialog, Uninstall, ask_to_remove, run_reading,
+};
 use super::super::row_menu::RowCommand;
 use super::super::v2_page::{Outcome, PageHandle, V2Page, critical};
 use crate::routes;
@@ -370,6 +377,21 @@ struct Draft {
     editing: RwSignal<bool>,
     /// The package the draft was seeded for.
     seeded: StoredValue<Option<String>>,
+    /// The remote it was seeded for, from [`remote_of`].
+    remote: StoredValue<Option<(Option<String>, String)>>,
+    /// The metadata it was seeded with: the reader edited it if it differs.
+    started: StoredValue<String>,
+}
+
+/// A package's remote, catalog and bucket, without the revision it points at:
+/// a save moves that, and is not a new bucket.
+fn remote_of(d: &CommitData) -> Option<(Option<String>, String)> {
+    d.uri.as_ref().map(|u| {
+        (
+            u.catalog.as_ref().map(ToString::to_string),
+            u.bucket.clone(),
+        )
+    })
 }
 
 impl Draft {
@@ -380,28 +402,117 @@ impl Draft {
             workflow: RwSignal::new(WorkflowIntent::BucketDefault),
             editing: RwSignal::new(false),
             seeded: StoredValue::new(None),
+            remote: StoredValue::new(None),
+            started: StoredValue::new(String::new()),
         }
     }
 
     /// Start from the answer's values, once per package. A re-read keeps
-    /// the draft, unless the workflow it holds is no longer offered.
+    /// the draft, unless the workflow it holds is no longer offered. A
+    /// re-read on another remote keeps only what the reader typed.
     /// Whether this answer seeded it: the first for this package.
     fn seed(self, d: &CommitData, form: &Form) -> bool {
+        let remote = remote_of(d);
         if self.seeded.get_value().as_deref() == Some(form.namespace.as_str()) {
-            if self.workflow.with(|w| form.label(w).is_none()) {
+            if self.remote.get_value() != remote {
+                self.remote.set_value(remote);
+                self.workflow.set(form.initial.clone());
+                if self.metadata.with(|m| *m == self.started.get_value()) {
+                    self.start_metadata(d);
+                }
+            } else if self.workflow.with(|w| form.label(w).is_none()) {
                 self.workflow.set(form.initial.clone());
             }
             return false;
         }
         self.seeded.set_value(Some(form.namespace.clone()));
+        self.remote.set_value(remote);
         self.message.set(String::new());
-        self.metadata.set(starting_metadata(
-            d.settings_user_meta.as_deref(),
-            &d.user_meta,
-        ));
+        self.start_metadata(d);
         self.workflow.set(form.initial.clone());
         self.editing.set(false);
         true
+    }
+
+    fn start_metadata(self, d: &CommitData) {
+        let start = starting_metadata(d.settings_user_meta.as_deref(), &d.user_meta);
+        self.started.set_value(start.clone());
+        self.metadata.set(start);
+    }
+}
+
+/// The header's `[⋯]` and the dialogs behind it. The page's, above the
+/// rebuild line, so a re-read keeps a dialog open and what was typed in it.
+#[derive(Clone, Copy)]
+struct HeaderMenu {
+    page: PageHandle,
+    bucket: RwSignal<bool>,
+    draft: BucketDraft,
+    remove: RwSignal<bool>,
+    /// Remove's *Also delete downloaded files from disk*.
+    prune: RwSignal<bool>,
+    /// Where Remove goes once it succeeds.
+    goto: RwSignal<Option<String>>,
+    /// `package_uninstall` unless a test says otherwise.
+    uninstall: Option<Uninstall>,
+}
+
+impl HeaderMenu {
+    fn new(page: PageHandle, goto: RwSignal<Option<String>>, uninstall: Option<Uninstall>) -> Self {
+        Self {
+            page,
+            bucket: RwSignal::new(false),
+            draft: BucketDraft::new(),
+            remove: RwSignal::new(false),
+            prune: RwSignal::new(true),
+            goto,
+            uninstall,
+        }
+    }
+
+    /// Opens the chosen command's dialog. The dialogs wait for the page's
+    /// lock, as the items do.
+    fn on_menu(self) -> Callback<MenuCommand> {
+        Callback::new(move |command| match command {
+            MenuCommand::Remote => self.bucket.set(true),
+            MenuCommand::Remove => ask_to_remove(self.remove, self.prune),
+            // Not on this page's menu.
+            MenuCommand::NewRevision | MenuCommand::OpenInCatalog(_) | MenuCommand::Undo => {}
+        })
+    }
+
+    /// The dialogs, for one answer. Changing the bucket re-reads the page;
+    /// a refusal of either stays in its dialog.
+    fn dialogs(self, d: &CommitData) -> AnyView {
+        let PageHandle {
+            busy,
+            outcome,
+            reload,
+            ..
+        } = self.page;
+        view! {
+            <BucketDialog
+                open=self.bucket
+                namespace=d.namespace.to_string()
+                uri=d.uri.clone()
+                locked=d.remote_locked
+                draft=self.draft
+                busy=busy
+                outcome=outcome
+                reload=reload
+            />
+            <RemoveDialog
+                open=self.remove
+                prune=self.prune
+                namespace=d.namespace.to_string()
+                uri=d.uri.clone()
+                busy=busy
+                outcome=outcome
+                goto=self.goto
+                uninstall=self.uninstall
+            />
+        }
+        .into_any()
     }
 }
 
@@ -447,7 +558,12 @@ async fn check(
     clippy::too_many_lines,
     reason = "the page's wiring in one place: the read, the draft, validation and the commands"
 )]
-fn CommitScreen(read: CommitRead) -> impl IntoView {
+fn CommitScreen(
+    read: CommitRead,
+    /// `package_uninstall` unless a test says otherwise.
+    #[prop(optional_no_strip)]
+    uninstall: Option<Uninstall>,
+) -> impl IntoView {
     let query = use_query_map();
     let ns = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
     let focus = query
@@ -492,6 +608,7 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
             navigate(&to, NavigateOptions::default());
         }
     });
+    let menu = HeaderMenu::new(page, goto, uninstall);
 
     // ── Live validation, v1's ──
     let workflow_id = Memo::new(move |_| match draft.workflow.get() {
@@ -659,6 +776,7 @@ fn CommitScreen(read: CommitRead) -> impl IntoView {
             open_folder,
             ignoring,
             outcome,
+            menu,
             focus && fresh,
         )
     };
@@ -717,6 +835,7 @@ fn column(
     open_folder: Callback<()>,
     ignoring: RwSignal<Option<IgnorePopupData>>,
     outcome: RwSignal<Option<Outcome>>,
+    menu: HeaderMenu,
     focus: bool,
 ) -> AnyView {
     let has_bucket = d.uri.as_ref().is_some_and(|u| u.catalog.is_some());
@@ -804,7 +923,10 @@ fn column(
             primary=primary(has_bucket, d.counts.changed)
             w=w
             on_open_folder=open_folder
+            remote_locked=d.remote_locked
+            on_menu=menu.on_menu()
         />
+        {menu.dialogs(d)}
     }
     .into_any();
 
@@ -1033,6 +1155,7 @@ mod tests {
                 )
                 .unwrap(),
             ),
+            remote_locked: false,
             status: "up_to_date".to_string(),
             message: "Updated 1203 files".to_string(),
             user_meta: "{\"plate\": 7}".to_string(),
@@ -1310,6 +1433,179 @@ mod tests {
             active,
             Some(message_input(&el).unchecked_into()),
             "the re-read left the focus alone"
+        );
+    }
+
+    /// The header's `[⋯]` trigger, and the list it opens.
+    const MENU: &str = "[aria-label='More actions for this package']";
+
+    /// Choose `label` in the header's `[⋯]`, the way a reader does.
+    async fn choose_in_menu(el: &web_sys::Element, label: &str) {
+        el.query_selector(MENU)
+            .unwrap()
+            .expect("the header's menu")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        leptos::task::tick().await;
+        let items = el
+            .query_selector_all(&format!("[popover]{MENU} button"))
+            .unwrap();
+        (0..items.length())
+            .map(|i| {
+                items
+                    .item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::HtmlElement>()
+            })
+            .find(|b| b.text_content().unwrap_or_default().trim() == label)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no menu item says {label:?}; markup was {}",
+                    el.inner_html()
+                )
+            })
+            .click();
+        // The dialog opens from an effect, on the next tick.
+        sleep_ms(20).await;
+    }
+
+    fn removed(
+        _: String,
+        _: Option<quilt_uri::S3PackageUri>,
+        _: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+        Box::pin(async { Ok(String::new()) })
+    }
+
+    /// Remove asks first, in the package page's dialog, and a confirmed
+    /// success goes to the main page: the package this page is about is gone.
+    #[wasm_bindgen_test]
+    async fn remove_asks_then_goes_to_the_main_page() {
+        unmount_earlier();
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(
+                &wasm_bindgen::JsValue::NULL,
+                "",
+                Some("/commit?namespace=org%2Fpkg"),
+            )
+            .unwrap();
+        let el = mount(|| {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/commit")
+                            view=|| view! { <CommitScreen read=answered uninstall=Some(removed) /> }
+                        />
+                        <Route path=path!("/") view=|| view! { "the main page" } />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(80).await;
+
+        choose_in_menu(&el, "Remove").await;
+        let dialog = el
+            .query_selector("dialog[open]")
+            .unwrap()
+            .unwrap_or_else(|| panic!("the confirmation; markup was {}", el.inner_html()));
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Remove this package"),
+            "markup was {}",
+            dialog.inner_html()
+        );
+
+        crate::test_support::button_saying(&dialog, "Remove").click();
+        sleep_ms(80).await;
+        assert!(
+            el.text_content()
+                .unwrap_or_default()
+                .contains("the main page"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    thread_local! {
+        /// How many times [`rebucketed`] was read.
+        static READS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    /// The package on `team-bucket`, then, from the second read on, on
+    /// `other-bucket`, whose default workflow and settings metadata differ.
+    fn rebucketed(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        let read = READS.get();
+        READS.set(read + 1);
+        let info = |id: &str, name: &str| commands::WorkflowInfo {
+            id: id.to_string(),
+            name: Some(name.to_string()),
+            description: None,
+            metadata_schema_url: None,
+            entries_schema_url: None,
+        };
+        let mut d = commit_data();
+        let (default, bucket) = if read == 0 {
+            ("plates", "team-bucket")
+        } else {
+            d.settings_user_meta = Some("{\"assay\": \"ELISA\"}".to_string());
+            ("exports", "other-bucket")
+        };
+        d.uri = Some(
+            quilt_uri::S3PackageUri::try_from(
+                format!("quilt+s3://{bucket}#package=org/pkg&catalog=quilt.test").as_str(),
+            )
+            .unwrap(),
+        );
+        d.workflows = CommitWorkflows::Available {
+            workflows: vec![info("plates", "Plates"), info("exports", "Exports")],
+            default_workflow: Some(default.to_string()),
+            is_workflow_required: false,
+            config_url: None,
+        };
+        Box::pin(async move { Ok(d) })
+    }
+
+    /// A re-read on another bucket keeps the typed message, and the fields
+    /// the reader left alone take the new bucket's defaults.
+    #[wasm_bindgen_test]
+    async fn a_new_bucket_keeps_the_message_and_resets_untouched_fields() {
+        READS.set(0);
+        let el = suspended_page_at("/commit?namespace=org%2Fpkg", rebucketed).await;
+        let input = message_input(&el);
+        input.set_value("Plate 7");
+        input
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        // Not the bucket dialog's, which is in the document while closed.
+        let workflow = |el: &web_sys::Element| {
+            let all = el.query_selector_all("select").unwrap();
+            (0..all.length())
+                .map(|i| {
+                    all.item(i)
+                        .unwrap()
+                        .unchecked_into::<web_sys::HtmlSelectElement>()
+                })
+                .find(|s| s.closest("dialog").unwrap().is_none())
+                .expect("the workflow select")
+                .value()
+        };
+        assert!(workflow(&el).starts_with("Plates"), "{}", workflow(&el));
+
+        crate::test_support::element_saying(&el, "Refresh").click();
+        sleep_ms(80).await;
+
+        assert_eq!(message_input(&el).value(), "Plate 7");
+        assert!(workflow(&el).starts_with("Exports"), "{}", workflow(&el));
+        assert!(
+            el.text_content().unwrap_or_default().contains("ELISA"),
+            "the new settings metadata; markup was {}",
+            el.inner_html()
         );
     }
 

@@ -90,6 +90,9 @@ pub async fn get_merge_data(
 pub struct CommitData {
     pub namespace: quilt_uri::Namespace,
     pub uri: Option<quilt_uri::S3PackageUri>,
+    /// The package has been pushed, so its remote is pinned to its push
+    /// history and can only be shown.
+    pub remote_locked: bool,
     pub status: String,
     /// The message the form starts with: what one-click Publish would send,
     /// the settings' template rendered over the summary of the changes.
@@ -344,6 +347,10 @@ async fn get_commit_data_from_model(
         .remote_uri
         .as_ref()
         .map(quilt_uri::S3PackageUri::from);
+    let remote_locked = lineage
+        .remote_uri
+        .as_ref()
+        .is_some_and(|r| !r.hash.is_empty());
     let origin_host = typed_uri.as_ref().and_then(|u| u.catalog.as_ref());
     if let Some(host) = origin_host {
         tracing.add_host(host);
@@ -538,6 +545,7 @@ async fn get_commit_data_from_model(
     Ok(CommitData {
         namespace: namespace.clone(),
         uri: typed_uri,
+        remote_locked,
         status: pkg_status_str.to_string(),
         message,
         user_meta,

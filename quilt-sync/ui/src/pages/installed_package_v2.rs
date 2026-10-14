@@ -51,11 +51,13 @@ mod revision_history;
 mod role_dialog;
 
 use crate::kit::PageHeaderSkeleton;
+pub(crate) use bucket_form::BucketDialog;
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
 use file_pane::{Reach, RowMenu};
 use header::PageHeader;
 pub use header::{MenuCommand, MenuItem, menu_items};
+pub(crate) use header::{RemoveDialog, Uninstall, ask_to_remove, remote_item, remove_item};
 use incoming::{HoverCard, IncomingSummary};
 use resolve::{ResolveCommands, ResolvePane};
 
@@ -248,7 +250,7 @@ pub struct BucketDraft {
 }
 
 impl BucketDraft {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             host: RwSignal::new(String::new()),
             bucket: RwSignal::new(String::new()),
