@@ -100,7 +100,6 @@ fn quiet_status(
 fn make_inner_for_run_once(reporter: Arc<RecordingReporter>) -> WatcherInner {
     WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -128,7 +127,6 @@ fn make_inner_with_flags(
             },
             close_to_tray: false,
         })),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -905,7 +903,7 @@ async fn run_once_login_required_on_publish() -> Result<(), Error> {
 #[tokio::test]
 async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<(), Error> {
     // The push-side quiet window must come from
-    // `push.idle_timeout_secs`, not `cadence_for_mode(...)`.
+    // `push.idle_timeout_secs`, not `pull_cadence(...)`.
     // Concretely: with focused_secs=5 and idle_timeout_secs=60, a
     // tick taken with most_recent_mtime=30s-ago must NOT publish
     // (still inside the 60s idle window), even though the pull
@@ -940,7 +938,6 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(settings)),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -1102,7 +1099,6 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
     let aggregator = Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx));
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
@@ -1159,7 +1155,6 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
     let aggregator = Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx));
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),

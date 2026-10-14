@@ -364,7 +364,7 @@ mod tests {
                 enabled: true,
                 activity: ToggleActivityData::Armed,
                 deadline: Some(js_sys::Date::now() + ms),
-                interval_ms: 30_000.0,
+                interval_ms: 60_000.0,
             },
             publish: ToggleStateData {
                 enabled: true,
@@ -400,7 +400,7 @@ mod tests {
                 enabled: true,
                 activity: ToggleActivityData::Paused,
                 deadline: None,
-                interval_ms: 30_000.0,
+                interval_ms: 60_000.0,
             },
             publish: ToggleStateData {
                 enabled: true,
@@ -450,12 +450,12 @@ mod tests {
     #[wasm_bindgen_test]
     fn both_directions_are_named_and_their_intervals_are_derived() {
         // §1: the number is derived from the value it describes, never sent as
-        // words. 30_000 ms is "30s"; 300_000 ms is "5 min".
+        // words. 60_000 ms is "1 min"; 300_000 ms is "5 min".
         let el = mount(|| view! { <AutosyncBody data=armed_payload() reload=Trigger::new() /> });
         let text = el.text_content().unwrap();
         assert!(text.contains("Get new revisions"), "got: {text}");
         assert!(text.contains("Publish your changes"), "got: {text}");
-        assert!(text.contains("Every 30s"), "got: {text}");
+        assert!(text.contains("Every 1 min"), "got: {text}");
         assert!(text.contains("After 5 min of inactivity"), "got: {text}");
     }
 

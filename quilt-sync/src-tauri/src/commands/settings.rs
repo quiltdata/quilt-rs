@@ -57,10 +57,7 @@ pub struct AutosyncSettingsData {
 
 impl From<AutosyncSettings> for AutosyncSettingsData {
     fn from(s: AutosyncSettings) -> Self {
-        // `pull_interval_secs` projects `focused_secs`. On a hand-edited
-        // JSON where focused != unfocused, the UI shows the focused value
-        // — what an active user experiences — and a Save will write both
-        // fields to the same value via `merge_autosync_settings_data`.
+        // `pull_interval_secs` is `focused_secs`, the one interval.
         Self {
             pull_enabled: s.pull.enabled,
             push_enabled: s.push.enabled,
@@ -71,10 +68,9 @@ impl From<AutosyncSettings> for AutosyncSettingsData {
     }
 }
 
+/// Only the quiet window is refused at 0: a check interval below a minute is
+/// raised to one ([`AutosyncSettings::normalised`]).
 fn validate_autosync_settings_data(data: &AutosyncSettingsData) -> Result<(), String> {
-    if data.pull_interval_secs == 0 {
-        return Err("pull_interval_secs must be > 0".to_string());
-    }
     if data.idle_timeout_secs == 0 {
         return Err("idle_timeout_secs must be > 0".to_string());
     }
@@ -83,8 +79,8 @@ fn validate_autosync_settings_data(data: &AutosyncSettingsData) -> Result<(), St
 
 /// Project `AutosyncSettingsData` onto a full `AutosyncSettings` by
 /// overwriting only the UI-owned fields on top of the current disk
-/// state. `closed_secs` — and any future disk-only field — flows
-/// through untouched.
+/// state. `unfocused_secs` and `closed_secs` — and any future disk-only
+/// field — flow through untouched. The interval comes out in whole minutes.
 fn merge_autosync_settings_data(
     current: &AutosyncSettings,
     incoming: &AutosyncSettingsData,
@@ -93,7 +89,7 @@ fn merge_autosync_settings_data(
         pull: PullSettings {
             enabled: incoming.pull_enabled,
             focused_secs: incoming.pull_interval_secs,
-            unfocused_secs: incoming.pull_interval_secs,
+            unfocused_secs: current.pull.unfocused_secs,
             closed_secs: current.pull.closed_secs,
         },
         push: PushSettings {
@@ -102,15 +98,15 @@ fn merge_autosync_settings_data(
         },
         close_to_tray: incoming.close_to_tray,
     }
+    .normalised()
 }
 
 /// Some of autosync's settings, changed; every `None` stays as stored.
 ///
 /// A page that saves one control at a time writes through this, so a write
 /// never resets a field it does not own: the main page knows two booleans, and
-/// a Settings row knows one value. `pull_interval_secs` is the focused
-/// interval only; the unfocused and closed ones stay as stored, where
-/// `update_autosync_settings` ties unfocused to focused.
+/// a Settings row knows one value. `pull_interval_secs` is the one check
+/// interval, in whole minutes once applied.
 #[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AutosyncPatch {
@@ -122,11 +118,8 @@ pub struct AutosyncPatch {
 }
 
 impl AutosyncPatch {
-    /// `current` with this patch applied; an interval of 0 is refused.
+    /// `current` with this patch applied; a quiet window of 0 is refused.
     fn apply(&self, current: &AutosyncSettings) -> Result<AutosyncSettings, String> {
-        if self.pull_interval_secs == Some(0) {
-            return Err("pull_interval_secs must be > 0".to_string());
-        }
         if self.idle_timeout_secs == Some(0) {
             return Err("idle_timeout_secs must be > 0".to_string());
         }
@@ -146,7 +139,7 @@ impl AutosyncPatch {
         if let Some(on) = self.close_to_tray {
             next.close_to_tray = on;
         }
-        Ok(next)
+        Ok(next.normalised())
     }
 }
 
@@ -503,8 +496,8 @@ mod tests {
         let s = AutosyncSettings {
             pull: PullSettings {
                 enabled: true,
-                focused_secs: 45,
-                unfocused_secs: 999, // hand-edited divergence
+                focused_secs: 180,
+                unfocused_secs: 999, // retired, never shown
                 closed_secs: 600,
             },
             push: PushSettings {
@@ -516,24 +509,21 @@ mod tests {
         let data = AutosyncSettingsData::from(s);
         assert!(data.pull_enabled);
         assert!(data.push_enabled);
-        assert_eq!(
-            data.pull_interval_secs, 45,
-            "focused wins on divergent files — that is what an active user feels",
-        );
+        assert_eq!(data.pull_interval_secs, 180, "the one interval");
         assert_eq!(data.idle_timeout_secs, 22);
     }
 
     #[tokio::test]
-    async fn merge_preserves_closed_secs() -> Result<(), Error> {
-        // Save a settings file with a non-default `closed_secs`, then run
-        // the merge logic with arbitrary UI-owned values, and verify
-        // `closed_secs` survives on disk.
+    async fn merge_preserves_the_retired_intervals() -> Result<(), Error> {
+        // Save a settings file with non-default `unfocused_secs` and
+        // `closed_secs`, then run the merge logic with arbitrary UI-owned
+        // values, and verify both survive.
         let dir = TempDir::new().unwrap();
         let initial = AutosyncSettings {
             pull: PullSettings {
                 enabled: true,
-                focused_secs: 30,
-                unfocused_secs: 120,
+                focused_secs: 60,
+                unfocused_secs: 77,
                 closed_secs: 999,
             },
             push: PushSettings {
@@ -555,10 +545,10 @@ mod tests {
 
         assert!(!merged.pull.enabled);
         assert!(merged.push.enabled);
-        assert_eq!(merged.pull.focused_secs, 7);
+        assert_eq!(merged.pull.focused_secs, 60, "7 s runs as one minute");
         assert_eq!(
-            merged.pull.unfocused_secs, 7,
-            "UI ties focused == unfocused"
+            merged.pull.unfocused_secs, 77,
+            "unfocused_secs must flow through untouched"
         );
         assert_eq!(
             merged.pull.closed_secs, 999,
@@ -568,16 +558,31 @@ mod tests {
         Ok(())
     }
 
+    /// The v1 popup's seconds field: what it saves is what runs, and what
+    /// its next load shows.
     #[test]
-    fn validate_rejects_zero_pull_interval() {
-        let bad = AutosyncSettingsData {
-            pull_enabled: true,
-            push_enabled: true,
-            pull_interval_secs: 0,
-            idle_timeout_secs: 30,
-            close_to_tray: false,
-        };
-        assert!(validate_autosync_settings_data(&bad).is_err());
+    fn a_v1_save_runs_in_whole_minutes() {
+        for (typed, runs) in [
+            (0, 60),
+            (30, 60),
+            (45, 60),
+            (90, 120),
+            (150, 180),
+            (300, 300),
+        ] {
+            let incoming = AutosyncSettingsData {
+                pull_interval_secs: typed,
+                ..AutosyncSettingsData::from(AutosyncSettings::default())
+            };
+            assert!(validate_autosync_settings_data(&incoming).is_ok());
+            let merged = merge_autosync_settings_data(&AutosyncSettings::default(), &incoming);
+            assert_eq!(merged.pull.focused_secs, runs, "{typed} s");
+            assert_eq!(
+                AutosyncSettingsData::from(merged).pull_interval_secs,
+                runs,
+                "and shows it"
+            );
+        }
     }
 
     #[test]
@@ -622,9 +627,9 @@ mod tests {
         let current = AutosyncSettings {
             pull: PullSettings {
                 enabled: false,
-                focused_secs: 5,
+                focused_secs: 300,
                 unfocused_secs: 60,
-                closed_secs: 300,
+                closed_secs: 900,
             },
             push: PushSettings {
                 enabled: true,
@@ -640,21 +645,21 @@ mod tests {
         .unwrap();
         assert!(next.pull.enabled);
         assert!(next.push.enabled, "the untouched direction is untouched");
-        assert_eq!(next.pull.focused_secs, 5);
+        assert_eq!(next.pull.focused_secs, 300);
         assert_eq!(next.pull.unfocused_secs, 60);
-        assert_eq!(next.pull.closed_secs, 300);
+        assert_eq!(next.pull.closed_secs, 900);
         assert_eq!(next.push.idle_timeout_secs, 45);
         assert!(next.close_to_tray);
     }
 
-    /// The settings page's minute field writes the focused interval only:
-    /// the unfocused and closed ones are not its to change.
+    /// The settings page's minute field writes the one interval only: the
+    /// retired unfocused and closed ones are not its to change.
     #[test]
     fn a_pull_interval_patch_leaves_unfocused_and_closed_alone() {
         let current = AutosyncSettings {
             pull: PullSettings {
                 enabled: true,
-                focused_secs: 30,
+                focused_secs: 60,
                 unfocused_secs: 120,
                 closed_secs: 600,
             },
@@ -703,20 +708,51 @@ mod tests {
     }
 
     #[test]
-    fn a_patch_refuses_a_zero_interval() {
-        let current = AutosyncSettings::default();
-        for patch in [
-            AutosyncPatch {
-                pull_interval_secs: Some(0),
-                ..AutosyncPatch::default()
-            },
-            AutosyncPatch {
-                idle_timeout_secs: Some(0),
-                ..AutosyncPatch::default()
-            },
+    fn a_patch_refuses_a_zero_quiet_window() {
+        let patch = AutosyncPatch {
+            idle_timeout_secs: Some(0),
+            ..AutosyncPatch::default()
+        };
+        assert!(patch.apply(&AutosyncSettings::default()).is_err());
+    }
+
+    #[test]
+    fn a_patch_runs_the_interval_in_whole_minutes() {
+        for (typed, runs) in [
+            (0, 60),
+            (30, 60),
+            (45, 60),
+            (90, 120),
+            (150, 180),
+            (300, 300),
         ] {
-            assert!(patch.apply(&current).is_err(), "{patch:?}");
+            let next = AutosyncPatch {
+                pull_interval_secs: Some(typed),
+                ..AutosyncPatch::default()
+            }
+            .apply(&AutosyncSettings::default())
+            .unwrap();
+            assert_eq!(next.pull.focused_secs, runs, "{typed} s");
         }
+    }
+
+    /// A toggle writes the interval as it is; only the minutes are tidied.
+    #[test]
+    fn a_toggle_keeps_a_stored_interval() {
+        let current = AutosyncSettings {
+            pull: PullSettings {
+                focused_secs: 600,
+                ..PullSettings::default()
+            },
+            ..AutosyncSettings::default()
+        };
+        let next = AutosyncPatch {
+            push_enabled: Some(true),
+            ..AutosyncPatch::default()
+        }
+        .apply(&current)
+        .unwrap();
+        assert_eq!(next.pull, current.pull);
     }
 
     #[test]

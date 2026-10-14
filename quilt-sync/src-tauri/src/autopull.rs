@@ -38,21 +38,6 @@ pub use status::TrayMode;
 use tick::BackoffState;
 use tick::run_once;
 
-/// Where the OS thinks the main window is. The watcher reads this each
-/// tick to pick a cadence. Default is `Focused` so the very first tick
-/// uses the tightest cadence — the OS will overwrite this from window
-/// events as soon as they arrive.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WindowMode {
-    Focused,
-    Unfocused,
-    /// Window has been closed but the app stays alive via the tray icon.
-    /// Set when the user closes the main window with `close_to_tray` on.
-    Closed,
-}
-
-pub type SharedWindowMode = Arc<RwLock<WindowMode>>;
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PausedReason {
     PendingChanges,
@@ -125,7 +110,6 @@ pub(crate) struct Clocks {
 /// the maps in place without round-tripping through `Watcher` methods.
 pub(crate) struct WatcherInner {
     pub settings: SharedAutosyncSettings,
-    pub window_mode: SharedWindowMode,
     pub publish_settings: SharedPublishSettings,
     pub paused: RwLock<BTreeMap<Namespace, PausedReason>>,
     pub backoff: RwLock<BTreeMap<Namespace, BackoffState>>,
@@ -152,16 +136,9 @@ pub struct WatcherFacts {
     /// window — the next thing that will publish, which is what one countdown
     /// can honestly represent. `None` when nothing is waiting.
     pub publish_arm_at: Option<DateTime<Utc>>,
-    /// The cadence the loop is actually sleeping, which depends on window mode.
-    /// Not `pull_interval_secs` from the settings payload: `focused_secs`,
-    /// `unfocused_secs` and `closed_secs` can differ, and a ring drawn from the
-    /// wrong one of the three is a ring that finishes at the wrong time.
+    /// The cadence the loop is actually sleeping: the one check interval.
     pub pull_interval: Duration,
     pub publish_interval: Duration,
-}
-
-pub fn create_window_mode() -> SharedWindowMode {
-    Arc::new(RwLock::new(WindowMode::Focused))
 }
 
 impl Watcher {
@@ -203,7 +180,6 @@ impl Watcher {
     pub fn spawn(
         app_handle: tauri::AppHandle,
         settings: SharedAutosyncSettings,
-        window_mode: SharedWindowMode,
         publish_settings: SharedPublishSettings,
         reporter: Arc<dyn StatusReporter>,
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
@@ -211,7 +187,6 @@ impl Watcher {
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
         let inner = Arc::new(WatcherInner {
             settings,
-            window_mode,
             publish_settings,
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
@@ -223,11 +198,7 @@ impl Watcher {
         let task_inner = Arc::clone(&inner);
         tauri::async_runtime::spawn(async move {
             loop {
-                let cadence = {
-                    let settings = task_inner.settings.read().await;
-                    let mode = *task_inner.window_mode.read().await;
-                    cadence_for_mode(&settings.pull, mode)
-                };
+                let cadence = pull_cadence(&task_inner.settings.read().await.pull);
                 // This deadline covers the sleep, which is when the Autosync
                 // card draws it. `run_once` arms again when the tick starts,
                 // because by then this deadline is already in the past.
@@ -255,10 +226,6 @@ impl Watcher {
             }
         });
         (Self { inner }, rx)
-    }
-
-    pub async fn set_window_mode(&self, mode: WindowMode) {
-        *self.inner.window_mode.write().await = mode;
     }
 
     /// Pause `namespace` for `reason` and announce it, exactly as the tick does
@@ -388,7 +355,6 @@ impl Watcher {
     /// One read, for the main page's watcher payload.
     pub async fn main_page_facts(&self) -> WatcherFacts {
         let settings = self.inner.settings.read().await.clone();
-        let mode = *self.inner.window_mode.read().await;
         let paused = self
             .inner
             .paused
@@ -411,7 +377,7 @@ impl Watcher {
                 .values()
                 .min()
                 .copied(),
-            pull_interval: cadence_for_mode(&settings.pull, mode),
+            pull_interval: pull_cadence(&settings.pull),
             publish_interval: Duration::from_secs(settings.push.idle_timeout_secs),
         }
     }
@@ -445,7 +411,6 @@ impl Watcher {
         Self {
             inner: Arc::new(WatcherInner {
                 settings: Arc::new(RwLock::new(AutosyncSettings::default())),
-                window_mode: create_window_mode(),
                 publish_settings: Arc::new(RwLock::new(
                     crate::publish_settings::PublishSettings::default(),
                 )),
@@ -569,7 +534,6 @@ pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
     let (tx, _rx) = tokio::sync::watch::channel(status::SyncTrayStatus::default());
     WatcherInner {
         settings: Arc::new(RwLock::new(settings)),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(
             crate::publish_settings::PublishSettings::default(),
         )),
@@ -582,13 +546,10 @@ pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
     }
 }
 
-pub fn cadence_for_mode(pull: &PullSettings, mode: WindowMode) -> Duration {
-    let secs = match mode {
-        WindowMode::Focused => pull.focused_secs,
-        WindowMode::Unfocused => pull.unfocused_secs,
-        WindowMode::Closed => pull.closed_secs,
-    };
-    Duration::from_secs(secs)
+/// How long the loop sleeps between checks: the one interval, whether the
+/// window is open, in the background or closed to the tray.
+pub fn pull_cadence(pull: &PullSettings) -> Duration {
+    Duration::from_secs(pull.focused_secs)
 }
 
 #[cfg(test)]
@@ -597,26 +558,16 @@ mod tests {
     use reporter::LogReporter;
     use status::TrayMode;
 
+    /// The retired unfocused and closed intervals are never read.
     #[test]
-    fn cadence_picks_per_mode_secs() {
+    fn the_cadence_is_the_one_interval() {
         let pull = settings::PullSettings {
             enabled: true,
-            focused_secs: 1,
-            unfocused_secs: 2,
-            closed_secs: 3,
+            focused_secs: 60,
+            unfocused_secs: 120,
+            closed_secs: 600,
         };
-        assert_eq!(
-            cadence_for_mode(&pull, WindowMode::Focused),
-            Duration::from_secs(1),
-        );
-        assert_eq!(
-            cadence_for_mode(&pull, WindowMode::Unfocused),
-            Duration::from_secs(2),
-        );
-        assert_eq!(
-            cadence_for_mode(&pull, WindowMode::Closed),
-            Duration::from_secs(3),
-        );
+        assert_eq!(pull_cadence(&pull), Duration::from_secs(60));
     }
 
     #[tokio::test]
@@ -835,11 +786,6 @@ mod tests {
             settings.pull.closed_secs = 33;
             settings.push.idle_timeout_secs = 44;
         }
-        // Unfocused, so the cadence can only be right by reading the mode: it is
-        // the middle of three different values, and `pull_interval_secs` is not
-        // one of them.
-        watcher.set_window_mode(WindowMode::Unfocused).await;
-
         let pull_at = Utc::now() + Duration::from_mins(15);
         *watcher.inner_for_test().clocks.next_pull_at.write().await = Some(pull_at);
         // Two namespaces waiting, arming at different moments: the earliest is the
@@ -867,8 +813,8 @@ mod tests {
         );
         assert_eq!(
             facts.pull_interval,
-            Duration::from_secs(22),
-            "the cadence for the current window mode"
+            Duration::from_secs(11),
+            "the one interval, not a retired one"
         );
         assert_eq!(
             facts.publish_interval,

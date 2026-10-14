@@ -7,6 +7,10 @@ use crate::components::buttons;
 
 // ── Autosync section ──
 
+/// The pull interval runs in whole minutes; the backend rounds what is typed.
+const PULL_INTERVAL_HINT: &str = "Rounded to whole minutes, at least 60 s. One interval \
+     applies whether the window is open, in the background or closed to the tray.";
+
 #[component]
 pub(super) fn AutosyncSection(
     autosync: AutosyncSettingsData,
@@ -85,12 +89,12 @@ fn AutosyncSettingsPopup(
         if saving.get_untracked() {
             return;
         }
-        let pull_interval = match pull_interval_secs.get_untracked().trim().parse::<u64>() {
-            Ok(n) if n >= 1 => n,
-            _ => {
-                parse_error.set(Some("Pull interval must be a positive integer".to_string()));
-                return;
-            }
+        // Any whole number: the backend rounds it to whole minutes, at least one.
+        let Ok(pull_interval) = pull_interval_secs.get_untracked().trim().parse::<u64>() else {
+            parse_error.set(Some(
+                "Pull interval must be a whole number of seconds".to_string(),
+            ));
+            return;
         };
         let idle_timeout = match idle_timeout_secs.get_untracked().trim().parse::<u64>() {
             Ok(n) if n >= 1 => n,
@@ -181,10 +185,11 @@ fn AutosyncSettingsPopup(
                         class="input"
                         id="autosync-pull-interval-secs"
                         type="number"
-                        min="1"
+                        min="0"
                         prop:value=move || pull_interval_secs.get()
                         on:input=move |ev| pull_interval_secs.set(event_target_value(&ev))
                     />
+                    <p class="field-description">{PULL_INTERVAL_HINT}</p>
                 </div>
 
                 <div class="field">

@@ -10,10 +10,9 @@ use tokio::sync::mpsc;
 
 use crate::autopull::PackageStatusEvent;
 use crate::autopull::SharedAutosyncSettings;
-use crate::autopull::SharedWindowMode;
 use crate::autopull::StatusReporter;
 use crate::autopull::Watcher;
-use crate::autopull::cadence_for_mode;
+use crate::autopull::pull_cadence;
 use crate::autopull::reporter::SubscriberErrorEvent;
 use crate::fswatcher::settings::SharedFsWatcherSettings;
 use crate::fswatcher::subscriber::MappingSignal;
@@ -34,7 +33,6 @@ pub(crate) struct ReactorState {
     /// Read for the pull cadence only: the signal bound is the tick's own
     /// cadence, not a second knob nobody would keep in step with it.
     pub autosync: SharedAutosyncSettings,
-    pub window_mode: SharedWindowMode,
     pub reporter: Arc<dyn StatusReporter>,
     pub signal_rx: mpsc::Receiver<MappingSignal>,
     pub subscription: Subscription,
@@ -60,11 +58,7 @@ impl ReactorState {
     /// the tick's own walk, so a signal just after a tick still takes one — at
     /// most one extra per window, never one per event.
     async fn claim_signal(&mut self, namespace: &Namespace, now: Instant) -> bool {
-        let cadence = {
-            let settings = self.autosync.read().await;
-            let mode = *self.window_mode.read().await;
-            cadence_for_mode(&settings.pull, mode)
-        };
+        let cadence = pull_cadence(&self.autosync.read().await.pull);
         if let Some(last) = self.last_signalled.get(namespace)
             && now.duration_since(*last) < cadence
         {
@@ -271,9 +265,6 @@ mod tests {
                 crate::fswatcher::FsWatcherSettings::default(),
             )),
             autosync: Arc::new(tokio::sync::RwLock::new(autosync)),
-            window_mode: Arc::new(tokio::sync::RwLock::new(
-                crate::autopull::WindowMode::Focused,
-            )),
             reporter,
             signal_rx: rx,
             subscription,
