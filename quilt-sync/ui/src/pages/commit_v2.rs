@@ -484,13 +484,16 @@ pub fn MetadataEditorField(
     /// Changes when `metadata` was set from outside the editor.
     #[prop(optional, into)]
     fresh: Signal<u64>,
+    /// The editor's opening height, in px; at least the least the grip drags it to.
+    #[prop(optional)]
+    height: Option<i32>,
 ) -> impl IntoView {
     let failing = Signal::derive(move || error.get().is_some());
     let control_id = crate::kit::unique_id("metadata");
     let error_id = format!("{control_id}-error");
     let label_id = format!("{control_id}-label");
     // Here so a height the reader dragged to survives a reset.
-    let height = RwSignal::new(EDITOR_HEIGHT);
+    let height = RwSignal::new(height.map_or(EDITOR_HEIGHT, |h| dragged_height(h, 0)));
     let editor_ref = NodeRef::<leptos::html::Div>::new();
     let editor = {
         let control_id = control_id.clone();

@@ -4,6 +4,13 @@
  * groups them — and what seals them while a submit is in flight.
  */
 
+/* What the caller puts at the footer's start, pushed away from Cancel and the primary. */
+.start {
+  display: flex;
+  gap: var(--q-space-2);
+  margin-inline-end: auto;
+}
+
 .fields {
   display: flex;
   flex-direction: column;

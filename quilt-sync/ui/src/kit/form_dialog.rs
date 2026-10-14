@@ -113,6 +113,13 @@ pub fn FormDialog(
     /// True while the fields hold a value that cannot be sent; the field says why.
     #[prop(optional, into)]
     blocked: MaybeProp<bool>,
+    /// See [`Dialog`]'s own `wide`.
+    #[prop(optional)]
+    wide: bool,
+    /// Buttons at the footer's start, apart from Cancel and the primary, such as a reset.
+    /// Outside the form's fieldset, so a caller seals them itself.
+    #[prop(optional)]
+    footer_start: Option<AnyView>,
     /// The fields. Wrapped in the `<form>` when there is something to submit.
     children: Children,
 ) -> impl IntoView {
@@ -143,6 +150,7 @@ pub fn FormDialog(
         }
         .into_any();
         let footer = view! {
+            {footer_start.map(|start| view! { <div class=style::start>{start}</div> })}
             <Button
                 disabled=busy
                 on_click=move |_| open.set(false)
@@ -173,7 +181,7 @@ pub fn FormDialog(
         (body, footer)
     };
 
-    view! { <Dialog open=open title=title held=busy footer=footer>{body}</Dialog> }
+    view! { <Dialog open=open title=title held=busy wide=wide footer=footer>{body}</Dialog> }
 }
 
 #[cfg(test)]

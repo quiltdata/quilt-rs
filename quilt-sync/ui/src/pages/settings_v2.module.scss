@@ -77,23 +77,6 @@
   min-width: 0;
 }
 
-// *Reset to defaults*: a button, drawn as a link, because it changes the
-// fields and saves nothing.
-.link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--q-fgColor-accent);
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-.link:disabled {
-  color: var(--q-fgColor-disabled);
-  cursor: default;
-}
-
 // A name over its value, and an action at the trailing end, centred on the
 // two lines.
 .row {

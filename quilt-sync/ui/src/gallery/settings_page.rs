@@ -19,12 +19,14 @@
 //! at 608px; only the Data folder's path is cut short, with its whole path in
 //! the tooltip. No width scrolls sideways.
 //!
-//! The Publishing popup, with a workflow, metadata and so the warning, is
-//! 636px tall in a 1280×900 window. In a 640×560 one it is held to 528px and
-//! scrolls inside, Save under the fold. The editor's context menu reaches
-//! past the popup's edge at both sizes and is not cropped: a point just past
-//! the edge lands on the menu. Without the rule in `_base.scss` that frees
-//! the editor's menus from a modal's clip, it does not.
+//! The Publishing popup is a wide dialog, 640px, with the metadata editor
+//! opening at 260px. With a workflow, metadata and so the warning, it is
+//! 694px tall in a 1280×900 window. In a 640×560 one it is 606px wide, held
+//! to 528px tall, and scrolls inside, the buttons under the fold. Scrolled
+//! there so the editor's context menu reaches past the popup's lower edge,
+//! the menu is not cropped: a point just past the edge lands on it. Without
+//! the rule in `_base.scss` that frees the editor's menus from a modal's
+//! clip, it does not.
 //!
 //! # Left open
 //!
@@ -145,7 +147,7 @@ fn publishing(p: Publishing) -> AnyView {
 /// cell opens the real one.
 fn publishing_popup(p: Publishing, saving: bool) -> AnyView {
     view! {
-        <div class="g-bars g-dialog-inline">
+        <div class="g-bars g-dialog-inline g-dialog-inline--wide">
             <form>
                 <fieldset class="g-bars g-fieldset" disabled=saving>
                     <PublishingForm
@@ -158,6 +160,9 @@ fn publishing_popup(p: Publishing, saving: bool) -> AnyView {
                 </fieldset>
             </form>
             <div class="g-inline g-inline--end">
+                <span class="g-inline__start">
+                    <Button disabled=saving on_click=move |_| ()>"Reset to defaults"</Button>
+                </span>
                 <Button disabled=saving on_click=move |_| ()>"Cancel"</Button>
                 <Button
                     variant=ButtonVariant::Primary

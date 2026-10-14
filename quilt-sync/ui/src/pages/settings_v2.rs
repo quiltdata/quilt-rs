@@ -380,10 +380,27 @@ pub fn PublishingCard(
     }
 }
 
-/// The popup's fields: the template, the workflow, the metadata editor, the
-/// every-bucket warning, and *Reset to defaults*, which fills the fields with
-/// the defaults and saves nothing. Apart from the dialog so the gallery can
-/// draw them inline.
+/// The metadata editor's opening height in the popup: room for about a dozen
+/// lines of JSON.
+pub const PUBLISHING_EDITOR_HEIGHT: i32 = 260;
+
+/// *Reset to defaults*: fills the fields with the defaults (no template, no
+/// workflow, no metadata) and saves nothing, so Cancel undoes it.
+pub fn reset_publishing(
+    template: RwSignal<String>,
+    workflow: RwSignal<String>,
+    metadata: RwSignal<String>,
+    fresh: RwSignal<u64>,
+) {
+    template.set(String::new());
+    workflow.set(String::new());
+    metadata.set(String::new());
+    fresh.update(|n| *n += 1);
+}
+
+/// The popup's fields: the template, the workflow, the metadata editor and
+/// the every-bucket warning. Apart from the dialog so the gallery can draw
+/// them inline.
 #[component]
 pub fn PublishingForm(
     template: RwSignal<String>,
@@ -404,12 +421,6 @@ pub fn PublishingForm(
         metadata.with(|text| show_global_scope_warning(named, text))
     });
     let placeholders = format!("Placeholders: {}", PUBLISH_PLACEHOLDERS.join(" "));
-    let reset = move |_| {
-        template.set(String::new());
-        workflow.set(String::new());
-        metadata.set(String::new());
-        fresh.update(|n| *n += 1);
-    };
     view! {
         <FormControl
             label="Message template"
@@ -435,21 +446,18 @@ pub fn PublishingForm(
                 metadata=metadata
                 error=error
                 fresh=fresh
+                height=PUBLISHING_EDITOR_HEIGHT
             />
         </div>
         <Show when=move || warn.get()>
             <Banner variant=BannerVariant::Warning>{GLOBAL_SCOPE_WARNING}</Banner>
         </Show>
-        <div>
-            <button type="button" class=style::link on:click=reset>
-                "Reset to defaults"
-            </button>
-        </div>
     }
 }
 
-/// *Publishing*, as the modal **Edit…** opens: [`PublishingForm`] with Save
-/// and Cancel. Save is off while the metadata is not valid JSON. The fields
+/// *Publishing*, as the modal **Edit…** opens: [`PublishingForm`], wide for
+/// its editor, with *Reset to defaults* at the footer's start and Cancel and
+/// Save at its end. Save is off while the metadata is not valid JSON. The fields
 /// are the caller's draft; Cancel leaves them, and the caller fills them
 /// again on the next open.
 #[component]
@@ -478,6 +486,16 @@ where
             submit=Submit::new("Save", save)
             running=running
             blocked=blocked
+            wide=true
+            footer_start=view! {
+                <Button
+                    disabled=running
+                    on_click=move |_| reset_publishing(template, workflow, metadata, fresh)
+                >
+                    "Reset to defaults"
+                </Button>
+            }
+                .into_any()
         >
             <PublishingForm
                 template=template
@@ -1369,8 +1387,8 @@ mod tests {
         assert_eq!(focused.tag_name(), "TEXTAREA", "{}", el.inner_html());
     }
 
-    /// *Reset to defaults* empties the three fields and draws the editor
-    /// again over no metadata; it saves nothing, as nothing here can.
+    /// *Reset to defaults*, at the footer's start, empties the three fields
+    /// and draws the editor again over no metadata; it saves nothing.
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn reset_fills_the_defaults() {
         crate::test_support::unmount_earlier();
@@ -1378,23 +1396,36 @@ mod tests {
         let workflow = RwSignal::new("release".to_string());
         let metadata = RwSignal::new("{\"a\": 1}".to_string());
         let fresh = RwSignal::new(0);
+        let saves = RwSignal::new(0);
         let el = crate::test_support::mount(move || {
             view! {
-                <PublishingForm
+                <PublishingDialog
+                    open=RwSignal::new(true)
                     template=template
                     workflow=workflow
                     metadata=metadata
                     fresh=fresh
+                    save=move || async move {
+                        saves.update(|n| *n += 1);
+                        Ok(())
+                    }
                 />
             }
         });
         leptos::task::tick().await;
-        crate::test_support::button_saying(&el, "Reset to defaults").click();
+        let reset = crate::test_support::button_saying(&el, "Reset to defaults");
+        assert!(
+            reset.closest("form").unwrap().is_none(),
+            "in the footer, not the form"
+        );
+        assert_eq!(reset.get_attribute("type").as_deref(), Some("button"));
+        reset.click();
         leptos::task::tick().await;
         assert_eq!(template.get_untracked(), "");
         assert_eq!(workflow.get_untracked(), "");
         assert_eq!(metadata.get_untracked(), "");
         assert_eq!(fresh.get_untracked(), 1, "the editor is drawn again");
+        assert_eq!(saves.get_untracked(), 0, "nothing saved");
         let textarea: web_sys::HtmlTextAreaElement = wasm_bindgen::JsCast::dyn_into(
             el.query_selector("textarea")
                 .unwrap()
