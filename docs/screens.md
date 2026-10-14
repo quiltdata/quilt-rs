@@ -375,39 +375,40 @@ After either action -> **Installed Package**
 ### Commit (v2)
 
 With *New design preview* on, `/commit` renders this page instead, from the
-same read and through the same commands. One column, in the order you
-confirm; the file list goes last so a long list scrolls under the form.
+same read and through the same commands. The header and any banner span the
+page. From about a 1024px window, the form is on the left and the changed
+files on the right; narrower, it is one column with the files last.
 
 ```text
-+--[appbar]----------------------------------------------+
-| [logo]                                 [refresh] [gear] |
-+---------------------------------------------------------+
-| Packages > user/package-a                               |
-| New revision     [Publish 3 files | v] [Open folder]    |
-|                                                         |
-| [! 2 system files would be published (.DS_Store)]       |
-|                                     [Ignore them]       |
-| Message                                                 |
-| [ Updated 3 files: a.csv, b.csv, c.json (placeholder) ] |
-| Workflow                                                |
-| [ Bucket's default (Plate reads)                   v ]  |
-| Metadata                                       [Edit]   |
-| { "assay": "ELISA", "plate": 7 }                        |
-|                                                         |
-| What's included · 3 files · 8.5 MB  2 ignored files not |
-|                                               included  |
-| +-----------------------------------------------------+ |
-| | data/file-a.csv          Changed   4.2 MB   [...]   | |
-| | data/file-b.parquet      New       4.3 MB   [...]   | |
-| | data/file-c.json         Deleted   18.4 kB  [...]   | |
-| +-----------------------------------------------------+ |
-+---------------------------------------------------------+
++--[appbar]-------------------------------------------------------------------+
+| [logo]                                                     [refresh] [gear] |
++-----------------------------------------------------------------------------+
+| Packages > user/package-a                                                   |
+| New revision                         [Publish 3 files | v] [Open folder]    |
+|                                                                             |
+| [! 2 system files would be published (.DS_Store)]           [Ignore them]   |
+|                                                                             |
+| Message                              What's included · 3 files · 8.5 MB     |
+|                                                2 ignored files not included |
+| [ Updated 3 files: a.csv, ... ]      +-----------------------------------+  |
+| Workflow                             | data/file-a.csv  Changed 4.2 MB ..|  |
+| [ Bucket's default (Plate reads) v ] | data/file-b.parq New     4.3 MB ..|  |
+| Metadata  Edit                       | data/file-c.json Deleted 18 kB  ..|  |
+| v {                                  +-----------------------------------+  |
+|     assay: "ELISA"                                                          |
+|     plate: 7                                                                |
+|   }                                                                         |
++-----------------------------------------------------------------------------+
 ```
 
-- The rows scroll in their own box, which takes the height the form leaves,
-  so the header and its primary stay on screen however long the list is.
-  The box keeps a floor of two rows and a half; when the form leaves less
-  (the editor open in a short window), the whole page scrolls instead.
+- The rows scroll in their own box, so the header and its primary stay on
+  screen however long the list is. Wide, the box fills the right column.
+  Narrow, it takes the height the form leaves, with a floor of two rows and a
+  half; when the form leaves less (the editor open in a short window), the
+  whole page scrolls instead.
+- The rows have no checkboxes, so they have no leading column either.
+- With no file changes, the right column shows a file glyph over "No file
+  changes. This revision only updates metadata."
 - The primary reads `Publish N files`, or `Publish revision` when only
   metadata changed; its caret holds `Save without publishing`. A package
   with no bucket gets `Save revision` with no caret. N and the size count
@@ -418,8 +419,9 @@ confirm; the file list goes last so a long list scrolls under the form.
 - The message starts empty over the publish message as its placeholder;
   an empty message submits the placeholder.
 - The workflow is a live select, or plain words when there is nothing to
-  choose. The metadata is a read-only preview with `Edit` (`Add` when
-  empty), which opens the JSON editor; a failed metadata check opens it.
+  choose. The metadata is a read-only preview, one line per top-level field,
+  with `Edit` (`Add` when empty) right after its name, which opens the JSON
+  editor and becomes `Close editor`; a failed metadata check opens it.
   The bar under the editor drags it taller, and never shorter than it
   opens. Each says "From your publish settings" only while Settings supplied it.
 - A role without access, no session, or a failing workflow check disables

@@ -49,25 +49,25 @@ pub fn JsonDisplayStories() -> impl IntoView {
                   the line refits as the window narrows."
         >
             <Cell full=true label="folded, measured width — package metadata">
-                <JsonDisplay value=metadata() />
+                <JsonDisplay value=metadata() expanded=Expanded::None />
             </Cell>
-            <Cell full=true label="one level open">
+            <Cell full=true label="one level open — the default">
                 <JsonDisplay value=metadata() expanded=Expanded::Levels(1) />
             </Cell>
             <Cell full=true label="everything open — arrays are keyed by index, as in the catalog">
                 <JsonDisplay value=nested() expanded=Expanded::All />
             </Cell>
             <Cell full=true label="the catalog's 140 — everything fits">
-                <JsonDisplay value=nested() chars=printer(140.0) />
+                <JsonDisplay value=nested() chars=printer(140.0) expanded=Expanded::None />
             </Cell>
             <Cell full=true label="the catalog's 110 — the last nested value folds to <…2>">
-                <JsonDisplay value=nested() chars=printer(110.0) />
+                <JsonDisplay value=nested() chars=printer(110.0) expanded=Expanded::None />
             </Cell>
             <Cell full=true label="the catalog's 50 — nested values fold, and two keys drop off the end">
-                <JsonDisplay value=nested() chars=printer(50.0) />
+                <JsonDisplay value=nested() chars=printer(50.0) expanded=Expanded::None />
             </Cell>
             <Cell full=true label="keys only (show_values off): an object's line names its fields">
-                <JsonDisplay value=metadata() show_values=false />
+                <JsonDisplay value=metadata() show_values=false expanded=Expanded::None />
             </Cell>
             <Cell full=true label="URLs open through the caller, when it can — here, a no-op">
                 <JsonDisplay

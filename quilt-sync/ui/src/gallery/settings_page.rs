@@ -10,12 +10,12 @@
 //!
 //! At 1024×560 the header ends at 138px and the cards are two to a row, 488px
 //! wide and 16px apart; a row's two cards share its height. Rows start at
-//! Syncing | Accounts 154, Storage | App 498, Publishing | Troubleshooting 694,
-//! Experimental | About 1054. The first screen shows Syncing and Accounts.
+//! Syncing | Accounts 154, Storage | App 481, Publishing | Troubleshooting 677,
+//! Experimental | About 1001. The first screen shows Syncing and Accounts.
 //!
 //! At 1000×560, just under the switch, one column of 968px in the same order:
-//! Syncing 154, Accounts 477, Storage 713, App 909, Publishing 1057,
-//! Troubleshooting 1354, Experimental 1693, About 1821. At 640, the same order
+//! Syncing 154, Accounts 440, Storage 676, App 872, Publishing 1020,
+//! Troubleshooting 1323, Experimental 1623, About 1751. At 640, the same order
 //! at 608px; only the Data folder's path is cut short, with its whole path in
 //! the tooltip. No width scrolls sideways.
 //!
@@ -64,6 +64,11 @@ fn noop() -> Callback<()> {
 /// A card at the page column's width.
 fn column(card: AnyView) -> AnyView {
     view! { <div class="g-stack" style="max-width:992px">{card}</div> }.into_any()
+}
+
+/// A card at the column's width in the app's smallest window.
+fn narrow(card: AnyView) -> AnyView {
+    view! { <div class="g-stack" style="max-width:608px">{card}</div> }.into_any()
 }
 
 // ── Syncing ──
@@ -393,6 +398,16 @@ pub fn SettingsPageScene() -> impl IntoView {
             <Cell full=true label="Syncing — just saved: the row says so for a moment">
                 {column(syncing(Syncing { saved: Some(Saved::Pull), ..Syncing::default() }))}
             </Cell>
+            <Cell full=true label="Syncing — narrow, as in the smallest window: the minutes stay at the right edge">
+                {narrow(syncing(Syncing {
+                    publish: true,
+                    saved: Some(Saved::Publish),
+                    ..Syncing::default()
+                }))}
+            </Cell>
+            <Cell full=true label="Syncing — narrow, with an error">
+                {narrow(syncing(Syncing { publish_minutes: "1.5".to_string(), ..Syncing::default() }))}
+            </Cell>
             <Cell full=true label="Publishing — all defaults: each value says what happens instead">
                 {column(publishing(Publishing::default()))}
             </Cell>
@@ -496,6 +511,9 @@ pub fn SettingsPageScene() -> impl IntoView {
             </Cell>
             <Cell full=true label="Troubleshooting — the logs in a temporary folder">
                 {column(troubleshooting(LogEnv::Unset, "Default", true))}
+            </Cell>
+            <Cell full=true label="Troubleshooting — narrow, with the QUILT_LOG hint">
+                {narrow(troubleshooting(LogEnv::Overrides("quilt_rs=trace".to_string()), "Info", false))}
             </Cell>
             <Cell full=true label="About">
                 {column(view! { <AboutCard version=VERSION on_release_notes=noop() /> }.into_any())}

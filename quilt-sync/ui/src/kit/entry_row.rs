@@ -255,6 +255,10 @@ pub fn EntryRow(
     /// row: the box is its only occupant.
     #[prop(optional)]
     have_mark: bool,
+    /// No gutter and no box-shaped hole: for a list with no checkboxes at
+    /// all, so the name starts the row. Ignored on a selectable row.
+    #[prop(optional)]
+    plain: bool,
 ) -> impl IntoView {
     let full_name = path.unwrap_or_else(|| name.clone());
 
@@ -337,8 +341,8 @@ pub fn EntryRow(
                 on:focusin=focus_in
                 on:focusout=focus_out
             >
-                {gutter()}
-                {nobox(have_mark)}
+                {(!plain).then(gutter)}
+                {(!plain).then(|| nobox(have_mark))}
                 <button
                     type="button"
                     class=style::open
@@ -354,8 +358,8 @@ pub fn EntryRow(
         // Neither. Inert, and says so: no pointer, no hover target.
         None => view! {
             <div class=format!("{} {}", style::main, style::inert)>
-                {gutter()}
-                {nobox(have_mark)}
+                {(!plain).then(gutter)}
+                {(!plain).then(|| nobox(have_mark))}
                 <span class=style::name title=full_name>{name}</span>
                 {trailing()}
             </div>
@@ -433,6 +437,35 @@ mod tests {
     fn click(el: &web_sys::Element) {
         let el: web_sys::HtmlElement = el.clone().dyn_into().unwrap();
         el.click();
+    }
+
+    /// A plain row has neither the gutter nor the box-shaped hole, so its
+    /// name is the first thing in it.
+    #[wasm_bindgen_test]
+    fn a_plain_row_starts_with_its_name() {
+        let el = mount(|| view! { <EntryRow name="data/a.csv" size="1 kB" plain=true /> });
+        let main = el
+            .query_selector(&format!(".{}", style::main))
+            .unwrap()
+            .unwrap();
+        let first = main.first_element_child().unwrap();
+        assert_eq!(first.text_content().as_deref(), Some("data/a.csv"));
+    }
+
+    /// Without `plain`, the name keeps its place after the gutter and the hole.
+    #[wasm_bindgen_test]
+    fn a_row_keeps_its_leading_column_by_default() {
+        let el = mount(|| view! { <EntryRow name="data/a.csv" size="1 kB" /> });
+        assert!(
+            el.query_selector(&format!(".{}", style::gutter))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            el.query_selector(&format!(".{}", style::nobox))
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[wasm_bindgen_test]
