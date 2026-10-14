@@ -459,6 +459,8 @@ struct HeaderMenu {
     goto: RwSignal<Option<String>>,
     /// `package_uninstall` unless a test says otherwise.
     uninstall: Option<Uninstall>,
+    /// Notified once the bucket dialog has set the remote.
+    saved: Trigger,
 }
 
 impl HeaderMenu {
@@ -471,7 +473,41 @@ impl HeaderMenu {
             prune: RwSignal::new(true),
             goto,
             uninstall,
+            saved: Trigger::new(),
         }
+    }
+
+    /// Once the remote is set, read the page again and hold the lock until
+    /// that read lands. The answer on screen is the old bucket's, and a save
+    /// before the draft takes the new one's defaults would send the old ones.
+    fn hold_through_read(self) {
+        let PageHandle {
+            busy,
+            reload,
+            in_flight,
+            ..
+        } = self.page;
+        // 0: nothing asked; 1: asked, the read not seen yet; 2: it is out.
+        let waiting = RwSignal::new(0_u8);
+        Effect::new(move |first: Option<()>| {
+            self.saved.track();
+            if first.is_some() {
+                busy.set(true);
+                waiting.set(1);
+                reload.notify();
+            }
+        });
+        Effect::new(move |_| {
+            let out = in_flight.get();
+            match (waiting.get(), out) {
+                (1, true) => waiting.set(2),
+                (2, false) => {
+                    waiting.set(0);
+                    busy.set(false);
+                }
+                _ => {}
+            }
+        });
     }
 
     /// Opens the chosen command's dialog. The dialogs wait for the page's
@@ -488,12 +524,7 @@ impl HeaderMenu {
     /// The dialogs, for one answer. Changing the bucket re-reads the page;
     /// a refusal of either stays in its dialog.
     fn dialogs(self, d: &CommitData) -> AnyView {
-        let PageHandle {
-            busy,
-            outcome,
-            reload,
-            ..
-        } = self.page;
+        let PageHandle { busy, outcome, .. } = self.page;
         view! {
             <BucketDialog
                 open=self.bucket
@@ -503,7 +534,7 @@ impl HeaderMenu {
                 draft=self.draft
                 busy=busy
                 outcome=outcome
-                reload=reload
+                reload=self.saved
             />
             <RemoveDialog
                 open=self.remove
@@ -523,8 +554,9 @@ impl HeaderMenu {
 const IGNORE_FAILED: &str = "Could not ignore this file.";
 
 /// The live check's input: the message as it would be sent, the metadata
-/// as typed, and the named workflow, if one is selected.
-type LiveKey = (String, String, Option<String>);
+/// as typed, the named workflow, if one is selected, and the remote whose
+/// rules apply. A result for another remote is not this one's.
+type LiveKey = (String, String, Option<String>, Remote);
 
 /// The live check's backend: namespace, workflow id, whether to drop the
 /// package's cached rules first, message and metadata in, the violations out.
@@ -558,12 +590,12 @@ async fn check(
     rules: RulesCheck,
     loaded_for: StoredValue<Option<Remote>>,
 ) -> (LiveKey, Vec<CommitViolation>) {
-    let (message, metadata, workflow_id) = key.clone();
+    let (message, metadata, workflow_id, remote) = key.clone();
     let (Some(id), Some(fixed)) = (workflow_id, fixed) else {
         return (key, Vec::new());
     };
-    let refresh = loaded_for.try_get_value() != Some(Some(fixed.remote.clone()));
-    loaded_for.try_set_value(Some(fixed.remote.clone()));
+    let refresh = loaded_for.try_get_value() != Some(Some(remote.clone()));
+    loaded_for.try_set_value(Some(remote));
     // An emptied editor keeps the previous revision's metadata, so
     // that is what the check sees, as the commit gate does.
     let metadata = effective_metadata(&metadata, &fixed.previous_meta);
@@ -632,6 +664,7 @@ fn CommitScreen(
         }
     });
     let menu = HeaderMenu::new(page, goto, uninstall);
+    menu.hold_through_read();
 
     // ── Live validation, v1's ──
     let workflow_id = Memo::new(move |_| match draft.workflow.get() {
@@ -644,6 +677,7 @@ fn CommitScreen(
             effective_message(&draft.message.get(), &placeholder.unwrap_or_default()),
             draft.metadata.get(),
             workflow_id.get(),
+            form.with(|f| f.as_ref().and_then(|f| f.remote.clone())),
         )
     });
     let debounced = RwSignal::new(live_key.get_untracked());
@@ -1745,6 +1779,51 @@ mod tests {
 
         assert_eq!(BUCKET.get(), "other-bucket");
         assert!(!refused(&el), "markup was {}", el.inner_html());
+    }
+
+    /// [`on_two_buckets`], with every read after the first slow to land.
+    fn slow_after_first(ns: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        let first = READS.get() == 0;
+        let answer = on_two_buckets(ns);
+        Box::pin(async move {
+            if !first {
+                sleep_ms(300).await;
+            }
+            answer.await
+        })
+    }
+
+    /// Once the remote is set, the lock holds until the re-read lands: the
+    /// answer on screen until then is the old bucket's, and a save in that
+    /// window would send its defaults.
+    #[wasm_bindgen_test]
+    async fn a_set_remote_holds_the_lock_until_the_re_read_lands() {
+        READS.set(0);
+        let owner = Owner::new();
+        let (page, answer, menu) = owner.with(|| {
+            let page = PageHandle::new();
+            let ns = Memo::new(|_| "org/pkg".to_string());
+            let answer = page.read(ns, slow_after_first);
+            let menu = HeaderMenu::new(page, RwSignal::new(None), None);
+            menu.hold_through_read();
+            (page, answer, menu)
+        });
+        let bucket = move || match answer.get_untracked() {
+            Some(Ok(d)) => d.uri.map(|u| u.bucket),
+            _ => None,
+        };
+        sleep_ms(50).await;
+        assert_eq!(bucket().as_deref(), Some("team-bucket"));
+
+        menu.saved.notify();
+        sleep_ms(100).await;
+        assert!(page.busy.get_untracked(), "held while the re-read is out");
+        assert_eq!(bucket().as_deref(), Some("team-bucket"));
+
+        sleep_ms(400).await;
+        assert_eq!(bucket().as_deref(), Some("other-bucket"));
+        assert!(!page.busy.get_untracked(), "released once it landed");
+        drop(owner);
     }
 
     fn entry(path: &str, status: &str) -> EntryData {
