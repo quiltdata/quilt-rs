@@ -548,6 +548,9 @@ impl HeaderMenu {
 
 const IGNORE_FAILED: &str = "Could not ignore this file.";
 
+/// How long typing pauses before the live check runs.
+const CHECK_PAUSE_MS: u64 = 400;
+
 /// The live check's input: the message as it would be sent, the metadata
 /// as typed, the named workflow, if one is selected, and the remote whose
 /// rules apply. A result for another remote is not this one's.
@@ -685,9 +688,10 @@ fn CommitScreen(
         if let Some(handle) = timer.get_value() {
             handle.clear();
         }
-        if let Ok(handle) =
-            set_timeout_with_handle(move || debounced.set(key), Duration::from_millis(400))
-        {
+        if let Ok(handle) = set_timeout_with_handle(
+            move || debounced.set(key),
+            Duration::from_millis(CHECK_PAUSE_MS),
+        ) {
             timer.set_value(Some(handle));
         }
     });
@@ -1725,6 +1729,11 @@ mod tests {
         Box::pin(async move { violations })
     }
 
+    /// Past the live check's pause, with time for the check to land.
+    fn past_the_pause() -> i32 {
+        i32::try_from(CHECK_PAUSE_MS).unwrap() + 200
+    }
+
     /// Two buckets can name the same workflow and hold different rules for
     /// it. After the bucket changes, the check runs on the new bucket's.
     #[wasm_bindgen_test]
@@ -1756,8 +1765,7 @@ mod tests {
                 </Router>
             }
         });
-        // Past the check's debounce.
-        sleep_ms(600).await;
+        sleep_ms(past_the_pause()).await;
         let refused = |el: &web_sys::Element| {
             el.text_content()
                 .unwrap_or_default()
@@ -1770,9 +1778,10 @@ mod tests {
         );
 
         crate::test_support::element_saying(&el, "Refresh").click();
-        sleep_ms(200).await;
+        sleep_ms(past_the_pause()).await;
 
         assert_eq!(BUCKET.get(), "other-bucket");
+        assert_eq!(CACHED.get(), "other-bucket", "the rules were read again");
         assert!(!refused(&el), "markup was {}", el.inner_html());
     }
 
