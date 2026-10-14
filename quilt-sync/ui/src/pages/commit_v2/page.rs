@@ -287,6 +287,7 @@ pub(crate) const CHOOSE_A_WORKFLOW: &str =
 #[derive(Clone, Debug, PartialEq)]
 struct Form {
     namespace: String,
+    remote: Remote,
     placeholder: String,
     previous_meta: String,
     settings_meta: Option<String>,
@@ -322,6 +323,7 @@ impl Form {
         let choosable = matches!(d.workflows, CommitWorkflows::Available { .. });
         Self {
             namespace: d.namespace.to_string(),
+            remote: remote_of(d),
             placeholder: d.message.clone(),
             previous_meta: d.user_meta.clone(),
             settings_meta: d.settings_user_meta.clone(),
@@ -377,15 +379,17 @@ struct Draft {
     editing: RwSignal<bool>,
     /// The package the draft was seeded for.
     seeded: StoredValue<Option<String>>,
-    /// The remote it was seeded for, from [`remote_of`].
-    remote: StoredValue<Option<(Option<String>, String)>>,
+    /// The remote it was seeded for.
+    remote: StoredValue<Remote>,
     /// The metadata it was seeded with: the reader edited it if it differs.
     started: StoredValue<String>,
 }
 
-/// A package's remote, catalog and bucket, without the revision it points at:
-/// a save moves that, and is not a new bucket.
-fn remote_of(d: &CommitData) -> Option<(Option<String>, String)> {
+/// A package's remote: catalog and bucket, without the revision it points at,
+/// which a save moves.
+type Remote = Option<(Option<String>, String)>;
+
+fn remote_of(d: &CommitData) -> Remote {
     d.uri.as_ref().map(|u| {
         (
             u.catalog.as_ref().map(ToString::to_string),
@@ -522,32 +526,48 @@ const IGNORE_FAILED: &str = "Could not ignore this file.";
 /// as typed, and the named workflow, if one is selected.
 type LiveKey = (String, String, Option<String>);
 
-/// One run of the live check, v1's: load the workflow's rules (refreshing
-/// them on the visit's first load), then check the candidate against them.
+/// The live check's backend: namespace, workflow id, whether to drop the
+/// package's cached rules first, message and metadata in, the violations out.
+/// A parameter so a test can answer without a Tauri host.
+pub(crate) type RulesCheck =
+    fn(String, String, bool, String, String) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>>;
+
+/// v1's: load the workflow's rules, then check the candidate against them.
+fn check_rules(
+    namespace: String,
+    id: String,
+    refresh: bool,
+    message: String,
+    metadata: String,
+) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>> {
+    Box::pin(async move {
+        let _ = commands::load_workflow_rules(namespace.clone(), id.clone(), refresh).await;
+        commands::validate_commit_candidate(namespace.clone(), id, message, metadata, namespace)
+            .await
+            .unwrap_or_default()
+    })
+}
+
+/// One run of the live check. The backend caches rules by package and
+/// workflow id, not by bucket, so it is told to read them again on the
+/// visit's first check and after the remote changes: two buckets can name
+/// the same workflow and hold different rules for it.
 async fn check(
     key: LiveKey,
     fixed: Option<Form>,
-    first_load: StoredValue<bool>,
+    rules: RulesCheck,
+    loaded_for: StoredValue<Option<Remote>>,
 ) -> (LiveKey, Vec<CommitViolation>) {
     let (message, metadata, workflow_id) = key.clone();
     let (Some(id), Some(fixed)) = (workflow_id, fixed) else {
         return (key, Vec::new());
     };
-    let refresh = first_load.try_get_value().unwrap_or(false);
-    first_load.try_set_value(false);
-    let _ = commands::load_workflow_rules(fixed.namespace.clone(), id.clone(), refresh).await;
+    let refresh = loaded_for.try_get_value() != Some(Some(fixed.remote.clone()));
+    loaded_for.try_set_value(Some(fixed.remote.clone()));
     // An emptied editor keeps the previous revision's metadata, so
     // that is what the check sees, as the commit gate does.
     let metadata = effective_metadata(&metadata, &fixed.previous_meta);
-    let violations = commands::validate_commit_candidate(
-        fixed.namespace.clone(),
-        id,
-        message,
-        metadata,
-        fixed.namespace,
-    )
-    .await
-    .unwrap_or_default();
+    let violations = rules(fixed.namespace, id, refresh, message, metadata).await;
     (key, violations)
 }
 
@@ -563,6 +583,9 @@ fn CommitScreen(
     /// `package_uninstall` unless a test says otherwise.
     #[prop(optional_no_strip)]
     uninstall: Option<Uninstall>,
+    /// [`check_rules`] unless a test says otherwise.
+    #[prop(optional_no_strip)]
+    rules: Option<RulesCheck>,
 ) -> impl IntoView {
     let query = use_query_map();
     let ns = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
@@ -644,9 +667,9 @@ fn CommitScreen(
             handle.clear();
         }
     });
-    // The first load of this visit refreshes the backend's rules cache, so a
-    // config changed since the last visit is read again.
-    let first_load = StoredValue::new(true);
+    // The remote the backend's rules were last read for; see `check`.
+    let loaded_for = StoredValue::new(None::<Remote>);
+    let rules = rules.unwrap_or(check_rules);
     let validation = RwSignal::new(None::<(LiveKey, Vec<CommitViolation>)>);
     let checks = StoredValue::new(0_u64);
     Effect::new(move |_| {
@@ -655,7 +678,7 @@ fn CommitScreen(
         checks.update_value(|n| *n += 1);
         let this = checks.get_value();
         leptos::task::spawn_local(async move {
-            let answer = check(key, fixed, first_load).await;
+            let answer = check(key, fixed, rules, loaded_for).await;
             if checks.try_get_value() == Some(this) {
                 validation.try_set(Some(answer));
             }
@@ -1607,6 +1630,121 @@ mod tests {
             "the new settings metadata; markup was {}",
             el.inner_html()
         );
+    }
+
+    thread_local! {
+        /// The bucket [`on_two_buckets`] answered last.
+        static BUCKET: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+        /// The bucket whose rules [`cached_rules`] holds.
+        static CACHED: std::cell::Cell<&'static str> = const { std::cell::Cell::new("") };
+    }
+
+    /// The package on `team-bucket`, then on `other-bucket`. Both name the
+    /// same workflow.
+    fn on_two_buckets(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        let read = READS.get();
+        READS.set(read + 1);
+        let bucket = if read == 0 {
+            "team-bucket"
+        } else {
+            "other-bucket"
+        };
+        BUCKET.set(bucket);
+        let mut d = commit_data();
+        d.uri = Some(
+            quilt_uri::S3PackageUri::try_from(
+                format!("quilt+s3://{bucket}#package=org/pkg&catalog=quilt.test").as_str(),
+            )
+            .unwrap(),
+        );
+        d.workflows = CommitWorkflows::Available {
+            workflows: vec![commands::WorkflowInfo {
+                id: "plates".to_string(),
+                name: Some("Plates".to_string()),
+                description: None,
+                metadata_schema_url: None,
+                entries_schema_url: None,
+            }],
+            default_workflow: Some("plates".to_string()),
+            is_workflow_required: false,
+            config_url: None,
+        };
+        Box::pin(async move { Ok(d) })
+    }
+
+    /// The backend's cache, keyed as it is by package and workflow: rules
+    /// are read for the current bucket only when asked to refresh, or when
+    /// none are held. `team-bucket`'s refuse every candidate.
+    fn cached_rules(
+        _: String,
+        _: String,
+        refresh: bool,
+        _: String,
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>> {
+        if refresh || CACHED.get().is_empty() {
+            CACHED.set(BUCKET.get());
+        }
+        let violations = if CACHED.get() == "team-bucket" {
+            vec![CommitViolation {
+                field: ViolationField::Metadata,
+                message: "team-bucket's rules refuse this".to_string(),
+            }]
+        } else {
+            Vec::new()
+        };
+        Box::pin(async move { violations })
+    }
+
+    /// Two buckets can name the same workflow and hold different rules for
+    /// it. After the bucket changes, the check runs on the new bucket's.
+    #[wasm_bindgen_test]
+    async fn a_new_bucket_s_rules_apply_to_the_same_workflow() {
+        READS.set(0);
+        CACHED.set("");
+        unmount_earlier();
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(
+                &wasm_bindgen::JsValue::NULL,
+                "",
+                Some("/commit?namespace=org%2Fpkg"),
+            )
+            .unwrap();
+        let el = mount(|| {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/commit")
+                            view=|| {
+                                view! { <CommitScreen read=on_two_buckets rules=Some(cached_rules) /> }
+                            }
+                        />
+                    </Routes>
+                </Router>
+            }
+        });
+        // Past the check's debounce.
+        sleep_ms(600).await;
+        let refused = |el: &web_sys::Element| {
+            el.text_content()
+                .unwrap_or_default()
+                .contains("team-bucket's rules refuse this")
+        };
+        assert!(
+            refused(&el),
+            "the first bucket's rules; markup was {}",
+            el.inner_html()
+        );
+
+        crate::test_support::element_saying(&el, "Refresh").click();
+        sleep_ms(200).await;
+
+        assert_eq!(BUCKET.get(), "other-bucket");
+        assert!(!refused(&el), "markup was {}", el.inner_html());
     }
 
     fn entry(path: &str, status: &str) -> EntryData {
