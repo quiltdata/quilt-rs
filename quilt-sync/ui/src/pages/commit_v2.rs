@@ -484,7 +484,7 @@ pub fn MetadataEditorField(
     /// Changes when `metadata` was set from outside the editor.
     #[prop(optional, into)]
     fresh: Signal<u64>,
-    /// The editor's opening height, in px; at least the least the grip drags it to.
+    /// The editor's opening height, in px. The grip's lower limit still applies.
     #[prop(optional)]
     height: Option<i32>,
 ) -> impl IntoView {

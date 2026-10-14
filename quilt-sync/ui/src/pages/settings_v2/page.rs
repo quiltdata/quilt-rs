@@ -838,10 +838,10 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             let (reply, answer) = reply();
             saves.push(None, Write::Publishing(draft), Some(reply), io, page);
             let answer = hold(busy, outcome, answer).await;
-            if answer.is_err() {
+            answer.map_err(|detail| {
                 written.publishing.try_set(before);
-            }
-            answer
+                format!("{SAVE_FAILED} {detail}")
+            })
         }
     };
 
@@ -1894,18 +1894,18 @@ mod tests {
             dialog
                 .text_content()
                 .unwrap_or_default()
-                .contains("disk full"),
-            "{}",
+                .contains(&format!("{SAVE_FAILED} disk full")),
+            "says what failed, then why: {}",
             dialog.inner_html()
         );
         assert_eq!(labelled(&dialog, "Default workflow").value(), "release");
         assert!(!button_saying(&dialog, "Save").disabled(), "still to save");
         assert!(card(&el).contains("Each bucket's default"), "{}", card(&el));
-        assert_eq!(
-            alert(&el).filter(|a| a.contains(SAVE_FAILED)),
-            None,
-            "not in the band"
-        );
+        let alerts = el.query_selector_all("[role=alert]").unwrap();
+        let in_band = (0..alerts.length())
+            .map(|i| alerts.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .any(|a| a.closest("dialog").unwrap().is_none());
+        assert!(!in_band, "not in the band");
     }
 
     /// The test handles around Accounts, Storage and Publishing add no box, so each card
