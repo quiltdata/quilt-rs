@@ -430,6 +430,8 @@ fn offered(rows: &[Row]) -> Vec<String> {
 pub enum RowCommand {
     /// Open the local file in its default application.
     Open(String),
+    /// Show the local file in the system's file browser.
+    Reveal(String),
     OpenInCatalog(String),
     /// The file's `quilt+s3` address, as `util::file_uri` builds it.
     CopyUri(String),
@@ -452,6 +454,7 @@ impl RowCommand {
     pub const fn label(&self) -> &'static str {
         match self {
             Self::Open(_) => "Open file",
+            Self::Reveal(_) => "Reveal in folder",
             Self::OpenInCatalog(_) => "Open in catalog",
             Self::CopyUri(_) => "Copy URI",
             Self::CopyPath(_) => "Copy path",
@@ -465,6 +468,7 @@ impl RowCommand {
     pub fn path(&self) -> &str {
         match self {
             Self::Open(path)
+            | Self::Reveal(path)
             | Self::OpenInCatalog(path)
             | Self::CopyUri(path)
             | Self::CopyPath(path)
@@ -533,10 +537,10 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
     })
 }
 
-/// The items a row offers, in their fixed order: open, catalog, copy, then the
-/// `.quiltignore` item. v1's entries form gates its buttons the same way, but
-/// Ignore is on every row: the pane does not read `junky_pattern`, and the
-/// popup is prefilled with the path instead.
+/// The items a row offers, in their fixed order: open, reveal, catalog, copy,
+/// then the `.quiltignore` item. v1's entries form gates its buttons the same
+/// way, but Ignore is on every row: the pane does not read `junky_pattern`, and
+/// the popup is prefilled with the path instead.
 fn row_commands(
     path: &str,
     place: Place,
@@ -555,6 +559,7 @@ fn row_commands(
     let mut commands = Vec::new();
     if matches!(place, Place::Here | Place::Changed | Place::New) {
         commands.push(RowCommand::Open(path.clone()));
+        commands.push(RowCommand::Reveal(path.clone()));
     }
     // The catalog shows the published file, which a changed or new row's local
     // bytes are not.
@@ -1577,10 +1582,22 @@ mod menu_tests {
         let all = |status| labels(status, None, true, true);
         assert_eq!(
             all("pristine"),
-            ["Open file", "Open in catalog", "Copy URI", "Ignore"]
+            [
+                "Open file",
+                "Reveal in folder",
+                "Open in catalog",
+                "Copy URI",
+                "Ignore"
+            ]
         );
-        assert_eq!(all("modified"), ["Open file", "Copy URI", "Ignore"]);
-        assert_eq!(all("added"), ["Open file", "Copy path", "Ignore"]);
+        assert_eq!(
+            all("modified"),
+            ["Open file", "Reveal in folder", "Copy URI", "Ignore"]
+        );
+        assert_eq!(
+            all("added"),
+            ["Open file", "Reveal in folder", "Copy path", "Ignore"]
+        );
         assert_eq!(all("deleted"), ["Copy URI", "Ignore"]);
         assert_eq!(all("remote"), ["Open in catalog", "Copy URI", "Ignore"]);
     }
@@ -1615,15 +1632,15 @@ mod menu_tests {
     fn the_catalog_and_the_address_need_the_package_to_have_them() {
         assert_eq!(
             labels("pristine", None, true, false),
-            ["Open file", "Copy URI", "Ignore"]
+            ["Open file", "Reveal in folder", "Copy URI", "Ignore"]
         );
         assert_eq!(
             labels("pristine", None, false, false),
-            ["Open file", "Ignore"]
+            ["Open file", "Reveal in folder", "Ignore"]
         );
         assert_eq!(
             labels("added", None, false, false),
-            ["Open file", "Copy path", "Ignore"]
+            ["Open file", "Reveal in folder", "Copy path", "Ignore"]
         );
     }
 
@@ -1642,6 +1659,7 @@ mod menu_tests {
             ),
             [
                 RowCommand::Open("raw/a.csv".to_string()),
+                RowCommand::Reveal("raw/a.csv".to_string()),
                 RowCommand::CopyPath("raw/a.csv".to_string()),
                 RowCommand::Ignore("raw/a.csv".to_string()),
             ]
@@ -1757,7 +1775,13 @@ mod menu_pane_tests {
             .collect();
         assert_eq!(
             words,
-            ["Open file", "Open in catalog", "Copy URI", "Ignore"]
+            [
+                "Open file",
+                "Reveal in folder",
+                "Open in catalog",
+                "Copy URI",
+                "Ignore"
+            ]
         );
         item(&items, "Copy URI").click();
         assert_eq!(

@@ -472,9 +472,9 @@ impl Confirm {
 ///
 /// §6 owes this — *"the menu must be gated the same way, or it offers `Open
 /// file` on a file that is not there"* — and gating turns one list into four.
-/// Two items exist for one state each: `Open file` wants something on disk, and
-/// `Stop keeping` wants bytes to delete, which a `Deleted` or `Missing` row has
-/// none of.
+/// Three items exist for one state each: `Open file` and `Reveal in folder` want
+/// something on disk, and `Stop keeping` wants bytes to delete, which a
+/// `Deleted` or `Missing` row has none of.
 ///
 /// `Stop ignoring` is not in §3's list at all, although the `Ignored` facet is
 /// the view that reaches it and v1 has the popup. A menu that can ignore and
@@ -483,6 +483,7 @@ fn menu(mark: Mark, subject: String, confirm: Confirm) -> Vec<MenuAction> {
     let mut items = Vec::new();
     if mark.local() {
         items.push(MenuAction::new("Open file", Callback::new(|()| ())));
+        items.push(MenuAction::new("Reveal in folder", Callback::new(|()| ())));
     }
     items.push(MenuAction::new("Open in catalog", Callback::new(|()| ())));
     items.push(MenuAction::new("Copy URI", Callback::new(|()| ())));
