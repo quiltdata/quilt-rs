@@ -38,11 +38,9 @@ pub fn TwoColumnsStories() -> impl IntoView {
         <Story
             title="TwoColumns"
             note="A page's regions two to a row while each column gets the page's minimum, \
-                  and in one column below that, in the same order: left to right, top to \
-                  bottom. Here the minimum is Settings' 480px, so with the 16px gap it is two \
-                  columns from 976px of its own width, a 1024px window. A row's two cards \
-                  share its height, so each row has one bottom edge. What is drawn, read and \
-                  reached by Tab is one order at every width."
+                  and one column below that, in the same order. These cells use Settings' \
+                  minimum: the narrowest width with two columns, then a pixel narrower. A \
+                  row's two cards share its height."
         >
             <Cell full=true label="976px — rows of two">
                 {layout(976)}

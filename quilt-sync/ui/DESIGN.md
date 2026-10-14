@@ -379,9 +379,8 @@ in exactly one place.
 
 The window is at least 640px wide. Regions that sit side by side when there is
 room use the kit's `TwoColumns`: two to a row while each gets the minimum width
-the page gives, one column below it. Settings gives 480px, so it is two columns
-from a 1024px window; the main page's state strip gives 300px, so it stacks
-below about 644px. Both are the same order, left to right and top to bottom, so
+the page gives, one column below it. Settings and the main page's state strip
+use it. Both are the same order, left to right and top to bottom, so
 what is drawn, read and reached by Tab never disagree, and a row's two cards
 share its height.
 

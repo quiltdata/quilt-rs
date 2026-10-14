@@ -432,10 +432,9 @@ pub(super) fn list_class() -> &'static str {
     style::list
 }
 
-/// The state strip: Autosync beside Accounts while each card gets 300px, so
-/// they stack below about a 644px window. The two share the taller one's
-/// height, so the strip has one bottom edge; sizing each to its contents
-/// would leave a ragged edge under a one-host Accounts card.
+/// The state strip: Autosync beside Accounts, or stacked when the window is
+/// too narrow for both. The cards share one height, so the strip has one
+/// bottom edge even when Accounts has a single host.
 #[component]
 pub fn StateStrip(children: Children) -> impl IntoView {
     view! {

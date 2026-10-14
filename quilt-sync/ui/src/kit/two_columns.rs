@@ -1,27 +1,15 @@
-//! A page's regions in rows of two on a wide page, one column on a narrow one.
+//! A page's regions in rows of two, or in one column when the page is narrow.
 //!
-//! # Rows, and one order
+//! The regions stay in the DOM in reading order and nothing moves them, so
+//! what is drawn, what a screen reader reads and what Tab reaches are one
+//! order at every width. The two regions in a row share its height.
 //!
-//! The regions fill the rows left to right, top to bottom, and narrow they
-//! are the same sequence in one column. So what is drawn, what a screen
-//! reader reads and what Tab reaches are one order at every width, and a page
-//! chooses its layout by the order of its children alone. The two regions in
-//! a row share its height, so each row has one bottom edge.
+//! The page passes the narrowest a column may be. The switch depends on the
+//! layout's own width, not the window's, so a gallery cell behaves like a
+//! window of its width.
 //!
-//! # Where it switches
-//!
-//! The page says how narrow a column may get: two columns while each gets at
-//! least `min_column` px, one column otherwise, and never more than two. The
-//! rule works on the layout's own width rather than the viewport's, so a
-//! gallery cell, which is not the window, answers for the room it has. See
-//! `two_columns.module.scss` for the rule.
-//!
-//! # Filling the height
-//!
-//! With `fill_height` the layout takes the height its parent's flex column
-//! leaves. Wide, its one row fills it, so a region can scroll inside its own
-//! box. Narrow, the first row is as tall as its region and the second takes
-//! the rest.
+//! With `fill_height` the layout fills its parent's flex column, so a region
+//! can scroll inside its own box.
 
 use leptos::prelude::*;
 
@@ -29,13 +17,13 @@ stylance::import_crate_style!(style, "src/kit/two_columns.module.scss");
 
 #[component]
 pub fn TwoColumns(
-    /// The narrowest a column may be, in px. Below twice this plus the gap,
-    /// the regions are one column.
+    /// The narrowest a column may be, in px. When two of them and the gap
+    /// don't fit, the regions are one column.
     min_column: u32,
-    /// The 12px gap the main page's state strip has, instead of 16px.
+    /// The smaller gap, as on the main page's state strip.
     #[prop(optional)]
     tight: bool,
-    /// Take the height the parent's flex column leaves; see the module docs.
+    /// Fill the height the parent's flex column leaves.
     #[prop(optional)]
     fill_height: bool,
     /// The regions, in reading order: wide, two to a row.
@@ -123,8 +111,8 @@ mod tests {
         drawn.iter().all(|b| b.0 == drawn[0].0) && drawn.windows(2).all(|w| w[0].1 < w[1].1)
     }
 
-    /// Settings' minimum: two columns from 2 × 480 + the 16px gap, one column
-    /// a pixel under, top to bottom in the DOM's order.
+    /// Two columns when two minimums and the gap fit, one column a pixel
+    /// narrower.
     #[wasm_bindgen_test]
     #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
     async fn switches_where_two_minimums_and_the_gap_fit() {
@@ -137,8 +125,7 @@ mod tests {
         assert_eq!(b.0 - a.0, 496.0, "976: a 16px gap: {drawn:?}");
     }
 
-    /// The strip's minimum and its 12px gap: two columns from 612px, so the
-    /// strip stacks below a 644px window as it did before it used the layout.
+    /// The tight gap counts in the switch too.
     #[wasm_bindgen_test]
     #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
     async fn tight_gap_moves_the_switch_with_it() {
@@ -151,7 +138,7 @@ mod tests {
         assert_eq!(b.0 - a.0, 312.0, "612: a 12px gap: {drawn:?}");
     }
 
-    /// However wide, two columns, never three.
+    /// However wide, never three columns.
     #[wasm_bindgen_test]
     #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
     async fn never_more_than_two_columns() {
@@ -161,8 +148,7 @@ mod tests {
         assert_eq!((c.0, d.0), (a.0, b.0), "c and d under a and b: {drawn:?}");
     }
 
-    /// Narrower than one minimum, the one column still fits: nothing
-    /// overflows sideways.
+    /// Narrower than one minimum, the one column still fits the layout.
     #[wasm_bindgen_test]
     #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
     async fn narrower_than_the_minimum_still_fits() {
@@ -185,8 +171,8 @@ mod tests {
         assert_eq!(c.1, d.1, "c and d share a row");
     }
 
-    /// A form and a long list, in a 400px flex column, the layout filling it.
-    /// The list region scrolls its rows in a box of its own.
+    /// A form and a long list in a flex column of fixed height. The list
+    /// region scrolls its rows in a box of its own.
     async fn filled(width: u32) -> web_sys::Element {
         load_stylesheet();
         let el = mount(move || {
@@ -211,8 +197,8 @@ mod tests {
         el
     }
 
-    /// Wide, the one row takes the 400px, and the long list scrolls inside
-    /// it instead of growing the row.
+    /// Wide, the one row takes the parent's height, and the long list
+    /// scrolls inside it instead of growing the row.
     #[wasm_bindgen_test]
     #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
     async fn fill_height_wide_is_one_row_the_height_of_the_parent() {

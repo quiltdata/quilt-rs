@@ -2,21 +2,12 @@
  * A page's regions in rows of two, or in one column.
  */
 
-/* Two columns while each gets at least `--two-columns-min`, else one.
+/* Each track is at least `--two-columns-min` wide and at least half the row
+ * less the gap, so one or two tracks fit, never three. `min(100%, …)` keeps
+ * one column inside a layout narrower than the minimum. The percentages are
+ * of the layout's own width.
  *
- * A track is never narrower than half the row less the gap, so no more than
- * two fit, and never narrower than the minimum, so two fit only from twice
- * it plus the gap. `auto-fit` then makes as many tracks as fit, one or two,
- * and `1fr` lets them share what is left. The outer `min(100%, …)` keeps one
- * column inside a layout narrower than the minimum.
- *
- * The percentages are of the layout's own width, not the window's, so a
- * gallery cell behaves as a window of its width. Settings passes 480: with
- * the 16px gap that is 976px of its own width, a 1024px window less the page
- * column's 16px a side and about 16 for a classic scrollbar.
- *
- * A grid row is as tall as its taller region and both stretch to it, so each
- * row has one bottom edge. */
+ * A grid row is as tall as its taller region and both stretch to it. */
 .grid {
   --two-columns-gap: var(--q-space-4);
   display: grid;
@@ -27,19 +18,17 @@
   gap: var(--two-columns-gap);
 }
 
-/* The main page's state strip has always had 12px between its cards. */
 .tight {
   --two-columns-gap: var(--q-space-3);
 }
 
-/* Fill the parent's flex column. `min-height: 0` lets the layout be shorter
- * than its content, so a long list scrolls in its region rather than growing
- * the page; below a region's own floor the page scrolls instead.
+/* `min-height: 0` lets the layout be shorter than its content, so a long
+ * region scrolls in its own box instead of making the page taller.
  *
- * The first row is `auto`: alone, as on a wide page, it stretches to the
- * height, since a grid stretches its `auto` rows into free space. Narrow, the
- * rows after it are `1fr` and take that space first, so the first region keeps
- * its own height and the last gets the rest. */
+ * The first row is `auto` and the rest are `1fr`. Wide, there is one row, and
+ * a grid stretches an `auto` row to fill its height. Narrow, the `1fr` rows
+ * take the free space first, so the first region keeps its own height and the
+ * last one gets the rest. */
 .fill {
   flex: 1 1 auto;
   min-height: 0;
