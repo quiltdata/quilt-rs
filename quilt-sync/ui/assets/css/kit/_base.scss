@@ -119,3 +119,16 @@ svg {
   white-space: nowrap;
   border: 0;
 }
+
+/* The metadata editor's menus, inside a modal. The editor draws them
+ * `position: absolute` from a zero-size anchor of its own, so a modal's
+ * `overflow: auto` crops them at its edges. Fixed at the viewport's corner, the
+ * anchor leaves the modal's clip, and the editor still places the menu right:
+ * it measures the anchor and offsets from it. Global by necessity: the class is
+ * the editor's, outside any module. Doubled to outrank the editor's own
+ * scoped rule. */
+dialog .jse-absolute-popup.jse-absolute-popup {
+  position: fixed;
+  top: 0;
+  left: 0;
+}

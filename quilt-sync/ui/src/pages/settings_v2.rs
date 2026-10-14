@@ -5,14 +5,16 @@
 //! where each card goes.
 //!
 //! Toggles, selects and minute fields save as they change, and the row says
-//! *Saved* for a moment ([`Saved`]). Publishing alone has a Save button,
-//! because its metadata must be valid JSON before anything is written.
+//! *Saved* for a moment ([`Saved`]). Publishing alone is edited in a popup
+//! with Save, because its metadata must be valid JSON before anything is
+//! written.
 
 use std::future::Future;
 
 use leptos::prelude::*;
 
 use crate::commands::LogEnv;
+use crate::commands::PublishSettingsData;
 use crate::kit::BackLink;
 use crate::kit::Banner;
 use crate::kit::BannerVariant;
@@ -23,7 +25,9 @@ use crate::kit::Card;
 use crate::kit::ConfirmDialog;
 use crate::kit::Dialog;
 use crate::kit::FormControl;
+use crate::kit::FormDialog;
 use crate::kit::HostRow;
+use crate::kit::JsonDisplay;
 use crate::kit::LoadFailure;
 use crate::kit::Naming;
 use crate::kit::NumberInput;
@@ -37,7 +41,7 @@ use crate::kit::ToggleRow;
 use crate::kit::TwoColumns;
 use crate::util::format_size;
 
-use super::commit_v2::MetadataField;
+use super::commit_v2::{MetadataEditorField, MetadataPreview};
 
 stylance::import_crate_style!(style, "src/pages/settings_v2.module.scss");
 
@@ -197,7 +201,7 @@ pub fn SettingsHeader(
 
 /// The page's cards, in rows of two on a wide window: Syncing and Accounts,
 /// the two the main page's strip shows, then Storage and App, Publishing and
-/// Help, Experimental and About. Narrow, the same order in one column.
+/// Troubleshooting, Experimental and About. Narrow, the same order in one column.
 #[component]
 pub fn SettingsLayout(
     header: AnyView,
@@ -207,7 +211,7 @@ pub fn SettingsLayout(
     app: AnyView,
     storage: AnyView,
     experimental: AnyView,
-    help: AnyView,
+    troubleshooting: AnyView,
     about: AnyView,
 ) -> impl IntoView {
     view! {
@@ -219,7 +223,7 @@ pub fn SettingsLayout(
                 {storage}
                 {app}
                 {publishing}
-                {help}
+                {troubleshooting}
                 {experimental}
                 {about}
             </TwoColumns>
@@ -333,92 +337,156 @@ pub fn metadata_error(text: &str) -> Option<String> {
         .map(|err| format!("Not valid JSON: {err}"))
 }
 
-/// The publish defaults, as fields in place. The one card with Save.
+/// The publish defaults as stored, read-only, and **Edit…**, which opens
+/// [`PublishingDialog`]. Each empty value says what happens instead, muted.
 #[component]
 pub fn PublishingCard(
+    #[prop(into)] stored: Signal<PublishSettingsData>,
+    on_edit: Callback<()>,
+) -> impl IntoView {
+    let muted = |words: &'static str| view! { <span class=style::quiet>{words}</span> }.into_any();
+    let template = move || {
+        stored.with(|p| match p.message_template.as_str() {
+            "" => muted("Generated from the changes"),
+            text => view! { <span class=style::long>{text.to_string()}</span> }.into_any(),
+        })
+    };
+    let workflow = move || {
+        stored.with(|p| match p.default_workflow.as_str() {
+            "" => muted("Each bucket's default"),
+            id => view! { <span class=style::long>{id.to_string()}</span> }.into_any(),
+        })
+    };
+    let metadata = move || {
+        stored.with(|p| match MetadataPreview::of(&p.default_metadata) {
+            MetadataPreview::None => muted("No metadata"),
+            MetadataPreview::Json(value) => {
+                view! { <div class=style::json><JsonDisplay value=value /></div> }.into_any()
+            }
+            // Saved only once valid, so only a file edited by hand.
+            MetadataPreview::Invalid => muted("Not valid JSON"),
+        })
+    };
+    view! {
+        <Card title="Publishing">
+            <p class=style::quiet>{PUBLISHING_USE}</p>
+            <ValueRow name="Message template" value=view! { {template} }.into_any() />
+            <ValueRow name="Default workflow" value=view! { {workflow} }.into_any() />
+            <ValueRow name="Default metadata" value=view! { {metadata} }.into_any() />
+            <div class=style::actions>
+                <Button on_click=move |_| on_edit.run(())>"Edit…"</Button>
+            </div>
+        </Card>
+    }
+}
+
+/// The popup's fields: the template, the workflow, the metadata editor, the
+/// every-bucket warning, and *Reset to defaults*, which fills the fields with
+/// the defaults and saves nothing. Apart from the dialog so the gallery can
+/// draw them inline.
+#[component]
+pub fn PublishingForm(
     template: RwSignal<String>,
     /// A workflow id; empty uses each bucket's default.
     workflow: RwSignal<String>,
     metadata: RwSignal<String>,
-    /// The fields differ from what is stored.
-    #[prop(into)]
-    dirty: Signal<bool>,
-    #[prop(optional, into)] saving: Signal<bool>,
-    on_save: Callback<()>,
-    /// The metadata editor open; folded to its one-line preview by default.
-    /// It opens itself when the JSON fails to validate.
-    #[prop(optional)]
-    editing: Option<RwSignal<bool>>,
+    /// Changes when the metadata is set from outside its editor, so the
+    /// editor is drawn again over the new value.
+    fresh: RwSignal<u64>,
+    /// While a save is out. The dialog's fieldset seals the other fields;
+    /// the editor is no form control, so it is made `inert`.
+    #[prop(optional, into)]
+    sealed: Signal<bool>,
 ) -> impl IntoView {
-    let editing = editing.unwrap_or_else(|| RwSignal::new(false));
     let error = Signal::derive(move || metadata.with(|text| metadata_error(text)));
     let warn = Signal::derive(move || {
         let named = workflow.with(|id| !id.trim().is_empty());
         metadata.with(|text| show_global_scope_warning(named, text))
     });
-    let blocked = Signal::derive(move || !dirty.get() || error.with(Option::is_some));
     let placeholders = format!("Placeholders: {}", PUBLISH_PLACEHOLDERS.join(" "));
-
+    let reset = move |_| {
+        template.set(String::new());
+        workflow.set(String::new());
+        metadata.set(String::new());
+        fresh.update(|n| *n += 1);
+    };
     view! {
-        <Card title="Publishing">
-            <div class=style::fields>
-                <p class=style::quiet>{PUBLISHING_USE}</p>
-                <FormControl
-                    label="Message template"
-                    caption=placeholders
-                    control=move |id| {
-                        view! {
-                            <TextInput
-                                id=id
-                                value=template
-                                placeholder="Generated from the changes"
-                                disabled=saving
-                            />
-                        }
-                            .into_any()
-                    }
-                />
-                <FormControl
-                    label="Default workflow"
-                    caption="A workflow id. Empty uses each bucket's default."
-                    control=move |id| {
-                        view! {
-                            <TextInput
-                                id=id
-                                value=workflow
-                                placeholder="Each bucket's default"
-                                disabled=saving
-                            />
-                        }
-                            .into_any()
-                    }
-                />
-                // The commit page's field: a one-line preview with Edit, and
-                // the editor when opened. `inert` while saving, as the other
-                // fields are disabled: the editor has no disabled state.
-                <div inert=move || saving.get()>
-                    <MetadataField
-                        label="Default metadata"
-                        metadata=metadata
-                        editing=editing
-                        error=error
-                    />
-                </div>
-                <Show when=move || warn.get()>
-                    <Banner variant=BannerVariant::Warning>{GLOBAL_SCOPE_WARNING}</Banner>
-                </Show>
-                <div class=style::actions>
-                    <Button
-                        variant=ButtonVariant::Primary
-                        disabled=blocked
-                        loading=saving
-                        on_click=move |_| on_save.run(())
-                    >
-                        "Save"
-                    </Button>
-                </div>
-            </div>
-        </Card>
+        <FormControl
+            label="Message template"
+            caption=placeholders
+            control=move |id| {
+                view! {
+                    <TextInput id=id value=template placeholder="Generated from the changes" />
+                }
+                    .into_any()
+            }
+        />
+        <FormControl
+            label="Default workflow"
+            caption="A workflow id. Empty uses each bucket's default."
+            control=move |id| {
+                view! { <TextInput id=id value=workflow placeholder="Each bucket's default" /> }
+                    .into_any()
+            }
+        />
+        <div inert=move || sealed.get()>
+            <MetadataEditorField
+                label="Default metadata"
+                metadata=metadata
+                error=error
+                fresh=fresh
+            />
+        </div>
+        <Show when=move || warn.get()>
+            <Banner variant=BannerVariant::Warning>{GLOBAL_SCOPE_WARNING}</Banner>
+        </Show>
+        <div>
+            <button type="button" class=style::link on:click=reset>
+                "Reset to defaults"
+            </button>
+        </div>
+    }
+}
+
+/// *Publishing*, as the modal **Edit…** opens: [`PublishingForm`] with Save
+/// and Cancel. Save is off while the metadata is not valid JSON. The fields
+/// are the caller's draft; Cancel leaves them, and the caller fills them
+/// again on the next open.
+#[component]
+pub fn PublishingDialog<F, Fut>(
+    open: RwSignal<bool>,
+    template: RwSignal<String>,
+    workflow: RwSignal<String>,
+    metadata: RwSignal<String>,
+    fresh: RwSignal<u64>,
+    /// Writes the draft. Its `Err` stays in the dialog.
+    save: F,
+    /// The page's lock, which Save holds too: the dialog seals while it is
+    /// held.
+    #[prop(optional, into)]
+    running: Signal<bool>,
+) -> impl IntoView
+where
+    F: Fn() -> Fut + 'static,
+    Fut: Future<Output = Result<(), String>> + 'static,
+{
+    let blocked = Signal::derive(move || metadata.with(|text| metadata_error(text).is_some()));
+    view! {
+        <FormDialog
+            open=open
+            title="Publishing"
+            submit=Submit::new("Save", save)
+            running=running
+            blocked=blocked
+        >
+            <PublishingForm
+                template=template
+                workflow=workflow
+                metadata=metadata
+                fresh=fresh
+                sealed=running
+            />
+        </FormDialog>
     }
 }
 
@@ -753,7 +821,7 @@ pub fn ExperimentalCard(
     }
 }
 
-// ── Help ──
+// ── Troubleshooting ──
 
 pub const LOG_LEVELS: [&str; 6] = ["Default", "Trace", "Debug", "Info", "Warn", "Error"];
 
@@ -793,7 +861,7 @@ pub const TEMPORARY_LOGS: &str = "The usual logs folder could not be created, so
     clippy::needless_pass_by_value,
     reason = "a component's props are owned; the body reads them from there"
 )]
-pub fn HelpCard(
+pub fn TroubleshootingCard(
     on_report: Callback<()>,
     /// One of [`LOG_LEVELS`].
     log_level: RwSignal<String>,
@@ -813,7 +881,7 @@ pub fn HelpCard(
         None => "Applies after a restart.".to_string(),
     };
     view! {
-        <Card title="Help">
+        <Card title="Troubleshooting">
             <ValueRow
                 name="Report a problem"
                 value=view! {
@@ -1243,27 +1311,29 @@ mod tests {
         );
     }
 
+    fn form(metadata: &str) -> impl IntoView + use<> {
+        let metadata = RwSignal::new(metadata.to_string());
+        view! {
+            <PublishingForm
+                template=RwSignal::new(String::new())
+                workflow=RwSignal::new(String::new())
+                metadata=metadata
+                fresh=RwSignal::new(0)
+            />
+        }
+    }
+
     /// The editor a reader sees is named by the field's label and, while the
     /// JSON fails, described by its error: the glue hides the textarea that
     /// the label points at.
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn the_visible_metadata_editor_is_named_and_described() {
-        let el = crate::test_support::mount(|| {
-            view! {
-                <PublishingCard
-                    template=RwSignal::new(String::new())
-                    workflow=RwSignal::new(String::new())
-                    metadata=RwSignal::new("{\"source\": ".to_string())
-                    dirty=true
-                    on_save=Callback::new(|()| ())
-                />
-            }
-        });
+        let el = crate::test_support::mount(|| form("{\"source\": "));
         leptos::task::tick().await;
         let group = el
             .query_selector("[role=group]")
             .unwrap()
-            .expect("the editor opened itself on the failing JSON");
+            .expect("the editor");
         let named_by = group.get_attribute("aria-labelledby").expect("a name");
         let label = el
             .query_selector(&format!("#{named_by}"))
@@ -1287,18 +1357,7 @@ mod tests {
     async fn a_click_on_the_metadata_label_focuses_the_editor() {
         // An earlier test's modal, left open, would make this page inert.
         crate::test_support::unmount_earlier();
-        let el = crate::test_support::mount(|| {
-            view! {
-                <PublishingCard
-                    template=RwSignal::new(String::new())
-                    workflow=RwSignal::new(String::new())
-                    metadata=RwSignal::new("{}".to_string())
-                    dirty=false
-                    on_save=Callback::new(|()| ())
-                    editing=RwSignal::new(true)
-                />
-            }
-        });
+        let el = crate::test_support::mount(|| form("{}"));
         leptos::task::tick().await;
         crate::test_support::element_saying(&el, "Default metadata").click();
         let focused = web_sys::window()
@@ -1308,6 +1367,80 @@ mod tests {
             .active_element()
             .expect("something has focus");
         assert_eq!(focused.tag_name(), "TEXTAREA", "{}", el.inner_html());
+    }
+
+    /// *Reset to defaults* empties the three fields and draws the editor
+    /// again over no metadata; it saves nothing, as nothing here can.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn reset_fills_the_defaults() {
+        crate::test_support::unmount_earlier();
+        let template = RwSignal::new("Plate {date}".to_string());
+        let workflow = RwSignal::new("release".to_string());
+        let metadata = RwSignal::new("{\"a\": 1}".to_string());
+        let fresh = RwSignal::new(0);
+        let el = crate::test_support::mount(move || {
+            view! {
+                <PublishingForm
+                    template=template
+                    workflow=workflow
+                    metadata=metadata
+                    fresh=fresh
+                />
+            }
+        });
+        leptos::task::tick().await;
+        crate::test_support::button_saying(&el, "Reset to defaults").click();
+        leptos::task::tick().await;
+        assert_eq!(template.get_untracked(), "");
+        assert_eq!(workflow.get_untracked(), "");
+        assert_eq!(metadata.get_untracked(), "");
+        assert_eq!(fresh.get_untracked(), 1, "the editor is drawn again");
+        let textarea: web_sys::HtmlTextAreaElement = wasm_bindgen::JsCast::dyn_into(
+            el.query_selector("textarea")
+                .unwrap()
+                .expect("the editor's field"),
+        )
+        .unwrap();
+        assert_eq!(textarea.value(), "");
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("every bucket"),
+            "and the every-bucket warning is gone"
+        );
+    }
+
+    /// The card says what each empty value means, muted, and has one button.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn the_card_reads_the_stored_values() {
+        crate::test_support::unmount_earlier();
+        let stored = RwSignal::new(PublishSettingsData::default());
+        let el = crate::test_support::mount(move || {
+            view! { <PublishingCard stored=stored on_edit=Callback::new(|()| ()) /> }
+        });
+        leptos::task::tick().await;
+        let text = || el.text_content().unwrap_or_default();
+        for words in [
+            "Generated from the changes",
+            "Each bucket's default",
+            "No metadata",
+        ] {
+            assert!(text().contains(words), "{words}: {}", text());
+        }
+        stored.set(PublishSettingsData {
+            message_template: "Plate {date}".to_string(),
+            default_workflow: "release".to_string(),
+            default_metadata: "{\"source\": \"desktop\"}".to_string(),
+        });
+        leptos::task::tick().await;
+        assert!(text().contains("Plate {date}"), "{}", text());
+        assert!(text().contains("release"));
+        assert!(!text().contains("No metadata"));
+        crate::test_support::button_saying(&el, "Edit…");
+        assert!(
+            el.query_selector("input, textarea").unwrap().is_none(),
+            "read-only"
+        );
     }
 
     /// v2 vocabulary: no commit, push, pull or remote in the page's words.

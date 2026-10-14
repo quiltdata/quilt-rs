@@ -10,20 +10,29 @@
 //!
 //! At 1024×560 the header ends at 138px and the cards are two to a row, 488px
 //! wide and 16px apart; a row's two cards share its height. Rows start at
-//! Syncing | Accounts 154, Storage | App 498, Publishing | Help 694,
-//! Experimental | About 1102. The first screen shows Syncing and Accounts.
+//! Syncing | Accounts 154, Storage | App 498, Publishing | Troubleshooting 694,
+//! Experimental | About 1054. The first screen shows Syncing and Accounts.
 //!
 //! At 1000×560, just under the switch, one column of 968px in the same order:
-//! Syncing 154, Accounts 477, Storage 713, App 909, Publishing 1057, Help 1445,
-//! Experimental 1785, About 1913. At 640, the same order at 608px; only the
-//! Data folder's path is cut short, with its whole path in the tooltip. No
-//! width scrolls sideways.
+//! Syncing 154, Accounts 477, Storage 713, App 909, Publishing 1057,
+//! Troubleshooting 1354, Experimental 1693, About 1821. At 640, the same order
+//! at 608px; only the Data folder's path is cut short, with its whole path in
+//! the tooltip. No width scrolls sideways.
+//!
+//! The Publishing popup, with a workflow, metadata and so the warning, is
+//! 636px tall in a 1280×900 window. In a 640×560 one it is held to 528px and
+//! scrolls inside, Save under the fold. The editor's context menu reaches
+//! past the popup's edge at both sizes and is not cropped: a point just past
+//! the edge lands on the menu. Without the rule in `_base.scss` that frees
+//! the editor's menus from a modal's clip, it does not.
 //!
 //! # Left open
 //!
 //! - The metadata editor repairs JSON it can (a missing `}`) and says so in
 //!   its own green bar, above the page's *Not valid JSON* error. The two
 //!   disagree until the reader picks the editor's repair.
+//! - The editor's context menu cuts some of its own labels short (`Edit valu`),
+//!   as on the commit page.
 
 use leptos::prelude::*;
 
@@ -33,11 +42,12 @@ use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::PageLayout;
 use crate::pages::settings_v2::{
-    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, HelpCard, PublishingCard,
-    ReportBody, ReportDialog, ReportFooter, ReportState, Saved, SettingsHeader, SettingsLayout,
-    SignOutDialog, StorageCard, StorageSize, SyncingCard, minutes_shown, sign_out_consequence,
+    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, PublishingCard,
+    PublishingDialog, PublishingForm, ReportBody, ReportDialog, ReportFooter, ReportState, Saved,
+    SettingsHeader, SettingsLayout, SignOutDialog, StorageCard, StorageSize, SyncingCard,
+    TroubleshootingCard, metadata_error, minutes_shown, sign_out_consequence,
 };
-use quilt_sync_ui::commands::LogEnv;
+use quilt_sync_ui::commands::{LogEnv, PublishSettingsData};
 
 const HOME_DIR: &str = "/Users/a-user/QuiltSync";
 const DATA_DIR: &str = "/Users/a-user/Library/Application Support/com.quiltdata.quilt-sync";
@@ -93,25 +103,91 @@ fn syncing(s: Syncing) -> AnyView {
 
 // ── Publishing ──
 
+const LONG_TEMPLATE: &str = "Plate reads for {namespace}, {datetime}: {changes}. Instrument \
+    SpectraMax iD5, read after recalibration; see the run sheet in the lab notebook for the \
+    protocol version and the operator";
+/// More than the folded line holds.
+const LARGE_METADATA: &str = "{\"source\": \"desktop\", \"lab\": \"plate-reader-2\", \
+    \"instrument\": \"SpectraMax iD5\", \"wavelength_nm\": 450, \"wells\": [\"A1\", \
+    \"A2\", \"A3\", \"B1\"], \"protocol\": {\"version\": 3, \"incubation_min\": 60, \
+    \"reagents\": [\"TMB\", \"stop solution\"]}, \"notes\": \"Second read after \
+    recalibration\"}";
+const METADATA: &str = "{\n  \"source\": \"desktop\",\n  \"lab\": \"plate-reader-2\"\n}";
+
 #[derive(Clone, Copy, Default)]
 struct Publishing {
     template: &'static str,
     workflow: &'static str,
     metadata: &'static str,
-    dirty: bool,
-    /// The metadata editor open.
-    editing: bool,
 }
 
+impl Publishing {
+    fn stored(self) -> PublishSettingsData {
+        PublishSettingsData {
+            message_template: self.template.to_string(),
+            default_workflow: self.workflow.to_string(),
+            default_metadata: self.metadata.to_string(),
+        }
+    }
+}
+
+const CUSTOM: Publishing = Publishing {
+    template: "Updated {namespace} on {date} ({changes})",
+    workflow: "plate-reads",
+    metadata: METADATA,
+};
+
 fn publishing(p: Publishing) -> AnyView {
+    view! { <PublishingCard stored=p.stored() on_edit=noop() /> }.into_any()
+}
+
+/// The popup drawn inline at the modal's width, as the report is; the last
+/// cell opens the real one.
+fn publishing_popup(p: Publishing, saving: bool) -> AnyView {
     view! {
-        <PublishingCard
-            template=RwSignal::new(p.template.to_string())
-            workflow=RwSignal::new(p.workflow.to_string())
-            metadata=RwSignal::new(p.metadata.to_string())
-            dirty=p.dirty
-            on_save=noop()
-            editing=RwSignal::new(p.editing)
+        <div class="g-bars g-dialog-inline">
+            <form>
+                <fieldset class="g-bars g-fieldset" disabled=saving>
+                    <PublishingForm
+                        template=RwSignal::new(p.template.to_string())
+                        workflow=RwSignal::new(p.workflow.to_string())
+                        metadata=RwSignal::new(p.metadata.to_string())
+                        fresh=RwSignal::new(0)
+                        sealed=saving
+                    />
+                </fieldset>
+            </form>
+            <div class="g-inline g-inline--end">
+                <Button disabled=saving on_click=move |_| ()>"Cancel"</Button>
+                <Button
+                    variant=ButtonVariant::Primary
+                    disabled=metadata_error(p.metadata).is_some()
+                    loading=saving
+                    on_click=move |_| ()
+                >
+                    "Save"
+                </Button>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+/// *Edit…* and the real popup behind it.
+fn publishing_real(p: Publishing) -> AnyView {
+    let open = RwSignal::new(false);
+    let stored = p.stored();
+    view! {
+        <div class="g-inline">
+            <Button on_click=move |_| open.set(true)>"Open the real one"</Button>
+        </div>
+        <PublishingDialog
+            open=open
+            template=RwSignal::new(stored.message_template)
+            workflow=RwSignal::new(stored.default_workflow)
+            metadata=RwSignal::new(stored.default_metadata)
+            fresh=RwSignal::new(0)
+            save=|| async { Ok(()) }
         />
     }
     .into_any()
@@ -206,12 +282,12 @@ const MEASURED: StorageSize = StorageSize::Measured {
     freeable: 1_100_000_000,
 };
 
-// ── Help ──
+// ── Troubleshooting ──
 
-fn help(log_env: LogEnv, level: &str, temporary: bool) -> AnyView {
+fn troubleshooting(log_env: LogEnv, level: &str, temporary: bool) -> AnyView {
     let logs_dir = if temporary { TEMP_LOGS_DIR } else { LOGS_DIR };
     view! {
-        <HelpCard
+        <TroubleshootingCard
             on_report=noop()
             log_level=RwSignal::new(level.to_string())
             log_env=log_env
@@ -267,7 +343,7 @@ fn whole_page(width: u32, height: u32) -> AnyView {
                         />
                     }
                         .into_any()
-                    help=help(LogEnv::Unset, "Default", false)
+                    troubleshooting=troubleshooting(LogEnv::Unset, "Default", false)
                     about=view! { <AboutCard version=VERSION on_release_notes=noop() /> }.into_any()
                 />
             </PageLayout>
@@ -277,9 +353,10 @@ fn whole_page(width: u32, height: u32) -> AnyView {
 }
 
 const NOTE: &str = "The settings page v2. From a 1024px window, two cards to a row: Syncing and \
-    Accounts, Storage and App, Publishing and Help, Experimental and About. Narrower, the same \
-    order in one column. Toggles, selects and minute fields save \
-    as they change and say Saved; Publishing alone has Save. Routed at /settings under New design preview.";
+    Accounts, Storage and App, Publishing and Troubleshooting, Experimental and About. Narrower, \
+    the same order in one column. Toggles, selects and minute fields save as they change and say \
+    Saved; Publishing is read-only, edited in a popup with Save. Routed at /settings under New \
+    design preview.";
 
 #[component]
 #[allow(clippy::too_many_lines, reason = "one cell per state, read as a list")]
@@ -311,43 +388,42 @@ pub fn SettingsPageScene() -> impl IntoView {
             <Cell full=true label="Syncing — just saved: the row says so for a moment">
                 {column(syncing(Syncing { saved: Some(Saved::Pull), ..Syncing::default() }))}
             </Cell>
-            <Cell full=true label="Publishing — at rest, nothing set, Save disabled">
+            <Cell full=true label="Publishing — all defaults: each value says what happens instead">
                 {column(publishing(Publishing::default()))}
             </Cell>
-            <Cell full=true label="Publishing — edited, Save enabled">
-                {column(publishing(Publishing {
-                    template: "Updated {namespace} on {date} ({changes})",
-                    dirty: true,
-                    ..Publishing::default()
-                }))}
+            <Cell full=true label="Publishing — custom values: the template, the workflow, the metadata as a tree">
+                {column(publishing(CUSTOM))}
             </Cell>
-            <Cell full=true label="Publishing — metadata folded to one line, with Edit">
-                {column(publishing(Publishing {
-                    metadata: "{\"source\": \"desktop\", \"lab\": \"plate-reader-2\"}",
-                    ..Publishing::default()
-                }))}
+            <Cell full=true label="Publishing — a long template wraps in the card">
+                {column(publishing(Publishing { template: LONG_TEMPLATE, ..Publishing::default() }))}
             </Cell>
-            <Cell full=true label="Publishing — the metadata editor open">
-                {column(publishing(Publishing {
-                    metadata: "{\"source\": \"desktop\"}",
-                    editing: true,
-                    dirty: true,
-                    ..Publishing::default()
-                }))}
+            <Cell full=true label="Publishing — large metadata folds to one line; open it to read it">
+                {column(publishing(Publishing { metadata: LARGE_METADATA, ..Publishing::default() }))}
             </Cell>
-            <Cell full=true label="Publishing — metadata that is not valid JSON: the editor opened itself, the error, Save disabled">
-                {column(publishing(Publishing {
-                    metadata: "{\"source\": \"desktop\",",
-                    dirty: true,
-                    ..Publishing::default()
-                }))}
+            <Cell wide=true label="The Publishing popup — at rest, nothing stored">
+                {publishing_popup(Publishing::default(), false)}
             </Cell>
-            <Cell full=true label="Publishing — a workflow and metadata set: the every-bucket warning">
-                {column(publishing(Publishing {
-                    workflow: "plate-reads",
-                    metadata: "{\"source\": \"desktop\"}",
-                    ..Publishing::default()
-                }))}
+            <Cell wide=true label="The Publishing popup — edited: a workflow and metadata, so the every-bucket warning">
+                {publishing_popup(CUSTOM, false)}
+            </Cell>
+            <Cell wide=true label="The Publishing popup — after Reset to defaults: the fields empty, nothing saved until Save">
+                {publishing_popup(Publishing::default(), false)}
+            </Cell>
+            <Cell wide=true label="The Publishing popup — metadata that is not valid JSON: the error under the editor, Save disabled">
+                {publishing_popup(
+                    Publishing { metadata: "{\"source\": \"desktop\",", ..Publishing::default() },
+                    false,
+                )}
+            </Cell>
+            <Cell wide=true label="The Publishing popup — saving: the fields sealed, Save busy">
+                {publishing_popup(CUSTOM, true)}
+            </Cell>
+            <Cell
+                wide=true
+                label="The Publishing popup, the real one — right-click a key in the editor: its menu \
+                       is not cropped by the popup"
+            >
+                {publishing_real(CUSTOM)}
             </Cell>
             <Cell full=true label="Accounts — several hosts: a role switcher, one role, and one signed out">
                 {column(accounts(several_hosts()))}
@@ -407,14 +483,14 @@ pub fn SettingsPageScene() -> impl IntoView {
                 }
                     .into_any())}
             </Cell>
-            <Cell full=true label="Help — at rest">
-                {column(help(LogEnv::Unset, "Default", false))}
+            <Cell full=true label="Troubleshooting — at rest">
+                {column(troubleshooting(LogEnv::Unset, "Default", false))}
             </Cell>
-            <Cell full=true label="Help — the log level set by QUILT_LOG: disabled, with the hint">
-                {column(help(LogEnv::Overrides("quilt_rs=trace".to_string()), "Info", false))}
+            <Cell full=true label="Troubleshooting — the log level set by QUILT_LOG: disabled, with the hint">
+                {column(troubleshooting(LogEnv::Overrides("quilt_rs=trace".to_string()), "Info", false))}
             </Cell>
-            <Cell full=true label="Help — the logs in a temporary folder">
-                {column(help(LogEnv::Unset, "Default", true))}
+            <Cell full=true label="Troubleshooting — the logs in a temporary folder">
+                {column(troubleshooting(LogEnv::Unset, "Default", true))}
             </Cell>
             <Cell full=true label="About">
                 {column(view! { <AboutCard version=VERSION on_release_notes=noop() /> }.into_any())}

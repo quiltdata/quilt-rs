@@ -17,13 +17,6 @@
   display: contents;
 }
 
-// A card's fields, stacked as a form.
-.fields {
-  display: flex;
-  flex-direction: column;
-  gap: var(--q-space-3);
-}
-
 .quiet {
   margin: 0;
   color: var(--q-fgColor-muted);
@@ -69,6 +62,36 @@
 .actions {
   display: flex;
   justify-content: flex-end;
+}
+
+// A value the reader typed, such as a long template: wrapped, even inside a
+// word, rather than pushing the card wider.
+.long {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+// The stored metadata's tree, at the row's full width.
+.json {
+  width: 100%;
+  min-width: 0;
+}
+
+// *Reset to defaults*: a button, drawn as a link, because it changes the
+// fields and saves nothing.
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--q-fgColor-accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link:disabled {
+  color: var(--q-fgColor-disabled);
+  cursor: default;
 }
 
 // A name over its value, and an action at the trailing end, centred on the
