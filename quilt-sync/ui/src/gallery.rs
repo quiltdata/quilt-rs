@@ -1162,8 +1162,8 @@ mod tests {
         assert!(failed_blocked && !rest_blocked);
     }
 
-    /// The two cells that are about an error draw it: the minute field below
-    /// 1, and metadata that is not JSON, whose Save is disabled.
+    /// The cells that are about an error draw it: a minute field below 1, one
+    /// not whole, and metadata that is not JSON, whose Save is disabled.
     #[wasm_bindgen_test]
     async fn the_settings_scene_draws_its_errors() {
         use crate::gallery::settings_page::SettingsPageScene;
@@ -1182,7 +1182,11 @@ mod tests {
         drop(handle);
         container.remove();
         assert!(text.contains("At least 1 minute"), "the minute error");
-        assert_eq!(invalid, 1, "only the below-1 cell's field is invalid");
+        assert!(
+            text.contains("Whole minutes only"),
+            "the narrow cell's error"
+        );
+        assert_eq!(invalid, 2, "only the two error cells' fields are invalid");
         assert!(text.contains("Not valid JSON"), "the metadata error");
     }
 

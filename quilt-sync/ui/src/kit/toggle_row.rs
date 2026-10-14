@@ -27,9 +27,9 @@ pub fn ToggleRow(
     #[prop(optional)]
     trailing: Option<AnyView>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
-    /// A control of the setting's own under the words, such as Settings'
-    /// `Every [1] minutes`. Outside the label, like `trailing`: a click into a
-    /// field must not flip the box.
+    /// A line of the setting's own under the words, such as the error of
+    /// Settings' minutes field. Outside the label, like `trailing`: a click
+    /// there must not flip the box. Hidden while it holds no element.
     #[prop(optional)]
     detail: Option<AnyView>,
 ) -> impl IntoView {
