@@ -26,6 +26,10 @@
  * near-black in light and a near-white in dark, which is wrong in dark, so this is one of
  * the few places a literal is right: a dark scrim over a dark page still reads as a
  * scrim. */
+.root.wide {
+  width: min(640px, calc(100vw - var(--q-space-8)));
+}
+
 .root::backdrop {
   background: rgb(0 0 0 / 45%);
 }

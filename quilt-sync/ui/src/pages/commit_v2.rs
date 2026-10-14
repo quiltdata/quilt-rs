@@ -472,6 +472,71 @@ pub fn MetadataField(
     }
 }
 
+/// The metadata editor alone, always open, with its label and its error:
+/// Settings' publishing popup. The editor reads `metadata` once, as it
+/// mounts, so it is drawn again whenever `fresh` changes: a value set from
+/// outside it, such as a reset, reaches it that way.
+#[component]
+pub fn MetadataEditorField(
+    metadata: RwSignal<String>,
+    #[prop(optional, into)] error: MaybeProp<String>,
+    #[prop(into)] label: String,
+    /// Changes when `metadata` was set from outside the editor.
+    #[prop(optional, into)]
+    fresh: Signal<u64>,
+    /// The editor's opening height, in px. The grip's lower limit still applies.
+    #[prop(optional)]
+    height: Option<i32>,
+) -> impl IntoView {
+    let failing = Signal::derive(move || error.get().is_some());
+    let control_id = crate::kit::unique_id("metadata");
+    let error_id = format!("{control_id}-error");
+    let label_id = format!("{control_id}-label");
+    // Here so a height the reader dragged to survives a reset.
+    let height = RwSignal::new(height.map_or(EDITOR_HEIGHT, |h| dragged_height(h, 0)));
+    let editor_ref = NodeRef::<leptos::html::Div>::new();
+    let editor = {
+        let control_id = control_id.clone();
+        let label_id = label_id.clone();
+        let error_id = error_id.clone();
+        move || {
+            fresh.track();
+            metadata_editor(
+                control_id.clone(),
+                label_id.clone(),
+                error_id.clone(),
+                metadata,
+                failing,
+                height,
+                editor_ref,
+            )
+        }
+    };
+    view! {
+        <div class=style::field>
+            <label
+                class=style::field_name
+                id=label_id
+                for=control_id
+                on:click=move |ev| {
+                    if focus_json_editor(editor_ref) {
+                        ev.prevent_default();
+                    }
+                }
+            >
+                {label}
+            </label>
+            <div class=style::field_value>{editor}</div>
+            <Show when=move || error.get().is_some()>
+                <p class=style::field_error id=error_id.clone()>
+                    {StateTone::Danger.glyph()}
+                    <span>{move || error.get().unwrap_or_default()}</span>
+                </p>
+            </Show>
+        </div>
+    }
+}
+
 /// Shown while the publish settings supplied the value: a global default can
 /// fail in a bucket that does not expect it.
 fn settings_hint(from_settings: Signal<bool>, href: Option<String>) -> impl IntoView {

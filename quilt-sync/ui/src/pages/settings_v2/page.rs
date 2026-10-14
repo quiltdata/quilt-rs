@@ -9,8 +9,8 @@
 //! re-read takes it away:
 //!
 //! - every control's value ([`Fields`]): the toggles, the minute fields as
-//!   typed, the log level, and the Publishing draft with its editor open or
-//!   folded;
+//!   typed, the log level;
+//! - the Publishing popup: open or not, and its draft;
 //! - what each control last wrote ([`Written`]), so a value the page seeds
 //!   from a read is never written back;
 //! - which row just saved (*Saved*);
@@ -37,7 +37,8 @@
 //! or the log level disabled, a minutes field read-only so the cursor stays —
 //! so one setting never has two saves in flight, and a failure is never about
 //! a value the reader has since replaced. The commands that run longer do — Free up space, a role
-//! switch, Sign out — and the dialogs read it.
+//! switch, Sign out — and so does the Publishing popup's Save, which waits for its
+//! own write on the queue; the dialogs read it.
 
 use std::collections::VecDeque;
 use std::future::Future;
@@ -59,9 +60,10 @@ use crate::kit::{
 
 use super::super::v2_page::{PageHandle, PageRead, V2Page, critical, hold};
 use super::{
-    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, HelpCard, PublishingCard,
-    ReportDialog, ReportState, Saved, SettingsHeader, SettingsLayout, SignOutDialog, StorageCard,
-    StorageSize, SyncingCard, log_level_label, minutes_secs, minutes_shown,
+    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, PublishingCard,
+    PublishingDialog, ReportDialog, ReportState, Saved, SettingsHeader, SettingsLayout,
+    SignOutDialog, StorageCard, StorageSize, SyncingCard, TroubleshootingCard, log_level_label,
+    minutes_secs, minutes_shown,
 };
 
 use super::style;
@@ -187,7 +189,7 @@ fn skeleton() -> AnyView {
             app=().into_any()
             storage=().into_any()
             experimental=().into_any()
-            help=().into_any()
+            troubleshooting=().into_any()
             about=().into_any()
         />
     }
@@ -277,10 +279,10 @@ struct Fields {
     design_preview: RwSignal<bool>,
     /// One of `LOG_LEVELS`.
     log_level: RwSignal<String>,
+    /// The Publishing popup's draft, filled from what is stored as it opens.
     template: RwSignal<String>,
     workflow: RwSignal<String>,
     metadata: RwSignal<String>,
-    editing: RwSignal<bool>,
 }
 
 impl Fields {
@@ -297,7 +299,6 @@ impl Fields {
             template: RwSignal::new(String::new()),
             workflow: RwSignal::new(String::new()),
             metadata: RwSignal::new(String::new()),
-            editing: RwSignal::new(false),
         }
     }
 
@@ -323,7 +324,7 @@ struct Written {
     tray: StoredValue<bool>,
     design_preview: StoredValue<bool>,
     log_level: StoredValue<String>,
-    /// Reactive, because Save's enabled state compares the draft with it.
+    /// Reactive, because the Publishing card draws it.
     publishing: RwSignal<PublishSettingsData>,
     /// Whether the first read has seeded the fields.
     seeded: StoredValue<bool>,
@@ -359,8 +360,8 @@ fn seed<T: Clone + PartialEq + Send + Sync + 'static>(
     }
 }
 
-/// Bring the fields to `d`. A minutes field the reader has edited, and a
-/// Publishing draft that differs from what was stored, stay as they are.
+/// Bring the fields to `d`. A minutes field the reader has edited stays as
+/// it is, and so does the Publishing draft: the popup fills it as it opens.
 fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
     let first = !written.seeded.get_value();
     written.seeded.set_value(true);
@@ -399,22 +400,6 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
             field.set(shown);
         }
     }
-    let clean = first
-        || written
-            .publishing
-            .with_untracked(|was| *was == fields.draft());
-    if clean {
-        let stored = &d.publish;
-        for (field, value) in [
-            (fields.template, &stored.message_template),
-            (fields.workflow, &stored.default_workflow),
-            (fields.metadata, &stored.default_metadata),
-        ] {
-            if field.with_untracked(|now| now != value) {
-                field.set(value.clone());
-            }
-        }
-    }
     if written.publishing.with_untracked(|was| *was != d.publish) {
         written.publishing.set(d.publish.clone());
     }
@@ -423,6 +408,10 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
 /// A toggle: its value, what it last wrote, its row, and its write.
 type Toggle = (RwSignal<bool>, StoredValue<bool>, Saved, fn(bool) -> Write);
 
+/// Where a save's answer goes when its caller waits for it, instead of the
+/// row's *Saved* or the band.
+type Reply = Box<dyn FnOnce(Result<(), String>)>;
+
 /// One save waiting its turn, with the page that asked for it.
 struct Queued {
     from: Saves,
@@ -430,8 +419,47 @@ struct Queued {
     io: SettingsIo,
     row: Option<Saved>,
     write: Write,
-    /// Run when the save fails: put back what the page took as stored.
-    undo: Option<Callback<()>>,
+    reply: Option<Reply>,
+}
+
+/// What [`Answered`] waits for.
+#[derive(Default)]
+struct Slot {
+    answer: Option<Result<(), String>>,
+    waker: Option<std::task::Waker>,
+}
+
+/// A save's answer, awaited: the other half of a [`Reply`].
+struct Answered(std::rc::Rc<std::cell::RefCell<Slot>>);
+
+impl Future for Answered {
+    type Output = Result<(), String>;
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let mut slot = self.0.borrow_mut();
+        if let Some(answer) = slot.answer.take() {
+            return std::task::Poll::Ready(answer);
+        }
+        slot.waker = Some(cx.waker().clone());
+        std::task::Poll::Pending
+    }
+}
+
+/// A reply for the queue to call, and the answer it gives.
+fn reply() -> (Reply, Answered) {
+    let slot = std::rc::Rc::new(std::cell::RefCell::new(Slot::default()));
+    let filled = std::rc::Rc::clone(&slot);
+    let reply: Reply = Box::new(move |answer| {
+        let mut slot = filled.borrow_mut();
+        slot.answer = Some(answer);
+        if let Some(waker) = slot.waker.take() {
+            waker.wake();
+        }
+    });
+    (reply, Answered(slot))
 }
 
 thread_local! {
@@ -502,7 +530,7 @@ impl Saves {
         self,
         row: Option<Saved>,
         write: Write,
-        undo: Option<Callback<()>>,
+        reply: Option<Reply>,
         io: SettingsIo,
         page: PageHandle,
     ) {
@@ -517,7 +545,7 @@ impl Saves {
                 io,
                 row,
                 write,
-                undo,
+                reply,
             });
         });
         self.writing.set(true);
@@ -530,13 +558,14 @@ impl Saves {
     /// One of this visit's saves has run.
     ///
     /// `preview` is the *New design preview* value it wrote, if it wrote one:
-    /// the last one saved decides whether the page leaves for `/`.
+    /// the last one saved decides whether the page leaves for `/`. A save
+    /// with a `reply` gets its answer there, failure included.
     fn ran(
         self,
         page: PageHandle,
         row: Option<Saved>,
         preview: Option<bool>,
-        undo: Option<Callback<()>>,
+        reply: Option<Reply>,
         result: Result<(), String>,
     ) {
         if let Some(row) = row {
@@ -545,6 +574,10 @@ impl Saves {
                     rows.remove(at);
                 }
             });
+        }
+        if let Some(reply) = reply {
+            reply(result);
+            return;
         }
         match result {
             Ok(()) => {
@@ -556,9 +589,6 @@ impl Saves {
                 }
             }
             Err(detail) => {
-                if let Some(undo) = undo {
-                    undo.try_run(());
-                }
                 page.outcome
                     .try_set(Some(critical(HERE.into(), SAVE_FAILED, Some(detail))));
             }
@@ -604,14 +634,14 @@ async fn drain() {
             io,
             row,
             write,
-            undo,
+            reply,
         } = next;
         let preview = match write {
             Write::DesignPreview(on) => Some(on),
             _ => None,
         };
         let result = (io.write)(write).await;
-        from.ran(page, row, preview, undo, result);
+        from.ran(page, row, preview, reply, result);
         if !QUEUE.with(|q| q.borrow().iter().any(|q| q.from.visit == from.visit)) {
             from.done(page);
         }
@@ -781,38 +811,39 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
     );
 
     // ── Publishing ──
-    let publishing_saving = RwSignal::new(false);
-    let dirty = Signal::derive(move || {
-        let draft = PublishSettingsData {
-            message_template: fields.template.get(),
-            default_workflow: fields.workflow.get(),
-            default_metadata: fields.metadata.get(),
-        };
-        written.publishing.with(|stored| *stored != draft)
+    // The popup and its draft are the page's: a re-read that rebuilds the
+    // body leaves them as they are.
+    let publishing_open = RwSignal::new(false);
+    let fresh = RwSignal::new(0_u64);
+    let on_edit = Callback::new(move |()| {
+        let stored = written.publishing.get_untracked();
+        fields.template.set(stored.message_template);
+        fields.workflow.set(stored.default_workflow);
+        fields.metadata.set(stored.default_metadata);
+        fresh.update(|n| *n += 1);
+        publishing_open.set(true);
     });
-    // Saving shows until the queue has run and the page has read again, so
-    // Save does not light up for a moment over a draft just saved.
-    Effect::new(move |_| {
-        if !saves.writing.get() && !in_flight.get() {
-            publishing_saving.set(false);
-        }
-    });
-    let on_save_publishing = Callback::new(move |()| {
-        if publishing_saving.get_untracked() {
-            return;
-        }
-        publishing_saving.set(true);
-        // What is sent is what the page takes as stored, so the re-read's
-        // value replaces the draft even where the backend trims it. A failed
-        // save puts the old one back, and the draft stays unsaved.
+    // Save waits for its own write on the queue, holding the page's lock.
+    // What is sent is what the page takes as stored, so the card shows it at
+    // once and the re-read's value replaces it where the backend trims it. A
+    // failure puts the old one back, and the popup stays open with the draft.
+    let save_publishing = move || {
         let draft = fields.draft();
-        let before = written.publishing.get_untracked();
-        written.publishing.set(draft.clone());
-        let undo = Callback::new(move |()| {
-            written.publishing.try_set(before.clone());
-        });
-        saves.push(None, Write::Publishing(draft), Some(undo), io, page);
-    });
+        async move {
+            let before = written.publishing.get_untracked();
+            if before == draft {
+                return Ok(());
+            }
+            written.publishing.set(draft.clone());
+            let (reply, answer) = reply();
+            saves.push(None, Write::Publishing(draft), Some(reply), io, page);
+            let answer = hold(busy, outcome, answer).await;
+            answer.map_err(|detail| {
+                written.publishing.try_set(before);
+                format!("{SAVE_FAILED} {detail}")
+            })
+        }
+    };
 
     // ── Accounts ──
     let accounts = RwSignal::new(Accounts::Reading);
@@ -1131,15 +1162,9 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 }
                     .into_any()
                 publishing=view! {
-                    <PublishingCard
-                        template=fields.template
-                        workflow=fields.workflow
-                        metadata=fields.metadata
-                        dirty=dirty
-                        saving=publishing_saving
-                        on_save=on_save_publishing
-                        editing=fields.editing
-                    />
+                    <div class=style::slot data-publishing>
+                        <PublishingCard stored=written.publishing on_edit=on_edit />
+                    </div>
                 }
                     .into_any()
                 accounts=view! { <div class=style::slot data-accounts>{accounts_card}</div> }.into_any()
@@ -1153,8 +1178,8 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                     />
                 }
                     .into_any()
-                help=view! {
-                    <HelpCard
+                troubleshooting=view! {
+                    <TroubleshootingCard
                         on_report=on_report
                         log_level=fields.log_level
                         log_env=f.log_env
@@ -1192,6 +1217,15 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             on_send=on_send
         />
         <ReleaseNotes open=notes_open entries=Signal::derive(notes) />
+        <PublishingDialog
+            open=publishing_open
+            template=fields.template
+            workflow=fields.workflow
+            metadata=fields.metadata
+            fresh=fresh
+            save=save_publishing
+            running=busy
+        />
         <V2Page
             heading="Settings"
             page=page
@@ -1511,6 +1545,40 @@ mod tests {
             .unwrap();
     }
 
+    fn type_metadata(el: &web_sys::Element, text: &str) {
+        let field: web_sys::HtmlTextAreaElement = el
+            .query_selector("textarea")
+            .unwrap()
+            .expect("the metadata editor's field")
+            .unchecked_into();
+        field.set_value(text);
+        field
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+    }
+
+    /// The Publishing card's text.
+    fn card(el: &web_sys::Element) -> String {
+        el.query_selector("[data-publishing]")
+            .unwrap()
+            .expect("the Publishing card")
+            .text_content()
+            .unwrap_or_default()
+    }
+
+    /// Edit… pressed: the popup, open.
+    async fn open_publishing(el: &web_sys::Element) -> web_sys::Element {
+        let card = el.query_selector("[data-publishing]").unwrap().unwrap();
+        button_saying(&card, "Edit…").click();
+        sleep_ms(10).await;
+        popup(el).expect("the popup opened")
+    }
+
+    fn popup(el: &web_sys::Element) -> Option<web_sys::Element> {
+        el.query_selector("dialog[open][aria-label=Publishing]")
+            .unwrap()
+    }
+
     fn no_loading_frame(el: &web_sys::Element) {
         assert!(
             el.query_selector("[data-fallback]").unwrap().is_none(),
@@ -1528,7 +1596,8 @@ mod tests {
         later.version = "0.0.2".to_string();
         let el = page(vec![settings(), later]).await;
         type_into(&minutes(&el, 0), "7");
-        type_into(&labelled(&el, "Message template"), "Plate {date}");
+        let dialog = open_publishing(&el).await;
+        type_into(&labelled(&dialog, "Message template"), "Plate {date}");
 
         toggle(&el, WATCH).click();
         sleep_ms(50).await;
@@ -1539,7 +1608,11 @@ mod tests {
             "the body drew the new answer"
         );
         assert_eq!(minutes(&el, 0).value(), "7");
-        assert_eq!(labelled(&el, "Message template").value(), "Plate {date}");
+        assert!(popup(&el).is_some(), "the popup is still open");
+        assert_eq!(
+            labelled(&dialog, "Message template").value(),
+            "Plate {date}"
+        );
         assert_eq!(
             writes(),
             vec![Write::Watch(false)],
@@ -1787,42 +1860,60 @@ mod tests {
     }
 
     /// The backend trims what Publishing saves; the re-read's value replaces
-    /// the draft, and Save is off again.
+    /// what the card shows, and the next open starts from it.
     #[wasm_bindgen_test]
     async fn publishing_takes_the_stored_value_after_a_save() {
         let mut trimmed = settings();
         trimmed.publish.default_workflow = "release".to_string();
         let el = page(vec![settings(), trimmed]).await;
-        type_into(&labelled(&el, "Default workflow"), " release ");
+        let dialog = open_publishing(&el).await;
+        type_into(&labelled(&dialog, "Default workflow"), " release ");
         sleep_ms(10).await;
-        button_saying(&el, "Save").click();
+        button_saying(&dialog, "Save").click();
         sleep_ms(60).await;
-        assert_eq!(labelled(&el, "Default workflow").value(), "release");
-        assert!(
-            button_saying(&el, "Save").disabled(),
-            "nothing left to save"
-        );
+        assert!(popup(&el).is_none(), "Save closed the popup");
+        assert!(card(&el).contains("release"), "{}", card(&el));
+        assert!(!card(&el).contains(" release "), "{}", card(&el));
+        let dialog = open_publishing(&el).await;
+        assert_eq!(labelled(&dialog, "Default workflow").value(), "release");
     }
 
-    /// A failed Publishing save keeps the draft, still unsaved.
+    /// A failed Publishing save says why in the popup, which stays open with
+    /// the draft; the card keeps what is stored.
     #[wasm_bindgen_test]
     async fn a_failed_publishing_save_keeps_the_draft() {
         let el = page(vec![settings()]).await;
         WRITE_FAILS.with(|f| f.set(true));
-        type_into(&labelled(&el, "Default workflow"), "release");
+        let dialog = open_publishing(&el).await;
+        type_into(&labelled(&dialog, "Default workflow"), "release");
         sleep_ms(10).await;
-        button_saying(&el, "Save").click();
+        button_saying(&dialog, "Save").click();
         sleep_ms(60).await;
-        assert_eq!(labelled(&el, "Default workflow").value(), "release");
-        assert!(!button_saying(&el, "Save").disabled(), "still to save");
+        assert!(popup(&el).is_some(), "still open");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains(&format!("{SAVE_FAILED} disk full")),
+            "says what failed, then why: {}",
+            dialog.inner_html()
+        );
+        assert_eq!(labelled(&dialog, "Default workflow").value(), "release");
+        assert!(!button_saying(&dialog, "Save").disabled(), "still to save");
+        assert!(card(&el).contains("Each bucket's default"), "{}", card(&el));
+        let alerts = el.query_selector_all("[role=alert]").unwrap();
+        let in_band = (0..alerts.length())
+            .map(|i| alerts.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .any(|a| a.closest("dialog").unwrap().is_none());
+        assert!(!in_band, "not in the band");
     }
 
-    /// The test handles around Accounts and Storage add no box, so each card
+    /// The test handles around Accounts, Storage and Publishing add no box, so each card
     /// is a cell of the layout's grid and stretches to its row like the rest.
     #[wasm_bindgen_test]
     async fn the_test_handles_leave_the_cards_as_grid_cells() {
         let el = page(vec![settings()]).await;
-        for hook in ["[data-accounts]", "[data-storage]"] {
+        for hook in ["[data-accounts]", "[data-storage]", "[data-publishing]"] {
             let slot = el.query_selector(hook).unwrap().unwrap();
             assert!(slot.class_list().contains(super::style::slot), "{hook}");
         }
@@ -1982,27 +2073,119 @@ mod tests {
         assert_eq!(open(), 1, "and is still open");
     }
 
-    /// Save writes the draft, and is off again once it has.
+    /// The popup opens on what is stored; Save writes the draft, and the card
+    /// shows it.
     #[wasm_bindgen_test]
     async fn publishing_saves_the_draft() {
-        let mut saved = settings();
+        let mut stored = settings();
+        stored.publish.message_template = "Plate {date}".to_string();
+        let mut saved = stored.clone();
         saved.publish.default_workflow = "release".to_string();
-        let el = page(vec![settings(), saved]).await;
-        let save = || button_saying(&el, "Save");
-        assert!(save().disabled(), "nothing to save");
-        type_into(&labelled(&el, "Default workflow"), "release");
+        let el = page(vec![stored, saved]).await;
+        assert!(card(&el).contains("Plate {date}"), "{}", card(&el));
+        let dialog = open_publishing(&el).await;
+        assert_eq!(
+            labelled(&dialog, "Message template").value(),
+            "Plate {date}"
+        );
+        type_into(&labelled(&dialog, "Default workflow"), "release");
         sleep_ms(10).await;
-        assert!(!save().disabled());
-        save().click();
+        button_saying(&dialog, "Save").click();
         sleep_ms(50).await;
         assert_eq!(
             writes(),
             vec![Write::Publishing(PublishSettingsData {
+                message_template: "Plate {date}".to_string(),
                 default_workflow: "release".to_string(),
                 ..PublishSettingsData::default()
             })]
         );
-        assert_eq!(labelled(&el, "Default workflow").value(), "release");
+        assert!(card(&el).contains("release"), "{}", card(&el));
+    }
+
+    /// Cancel drops the draft, a reset one too: nothing is written, and the
+    /// next open starts from what is stored.
+    #[wasm_bindgen_test]
+    async fn cancel_undoes_the_draft_and_a_reset() {
+        let mut stored = settings();
+        stored.publish.default_workflow = "release".to_string();
+        let el = page(vec![stored]).await;
+        let dialog = open_publishing(&el).await;
+        button_saying(&dialog, "Reset to defaults").click();
+        sleep_ms(10).await;
+        assert_eq!(labelled(&dialog, "Default workflow").value(), "");
+        button_saying(&dialog, "Cancel").click();
+        sleep_ms(30).await;
+        assert!(popup(&el).is_none());
+        assert_eq!(writes(), Vec::new());
+        assert!(card(&el).contains("release"), "{}", card(&el));
+        let dialog = open_publishing(&el).await;
+        assert_eq!(labelled(&dialog, "Default workflow").value(), "release");
+    }
+
+    /// Metadata that is not valid JSON says why under the editor, and Save
+    /// is off until it is fixed.
+    #[wasm_bindgen_test]
+    async fn invalid_metadata_blocks_save() {
+        let el = page(vec![settings()]).await;
+        let dialog = open_publishing(&el).await;
+        type_metadata(&dialog, "{\"source\": ");
+        sleep_ms(10).await;
+        assert!(button_saying(&dialog, "Save").disabled());
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Not valid JSON: "),
+            "{}",
+            dialog.inner_html()
+        );
+        type_metadata(&dialog, "{\"source\": \"desktop\"}");
+        sleep_ms(10).await;
+        assert!(!button_saying(&dialog, "Save").disabled());
+    }
+
+    /// The popup's Save takes the page's lock: the role switcher waits for
+    /// it, and while another command holds the lock, Save does.
+    #[wasm_bindgen_test]
+    async fn publishing_shares_the_pages_lock() {
+        let el = page(vec![settings()]).await;
+        let accounts = el.query_selector("[data-accounts]").unwrap().unwrap();
+        let role = || -> web_sys::HtmlSelectElement {
+            accounts
+                .query_selector("select")
+                .unwrap()
+                .expect("the switcher")
+                .unchecked_into()
+        };
+        WRITE_DELAY.with(|d| d.set(60));
+        let dialog = open_publishing(&el).await;
+        type_into(&labelled(&dialog, "Default workflow"), "release");
+        sleep_ms(10).await;
+        button_saying(&dialog, "Save").click();
+        sleep_ms(10).await;
+        assert!(role().disabled(), "held while Publishing saves");
+        assert!(
+            dialog
+                .query_selector("[inert] [role=group]")
+                .unwrap()
+                .is_some(),
+            "and the metadata editor is sealed"
+        );
+        sleep_ms(120).await;
+        assert!(!role().disabled(), "free again");
+
+        FREE_DELAY.with(|d| d.set(60));
+        let storage = el.query_selector("[data-storage]").unwrap().unwrap();
+        button_saying(&storage, "Free up space").click();
+        sleep_ms(10).await;
+        let dialog = open_publishing(&el).await;
+        assert!(
+            button_saying(&dialog, "Save").disabled(),
+            "sealed while freeing"
+        );
+        sleep_ms(100).await;
+        assert!(!button_saying(&dialog, "Save").disabled(), "free again");
     }
 
     #[test]

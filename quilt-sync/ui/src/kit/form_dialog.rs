@@ -74,6 +74,12 @@
 //! dialog is sealed by either. [`ConfirmDialog`](super::ConfirmDialog) takes it the same
 //! way.
 //!
+//! # A form that cannot be sent yet
+//!
+//! `blocked` disables the primary and refuses Return, for a field whose value is wrong
+//! where the field itself says why — metadata that is not valid JSON. Cancel stays live,
+//! and nothing is sealed: the reader is about to fix the field.
+//!
 //! # No submit makes it read-only
 //!
 //! `submit: None` draws no form and one `Close`. That is not a spare variant: a package
@@ -104,6 +110,16 @@ pub fn FormDialog(
     /// exactly as its own submit does, and refuses a submit on top of it.
     #[prop(optional, into)]
     running: MaybeProp<bool>,
+    /// True while the fields hold a value that cannot be sent; the field says why.
+    #[prop(optional, into)]
+    blocked: MaybeProp<bool>,
+    /// See [`Dialog`]'s own `wide`.
+    #[prop(optional)]
+    wide: bool,
+    /// Buttons at the footer's start, apart from Cancel and the primary, such as a reset.
+    /// Outside the form's fieldset, so a caller seals them itself.
+    #[prop(optional)]
+    footer_start: Option<AnyView>,
     /// The fields. Wrapped in the `<form>` when there is something to submit.
     children: Children,
 ) -> impl IntoView {
@@ -118,6 +134,9 @@ pub fn FormDialog(
         let on_submit = move |ev: leptos::ev::SubmitEvent| {
             // The default is a navigation, which in a webview is the app disappearing.
             ev.prevent_default();
+            if blocked.get_untracked().unwrap_or(false) {
+                return;
+            }
             submission.run(&action);
         };
         let body = view! {
@@ -131,6 +150,7 @@ pub fn FormDialog(
         }
         .into_any();
         let footer = view! {
+            {footer_start.map(|start| view! { <div class=style::start>{start}</div> })}
             <Button
                 disabled=busy
                 on_click=move |_| open.set(false)
@@ -141,6 +161,7 @@ pub fn FormDialog(
                 variant=ButtonVariant::Primary
                 submit=true
                 form=form_id
+                disabled=Signal::derive(move || blocked.get().unwrap_or(false))
                 loading=busy
                 on_click=move |_| ()
             >
@@ -160,7 +181,7 @@ pub fn FormDialog(
         (body, footer)
     };
 
-    view! { <Dialog open=open title=title held=busy footer=footer>{body}</Dialog> }
+    view! { <Dialog open=open title=title held=busy wide=wide footer=footer>{body}</Dialog> }
 }
 
 #[cfg(test)]
@@ -272,6 +293,45 @@ mod tests {
         sleep_ms(0).await;
         leptos::task::tick().await;
         assert_eq!(ran.get_untracked(), 1, "the click crossed into the form");
+    }
+
+    /// A blocked form takes neither the primary nor Return, and Cancel stays live; it
+    /// sends once the field is fixed.
+    #[wasm_bindgen_test]
+    async fn a_blocked_form_is_not_sent() {
+        let open = RwSignal::new(true);
+        let blocked = RwSignal::new(true);
+        let ran = RwSignal::new(0);
+        let el = mount(move || {
+            view! {
+                <FormDialog
+                    open=open
+                    title="Change bucket"
+                    blocked=blocked
+                    submit=Submit::new(
+                        "Save",
+                        move || async move {
+                            ran.update(|n| *n += 1);
+                            Ok(())
+                        },
+                    )
+                >
+                    <Fields />
+                </FormDialog>
+            }
+        });
+        assert!(primary(&el, "Save").disabled());
+        assert!(!primary(&el, "Cancel").disabled());
+        form(&el).request_submit().unwrap();
+        sleep_ms(0).await;
+        assert_eq!(ran.get_untracked(), 0, "Return is refused too");
+
+        blocked.set(false);
+        leptos::task::tick().await;
+        primary(&el, "Save").click();
+        sleep_ms(0).await;
+        leptos::task::tick().await;
+        assert_eq!(ran.get_untracked(), 1);
     }
 
     /// The rejection the page's notification slot used to swallow, now above the fields.

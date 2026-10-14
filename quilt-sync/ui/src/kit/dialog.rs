@@ -58,6 +58,9 @@ pub fn Dialog(
     /// the element can refuse it.
     #[prop(optional, into)]
     held: MaybeProp<bool>,
+    /// 640px instead of 440, for a form with a tall control such as a JSON editor.
+    #[prop(optional)]
+    wide: bool,
     /// The buttons, right-aligned in the footer. Primary last, as everywhere else on this
     /// platform.
     footer: AnyView,
@@ -85,7 +88,7 @@ pub fn Dialog(
     view! {
         <dialog
             node_ref=element
-            class=style::root
+            class=if wide { format!("{} {}", style::root, style::wide) } else { style::root.to_string() }
             aria-label=title
             // `cancel` is Escape's own event and fires before the close. Preventing it is
             // the only thing that stops the UA closing the element.
