@@ -3,48 +3,37 @@
 //! Every region is `pages::commit_v2`'s own, over fixture props, so the routed
 //! page (`pages::CommitV2`) and this scene cannot drift. Callbacks are dropped.
 //!
-//! # Measured at 1024x560, in Chrome
+//! # Measured in Chrome
 //!
-//! The list's rows scroll in their own box, which takes what the form leaves;
-//! "rows" counts those wholly in sight, in the box and the window.
+//! "Rows" counts those wholly in sight, in the list's box and the window.
 //!
-//! | | header ends | message ends | metadata ends | box | rows | at 900 tall |
-//! |---|---:|---:|---:|---:|---:|---:|
-//! | at rest, 4 files | 144 | 217 | 361 | 412–527 | 3 of 4 | 4 of 4 |
-//! | 300 files | 144 | 217 | 361 | 412–527 | **3** of 300 | **13** of 300 |
-//! | no bucket, so no workflow to pick | 144 | 217 | 349 | 401–527 | 3 of 4 | 4 of 4 |
-//! | both values from your publish settings | 144 | 217 | 410 | 461–541 | 2 of 4 | 4 of 4 |
-//! | junk banner, signed out | 144 | 283 | 427 | 478–558 | 2 of 4 | 4 of 4 |
-//! | no access | 144 | 271 | 415 | 467–546 | 2 of 4 | 4 of 4 |
-//! | the metadata editor open | 144 | 217 | 503 | 554–634 | 0 | 4 of 4 |
-//! | a failed check | 144 | 217 | 527 | 578–658 | 0 | 4 of 4 |
+//! | | layout | box | rows |
+//! |---|---|---:|---:|
+//! | 1280×900, 300 files | two columns | 191–867 | 20 of 300 |
+//! | 1024×560, 300 files | two columns | 191–527 | 10 of 300 |
+//! | 1024×560, a banner | two columns | 257–388 | 4 of 4 |
+//! | 1000×560, at rest | one column | 458–541 | 2 of 4 |
+//! | 1000×560, 300 files, seven metadata fields | one column | 559–643 | 0; the page scrolls 84px |
+//! | 640×560, a failed check | one column | 563–646 | 0; the page scrolls 87px |
 //!
-//! - The header, with the primary, never scrolls away: however long the list,
-//!   only its box scrolls. The ignored count shares the heading's row, so it is
-//!   in sight too.
-//! - The box has a floor, two rows and a half under the heading: what a banner
-//!   leaves at 560. Only with the editor open does the floor not fit, and then
-//!   the page scrolls (75px, or 99 with a failed check).
-//! - A failed check's error ends at 527, inside the window. That sets the
-//!   metadata editor's opening height at 150px, which is also the least its
-//!   grip drags it to; at 220 the error fell to 613. The grip is the 12px
-//!   under the editor, and drags it to 600px at most.
-//! - The editor's context menu is not cropped: its one clipping ancestor is
-//!   the page's scroller, and the menu opens upward over the form.
+//! - Wide, the header and any banner span the page, and both columns take
+//!   the height under them. The open editor with a failed check fits in the
+//!   left column at 1024×560, so the page does not scroll.
+//! - Narrow, the box takes what the form leaves, down to its floor; with the
+//!   editor open the page scrolls instead.
+//! - Paths start 13px right of the heading: the rows have no leading column.
+//! - The message field's border and the list's border start on one line.
+//! - The metadata preview opens its top level, a line per field, so long
+//!   metadata pushes a narrow page's list down; the page then scrolls.
+//! - The editor's context menu is not cropped by the column: its one
+//!   clipping ancestor is the page's scroller.
+//! - Nothing scrolls sideways at 640.
 //!
-//! # At 640 wide
-//!
-//! The four 640 cells measure as their 1024 rows above, to the pixel: every
-//! field fills the column, the ignored count shares the heading's row, and
-//! nothing scrolls sideways. Only a long namespace costs height, in the
-//! breadcrumb, which wraps to a second line (21px) rather than overflowing.
-//!
-//! # Left for the port
+//! # Left for later
 //!
 //! - The editor's context menu cuts some of its own labels short (`Edit valu`),
 //!   at its own 16px.
 //! - The `Metadata` label names the editor's hidden fallback textarea, as on v1.
-//! - File rows keep `EntryRow`'s empty leading column, about 60px.
 //! - The loading skeleton's header is 4px shorter than the real one.
 
 use leptos::prelude::*;
@@ -136,6 +125,7 @@ struct Fixture {
     no_workflow: &'static str,
     /// The window's width; the app's narrowest is 640.
     width: u32,
+    height: u32,
 }
 
 impl Fixture {
@@ -155,6 +145,7 @@ impl Fixture {
             from_settings: (false, false),
             no_workflow: "None",
             width: 1024,
+            height: 560,
         }
     }
 }
@@ -174,6 +165,7 @@ fn page(f: Fixture) -> AnyView {
         from_settings,
         no_workflow,
         width,
+        height,
     } = f;
     let w = PrimaryWiring {
         choice: RwSignal::new(0),
@@ -223,7 +215,7 @@ fn page(f: Fixture) -> AnyView {
     }
     .into_any();
 
-    let frame = format!("width:{width}px; --q-frame-height:560px; max-width:100%");
+    let frame = format!("width:{width}px; --q-frame-height:{height}px; max-width:100%");
     view! {
         <div id=id class="g-window" style=frame>
             <PageLayout heading="QuiltSync" banner=().into_any() actions=appbar_actions()>
@@ -273,9 +265,10 @@ fn loading() -> AnyView {
     .into_any()
 }
 
-const NOTE: &str = "The commit page v2 at 1024×560, one cell per state: header, \
-    problem, message, workflow, metadata, then the changed files, which scroll under the form. \
-    The cells after the long list are the same page at 640, the window's narrowest.";
+const NOTE: &str = "The commit page v2. The header and any banner span the page; under them \
+    the form is on the left and the changed files on the right, scrolling in their own box. \
+    Narrower than about a 1024px window it is one column, the files last. The state cells are \
+    at 1024×560; then the default 1280×900, one column at 1000, and the window's narrowest, 640.";
 
 const FAILED_CHECK: &str = "The workflow requires an \"operator\" field in the metadata";
 
@@ -311,7 +304,7 @@ pub fn CommitPageScene() -> impl IntoView {
                     ..Fixture::new("commit-local-only")
                 })}
             </Cell>
-            <Cell full=true label="no metadata — the absence muted, and the button reads Add">
+            <Cell full=true label="no metadata — the absence muted, and the toggle reads Add">
                 {page(Fixture { metadata: "", ..Fixture::new("commit-no-metadata") })}
             </Cell>
             <Cell full=true label="the metadata editor open — drag the bar under it, or focus it and use the arrow keys, to make it taller">
@@ -371,12 +364,47 @@ pub fn CommitPageScene() -> impl IntoView {
                     ..Fixture::new("commit-long")
                 })}
             </Cell>
+            {size_cells()}
             {narrow_cells()}
             <Cell full=true label="loading">
                 {loading()}
             </Cell>
         </Scene>
     }
+}
+
+/// The default window, and one just under the switch.
+fn size_cells() -> AnyView {
+    view! {
+        <Cell full=true label="1280×900, the default window — at rest">
+            {page(Fixture { width: 1280, height: 900, ..Fixture::new("commit-1280-rest") })}
+        </Cell>
+        <Cell full=true label="1280×900 — 300 files: the list scrolls in its own box beside the form">
+            {page(Fixture {
+                primary: Primary::Files(300),
+                files: many_files(),
+                ignored: 14,
+                metadata: LONG_METADATA,
+                width: 1280,
+                height: 900,
+                ..Fixture::new("commit-1280-long")
+            })}
+        </Cell>
+        <Cell full=true label="1000 wide — one column, the files last">
+            {page(Fixture { width: 1000, ..Fixture::new("commit-1000-rest") })}
+        </Cell>
+        <Cell full=true label="1000 wide — 300 files">
+            {page(Fixture {
+                primary: Primary::Files(300),
+                files: many_files(),
+                ignored: 14,
+                metadata: LONG_METADATA,
+                width: 1000,
+                ..Fixture::new("commit-1000-long")
+            })}
+        </Cell>
+    }
+    .into_any()
 }
 
 /// The same page at 640, the window's narrowest: the states that add a line

@@ -1,7 +1,7 @@
-// Tighter than `PageLayout`'s gap: these read as one form. It fills the page,
-// so the file list can take what the form leaves and scroll inside it.
-// `min-height: 0` lets it be shorter than its content; when the list's floor
-// does not fit, `PageLayout` scrolls the whole page instead.
+/* Tighter than `PageLayout`'s gap: these read as one form. It fills the page,
+ * so the file list can take what is left and scroll inside it. `min-height: 0`
+ * lets it be shorter than its content; when the list's floor does not fit,
+ * `PageLayout` scrolls the whole page instead. */
 .column {
   display: flex;
   flex-direction: column;
@@ -10,7 +10,15 @@
   min-height: 0;
 }
 
-// A test handle that adds no box.
+/* The message, the workflow and the metadata, spaced as the column is. */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-4);
+  min-width: 0;
+}
+
+/* A test handle that adds no box. */
 .slot {
   display: contents;
 }
@@ -19,7 +27,7 @@
   color: var(--q-fgColor-accent);
 }
 
-// Fields that are not a `FormControl`, drawn to match one.
+/* Fields that are not a `FormControl`, drawn to match one. */
 .field {
   min-width: 0;
 }
@@ -30,21 +38,38 @@
   font-weight: 600;
 }
 
-// One control tall, so toggling `Edit` does not move the row.
+/* The name, then the editor's toggle on the same line. */
 .field_head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--q-space-3);
-  min-height: var(--q-control-height);
+  align-items: baseline;
+  gap: var(--q-space-2);
   margin-bottom: var(--q-space-1);
+}
+
+/* A small text button with a dashed underline, so it reads as part of the
+ * label line and not as a second control row. */
+.inline_action {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--q-fgColor-accent);
+  text-decoration: underline dashed;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.inline_action:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 .field_head .field_name {
   margin-bottom: 0;
 }
 
-// Full width: `JsonDisplay` fits its line to the width it is given.
+/* Full width: `JsonDisplay` fits its line to the width it is given. */
 .field_value {
   min-width: 0;
   margin: 0;
@@ -59,7 +84,7 @@
   color: var(--q-fgColor-muted);
 }
 
-// As `FormControl`'s error.
+/* As `FormControl`'s error. */
 .field_error {
   display: flex;
   align-items: flex-start;
@@ -75,7 +100,7 @@
   margin-top: 3px;
 }
 
-// The fallback textarea.
+/* The fallback textarea. */
 .metadata {
   width: 100%;
   min-width: 0;
@@ -90,14 +115,14 @@
   resize: vertical;
 }
 
-// The editor fills its parent, whose height the grip sets. No `overflow` here
-// or above: it crops the editor's context menu.
+/* The editor fills its parent, whose height the grip sets. No `overflow` here
+ * or above: it crops the editor's context menu. */
 .editor {
   height: 100%;
 }
 
-// A short bar centred on a strip as wide as the editor, so the whole strip
-// takes the drag.
+/* A short bar centred on a strip as wide as the editor, so the whole strip
+ * takes the drag. */
 .grip {
   display: flex;
   justify-content: center;
@@ -129,15 +154,15 @@
   --jse-main-border: 1px solid var(--q-borderColor-danger-muted);
 }
 
-// Takes the height the form leaves. The floor is the heading and two rows and
-// a half, the most a banner leaves at 560 (measured in the gallery), so the
-// list stays a list when the editor is open in a short window; below it the
-// page scrolls. On the section, not the box, so a short list's
-// box is no taller than its rows.
+/* Wide, the files' column; narrow, what the form leaves. The floor is the
+ * heading and about two rows and a half, so the list stays a list when the
+ * editor is open in a short window; below it the page scrolls. On the
+ * section, not the box, so a short list's box is no taller than its rows. */
 .included {
   display: flex;
   flex-direction: column;
-  gap: var(--q-space-2);
+  /* As a field's label: the box's border lines up with the message's. */
+  gap: var(--q-space-1);
   flex: 1 1 auto;
   min-height: 116px;
 }
@@ -150,8 +175,8 @@
   gap: var(--q-space-1) var(--q-space-3);
 }
 
-// The rows' box shrinks to what is left and scrolls; the lines under it stay
-// on screen.
+/* The rows' box shrinks to what is left and scrolls; the lines under it stay
+ * on screen. */
 .rows {
   display: flex;
   flex-direction: column;
