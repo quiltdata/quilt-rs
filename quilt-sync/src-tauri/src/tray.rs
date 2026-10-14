@@ -20,11 +20,9 @@ use tokio::sync::watch;
 use crate::telemetry::prelude::*;
 
 use crate::autopull::SharedAutosyncSettings;
-use crate::autopull::SharedWindowMode;
 use crate::autopull::SyncTrayStatus;
 use crate::autopull::TrayMode;
 use crate::autopull::Watcher;
-use crate::autopull::WindowMode;
 use crate::quit::QuitAction;
 use crate::quit::QuitGate;
 
@@ -118,11 +116,6 @@ fn show_main_window(app: &AppHandle) {
         {
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
         }
-        let handle = app.clone();
-        async_runtime::spawn(async move {
-            let mode = handle.state::<SharedWindowMode>();
-            *mode.write().await = WindowMode::Focused;
-        });
     }
 }
 
@@ -246,11 +239,6 @@ fn install_close_handler(app: &AppHandle) {
             {
                 let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
-            let mode_handle = handle.clone();
-            async_runtime::spawn(async move {
-                let mode = mode_handle.state::<SharedWindowMode>();
-                *mode.write().await = WindowMode::Closed;
-            });
         }
     });
 }
