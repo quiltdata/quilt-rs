@@ -1865,6 +1865,104 @@ mod tests {
         }
     }
 
+    const EDITED: &str = "{\"edited\": true}";
+
+    /// The backend's cache, as [`cached_rules`] keeps it, where only
+    /// `other-bucket`'s rules refuse [`EDITED`].
+    fn other_bucket_refuses_edits(
+        _: String,
+        _: String,
+        refresh: bool,
+        _: String,
+        metadata: String,
+    ) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>> {
+        if refresh || CACHED.get().is_empty() {
+            CACHED.set(BUCKET.get());
+        }
+        let violations = if CACHED.get() == "other-bucket" && metadata == EDITED {
+            vec![CommitViolation {
+                field: ViolationField::Metadata,
+                message: "other-bucket's rules refuse this".to_string(),
+            }]
+        } else {
+            Vec::new()
+        };
+        Box::pin(async move { violations })
+    }
+
+    /// Edited metadata survives a bucket change, and the new bucket's rules
+    /// judge it: when they refuse it, the field says so and Publish is off.
+    #[wasm_bindgen_test]
+    async fn edited_metadata_survives_a_bucket_change_and_meets_its_rules() {
+        READS.set(0);
+        CACHED.set("");
+        unmount_earlier();
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(
+                &wasm_bindgen::JsValue::NULL,
+                "",
+                Some("/commit?namespace=org%2Fpkg"),
+            )
+            .unwrap();
+        let el = mount(|| {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route
+                            path=path!("/commit")
+                            view=|| {
+                                view! {
+                                    <CommitScreen
+                                        read=on_two_buckets
+                                        rules=Some(other_bucket_refuses_edits)
+                                    />
+                                }
+                            }
+                        />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(80).await;
+        crate::test_support::element_saying(&el, "Edit").click();
+        sleep_ms(30).await;
+        let editor = |el: &web_sys::Element| -> web_sys::HtmlTextAreaElement {
+            el.query_selector("textarea")
+                .unwrap()
+                .expect("the metadata editor")
+                .unchecked_into()
+        };
+        editor(&el).set_value(EDITED);
+        editor(&el)
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        sleep_ms(past_the_pause()).await;
+        let face = |el: &web_sys::Element| -> web_sys::HtmlButtonElement {
+            el.query_selector("[data-primary-action] button")
+                .unwrap()
+                .unwrap()
+                .unchecked_into()
+        };
+        assert!(!face(&el).disabled(), "team-bucket's rules take it");
+
+        crate::test_support::element_saying(&el, "Refresh").click();
+        sleep_ms(past_the_pause()).await;
+
+        assert_eq!(BUCKET.get(), "other-bucket");
+        assert_eq!(editor(&el).value(), EDITED, "the edit survived");
+        assert!(
+            el.text_content()
+                .unwrap_or_default()
+                .contains("other-bucket's rules refuse this"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(face(&el).disabled(), "Publish is off");
+    }
+
     fn entry(path: &str, status: &str) -> EntryData {
         EntryData {
             filename: path.to_string(),
