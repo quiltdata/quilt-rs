@@ -24,6 +24,11 @@ pub fn Select(
     options: Vec<String>,
     selected: RwSignal<String>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
+    /// The id of a line that describes it, for a select named by
+    /// [`Naming::Hidden`] that has a note beside it. A [`FormControl`](super::FormControl)
+    /// describes its own.
+    #[prop(optional, into)]
+    described_by: Option<String>,
 ) -> impl IntoView {
     let is_disabled = Signal::derive(move || disabled.get().unwrap_or(false));
 
@@ -43,8 +48,8 @@ pub fn Select(
             let (id, described_by) = ids.into_attrs();
             (None, None, Some(id), Some(described_by))
         }
-        Naming::Hidden(name) => (None, Some(name), None, None),
-        Naming::Prefix(name) => (Some(format!("{name}:")), Some(name), None, None),
+        Naming::Hidden(name) => (None, Some(name), None, described_by),
+        Naming::Prefix(name) => (Some(format!("{name}:")), Some(name), None, described_by),
     };
 
     view! {

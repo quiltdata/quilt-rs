@@ -119,57 +119,41 @@ pub fn minutes_error(text: &str) -> Option<&'static str> {
     minutes_secs(text).err()
 }
 
-/// The sentence around a minutes field: `Every [1] minute`, `After [5]
-/// minutes of inactivity`. Its error, if any, goes under it.
-#[component]
-fn MinutesSentence(
-    /// The words before the field.
-    before: &'static str,
-    /// The words after `minute(s)`, if any.
-    #[prop(optional)]
-    after: &'static str,
-    /// The field's name for a reader: the sentence is not a label.
+/// A minutes field for a toggle row's trailing slot, and its error for the
+/// row's detail, under the words. `name` is the field's name for a reader, as
+/// the sub-label says it. While `held` (its save is out) it takes no typing,
+/// but the cursor stays. Only a valid value is saved; an invalid one stays in
+/// the field with its error.
+fn minutes_field(
     name: &'static str,
     minutes: RwSignal<String>,
     on_commit: Option<Callback<()>>,
-    /// While its save is out: no typing, but the cursor stays.
     held: Signal<bool>,
-) -> impl IntoView {
+) -> (AnyView, AnyView) {
     let error = Signal::derive(move || minutes.with(|text| minutes_error(text)));
     let error_id = crate::kit::unique_id("minutes-error");
-    let unit = move || {
-        if minutes.with(|text| text.trim() == "1") {
-            "minute"
-        } else {
-            "minutes"
-        }
-    };
-    view! {
-        <span class=style::sentence>
-            {before}
-            <NumberInput
-                naming=Naming::Hidden(name.to_string())
-                value=minutes
-                min=1
-                readonly=held
-                invalid=Signal::derive(move || error.get().is_some())
-                described_by={
-                    let id = error_id.clone();
-                    Signal::derive(move || error.get().map(|_| id.clone()))
+    let field = view! {
+        <NumberInput
+            naming=Naming::Hidden(name.to_string())
+            value=minutes
+            min=1
+            readonly=held
+            invalid=Signal::derive(move || error.get().is_some())
+            described_by={
+                let id = error_id.clone();
+                Signal::derive(move || error.get().map(|_| id.clone()))
+            }
+            on_commit=Callback::new(move |()| {
+                if let Some(commit) = on_commit
+                    && error.with_untracked(Option::is_none)
+                {
+                    commit.run(());
                 }
-                // Only a valid value is saved; an invalid one stays on screen
-                // with its error.
-                on_commit=Callback::new(move |()| {
-                    if let Some(commit) = on_commit
-                        && error.with_untracked(Option::is_none)
-                    {
-                        commit.run(());
-                    }
-                })
-            />
-            {unit}
-            {after}
-        </span>
+            })
+        />
+    }
+    .into_any();
+    let message = view! {
         <Show when=move || error.get().is_some()>
             <p class=style::error id=error_id.clone()>
                 {StateTone::Danger.glyph()}
@@ -177,6 +161,14 @@ fn MinutesSentence(
             </p>
         </Show>
     }
+    .into_any();
+    (field, message)
+}
+
+/// A row's control at its trailing end, with the row's *Saved* before it, so
+/// the control stays at the card's edge when the note comes and goes.
+fn trailing_control(saved: AnyView, control: AnyView) -> AnyView {
+    view! { <span class=style::control>{saved}{control}</span> }.into_any()
 }
 
 // ── Header and column ──
@@ -235,6 +227,11 @@ pub fn SettingsLayout(
 
 // ── Syncing ──
 
+/// The pull minutes' sub-label, and the field's name for a reader.
+pub const PULL_MINUTES: &str = "Minutes between checks for new revisions";
+/// The publish minutes' sub-label, and the field's name for a reader.
+pub const PUBLISH_MINUTES: &str = "Minutes to wait after your last edit before publishing";
+
 pub const WATCH_SUBLABEL: &str = "Package statuses update as soon as you save, add or delete a \
      file in a package folder. When this is off, changes appear at the next autosync check, or \
      when you press Refresh. Turn it off if your system can't watch this many files.";
@@ -260,40 +257,35 @@ pub fn SyncingCard(
     on_pull_minutes: Option<Callback<()>>,
     #[prop(optional)] on_publish_minutes: Option<Callback<()>>,
 ) -> impl IntoView {
+    let (pull_field, pull_error) = minutes_field(
+        PULL_MINUTES,
+        pull_minutes,
+        on_pull_minutes,
+        saving(pending, Saved::Pull),
+    );
+    let (publish_field, publish_error) = minutes_field(
+        PUBLISH_MINUTES,
+        publish_minutes,
+        on_publish_minutes,
+        saving(pending, Saved::Publish),
+    );
     view! {
         <Card title="Syncing">
             <ToggleRow
                 label="Get new revisions"
+                sublabel=format!("{PULL_MINUTES}.")
                 checked=pull
                 disabled=saving(pending, Saved::Pull)
-                trailing=saved_note(saved, Saved::Pull)
-                detail=view! {
-                    <MinutesSentence
-                        before="Every "
-                        name="Minutes between checks for new revisions"
-                        minutes=pull_minutes
-                        on_commit=on_pull_minutes
-                        held=saving(pending, Saved::Pull)
-                    />
-                }
-                    .into_any()
+                trailing=trailing_control(saved_note(saved, Saved::Pull), pull_field)
+                detail=pull_error
             />
             <ToggleRow
                 label="Publish your changes"
+                sublabel=format!("{PUBLISH_MINUTES}.")
                 checked=publish
                 disabled=saving(pending, Saved::Publish)
-                trailing=saved_note(saved, Saved::Publish)
-                detail=view! {
-                    <MinutesSentence
-                        before="After "
-                        after=" of inactivity"
-                        name="Minutes of inactivity before publishing"
-                        minutes=publish_minutes
-                        on_commit=on_publish_minutes
-                        held=saving(pending, Saved::Publish)
-                    />
-                }
-                    .into_any()
+                trailing=trailing_control(saved_note(saved, Saved::Publish), publish_field)
+                detail=publish_error
             />
             <ToggleRow
                 label="Watch folders for changes"
@@ -736,18 +728,23 @@ impl StorageSize {
 #[component]
 fn ValueRow(
     #[prop(into)] name: String,
-    value: AnyView,
+    /// None for a row whose control is its action, such as Log level.
+    #[prop(optional)]
+    value: Option<AnyView>,
     #[prop(optional)] action: Option<AnyView>,
     /// A line under the value.
     #[prop(optional, into)]
     note: Option<String>,
+    /// The note's id, for a control in the action that it describes.
+    #[prop(optional, into)]
+    note_id: Option<String>,
 ) -> impl IntoView {
     view! {
         <div class=style::row>
             <div class=style::row_text>
                 <span class=style::row_name>{name}</span>
-                <span class=style::row_value>{value}</span>
-                {note.map(|note| view! { <span class=style::row_note>{note}</span> })}
+                {value.map(|value| view! { <span class=style::row_value>{value}</span> })}
+                {note.map(|note| view! { <span class=style::row_note id=note_id>{note}</span> })}
             </div>
             {action.map(|action| view! { <div class=style::row_action>{action}</div> })}
         </div>
@@ -911,6 +908,7 @@ pub fn TroubleshootingCard(
         Some(hint) => format!("Applies after a restart. {hint}."),
         None => "Applies after a restart.".to_string(),
     };
+    let note_id = crate::kit::unique_id("log-level-note");
     view! {
         <Card title="Troubleshooting">
             <ValueRow
@@ -924,30 +922,26 @@ pub fn TroubleshootingCard(
                 action=view! { <Button on_click=move |_| on_report.run(())>"Report a problem…"</Button> }
                     .into_any()
             />
-            <div class=style::row>
-                <div class=style::row_text>
-                    <FormControl
-                        label="Log level"
-                        caption=caption
-                        control=move |id| {
-                            view! {
-                                <span class=style::select>
-                                    <Select
-                                        naming=Naming::FormControl(id)
-                                        options=LOG_LEVELS.iter().map(ToString::to_string).collect()
-                                        selected=log_level
-                                        disabled=Signal::derive(move || {
-                                            overridden || saving(pending, Saved::LogLevel).get()
-                                        })
-                                    />
-                                </span>
-                            }
-                                .into_any()
-                        }
-                    />
-                </div>
-                <div class=style::row_action>{saved_note(saved, Saved::LogLevel)}</div>
-            </div>
+            <ValueRow
+                name="Log level"
+                note=caption
+                note_id=note_id.clone()
+                action=trailing_control(
+                    saved_note(saved, Saved::LogLevel),
+                    view! {
+                        <Select
+                            naming=Naming::Hidden("Log level".to_string())
+                            described_by=note_id
+                            options=LOG_LEVELS.iter().map(ToString::to_string).collect()
+                            selected=log_level
+                            disabled=Signal::derive(move || {
+                                overridden || saving(pending, Saved::LogLevel).get()
+                            })
+                        />
+                    }
+                        .into_any(),
+                )
+            />
             {
                 let logs_note = logs_dir_is_temporary.then_some(TEMPORARY_LOGS);
                 match logs_note {
@@ -1263,6 +1257,100 @@ mod tests {
             log_env_hint(&LogEnv::Ignored("debgu".into())).as_deref(),
             Some("QUILT_LOG=\"debgu\" is not a log level or a list of directives, so it's ignored")
         );
+    }
+
+    /// The minutes sit at the row's end, outside its label, named as the
+    /// sub-label says; an invalid value's error is under the row and
+    /// describes the field.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn the_minutes_are_at_the_rows_end_with_the_error_under_it() {
+        use wasm_bindgen::JsCast;
+
+        let el = crate::test_support::mount(move || {
+            view! {
+                <SyncingCard
+                    pull=RwSignal::new(true)
+                    pull_minutes=RwSignal::new("0".to_string())
+                    publish=RwSignal::new(false)
+                    publish_minutes=RwSignal::new("5".to_string())
+                    watch=RwSignal::new(true)
+                />
+            }
+        });
+        let text = el.text_content().unwrap_or_default();
+        assert!(!text.contains("Every"), "no sentence: {text}");
+        assert!(text.contains(&format!("{PULL_MINUTES}.")), "got: {text}");
+        assert!(text.contains(&format!("{PUBLISH_MINUTES}.")), "got: {text}");
+
+        let field: web_sys::HtmlInputElement = el
+            .query_selector("input[type=number]")
+            .unwrap()
+            .expect("the pull minutes")
+            .dyn_into()
+            .unwrap();
+        assert_eq!(
+            field.get_attribute("aria-label").as_deref(),
+            Some(PULL_MINUTES)
+        );
+        assert!(
+            field.closest("label").unwrap().is_none(),
+            "outside the label"
+        );
+
+        let error_id = field.get_attribute("aria-describedby").expect("described");
+        let error = el
+            .query_selector(&format!("#{error_id}"))
+            .unwrap()
+            .expect("the error");
+        assert!(
+            error
+                .text_content()
+                .unwrap_or_default()
+                .contains("At least 1 minute"),
+            "got: {:?}",
+            error.text_content()
+        );
+        assert!(
+            error.closest("label").unwrap().is_none(),
+            "under the row, not in it"
+        );
+    }
+
+    /// Log level is a row like Report a problem: the select is named *Log
+    /// level* and described by the note under the name.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn the_log_level_select_is_named_and_described_by_its_note() {
+        let el = crate::test_support::mount(move || {
+            view! {
+                <TroubleshootingCard
+                    on_report=Callback::new(|()| ())
+                    log_level=RwSignal::new("Default".to_string())
+                    log_env=LogEnv::Overrides("quilt_rs=trace".into())
+                    logs_dir="/logs"
+                    on_open_logs=Callback::new(|()| ())
+                    data_dir="/data"
+                    on_open_data=Callback::new(|()| ())
+                />
+            }
+        });
+        let select = el.query_selector("select").unwrap().expect("the select");
+        assert_eq!(
+            select.get_attribute("aria-label").as_deref(),
+            Some("Log level")
+        );
+        let note_id = select.get_attribute("aria-describedby").expect("described");
+        let note = el
+            .query_selector(&format!("#{note_id}"))
+            .unwrap()
+            .expect("the note")
+            .text_content()
+            .unwrap_or_default();
+        assert_eq!(
+            note,
+            "Applies after a restart. Set by the QUILT_LOG environment variable \
+             (quilt_rs=trace)."
+        );
+        assert!(select.has_attribute("disabled"), "QUILT_LOG decides");
     }
 
     /// A minute field saves on Enter or leaving it, and only a valid value.

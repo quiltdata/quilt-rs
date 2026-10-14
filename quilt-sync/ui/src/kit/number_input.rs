@@ -1,10 +1,10 @@
-//! A whole-number field, a few digits wide, for a value that sits inside a
-//! sentence: Settings' `Every [1] minutes`.
+//! A whole-number field, a few digits wide, for a value at the end of a row:
+//! Settings' Syncing minutes.
 //!
 //! [`TextInput`](super::TextInput)'s box, so the two cannot disagree about
 //! height or border. It takes a [`Naming`] rather than a bare `ControlId`
-//! because the words around it are not a label: `Every … minutes` is a
-//! sentence, and its name is said for a reader with [`Naming::Hidden`].
+//! because the row's words are not a `<label>` for it: they belong to the
+//! row's checkbox, so its name is said for a reader with [`Naming::Hidden`].
 //!
 //! The value stays the text typed. Whether it is a number, and whether it is
 //! at least `min`, is the caller's to say, as `invalid` and an error under it.
@@ -103,7 +103,7 @@ mod tests {
             .unwrap()
     }
 
-    /// Inside a sentence, the field's name is said rather than drawn.
+    /// At the end of a row, the field's name is said rather than drawn.
     #[wasm_bindgen_test]
     fn a_hidden_name_is_the_fields_label() {
         let el = mount(|| {
