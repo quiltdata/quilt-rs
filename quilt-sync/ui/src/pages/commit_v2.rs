@@ -915,6 +915,7 @@ mod layout_tests {
     use wasm_bindgen_test::*;
 
     stylance::import_crate_style!(columns, "src/kit/two_columns.module.scss");
+    stylance::import_crate_style!(card, "src/kit/card.module.scss");
 
     /// The kit's spacing tokens, which the test page does not load.
     const TOKENS: &str = "--q-space-3:12px; --q-space-4:16px";
@@ -923,8 +924,8 @@ mod layout_tests {
         view! { <div data-region=name style=format!("height:{height}px")></div> }.into_any()
     }
 
-    /// The column with stand-in regions, `width` px wide.
-    async fn column(width: u32) -> web_sys::Element {
+    /// The page's, the layout's and the card's stylesheets, as the app has them.
+    fn load_styles() {
         load_module_style(
             include_str!("../kit/two_columns.module.scss"),
             &[
@@ -933,6 +934,35 @@ mod layout_tests {
                 ("fill", columns::fill),
             ],
         );
+        load_module_style(
+            include_str!("../kit/card.module.scss"),
+            &[
+                ("root", card::root),
+                ("title", card::title),
+                ("count", card::count),
+                ("body", card::body),
+                ("flush", card::flush),
+                ("fill", card::fill),
+            ],
+        );
+        load_module_style(
+            include_str!("commit_v2.module.scss"),
+            &[
+                ("column", style::column),
+                ("form", style::form),
+                ("included", style::included),
+                ("included_head", style::included_head),
+                ("included_heading", style::included_heading),
+                ("rows", style::rows),
+                ("tally", style::tally),
+                ("quiet", style::quiet),
+            ],
+        );
+    }
+
+    /// The column with stand-in regions, `width` px wide.
+    async fn column(width: u32) -> web_sys::Element {
+        load_styles();
         let el = mount(move || {
             view! {
                 <div style=format!(
@@ -984,6 +1014,65 @@ mod layout_tests {
             "the files under the form"
         );
         assert_eq!(included.left(), metadata.left(), "one column");
+    }
+
+    /// The column with a real list of `n` files, in a 600px page that scrolls
+    /// as `PageLayout`'s frame does.
+    async fn page_with_files(width: u32, n: usize) -> web_sys::Element {
+        load_styles();
+        let el = mount(move || {
+            let files = (0..n)
+                .map(|i| IncludedFile {
+                    path: format!("data/file-{i:03}.csv"),
+                    size: 1000,
+                    change: Change::New,
+                })
+                .collect::<Vec<_>>();
+            view! {
+                <div
+                    data-page=""
+                    style=format!(
+                        "{TOKENS}; width:{width}px; height:600px; display:flex; \
+                         flex-direction:column; overflow-y:auto",
+                    )
+                >
+                    <CommitColumn
+                        header=region("header", 60)
+                        message=region("message", 60)
+                        workflow=region("workflow", 60)
+                        metadata=region("metadata", 60)
+                        included=view! {
+                            <IncludedList files=files ignored=0 on_ignore=Callback::new(|_| ()) />
+                        }
+                            .into_any()
+                    />
+                </div>
+            }
+        });
+        sleep_ms(0).await;
+        el
+    }
+
+    /// A long list scrolls in its own box, so the page does not scroll and
+    /// the header stays in view, wide and narrow.
+    #[wasm_bindgen_test]
+    async fn a_long_list_scrolls_in_its_own_box() {
+        for width in [1200, 800] {
+            let el = page_with_files(width, 100).await;
+            let page = el.query_selector("[data-page]").unwrap().unwrap();
+            assert_eq!(
+                page.scroll_height(),
+                page.client_height(),
+                "{width}: the page does not scroll"
+            );
+            let ul = el.query_selector("ul").unwrap().unwrap();
+            assert!(
+                ul.client_height() > 0 && ul.scroll_height() > ul.client_height(),
+                "{width}: the rows scroll in their box ({} of {})",
+                ul.client_height(),
+                ul.scroll_height()
+            );
+        }
     }
 
     /// With no file changes, a blank state with a glyph says so.
