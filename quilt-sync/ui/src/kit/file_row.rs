@@ -4,62 +4,24 @@
 //! primary enough to be one click, which is why the tag is a real link and the row
 //! is not an anchor.
 //!
-//! Up to three secondary actions live in the row and are always visible, not
-//! revealed on hover. They are not on the packages view's rows, and the asymmetry
-//! is deliberate: a file is a thing you act on, a package is a place you go. Two of
-//! the three are optional — see `on_open_catalog` and `on_copy_uri` — because a
-//! button with nothing behind it is chrome.
+//! The rest of what can be done with the file sits behind one `[⋯]`, as on the
+//! package page's file rows. The packages view's rows have none: a file is a
+//! thing you act on, a package is a place you go.
 
 use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 
-use super::IconButton;
-use super::IconButtonVariant;
+use super::ActionMenu;
+use super::MenuAction;
 use super::RelativeTime;
 use super::SkeletonBox;
 use super::countdown::EpochMillis;
 
 stylance::import_crate_style!(style, "src/kit/file_row.module.scss");
 
-// Inline rather than shared: these three are the only icons in the kit so far, and
-// a real icon set is its own component. The box-arrow specifically means "leaves
-// the application" — a plain arrow would be ambiguous next to the package tag,
-// which is also navigation.
-fn folder_icon() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.3" stroke-linejoin="round">
-            <path d="M1.75 4.25h3.9l1.4 1.9h7.2v7.6H1.75z" />
-        </svg>
-    }
-    .into_any()
-}
-
-fn catalog_icon() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.3" stroke-linejoin="round">
-            <path d="M12.25 9.5v4.25H2.25V3.75H6.5" />
-            <path d="M9.5 2.25h4.25V6.5M13.75 2.25 8 8" />
-        </svg>
-    }
-    .into_any()
-}
-
-fn copy_icon() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.3">
-            <rect x="5.6" y="5.6" width="8.1" height="8.1" rx="1.4" />
-            <path d="M10.4 3.3V2.9c0-.33-.27-.6-.6-.6H2.9c-.33 0-.6.27-.6.6v6.9c0 .33.27.6.6.6h.4" />
-        </svg>
-    }
-    .into_any()
-}
-
-/// The copy button's glyph once the address is on the clipboard. Octicons' check
-/// would be the obvious choice, but the three glyphs beside it here are hand-drawn
-/// strokes at 1.3 and a filled Octicon among them reads as a different weight.
+/// The check the time column shows once the row's address is on the
+/// clipboard. Drawn in strokes, to sit with the row's other text rather than
+/// read as a filled badge.
 fn copied_icon() -> AnyView {
     view! {
         <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
@@ -79,48 +41,47 @@ pub fn FileRow(
     #[prop(into)] package_href: String,
     at: EpochMillis,
     /// Opens the file in whatever application the OS associates with it. Bound to
-    /// the row, not to a button — a button that duplicated the row's own affordance
+    /// the row, not to a button: a button that duplicated the row's own affordance
     /// would be chrome.
     on_open: impl Fn(MouseEvent) + 'static,
-    on_reveal: impl Fn(MouseEvent) + 'static,
-    /// Optional: no command opens a *file* in the catalog yet. A button with
-    /// nothing behind it is chrome — see `on_open`'s note. Pass it and the button
-    /// appears.
-    #[prop(optional, into)]
-    on_open_catalog: Option<Callback<MouseEvent>>,
-    /// `optional_no_strip`, unlike its neighbour above: this is the one action
-    /// whose presence is decided per row — a package with no bucket has no
-    /// address to copy — so the caller hands in the `Option` it computed rather
-    /// than a callback it may not have.
-    #[prop(optional_no_strip)]
-    on_copy_uri: Option<Callback<MouseEvent>>,
+    /// The `[⋯]`'s items. The caller decides which apply to the file.
+    #[prop(into)]
+    actions: Signal<Vec<MenuAction>>,
     /// Whether this row's address is the one currently on the clipboard.
     ///
     /// The caller's answer, not this row's: only a copy that actually landed may
-    /// say so, and the row cannot know. It swaps the glyph for a check and
-    /// changes nothing else — in particular not the button's accessible name,
-    /// which would mean rebuilding the control under whoever had just pressed
-    /// it. The words a screen reader hears come from the region's own live
-    /// region (`pages/main_page/recent_files.rs`).
+    /// say so, and the row cannot know. The time column says *Copied* while it
+    /// holds, so the menu that started the copy can close without the copy
+    /// going unseen. It is hidden from assistive tech, which hears the card's
+    /// live region instead (`pages/main_page/recent_files.rs`).
     #[prop(optional, into)]
     copied: MaybeProp<bool>,
 ) -> impl IntoView {
     // Both ellipsise, so each carries its whole value in `title`.
     let full_path = path.clone();
     let full_package = package.clone();
+    let time = move || {
+        if copied.get().unwrap_or(false) {
+            view! {
+                <span class=style::copied aria-hidden="true">
+                    {copied_icon()}
+                    "Copied"
+                </span>
+            }
+            .into_any()
+        } else {
+            view! { <RelativeTime at=at /> }.into_any()
+        }
+    };
     view! {
-        // A plain container. It used to be `role="button"` around a link and three
-        // buttons, and WAI-ARIA marks `button` as Children Presentational: assistive
-        // tech may prune the subtree and announce one button per row, reaching
-        // neither the package link nor the actions. The row's own key handling
-        // existed only to pay back what that role promised.
-        //
-        // `on:click` stays as a pointer convenience — the whole row remains a
-        // target for a mouse — and the path below is the control that owns opening.
+        // A plain container, not `role="button"`: WAI-ARIA marks `button` as
+        // Children Presentational, and assistive tech may prune the link and the
+        // menu inside it. `on:click` is a pointer convenience, so the whole row is
+        // a target for a mouse; the path below is the control that owns opening.
         <div class=style::root on:click=on_open>
             // The open control, and a real button: it carries the file's name, which
             // is what a reader needs to hear before choosing to open it. No handler
-            // of its own — a native button turns Enter and Space into a click, and
+            // of its own: a native button turns Enter and Space into a click, and
             // that click bubbles to the row above, which is the one handler.
             <button type="button" class=style::path title=full_path>{path}</button>
             // Stops propagation, or going to the package would also open the file.
@@ -132,47 +93,11 @@ pub fn FileRow(
             >
                 {package}
             </a>
-            <span class=style::time>
-                <RelativeTime at=at />
-            </span>
+            <span class=style::time>{time}</span>
+            // The menu's surface is drawn inside this span, so a click on an item
+            // stops here too and does not also open the file.
             <span class=style::actions on:click=|ev: MouseEvent| ev.stop_propagation()>
-                <IconButton
-                    icon=folder_icon()
-                    aria_label="Reveal in directory"
-                    variant=IconButtonVariant::Invisible
-                    on_click=on_reveal
-                />
-                {on_open_catalog.map(|cb| {
-                    view! {
-                        <IconButton
-                            icon=catalog_icon()
-                            aria_label="Open in catalog"
-                            variant=IconButtonVariant::Invisible
-                            on_click=move |ev| cb.run(ev)
-                        />
-                    }
-                })}
-                {on_copy_uri.map(|cb| {
-                    // One button whose glyph is reactive, never two swapped by a
-                    // `Show`: the control must survive its own press, or a keyboard
-                    // user loses focus the moment the copy lands.
-                    let glyph = view! {
-                        {move || if copied.get().unwrap_or(false) {
-                            copied_icon()
-                        } else {
-                            copy_icon()
-                        }}
-                    }
-                        .into_any();
-                    view! {
-                        <IconButton
-                            icon=glyph
-                            aria_label="Copy Quilt+S3 URI"
-                            variant=IconButtonVariant::Invisible
-                            on_click=move |ev| cb.run(ev)
-                        />
-                    }
-                })}
+                <ActionMenu aria_label="More actions for this file" actions=actions />
             </span>
         </div>
     }
@@ -185,8 +110,8 @@ pub fn FileRow(
 /// gets no skeleton, but both lists do.
 ///
 /// Three boxes, not four: the path, the package tag and the time take up most
-/// of a row. The actions are three fixed glyphs, and their brief absence does
-/// not look like missing content.
+/// of a row. The `[⋯]` is one fixed glyph, and its brief absence does not look
+/// like missing content.
 #[component]
 pub fn FileRowSkeleton() -> impl IntoView {
     view! {
@@ -212,100 +137,97 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    /// The action span's buttons, in document order.
-    fn buttons(el: &web_sys::Element) -> Vec<web_sys::Element> {
-        let list = el.query_selector_all("button").unwrap();
-        (0..list.length())
-            .map(|i| list.get(i).unwrap().dyn_into().unwrap())
-            .collect()
-    }
+    const TRIGGER: &str = "button[aria-label='More actions for this file']";
 
-    /// `queue.rs`'s pattern: `dyn_into` to the concrete element, then the DOM's
-    /// own `.click()` — a real click, not a synthesized event.
     fn click(el: &web_sys::Element) {
-        let el: web_sys::HtmlElement = el.clone().dyn_into().unwrap();
-        el.click();
+        el.clone().unchecked_into::<web_sys::HtmlElement>().click();
     }
 
-    #[wasm_bindgen_test]
-    fn a_row_given_no_catalog_or_copy_action_draws_neither_button() {
-        // R1: two of this component's four actions have nothing behind them in the
-        // app. A button that does nothing is chrome, which this file's own `on_open`
-        // doc rejects in as many words.
-        let el = mount(|| {
+    /// Two items in two groups, each counting its own presses.
+    fn actions(reveals: RwSignal<u32>, uris: RwSignal<u32>) -> Vec<MenuAction> {
+        vec![
+            MenuAction::new(
+                "Reveal in folder",
+                Callback::new(move |()| reveals.update(|n| *n += 1)),
+            ),
+            MenuAction::new(
+                "Copy URI",
+                Callback::new(move |()| uris.update(|n| *n += 1)),
+            )
+            .separated(),
+        ]
+    }
+
+    fn row(opened: RwSignal<u32>, copied: Signal<bool>) -> web_sys::Element {
+        let (reveals, uris) = (RwSignal::new(0), RwSignal::new(0));
+        mount(move || {
             view! {
                 <FileRow
                     path="data/one.csv"
                     package="user/alpha"
                     package_href="/installed-package?namespace=user/alpha"
                     at=0.0
-                    on_open=|_| {}
-                    on_reveal=|_| {}
+                    on_open=move |_| opened.update(|n| *n += 1)
+                    actions=actions(reveals, uris)
+                    copied=copied
                 />
             }
-        });
-        let labels: Vec<String> = buttons(&el)
-            .into_iter()
-            .filter_map(|b| b.get_attribute("aria-label"))
+        })
+    }
+
+    /// The row's one control besides the path and the chip is its `[⋯]`, and
+    /// the menu draws what it is handed, in its groups.
+    #[wasm_bindgen_test]
+    async fn the_row_s_actions_sit_behind_one_menu() {
+        let el = row(RwSignal::new(0), Signal::stored(false));
+        let labelled = el.query_selector_all("button[aria-label]").unwrap();
+        assert_eq!(labelled.length(), 1, "one trigger, no bare icons");
+
+        click(&el.query_selector(TRIGGER).unwrap().expect("the [⋯]"));
+        leptos::task::tick().await;
+        let items = el.query_selector_all("[popover] button").unwrap();
+        let words: Vec<String> = (0..items.length())
+            .map(|i| items.item(i).unwrap().text_content().unwrap_or_default())
             .collect();
+        assert_eq!(words, ["Reveal in folder", "Copy URI"]);
         assert_eq!(
-            labels,
-            vec!["Reveal in directory".to_string()],
-            "only the action with a command behind it"
+            el.query_selector_all("[popover] [role='separator']")
+                .unwrap()
+                .length(),
+            1
         );
     }
 
+    /// Opening the menu and choosing from it never also opens the file.
     #[wasm_bindgen_test]
-    fn a_row_given_every_action_draws_every_button() {
-        // The optionality must not have deleted the capability: a later plan lights
-        // these up by passing the props, and this is what pins that path.
-        let el = mount(|| {
-            view! {
-                <FileRow
-                    path="data/one.csv"
-                    package="user/alpha"
-                    package_href="/installed-package?namespace=user/alpha"
-                    at=0.0
-                    on_open=|_| {}
-                    on_reveal=|_| {}
-                    on_open_catalog=Callback::new(|_| {})
-                    on_copy_uri=Some(Callback::new(|_| {}))
-                />
-            }
-        });
-        let labels: Vec<String> = buttons(&el)
-            .into_iter()
-            .filter_map(|b| b.get_attribute("aria-label"))
-            .collect();
-        assert_eq!(
-            labels,
-            vec![
-                "Reveal in directory".to_string(),
-                "Open in catalog".to_string(),
-                "Copy Quilt+S3 URI".to_string(),
-            ],
-            "order is the row's, not the caller's"
+    async fn the_menu_does_not_open_the_file() {
+        let opened = RwSignal::new(0);
+        let el = row(opened, Signal::stored(false));
+        click(&el.query_selector(TRIGGER).unwrap().expect("the [⋯]"));
+        leptos::task::tick().await;
+        click(
+            &el.query_selector("[popover] button")
+                .unwrap()
+                .expect("an item"),
         );
+        leptos::task::tick().await;
+        assert_eq!(opened.get_untracked(), 0);
+
+        click(
+            &el.query_selector("[class*=path]")
+                .unwrap()
+                .expect("the path"),
+        );
+        assert_eq!(opened.get_untracked(), 1, "and the path still does");
     }
 
     /// The path is the open control and the row is not a button.
     ///
-    /// `button` is Children Presentational in WAI-ARIA, so the old `role="button"`
-    /// root let assistive tech prune the link and the three actions inside it.
+    /// `button` is Children Presentational in WAI-ARIA, so a `role="button"`
+    /// root would let assistive tech prune the link and the menu inside it.
     #[wasm_bindgen_test]
     fn the_row_is_not_a_button_and_the_path_is() {
-        let el = mount(|| {
-            view! {
-                <FileRow
-                    path="data/one.csv"
-                    package="user/alpha"
-                    package_href="/x"
-                    at=0.0
-                    on_open=|_| {}
-                    on_reveal=|_| {}
-                />
-            }
-        });
+        let el = row(RwSignal::new(0), Signal::stored(false));
         assert!(
             el.query_selector("[role=button]").unwrap().is_none(),
             "nothing here claims a role it cannot keep"
@@ -321,41 +243,6 @@ mod tests {
         );
     }
 
-    #[wasm_bindgen_test]
-    async fn clicking_the_row_opens_and_clicking_reveal_does_not_also_open() {
-        // The actions span stops propagation. Deleting that `stop_propagation` would
-        // make every Reveal also open the file, which no assertion currently catches.
-        let opened = RwSignal::new(0);
-        let revealed = RwSignal::new(0);
-        let el = mount(move || {
-            view! {
-                <FileRow
-                    path="data/one.csv"
-                    package="user/alpha"
-                    package_href="/x"
-                    at=0.0
-                    on_open=move |_| opened.update(|n| *n += 1)
-                    on_reveal=move |_| revealed.update(|n| *n += 1)
-                />
-            }
-        });
-
-        // By name, not by index: the path is a button too now, and it is first.
-        let reveal = buttons(&el)
-            .into_iter()
-            .find(|b| b.get_attribute("aria-label").as_deref() == Some("Reveal in directory"))
-            .expect("the reveal action");
-        click(&reveal);
-        leptos::task::tick().await;
-
-        assert_eq!(revealed.get_untracked(), 1);
-        assert_eq!(
-            opened.get_untracked(),
-            0,
-            "reveal must not also open the file"
-        );
-    }
-
     /// The path truncates from the right and the tag is capped at 30% of the row.
     #[wasm_bindgen_test]
     fn the_path_and_the_package_tag_carry_their_whole_values() {
@@ -367,7 +254,7 @@ mod tests {
                     package_href="/installed-package"
                     at=0.0
                     on_open=|_| {}
-                    on_reveal=|_| {}
+                    actions=Vec::new()
                 />
             }
         });
@@ -386,66 +273,41 @@ mod tests {
         );
     }
 
-    /// The copy button confirms in place: the glyph swaps, the button does not.
-    ///
-    /// Node identity is half the assertion. A `Show` around two buttons would
-    /// pass the glyph half and fail this one, and it would take focus off the
-    /// control in the instant after a keyboard user pressed it.
+    /// A copy that landed shows in the time column while it holds, and the
+    /// `[⋯]` that started it stays the same node, so focus stays on it.
     #[wasm_bindgen_test]
-    async fn a_copied_row_swaps_its_glyph_without_replacing_the_button() {
+    async fn a_copied_row_says_so_in_place_of_its_time() {
         let copied = RwSignal::new(false);
-        let el = mount(move || {
-            view! {
-                <FileRow
-                    path="data/one.csv"
-                    package="user/alpha"
-                    package_href="/installed-package?namespace=user/alpha"
-                    at=0.0
-                    on_open=|_| {}
-                    on_reveal=|_| {}
-                    on_copy_uri=Some(Callback::new(|_| {}))
-                    copied=copied
-                />
-            }
-        });
-        let button = el
-            .query_selector("button[aria-label='Copy Quilt+S3 URI']")
-            .unwrap()
-            .expect("the copy button");
-        let before = button
-            .query_selector("svg")
-            .unwrap()
-            .expect("a glyph")
-            .inner_html();
+        let el = row(RwSignal::new(0), copied.into());
+        let time = || {
+            el.query_selector("[class*=time]")
+                .unwrap()
+                .expect("the time column")
+                .text_content()
+                .unwrap_or_default()
+        };
+        let trigger = el.query_selector(TRIGGER).unwrap().expect("the [⋯]");
+        assert!(!time().contains("Copied"));
 
         copied.set(true);
         leptos::task::tick().await;
-
-        let after_button = el
-            .query_selector("button[aria-label='Copy Quilt+S3 URI']")
-            .unwrap()
-            .expect("the copy button, still");
+        assert_eq!(time(), "Copied");
         assert!(
-            button.is_same_node(Some(&after_button)),
-            "the control survives its own press"
+            el.query_selector("[class*=copied]")
+                .unwrap()
+                .expect("the mark")
+                .get_attribute("aria-hidden")
+                .is_some(),
+            "the card's live region speaks for it"
         );
-        let after = after_button
-            .query_selector("svg")
-            .unwrap()
-            .expect("a glyph")
-            .inner_html();
-        assert_ne!(before, after, "and the glyph says the copy landed");
+        let after = el.query_selector(TRIGGER).unwrap().expect("the [⋯], still");
+        assert!(trigger.is_same_node(Some(&after)));
 
         copied.set(false);
         leptos::task::tick().await;
-        assert_eq!(
-            after_button
-                .query_selector("svg")
-                .unwrap()
-                .expect("a glyph")
-                .inner_html(),
-            before,
-            "and goes back — a check that stayed would outlive the clipboard"
+        assert!(
+            !time().contains("Copied"),
+            "a mark that stayed would outlive the clipboard"
         );
     }
 }

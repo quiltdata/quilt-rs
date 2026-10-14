@@ -2,8 +2,7 @@
 //!
 //! Everything this view needs lives here, because the components exist for it and
 //! reviewing one in isolation from the others misses the interesting failures —
-//! whether a path, a chip and three icons fit on one line at 1200px, and whether
-//! revealing the icons shifts anything.
+//! whether a path, a chip, the time and a `[⋯]` fit on one line at 1200px.
 
 use leptos::prelude::*;
 
@@ -16,12 +15,14 @@ use crate::kit::GroupHeading;
 use crate::kit::IconButton;
 use crate::kit::IconButtonVariant;
 use crate::kit::ListToolbar;
+use crate::kit::MenuAction;
 use crate::kit::Naming;
 use crate::kit::RelativeTime;
 use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::icons;
+use crate::pages::row_menu::{RowCommand, menu_actions};
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;
@@ -29,6 +30,33 @@ const DAY: f64 = 24.0 * HOUR;
 
 fn ago(ms: f64) -> f64 {
     js_sys::Date::now() - ms
+}
+
+/// What a row's package can be reached by, which decides its `[⋯]`'s items.
+#[derive(Clone, Copy)]
+enum Reach {
+    /// A bucket and a catalog host, and no unpublished revision.
+    Published,
+    /// A bucket and a catalog host, and a revision not yet published.
+    Ahead,
+    /// No bucket.
+    LocalOnly,
+}
+
+/// The page's items for a row, as `pages/main_page/recent_files.rs` picks them.
+fn menu(reach: Reach) -> Vec<MenuAction> {
+    let path = String::from("file");
+    let mut commands = vec![
+        RowCommand::Open(path.clone()),
+        RowCommand::Reveal(path.clone()),
+    ];
+    if matches!(reach, Reach::Published) {
+        commands.push(RowCommand::OpenInCatalog(path.clone()));
+    }
+    if !matches!(reach, Reach::LocalOnly) {
+        commands.push(RowCommand::CopyUri(path));
+    }
+    menu_actions(&commands, Callback::new(|_| ()))
 }
 
 #[component]
@@ -50,9 +78,7 @@ fn Rows() -> impl IntoView {
                 package_href="#recent-files-parts"
                 at=ago(elapsed)
                 on_open=|_| ()
-                on_reveal=|_| ()
-                on_open_catalog=|_| ()
-                on_copy_uri=Some(Callback::new(|_| ()))
+                actions=menu(Reach::Published)
             />
         }
     };
@@ -62,9 +88,9 @@ fn Rows() -> impl IntoView {
             title="FileRow"
             note="Compare against PackageRow directly above — same width, opposite \
                   truncation. A path truncates from the LEFT so the filename survives; a \
-                  namespace truncates from the right. This row is a div with \
-                  role=\"button\", not an anchor, because it has three actions and a second \
-                  link inside it and nested anchors are invalid. Both rows give the time a \
+                  namespace truncates from the right. This row is a plain div, not an \
+                  anchor, because it has a [⋯] and a second link inside it and nested \
+                  anchors are invalid. Both rows give the time a \
                   104px floor and never clip it, which is the thing to check here: every \
                   phrase RelativeTime can produce must sit inside the column."
         >
@@ -88,28 +114,35 @@ fn Rows() -> impl IntoView {
             <Cell full=true label="short path — nothing truncates, actions still sit right">
                 {row("README.md", "user/package-a", 3.0 * HOUR)}
             </Cell>
-            <Cell full=true label="just copied — the glyph confirms, the button stays put">
+            <Cell full=true label="just copied — the time column confirms, the [⋯] stays put">
                 <FileRow
                     path="analysis/qc/summary-by-well.parquet"
                     package="org/dataset-c"
                     package_href="#recent-files-parts"
                     at=ago(41.0 * MINUTE)
                     on_open=|_| ()
-                    on_reveal=|_| ()
-                    on_open_catalog=|_| ()
-                    on_copy_uri=Some(Callback::new(|_| ()))
+                    actions=menu(Reach::Published)
                     copied=true
                 />
             </Cell>
-            <Cell full=true label="local only — no bucket, so no address and no Copy button">
+            <Cell full=true label="ahead of its remote — no Open in catalog">
+                <FileRow
+                    path="notebooks/qc-review.ipynb"
+                    package="org/dataset-c"
+                    package_href="#recent-files-parts"
+                    at=ago(5.0 * MINUTE)
+                    on_open=|_| ()
+                    actions=menu(Reach::Ahead)
+                />
+            </Cell>
+            <Cell full=true label="local only — no bucket, so no catalog and no Copy URI">
                 <FileRow
                     path="README.md"
                     package="user/package-a"
                     package_href="#recent-files-parts"
                     at=ago(3.0 * HOUR)
                     on_open=|_| ()
-                    on_reveal=|_| ()
-                    on_open_catalog=|_| ()
+                    actions=menu(Reach::LocalOnly)
                 />
             </Cell>
             <Cell wide=true label="narrow — two columns, roughly a narrow window">
@@ -340,6 +373,16 @@ fn fixtures() -> Vec<(&'static str, &'static str, f64)> {
     ]
 }
 
+/// The scene's packages: one local only, one with a revision not yet
+/// published, the rest published.
+fn reach(package: &str) -> Reach {
+    match package {
+        "user/package-a" => Reach::LocalOnly,
+        "user/package-b" => Reach::Ahead,
+        _ => Reach::Published,
+    }
+}
+
 fn row(entry: (&'static str, &'static str, f64)) -> AnyView {
     let (path, package, elapsed) = entry;
     view! {
@@ -349,9 +392,7 @@ fn row(entry: (&'static str, &'static str, f64)) -> AnyView {
             package_href="#scene-recent-files"
             at=ago(elapsed)
             on_open=|_| ()
-            on_reveal=|_| ()
-            on_open_catalog=|_| ()
-            on_copy_uri=Some(Callback::new(|_| ()))
+            actions=menu(reach(package))
         />
     }
     .into_any()
@@ -373,7 +414,9 @@ pub fn RecentFilesScene() -> impl IntoView {
                   older ones. That is why None is the default. \
                   \
                   Paths truncate from the LEFT so the filename survives. Tab into the list: \
-                  the row is one stop, then the package chip, then the three actions."
+                  the row is one stop, then the package chip, then its [⋯]. user/package-a \
+                  is local only and user/package-b has a revision not yet published, so \
+                  neither offers Open in catalog."
         >
             <ListToolbar>
                 <SegmentedControl

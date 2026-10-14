@@ -1,9 +1,15 @@
 //! A file row's `[⋯]`: the commands it can offer, their words and their
-//! groups. The package page's file pane and the commit page's list each decide
-//! which apply to a row; their pages run them.
+//! groups, and [`carry_out`] for the ones that write nothing. The package
+//! page's file pane, the commit page's list and the main page's recent files
+//! each decide which apply to a row; their pages run them and report how it
+//! went in their own way.
+
+use std::future::Future;
+use std::pin::Pin;
 
 use leptos::prelude::*;
 
+use crate::commands;
 use crate::kit::MenuAction;
 
 /// One command a row's `[⋯]` offers, naming the row it acts on.
@@ -87,10 +93,7 @@ pub(crate) fn group_starts(commands: &[RowCommand]) -> Vec<bool> {
 
 /// One item per command, handing it to `on_command`, grouped as
 /// [`group_starts`] says.
-pub(crate) fn menu_actions(
-    commands: &[RowCommand],
-    on_command: Callback<RowCommand>,
-) -> Vec<MenuAction> {
+pub fn menu_actions(commands: &[RowCommand], on_command: Callback<RowCommand>) -> Vec<MenuAction> {
     commands
         .iter()
         .zip(group_starts(commands))
@@ -103,4 +106,237 @@ pub(crate) fn menu_actions(
             if starts { action.separated() } else { action }
         })
         .collect()
+}
+
+/// How a command that writes nothing went, for the page to report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Ran {
+    /// It ran, and shows itself: an application, a folder or the browser
+    /// opens. Also a command with nothing to act on, such as a catalog link
+    /// with no catalog host.
+    Done,
+    /// A copy landed, with what it put on the clipboard.
+    Copied(String),
+    /// It failed: the page's words, and the engine's.
+    Failed { lead: &'static str, detail: String },
+}
+
+/// Runs a row's command that writes nothing: opening, revealing, the catalog
+/// and the copies. None needs a page's lock. `uri` is the package's remote, if
+/// it has one; the `.quiltignore` items are each page's own and come back
+/// [`Ran::Done`].
+pub(crate) async fn carry_out(
+    command: &RowCommand,
+    namespace: &str,
+    uri: Option<&quilt_uri::S3PackageUri>,
+    local: LocalPath,
+) -> Ran {
+    let failed = |lead| move |detail| Ran::Failed { lead, detail };
+    match command {
+        RowCommand::Open(path) => {
+            commands::open_in_default_application(namespace.to_string(), path.clone(), uri.cloned())
+                .await
+                .map_or_else(failed("Could not open this file."), |_| Ran::Done)
+        }
+        RowCommand::Reveal(path) => {
+            commands::reveal_in_file_browser(namespace.to_string(), path.clone(), uri.cloned())
+                .await
+                .map_or_else(failed("Could not show this file in its folder."), |_| {
+                    Ran::Done
+                })
+        }
+        RowCommand::OpenInCatalog(path) => {
+            let Some(url) = uri.and_then(|u| crate::util::entry_catalog_url(u, path)) else {
+                return Ran::Done;
+            };
+            commands::open_in_web_browser(url)
+                .await
+                .map_or_else(failed("Could not open this file in the catalog."), |_| {
+                    Ran::Done
+                })
+        }
+        RowCommand::CopyUri(_) | RowCommand::CopyPath(_) => {
+            let copied = match clipped(command, namespace, uri, local).await {
+                Ok(None) => return Ran::Done,
+                Ok(Some((text, event))) => commands::copy_to_clipboard(text.clone(), event)
+                    .await
+                    .map(|_| text),
+                Err(detail) => Err(detail),
+            };
+            copied.map_or_else(failed("Could not copy."), Ran::Copied)
+        }
+        RowCommand::Ignore(_) | RowCommand::StopIgnoring { .. } => Ran::Done,
+    }
+}
+
+/// Where a package's file is on disk: `(namespace, path)` to the full path.
+/// A seam, so a test can answer without a Tauri host.
+pub(crate) type LocalPath =
+    fn(String, String) -> Pin<Box<dyn Future<Output = Result<String, String>>>>;
+
+pub(crate) fn local_path(
+    namespace: String,
+    path: String,
+) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+    Box::pin(commands::package_file_path(namespace, path))
+}
+
+/// What a copy puts on the clipboard, and the address its event names:
+/// `util::file_uri` for *Copy URI*, and for *Copy path* the file's full path
+/// on disk, which a `New` file has though no revision holds it. `Ok(None)` for
+/// a command that copies nothing, or an address with no remote to build it
+/// from; an error when the path cannot be found.
+///
+/// The address is built at `Latest`, whatever revision `uri` names, as
+/// `util::package_uri` builds it: a copied address points at the package
+/// rather than at the revision the copier happens to have.
+pub(crate) async fn clipped(
+    command: &RowCommand,
+    namespace: &str,
+    uri: Option<&quilt_uri::S3PackageUri>,
+    local: LocalPath,
+) -> Result<Option<(String, Option<quilt_uri::S3PackageUri>)>, String> {
+    let file = |path: &str| {
+        uri.map(|u| {
+            let latest = quilt_uri::S3PackageUri {
+                revision: quilt_uri::RevisionPointer::Tag(quilt_uri::Tag::Latest),
+                ..u.clone()
+            };
+            crate::util::file_uri(&latest, path)
+        })
+    };
+    match command {
+        RowCommand::CopyUri(path) => Ok(file(path).map(|f| (f.display(), Some(f)))),
+        RowCommand::CopyPath(path) => {
+            let on_disk = local(namespace.to_string(), path.clone()).await?;
+            Ok(Some((on_disk, file(path))))
+        }
+        _ => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    /// Where this test's package is on disk, as the backend would answer.
+    fn at_home(
+        namespace: String,
+        path: String,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+        Box::pin(async move { Ok(format!("/Users/me/QuiltSync/{namespace}/{path}")) })
+    }
+
+    fn not_there(_: String, path: String) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+        Box::pin(async move { Err(format!("{path} is not there")) })
+    }
+
+    /// Copy URI puts `util::file_uri`'s address on the clipboard, at `Latest`;
+    /// Copy path puts the file's full path on disk, which needs no remote.
+    #[wasm_bindgen_test]
+    async fn copy_uri_copies_the_address_and_copy_path_the_full_path_on_disk() {
+        let package = crate::util::package_uri(
+            "team-bucket",
+            &"user/plate-07".try_into().unwrap(),
+            Some("quilt.test"),
+        );
+        let address =
+            "quilt+s3://team-bucket#package=user/plate-07&path=runs/one.csv&catalog=quilt.test";
+        let copy_uri = RowCommand::CopyUri("runs/one.csv".to_string());
+        let (text, event) = clipped(&copy_uri, "user/plate-07", Some(&package), at_home)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, address);
+        assert_eq!(event.map(|u| u.display()), Some(text));
+
+        // A New row: the full path on disk, as opening the file resolves it.
+        let copy_path = RowCommand::CopyPath("runs/new.csv".to_string());
+        let (text, _) = clipped(&copy_path, "user/plate-07", None, at_home)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "/Users/me/QuiltSync/user/plate-07/runs/new.csv");
+        assert_eq!(
+            clipped(&copy_path, "user/plate-07", None, not_there).await,
+            Err("runs/new.csv is not there".to_string()),
+            "a path that cannot be found is a failed copy, not an empty one",
+        );
+
+        assert_eq!(
+            clipped(
+                &RowCommand::CopyUri("a.csv".to_string()),
+                "user/plate-07",
+                None,
+                at_home
+            )
+            .await,
+            Ok(None),
+            "no remote, no address",
+        );
+        assert_eq!(
+            clipped(
+                &RowCommand::Ignore("a.csv".to_string()),
+                "user/plate-07",
+                Some(&package),
+                at_home
+            )
+            .await,
+            Ok(None),
+        );
+
+        // The header's remote names the revision this copy holds; the address
+        // names the package, as the recent-files list's does.
+        let pinned = quilt_uri::S3PackageUri {
+            revision: quilt_uri::RevisionPointer::Hash("abc123".to_string()),
+            ..package.clone()
+        };
+        let (text, _) = clipped(&copy_uri, "user/plate-07", Some(&pinned), at_home)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, address);
+    }
+
+    /// A command with nothing to act on is done without asking the host; one
+    /// the host refuses fails in the page-facing words. There is no Tauri host
+    /// in this harness, so every call it makes is refused.
+    #[wasm_bindgen_test]
+    async fn carry_out_says_how_a_command_went() {
+        let ns = "user/plate-07";
+        let no_catalog = crate::util::package_uri("team-bucket", &ns.try_into().unwrap(), None);
+        let catalog = RowCommand::OpenInCatalog("a.csv".to_string());
+        assert_eq!(
+            carry_out(&catalog, ns, Some(&no_catalog), at_home).await,
+            Ran::Done,
+            "no catalog host, no link to open",
+        );
+        assert_eq!(
+            carry_out(&RowCommand::CopyUri("a.csv".to_string()), ns, None, at_home).await,
+            Ran::Done,
+            "no remote, no address to copy",
+        );
+        assert_eq!(
+            carry_out(&RowCommand::Ignore("a.csv".to_string()), ns, None, at_home).await,
+            Ran::Done,
+        );
+        let refused = carry_out(
+            &RowCommand::CopyUri("a.csv".to_string()),
+            ns,
+            Some(&no_catalog),
+            at_home,
+        )
+        .await;
+        assert!(
+            matches!(
+                refused,
+                Ran::Failed {
+                    lead: "Could not copy.",
+                    ..
+                }
+            ),
+            "got {refused:?}"
+        );
+    }
 }

@@ -1,5 +1,5 @@
 /*
- * File row. Path, package tag, time, and three actions.
+ * File row. Path, package tag, time, and a `[⋯]`.
  *
  * The row itself opens the file; the tag navigates to its package. Two
  * destinations, so the row cannot be an anchor — nested `<a>` is invalid — and the
@@ -19,7 +19,7 @@
   width: 100%;
   gap: var(--q-space-3);
   padding: 5px 2px;
-  /* 24px action buttons + 5px padding each side + 1px border; the skeleton shares it. */
+  /* The 24px `[⋯]` + 5px padding each side + 1px border; the skeleton shares it. */
   min-height: 35px;
   border-bottom: 1px solid var(--q-borderColor-muted);
   cursor: pointer;
@@ -98,13 +98,25 @@
   white-space: nowrap;
 }
 
-/* Always visible, not revealed on hover. The cost is three glyphs on every row;
- * the gain is that the actions are discoverable without hovering, survive a
- * screenshot, and are obvious to anyone who navigates by keyboard. */
+/* What the time column says while the row's address is on the clipboard. */
+.copied {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-1);
+  color: var(--q-fgColor-success);
+}
+
+.copied svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Always visible, not revealed on hover: the `[⋯]` is discoverable without
+ * hovering, survives a screenshot, and is plain to anyone who navigates by
+ * keyboard. */
 .actions {
   display: flex;
   flex: none;
-  gap: 1px;
 }
 
 /* The skeleton variant, sharing `.root` for its geometry and switching off the two
