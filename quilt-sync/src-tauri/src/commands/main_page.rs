@@ -1114,9 +1114,10 @@ pub struct MainPageFile {
     /// here: a path only exists in `lineage.paths` because it was installed or
     /// committed, and both of those write a timestamp.
     pub changed_at: f64,
-    /// The package has no unpublished revision: see [`package_published`].
-    /// The same for every file of one package.
-    pub package_published: bool,
+    /// The revision the package holds, when the remote has it and the package
+    /// has nothing unpublished: see [`published_hash`]. The same for every
+    /// file of one package.
+    pub published_hash: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -1152,13 +1153,13 @@ async fn recent_files(m: &impl model::QuiltModel) -> Result<Vec<MainPageFile>, E
         };
         let namespace = installed_package.namespace.clone();
         let paths = std::mem::take(&mut lineage.paths);
-        let published = package_published(lineage);
+        let published = published_hash(lineage);
         for (path, state) in &paths {
             files.push(MainPageFile {
                 path: path.to_string_lossy().into_owned(),
                 namespace: namespace.clone(),
                 changed_at: epoch_millis(state.timestamp),
-                package_published: published,
+                published_hash: published.clone(),
             });
         }
     }
@@ -1169,15 +1170,19 @@ async fn recent_files(m: &impl model::QuiltModel) -> Result<Vec<MainPageFile>, E
     Ok(files)
 }
 
-/// Whether the package's remote holds every revision it has: a remote with a
-/// hash, and no local commit past it. `UpstreamState` makes this comparison;
-/// `Behind` counts, since the remote holds what the package has. Reads the
-/// lineage only: an edit not yet committed does not count.
-fn package_published(lineage: quilt::lineage::PackageLineage) -> bool {
+/// The remote's hash for the revision the package holds, when the remote
+/// holds every revision the package has: a remote with a hash, and no local
+/// commit past it. `UpstreamState` makes this comparison; `Behind` counts,
+/// since the remote holds what the package has. The package page pins its
+/// catalog links to the same hash. Reads the lineage only: an edit not yet
+/// committed does not count.
+fn published_hash(lineage: quilt::lineage::PackageLineage) -> Option<String> {
+    let hash = lineage.remote_uri.as_ref()?.hash.clone();
     matches!(
         quilt::lineage::UpstreamState::from(lineage),
         quilt::lineage::UpstreamState::UpToDate | quilt::lineage::UpstreamState::Behind
     )
+    .then_some(hash)
 }
 
 /// The recent files feed. Single-phase and final on arrival: a path and an
@@ -3188,45 +3193,61 @@ mod tests {
 
     #[test]
     fn a_package_whose_remote_holds_its_revision_is_published() {
-        assert!(package_published(installed_from("abcdef", None)));
-        assert!(
-            package_published(installed_from("newer", None)),
-            "behind: the remote still holds the revision the package has"
+        assert_eq!(
+            published_hash(installed_from("abcdef", None)).as_deref(),
+            Some("abcdef")
+        );
+        assert_eq!(
+            published_hash(installed_from("newer", None)).as_deref(),
+            Some("abcdef"),
+            "behind: the held revision, not the remote's latest"
         );
     }
 
     #[test]
     fn a_package_with_a_local_commit_past_its_remote_is_not_published() {
-        assert!(!package_published(installed_from("abcdef", Some("local1"))));
-        assert!(
-            !package_published(installed_from("newer", Some("local1"))),
+        assert_eq!(
+            published_hash(installed_from("abcdef", Some("local1"))),
+            None
+        );
+        assert_eq!(
+            published_hash(installed_from("newer", Some("local1"))),
+            None,
             "diverged"
         );
     }
 
     #[test]
     fn a_local_only_package_is_not_published() {
-        assert!(!package_published(quilt::lineage::PackageLineage::default()));
+        assert_eq!(
+            published_hash(quilt::lineage::PackageLineage::default()),
+            None
+        );
     }
 
     #[test]
     fn a_remote_with_no_hash_is_not_published() {
         let mut uri = make_manifest_uri("user/alpha");
         uri.hash = String::new();
-        assert!(!package_published(
-            quilt::lineage::PackageLineage::from_remote(uri.clone(), String::new())
-        ));
-        assert!(
-            !package_published(quilt::lineage::PackageLineage::from_remote(
+        assert_eq!(
+            published_hash(quilt::lineage::PackageLineage::from_remote(
+                uri.clone(),
+                String::new()
+            )),
+            None
+        );
+        assert_eq!(
+            published_hash(quilt::lineage::PackageLineage::from_remote(
                 uri,
                 "theirs".to_string()
             )),
+            None,
             "someone else published under this name first"
         );
     }
 
     #[tokio::test]
-    async fn every_file_carries_whether_its_package_is_published() {
+    async fn every_file_carries_the_hash_its_package_published() {
         let mut model = crate::model::mocks::create();
         model.expect_get_installed_packages_list().return_once(|| {
             Ok(vec![
@@ -3249,28 +3270,32 @@ mod tests {
 
         let files = recent_files(&model).await.unwrap();
 
-        let published: Vec<(String, &str, bool)> = files
+        let published: Vec<(String, &str, Option<&str>)> = files
             .iter()
             .map(|f| {
                 (
                     f.namespace.to_string(),
                     f.path.as_str(),
-                    f.package_published,
+                    f.published_hash.as_deref(),
                 )
             })
             .collect();
         assert_eq!(
             published,
             [
-                ("user/alpha".to_string(), "two.csv", true),
-                ("user/beta".to_string(), "two.csv", false),
-                ("user/alpha".to_string(), "one.csv", true),
-                ("user/beta".to_string(), "one.csv", false),
+                ("user/alpha".to_string(), "two.csv", Some("abcdef")),
+                ("user/beta".to_string(), "two.csv", None),
+                ("user/alpha".to_string(), "one.csv", Some("abcdef")),
+                ("user/beta".to_string(), "one.csv", None),
             ]
         );
         assert_eq!(
-            serde_json::to_value(&files[0]).unwrap()["packagePublished"],
-            true
+            serde_json::to_value(&files[0]).unwrap()["publishedHash"],
+            "abcdef"
+        );
+        assert_eq!(
+            serde_json::to_value(&files[1]).unwrap()["publishedHash"],
+            serde_json::Value::Null
         );
     }
 }

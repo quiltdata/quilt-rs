@@ -281,11 +281,25 @@ fn run_command(
     });
 }
 
+/// The address a row's commands run on: the package's, pinned to the revision
+/// it holds when that revision is published, as the package page pins its
+/// own. The catalog link opens that revision. *Copy URI* still copies the
+/// package's address at `Latest`, since `clipped` builds it there.
+fn held_address(address: Option<&S3PackageUri>, published: Option<&str>) -> Option<S3PackageUri> {
+    address.map(|address| match published {
+        Some(hash) => S3PackageUri {
+            revision: quilt_uri::RevisionPointer::Hash(hash.to_string()),
+            ..address.clone()
+        },
+        None => address.clone(),
+    })
+}
+
 /// The items a row's `[⋯]` offers: open and reveal; then the catalog and the
 /// copy, which need the package's address. The catalog link also needs a
-/// catalog host and a package with no unpublished revision, or it could name
-/// a revision the catalog lacks. No *Ignore*: it edits the package's
-/// `.quiltignore` under the package page's lock, which this page does not hold.
+/// catalog host and a published revision, or it could name one the catalog
+/// lacks. No *Ignore*: it edits the package's `.quiltignore` under the package
+/// page's lock, which this page does not hold.
 fn row_commands(path: &str, address: Option<&S3PackageUri>, published: bool) -> Vec<RowCommand> {
     let path = path.to_string();
     let mut commands = vec![
@@ -366,7 +380,8 @@ fn file_group(
                 key=|f: &MainPageFileData| (f.namespace.clone(), f.path.clone())
                 children=move |f| {
                     let address = addresses.get(&f.namespace).cloned();
-                    let (namespace, run_with) = (f.namespace.clone(), address.clone());
+                    let run_with = held_address(address.as_ref(), f.published_hash.as_deref());
+                    let namespace = f.namespace.clone();
                     let on_command = Callback::new(move |command| {
                         run_command(command, namespace.clone(), run_with.clone(), state);
                     });
@@ -387,7 +402,7 @@ fn file_row(
     on_command: Callback<RowCommand>,
     copied: RwSignal<Option<Copied>>,
 ) -> impl IntoView + use<> {
-    let commands = row_commands(&f.path, address, f.package_published);
+    let commands = row_commands(&f.path, address, f.published_hash.is_some());
     let uri = address.map(|package| crate::util::file_uri(package, &f.path).display());
     let is_copied = Signal::derive(move || {
         uri.as_ref()
@@ -427,7 +442,7 @@ mod tests {
             path: path.to_string(),
             namespace: ns(namespace),
             changed_at,
-            package_published: true,
+            published_hash: Some("abc123".to_string()),
         }
     }
 
@@ -554,6 +569,36 @@ mod tests {
         assert_eq!(
             menu("one.csv", None, true),
             ["Open file", "Reveal in folder"]
+        );
+    }
+
+    /// A package behind its remote links to the revision it holds, as the
+    /// package page does, not to the remote's latest. Its copied address still
+    /// names the package at `Latest`.
+    #[wasm_bindgen_test]
+    async fn the_catalog_link_names_the_held_revision_and_the_copy_does_not() {
+        let held = held_address(Some(&with_catalog()), Some("abc123")).expect("an address");
+        let link = crate::util::entry_catalog_url(&held, "one.csv").expect("a catalog link");
+        let latest = crate::util::entry_catalog_url(&with_catalog(), "one.csv").unwrap();
+        assert!(link.contains("abc123"), "got {link}");
+        assert_ne!(link, latest);
+
+        let (copied, _) = crate::pages::row_menu::clipped(
+            &RowCommand::CopyUri("one.csv".to_string()),
+            "user/alpha",
+            Some(&held),
+            local_path,
+        )
+        .await
+        .unwrap()
+        .expect("an address");
+        assert_eq!(
+            copied,
+            crate::util::file_uri(&with_catalog(), "one.csv").display()
+        );
+        assert_eq!(
+            held_address(Some(&with_catalog()), None),
+            Some(with_catalog())
         );
     }
 
