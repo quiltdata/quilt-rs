@@ -28,6 +28,7 @@ use crate::commands;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 use crate::routes;
 
+use super::row_menu::RowCommand;
 use super::status_watch::StatusWatch;
 #[cfg(test)]
 use super::v2_page::outcome_band;
@@ -52,7 +53,7 @@ mod role_dialog;
 use crate::kit::PageHeaderSkeleton;
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
-use file_pane::{Reach, RowCommand, RowMenu};
+use file_pane::{Reach, RowMenu};
 use header::PageHeader;
 pub use header::{MenuCommand, MenuItem, menu_items};
 use incoming::{HoverCard, IncomingSummary};
@@ -661,7 +662,7 @@ fn package_body(
             catalog: uri.as_ref().is_some_and(|u| u.catalog.is_some()),
         },
         busy: w.busy.into(),
-        on_command: row_runner(namespace.clone(), uri.clone(), w, files, open_file),
+        on_command: row_runner(namespace.clone(), uri.clone(), w, files),
     };
     let context = StoredValue::new(context);
     let pane = move || {
@@ -827,66 +828,18 @@ fn file_downloader(namespace: String, w: Wiring, files: Files) -> Callback<Vec<S
 
 /// Runs what a row's `[⋯]` chose.
 ///
-/// Opening, revealing and copying write nothing, so they take no lock, as
-/// `file_opener` does not; the two `.quiltignore` items open popups whose state
-/// is the page's ([`row_popups`]), and the menu holds them back while the lock
-/// is held.
+/// The two `.quiltignore` items open popups whose state is the page's
+/// ([`row_popups`]), and the menu holds them back while the lock is held; the
+/// rest are [`run_reading`]'s.
 fn row_runner(
     namespace: String,
     uri: Option<quilt_uri::S3PackageUri>,
     w: Wiring,
     files: Files,
-    open_file: Callback<String>,
 ) -> Callback<RowCommand> {
     Callback::new(move |command: RowCommand| {
-        let (namespace, uri, outcome) = (namespace.clone(), uri.clone(), w.outcome);
+        let (namespace, uri) = (namespace.clone(), uri.clone());
         match command {
-            RowCommand::Open(path) => open_file.run(path),
-            RowCommand::Reveal(path) => {
-                leptos::task::spawn_local(async move {
-                    if let Err(detail) =
-                        commands::reveal_in_file_browser(namespace.clone(), path, uri).await
-                    {
-                        outcome.try_set(Some(Outcome {
-                            namespace,
-                            variant: BannerVariant::Critical,
-                            lead: "Could not show this file in its folder.".to_string(),
-                            detail: Some(detail),
-                        }));
-                    }
-                });
-            }
-            RowCommand::OpenInCatalog(path) => {
-                let Some(url) = uri
-                    .as_ref()
-                    .and_then(|u| crate::util::entry_catalog_url(u, &path))
-                else {
-                    return;
-                };
-                leptos::task::spawn_local(async move {
-                    if let Err(detail) = commands::open_in_web_browser(url).await {
-                        outcome.try_set(Some(Outcome {
-                            namespace,
-                            variant: BannerVariant::Critical,
-                            lead: "Could not open this file in the catalog.".to_string(),
-                            detail: Some(detail),
-                        }));
-                    }
-                });
-            }
-            RowCommand::CopyUri(_) | RowCommand::CopyPath(_) => {
-                leptos::task::spawn_local(async move {
-                    let copied = match clipped(&command, &namespace, uri.as_ref(), local_path).await
-                    {
-                        Ok(None) => return,
-                        Ok(Some((text, event))) => {
-                            commands::copy_to_clipboard(text, event).await.map(|_| ())
-                        }
-                        Err(detail) => Err(detail),
-                    };
-                    outcome.try_set(Some(copy_outcome(namespace, &command, copied)));
-                });
-            }
             RowCommand::Ignore(path) => files.ignoring.set(Some(IgnorePopupData {
                 namespace,
                 suggested_pattern: path.clone(),
@@ -900,8 +853,69 @@ fn row_runner(
                     uri,
                 }));
             }
+            command => run_reading(command, namespace, uri, w.outcome),
         }
     })
+}
+
+/// Runs a row's command that writes nothing: opening, revealing, the catalog
+/// and the copies. None takes the page's lock, as [`file_opener`] does not, and
+/// each reports on `outcome`: a failure, and what a copy put on the clipboard.
+/// The `.quiltignore` items are the page's own, so this skips them.
+pub(crate) fn run_reading(
+    command: RowCommand,
+    namespace: String,
+    uri: Option<quilt_uri::S3PackageUri>,
+    outcome: RwSignal<Option<Outcome>>,
+) {
+    match command {
+        RowCommand::Open(path) => open_file(namespace, path, uri, outcome),
+        RowCommand::Reveal(path) => {
+            leptos::task::spawn_local(async move {
+                if let Err(detail) =
+                    commands::reveal_in_file_browser(namespace.clone(), path, uri).await
+                {
+                    outcome.try_set(Some(Outcome {
+                        namespace,
+                        variant: BannerVariant::Critical,
+                        lead: "Could not show this file in its folder.".to_string(),
+                        detail: Some(detail),
+                    }));
+                }
+            });
+        }
+        RowCommand::OpenInCatalog(path) => {
+            let Some(url) = uri
+                .as_ref()
+                .and_then(|u| crate::util::entry_catalog_url(u, &path))
+            else {
+                return;
+            };
+            leptos::task::spawn_local(async move {
+                if let Err(detail) = commands::open_in_web_browser(url).await {
+                    outcome.try_set(Some(Outcome {
+                        namespace,
+                        variant: BannerVariant::Critical,
+                        lead: "Could not open this file in the catalog.".to_string(),
+                        detail: Some(detail),
+                    }));
+                }
+            });
+        }
+        RowCommand::CopyUri(_) | RowCommand::CopyPath(_) => {
+            leptos::task::spawn_local(async move {
+                let copied = match clipped(&command, &namespace, uri.as_ref(), local_path).await {
+                    Ok(None) => return,
+                    Ok(Some((text, event))) => {
+                        commands::copy_to_clipboard(text, event).await.map(|_| ())
+                    }
+                    Err(detail) => Err(detail),
+                };
+                outcome.try_set(Some(copy_outcome(namespace, &command, copied)));
+            });
+        }
+        RowCommand::Ignore(_) | RowCommand::StopIgnoring { .. } => {}
+    }
 }
 
 /// Where a package's file is on disk: `(namespace, path)` to the full path.
@@ -1153,22 +1167,27 @@ fn file_opener(
     uri: Option<quilt_uri::S3PackageUri>,
     outcome: RwSignal<Option<Outcome>>,
 ) -> Callback<String> {
-    Callback::new(move |path: String| {
-        let namespace = namespace.clone();
-        let uri = uri.clone();
-        leptos::task::spawn_local(async move {
-            if let Err(detail) =
-                commands::open_in_default_application(namespace.clone(), path, uri).await
-            {
-                outcome.try_set(Some(Outcome {
-                    namespace,
-                    variant: BannerVariant::Critical,
-                    lead: "Could not open this file.".to_string(),
-                    detail: Some(detail),
-                }));
-            }
-        });
-    })
+    Callback::new(move |path: String| open_file(namespace.clone(), path, uri.clone(), outcome))
+}
+
+fn open_file(
+    namespace: String,
+    path: String,
+    uri: Option<quilt_uri::S3PackageUri>,
+    outcome: RwSignal<Option<Outcome>>,
+) {
+    leptos::task::spawn_local(async move {
+        if let Err(detail) =
+            commands::open_in_default_application(namespace.clone(), path, uri).await
+        {
+            outcome.try_set(Some(Outcome {
+                namespace,
+                variant: BannerVariant::Critical,
+                lead: "Could not open this file.".to_string(),
+                detail: Some(detail),
+            }));
+        }
+    });
 }
 
 /// The whole package page before its read answers: the appbar, the banner's
