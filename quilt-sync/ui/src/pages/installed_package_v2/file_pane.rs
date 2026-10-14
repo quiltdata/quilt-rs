@@ -561,8 +561,8 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
     })
 }
 
-/// The items a row offers, in their fixed order and three groups: open and
-/// reveal; catalog and copy; then the `.quiltignore` item. v1's entries form
+/// The items a row offers, in their fixed order and groups: open and reveal;
+/// catalog and copy; then the `.quiltignore` item. v1's entries form
 /// gates its buttons the same way, but Ignore is on every row: the pane does
 /// not read `junky_pattern`, and the popup is prefilled with the path instead.
 fn row_commands(

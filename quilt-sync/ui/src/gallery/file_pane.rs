@@ -87,10 +87,11 @@
 //!   drawn with them the toolbar has to wait. So the loading cell skeletonises
 //!   the toolbar, and the rule has an exception the design has to record.
 //! - **The `[⋯]` cannot be one list.** §6 owes this: gated by where the file is,
-//!   the menu is four different menus, and three of its items only exist for
-//!   one state each — *Open file* and *Reveal in folder* want a local file and
-//!   *Stop keeping* wants bytes to delete. An ignored row needs *Stop ignoring*, which §3's list does not
-//!   have at all although the `Ignored` facet is the view that reaches it.
+//!   the menu is four different menus, and some of its items exist for one
+//!   state only — *Open file* and *Reveal in folder* want a local file and
+//!   *Stop keeping* wants bytes to delete. An ignored row needs *Stop
+//!   ignoring*, which §3's list does not have at all although the `Ignored`
+//!   facet is the view that reaches it.
 //! - **A facet at zero has to stay.** It is the same argument that keeps the
 //!   facets out of a `Select`: a segment that vanishes when it is empty teaches
 //!   nothing and moves the segments beside it. `Segment::inert` is that state,
@@ -472,7 +473,7 @@ impl Confirm {
 ///
 /// §6 owes this — *"the menu must be gated the same way, or it offers `Open
 /// file` on a file that is not there"* — and gating turns one list into four.
-/// Three items exist for one state each: `Open file` and `Reveal in folder` want
+/// Some items exist for one state only: `Open file` and `Reveal in folder` want
 /// something on disk, and `Stop keeping` wants bytes to delete, which a
 /// `Deleted` or `Missing` row has none of.
 ///
