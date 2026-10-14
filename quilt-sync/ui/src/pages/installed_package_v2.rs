@@ -247,6 +247,9 @@ pub struct BucketDraft {
     /// The package the draft was filled for. One route serves every package,
     /// so a draft left from another one is refilled rather than shown.
     pub namespace: RwSignal<Option<String>>,
+    /// A save was refused. It can fail after the remote is set, so the page
+    /// is read again when the dialog closes.
+    pub refused: RwSignal<bool>,
 }
 
 impl BucketDraft {
@@ -258,6 +261,7 @@ impl BucketDraft {
             workflow_for: RwSignal::new(None),
             workflows: RwSignal::new(None),
             namespace: RwSignal::new(None),
+            refused: RwSignal::new(false),
         }
     }
 }

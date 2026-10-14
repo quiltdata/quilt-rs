@@ -93,6 +93,25 @@ fn read_workflows(
     Box::pin(commands::get_bucket_workflows(host, bucket))
 }
 
+/// The command that sets the remote: namespace, host, bucket and workflow in.
+/// A parameter so a test can answer it without a Tauri host.
+pub(crate) type SetRemote =
+    fn(
+        String,
+        String,
+        String,
+        WorkflowIntent,
+    ) -> Pin<Box<dyn Future<Output = Result<commands::SetRemoteResponse, String>>>>;
+
+fn set_remote(
+    namespace: String,
+    host: String,
+    bucket: String,
+    workflow: WorkflowIntent,
+) -> Pin<Box<dyn Future<Output = Result<commands::SetRemoteResponse, String>>>> {
+    Box::pin(commands::set_remote(namespace, host, bucket, workflow))
+}
+
 /// The set-remote dialog, in both of its shapes. The package page and the
 /// commit page each hold its flag and draft, and lend it their lock, band and
 /// re-read.
@@ -121,8 +140,12 @@ pub(crate) fn BucketDialog(
     /// `get_bucket_workflows` unless a test says otherwise.
     #[prop(optional)]
     workflows: Option<WorkflowRead>,
+    /// `set_remote` unless a test says otherwise.
+    #[prop(optional)]
+    set_remote_with: Option<SetRemote>,
 ) -> impl IntoView {
     let read = workflows.unwrap_or(read_workflows);
+    let set_remote = set_remote_with.unwrap_or(set_remote);
     // The workflow read must not re-trigger the page's `<Suspense>`; see
     // `components/set_remote_popup.rs` for the full argument.
     #[allow(
@@ -175,8 +198,15 @@ pub(crate) fn BucketDialog(
     // opening in that tick is still one, and a rebuild while open is not.
     Effect::new(move |was_open: Option<bool>| {
         let is_open = open.get();
-        if is_open && !was_open.unwrap_or(built_open) {
+        let was_open = was_open.unwrap_or(built_open);
+        if is_open && !was_open {
             fill();
+        }
+        // A refused save can still have set the remote, so the page is read
+        // again once the reader has seen the refusal and closed the dialog.
+        if !is_open && was_open && draft.refused.get_untracked() {
+            draft.refused.set(false);
+            reload.notify();
         }
         is_open
     });
@@ -324,12 +354,9 @@ pub(crate) fn BucketDialog(
                             .map(|option| option.intent)
                     })
                     .unwrap_or(WorkflowIntent::BucketDefault);
-                let response = holding(
-                    busy,
-                    outcome,
-                    commands::set_remote(ns.clone(), host, name, workflow),
-                )
-                .await?;
+                let response = holding(busy, outcome, set_remote(ns.clone(), host, name, workflow))
+                    .await
+                    .inspect_err(|_| draft.refused.set(true))?;
                 // The remote is set either way. A workflow that could not be
                 // resolved is the one partial success the band carries: the
                 // package will publish ungoverned, and the reader should learn
@@ -344,6 +371,8 @@ pub(crate) fn BucketDialog(
                         detail: Some(reason),
                     }));
                 }
+                // This save is the one the page re-reads for.
+                draft.refused.set(false);
                 reload.notify();
                 Ok(())
             }
@@ -938,6 +967,72 @@ mod tests {
         choose(&el, "Workflow", "Beta");
         leptos::task::tick().await;
         assert_eq!(value_of(&el, "Workflow"), "Beta", "the governed options");
+    }
+
+    fn refusing(
+        _: String,
+        _: String,
+        _: String,
+        _: WorkflowIntent,
+    ) -> Pin<Box<dyn Future<Output = Result<commands::SetRemoteResponse, String>>>> {
+        Box::pin(async { Err("the workflow could not be resolved".to_string()) })
+    }
+
+    /// A save can fail after the remote is set. The refusal stays in the
+    /// dialog, and the page is read again once the reader closes it.
+    #[wasm_bindgen_test]
+    async fn a_refused_save_re_reads_the_page_when_the_dialog_closes() {
+        let w = Wiring::new();
+        let reloads = RwSignal::new(0_u32);
+        let owner = Owner::new();
+        owner.with(|| {
+            Effect::new(move |seen: Option<()>| {
+                w.reload.track();
+                if seen.is_some() {
+                    reloads.update(|n| *n += 1);
+                }
+            });
+        });
+        let el = mount(move || {
+            view! {
+                <BucketDialog
+                    open=w.dialogs.bucket
+                    namespace="team/dataset".to_string()
+                    uri=published().uri
+                    locked=false
+                    draft=w.dialogs.bucket_draft.get_value()
+                    busy=w.busy
+                    outcome=w.outcome
+                    reload=w.reload
+                    workflows=governed
+                    set_remote_with=refusing
+                />
+            }
+        });
+        w.dialogs.bucket.set(true);
+        leptos::task::tick().await;
+        sleep_ms(SETTLED_MS).await;
+
+        crate::test_support::button_saying(&el, "Save").click();
+        sleep_ms(50).await;
+        let alert = el
+            .query_selector("dialog[open] [role=alert]")
+            .unwrap()
+            .unwrap_or_else(|| {
+                panic!("the refusal, in the dialog; markup was {}", el.inner_html())
+            });
+        assert!(
+            alert
+                .text_content()
+                .unwrap_or_default()
+                .contains("the workflow could not be resolved")
+        );
+        assert_eq!(reloads.get_untracked(), 0, "not while the refusal is shown");
+
+        crate::test_support::button_saying(&el, "Cancel").click();
+        sleep_ms(50).await;
+        assert_eq!(reloads.get_untracked(), 1, "read again on close");
+        drop(owner);
     }
 
     /// A draft is one package's. A re-read that rebuilds the dialog, still
