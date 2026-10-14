@@ -9,11 +9,12 @@
 //!
 //! | | layout | box | rows |
 //! |---|---|---:|---:|
-//! | 1280×900, 300 files | two columns | 195–867 | 20 of 300 |
-//! | 1024×560, 300 files | two columns | 195–527 | 10 of 300 |
-//! | 1024×560, a banner | two columns | 261–392 | 4 of 4 |
-//! | 1000×560, 300 files | one column | 412–527 | 3 of 300 |
-//! | 640×560, a failed check | one column | 578–658 | 0; the page scrolls 99px |
+//! | 1280×900, 300 files | two columns | 191–867 | 20 of 300 |
+//! | 1024×560, 300 files | two columns | 191–527 | 10 of 300 |
+//! | 1024×560, a banner | two columns | 257–388 | 4 of 4 |
+//! | 1000×560, at rest | one column | 458–541 | 2 of 4 |
+//! | 1000×560, 300 files, seven metadata fields | one column | 559–643 | 0; the page scrolls 84px |
+//! | 640×560, a failed check | one column | 563–646 | 0; the page scrolls 87px |
 //!
 //! - Wide, the header and any banner span the page, and both columns take
 //!   the height under them. The open editor with a failed check fits in the
@@ -21,6 +22,9 @@
 //! - Narrow, the box takes what the form leaves, down to its floor; with the
 //!   editor open the page scrolls instead.
 //! - Paths start 13px right of the heading: the rows have no leading column.
+//! - The message field's border and the list's border start on one line.
+//! - The metadata preview opens its top level, a line per field, so long
+//!   metadata pushes a narrow page's list down; the page then scrolls.
 //! - The editor's context menu is not cropped by the column: its one
 //!   clipping ancestor is the page's scroller.
 //! - Nothing scrolls sideways at 640.
@@ -300,7 +304,7 @@ pub fn CommitPageScene() -> impl IntoView {
                     ..Fixture::new("commit-local-only")
                 })}
             </Cell>
-            <Cell full=true label="no metadata — the absence muted, and the button reads Add">
+            <Cell full=true label="no metadata — the absence muted, and the toggle reads Add">
                 {page(Fixture { metadata: "", ..Fixture::new("commit-no-metadata") })}
             </Cell>
             <Cell full=true label="the metadata editor open — drag the bar under it, or focus it and use the arrow keys, to make it taller">

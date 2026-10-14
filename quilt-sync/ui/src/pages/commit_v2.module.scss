@@ -38,14 +38,31 @@
   font-weight: 600;
 }
 
-/* One control tall, so toggling `Edit` does not move the row. */
+/* The name, then the editor's toggle on the same line. */
 .field_head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--q-space-3);
-  min-height: var(--q-control-height);
+  align-items: baseline;
+  gap: var(--q-space-2);
   margin-bottom: var(--q-space-1);
+}
+
+/* A small text button with a dashed underline, so it reads as part of the
+ * label line and not as a second control row. */
+.inline_action {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--q-fgColor-accent);
+  text-decoration: underline dashed;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.inline_action:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 .field_head .field_name {
@@ -144,7 +161,8 @@
 .included {
   display: flex;
   flex-direction: column;
-  gap: var(--q-space-2);
+  /* As a field's label: the box's border lines up with the message's. */
+  gap: var(--q-space-1);
   flex: 1 1 auto;
   min-height: 116px;
 }

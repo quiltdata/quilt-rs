@@ -380,7 +380,7 @@ pub fn MetadataField(
         }
         now
     });
-    // Not a `FormControl`: the name shares its row with `Edit`.
+    // Not a `FormControl`: the name shares its line with the editor's toggle.
     let control_id = crate::kit::unique_id("metadata");
     let error_id = format!("{control_id}-error");
     let label_id = format!("{control_id}-label");
@@ -445,21 +445,23 @@ pub fn MetadataField(
                         }
                     }
                 }
-                <Button
-                    aria_expanded=Signal::derive(move || Some(editing.get()))
-                    aria_controls=body_id.clone()
-                    on_click=move |_| editing.update(|open| *open = !*open)
+                <button
+                    type="button"
+                    class=style::inline_action
+                    aria-expanded=move || editing.get().to_string()
+                    aria-controls=body_id.clone()
+                    on:click=move |_| editing.update(|open| *open = !*open)
                 >
                     {move || {
                         if editing.get() {
-                            "Done"
+                            "Close editor"
                         } else if MetadataPreview::of(&metadata.get()) == MetadataPreview::None {
                             "Add"
                         } else {
                             "Edit"
                         }
                     }}
-                </Button>
+                </button>
             </div>
             <div class=style::field_value id=body_id>
                 {move || if editing.get() { editor.clone()() } else { preview().into_any() }}
@@ -924,10 +926,12 @@ pub fn CommitPageSkeleton() -> impl IntoView {
 mod layout_tests {
     use super::*;
     use crate::test_support::{load_module_style, mount, sleep_ms};
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
     stylance::import_crate_style!(columns, "src/kit/two_columns.module.scss");
     stylance::import_crate_style!(card, "src/kit/card.module.scss");
+    stylance::import_crate_style!(form_control, "src/kit/form_control.module.scss");
 
     /// The kit's spacing tokens, which the test page does not load.
     const TOKENS: &str = "--q-space-3:12px; --q-space-4:16px";
@@ -1085,6 +1089,94 @@ mod layout_tests {
                 ul.scroll_height()
             );
         }
+    }
+
+    /// The message field's border and the file box's border start on one
+    /// line: a field's label and the files' heading leave the same room.
+    #[wasm_bindgen_test]
+    #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
+    async fn the_message_and_the_files_line_up() {
+        load_styles();
+        load_module_style(
+            include_str!("../kit/form_control.module.scss"),
+            &[
+                ("root", form_control::root),
+                ("name", form_control::name),
+                ("required", form_control::required),
+                ("caption", form_control::caption),
+                ("error", form_control::error),
+            ],
+        );
+        let el = mount(|| {
+            let files = vec![IncludedFile {
+                path: "data/a.csv".to_string(),
+                size: 10,
+                change: Change::New,
+            }];
+            view! {
+                <div style=format!(
+                    "{TOKENS}; --q-space-1:4px; --q-space-2:8px; --q-text-body:14px; \
+                     --q-line-body:20px; font-size:14px; line-height:20px; width:1200px; \
+                     height:600px; display:flex; flex-direction:column",
+                )>
+                    <CommitColumn
+                        header=region("header", 60)
+                        message=view! {
+                            <MessageField value=RwSignal::new(String::new()) placeholder="m" />
+                        }
+                            .into_any()
+                        workflow=region("workflow", 60)
+                        metadata=region("metadata", 60)
+                        included=view! {
+                            <IncludedList files=files ignored=0 on_command=Callback::new(|_| ()) />
+                        }
+                            .into_any()
+                    />
+                </div>
+            }
+        });
+        sleep_ms(0).await;
+        let top = |sel: &str| {
+            el.query_selector(sel)
+                .unwrap()
+                .unwrap()
+                .get_bounding_client_rect()
+                .top()
+        };
+        let card = el
+            .query_selector("ul")
+            .unwrap()
+            .and_then(|ul| ul.parent_element())
+            .unwrap()
+            .get_bounding_client_rect()
+            .top();
+        assert_eq!(top("input"), card, "{}", el.inner_html());
+    }
+
+    /// The editor's toggle sits right after the field's name and says what
+    /// it does: `Edit`, then `Close editor`.
+    #[wasm_bindgen_test]
+    async fn the_editor_toggle_follows_the_name() {
+        let el = mount(|| {
+            view! {
+                <MetadataField
+                    metadata=RwSignal::new("{\"plate\": 7}".to_string())
+                    editing=RwSignal::new(false)
+                />
+            }
+        });
+        let toggle = |el: &web_sys::Element| {
+            el.query_selector("[aria-expanded][aria-controls]")
+                .unwrap()
+                .expect("the toggle")
+        };
+        let name = toggle(&el).previous_element_sibling().expect("the name");
+        assert_eq!(name.text_content().as_deref(), Some("Metadata"));
+        assert_eq!(toggle(&el).text_content().as_deref(), Some("Edit"));
+        let button: web_sys::HtmlElement = toggle(&el).unchecked_into();
+        button.click();
+        sleep_ms(0).await;
+        assert_eq!(toggle(&el).text_content().as_deref(), Some("Close editor"));
     }
 
     /// With no file changes, a blank state with a glyph says so.
