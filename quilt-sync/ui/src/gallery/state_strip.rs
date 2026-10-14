@@ -20,7 +20,7 @@ use crate::kit::StateLabel;
 use crate::kit::StateTone;
 use crate::kit::ToggleRow;
 use crate::kit::ZeroLine;
-use quilt_sync_ui::pages::strip_class;
+use quilt_sync_ui::pages::StateStrip;
 
 fn in_secs(secs: f64) -> Signal<Option<f64>> {
     let at = js_sys::Date::now() + secs * 1000.0;
@@ -58,7 +58,7 @@ pub fn StripErrorScene() -> impl IntoView {
                   together: it is the one arrangement where the strip says nothing useful \
                   and still costs the queue its space."
         >
-            <div class=strip_class()>
+            <StateStrip>
                 <Card title="Autosync">
                     <LoadFailure
                         words="Could not load autosync."
@@ -71,7 +71,7 @@ pub fn StripErrorScene() -> impl IntoView {
                         on_retry=Callback::new(|()| ())
                     />
                 </Card>
-            </div>
+            </StateStrip>
         </Scene>
     }
 }
@@ -84,10 +84,8 @@ pub fn StateStripRegion() -> impl IntoView {
     let out_role = RwSignal::new("analyst".to_string());
 
     view! {
-        // The page's own strip class. No breakpoint and no media query: `flex-wrap`
-        // alone drops the second card under the first when the window cannot hold
-        // both.
-        <div class=strip_class()>
+        // The page's own strip, so the gallery stacks it where the page does.
+        <StateStrip>
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
@@ -129,7 +127,7 @@ pub fn StateStripRegion() -> impl IntoView {
                         on_sign_in=|_| ()
                     />
                 </Card>
-            </div>
+            </StateStrip>
     }
 }
 
@@ -184,7 +182,7 @@ fn PausedWithReason() -> impl IntoView {
                   `clear_paused`. Adding a paused row to the queue would count the same \
                   packages twice, including in the header count."
         >
-            <div class=strip_class()>
+            <StateStrip>
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
@@ -211,7 +209,7 @@ fn PausedWithReason() -> impl IntoView {
                         trailing=paused()
                     />
                 </Card>
-            </div>
+            </StateStrip>
             <Card title="Needs your attention" count=1>
                 <div>
                     {row("user/package-b", &PackageState::PendingChanges { files: 2 })}
@@ -237,7 +235,7 @@ fn PausedStale() -> impl IntoView {
                   reachable, so the scene has no button to leave it: a button here would \
                   make a backend defect look like a feature."
         >
-            <div class=strip_class()>
+            <StateStrip>
                 <Card title="Autosync">
                     <ToggleRow
                         label="Get new revisions"
@@ -252,7 +250,7 @@ fn PausedStale() -> impl IntoView {
                         trailing=paused()
                     />
                 </Card>
-            </div>
+            </StateStrip>
             <ZeroLine text="Everything is Latest — 13 packages" />
         </Scene>
     }

@@ -20,7 +20,7 @@ fn card(title: &'static str, lines: usize) -> impl IntoView {
 fn layout(width: u32) -> AnyView {
     view! {
         <div style=format!("width:{width}px; max-width:100%")>
-            <TwoColumns>
+            <TwoColumns min_column=480>
                 {card("1 · tall", 6)}
                 {card("2", 2)}
                 {card("3", 1)}
@@ -37,16 +37,18 @@ pub fn TwoColumnsStories() -> impl IntoView {
     view! {
         <Story
             title="TwoColumns"
-            note="A page's regions two to a row from a 1024px window (976px of its own width), \
+            note="A page's regions two to a row while each column gets the page's minimum, \
                   and in one column below that, in the same order: left to right, top to \
-                  bottom. A row's two cards share its height, so each row has one bottom edge. \
-                  What is drawn, read and reached by Tab is one order at every width."
+                  bottom. Here the minimum is Settings' 480px, so with the 16px gap it is two \
+                  columns from 976px of its own width, a 1024px window. A row's two cards \
+                  share its height, so each row has one bottom edge. What is drawn, read and \
+                  reached by Tab is one order at every width."
         >
             <Cell full=true label="976px — rows of two">
                 {layout(976)}
             </Cell>
-            <Cell full=true label="960px — one column, in the same order">
-                {layout(960)}
+            <Cell full=true label="975px — one column, in the same order">
+                {layout(975)}
             </Cell>
         </Story>
     }

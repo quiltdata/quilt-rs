@@ -65,6 +65,7 @@ use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::Site;
+use crate::kit::TwoColumns;
 use crate::kit::ZeroLineSkeleton;
 use crate::kit::render;
 
@@ -418,7 +419,7 @@ fn PackageListRow(
 /// The class a run of rows carries, for the feed's list as well as this one — it has
 /// no stylesheet of its own and the rule is the page's.
 ///
-/// Public, with [`strip_class`] and [`list_region_class`], for the gallery's
+/// Public, with [`StateStrip`] and [`list_region_class`], for the gallery's
 /// whole-page scenes: they draw fixture rows rather than this page, but in the
 /// page's own layout, so a change to it shows there too.
 pub fn rows_class() -> &'static str {
@@ -431,9 +432,17 @@ pub(super) fn list_class() -> &'static str {
     style::list
 }
 
-/// The state strip's two-card row.
-pub fn strip_class() -> &'static str {
-    style::strip
+/// The state strip: Autosync beside Accounts while each card gets 300px, so
+/// they stack below about a 644px window. The two share the taller one's
+/// height, so the strip has one bottom edge; sizing each to its contents
+/// would leave a ragged edge under a one-host Accounts card.
+#[component]
+pub fn StateStrip(children: Children) -> impl IntoView {
+    view! {
+        <TwoColumns min_column=300 tight=true>
+            {children()}
+        </TwoColumns>
+    }
 }
 
 /// Region 4: the list toolbar, then the card that scrolls under it.
@@ -676,10 +685,10 @@ fn regions_skeleton(toolbar: AnyView, inert: bool) -> AnyView {
 pub fn MainPageSkeleton(actions: AnyView) -> impl IntoView {
     view! {
         <PageLayout heading="QuiltSync" actions=actions>
-            <div class=style::strip>
+            <StateStrip>
                 {autosync::autosync_skeleton()}
                 {accounts::accounts_skeleton()}
-            </div>
+            </StateStrip>
             {regions_skeleton(list_toolbar(ListControls::new()), true)}
         </PageLayout>
     }
@@ -992,7 +1001,7 @@ fn MainPageRegions(
     view! {
         // Outside every boundary, so both cards are constructed once and each one
         // owns when it blanks.
-        <div class=style::strip>
+        <StateStrip>
             <autosync::AutosyncCard reload=watcher_reload watcher=watcher />
             <Transition fallback=accounts::accounts_skeleton>
                 {move || Suspend::new(async move {
@@ -1013,7 +1022,7 @@ fn MainPageRegions(
                     }
                 })}
             </Transition>
-        </div>
+        </StateStrip>
         // Outside every `Transition`, beside the strip: a refetch rebuilds the
         // resolved subtree below, and a dialog rebuilt mid-typing would close
         // itself. The `<dialog>` is in the browser's top layer regardless of
@@ -2626,10 +2635,19 @@ mod tests {
     }
 
     /// The strip element itself, so a test can ask what is inside it rather than
-    /// only where its text falls in the document.
+    /// only where its text falls in the document: the layout around the
+    /// Autosync card, found by its title as `queue_text` finds the queue.
     fn strip_of(el: &web_sys::Element) -> web_sys::Element {
-        el.query_selector("[class*=strip]")
-            .unwrap()
+        let sections = el.query_selector_all("section").unwrap();
+        (0..sections.length())
+            .filter_map(|i| sections.item(i))
+            .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+            .find(|section| {
+                section
+                    .text_content()
+                    .is_some_and(|text| text.contains("Autosync"))
+            })
+            .and_then(|card| card.parent_element())
             .expect("the state strip")
     }
 
@@ -3240,8 +3258,10 @@ mod tests {
 
         let main = skeleton.query_selector("main").unwrap().unwrap();
         assert_eq!(column(&main.children()), column(&page.children()));
+        let strip = page.first_element_child().unwrap();
         assert_eq!(
-            page.query_selector_all(&format!(".{} [aria-busy=true]", style::strip))
+            strip
+                .query_selector_all("[aria-busy=true]")
                 .unwrap()
                 .length(),
             2,
