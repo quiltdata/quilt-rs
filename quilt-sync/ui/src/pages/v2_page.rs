@@ -68,6 +68,9 @@ pub struct PageHandle {
     /// Whether a read is out. It spins *Refresh*, so the button reports a read
     /// the watcher started as readily as one the reader asked for.
     pub in_flight: RwSignal<bool>,
+    /// How many reads have landed, failed ones included. A command that asks
+    /// for a re-read waits for this to pass the count it saw.
+    pub landed: RwSignal<u64>,
 }
 
 impl PageHandle {
@@ -78,6 +81,7 @@ impl PageHandle {
             outcome: RwSignal::new(None),
             reload: Trigger::new(),
             in_flight: RwSignal::new(false),
+            landed: RwSignal::new(0),
         }
     }
 
@@ -93,7 +97,10 @@ impl PageHandle {
         T: Clone + PartialEq + Send + Sync + 'static,
     {
         let Self {
-            reload, in_flight, ..
+            reload,
+            in_flight,
+            landed: count,
+            ..
         } = self;
         let landed = RwSignal::new(None::<(String, Result<T, String>)>);
         let reads = StoredValue::new(0_u64);
@@ -109,6 +116,7 @@ impl PageHandle {
                 if reads.try_get_value() == Some(this) {
                     in_flight.try_set(false);
                     landed.try_set(Some((asked, answer)));
+                    count.try_update(|n| *n += 1);
                 }
             });
         });

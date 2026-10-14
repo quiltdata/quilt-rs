@@ -484,28 +484,23 @@ impl HeaderMenu {
         let PageHandle {
             busy,
             reload,
-            in_flight,
+            landed,
             ..
         } = self.page;
-        // 0: nothing asked; 1: asked, the read not seen yet; 2: it is out.
-        let waiting = RwSignal::new(0_u8);
+        // The count of landed reads when the re-read was asked for.
+        let asked = RwSignal::new(None::<u64>);
         Effect::new(move |first: Option<()>| {
             self.saved.track();
             if first.is_some() {
                 busy.set(true);
-                waiting.set(1);
+                asked.set(Some(landed.get_untracked()));
                 reload.notify();
             }
         });
         Effect::new(move |_| {
-            let out = in_flight.get();
-            match (waiting.get(), out) {
-                (1, true) => waiting.set(2),
-                (2, false) => {
-                    waiting.set(0);
-                    busy.set(false);
-                }
-                _ => {}
+            if asked.get().is_some_and(|asked| landed.get() > asked) {
+                asked.set(None);
+                busy.set(false);
             }
         });
     }
@@ -833,7 +828,7 @@ fn CommitScreen(
             open_folder,
             ignoring,
             outcome,
-            menu,
+            &menu,
             focus && fresh,
         )
     };
@@ -892,7 +887,7 @@ fn column(
     open_folder: Callback<()>,
     ignoring: RwSignal<Option<IgnorePopupData>>,
     outcome: RwSignal<Option<Outcome>>,
-    menu: HeaderMenu,
+    menu: &HeaderMenu,
     focus: bool,
 ) -> AnyView {
     let has_bucket = d.uri.as_ref().is_some_and(|u| u.catalog.is_some());
@@ -1824,6 +1819,41 @@ mod tests {
         assert_eq!(bucket().as_deref(), Some("other-bucket"));
         assert!(!page.busy.get_untracked(), "released once it landed");
         drop(owner);
+    }
+
+    /// [`on_two_buckets`]'s first answer, then a failure.
+    fn fails_after_first(ns: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        if READS.get() == 0 {
+            on_two_buckets(ns)
+        } else {
+            READS.set(READS.get() + 1);
+            Box::pin(async { Err("connection reset".to_string()) })
+        }
+    }
+
+    /// A re-read that lands at once, or fails, releases the lock too.
+    #[wasm_bindgen_test]
+    async fn a_quick_or_failed_re_read_releases_the_lock() {
+        for read in [on_two_buckets as CommitRead, fails_after_first] {
+            READS.set(0);
+            let owner = Owner::new();
+            let (page, menu) = owner.with(|| {
+                let page = PageHandle::new();
+                let ns = Memo::new(|_| "org/pkg".to_string());
+                let _answer = page.read(ns, read);
+                let menu = HeaderMenu::new(page, RwSignal::new(None), None);
+                menu.hold_through_read();
+                (page, menu)
+            });
+            sleep_ms(50).await;
+
+            menu.saved.notify();
+            sleep_ms(50).await;
+
+            assert_eq!(READS.get(), 2, "read again");
+            assert!(!page.busy.get_untracked(), "released");
+            drop(owner);
+        }
     }
 
     fn entry(path: &str, status: &str) -> EntryData {

@@ -674,6 +674,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         outcome,
         reload,
         in_flight,
+        ..
     } = page;
     let answer = page.read(key, io.read);
     let fixed = Memo::new(move |_| {
