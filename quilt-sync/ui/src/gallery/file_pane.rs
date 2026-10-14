@@ -87,10 +87,11 @@
 //!   drawn with them the toolbar has to wait. So the loading cell skeletonises
 //!   the toolbar, and the rule has an exception the design has to record.
 //! - **The `[⋯]` cannot be one list.** §6 owes this: gated by where the file is,
-//!   the menu is four different menus, and two of its items only exist for one
-//!   state each — *Open file* wants a local file and *Stop keeping* wants bytes
-//!   to delete. An ignored row needs *Stop ignoring*, which §3's list does not
-//!   have at all although the `Ignored` facet is the view that reaches it.
+//!   the menu is four different menus, and some of its items exist for one
+//!   state only — *Open file* and *Reveal in folder* want a local file and
+//!   *Stop keeping* wants bytes to delete. An ignored row needs *Stop
+//!   ignoring*, which §3's list does not have at all although the `Ignored`
+//!   facet is the view that reaches it.
 //! - **A facet at zero has to stay.** It is the same argument that keeps the
 //!   facets out of a `Select`: a segment that vanishes when it is empty teaches
 //!   nothing and moves the segments beside it. `Segment::inert` is that state,
@@ -472,9 +473,12 @@ impl Confirm {
 ///
 /// §6 owes this — *"the menu must be gated the same way, or it offers `Open
 /// file` on a file that is not there"* — and gating turns one list into four.
-/// Two items exist for one state each: `Open file` wants something on disk, and
-/// `Stop keeping` wants bytes to delete, which a `Deleted` or `Missing` row has
-/// none of.
+/// Some items exist for one state only: `Open file` and `Reveal in folder` want
+/// something on disk, and `Stop keeping` wants bytes to delete, which a
+/// `Deleted` or `Missing` row has none of.
+///
+/// Rules split it as the package page does: the local file, its address,
+/// `.quiltignore`, then `Stop keeping` under its danger rule.
 ///
 /// `Stop ignoring` is not in §3's list at all, although the `Ignored` facet is
 /// the view that reaches it and v1 has the popup. A menu that can ignore and
@@ -483,14 +487,23 @@ fn menu(mark: Mark, subject: String, confirm: Confirm) -> Vec<MenuAction> {
     let mut items = Vec::new();
     if mark.local() {
         items.push(MenuAction::new("Open file", Callback::new(|()| ())));
+        items.push(MenuAction::new("Reveal in folder", Callback::new(|()| ())));
     }
-    items.push(MenuAction::new("Open in catalog", Callback::new(|()| ())));
-    items.push(MenuAction::new("Copy URI", Callback::new(|()| ())));
-    items.push(if mark == Mark::Ignored {
-        MenuAction::new("Stop ignoring", Callback::new(|()| ()))
+    let catalog = MenuAction::new("Open in catalog", Callback::new(|()| ()));
+    items.push(if items.is_empty() {
+        catalog
     } else {
-        MenuAction::new("Ignore", Callback::new(|()| ()))
+        catalog.separated()
     });
+    items.push(MenuAction::new("Copy URI", Callback::new(|()| ())));
+    items.push(
+        if mark == Mark::Ignored {
+            MenuAction::new("Stop ignoring", Callback::new(|()| ()))
+        } else {
+            MenuAction::new("Ignore", Callback::new(|()| ()))
+        }
+        .separated(),
+    );
     if matches!(mark, Mark::Here | Mark::Changed | Mark::New) {
         items.push(
             MenuAction::new(

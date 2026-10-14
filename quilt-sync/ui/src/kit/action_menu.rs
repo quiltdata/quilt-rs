@@ -79,7 +79,8 @@ pub struct MenuAction {
     /// Runs the command. The menu closes first, so a command that opens a dialog
     /// does not leave a surface floating over it.
     pub on_select: Callback<()>,
-    /// Draws a rule above this item. The destructive commands sit below one.
+    /// Draws a rule above this item, starting a group. The destructive commands
+    /// sit below one.
     pub separated: bool,
 }
 
@@ -100,6 +101,13 @@ impl MenuAction {
     #[must_use]
     pub fn danger(mut self) -> Self {
         self.tone = ActionTone::Danger;
+        self.separated = true;
+        self
+    }
+
+    /// Below a rule, starting a group of its own.
+    #[must_use]
+    pub fn separated(mut self) -> Self {
         self.separated = true;
         self
     }

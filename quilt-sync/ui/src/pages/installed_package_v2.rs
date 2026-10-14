@@ -827,9 +827,10 @@ fn file_downloader(namespace: String, w: Wiring, files: Files) -> Callback<Vec<S
 
 /// Runs what a row's `[⋯]` chose.
 ///
-/// Opening and copying write nothing, so they take no lock, as `file_opener`
-/// does not; the two `.quiltignore` items open popups whose state is the
-/// page's ([`row_popups`]), and the menu holds them back while the lock is held.
+/// Opening, revealing and copying write nothing, so they take no lock, as
+/// `file_opener` does not; the two `.quiltignore` items open popups whose state
+/// is the page's ([`row_popups`]), and the menu holds them back while the lock
+/// is held.
 fn row_runner(
     namespace: String,
     uri: Option<quilt_uri::S3PackageUri>,
@@ -841,6 +842,20 @@ fn row_runner(
         let (namespace, uri, outcome) = (namespace.clone(), uri.clone(), w.outcome);
         match command {
             RowCommand::Open(path) => open_file.run(path),
+            RowCommand::Reveal(path) => {
+                leptos::task::spawn_local(async move {
+                    if let Err(detail) =
+                        commands::reveal_in_file_browser(namespace.clone(), path, uri).await
+                    {
+                        outcome.try_set(Some(Outcome {
+                            namespace,
+                            variant: BannerVariant::Critical,
+                            lead: "Could not show this file in its folder.".to_string(),
+                            detail: Some(detail),
+                        }));
+                    }
+                });
+            }
             RowCommand::OpenInCatalog(path) => {
                 let Some(url) = uri
                     .as_ref()

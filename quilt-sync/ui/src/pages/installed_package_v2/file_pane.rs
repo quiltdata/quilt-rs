@@ -430,6 +430,8 @@ fn offered(rows: &[Row]) -> Vec<String> {
 pub enum RowCommand {
     /// Open the local file in its default application.
     Open(String),
+    /// Show the local file in the system's file browser.
+    Reveal(String),
     OpenInCatalog(String),
     /// The file's `quilt+s3` address, as `util::file_uri` builds it.
     CopyUri(String),
@@ -452,6 +454,7 @@ impl RowCommand {
     pub const fn label(&self) -> &'static str {
         match self {
             Self::Open(_) => "Open file",
+            Self::Reveal(_) => "Reveal in folder",
             Self::OpenInCatalog(_) => "Open in catalog",
             Self::CopyUri(_) => "Copy URI",
             Self::CopyPath(_) => "Copy path",
@@ -465,11 +468,22 @@ impl RowCommand {
     pub fn path(&self) -> &str {
         match self {
             Self::Open(path)
+            | Self::Reveal(path)
             | Self::OpenInCatalog(path)
             | Self::CopyUri(path)
             | Self::CopyPath(path)
             | Self::Ignore(path)
             | Self::StopIgnoring { path, .. } => path,
+        }
+    }
+
+    /// Which of the menu's groups it sits in: the local file, its address, then
+    /// `.quiltignore`. A rule goes between two groups.
+    const fn group(&self) -> u8 {
+        match self {
+            Self::Open(_) | Self::Reveal(_) => 0,
+            Self::OpenInCatalog(_) | Self::CopyUri(_) | Self::CopyPath(_) => 1,
+            Self::Ignore(_) | Self::StopIgnoring { .. } => 2,
         }
     }
 
@@ -502,7 +516,18 @@ pub struct RowMenu {
 /// The header's words for a command held back by the lock.
 const BUSY: &str = "Something else is running";
 
-/// A row's `[⋯]` items, following the lock while the menu is open.
+/// Whether each command starts a group after another, and so sits below a
+/// rule. The first item never does, and a group a row lacks draws no rule.
+fn group_starts(commands: &[RowCommand]) -> Vec<bool> {
+    commands
+        .iter()
+        .enumerate()
+        .map(|(i, command)| i > 0 && commands[i - 1].group() != command.group())
+        .collect()
+}
+
+/// A row's `[⋯]` items, following the lock while the menu is open, grouped
+/// as [`group_starts`] says.
 fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
     let Some(RowMenu {
         reach,
@@ -513,16 +538,19 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
         return Signal::stored(Vec::new());
     };
     let commands = row_commands(&r.path, r.place, r.ignored_by.as_deref(), reach);
+    let starts = group_starts(&commands);
     Signal::derive(move || {
         let busy = busy.get();
         commands
             .iter()
-            .map(|command| {
+            .zip(&starts)
+            .map(|(command, &starts)| {
                 let run = command.clone();
                 let action = MenuAction::new(
                     command.label(),
                     Callback::new(move |()| on_command.run(run.clone())),
                 );
+                let action = if starts { action.separated() } else { action };
                 if busy && command.edits_ignore() {
                     action.disabled(BUSY)
                 } else {
@@ -533,10 +561,10 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
     })
 }
 
-/// The items a row offers, in their fixed order: open, catalog, copy, then the
-/// `.quiltignore` item. v1's entries form gates its buttons the same way, but
-/// Ignore is on every row: the pane does not read `junky_pattern`, and the
-/// popup is prefilled with the path instead.
+/// The items a row offers, in their fixed order and groups: open and reveal;
+/// catalog and copy; then the `.quiltignore` item. v1's entries form
+/// gates its buttons the same way, but Ignore is on every row: the pane does
+/// not read `junky_pattern`, and the popup is prefilled with the path instead.
 fn row_commands(
     path: &str,
     place: Place,
@@ -555,6 +583,7 @@ fn row_commands(
     let mut commands = Vec::new();
     if matches!(place, Place::Here | Place::Changed | Place::New) {
         commands.push(RowCommand::Open(path.clone()));
+        commands.push(RowCommand::Reveal(path.clone()));
     }
     // The catalog shows the published file, which a changed or new row's local
     // bytes are not.
@@ -1577,12 +1606,78 @@ mod menu_tests {
         let all = |status| labels(status, None, true, true);
         assert_eq!(
             all("pristine"),
-            ["Open file", "Open in catalog", "Copy URI", "Ignore"]
+            [
+                "Open file",
+                "Reveal in folder",
+                "Open in catalog",
+                "Copy URI",
+                "Ignore"
+            ]
         );
-        assert_eq!(all("modified"), ["Open file", "Copy URI", "Ignore"]);
-        assert_eq!(all("added"), ["Open file", "Copy path", "Ignore"]);
+        assert_eq!(
+            all("modified"),
+            ["Open file", "Reveal in folder", "Copy URI", "Ignore"]
+        );
+        assert_eq!(
+            all("added"),
+            ["Open file", "Reveal in folder", "Copy path", "Ignore"]
+        );
         assert_eq!(all("deleted"), ["Copy URI", "Ignore"]);
         assert_eq!(all("remote"), ["Open in catalog", "Copy URI", "Ignore"]);
+    }
+
+    /// Each row's items with a `|` where a rule goes.
+    fn grouped(status: &str, ignored_by: Option<&str>, remote: bool) -> String {
+        let commands = row_commands(
+            "raw/a.csv",
+            Place::of(status),
+            ignored_by,
+            Reach {
+                remote,
+                catalog: remote,
+            },
+        );
+        commands
+            .iter()
+            .zip(group_starts(&commands))
+            .map(|(c, starts)| {
+                if starts {
+                    format!("| {}", c.label())
+                } else {
+                    c.label().to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The local file, its address, and `.quiltignore`, each its own group; a
+    /// group a row lacks draws no rule, and none leads or trails.
+    #[test]
+    fn rules_fall_between_the_groups_a_row_has() {
+        assert_eq!(
+            grouped("pristine", None, true),
+            "Open file, Reveal in folder, | Open in catalog, Copy URI, | Ignore"
+        );
+        assert_eq!(
+            grouped("modified", None, true),
+            "Open file, Reveal in folder, | Copy URI, | Ignore"
+        );
+        assert_eq!(
+            grouped("added", None, false),
+            "Open file, Reveal in folder, | Copy path, | Ignore"
+        );
+        assert_eq!(grouped("deleted", None, true), "Copy URI, | Ignore");
+        assert_eq!(
+            grouped("remote", None, true),
+            "Open in catalog, Copy URI, | Ignore"
+        );
+        assert_eq!(
+            grouped("pristine", None, false),
+            "Open file, Reveal in folder, | Ignore"
+        );
+        assert_eq!(grouped("deleted", None, false), "Ignore");
+        assert_eq!(grouped("pristine", Some("*.tmp"), true), "Stop ignoring");
     }
 
     /// An ignored row offers only the way back, whatever its status.
@@ -1615,15 +1710,15 @@ mod menu_tests {
     fn the_catalog_and_the_address_need_the_package_to_have_them() {
         assert_eq!(
             labels("pristine", None, true, false),
-            ["Open file", "Copy URI", "Ignore"]
+            ["Open file", "Reveal in folder", "Copy URI", "Ignore"]
         );
         assert_eq!(
             labels("pristine", None, false, false),
-            ["Open file", "Ignore"]
+            ["Open file", "Reveal in folder", "Ignore"]
         );
         assert_eq!(
             labels("added", None, false, false),
-            ["Open file", "Copy path", "Ignore"]
+            ["Open file", "Reveal in folder", "Copy path", "Ignore"]
         );
     }
 
@@ -1642,6 +1737,7 @@ mod menu_tests {
             ),
             [
                 RowCommand::Open("raw/a.csv".to_string()),
+                RowCommand::Reveal("raw/a.csv".to_string()),
                 RowCommand::CopyPath("raw/a.csv".to_string()),
                 RowCommand::Ignore("raw/a.csv".to_string()),
             ]
@@ -1757,7 +1853,20 @@ mod menu_pane_tests {
             .collect();
         assert_eq!(
             words,
-            ["Open file", "Open in catalog", "Copy URI", "Ignore"]
+            [
+                "Open file",
+                "Reveal in folder",
+                "Open in catalog",
+                "Copy URI",
+                "Ignore"
+            ]
+        );
+        assert_eq!(
+            el.query_selector_all("[popover] [role='separator']")
+                .unwrap()
+                .length(),
+            2,
+            "a rule between each of the three groups",
         );
         item(&items, "Copy URI").click();
         assert_eq!(
