@@ -59,9 +59,26 @@
   color: var(--q-fgColor-muted);
 }
 
-.actions {
+// The card's buttons, under its rows. No rule above them: they belong to
+// the card, not to the row before. Doubled to outrank Card's rule between
+// its children.
+.card_actions.card_actions {
   display: flex;
   justify-content: flex-end;
+  border-top: 0;
+}
+
+// A card's opening sentence, spaced from the first row as the rows are from
+// each other.
+.lead {
+  margin: 0;
+  padding-bottom: var(--q-space-2);
+  color: var(--q-fgColor-muted);
+}
+
+// A placeholder, as typed in the template.
+.code {
+  font-family: var(--q-font-mono);
 }
 
 // A value the reader typed, such as a long template: wrapped, even inside a

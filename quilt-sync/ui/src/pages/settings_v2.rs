@@ -312,6 +312,10 @@ pub fn SyncingCard(
 pub const PUBLISH_PLACEHOLDERS: &[&str] =
     &["{date}", "{time}", "{datetime}", "{namespace}", "{changes}"];
 
+/// The template an empty one works as: `render_publish_message` in
+/// `quilt-sync/src-tauri/src/commit_message.rs` returns the changes summary.
+pub const EMPTY_TEMPLATE_MEANS: &str = "{changes}";
+
 pub const PUBLISHING_USE: &str = "Publishing and autosync use these. They also fill in a new \
      revision's form, where you can change them.";
 
@@ -349,7 +353,13 @@ pub fn PublishingCard(
     let muted = |words: &'static str| view! { <span class=style::quiet>{words}</span> }.into_any();
     let template = move || {
         stored.with(|p| match p.message_template.as_str() {
-            "" => muted("Generated from the changes"),
+            "" => view! {
+                <span class=style::quiet>
+                    "Generated from the changes: "
+                    <code class=style::code>{EMPTY_TEMPLATE_MEANS}</code>
+                </span>
+            }
+            .into_any(),
             text => view! { <span class=style::long>{text.to_string()}</span> }.into_any(),
         })
     };
@@ -371,11 +381,11 @@ pub fn PublishingCard(
     };
     view! {
         <Card title="Publishing">
-            <p class=style::quiet>{PUBLISHING_USE}</p>
+            <p class=style::lead>{PUBLISHING_USE}</p>
             <ValueRow name="Message template" value=view! { {template} }.into_any() />
             <ValueRow name="Default workflow" value=view! { {workflow} }.into_any() />
             <ValueRow name="Default metadata" value=view! { {metadata} }.into_any() />
-            <div class=style::actions>
+            <div class=style::card_actions>
                 <Button on_click=move |_| on_edit.run(())>"Edit…"</Button>
             </div>
         </Card>
@@ -1454,7 +1464,7 @@ mod tests {
         leptos::task::tick().await;
         let text = || el.text_content().unwrap_or_default();
         for words in [
-            "Generated from the changes",
+            "Generated from the changes: {changes}",
             "Each bucket's default",
             "No metadata",
         ] {
