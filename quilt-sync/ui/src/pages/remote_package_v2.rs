@@ -9,7 +9,7 @@
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_navigate, use_query_map};
+use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 use crate::components::appbar::transit_appbar_actions;
@@ -61,7 +61,7 @@ fn replacing() -> NavigateOptions {
 
 #[component]
 pub(crate) fn RelayScreen(read: PageRead<String>) -> impl IntoView {
-    let query = use_query_map();
+    let query = crate::routes::use_query();
     let key = Memo::new(move |_| query.with(|q| q.get("uri").unwrap_or_default()));
     let page = PageHandle::new();
     let PageHandle {
@@ -349,5 +349,87 @@ mod tests {
         ))
         .await;
         left_without_a_way_back(before, "/setup").await;
+    }
+
+    thread_local! {
+        /// Every `uri` the relay was asked to run.
+        static ASKED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// No session on the first run; the second runs.
+    fn needs_a_session(
+        uri: String,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<String, String>>>> {
+        let first = ASKED.with(|a| {
+            let mut a = a.borrow_mut();
+            a.push(uri);
+            a.len() == 1
+        });
+        Box::pin(async move {
+            if first {
+                Err(
+                    r#"{"kind":"session_absent","message":"Log in","host":"quilt.test"}"#
+                        .to_string(),
+                )
+            } else {
+                Ok("/installed-package?namespace=proj%2Fplans".to_string())
+            }
+        })
+    }
+
+    /// `/login` as the code sign-in leaves it: to the `back` it read, which
+    /// the backend hands back unchanged.
+    #[component]
+    fn SignedIn() -> impl IntoView {
+        let query = crate::routes::use_query();
+        let navigate = leptos_router::hooks::use_navigate();
+        let back = query.with_untracked(|q| q.get("back").unwrap_or_default());
+        Effect::new(move |_| {
+            navigate(
+                crate::pages::login_v2::after_login(&back),
+                NavigateOptions::default(),
+            );
+        });
+    }
+
+    /// A deep link that needs a session runs, after the code sign-in, with
+    /// the `uri` it was opened with.
+    #[wasm_bindgen_test]
+    async fn a_link_after_sign_in_runs_with_its_own_uri() {
+        unmount_earlier();
+        ASKED.with(|a| a.borrow_mut().clear());
+        let uri = "quilt+s3://quilt-dev#package=proj/quilt-rs-tech-plans@1a2b3c&catalog=nightly.quilttest.com";
+        // As the backend's `Paths::RemotePackage` builds it.
+        let relay = format!("/remote-package?uri={}", urlencoding::encode(uri));
+        let window = web_sys::window().unwrap();
+        let was = window.location().href().unwrap();
+        history()
+            .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&relay))
+            .unwrap();
+        mount(|| {
+            use leptos_router::components::{Route, Routes};
+            use leptos_router::path;
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { <p>"elsewhere"</p> }>
+                        <Route
+                            path=path!("/remote-package")
+                            view=|| view! { <RelayScreen read=needs_a_session /> }
+                        />
+                        <Route path=path!("/login") view=SignedIn />
+                        <Route path=path!("/installed-package") view=|| view! { <p>"package"</p> } />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(150).await;
+        let asked = ASKED.with(|a| a.borrow().clone());
+        let landed = location().pathname().unwrap();
+        unmount_earlier();
+        history()
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&was))
+            .unwrap();
+        assert_eq!(asked, vec![uri.to_string(), uri.to_string()]);
+        assert_eq!(landed, "/installed-package");
     }
 }

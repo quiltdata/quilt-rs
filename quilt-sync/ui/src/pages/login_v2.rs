@@ -11,7 +11,7 @@
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_navigate, use_query_map};
+use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, LoginData};
 use crate::kit::{
@@ -159,7 +159,7 @@ fn read_login(key: String) -> std::pin::Pin<Box<dyn Future<Output = Result<Login
 }
 
 /// Where a code that signed in goes.
-fn after_login(back: &str) -> &str {
+pub(crate) fn after_login(back: &str) -> &str {
     if back.is_empty() { "/" } else { back }
 }
 
@@ -189,7 +189,7 @@ fn browser_sign_in(
                 Ok(_) => Outcome {
                     namespace: here.clone(),
                     variant: BannerVariant::Success,
-                    lead: "Continue logging in in your browser.".to_string(),
+                    lead: "Continue in your browser to log in.".to_string(),
                     detail: None,
                 },
                 Err(e) => critical(
@@ -241,7 +241,7 @@ fn code_sign_in(
 
 #[component]
 pub(crate) fn LoginScreen(read: PageRead<LoginData>) -> impl IntoView {
-    let query = use_query_map();
+    let query = crate::routes::use_query();
     let key = Memo::new(move |_| {
         query.with(|q| {
             login_key(

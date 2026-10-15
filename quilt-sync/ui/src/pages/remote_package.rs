@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_navigate, use_query_map};
+use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 use crate::components::{Layout, Spinner};
@@ -9,7 +9,7 @@ use crate::components::{Layout, Spinner};
 pub fn RemotePackage() -> impl IntoView {
     let notification = RwSignal::new(None);
     let navigate = use_navigate();
-    let query = use_query_map();
+    let query = crate::routes::use_query();
 
     let data = LocalResource::new(move || {
         let uri = query.read().get("uri").unwrap_or_default();

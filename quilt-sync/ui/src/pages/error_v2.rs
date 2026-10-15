@@ -7,7 +7,7 @@
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_navigate, use_query_map};
+use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, LoginErrorData};
 use crate::components::appbar::appbar_actions;
@@ -170,7 +170,7 @@ pub(crate) fn open_dot_quilt(
 
 #[component]
 pub(crate) fn ErrorScreen(read: PageRead<LoginErrorData>) -> impl IntoView {
-    let query = use_query_map();
+    let query = crate::routes::use_query();
     let key = Memo::new(move |_| {
         query.with(|q| {
             error_key(
