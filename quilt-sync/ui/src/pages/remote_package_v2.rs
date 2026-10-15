@@ -13,7 +13,6 @@ use leptos_router::hooks::{use_navigate, use_query_map};
 
 use crate::commands;
 use crate::components::appbar::transit_appbar_actions;
-use crate::error_handler::redirect;
 use crate::kit::{PageLayout, Spinner, SpinnerVariant, readable};
 
 use super::error_v2::{ErrorSlate, open_dot_quilt};
@@ -73,19 +72,15 @@ pub(crate) fn RelayScreen(read: PageRead<String>) -> impl IntoView {
     } = page;
     let answer = page.read(key, read);
 
-    // On to the package, or to sign-in or setup where v1 goes for the same
-    // failure.
+    // On to the package. Sign-in and setup are the scaffold's, as for every
+    // v2 page.
     let navigate = use_navigate();
     Effect::new({
         let navigate = navigate.clone();
-        move |_| match answer.get() {
-            Some(Ok(path)) => navigate(&path, replacing()),
-            Some(Err(e)) => {
-                if let Some(target) = redirect(&e) {
-                    navigate(&target, replacing());
-                }
+        move |_| {
+            if let Some(Ok(path)) = answer.get() {
+                navigate(&path, replacing());
             }
-            None => {}
         }
     });
 
@@ -116,9 +111,6 @@ pub(crate) fn RelayScreen(read: PageRead<String>) -> impl IntoView {
                 let Some(Err(e)) = answer.get_untracked() else {
                     return running();
                 };
-                if redirect(&e).is_some() {
-                    return running();
-                }
                 view! {
                     <ErrorSlate
                         title="Error"

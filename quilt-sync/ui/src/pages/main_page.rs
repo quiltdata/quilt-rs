@@ -41,6 +41,7 @@ use crate::commands::MainPagePackagesData;
 use crate::commands::MainPageRecentFilesData;
 use crate::commands::MainPageWatcherData;
 use crate::components::appbar::appbar_actions;
+use crate::error_handler::{current_path, follow_redirect};
 use crate::routes::package_page_href;
 use crate::util;
 use grouping::ListRowData;
@@ -796,6 +797,8 @@ fn files_view(
     // packages there are no addresses and so no Copy buttons.
     addresses: HashMap<Namespace, S3PackageUri>,
 ) -> AnyView {
+    // The page as it mounted, for the redirect's check against itself.
+    let on = StoredValue::new(current_path());
     view! {
         // Three skeleton rows, as the packages view shows in the same position.
         // Without a fallback the region is empty while the feed is read, and
@@ -827,6 +830,8 @@ fn files_view(
                         }
                             .into_any()
                     }
+                    // A missing session or setup goes where v1 sends it.
+                    Err(err) if follow_redirect(&err, &on.get_value()) => ().into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
                             &format!("get_main_page_recent_files failed: {err}").into(),
@@ -931,6 +936,8 @@ fn MainPageRegions(
     #[prop(optional_no_strip)]
     fetch_watcher: Option<WatcherRead>,
 ) -> impl IntoView {
+    // The page as it mounted, for the redirect's check against itself.
+    let on = StoredValue::new(current_path());
     // In the component body, NOT inside the `Suspend` closure below. A refetch
     // rebuilds that subtree deliberately — it is what re-collapses the queue's
     // expanders (R6) — so a view signal created inside it would reset on every
@@ -1009,6 +1016,8 @@ fn MainPageRegions(
                             view! { <accounts::AccountsBody data=data refresh=reload /> }
                                 .into_any()
                         }
+                        // A missing session or setup goes where v1 sends it.
+                        Err(err) if follow_redirect(&err, &on.get_value()) => ().into_any(),
                         Err(err) => {
                             // Logged once, here. The card says it could not read:
                             // rows would claim sessions it has not seen, and no card
@@ -1287,6 +1296,8 @@ fn MainPageRegions(
                         }
                             .into_any()
                     }
+                    // A missing session or setup goes where v1 sends it.
+                    Err(err) if follow_redirect(&err, &on.get_value()) => ().into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
                             &format!("get_main_page_packages failed: {err}").into(),
@@ -2990,6 +3001,34 @@ mod tests {
             !text.contains("Everything is Latest"),
             "and the page does not claim an all-clear over it: {text}"
         );
+    }
+
+    /// A fresh app with no data folder: the reads say so, and the page goes to
+    /// `/setup`, replacing its entry, as v1's does, instead of drawing two
+    /// failures.
+    #[wasm_bindgen_test]
+    async fn reads_that_need_setup_go_to_setup() {
+        let window = web_sys::window().unwrap();
+        let history = window.history().unwrap();
+        let was = window.location().href().unwrap();
+        history
+            .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/"))
+            .unwrap();
+        let before = history.length().unwrap();
+        let setup = r#"{"kind":"setup_required","message":"Set up"}"#.to_string();
+        let el = mount_regions(Err(setup.clone()), Err(setup));
+        sleep_ms(50).await;
+
+        let landed = window.location().pathname().unwrap();
+        let text = el.text_content().unwrap();
+        let length = history.length().unwrap();
+        history
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&was))
+            .unwrap();
+        assert_eq!(landed, "/setup");
+        assert_eq!(length, before, "the entry is replaced");
+        assert!(!text.contains(FETCH_ERROR_WORDS), "got: {text}");
+        assert!(!text.contains(ACCOUNTS_ERROR_WORDS), "got: {text}");
     }
 
     #[wasm_bindgen_test]

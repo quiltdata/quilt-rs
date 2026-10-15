@@ -64,6 +64,40 @@ pub fn redirect(error: &str) -> Option<String> {
     }
 }
 
+/// For a v2 read that failed on the page at path `on`: go where [`redirect`]
+/// says, replacing this entry so Back does not land on a page that sends the
+/// reader straight back, and say whether it went. The page draws nothing in
+/// place then.
+///
+/// Never to `on` itself, so `/setup` and `/login` reading the error they
+/// exist to fix draw their own failure instead of looping. `on` is the page's
+/// path as it mounted, not the window's now: a page whose first read already
+/// went has not left yet when its second fails.
+pub fn follow_redirect(error: &str, on: &str) -> bool {
+    let Some(target) = redirect(error) else {
+        return false;
+    };
+    if target.split('?').next() == Some(on) {
+        return false;
+    }
+    let navigate = use_navigate();
+    navigate(
+        &target,
+        NavigateOptions {
+            replace: true,
+            ..NavigateOptions::default()
+        },
+    );
+    true
+}
+
+/// The window's path, for [`follow_redirect`]'s `on`.
+pub fn current_path() -> String {
+    web_sys::window()
+        .and_then(|w| w.location().pathname().ok())
+        .unwrap_or_default()
+}
+
 fn render_page_error(
     message: &str,
     notification: RwSignal<Option<Notification>>,

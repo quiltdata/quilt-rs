@@ -26,6 +26,7 @@
 - **New design preview**: the commit page's *More actions* menu offers **Change bucket**, or **Show remote** once the package is published, and **Remove** (<https://github.com/quiltdata/quilt-rs/pull/1122>)
 - **New design preview**: a recent file's *More actions* menu on the main page offers **Open file**, **Reveal in folder**, **Copy URI**, and **Open in catalog** once the package is published (<https://github.com/quiltdata/quilt-rs/pull/1126>)
 - **New design preview**: the Log in, Set up, Error and Page not found pages, and the page shown while a Quilt link opens, in the new design (<https://github.com/quiltdata/quilt-rs/pull/1127>)
+- **New design preview**: a missing data folder or session opens Set up or Log in, as without the preview (<https://github.com/quiltdata/quilt-rs/pull/1127>)
 
 ## [v0.22.11] - 2026-10-14
 

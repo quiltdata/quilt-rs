@@ -35,6 +35,7 @@ use std::pin::Pin;
 use leptos::prelude::*;
 
 use crate::components::appbar::{appbar_actions, transit_appbar_actions};
+use crate::error_handler::{current_path, follow_redirect};
 use crate::kit::readable;
 use crate::kit::{Banner, BannerVariant, PageLayout};
 
@@ -198,6 +199,7 @@ where
         in_flight,
         ..
     } = page;
+    let on = current_path();
     view! {
         <PageLayout
             heading=heading
@@ -224,6 +226,8 @@ where
             {move || match answer.get() {
                 None => skeleton(),
                 Some(Ok(d)) => body(d),
+                // A missing session or setup goes where v1 sends it.
+                Some(Err(e)) if follow_redirect(&e, &on) => skeleton(),
                 Some(Err(_)) => failure(),
             }}
         </PageLayout>
@@ -519,6 +523,74 @@ mod tests {
 
         sleep_ms(80).await;
         assert!(!page.busy.get_untracked(), "released when it settles");
+    }
+
+    fn setup_required(_: String) -> Pin<Box<dyn Future<Output = Result<u32, String>>>> {
+        Box::pin(async { Err(r#"{"kind":"setup_required","message":"Set up"}"#.to_string()) })
+    }
+
+    fn session_absent(_: String) -> Pin<Box<dyn Future<Output = Result<u32, String>>>> {
+        Box::pin(async {
+            Err(r#"{"kind":"session_absent","message":"Log in","host":"quilt.test"}"#.to_string())
+        })
+    }
+
+    /// The probe at `at`, over `read`: where the window is afterwards, and
+    /// whether the page drew its failure. Puts the window back after.
+    async fn probe_at(at: &str, read: PageRead<u32>) -> (String, String, bool) {
+        let window = web_sys::window().unwrap();
+        let history = window.history().unwrap();
+        let was = window.location().href().unwrap();
+        history
+            .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(at))
+            .unwrap();
+        let before = history.length().unwrap();
+        let el = probe(vec![1], vec![], read).await;
+        let location = window.location();
+        let landed = format!(
+            "{}{}",
+            location.pathname().unwrap(),
+            location.search().unwrap()
+        );
+        assert_eq!(history.length().unwrap(), before, "the entry is replaced");
+        let failed = el.text_content().unwrap_or_default().contains("failed");
+        unmount_earlier();
+        history
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&was))
+            .unwrap();
+        (landed, at.to_string(), failed)
+    }
+
+    /// A read that needs setup goes to `/setup`, as v1 does, and draws no
+    /// failure on the way.
+    #[wasm_bindgen_test]
+    async fn a_read_that_needs_setup_goes_to_setup() {
+        let (landed, _, failed) =
+            probe_at("/installed-package?namespace=team%2Fa", setup_required).await;
+        assert_eq!(landed, "/setup");
+        assert!(!failed);
+    }
+
+    /// A read with no session goes to `/login` for its host, coming back here.
+    #[wasm_bindgen_test]
+    async fn a_read_with_no_session_goes_to_login_and_back() {
+        let (landed, at, failed) =
+            probe_at("/installed-package?namespace=team%2Fa", session_absent).await;
+        let back = urlencoding::encode(&at).into_owned();
+        assert_eq!(landed, format!("/login?host=quilt.test&back={back}"));
+        assert!(!failed);
+    }
+
+    /// `/setup` and `/login` reading the error they exist for stay put and say
+    /// so, rather than sending the reader to themselves.
+    #[wasm_bindgen_test]
+    async fn setup_and_login_never_redirect_to_themselves() {
+        let (landed, _, failed) = probe_at("/setup", setup_required).await;
+        assert_eq!(landed, "/setup");
+        assert!(failed, "setup draws its own failure");
+        let (landed, _, failed) = probe_at("/login?host=quilt.test&back=%2F", session_absent).await;
+        assert_eq!(landed, "/login?host=quilt.test&back=%2F");
+        assert!(failed, "login draws its own failure");
     }
 
     /// A command's answer moves the reader on only from the page and address
