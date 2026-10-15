@@ -1174,6 +1174,14 @@ fn group(
             tracked.peek().is_some() && tracked.all(|r| r.mark.local())
         });
 
+    // The folder's files in `All`, which the heading names beside the rows it
+    // holds once the view hides some.
+    let total = all.with_value(|rs| {
+        rs.iter()
+            .filter(|r| r.folder.as_deref() == Some(name.as_str()) && r.mark != Mark::Ignored)
+            .count()
+    });
+
     let members = StoredValue::new(members);
     let children = move || {
         all.with_value(|rs| {
@@ -1189,7 +1197,8 @@ fn group(
         Some(selection) => view! {
             <EntryGroup
                 name=name
-                count=Signal::derive(move || count)
+                shown=Signal::derive(move || count)
+                total=Signal::derive(move || total)
                 open=open
                 selection=selection
             >
@@ -1200,7 +1209,8 @@ fn group(
         None => view! {
             <EntryGroup
                 name=name
-                count=Signal::derive(move || count)
+                shown=Signal::derive(move || count)
+                total=Signal::derive(move || total)
                 open=open
                 have_mark=all_here
             >
@@ -1587,7 +1597,7 @@ pub fn FilePaneScene() -> impl IntoView {
             <Cell full=true label="all downloaded, one file deleted here — the line names it, and the tick goes">
                 {pane(Pane { files: deleted_here_package(), ..Pane::new("fp-deleted-here") })}
             </Cell>
-            <Cell full=true label="the Changed facet — nothing here can be ticked, so select-all goes">
+            <Cell full=true label="the Changed facet — nothing here can be ticked, so select-all goes, and each heading says how many of its folder it shows">
                 {pane(Pane { facet: "Changed", ..Pane::new("fp-changed") })}
             </Cell>
             <Cell full=true label="the Ignored facet — three files, two headings, one name between them">

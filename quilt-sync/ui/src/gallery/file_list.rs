@@ -248,7 +248,8 @@ fn group(
         Some(picks_all) => view! {
             <EntryGroup
                 name=name
-                count=Signal::derive(move || count)
+                shown=Signal::derive(move || count)
+                total=Signal::derive(move || count)
                 open=open
                 selection=picks_all
             >
@@ -259,7 +260,8 @@ fn group(
         None => view! {
             <EntryGroup
                 name=name
-                count=Signal::derive(move || count)
+                shown=Signal::derive(move || count)
+                total=Signal::derive(move || count)
                 open=open
                 have_mark=all_here
             >

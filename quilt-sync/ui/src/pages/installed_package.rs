@@ -6,7 +6,6 @@ mod sync_scope;
 mod toolbar;
 
 use leptos::prelude::*;
-use leptos_router::hooks::use_query_map;
 
 use content::InstalledPackageContent;
 use selection::RemoteSelection;
@@ -47,7 +46,7 @@ fn warrants_paused_banner(reason: &str) -> bool {
     reason = "declarative Leptos view; length is markup, not logic complexity"
 )]
 pub fn InstalledPackage() -> impl IntoView {
-    let query = use_query_map();
+    let query = crate::routes::use_query();
 
     // Version-mismatch banner inputs from the deep-link navigation (Task 5).
     // The requested revision's own remote (bucket + catalog) travels alongside

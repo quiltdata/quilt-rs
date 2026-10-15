@@ -28,8 +28,17 @@
 - **New design preview**: the Log in, Set up, Error and Page not found pages, and the page shown while a Quilt link opens, in the new design (<https://github.com/quiltdata/quilt-rs/pull/1127>)
 - **New design preview**: a missing data folder or session opens Set up or Log in, as without the preview (<https://github.com/quiltdata/quilt-rs/pull/1127>)
 
+### Changed
+
+- **New design preview**: a folder heading in the package page's file list reads *3 of 54* when a filter or search hides some of its files (<https://github.com/quiltdata/quilt-rs/pull/1128>)
+- **New design preview**: a file name or package name cut short in the package page's and the commit page's file lists, and in the main page's *Recent files*, shows whole in the app's own tooltip on hover or keyboard focus, in place of the browser's
+  - <https://github.com/quiltdata/quilt-rs/pull/1130>
+  - <https://github.com/quiltdata/quilt-rs/pull/1132>
+- Under the hood, every page reads the values in its address decoded once, as the Log in page does since the fix below. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1129>)
+
 ### Fixed
 
+- **Create package** refuses a name quilt3 would refuse, such as one with a space or `%`: a name is `prefix/name` using letters, digits, `_` and `-` (<https://github.com/quiltdata/quilt-rs/pull/1131>)
 - Opening a Quilt link that needs a sign-in opens its package after you log in with a code (<https://github.com/quiltdata/quilt-rs/pull/1127>)
 
 ## [v0.22.11] - 2026-10-14

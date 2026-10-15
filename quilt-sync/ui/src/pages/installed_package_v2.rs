@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_navigate, use_query_map};
+use leptos_router::hooks::use_navigate;
 
 use crate::commands;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
@@ -1188,7 +1188,7 @@ fn PackageScreen(
     resolving: ResolveCommands,
     revision_message: mismatch_band::RevisionMessage,
 ) -> impl IntoView {
-    let query = use_query_map();
+    let query = routes::use_query();
     // The address is the only input, and changes without a remount: one route serves every package.
     // Memos, so only `namespace` re-runs the read: the mode opens with no loading state.
     let ns = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
@@ -1456,7 +1456,7 @@ fn pause_banner(message: Option<String>, dismissed: RwSignal<Option<String>>) ->
 /// arrives, and must not subscribe to it.
 #[component]
 fn PackageEventListener(reload: Trigger) -> impl IntoView {
-    let query = use_query_map();
+    let query = routes::use_query();
     let watch = StatusWatch::new(reload);
 
     let is_ours = move |namespace: &quilt_uri::Namespace| {
@@ -1709,7 +1709,7 @@ mod tests {
     fn the_body_draws_the_file_list_its_own_answer_carries() {
         let el = body(page_data());
         assert!(
-            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+            el.query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
                 .unwrap()
                 .is_some(),
             "markup was {}",
@@ -1727,7 +1727,7 @@ mod tests {
         let el = body(data);
         element_saying(&el, "Could not list this package's files.");
         assert!(
-            el.query_selector("section[aria-label='Files'] [title]")
+            el.query_selector("section[aria-label='Files'] [data-full-name]")
                 .unwrap()
                 .is_none(),
             "markup was {}",
@@ -2418,6 +2418,28 @@ mod tests {
         Box::pin(std::future::pending())
     }
 
+    thread_local! {
+        static ASKED_FOR: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn recorded_read(namespace: String) -> Read {
+        ASKED_FOR.with(|a| a.borrow_mut().push(namespace));
+        pending_read(String::new())
+    }
+
+    /// The page reads its query as written: decoded twice, `team/q%20report`
+    /// would read as `team/q report`. Valid package names hold no `%`, so
+    /// this guards the reader, not a name a user can create.
+    #[wasm_bindgen_test]
+    async fn a_namespace_holding_a_percent_reads_as_written() {
+        ASKED_FOR.with(|a| a.borrow_mut().clear());
+        let namespace = quilt_uri::Namespace::try_from("team/q%20report").unwrap();
+        screen_at(&routes::package_page_href(&namespace), recorded_read).await;
+        let asked = ASKED_FOR.with(|a| a.borrow().clone());
+        crate::test_support::unmount_earlier();
+        assert_eq!(asked.first().map(String::as_str), Some("team/q%20report"));
+    }
+
     /// The page at `address`, reading through `read`, inside a router.
     async fn screen_at(address: &str, read: PageRead) -> web_sys::Element {
         screen_resolving(address, read, ResolveCommands::app()).await
@@ -2605,7 +2627,7 @@ mod tests {
     async fn a_re_read_in_flight_keeps_the_file_list() {
         let el = screen_at(PLAIN, answers_once).await;
         let row = || {
-            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+            el.query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
                 .unwrap()
                 .is_some()
         };
@@ -2624,7 +2646,7 @@ mod tests {
     async fn a_re_read_under_by_design_keeps_the_page() {
         let el = suspended_screen_at(PLAIN, answers_once).await;
         let row = || {
-            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+            el.query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
                 .unwrap()
         };
         assert!(row().is_some(), "listed; markup was {}", el.inner_html());
@@ -2651,7 +2673,7 @@ mod tests {
     async fn an_unchanged_re_read_rebuilds_nothing() {
         let el = suspended_screen_at(PLAIN, settled_read).await;
         let row = el
-            .query_selector("section[aria-label='Files'] [title='a.csv']")
+            .query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
             .unwrap()
             .expect("listed");
 
@@ -2776,9 +2798,11 @@ mod tests {
             .unwrap();
         sleep_ms(40).await;
         let shown = |path: &str| {
-            el.query_selector(&format!("section[aria-label='Files'] [title='{path}']"))
-                .unwrap()
-                .is_some()
+            el.query_selector(&format!(
+                "section[aria-label='Files'] [data-full-name='{path}']"
+            ))
+            .unwrap()
+            .is_some()
         };
         assert!(
             !shown("notes/a.md"),
@@ -2842,7 +2866,7 @@ mod tests {
     async fn another_package_s_read_in_flight_draws_no_stale_files() {
         let el = screen_at(PLAIN, answers_dataset_only).await;
         let row = || {
-            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+            el.query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
                 .unwrap()
                 .is_some()
         };
@@ -3025,12 +3049,14 @@ mod tests {
 
     /// Whether the file list marks the row drawing `path`.
     fn row_marked(el: &web_sys::Element, path: &str) -> bool {
-        el.query_selector(&format!("section[aria-label='Files'] [title='{path}']"))
-            .unwrap()
-            .unwrap_or_else(|| panic!("{path} is listed; markup was {}", el.inner_html()))
-            .closest(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
-            .unwrap()
-            .is_some()
+        el.query_selector(&format!(
+            "section[aria-label='Files'] [data-full-name='{path}']"
+        ))
+        .unwrap()
+        .unwrap_or_else(|| panic!("{path} is listed; markup was {}", el.inner_html()))
+        .closest(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
+        .unwrap()
+        .is_some()
     }
 
     /// In resolve mode the list marks the rows in the page's one differing

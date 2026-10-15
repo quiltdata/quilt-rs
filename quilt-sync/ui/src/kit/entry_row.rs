@@ -108,10 +108,10 @@
 //! worse than none — so its sentence is hover-only, which is why the word has
 //! to carry the meaning without it.
 //!
-//! The row itself has no `title`. It had one, and the name's own `title` (the
-//! whole path) covered most of the row and won, so the hint showed only over
-//! the gutter and the size. An element with a tooltip carries no `title` of its
-//! own, or the browser's would sit on top of ours.
+//! Nothing in the row has a `title`: the browser's box would sit on top of
+//! ours. The name's whole path is shown by the list's
+//! [`NameTooltip`](super::NameTooltip) when the name is cut, and the row only
+//! marks its name with `data-full-name` for it.
 //!
 //! # The `<label>` stops before the overflow, and only a selectable row has one
 //!
@@ -216,8 +216,9 @@ pub fn EntryRow(
     /// leaf under a group heading; this row only truncates it, at the end.
     #[prop(into)]
     name: String,
-    /// The whole path, for the `title`, when `name` shows only part of it.
-    /// Absent means `name` already is the whole path.
+    /// The whole path, for the list's [`NameTooltip`](super::NameTooltip),
+    /// when `name` shows only part of it. Absent means `name` already is the
+    /// whole path.
     #[prop(optional, into)]
     path: Option<String>,
     /// The state's words, or nothing at all for a resting state.
@@ -326,7 +327,7 @@ pub fn EntryRow(
                     disabled=disabled
                     aria_describedby=described.clone()
                 />
-                <span class=style::name title=full_name>{name}</span>
+                <span class=style::name data-full-name=full_name>{name}</span>
                 {trailing()}
             </label>
         }
@@ -346,7 +347,7 @@ pub fn EntryRow(
                 <button
                     type="button"
                     class=style::open
-                    title=full_name
+                    data-full-name=full_name
                     aria-describedby=described.clone()
                 >
                     {name}
@@ -360,7 +361,7 @@ pub fn EntryRow(
             <div class=format!("{} {}", style::main, style::inert)>
                 {(!plain).then(gutter)}
                 {(!plain).then(|| nobox(have_mark))}
-                <span class=style::name title=full_name>{name}</span>
+                <span class=style::name data-full-name=full_name>{name}</span>
                 {trailing()}
             </div>
         }
@@ -533,10 +534,11 @@ mod tests {
         );
     }
 
-    /// The name may be only the part under a heading; the `title` is always
-    /// the whole path, in every shape, since the name can be truncated.
+    /// The name may be only the part under a heading; what it hands the
+    /// list's tooltip is always the whole path, in every shape, and nothing
+    /// carries a `title` for the browser to draw over it.
     #[wasm_bindgen_test]
-    fn the_title_is_the_whole_path() {
+    fn the_name_carries_the_whole_path_and_no_title() {
         let el = mount(|| {
             view! {
                 <EntryRow name="plate-07.csv" path="raw/plate-07.csv" size="4.1 MB" />
@@ -554,12 +556,17 @@ mod tests {
             ("notes/design-01.md", "design-01.md"),
             ("README.md", "README.md"),
         ] {
-            let titled = el
-                .query_selector(&format!("[title='{path}']"))
+            let named = el
+                .query_selector(&format!("[data-full-name='{path}']"))
                 .unwrap()
-                .unwrap_or_else(|| panic!("titled {path}; markup was {}", el.inner_html()));
-            assert_eq!(titled.text_content().unwrap(), name);
+                .unwrap_or_else(|| panic!("named {path}; markup was {}", el.inner_html()));
+            assert_eq!(named.text_content().unwrap(), name);
         }
+        assert!(
+            el.query_selector("[title]").unwrap().is_none(),
+            "markup was {}",
+            el.inner_html()
+        );
     }
 
     #[wasm_bindgen_test]
@@ -848,23 +855,20 @@ mod tests {
         );
     }
 
-    /// The row's own `title` was what hid the hint: the name's `title` covered
-    /// it. A row that differs has none; only the name's path is titled.
+    /// A `title` anywhere in the row would draw the browser's box over the
+    /// `Differs` sentence, as the name's own once did.
     #[wasm_bindgen_test]
-    fn a_differing_row_carries_no_title_of_its_own() {
+    fn a_differing_row_carries_no_title() {
         for el in [
             mount(selectable_differing),
             mount(openable_differing),
             mount(inert_differing),
         ] {
-            let row = el.first_element_child().expect("the row");
             assert!(
-                !row.has_attribute("title"),
+                el.query_selector("[title]").unwrap().is_none(),
                 "markup was {}",
                 el.inner_html()
             );
-            let titled = el.query_selector_all("[title]").unwrap();
-            assert_eq!(titled.length(), 1, "markup was {}", el.inner_html());
         }
     }
 }

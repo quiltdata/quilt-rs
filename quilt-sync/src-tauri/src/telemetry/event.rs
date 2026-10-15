@@ -170,7 +170,7 @@ pub enum Failure {
 
 /// Why an operation was refused, coarsely — never the error's contents.
 ///
-/// Ten categories over thirty-odd error variants, and the grain is chosen so
+/// Eleven categories over thirty-odd error variants, and the grain is chosen so
 /// each one answers *who acts*: the user, their administrator, or nobody.
 /// Anything that cannot be placed stays a fault, deliberately: a misfiled refusal
 /// is noise in one report, a misfiled fault is a bug nobody sees.
@@ -202,6 +202,8 @@ pub enum RefusalKind {
     /// Another writer holds what the operation needs, so it stopped before
     /// touching anything. The user's to resolve by waiting and trying again.
     Busy,
+    /// The user typed a package name the name format refuses. Theirs to retype.
+    InvalidName,
 }
 
 impl From<&crate::error::Error> for Failure {
@@ -216,6 +218,7 @@ impl From<&crate::error::Error> for Failure {
             E::TauriUi(TauriUiError::UserCancelled) => Self::Refusal(RefusalKind::Cancelled),
             E::FsOpen(FsOpenError::PathNotFound(_)) => Self::Refusal(RefusalKind::Missing),
             E::Telemetry(TelemetryError::SendTimeout(_)) => Self::Refusal(RefusalKind::Unreachable),
+            E::PackageName(_) => Self::Refusal(RefusalKind::InvalidName),
 
             E::Quilt(err) => Self::from(err),
 
@@ -603,6 +606,14 @@ mod tests {
         let err = Error::Quilt(quilt::Error::PackageBusy(("acme", "demo").into()));
 
         assert_eq!(refusal(&err), Some(RefusalKind::Busy));
+    }
+
+    /// A typed name the format refuses is the user's to retype, not a bug.
+    #[test]
+    fn a_refused_package_name_is_a_refusal() {
+        let err = Error::PackageName("team/a b".to_string());
+
+        assert_eq!(refusal(&err), Some(RefusalKind::InvalidName));
     }
 
     /// A removal asked for a revision that is protected now, or gone: the list

@@ -18,6 +18,7 @@ use crate::kit::Card;
 use crate::kit::EntryRow;
 use crate::kit::FormControl;
 use crate::kit::JsonDisplay;
+use crate::kit::NameTooltip;
 use crate::kit::Naming;
 use crate::kit::PageHeader;
 use crate::kit::PageHeaderSkeleton;
@@ -859,6 +860,7 @@ pub fn IncludedList(
     } else {
         view! {
             // A box of its own, so the rows scroll under a header that stays.
+            <NameTooltip>
             <div class=style::rows>
             <Card flush=true list=true fill=true>
                 {files
@@ -881,6 +883,7 @@ pub fn IncludedList(
                     .collect_view()}
             </Card>
             </div>
+            </NameTooltip>
         }
         .into_any()
     };
