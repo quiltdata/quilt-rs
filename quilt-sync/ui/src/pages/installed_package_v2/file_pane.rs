@@ -30,11 +30,11 @@
 //!   it acts on it. Under `Ignored` no heading has one. Over the cap, a
 //!   folder the cut runs through has none either: its files past the cut
 //!   were never loaded.
+//!   Under whole-package Keeping a folder still receiving files shows neither.
 //! - **A heading counts what it holds of its folder.** `raw/ 54` while the
 //!   view hides none of the folder's files, and `raw/ 3 of 54` once a facet
 //!   or a search hides some. The first number is the rows under the heading,
 //!   collapsed or not; the second is the folder's loaded files in `All`.
-//!   Under whole-package Keeping a folder still receiving files shows neither.
 //! - **The facets filter by state.** `All · Changed · Not downloaded ·
 //!   Ignored`, each with the package's count (the payload's `counts`, not the
 //!   loaded rows). A facet at zero stays in place and cannot be chosen, except
