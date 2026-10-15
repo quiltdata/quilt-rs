@@ -1189,7 +1189,7 @@ fn workflow_field(fixed: &Form, draft: Draft, violations: Memo<Vec<CommitViolati
 mod tests {
     use super::*;
     use crate::pages::commit_v2::SAVE_WITHOUT_PUBLISHING;
-    use crate::test_support::{mount, sleep_ms, unmount_earlier};
+    use crate::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
     use wasm_bindgen::JsCast;
@@ -1436,6 +1436,85 @@ mod tests {
             .unwrap()
             .active_element();
         assert_eq!(active, Some(input.unchecked_into()), "the cursor stayed");
+    }
+
+    thread_local! {
+        static LAPSE_READS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Answers, then finds the session gone, then answers again.
+    fn session_lapses(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        let n = LAPSE_READS.with(|r| {
+            r.set(r.get() + 1);
+            r.get()
+        });
+        Box::pin(async move {
+            if n == 2 {
+                Err(
+                    r#"{"kind":"session_absent","message":"Log in","host":"quilt.test"}"#
+                        .to_string(),
+                )
+            } else {
+                Ok(commit_data())
+            }
+        })
+    }
+
+    /// A session that lapses during a re-read does not send the reader to
+    /// sign in from a page holding their message: the page stays, says the
+    /// read failed, and the message is there when it reads again.
+    #[wasm_bindgen_test]
+    async fn a_lapsed_session_on_a_re_read_keeps_the_message() {
+        unmount_earlier();
+        LAPSE_READS.with(|r| r.set(0));
+        let window = web_sys::window().unwrap();
+        let was = window.location().href().unwrap();
+        window
+            .history()
+            .unwrap()
+            .replace_state_with_url(
+                &wasm_bindgen::JsValue::NULL,
+                "",
+                Some("/commit?namespace=org%2Fpkg"),
+            )
+            .unwrap();
+        let el = mount(|| {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route path=path!("/commit") view=|| view! { <CommitScreen read=session_lapses /> } />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(80).await;
+        let input = message_input(&el);
+        input.set_value("Plate 7");
+        input
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+
+        button_saying(&el, "Refresh").click();
+        sleep_ms(80).await;
+        let stayed = window.location().pathname().unwrap();
+        let said = el.text_content().unwrap_or_default();
+
+        button_saying(&el, "Refresh").click();
+        sleep_ms(80).await;
+        let kept = message_input(&el).value();
+        window
+            .history()
+            .unwrap()
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&was))
+            .unwrap();
+
+        assert_eq!(LAPSE_READS.with(std::cell::Cell::get), 3);
+        assert_eq!(stayed, "/commit", "the page stayed");
+        assert!(
+            said.contains("Try again"),
+            "and said the read failed: {said}"
+        );
+        assert_eq!(kept, "Plate 7", "the message survived");
     }
 
     /// *Save without publishing*, once chosen, stays on the button through

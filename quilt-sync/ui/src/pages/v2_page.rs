@@ -28,6 +28,10 @@
 //!    that writes.
 //! 6. One band under the appbar, [`PageHandle::outcome`], keyed to the
 //!    address, so a result that lands after the reader moved on is not drawn.
+//! 7. A read that fails for a missing session or setup goes to `/login` or
+//!    `/setup`, as v1 does, but only before the page has drawn an answer for
+//!    its address. After that the page may hold the reader's work, so a failed
+//!    re-read stays and says so.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -200,6 +204,8 @@ where
         ..
     } = page;
     let on = current_path();
+    // The address whose answer the body last drew.
+    let drawn_for = StoredValue::new(None::<String>);
     view! {
         <PageLayout
             heading=heading
@@ -225,9 +231,19 @@ where
         >
             {move || match answer.get() {
                 None => skeleton(),
-                Some(Ok(d)) => body(d),
-                // A missing session or setup goes where v1 sends it.
-                Some(Err(e)) if follow_redirect(&e, &on) => skeleton(),
+                Some(Ok(d)) => {
+                    drawn_for.set_value(Some(showing.get_untracked()));
+                    body(d)
+                }
+                // A missing session or setup goes where v1 sends it, but only
+                // from a page with nothing on screen for this address: one
+                // that has drawn may hold the reader's work.
+                Some(Err(e))
+                    if drawn_for.with_value(|k| k.as_deref() != Some(&*showing.get_untracked()))
+                        && follow_redirect(&e, &on) =>
+                {
+                    skeleton()
+                }
                 Some(Err(_)) => failure(),
             }}
         </PageLayout>
@@ -579,6 +595,56 @@ mod tests {
         let back = urlencoding::encode(&at).into_owned();
         assert_eq!(landed, format!("/login?host=quilt.test&back={back}"));
         assert!(!failed);
+    }
+
+    /// Answers 1, then a missing session.
+    fn lapses(_: String) -> Pin<Box<dyn Future<Output = Result<u32, String>>>> {
+        let n = READS.with(|r| {
+            r.set(r.get() + 1);
+            r.get()
+        });
+        Box::pin(async move {
+            if n == 1 {
+                Ok(1)
+            } else {
+                Err(
+                    r#"{"kind":"session_absent","message":"Log in","host":"quilt.test"}"#
+                        .to_string(),
+                )
+            }
+        })
+    }
+
+    /// A page that has drawn its address stays when a re-read finds the
+    /// session gone, and keeps what was typed for when it reads again.
+    #[wasm_bindgen_test]
+    async fn a_failed_re_read_after_an_answer_stays() {
+        let window = web_sys::window().unwrap();
+        let was = window.location().href().unwrap();
+        let history = window.history().unwrap();
+        history
+            .push_state_with_url(
+                &wasm_bindgen::JsValue::NULL,
+                "",
+                Some("/commit?namespace=team%2Fa"),
+            )
+            .unwrap();
+        let el = probe(vec![1], vec![], lapses).await;
+        type_into(&field(&el), "Plate 7");
+        handle().reload.notify();
+        sleep_ms(30).await;
+
+        let landed = window.location().pathname().unwrap();
+        let failed = el.text_content().unwrap_or_default().contains("failed");
+        history
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&was))
+            .unwrap();
+        assert_eq!(landed, "/commit", "the page stayed");
+        assert!(
+            failed,
+            "and said the read failed; markup was {}",
+            el.inner_html()
+        );
     }
 
     /// `/setup` and `/login` reading the error they exist for stay put and say

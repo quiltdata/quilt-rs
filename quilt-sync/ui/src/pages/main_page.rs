@@ -796,9 +796,8 @@ fn files_view(
     // payload of its own and stands whatever the other one did, but with no
     // packages there are no addresses and so no Copy buttons.
     addresses: HashMap<Namespace, S3PackageUri>,
+    first_load: FirstLoad,
 ) -> AnyView {
-    // The page as it mounted, for the redirect's check against itself.
-    let on = StoredValue::new(current_path());
     view! {
         // Three skeleton rows, as the packages view shows in the same position.
         // Without a fallback the region is empty while the feed is read, and
@@ -820,6 +819,7 @@ fn files_view(
                 Suspend::new(async move {
                 match recent_files.await {
                     Ok(data) => {
+                        first_load.answered();
                         view! {
                             <recent_files::RecentFilesRegion
                                 files=data.files
@@ -831,7 +831,7 @@ fn files_view(
                             .into_any()
                     }
                     // A missing session or setup goes where v1 sends it.
-                    Err(err) if follow_redirect(&err, &on.get_value()) => ().into_any(),
+                    Err(err) if first_load.redirect(&err) => ().into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
                             &format!("get_main_page_recent_files failed: {err}").into(),
@@ -844,6 +844,34 @@ fn files_view(
         </Transition>
     }
     .into_any()
+}
+
+/// Whether a failed read may still send the reader to sign-in or setup, as
+/// v1 does: only while the page has drawn no answer. After that the reader
+/// may be reading or working, and a failed re-read is reported in place.
+#[derive(Clone, Copy)]
+struct FirstLoad {
+    /// The page as it mounted, for the redirect's check against itself.
+    on: StoredValue<String>,
+    drawn: StoredValue<bool>,
+}
+
+impl FirstLoad {
+    fn new() -> Self {
+        Self {
+            on: StoredValue::new(current_path()),
+            drawn: StoredValue::new(false),
+        }
+    }
+
+    /// A read answered, so the page has something on screen.
+    fn answered(self) {
+        self.drawn.set_value(true);
+    }
+
+    fn redirect(self, error: &str) -> bool {
+        !self.drawn.get_value() && follow_redirect(error, &self.on.get_value())
+    }
 }
 
 /// A read of the watcher's payload, for [`MainPageRegions`]' test seam.
@@ -936,8 +964,7 @@ fn MainPageRegions(
     #[prop(optional_no_strip)]
     fetch_watcher: Option<WatcherRead>,
 ) -> impl IntoView {
-    // The page as it mounted, for the redirect's check against itself.
-    let on = StoredValue::new(current_path());
+    let first_load = FirstLoad::new();
     // In the component body, NOT inside the `Suspend` closure below. A refetch
     // rebuilds that subtree deliberately — it is what re-collapses the queue's
     // expanders (R6) — so a view signal created inside it would reset on every
@@ -1013,11 +1040,12 @@ fn MainPageRegions(
                 {move || Suspend::new(async move {
                     match accounts.await {
                         Ok(data) => {
+                            first_load.answered();
                             view! { <accounts::AccountsBody data=data refresh=reload /> }
                                 .into_any()
                         }
                         // A missing session or setup goes where v1 sends it.
-                        Err(err) if follow_redirect(&err, &on.get_value()) => ().into_any(),
+                        Err(err) if first_load.redirect(&err) => ().into_any(),
                         Err(err) => {
                             // Logged once, here. The card says it could not read:
                             // rows would claim sessions it has not seen, and no card
@@ -1045,6 +1073,7 @@ fn MainPageRegions(
             {move || Suspend::new(async move {
                 match packages.await {
                     Ok(data) => {
+                        first_load.answered();
                         // The light phase's payload, held for the life of this
                         // resolve: it is the base the store's projection writes
                         // the heavy phase's answers over, and both the store and
@@ -1290,14 +1319,14 @@ fn MainPageRegions(
                                     }
                                 }
                             >
-                                {files_view(recent_files, query, group_files_by, files_retry, addresses.clone())}
+                                {files_view(recent_files, query, group_files_by, files_retry, addresses.clone(), first_load)}
                             </Show>
                             </div>
                         }
                             .into_any()
                     }
                     // A missing session or setup goes where v1 sends it.
-                    Err(err) if follow_redirect(&err, &on.get_value()) => ().into_any(),
+                    Err(err) if first_load.redirect(&err) => ().into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
                             &format!("get_main_page_packages failed: {err}").into(),
@@ -1321,7 +1350,7 @@ fn MainPageRegions(
                                         view! { <Card>{render_fetch_error(packages_retry)}</Card> }
                                     }
                                 >
-                                    {files_view(recent_files, query, group_files_by, files_retry, HashMap::new())}
+                                    {files_view(recent_files, query, group_files_by, files_retry, HashMap::new(), first_load)}
                                 </Show>
                             </div>
                         }
@@ -4418,6 +4447,7 @@ mod tests {
                 RwSignal::new(GROUP_NONE.to_string()),
                 Trigger::new(),
                 HashMap::new(),
+                FirstLoad::new(),
             )
         });
         leptos::task::tick().await;
