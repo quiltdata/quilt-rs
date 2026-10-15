@@ -29,8 +29,13 @@
    *
    * `:last-child` is safe because this region has exactly two element children in
    * every arm of the read, toolbar then card, which
-   * `the_toolbar_and_its_list_share_one_parent` pins. */
-  > :last-child {
+   * `the_toolbar_and_its_list_share_one_parent` pins.
+   *
+   * Recent files' card sits inside its `NameTooltip`, whose wrapper draws no box
+   * and so takes none of this; the card is that wrapper's first child, and its
+   * surface the last. */
+  > :last-child,
+  > [data-name-tooltip] > :first-child {
     min-height: 0;
     overflow-y: auto;
   }

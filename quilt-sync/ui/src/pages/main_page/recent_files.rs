@@ -24,6 +24,7 @@ use crate::kit::Blankslate;
 use crate::kit::Card;
 use crate::kit::FileRow;
 use crate::kit::GroupHeading;
+use crate::kit::NameTooltip;
 
 #[cfg(test)]
 use super::GROUP_NONE;
@@ -121,6 +122,9 @@ pub fn RecentFilesRegion(
     });
 
     view! {
+        // One tooltip for every row's cut path or package tag. Around the card,
+        // not inside it: the card spaces its body's children itself.
+        <NameTooltip>
         <Card label="Recent files">
             {move || match shape.get() {
                 FeedShape::NoMatch => {
@@ -167,6 +171,7 @@ pub fn RecentFilesRegion(
                 {move || state.said.get()}
             </span>
         </Card>
+        </NameTooltip>
     }
     .into_any()
 }
@@ -658,6 +663,95 @@ mod tests {
         assert!(
             two < three && three < one,
             "the wire's order is the screen's order: {text}"
+        );
+    }
+
+    /// The feed holds one tooltip for every row's path and tag, flat or
+    /// grouped, and no path or tag carries a `title`.
+    #[wasm_bindgen_test]
+    fn the_feed_mounts_one_tooltip_for_all_its_rows() {
+        let files = || {
+            vec![
+                file("b/two.csv", "user/beta", 5_000.0),
+                file("c/three.csv", "user/gamma", 9_000.0),
+                file("a/one.csv", "user/alpha", 1_000.0),
+            ]
+        };
+        for el in [
+            mount_feed(files()),
+            mount_feed_grouped(files(), GROUP_PACKAGE),
+        ] {
+            assert_eq!(
+                el.query_selector_all("[role='tooltip']").unwrap().length(),
+                1,
+                "markup was {}",
+                el.inner_html()
+            );
+            assert_eq!(
+                el.query_selector_all("[data-full-name]").unwrap().length(),
+                6
+            );
+            assert!(
+                el.query_selector("[data-full-name][title]")
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
+    mod sheets {
+        stylance::import_crate_style!(pub page, "src/pages/main_page.module.scss");
+        stylance::import_crate_style!(pub card, "src/kit/card.module.scss");
+    }
+
+    /// The card is the list region's scroller with the tooltip's wrapper
+    /// around it: a long feed scrolls inside the card, under a toolbar that
+    /// keeps its place, rather than growing the page.
+    #[wasm_bindgen_test]
+    async fn a_long_feed_scrolls_inside_its_card() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("../main_page.module.scss"),
+            &[("list_region", sheets::page::list_region)],
+        );
+        load_module_style(
+            include_str!("../../kit/card.module.scss"),
+            &[("root", sheets::card::root), ("body", sheets::card::body)],
+        );
+        let files: Vec<_> = (0..60)
+            .map(|i| file(&format!("data/{i}.csv"), "user/alpha", f64::from(i)))
+            .collect();
+        let el = mount(move || {
+            view! {
+                <leptos_router::components::Router>
+                    <div style="height:300px; display:flex; flex-direction:column">
+                        <div class=sheets::page::list_region>
+                            <div style="height:32px; flex:none">"Toolbar"</div>
+                            <RecentFilesRegion
+                                files=files.clone()
+                                query=Signal::stored(String::new())
+                                group_by=Signal::stored(GROUP_NONE.to_string())
+                            />
+                        </div>
+                    </div>
+                </leptos_router::components::Router>
+            }
+        });
+        sleep_ms(0).await;
+        let card: web_sys::HtmlElement = el
+            .query_selector("section")
+            .unwrap()
+            .expect("the card")
+            .unchecked_into();
+        assert!(
+            card.client_height() <= 300,
+            "the card grew to {}px instead of scrolling",
+            card.client_height()
+        );
+        assert!(
+            card.scroll_height() > card.client_height(),
+            "the rows scroll"
         );
     }
 

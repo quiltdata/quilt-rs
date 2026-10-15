@@ -153,7 +153,10 @@ pub fn NameTooltip(
         // No box of its own, so the list lays out as it would unwrapped: a
         // scroll box under it still fills its column. Inline, so that holds
         // wherever the list is drawn, stylesheet or not.
+        // Named, so a parent that styles its last child can reach the list
+        // through it: the list comes first, the surface last.
         <div
+            data-name-tooltip
             style="display:contents"
             on:pointerover=pointer_over
             on:pointerout=pointer_out
