@@ -124,6 +124,9 @@ pub enum Error {
     #[error("General error: {0}")]
     General(String),
 
+    #[error("Package name must be prefix/name, using only letters, digits, _ and -; got: {0}")]
+    PackageName(String),
+
     #[error("Test failed: {0}")]
     Test(String),
 }

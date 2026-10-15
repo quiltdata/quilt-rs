@@ -806,12 +806,30 @@ pub async fn set_remote(
     }
 }
 
+/// A typed name must be one quilt3 and the catalog accept: `prefix/name`, each
+/// part ASCII letters, digits, `_` or `-`. Only here, where a reader types it:
+/// `Namespace` parses names from remotes and installs too, and refusing one of
+/// those would hide a package the reader already has.
+fn check_new_name(namespace: &str) -> Result<(), Error> {
+    let part_ok = |part: &str| {
+        !part.is_empty()
+            && part
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    };
+    match namespace.split_once('/') {
+        Some((prefix, name)) if part_ok(prefix) && part_ok(name) => Ok(()),
+        _ => Err(Error::PackageName(namespace.to_string())),
+    }
+}
+
 async fn package_create_command(
-    m: &model::Model,
+    m: &impl QuiltModel,
     namespace: &str,
     source: Option<String>,
     message: Option<String>,
 ) -> Result<(), Error> {
+    check_new_name(namespace)?;
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let source = source.map(PathBuf::from);
     model::package_create(m, namespace, source, message).await?;
@@ -841,7 +859,7 @@ pub async fn package_create(
             MixpanelEvent::PackageCreated(PackageEvent::hostless()),
         )
         .map(
-            package_create_command(&m, &namespace, source, message).await,
+            package_create_command(m.inner(), &namespace, source, message).await,
             msg_ok,
             msg_err,
         )
@@ -1099,6 +1117,45 @@ mod tests {
     use crate::autopull::reporter::test_support::RecordingReporter;
     use crate::model::MockQuiltModel;
     use crate::quilt;
+
+    /// A typed name quilt3 would refuse never reaches the model.
+    #[tokio::test]
+    async fn create_refuses_a_name_quilt3_would_refuse() {
+        for name in [
+            "team/a%41",
+            "team/a b",
+            "team/a.b",
+            "team",
+            "team/",
+            "a/b/c",
+        ] {
+            let model = MockQuiltModel::new();
+            let err = super::package_create_command(&model, name, None, None)
+                .await
+                .expect_err(name);
+            assert!(matches!(err, Error::PackageName(_)), "{name}: {err}");
+            assert_eq!(
+                err.user_facing(),
+                format!(
+                    "Package name must be prefix/name, using only letters, digits, _ and -; got: {name}"
+                )
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn create_takes_a_name_quilt3_takes() {
+        let mut model = MockQuiltModel::new();
+        model
+            .expect_package_create()
+            .withf(|ns, _, _| ns.to_string() == "team/plate-07_B")
+            .times(1)
+            .returning(|_, _, _| Err(Error::General("stop here".to_string())));
+        let err = super::package_create_command(&model, "team/plate-07_B", None, None)
+            .await
+            .expect_err("the mock stops it");
+        assert!(matches!(err, Error::General(_)), "{err}");
+    }
 
     /// The error S3 returns when the active role cannot write a bucket. The
     /// upload path types the `AccessDenied` code distinctly instead of
