@@ -47,6 +47,12 @@
 //! control that is always there. The disclosure names both the tooltip and
 //! [`DIFFERS_ID`], the pane's count.
 //!
+//! # A heading counts in words
+//!
+//! A heading says how many rows it holds, and while a filter or a search
+//! hides some of its folder, of how many: `3 of 54`, words a screen reader
+//! reads as they stand, where `3/54` would be read as a date or a fraction.
+//!
 //! # A heading summarises its rows
 //!
 //! The way the select-all slot summarises the list: a tri-state box while any
@@ -113,10 +119,16 @@ pub fn EntryGroup(
     /// The folder this run of rows shares.
     #[prop(into)]
     name: String,
-    /// How many rows follow. Always shown, including one — "1" is information,
-    /// and hiding it would make a single-row group look like a header with a bug.
+    /// How many rows the heading holds, collapsed or not. Always shown,
+    /// including one — "1" is information, and hiding it would make a
+    /// single-row group look like a header with a bug.
     #[prop(into)]
-    count: Signal<usize>,
+    shown: Signal<usize>,
+    /// How many files the folder has in all. Shown after `shown`, as `3 of
+    /// 54`, only while a view hides some of them; equal, the heading reads the
+    /// one number.
+    #[prop(into)]
+    total: Signal<usize>,
     open: RwSignal<bool>,
     /// Present when at least one row under this heading can be downloaded.
     /// Absent draws no box at all.
@@ -209,7 +221,12 @@ pub fn EntryGroup(
                         }
                     />
                 </Show>
-                <span class=style::count>{move || count.get()}</span>
+                <span class=style::count>
+                    {move || {
+                        let (shown, total) = (shown.get(), total.get());
+                        if shown == total { shown.to_string() } else { format!("{shown} of {total}") }
+                    }}
+                </span>
             </div>
             <Show when=move || open.get()>{children()}</Show>
         </div>
@@ -233,7 +250,7 @@ mod tests {
 
         let here = mount(|| {
             view! {
-                <EntryGroup name="notes/" count=6 open=RwSignal::new(false) have_mark=true>
+                <EntryGroup name="notes/" shown=6 total=6 open=RwSignal::new(false) have_mark=true>
                     <span />
                 </EntryGroup>
             }
@@ -248,7 +265,8 @@ mod tests {
             view! {
                 <EntryGroup
                     name="raw/"
-                    count=2
+                    shown=2
+                    total=2
                     open=RwSignal::new(false)
                     selection=GroupSelection::new(CheckState::Off, Callback::new(|_| ()))
                     have_mark=true
@@ -273,7 +291,7 @@ mod tests {
 
         let blank = mount(|| {
             view! {
-                <EntryGroup name="raw/" count=2 open=RwSignal::new(false)>
+                <EntryGroup name="raw/" shown=2 total=2 open=RwSignal::new(false)>
                     <span />
                 </EntryGroup>
             }
@@ -289,6 +307,29 @@ mod tests {
         );
     }
 
+    /// One number while the heading holds every file it counts, and both,
+    /// in words, once a view hides some.
+    #[wasm_bindgen_test]
+    fn a_heading_names_its_total_only_when_rows_are_hidden() {
+        let whole = mount(|| {
+            view! {
+                <EntryGroup name="raw/" shown=2 total=2 open=RwSignal::new(true)>
+                    <span />
+                </EntryGroup>
+            }
+        });
+        assert_eq!(whole.text_content().unwrap(), "raw/2");
+
+        let narrowed = mount(|| {
+            view! {
+                <EntryGroup name="raw/" shown=3 total=54 open=RwSignal::new(true)>
+                    <span />
+                </EntryGroup>
+            }
+        });
+        assert_eq!(narrowed.text_content().unwrap(), "raw/3 of 54");
+    }
+
     /// Closed, a heading hides its rows' marks, so its disclosure button is
     /// described by the dot's tooltip and opens it from the keyboard. Open, the
     /// rows speak for themselves and the button names nothing.
@@ -298,7 +339,7 @@ mod tests {
         let open = RwSignal::new(false);
         let el = mount(move || {
             view! {
-                <EntryGroup name="raw/" count=2 open=open differs=true>
+                <EntryGroup name="raw/" shown=2 total=2 open=open differs=true>
                     <span />
                 </EntryGroup>
             }

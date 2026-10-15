@@ -30,6 +30,7 @@
 
 ### Changed
 
+- **New design preview**: a folder heading in the package page's file list reads *3 of 54* when a filter or search hides some of its files (<https://github.com/quiltdata/quilt-rs/pull/1128>)
 - **New design preview**: a file name cut short in the package page's and the commit page's file lists shows whole in the app's own tooltip on hover or keyboard focus, in place of the browser's (<https://github.com/quiltdata/quilt-rs/pull/1130>)
 
 ### Fixed
