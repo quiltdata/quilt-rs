@@ -45,7 +45,7 @@ use wasm_bindgen::JsCast;
 
 use super::Align;
 use super::TooltipHandle;
-use super::tooltip::surface;
+use super::tooltip::{style, surface};
 
 /// What a name carries for this to find it.
 const NAMED: &str = "[data-full-name]";
@@ -155,7 +155,13 @@ pub fn NameTooltip(
             on:focusout=focus_out
         >
             {children()}
-            {surface(handle, text.into(), Signal::derive_local(move || anchor.get()), Align::Start)}
+            {surface(
+                handle,
+                text.into(),
+                Signal::derive_local(move || anchor.get()),
+                Align::Start,
+                format!("{} {}", style::surface, style::name),
+            )}
         </div>
     }
 }
@@ -175,6 +181,11 @@ mod tests {
         stylance::import_crate_style!(pub style, "src/kit/entry_row.module.scss");
     }
     use rows::style as row;
+
+    mod tooltips {
+        stylance::import_crate_style!(pub style, "src/kit/tooltip.module.scss");
+    }
+    use tooltips::style as tips;
 
     const LONG: &str = "raw/2026-10-15/plate-07/instrument-export/a-name-far-too-long-for-the-column-it-is-drawn-in.csv";
 
@@ -397,6 +408,45 @@ mod tests {
         );
         escape();
         blur(&name);
+    }
+
+    /// A path has no spaces to wrap at. The surface wraps it anywhere rather
+    /// than scrolling it sideways.
+    #[wasm_bindgen_test]
+    async fn a_long_path_wraps_in_its_tooltip() {
+        unmount_earlier();
+        load_module_style(
+            include_str!("tooltip.module.scss"),
+            &[
+                ("root", tips::root),
+                ("surface", tips::surface),
+                ("name", tips::name),
+            ],
+        );
+        // No hyphen or space: nowhere a browser would wrap on its own.
+        let path = "raw/2026_10_15/plate_07/instrument_export/\
+                    a_name_far_too_long_for_the_column_it_is_drawn_in_and_for_its_tooltip.csv";
+        row_style();
+        let el = mount(move || {
+            view! {
+                <div style="width:480px">
+                    <NameTooltip>
+                        <EntryRow name=path size="1 kB" plain=true />
+                    </NameTooltip>
+                </div>
+            }
+        });
+        hover(&element_saying(&el, path));
+        sleep_ms(600).await;
+        assert_eq!(showing(&el).as_deref(), Some(path));
+        let tip = tooltip(&el);
+        assert!(
+            tip.scroll_width() <= tip.client_width(),
+            "the path scrolls sideways: {} wide in {}",
+            tip.scroll_width(),
+            tip.client_width()
+        );
+        escape();
     }
 
     #[wasm_bindgen_test]

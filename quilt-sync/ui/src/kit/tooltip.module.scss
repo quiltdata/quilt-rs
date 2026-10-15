@@ -19,6 +19,10 @@
   /* A sentence, not a paragraph: narrow enough to read in one glance, and a
    * longer one wraps rather than running across the list it explains. */
   max-width: 280px;
+  /* A path or a name has no spaces to wrap at, and a popover scrolls what
+   * overflows it. Broken anywhere, it stays whole and readable; a sentence
+   * still wraps at its spaces first. */
+  overflow-wrap: anywhere;
   border: 1px solid var(--q-borderColor-default);
   border-radius: var(--q-radius);
   background: var(--q-bgColor-default);
@@ -31,4 +35,10 @@
 
 .surface::backdrop {
   background: transparent;
+}
+
+/* A list's names: a path is wider than a sentence and is read in one piece,
+ * so it gets more room before it wraps. */
+.surface.name {
+  max-width: 480px;
 }

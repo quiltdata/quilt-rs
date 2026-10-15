@@ -92,7 +92,7 @@ use super::Align;
 use super::placement::place;
 use super::unique_id;
 
-stylance::import_crate_style!(style, "src/kit/tooltip.module.scss");
+stylance::import_crate_style!(pub(super) style, "src/kit/tooltip.module.scss");
 
 /// How long the pointer rests before it opens. The common default; shorter
 /// fires on every row a pointer merely crosses in a dense list.
@@ -317,7 +317,7 @@ pub fn Tooltip(
             // Inside the wrapper in the document, though drawn in the top
             // layer: the pointer crossing onto it has not left the wrapper, so
             // the sentence stays while it is read.
-            {surface(handle, text, anchor, align)}
+            {surface(handle, text, anchor, align, style::surface.to_string())}
         </span>
     }
 }
@@ -330,6 +330,7 @@ pub(super) fn surface(
     text: Signal<String>,
     anchor: Signal<Option<web_sys::Element>, LocalStorage>,
     align: Align,
+    class: String,
 ) -> impl IntoView {
     let open = handle.open;
     let surface: NodeRef<leptos::html::Span> = NodeRef::new();
@@ -437,7 +438,7 @@ pub(super) fn surface(
         <span
             node_ref=surface
             id=handle.id()
-            class=style::surface
+            class=class
             popover="manual"
             role="tooltip"
             // Out of the tree, and still a description: a node named
