@@ -131,10 +131,16 @@ pub fn NameTooltip(
             .target()
             .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
             .is_some_and(|element| element.matches(":focus-visible").unwrap_or(false));
+        if !keyboard {
+            return;
+        }
         // The row's own handler ran first, as the event bubbled to the list:
-        // a `Differs` it opened for this focus stays. One opened by a hover
-        // elsewhere gives way, as any tooltip does to the next.
-        if keyboard && !handle.another_opened_by(&event) {
+        // a `Differs` it opened for this focus stays, and a name still waiting
+        // out its hover delay does not open over it later. One opened by a
+        // hover elsewhere gives way, as any tooltip does to the next.
+        if handle.another_opened_by(&event) {
+            handle.cancel();
+        } else {
             open_on(name);
         }
     };
@@ -171,8 +177,8 @@ mod tests {
     use super::*;
     use crate::kit::{EntryAction, EntryRow, EntrySelection};
     use crate::test_support::{
-        blur, element_saying, focus_report, keyboard_focus, load_module_style, mount, sleep_ms,
-        unmount_earlier,
+        blur, button_saying, element_saying, focus_report, keyboard_focus, load_module_style,
+        mount, sleep_ms, unmount_earlier,
     };
     use wasm_bindgen_test::*;
 
@@ -357,6 +363,47 @@ mod tests {
             blur(&control);
             leptos::task::tick().await;
         }
+    }
+
+    /// A name hovered just before keyboard focus reaches a differing row does
+    /// not open when its delay runs out: the focused row's sentence stays.
+    #[wasm_bindgen_test]
+    async fn a_pending_hover_does_not_cover_a_focused_row_s_differs() {
+        use crate::kit::DIFFERS_TITLE;
+        unmount_earlier();
+        row_style();
+        let el = mount(|| {
+            view! {
+                <div style="width:480px">
+                    <NameTooltip>
+                        <EntryRow name=LONG size="1 kB" plain=true />
+                        <EntryRow
+                            name="a.csv"
+                            size="1 kB"
+                            action=EntryAction::Open(Callback::new(|()| {}))
+                            differs=true
+                            plain=true
+                        />
+                    </NameTooltip>
+                </div>
+            }
+        });
+        hover(&element_saying(&el, LONG));
+        sleep_ms(100).await;
+        let control = button_saying(&el, "a.csv");
+        keyboard_focus(&control);
+        sleep_ms(600).await;
+        let open = el
+            .query_selector_all("[role='tooltip']:popover-open")
+            .unwrap();
+        assert_eq!(open.length(), 1, "{}", focus_report(&control));
+        assert_eq!(
+            open.item(0).unwrap().text_content().as_deref(),
+            Some(DIFFERS_TITLE),
+            "the hovered name covered the Differs sentence"
+        );
+        blur(&control);
+        leptos::task::tick().await;
     }
 
     /// A `Differs` sentence opened by hovering one row does not hold back

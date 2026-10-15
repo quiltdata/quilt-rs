@@ -254,7 +254,7 @@ impl TooltipHandle {
         self.timer.try_set_value(pending);
     }
 
-    fn cancel(self) {
+    pub(super) fn cancel(self) {
         if let Some(Some(pending)) = self.timer.try_update_value(Option::take) {
             pending.clear();
         }
