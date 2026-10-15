@@ -1343,8 +1343,9 @@ mod tests {
         answered(String::new())
     }
 
-    /// A namespace may hold `%`, and the page reads it as written: decoded
-    /// twice, `team/q%20report` would read as `team/q report`.
+    /// The page reads its query as written: decoded twice, `team/q%20report`
+    /// would read as `team/q report`. Valid package names hold no `%`, so
+    /// this guards the reader, not a name a user can create.
     #[wasm_bindgen_test]
     async fn a_namespace_holding_a_percent_reads_as_written() {
         unmount_earlier();
