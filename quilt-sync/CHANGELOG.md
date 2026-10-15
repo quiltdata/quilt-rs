@@ -34,6 +34,7 @@
 - **New design preview**: a file name or package name cut short in the package page's and the commit page's file lists, and in the main page's *Recent files*, shows whole in the app's own tooltip on hover or keyboard focus, in place of the browser's
   - <https://github.com/quiltdata/quilt-rs/pull/1130>
   - <https://github.com/quiltdata/quilt-rs/pull/1132>
+- **New design preview**: the main page remembers your *Group* and *Sort* choices between visits and restarts; the search box still opens empty (<https://github.com/quiltdata/quilt-rs/pull/1133>)
 - Under the hood, every page reads the values in its address decoded once, as the Log in page does since the fix below. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1129>)
 
 ### Fixed
