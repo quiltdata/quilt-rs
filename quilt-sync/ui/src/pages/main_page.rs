@@ -24,6 +24,7 @@ mod create_package;
 mod grouping;
 pub mod queue;
 mod recent_files;
+mod toolbar_memory;
 
 use std::collections::HashMap;
 
@@ -46,6 +47,11 @@ use crate::routes::package_page_href;
 use crate::util;
 use grouping::ListRowData;
 use grouping::PackageGroup;
+use toolbar_memory::FILES_GROUP;
+use toolbar_memory::PACKAGES_GROUP;
+use toolbar_memory::PACKAGES_SORT;
+use toolbar_memory::remember_choice;
+use toolbar_memory::remembered_choice;
 
 stylance::import_crate_style!(style, "src/pages/main_page.module.scss");
 
@@ -606,7 +612,9 @@ fn group_annotation(group: &PackageGroup, store: PackageStore, group_by: &str) -
 ///
 /// One constructor, so [`MainPageSkeleton`]'s inert set opens on exactly the
 /// values the page does: a toolbar that drew `Group: Bucket` and then
-/// `Group: None` would move under the cursor at the handover.
+/// `Group: None` would move under the cursor at the handover. Both read the
+/// reader's stored `Group:` and `Sort:` choices; the view and the search
+/// always start fresh.
 #[derive(Clone, Copy)]
 struct ListControls {
     view_selected: RwSignal<String>,
@@ -622,10 +630,26 @@ impl ListControls {
         Self {
             view_selected: RwSignal::new(PACKAGES_VIEW.to_string()),
             query: RwSignal::new(String::new()),
-            group_packages_by: RwSignal::new(GROUP_BUCKET.to_string()),
-            group_files_by: RwSignal::new(GROUP_NONE.to_string()),
-            sort_by: RwSignal::new(SORT_CHANGED.to_string()),
+            group_packages_by: RwSignal::new(remembered_choice(&PACKAGES_GROUP)),
+            group_files_by: RwSignal::new(remembered_choice(&FILES_GROUP)),
+            sort_by: RwSignal::new(remembered_choice(&PACKAGES_SORT)),
             create_open: RwSignal::new(false),
+        }
+    }
+
+    /// Store each `Group:` and `Sort:` choice when the reader changes it. The
+    /// page's own set only: the loading frame's is inert.
+    fn remember(self) {
+        for (signal, choice) in [
+            (self.group_packages_by, &PACKAGES_GROUP),
+            (self.group_files_by, &FILES_GROUP),
+            (self.sort_by, &PACKAGES_SORT),
+        ] {
+            Effect::watch(
+                move || signal.get(),
+                move |label, _, _| remember_choice(choice, label),
+                false,
+            );
         }
     }
 }
@@ -739,16 +763,12 @@ fn list_toolbar(controls: ListControls) -> AnyView {
                             />
                             <Select
                                 naming=Naming::Prefix("Group".to_string())
-                                options=vec![
-                                    GROUP_BUCKET.to_string(),
-                                    GROUP_PREFIX.to_string(),
-                                    GROUP_NONE.to_string(),
-                                ]
+                                options=PACKAGES_GROUP.labels()
                                 selected=group_packages_by
                             />
                             <Select
                                 naming=Naming::Prefix("Sort".to_string())
-                                options=vec![SORT_CHANGED.to_string(), SORT_NAME.to_string()]
+                                options=PACKAGES_SORT.labels()
                                 selected=sort_by
                             />
                             <Button on_click=move |_| create_open.set(true)>
@@ -764,7 +784,7 @@ fn list_toolbar(controls: ListControls) -> AnyView {
                             <SearchInput value=query aria_label="Search files" placeholder="Search…" />
                             <Select
                                 naming=Naming::Prefix("Group".to_string())
-                                options=vec![GROUP_NONE.to_string(), GROUP_PACKAGE.to_string()]
+                                options=FILES_GROUP.labels()
                                 selected=group_files_by
                             />
                         }
@@ -993,6 +1013,7 @@ fn MainPageRegions(
     // Here, for the reason `ListControls` gives: a refetch rebuilds the
     // resolved subtree, and a signal created inside it would reset.
     let controls = ListControls::new();
+    controls.remember();
     let ListControls {
         view_selected,
         query,
@@ -1802,6 +1823,20 @@ mod tests {
         files: Result<MainPageRecentFilesData, String>,
         feed_calls: Option<Arc<AtomicUsize>>,
     ) -> web_sys::Element {
+        forget_toolbar();
+        mount_regions_keeping_toolbar(packages, accounts, reload, on_store, files, feed_calls)
+    }
+
+    /// [`mount_regions_with_feed`] over whatever toolbar choices are stored, for
+    /// the tests that remount the page.
+    fn mount_regions_keeping_toolbar(
+        packages: Result<MainPagePackagesData, String>,
+        accounts: Result<MainPageAccountsData, String>,
+        reload: Trigger,
+        on_store: Option<Callback<PackageStore>>,
+        files: Result<MainPageRecentFilesData, String>,
+        feed_calls: Option<Arc<AtomicUsize>>,
+    ) -> web_sys::Element {
         mount(move || {
             let packages = LocalResource::new(move || {
                 reload.track();
@@ -1851,6 +1886,12 @@ mod tests {
     /// The page on reads that never answer, so the queue/list boundary stays on
     /// its fallback for as long as the test looks at it.
     fn mount_regions_pending() -> web_sys::Element {
+        forget_toolbar();
+        mount_regions_pending_keeping_toolbar()
+    }
+
+    /// [`mount_regions_pending`] over whatever toolbar choices are stored.
+    fn mount_regions_pending_keeping_toolbar() -> web_sys::Element {
         mount(|| {
             let reload = Trigger::new();
             let packages = LocalResource::new(|| {
@@ -1888,6 +1929,7 @@ mod tests {
         on_store: Callback<PackageStore>,
         delay_ms: i32,
     ) -> web_sys::Element {
+        forget_toolbar();
         mount(move || {
             let reload = Trigger::new();
             let packages = LocalResource::new(move || {
@@ -2289,6 +2331,133 @@ mod tests {
             GROUP_NONE,
             "the feed's own axis defaults to None (§3.2), not to the packages axis's Bucket"
         );
+    }
+
+    /// The toolbar choices other tests stored, removed, so every test starts on
+    /// the defaults.
+    fn forget_toolbar() {
+        let storage = web_sys::window()
+            .unwrap()
+            .local_storage()
+            .unwrap()
+            .expect("a browser with storage");
+        for choice in [
+            &toolbar_memory::PACKAGES_GROUP,
+            &toolbar_memory::PACKAGES_SORT,
+            &toolbar_memory::FILES_GROUP,
+        ] {
+            drop(storage.remove_item(choice.key));
+        }
+    }
+
+    fn store_toolbar(choice: &toolbar_memory::Choice, value: &str) {
+        web_sys::window()
+            .unwrap()
+            .local_storage()
+            .unwrap()
+            .expect("a browser with storage")
+            .set_item(choice.key, value)
+            .unwrap();
+    }
+
+    /// The page as [`mount_regions`] draws it, after `unmount_earlier`, over
+    /// whatever toolbar choices are stored: the reader coming back.
+    fn remount_regions() -> web_sys::Element {
+        crate::test_support::unmount_earlier();
+        mount_regions_keeping_toolbar(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            None,
+            Ok(no_files()),
+            None,
+        )
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_toolbar_choices_survive_a_remount() {
+        let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+        select_option(&group_select(&el), GROUP_PREFIX);
+        select_option(&sort_select(&el), SORT_NAME);
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        select_option(&group_select(&el), GROUP_PACKAGE);
+        sleep_ms(20).await;
+
+        let el = remount_regions();
+        sleep_ms(50).await;
+
+        assert!(
+            toggle_option(&el, PACKAGES_VIEW).checked(),
+            "the page opens on Packages"
+        );
+        assert_eq!(
+            group_select(&el).value(),
+            GROUP_PREFIX,
+            "the group was kept"
+        );
+        assert_eq!(sort_select(&el).value(), SORT_NAME, "the sort was kept");
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        assert_eq!(
+            group_select(&el).value(),
+            GROUP_PACKAGE,
+            "the Recent files group was kept"
+        );
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_loading_frame_opens_on_the_stored_choices() {
+        forget_toolbar();
+        store_toolbar(&toolbar_memory::PACKAGES_GROUP, "prefix");
+        store_toolbar(&toolbar_memory::PACKAGES_SORT, "name");
+        let el = mount_regions_pending_keeping_toolbar();
+        sleep_ms(20).await;
+
+        assert_eq!(group_select(&el).value(), GROUP_PREFIX);
+        assert_eq!(sort_select(&el).value(), SORT_NAME);
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn an_unknown_stored_choice_opens_on_the_defaults() {
+        crate::test_support::unmount_earlier();
+        forget_toolbar();
+        // A label is not a stored name, and garbage is not either.
+        store_toolbar(&toolbar_memory::PACKAGES_GROUP, GROUP_PREFIX);
+        store_toolbar(&toolbar_memory::PACKAGES_SORT, "{not json");
+        store_toolbar(&toolbar_memory::FILES_GROUP, "");
+        let el = remount_regions();
+        sleep_ms(50).await;
+
+        assert_eq!(group_select(&el).value(), GROUP_BUCKET);
+        assert_eq!(sort_select(&el).value(), SORT_CHANGED);
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        assert_eq!(group_select(&el).value(), GROUP_NONE);
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_search_box_always_opens_empty() {
+        let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+        type_search(&el, "plate");
+        select_option(&group_select(&el), GROUP_PREFIX);
+        sleep_ms(20).await;
+
+        let el = remount_regions();
+        sleep_ms(50).await;
+
+        assert_eq!(search_field(&el).value(), "", "the search was not kept");
+        assert_eq!(
+            group_select(&el).value(),
+            GROUP_PREFIX,
+            "while the group was"
+        );
+        forget_toolbar();
     }
 
     #[wasm_bindgen_test]
