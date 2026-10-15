@@ -680,6 +680,10 @@ a `Tooltip` carries no `title`, or the browser's box covers the kit's. A
 tooltip explains a mark and is never the mark: a distinction a reader needs at
 a glance is drawn on the row, and the tooltip says what it means.
 
+A list's cut-off names share one `NameTooltip`, which wraps the list and shows
+a name in full only when the ellipsis cut it. A row marks its name with
+`data-full-name` and mounts no tooltip of its own.
+
 ## Do's and Don'ts
 
 ### Do

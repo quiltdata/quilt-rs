@@ -166,13 +166,13 @@ impl TooltipHandle {
 
     /// A finger fires `pointerenter` too, and holding it on a mark would open
     /// the sentence after the delay. Touch does nothing.
-    fn pointer_enter(self, event: &web_sys::PointerEvent) {
+    pub(super) fn pointer_enter(self, event: &web_sys::PointerEvent) {
         if event.pointer_type() != "touch" {
             self.enter();
         }
     }
 
-    fn enter(self) {
+    pub(super) fn enter(self) {
         self.cancel();
         if self.open.get_untracked() {
             return;
@@ -185,7 +185,7 @@ impl TooltipHandle {
         }
     }
 
-    fn leave(self) {
+    pub(super) fn leave(self) {
         self.cancel();
         if self.open.get_untracked() {
             self.later(GRACE, move || self.hide(true));
@@ -270,8 +270,37 @@ pub fn Tooltip(
     trigger: impl FnOnce(String) -> AnyView,
 ) -> impl IntoView {
     let handle = handle.unwrap_or_default();
+    let wrapper: NodeRef<leptos::html::Span> = NodeRef::new();
+    let anchor = Signal::derive_local(move || wrapper.get().map(JsCast::unchecked_into));
+
+    view! {
+        <span
+            class=style::root
+            node_ref=wrapper
+            on:pointerenter=move |event| handle.pointer_enter(&event)
+            on:pointerleave=move |_| handle.leave()
+            on:focusin=move |event| handle.focus_in(&event)
+            on:focusout=move |_| handle.focus_out()
+        >
+            {trigger(handle.id())}
+            // Inside the wrapper in the document, though drawn in the top
+            // layer: the pointer crossing onto it has not left the wrapper, so
+            // the sentence stays while it is read.
+            {surface(handle, text, anchor, align)}
+        </span>
+    }
+}
+
+/// The floating sentence, placed against whatever `anchor` holds while open:
+/// a [`Tooltip`]'s own wrapper, or the name a
+/// [`NameTooltip`](super::NameTooltip) last saw the pointer or focus reach.
+pub(super) fn surface(
+    handle: TooltipHandle,
+    text: Signal<String>,
+    anchor: Signal<Option<web_sys::Element>, LocalStorage>,
+    align: Align,
+) -> impl IntoView {
     let open = handle.open;
-    let anchor: NodeRef<leptos::html::Span> = NodeRef::new();
     let surface: NodeRef<leptos::html::Span> = NodeRef::new();
 
     // Held only while it shows, and only one shows at a time, so a list of
@@ -302,7 +331,8 @@ pub fn Tooltip(
             if !open.try_get_untracked().unwrap_or(false) {
                 return;
             }
-            if let (Some(anchor), Some(surface)) = (anchor.get_untracked(), surface.get_untracked())
+            if let (Some(Some(anchor)), Some(surface)) =
+                (anchor.try_get_untracked(), surface.get_untracked())
             {
                 place(
                     surface.unchecked_ref(),
@@ -344,6 +374,8 @@ pub fn Tooltip(
         });
     };
 
+    // Runs again when the anchor moves while open, which is a list's one
+    // surface following the pointer from one name to the next.
     Effect::new(move |_| {
         let (Some(anchor), Some(surface)) = (anchor.get(), surface.get()) else {
             return;
@@ -372,32 +404,19 @@ pub fn Tooltip(
 
     view! {
         <span
-            class=style::root
-            node_ref=anchor
-            on:pointerenter=move |event| handle.pointer_enter(&event)
-            on:pointerleave=move |_| handle.leave()
-            on:focusin=move |event| handle.focus_in(&event)
-            on:focusout=move |_| handle.focus_out()
+            node_ref=surface
+            id=handle.id()
+            class=style::surface
+            popover="manual"
+            role="tooltip"
+            // Out of the tree, and still a description: a node named
+            // directly by `aria-describedby` is read even when hidden. Left
+            // in, an open surface drawn inside a `<label>` — a selectable
+            // row's `Differs` label is — would join the label's control's name, and a
+            // reader would hear the sentence twice.
+            aria-hidden="true"
         >
-            {trigger(handle.id())}
-            // Inside the wrapper in the document, though drawn in the top
-            // layer: the pointer crossing onto it has not left the wrapper, so
-            // the sentence stays while it is read.
-            <span
-                node_ref=surface
-                id=handle.id()
-                class=style::surface
-                popover="manual"
-                role="tooltip"
-                // Out of the tree, and still a description: a node named
-                // directly by `aria-describedby` is read even when hidden. Left
-                // in, an open surface drawn inside a `<label>` — a selectable
-                // row's `Differs` label is — would join the label's control's name, and a
-                // reader would hear the sentence twice.
-                aria-hidden="true"
-            >
-                {move || text.get()}
-            </span>
+            {move || text.get()}
         </span>
     }
 }

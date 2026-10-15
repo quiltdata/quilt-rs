@@ -71,6 +71,7 @@ mod gallery {
     pub mod json_display;
     pub mod list_toolbar;
     pub mod load_failure;
+    pub mod name_tooltip;
     pub mod old_revisions_inline;
     pub mod package_header;
     pub mod packages;
@@ -225,6 +226,7 @@ const ENTRIES: &[Entry] = &[
     entry!(Core, "HostRow", host_row::HostRowStories),
     entry!(Core, "JsonDisplay", json_display::JsonDisplayStories),
     entry!(Core, "LoadFailure", load_failure::LoadFailureStories),
+    entry!(Core, "NameTooltip", name_tooltip::NameTooltipStories),
     entry!(Core, "PackageRow", packages::PackageRowStories),
     entry!(Core, "PaneSection", pane_section::PaneSectionStories),
     entry!(Core, "RevisionRow", revision_row::RevisionRowStories),
