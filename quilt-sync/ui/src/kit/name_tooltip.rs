@@ -30,7 +30,8 @@
 //! Keyboard focus opens it at once on a focusable name, the openable row's
 //! button, and on a control whose `<label>` holds a name, the selectable row's
 //! checkbox. The row's `[⋯]` and a group's disclosure are neither, so they open
-//! nothing.
+//! nothing. A row that differs opens its `Differs` sentence on that same focus,
+//! and that sentence wins: what is wrong with a file outranks its name.
 //!
 //! # No `aria-describedby`
 //!
@@ -85,36 +86,55 @@ pub fn NameTooltip(
             .flatten()
     };
 
-    // Points the surface at `name`, if it is cut. False for a name that fits.
-    let aim = move |name: web_sys::Element| {
+    // Points the surface at `name` and opens it, if the name is cut; lets go
+    // of what shows if not. Measured here, when it would open, and nowhere
+    // else: a pointer crossing a column of names reads no width, and a width
+    // read here is never stale.
+    let open_on = move |name: web_sys::Element| {
         if name.scroll_width() <= name.client_width() {
-            return false;
+            handle.leave();
+            return;
         }
         text.set(name.get_attribute("data-full-name").unwrap_or_default());
         anchor.set(Some(name));
-        true
+        handle.show();
     };
 
     let pointer_over = move |event: web_sys::PointerEvent| {
+        if event.pointer_type() == "touch" {
+            return;
+        }
         let Some(name) = name_at.with_value(|at| at(event.target())) else {
             return;
         };
-        if anchor.get_untracked().as_ref() == Some(&name) || aim(name) {
-            handle.pointer_enter(&event);
+        // Back onto the name that shows, or onto its surface: it stays.
+        if handle.is_open() && anchor.get_untracked().as_ref() == Some(&name) {
+            handle.enter();
+        } else {
+            handle.enter_with(move || open_on(name));
         }
     };
-    // Leaving the shown name for anything but itself or its surface.
+    // Leaving a name for anything but itself or its surface: the name that
+    // shows, or one still waiting out its delay.
     let pointer_out = move |event: web_sys::PointerEvent| {
         let (from, to) = name_at.with_value(|at| (at(event.target()), at(event.related_target())));
-        if from.is_some() && from != to && from == anchor.get_untracked() {
+        let waiting_or_shown = !handle.is_open() || from == anchor.get_untracked();
+        if from.is_some() && from != to && waiting_or_shown {
             handle.leave();
         }
     };
     let focus_in = move |event: web_sys::FocusEvent| {
-        if let Some(name) = focused_name(event.target())
-            && aim(name)
-        {
-            handle.focus_in(&event);
+        let Some(name) = focused_name(event.target()) else {
+            return;
+        };
+        let keyboard = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|element| element.matches(":focus-visible").unwrap_or(false));
+        // The row's own handler ran first, as the event bubbled to the list:
+        // a `Differs` it opened stays.
+        if keyboard && !handle.another_shows() {
+            open_on(name);
         }
     };
     let focus_out = move |event: web_sys::FocusEvent| {
@@ -122,7 +142,6 @@ pub fn NameTooltip(
             handle.focus_out();
         }
     };
-
     view! {
         // No box of its own, so the list lays out as it would unwrapped: a
         // scroll box under it still fills its column. Inline, so that holds
@@ -254,6 +273,72 @@ mod tests {
         sleep_ms(250).await;
         assert_eq!(showing(&el), None, "still open after the pointer left");
         sleep_ms(200).await;
+    }
+
+    /// The width is read when it would open, not when the pointer arrived: a
+    /// name that fits by then opens nothing, however it was when hovered.
+    #[wasm_bindgen_test]
+    async fn the_width_is_read_when_it_would_open() {
+        unmount_earlier();
+        let el = two_rows(|| None);
+        let column: web_sys::HtmlElement = el.first_element_child().unwrap().unchecked_into();
+        let name = element_saying(&el, LONG);
+
+        hover(&name);
+        sleep_ms(100).await;
+        column.style().set_property("width", "4000px").unwrap();
+        sleep_ms(500).await;
+        assert_eq!(showing(&el), None, "a name that fits by then opened it");
+
+        // Cut again, and the same name opens on its next hover.
+        fire(&name, "pointerout");
+        column.style().set_property("width", "480px").unwrap();
+        sleep_ms(200).await;
+        hover(&name);
+        sleep_ms(600).await;
+        assert_eq!(showing(&el).as_deref(), Some(LONG));
+        escape();
+    }
+
+    /// A differing row opens its `Differs` sentence on keyboard focus, and the
+    /// list leaves it there rather than covering it with the name.
+    #[wasm_bindgen_test]
+    async fn keyboard_focus_on_a_differing_row_keeps_its_differs_sentence() {
+        use crate::kit::DIFFERS_TITLE;
+        let actions: [fn() -> EntryAction; 2] = [
+            || EntryAction::Select(EntrySelection::new(false, Callback::new(|_| {}))),
+            || EntryAction::Open(Callback::new(|()| {})),
+        ];
+        for action in actions {
+            unmount_earlier();
+            row_style();
+            let el = mount(move || {
+                view! {
+                    <div style="width:480px">
+                        <NameTooltip>
+                            <EntryRow name=LONG size="1 kB" action=action() differs=true plain=true />
+                        </NameTooltip>
+                    </div>
+                }
+            });
+            let control = el
+                .query_selector("input[type=checkbox], button[aria-describedby]")
+                .unwrap()
+                .expect("the row's control");
+            keyboard_focus(&control);
+            leptos::task::tick().await;
+            let open = el
+                .query_selector_all("[role='tooltip']:popover-open")
+                .unwrap();
+            assert_eq!(open.length(), 1, "{}", focus_report(&control));
+            assert_eq!(
+                open.item(0).unwrap().text_content().as_deref(),
+                Some(DIFFERS_TITLE),
+                "the name covered the Differs sentence"
+            );
+            blur(&control);
+            leptos::task::tick().await;
+        }
     }
 
     #[wasm_bindgen_test]

@@ -173,16 +173,37 @@ impl TooltipHandle {
     }
 
     pub(super) fn enter(self) {
-        self.cancel();
         if self.open.get_untracked() {
+            self.cancel();
             return;
         }
-        let warm = SHOWN.get().is_some() || now() - LET_GO_AT.get() < millis(GRACE);
+        self.enter_with(move || self.show());
+    }
+
+    /// A hover began, and `open` decides what it opens when the time comes: at
+    /// once while warm, or after [`DELAY`]. While this one is open that is now,
+    /// so a list's one surface can move to the next name or let go.
+    pub(super) fn enter_with(self, open: impl FnOnce() + 'static) {
+        self.cancel();
+        let warm = self.open.get_untracked()
+            || SHOWN.get().is_some()
+            || now() - LET_GO_AT.get() < millis(GRACE);
         if warm {
-            self.show();
+            open();
         } else {
-            self.later(DELAY, move || self.show());
+            self.later(DELAY, open);
         }
+    }
+
+    /// Whether this one shows.
+    pub(super) fn is_open(self) -> bool {
+        self.open.get_untracked()
+    }
+
+    /// Whether another tooltip shows, which a list's names leave alone: a
+    /// row's own sentence about what it is outranks its name.
+    pub(super) fn another_shows(self) -> bool {
+        SHOWN.get().is_some_and(|other| other != self.open)
     }
 
     pub(super) fn leave(self) {
@@ -192,7 +213,7 @@ impl TooltipHandle {
         }
     }
 
-    fn show(self) {
+    pub(super) fn show(self) {
         self.cancel();
         if let Some(other) = SHOWN.get()
             && other != self.open
@@ -205,7 +226,7 @@ impl TooltipHandle {
 
     /// `let_go` is a hover ending, which warms the next trigger; Escape, a
     /// click or a scroll is the reader dismissing it, which does not.
-    fn hide(self, let_go: bool) {
+    pub(super) fn hide(self, let_go: bool) {
         self.cancel();
         if SHOWN.get() == Some(self.open) {
             SHOWN.set(None);
