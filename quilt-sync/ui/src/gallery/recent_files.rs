@@ -437,6 +437,7 @@ pub fn RecentFilesScene() -> impl IntoView {
                     selected=group
                 />
             </ListToolbar>
+            <NameTooltip>
             {move || {
                 let files = fixtures();
                 if group.get() == "Package" {
@@ -466,6 +467,7 @@ pub fn RecentFilesScene() -> impl IntoView {
                     files.into_iter().map(row).collect_view().into_any()
                 }
             }}
+            </NameTooltip>
         </Scene>
     }
 }

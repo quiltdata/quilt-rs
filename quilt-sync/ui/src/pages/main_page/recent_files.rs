@@ -699,6 +699,62 @@ mod tests {
         }
     }
 
+    #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
+    mod sheets {
+        stylance::import_crate_style!(pub page, "src/pages/main_page.module.scss");
+        stylance::import_crate_style!(pub card, "src/kit/card.module.scss");
+    }
+
+    /// The card is the list region's scroller with the tooltip's wrapper
+    /// around it: a long feed scrolls inside the card, under a toolbar that
+    /// keeps its place, rather than growing the page.
+    #[wasm_bindgen_test]
+    async fn a_long_feed_scrolls_inside_its_card() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("../main_page.module.scss"),
+            &[("list_region", sheets::page::list_region)],
+        );
+        load_module_style(
+            include_str!("../../kit/card.module.scss"),
+            &[("root", sheets::card::root), ("body", sheets::card::body)],
+        );
+        let files: Vec<_> = (0..60)
+            .map(|i| file(&format!("data/{i}.csv"), "user/alpha", f64::from(i)))
+            .collect();
+        let el = mount(move || {
+            view! {
+                <leptos_router::components::Router>
+                    <div style="height:300px; display:flex; flex-direction:column">
+                        <div class=sheets::page::list_region>
+                            <div style="height:32px; flex:none">"Toolbar"</div>
+                            <RecentFilesRegion
+                                files=files.clone()
+                                query=Signal::stored(String::new())
+                                group_by=Signal::stored(GROUP_NONE.to_string())
+                            />
+                        </div>
+                    </div>
+                </leptos_router::components::Router>
+            }
+        });
+        sleep_ms(0).await;
+        let card: web_sys::HtmlElement = el
+            .query_selector("section")
+            .unwrap()
+            .expect("the card")
+            .unchecked_into();
+        assert!(
+            card.client_height() <= 300,
+            "the card grew to {}px instead of scrolling",
+            card.client_height()
+        );
+        assert!(
+            card.scroll_height() > card.client_height(),
+            "the rows scroll"
+        );
+    }
+
     #[wasm_bindgen_test]
     fn a_file_row_links_to_its_owning_package() {
         let el = mount_feed(vec![file("a/one.csv", "user/alpha", 1_000.0)]);
