@@ -66,7 +66,10 @@ pub(crate) fn RelayScreen(read: PageRead<String>) -> impl IntoView {
     let key = Memo::new(move |_| query.with(|q| q.get("uri").unwrap_or_default()));
     let page = PageHandle::new();
     let PageHandle {
-        outcome, reload, ..
+        outcome,
+        reload,
+        in_flight,
+        ..
     } = page;
     let answer = page.read(key, read);
 
@@ -86,7 +89,16 @@ pub(crate) fn RelayScreen(read: PageRead<String>) -> impl IntoView {
         }
     });
 
-    let on_reload = Callback::new(move |()| reload.notify());
+    // Each run installs or opens something, so a second may not start while
+    // one is out. Marked here, before the read's own effect runs, so a quick
+    // second press already finds it out.
+    let on_reload = Callback::new(move |()| {
+        if in_flight.get_untracked() {
+            return;
+        }
+        in_flight.set(true);
+        reload.notify();
+    });
     let on_dot_quilt = open_dot_quilt(outcome, key);
     let on_home = Callback::new(move |()| navigate("/", replacing()));
 
@@ -112,6 +124,7 @@ pub(crate) fn RelayScreen(read: PageRead<String>) -> impl IntoView {
                         title="Error"
                         message=readable(&e)
                         on_reload=on_reload
+                        reloading=in_flight
                         on_dot_quilt=on_dot_quilt
                         on_home=on_home
                     />
@@ -134,9 +147,18 @@ mod tests {
         static RUNS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
     }
 
+    /// Fails; every run after the first takes a while.
     fn refused(_: String) -> std::pin::Pin<Box<dyn Future<Output = Result<String, String>>>> {
-        RUNS.with(|r| r.set(r.get() + 1));
-        Box::pin(async { Err("no such package".to_string()) })
+        let n = RUNS.with(|r| {
+            r.set(r.get() + 1);
+            r.get()
+        });
+        Box::pin(async move {
+            if n > 1 {
+                sleep_ms(100).await;
+            }
+            Err("no such package".to_string())
+        })
     }
 
     async fn relay() -> web_sys::Element {
@@ -193,14 +215,30 @@ mod tests {
         );
     }
 
-    /// Mounting runs the link once; Reload page runs it again in place.
+    /// Mounting runs the link once; Reload page runs it again in place, and
+    /// never twice at once.
     #[wasm_bindgen_test]
     async fn the_link_runs_once_and_again_on_reload() {
         let el = relay().await;
         assert_eq!(RUNS.with(std::cell::Cell::get), 1);
+        let reload = button_saying(&el, "Reload page");
+        reload.click();
+        reload.click();
+        sleep_ms(30).await;
+        assert_eq!(
+            RUNS.with(std::cell::Cell::get),
+            2,
+            "one run while one is out"
+        );
+        assert!(
+            button_saying(&el, "Reload page").disabled(),
+            "and Reload page says so"
+        );
         button_saying(&el, "Reload page").click();
         sleep_ms(30).await;
         assert_eq!(RUNS.with(std::cell::Cell::get), 2);
+        sleep_ms(150).await;
+        assert!(!button_saying(&el, "Reload page").disabled(), "free again");
         button_saying(&el, "Open .quilt directory");
         button_saying(&el, "Go home");
     }

@@ -19,7 +19,7 @@ use crate::kit::{
     SkeletonBox, TextInput, icons, readable,
 };
 
-use super::v2_page::{Outcome, PageHandle, PageRead, V2Page, critical, hold};
+use super::v2_page::{Outcome, PageHandle, PageRead, V2Page, critical, hold, still_here};
 
 stylance::import_crate_style!(style, "src/pages/login_v2.module.scss");
 
@@ -226,6 +226,9 @@ fn code_sign_in(
         leptos::task::spawn_local(async move {
             let signed_in = hold(busy, outcome, commands::login(data.host, typed)).await;
             running.try_set(None);
+            if !still_here(key, &here) {
+                return;
+            }
             match signed_in {
                 Ok(_) => navigate(after_login(&data.back), NavigateOptions::default()),
                 Err(e) => {

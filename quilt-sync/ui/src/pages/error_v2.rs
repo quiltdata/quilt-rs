@@ -30,6 +30,9 @@ pub fn ErrorSlate(
     /// Run the failed read again.
     #[prop(optional)]
     on_reload: Option<Callback<()>>,
+    /// The read is out again: *Reload page* spins and takes no press.
+    #[prop(optional, into)]
+    reloading: Signal<bool>,
     /// Open the app's `.quilt` folder.
     #[prop(optional)]
     on_dot_quilt: Option<Callback<()>>,
@@ -42,7 +45,11 @@ pub fn ErrorSlate(
         <div class=style::actions>
             {on_reload
                 .map(|run| {
-                    view! { <Button on_click=move |_| run.run(())>"Reload page"</Button> }
+                    view! {
+                        <Button loading=reloading on_click=move |_| run.run(())>
+                            "Reload page"
+                        </Button>
+                    }
                 })}
             {on_dot_quilt
                 .map(|run| {
@@ -175,7 +182,10 @@ pub(crate) fn ErrorScreen(read: PageRead<LoginErrorData>) -> impl IntoView {
     });
     let page = PageHandle::new();
     let PageHandle {
-        outcome, reload, ..
+        outcome,
+        reload,
+        in_flight,
+        ..
     } = page;
     let answer = page.read(key, read);
 
@@ -210,6 +220,7 @@ pub(crate) fn ErrorScreen(read: PageRead<LoginErrorData>) -> impl IntoView {
                             title=d.title
                             message=d.message
                             on_reload=on_reload
+                            reloading=in_flight
                             on_dot_quilt=on_dot_quilt
                             on_login=on_login
                             on_home=on_home
@@ -221,6 +232,7 @@ pub(crate) fn ErrorScreen(read: PageRead<LoginErrorData>) -> impl IntoView {
                             title=d.title
                             message=d.message
                             on_reload=on_reload
+                            reloading=in_flight
                             on_dot_quilt=on_dot_quilt
                             on_home=on_home
                         />

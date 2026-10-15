@@ -16,7 +16,7 @@ use crate::kit::{
     readable,
 };
 
-use super::v2_page::{PageHandle, PageRead, V2Page, critical, hold};
+use super::v2_page::{PageHandle, PageRead, V2Page, critical, hold, still_here};
 
 stylance::import_crate_style!(style, "src/pages/setup_v2.module.scss");
 
@@ -178,7 +178,8 @@ pub(crate) fn SetupScreen(read: PageRead<SetupData>) -> impl IntoView {
         let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
             match hold(busy, outcome, commands::setup(chosen)).await {
-                Ok(_) => navigate("/", NavigateOptions::default()),
+                Ok(_) if still_here(key, HERE) => navigate("/", NavigateOptions::default()),
+                Ok(_) => {}
                 Err(e) => {
                     outcome.try_set(Some(critical(
                         HERE.into(),

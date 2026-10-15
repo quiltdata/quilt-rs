@@ -273,6 +273,15 @@ pub(super) fn outcome_band(outcome: RwSignal<Option<Outcome>>, showing: Signal<S
     .into_any()
 }
 
+/// Whether the page that started a command on address `here` is still up and
+/// still on it, for a command whose answer moves the reader on: a late answer
+/// must not take them from wherever they went meanwhile.
+#[must_use]
+pub fn still_here(key: Memo<String>, here: &str) -> bool {
+    // `try_`: the page can be gone by the time the answer lands.
+    key.try_get_untracked().as_deref() == Some(here)
+}
+
 /// A failure the page words, with the engine's text after it.
 #[must_use]
 pub fn critical(namespace: String, lead: &str, detail: Option<String>) -> Outcome {
@@ -510,6 +519,23 @@ mod tests {
 
         sleep_ms(80).await;
         assert!(!page.busy.get_untracked(), "released when it settles");
+    }
+
+    /// A command's answer moves the reader on only from the page and address
+    /// it started on.
+    #[wasm_bindgen_test]
+    fn a_late_answer_is_still_here_only_on_its_own_page() {
+        let owner = Owner::new();
+        let (key, address) = owner.with(|| {
+            let address = RwSignal::new("team/a".to_string());
+            (Memo::new(move |_| address.get()), address)
+        });
+        assert!(still_here(key, "team/a"));
+        assert!(!still_here(key, "team/b"), "another address");
+        address.set("team/b".to_string());
+        assert!(!still_here(key, "team/a"), "the address changed");
+        owner.cleanup();
+        assert!(!still_here(key, "team/b"), "the page is gone");
     }
 
     /// The band draws an outcome for the address on screen only.
