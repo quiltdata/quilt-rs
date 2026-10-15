@@ -242,4 +242,120 @@ mod tests {
         button_saying(&el, "Open .quilt directory");
         button_saying(&el, "Go home");
     }
+
+    // ── The three ways out, each replacing the relay's history entry ──
+
+    const RELAY: &str = "/remote-package?uri=quilt%2Bs3%3A%2F%2Fbucket%23package%3Dteam%2Fplate";
+
+    thread_local! {
+        /// What the stubbed run answers.
+        static ANSWER: std::cell::RefCell<Result<String, String>> =
+            const { std::cell::RefCell::new(Ok(String::new())) };
+    }
+
+    fn scripted(_: String) -> std::pin::Pin<Box<dyn Future<Output = Result<String, String>>>> {
+        RUNS.with(|r| r.set(r.get() + 1));
+        let answer = ANSWER.with(|a| a.borrow().clone());
+        Box::pin(async move { answer })
+    }
+
+    fn location() -> web_sys::Location {
+        web_sys::window().unwrap().location()
+    }
+
+    fn history() -> web_sys::History {
+        web_sys::window().unwrap().history().unwrap()
+    }
+
+    /// The relay at its own address, under a router with somewhere to go, run
+    /// over `answer`. Hands back the history length before the relay drew.
+    async fn way_out(answer: Result<String, String>) -> u32 {
+        unmount_earlier();
+        RUNS.with(|r| r.set(0));
+        ANSWER.with(|a| *a.borrow_mut() = answer);
+        history()
+            .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(RELAY))
+            .unwrap();
+        let before = history().length().unwrap();
+        mount(|| {
+            use leptos_router::components::{Route, Routes};
+            use leptos_router::path;
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { <p>"elsewhere"</p> }>
+                        <Route
+                            path=path!("/remote-package")
+                            view=|| view! { <RelayScreen read=scripted /> }
+                        />
+                        <Route path=path!("/installed-package") view=|| view! { <p>"package"</p> } />
+                        <Route path=path!("/login") view=|| view! { <p>"login"</p> } />
+                        <Route path=path!("/setup") view=|| view! { <p>"setup"</p> } />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(50).await;
+        before
+    }
+
+    /// The relay replaced its own entry, so Back leaves it and the link does
+    /// not run again.
+    async fn left_without_a_way_back(before: u32, to: &str) {
+        assert_eq!(location().pathname().unwrap(), to);
+        assert_eq!(
+            history().length().unwrap(),
+            before,
+            "the entry was replaced"
+        );
+        assert_eq!(RUNS.with(std::cell::Cell::get), 1);
+        history().back().unwrap();
+        sleep_ms(50).await;
+        assert_ne!(
+            location().pathname().unwrap(),
+            "/remote-package",
+            "Back skips the relay"
+        );
+        assert_eq!(
+            RUNS.with(std::cell::Cell::get),
+            1,
+            "and the link did not run again"
+        );
+        unmount_earlier();
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_run_link_replaces_the_relay_with_the_package() {
+        let before = way_out(Ok("/installed-package?namespace=team%2Fplate".to_string())).await;
+        left_without_a_way_back(before, "/installed-package").await;
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_missing_session_replaces_the_relay_with_login_and_comes_back_to_it() {
+        let before = way_out(Err(
+            r#"{"kind":"session_absent","message":"Log in","host":"quilt.test"}"#.to_string(),
+        ))
+        .await;
+        let search = location().search().unwrap();
+        let back = search
+            .trim_start_matches('?')
+            .split('&')
+            .find_map(|pair| pair.strip_prefix("back="))
+            .expect("login carries back");
+        assert_eq!(
+            urlencoding::decode(back).unwrap(),
+            RELAY,
+            "back is the relay's URL"
+        );
+        assert!(search.contains("host=quilt.test"), "{search}");
+        left_without_a_way_back(before, "/login").await;
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_missing_setup_replaces_the_relay_with_setup() {
+        let before = way_out(Err(
+            r#"{"kind":"setup_required","message":"Set up"}"#.to_string()
+        ))
+        .await;
+        left_without_a_way_back(before, "/setup").await;
+    }
 }
