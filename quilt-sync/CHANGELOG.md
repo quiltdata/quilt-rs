@@ -30,6 +30,7 @@
 
 ### Changed
 
+- **New design preview**: a folder heading in the package page's file list reads *3 of 54* when a filter or search hides some of its files (<https://github.com/quiltdata/quilt-rs/pull/1128>)
 - Under the hood, every page reads the values in its address decoded once, as the Log in page does since the fix below. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1129>)
 
 ### Fixed
