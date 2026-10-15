@@ -806,7 +806,7 @@ pub async fn set_remote(
     }
 }
 
-/// A typed name must be one quilt3 and the catalog accept: `prefix/name`, each
+/// A typed name must be one quilt3 accepts, read as ASCII: `prefix/name`, each
 /// part ASCII letters, digits, `_` or `-`. Only here, where a reader types it:
 /// `Namespace` parses names from remotes and installs too, and refusing one of
 /// those would hide a package the reader already has.

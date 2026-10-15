@@ -34,6 +34,7 @@
 
 ### Fixed
 
+- **Create package** refuses a name quilt3 would refuse, such as one with a space or `%`: a name is `prefix/name` using letters, digits, `_` and `-` (<https://github.com/quiltdata/quilt-rs/pull/1131>)
 - Opening a Quilt link that needs a sign-in opens its package after you log in with a code (<https://github.com/quiltdata/quilt-rs/pull/1127>)
 
 ## [v0.22.11] - 2026-10-14
