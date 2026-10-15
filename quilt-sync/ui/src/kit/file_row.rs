@@ -5,7 +5,11 @@
 //! is not an anchor.
 //!
 //! The rest of what can be done with the file sits behind one `[⋯]`, as on the
-//! package page's file rows. The packages view's rows have none: a file is a
+//! package page's file rows.
+//!
+//! The path and the tag carry no `title`. Each marks itself with
+//! `data-full-name`, and the list's [`NameTooltip`](super::NameTooltip) shows
+//! the whole value when the ellipsis cut it. The packages view's rows have none: a file is a
 //! thing you act on, a package is a place you go.
 
 use leptos::ev::MouseEvent;
@@ -57,7 +61,8 @@ pub fn FileRow(
     #[prop(optional, into)]
     copied: MaybeProp<bool>,
 ) -> impl IntoView {
-    // Both ellipsise, so each carries its whole value in `title`.
+    // Both ellipsise, so each hands its whole value to the list's
+    // `NameTooltip`, which shows it only when it is cut.
     let full_path = path.clone();
     let full_package = package.clone();
     let time = move || {
@@ -83,11 +88,11 @@ pub fn FileRow(
             // is what a reader needs to hear before choosing to open it. No handler
             // of its own: a native button turns Enter and Space into a click, and
             // that click bubbles to the row above, which is the one handler.
-            <button type="button" class=style::path title=full_path>{path}</button>
+            <button type="button" class=style::path data-full-name=full_path>{path}</button>
             // Stops propagation, or going to the package would also open the file.
             <a
                 class=style::tag
-                title=full_package
+                data-full-name=full_package
                 href=package_href
                 on:click=|ev: MouseEvent| ev.stop_propagation()
             >
@@ -133,7 +138,10 @@ pub fn FileRowSkeleton() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::mount;
+    use crate::test_support::{
+        blur, button_saying, element_saying, focus_report, keyboard_focus, mount, sleep_ms,
+        unmount_earlier,
+    };
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
@@ -243,14 +251,15 @@ mod tests {
         );
     }
 
-    /// The path truncates from the right and the tag is capped at 30% of the row.
+    /// The path and the tag both truncate; each hands its whole value to the
+    /// list's tooltip, and neither carries a `title` for the browser to draw.
     #[wasm_bindgen_test]
     fn the_path_and_the_package_tag_carry_their_whole_values() {
         let el = mount(|| {
             view! {
                 <FileRow
-                    path="data/deep/nested/directory/with/a/long/name/measurements.csv"
-                    package="a-long-owner-name/a-much-longer-package-name-than-the-column"
+                    path=PATH
+                    package=PACKAGE
                     package_href="/installed-package"
                     at=0.0
                     on_open=|_| {}
@@ -258,19 +267,104 @@ mod tests {
                 />
             }
         });
-        let path = el
-            .query_selector("[class*=path]")
+        assert_eq!(
+            button_saying(&el, PATH)
+                .get_attribute("data-full-name")
+                .as_deref(),
+            Some(PATH)
+        );
+        assert_eq!(
+            element_saying(&el, PACKAGE)
+                .get_attribute("data-full-name")
+                .as_deref(),
+            Some(PACKAGE)
+        );
+        assert!(
+            el.query_selector("[data-full-name][title]")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    const PATH: &str = "data/deep/nested/directory/with/a/long/name/measurements.csv";
+    const PACKAGE: &str = "a-long-owner-name/a-much-longer-package-name-than-the-column";
+
+    /// A row 360px wide inside a list's `NameTooltip`, with its stylesheet, so
+    /// the path and the tag are both cut as in the app.
+    fn cut_row() -> web_sys::Element {
+        crate::test_support::load_module_style(
+            include_str!("file_row.module.scss"),
+            &[
+                ("root", style::root),
+                ("path", style::path),
+                ("tag", style::tag),
+                ("time", style::time),
+                ("actions", style::actions),
+            ],
+        );
+        mount(|| {
+            view! {
+                <div style="width:360px">
+                    <crate::kit::NameTooltip>
+                        <FileRow
+                            path=PATH
+                            package=PACKAGE
+                            package_href="/installed-package"
+                            at=0.0
+                            on_open=|_| {}
+                            actions=Vec::new()
+                        />
+                    </crate::kit::NameTooltip>
+                </div>
+            }
+        })
+    }
+
+    fn shown(el: &web_sys::Element) -> Option<String> {
+        let tip = el
+            .query_selector("[role='tooltip']")
             .unwrap()
-            .expect("the path");
+            .expect("the surface");
+        tip.matches(":popover-open")
+            .unwrap()
+            .then(|| tip.text_content().unwrap_or_default())
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_cut_path_shows_whole_on_hover() {
+        unmount_earlier();
+        let el = cut_row();
+        let path = button_saying(&el, PATH);
+        assert!(path.scroll_width() > path.client_width(), "the path is cut");
+        let init = web_sys::PointerEventInit::new();
+        init.set_pointer_type("mouse");
+        init.set_bubbles(true);
+        let over = web_sys::PointerEvent::new_with_event_init_dict("pointerover", &init).unwrap();
+        path.dispatch_event(&over).unwrap();
+        sleep_ms(600).await;
+        assert_eq!(shown(&el).as_deref(), Some(PATH));
+        let out = web_sys::PointerEvent::new_with_event_init_dict("pointerout", &init).unwrap();
+        path.dispatch_event(&out).unwrap();
+        sleep_ms(400).await;
+    }
+
+    /// The tag is a link, so Tab reaches it, and its focus opens the package's
+    /// whole name at once.
+    #[wasm_bindgen_test]
+    async fn keyboard_focus_on_a_cut_tag_shows_the_whole_package() {
+        unmount_earlier();
+        let el = cut_row();
+        let tag = element_saying(&el, PACKAGE);
+        assert!(tag.scroll_width() > tag.client_width(), "the tag is cut");
+        keyboard_focus(&tag);
+        leptos::task::tick().await;
         assert_eq!(
-            path.get_attribute("title").as_deref(),
-            Some("data/deep/nested/directory/with/a/long/name/measurements.csv"),
+            shown(&el).as_deref(),
+            Some(PACKAGE),
+            "{}",
+            focus_report(&tag)
         );
-        let tag = el.query_selector("[class*=tag]").unwrap().expect("the tag");
-        assert_eq!(
-            tag.get_attribute("title").as_deref(),
-            Some("a-long-owner-name/a-much-longer-package-name-than-the-column")
-        );
+        blur(&tag);
     }
 
     /// A copy that landed shows in the time column while it holds, and the

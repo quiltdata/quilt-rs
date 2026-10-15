@@ -24,6 +24,7 @@ use crate::kit::Blankslate;
 use crate::kit::Card;
 use crate::kit::FileRow;
 use crate::kit::GroupHeading;
+use crate::kit::NameTooltip;
 
 #[cfg(test)]
 use super::GROUP_NONE;
@@ -121,6 +122,9 @@ pub fn RecentFilesRegion(
     });
 
     view! {
+        // One tooltip for every row's cut path or package tag. Around the card,
+        // not inside it: the card spaces its body's children itself.
+        <NameTooltip>
         <Card label="Recent files">
             {move || match shape.get() {
                 FeedShape::NoMatch => {
@@ -167,6 +171,7 @@ pub fn RecentFilesRegion(
                 {move || state.said.get()}
             </span>
         </Card>
+        </NameTooltip>
     }
     .into_any()
 }
@@ -659,6 +664,39 @@ mod tests {
             two < three && three < one,
             "the wire's order is the screen's order: {text}"
         );
+    }
+
+    /// The feed holds one tooltip for every row's path and tag, flat or
+    /// grouped, and no path or tag carries a `title`.
+    #[wasm_bindgen_test]
+    fn the_feed_mounts_one_tooltip_for_all_its_rows() {
+        let files = || {
+            vec![
+                file("b/two.csv", "user/beta", 5_000.0),
+                file("c/three.csv", "user/gamma", 9_000.0),
+                file("a/one.csv", "user/alpha", 1_000.0),
+            ]
+        };
+        for el in [
+            mount_feed(files()),
+            mount_feed_grouped(files(), GROUP_PACKAGE),
+        ] {
+            assert_eq!(
+                el.query_selector_all("[role='tooltip']").unwrap().length(),
+                1,
+                "markup was {}",
+                el.inner_html()
+            );
+            assert_eq!(
+                el.query_selector_all("[data-full-name]").unwrap().length(),
+                6
+            );
+            assert!(
+                el.query_selector("[data-full-name][title]")
+                    .unwrap()
+                    .is_none()
+            );
+        }
     }
 
     #[wasm_bindgen_test]

@@ -16,6 +16,7 @@ use crate::kit::IconButton;
 use crate::kit::IconButtonVariant;
 use crate::kit::ListToolbar;
 use crate::kit::MenuAction;
+use crate::kit::NameTooltip;
 use crate::kit::Naming;
 use crate::kit::RelativeTime;
 use crate::kit::SearchInput;
@@ -70,16 +71,20 @@ pub fn RecentFilesStories() -> impl IntoView {
 /// question the page never asks.
 #[component]
 fn Rows() -> impl IntoView {
+    // Each cell is its own list, so each holds its own `NameTooltip`: rest the
+    // pointer on a cut path or tag, or Tab to one, to see it whole.
     let row = |path: &'static str, package: &'static str, elapsed: f64| {
         view! {
-            <FileRow
-                path=path
-                package=package
-                package_href="#recent-files-parts"
-                at=ago(elapsed)
-                on_open=|_| ()
-                actions=menu(Reach::Published)
-            />
+            <NameTooltip>
+                <FileRow
+                    path=path
+                    package=package
+                    package_href="#recent-files-parts"
+                    at=ago(elapsed)
+                    on_open=|_| ()
+                    actions=menu(Reach::Published)
+                />
+            </NameTooltip>
         }
     };
 
@@ -97,14 +102,14 @@ fn Rows() -> impl IntoView {
             <Cell full=true label="ordinary">
                 {row("analysis/qc/summary-by-well.parquet", "org/dataset-c", 41.0 * MINUTE)}
             </Cell>
-            <Cell full=true label="deep path — truncates left, filename survives">
+            <Cell full=true label="deep path — hover it or Tab to it for the whole path">
                 {row(
                     "runs/2026-08-04/plate-07/wells/row-a/A01_Specimen_001_A1_A01.fcs",
                     "user/package-b",
                     2.0 * MINUTE,
                 )}
             </Cell>
-            <Cell full=true label="long namespace — the chip caps at 30% and truncates too">
+            <Cell full=true label="long namespace — the chip caps at 30%; hover it or Tab to it for the whole name">
                 {row(
                     "derived/2026-08/counts_matrix_filtered_log1p.h5ad",
                     "team/rnaseq-batch-2026-07-31-reprocessed-v2-and-then-some",
