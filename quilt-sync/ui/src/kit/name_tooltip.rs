@@ -132,8 +132,9 @@ pub fn NameTooltip(
             .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
             .is_some_and(|element| element.matches(":focus-visible").unwrap_or(false));
         // The row's own handler ran first, as the event bubbled to the list:
-        // a `Differs` it opened stays.
-        if keyboard && !handle.another_shows() {
+        // a `Differs` it opened for this focus stays. One opened by a hover
+        // elsewhere gives way, as any tooltip does to the next.
+        if keyboard && !handle.another_opened_by(&event) {
             open_on(name);
         }
     };
@@ -243,10 +244,16 @@ mod tests {
             .unwrap();
     }
 
+    /// The list's surface: the last one, after any a row draws for itself.
     fn tooltip(el: &web_sys::Element) -> web_sys::Element {
-        el.query_selector("[role='tooltip']")
-            .unwrap()
-            .expect("the list has its surface")
+        let all = el.query_selector_all("[role='tooltip']").unwrap();
+        all.item(
+            all.length()
+                .checked_sub(1)
+                .expect("the list has its surface"),
+        )
+        .unwrap()
+        .unchecked_into()
     }
 
     fn showing(el: &web_sys::Element) -> Option<String> {
@@ -339,6 +346,57 @@ mod tests {
             blur(&control);
             leptos::task::tick().await;
         }
+    }
+
+    /// A `Differs` sentence opened by hovering one row does not hold back
+    /// keyboard focus on another row's cut name.
+    #[wasm_bindgen_test]
+    async fn a_hovered_differs_elsewhere_gives_way_to_a_focused_name() {
+        unmount_earlier();
+        row_style();
+        let el = mount(|| {
+            view! {
+                <div style="width:480px">
+                    <NameTooltip>
+                        <EntryRow name="a.csv" size="1 kB" differs=true plain=true />
+                        <EntryRow
+                            name=LONG
+                            size="1 kB"
+                            action=EntryAction::Open(Callback::new(|()| {}))
+                            plain=true
+                        />
+                    </NameTooltip>
+                </div>
+            }
+        });
+        // The row's surface comes first; the list's is last.
+        let differs = el.query_selector("[role='tooltip']").unwrap().unwrap();
+        let init = web_sys::PointerEventInit::new();
+        init.set_pointer_type("mouse");
+        let enter = web_sys::PointerEvent::new_with_event_init_dict("pointerenter", &init).unwrap();
+        differs
+            .parent_element()
+            .unwrap()
+            .dispatch_event(&enter)
+            .unwrap();
+        sleep_ms(600).await;
+        assert!(differs.matches(":popover-open").unwrap(), "Differs opened");
+
+        let name = element_saying(&el, LONG);
+        keyboard_focus(&name);
+        leptos::task::tick().await;
+        assert_eq!(
+            showing(&el).as_deref(),
+            Some(LONG),
+            "{}",
+            focus_report(&name)
+        );
+        assert!(
+            !differs.matches(":popover-open").unwrap(),
+            "two tooltips open"
+        );
+        escape();
+        blur(&name);
     }
 
     #[wasm_bindgen_test]

@@ -81,6 +81,7 @@
 //! without the sentence.
 
 use std::cell::Cell;
+use std::cell::RefCell;
 use std::time::Duration;
 
 use leptos::prelude::*;
@@ -108,6 +109,9 @@ thread_local! {
     /// When a hover last let one go, in `Date` milliseconds. A pointer
     /// entering a trigger within [`GRACE`] of it is still reading.
     static LET_GO_AT: Cell<f64> = const { Cell::new(f64::NEG_INFINITY) };
+    /// The focus event that last opened one, so a list's names can tell a
+    /// row's own sentence, opened by that same focus, from any other.
+    static OPENED_BY_FOCUS: RefCell<Option<web_sys::Event>> = const { RefCell::new(None) };
 }
 
 /// One tooltip's state: its id, whether it shows, and its pending timer.
@@ -156,6 +160,7 @@ impl TooltipHandle {
             .is_some_and(|element| element.matches(":focus-visible").unwrap_or(false));
         if keyboard {
             self.show();
+            OPENED_BY_FOCUS.set(Some(event.clone()));
         }
     }
 
@@ -200,10 +205,15 @@ impl TooltipHandle {
         self.open.get_untracked()
     }
 
-    /// Whether another tooltip shows, which a list's names leave alone: a
-    /// row's own sentence about what it is outranks its name.
-    pub(super) fn another_shows(self) -> bool {
-        SHOWN.get().is_some_and(|other| other != self.open)
+    /// Whether `event` opened another tooltip, as it bubbled through a row on
+    /// its way to the list: that row's sentence about what it is outranks its
+    /// name. A sentence opened by anything else does not.
+    pub(super) fn another_opened_by(self, event: &web_sys::Event) -> bool {
+        let by_this = OPENED_BY_FOCUS.with_borrow(|last| {
+            last.as_ref()
+                .is_some_and(|last| js_sys::Object::is(last, event))
+        });
+        by_this && SHOWN.get().is_some_and(|other| other != self.open)
     }
 
     pub(super) fn leave(self) {
