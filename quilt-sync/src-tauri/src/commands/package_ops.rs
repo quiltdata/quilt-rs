@@ -806,21 +806,37 @@ pub async fn set_remote(
     }
 }
 
-/// A typed name must be one quilt3 accepts, read as ASCII: `prefix/name`, each
-/// part ASCII letters, digits, `_` or `-`. Only here, where a reader types it:
-/// `Namespace` parses names from remotes and installs too, and refusing one of
-/// those would hide a package the reader already has.
+/// A typed name must be one quilt3 accepts: `prefix/name`, each part made of
+/// `_`, `-` and what Python's `str.isalnum()` takes, which is quilt3's `\w`.
+/// Only here, where a reader types it: `Namespace` parses names from remotes
+/// and installs too, and refusing one of those would hide a package the
+/// reader already has.
 fn check_new_name(namespace: &str) -> Result<(), Error> {
-    let part_ok = |part: &str| {
-        !part.is_empty()
-            && part
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    };
+    let part_ok = |part: &str| !part.is_empty() && part.chars().all(name_char);
     match namespace.split_once('/') {
         Some((prefix, name)) if part_ok(prefix) && part_ok(name) => Ok(()),
         _ => Err(Error::PackageName(namespace.to_string())),
     }
+}
+
+/// Letters and numbers by general category, as Python reads them. Not
+/// `char::is_alphanumeric`: it also takes combining vowel signs, such as
+/// Devanagari's, which Python's `\w` refuses.
+fn name_char(c: char) -> bool {
+    use unicode_general_category::{GeneralCategory as G, get_general_category};
+    c == '_'
+        || c == '-'
+        || matches!(
+            get_general_category(c),
+            G::UppercaseLetter
+                | G::LowercaseLetter
+                | G::TitlecaseLetter
+                | G::ModifierLetter
+                | G::OtherLetter
+                | G::DecimalNumber
+                | G::LetterNumber
+                | G::OtherNumber
+        )
 }
 
 async fn package_create_command(
@@ -1128,6 +1144,8 @@ mod tests {
             "team",
             "team/",
             "a/b/c",
+            // A combining vowel sign: `char::is_alphanumeric` takes it, quilt3 does not.
+            "team/\u{915}\u{93f}",
         ] {
             let model = MockQuiltModel::new();
             let err = super::package_create_command(&model, name, None, None)
@@ -1143,18 +1161,22 @@ mod tests {
         }
     }
 
+    /// quilt3's `\w` is Unicode, so a name in any script is a name.
     #[tokio::test]
     async fn create_takes_a_name_quilt3_takes() {
-        let mut model = MockQuiltModel::new();
-        model
-            .expect_package_create()
-            .withf(|ns, _, _| ns.to_string() == "team/plate-07_B")
-            .times(1)
-            .returning(|_, _, _| Err(Error::General("stop here".to_string())));
-        let err = super::package_create_command(&model, "team/plate-07_B", None, None)
-            .await
-            .expect_err("the mock stops it");
-        assert!(matches!(err, Error::General(_)), "{err}");
+        for name in ["team/plate-07_B", "team/données", "チーム/データ"] {
+            let mut model = MockQuiltModel::new();
+            let expected = name.to_string();
+            model
+                .expect_package_create()
+                .withf(move |ns, _, _| ns.to_string() == expected)
+                .times(1)
+                .returning(|_, _, _| Err(Error::General("stop here".to_string())));
+            let err = super::package_create_command(&model, name, None, None)
+                .await
+                .expect_err("the mock stops it");
+            assert!(matches!(err, Error::General(_)), "{name}: {err}");
+        }
     }
 
     /// The error S3 returns when the active role cannot write a bucket. The
