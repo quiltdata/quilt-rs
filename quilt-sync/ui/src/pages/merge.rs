@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_navigate, use_query_map};
+use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, MergeData};
 use crate::components::buttons;
@@ -15,7 +15,7 @@ pub fn Merge() -> impl IntoView {
     let notification = RwSignal::new(None);
     let ui_locked = RwSignal::new(false);
 
-    let query = use_query_map();
+    let query = crate::routes::use_query();
     let data = LocalResource::new(move || {
         let namespace = query.read().get("namespace").unwrap_or_default();
         async move { commands::get_merge_data(namespace).await }
