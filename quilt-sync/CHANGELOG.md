@@ -30,7 +30,7 @@
 
 ### Changed
 
-- **New design preview**: a folder heading in the package page's file list reads *3 of 54* when a filter or search hides some of its files
+- **New design preview**: a folder heading in the package page's file list reads *3 of 54* when a filter or search hides some of its files (<https://github.com/quiltdata/quilt-rs/pull/1128>)
 
 ### Fixed
 
