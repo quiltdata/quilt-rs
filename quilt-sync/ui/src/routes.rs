@@ -8,7 +8,7 @@
 //! at the fragment. Percent-encoding here rather than at each call site is what
 //! keeps a seventh call site from being the one that forgets.
 //!
-//! The router decodes on the way in, as does the backend's own parse of a
+//! [`use_query`] decodes on the way in, once, as does the backend's own parse of a
 //! `back` parameter (`src-tauri/src/routes.rs`), so the encoding is invisible to
 //! everything downstream.
 
@@ -17,7 +17,7 @@ use quilt_uri::Namespace;
 /// The installed-package screen for one package.
 ///
 /// `namespace` goes in the query string because `installed_package` reads it
-/// with `use_query_map`, and a bare path leaves it empty. `filter=unmodified`
+/// with [`use_query`], and a bare path leaves it empty. `filter=unmodified`
 /// is part of the address rather than a default the page applies: it is what
 /// every link to this screen has always carried.
 ///
@@ -61,7 +61,7 @@ pub enum DeepLinkOutcome {
 
 impl DeepLinkOutcome {
     /// `localOnly` decides first, then `mismatch` — see [`RevisionMismatch`].
-    pub fn from_query(query: &leptos_router::params::ParamsMap) -> Option<Self> {
+    pub fn from_query(query: &Query) -> Option<Self> {
         if query.get("localOnly").is_some() {
             return Some(Self::LocalOnly);
         }
@@ -89,7 +89,7 @@ pub struct RevisionMismatch {
 impl RevisionMismatch {
     /// `mismatch` alone decides. A missing `mrbucket` reads as empty, as v1
     /// has always read it, so the lookup fails and the band shows the hash.
-    fn from_query(query: &leptos_router::params::ParamsMap) -> Option<Self> {
+    fn from_query(query: &Query) -> Option<Self> {
         Some(Self {
             hash: query.get("mismatch")?,
             bucket: query.get("mrbucket").unwrap_or_default(),
@@ -197,8 +197,8 @@ impl Query {
     }
 }
 
-/// The current query, decoded once; see [`Query`]. Use it in place of
-/// `use_query_map` wherever a value may carry encoded text of its own.
+/// The current query, decoded once; see [`Query`]. Every page reads its
+/// query through it, never through `use_query_map`.
 #[must_use]
 pub fn use_query() -> leptos::prelude::Memo<Query> {
     use leptos::prelude::*;
@@ -360,22 +360,37 @@ mod tests {
         );
     }
 
-    /// What the router decodes is what was carried: `mismatch` alone decides,
-    /// and a missing bucket reads as empty, as v1 has always read it. In the
-    /// browser, because `ParamsMap` unescapes through JavaScript.
+    /// What the address carries is what is read back: `mismatch` alone
+    /// decides, and a missing bucket reads as empty, as v1 has always read
+    /// it. In the browser, because [`Query`] parses through `URLSearchParams`.
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn the_query_reads_back_what_was_carried() {
-        let mut query = leptos_router::params::ParamsMap::new();
-        assert_eq!(DeepLinkOutcome::from_query(&query), None);
+        let href = package_page_href(&ns("org/pkg"));
+        let search = |href: &str| Query::parse(href.split_once('?').expect("a query").1);
+        assert_eq!(DeepLinkOutcome::from_query(&search(&href)), None);
 
-        query.insert("mismatch", "c41d8f02".to_string());
-        query.insert("mrbucket", "quilt-lab".to_string());
-        assert_eq!(DeepLinkOutcome::from_query(&query), Some(mismatch(None)));
-
-        query.insert("mrcatalog", "https://quilt.test".to_string());
+        let outcome = mismatch(None);
+        let carried = keeping_outcome(href.clone(), Some(&outcome));
         assert_eq!(
-            DeepLinkOutcome::from_query(&query),
-            Some(mismatch(Some("https://quilt.test")))
+            DeepLinkOutcome::from_query(&search(&carried)),
+            Some(outcome)
+        );
+
+        let outcome = mismatch(Some("https://quilt.test"));
+        let carried = keeping_outcome(href.clone(), Some(&outcome));
+        assert_eq!(
+            DeepLinkOutcome::from_query(&search(&carried)),
+            Some(outcome)
+        );
+
+        let bucketless = format!("{href}&mismatch=c41d8f02");
+        assert_eq!(
+            DeepLinkOutcome::from_query(&search(&bucketless)),
+            Some(DeepLinkOutcome::Mismatch(RevisionMismatch {
+                hash: "c41d8f02".to_string(),
+                bucket: String::new(),
+                catalog: None,
+            }))
         );
     }
 
@@ -383,17 +398,14 @@ mod tests {
     /// address: with no remote there is nothing to compare against.
     #[wasm_bindgen_test::wasm_bindgen_test]
     fn local_only_reads_back_and_wins_over_a_mismatch() {
-        let mut query = leptos_router::params::ParamsMap::new();
-        query.insert("localOnly", "1".to_string());
         assert_eq!(
-            DeepLinkOutcome::from_query(&query),
+            DeepLinkOutcome::from_query(&Query::parse("?localOnly=1")),
             Some(DeepLinkOutcome::LocalOnly)
         );
-
-        query.insert("mismatch", "c41d8f02".to_string());
-        query.insert("mrbucket", "quilt-lab".to_string());
         assert_eq!(
-            DeepLinkOutcome::from_query(&query),
+            DeepLinkOutcome::from_query(&Query::parse(
+                "?localOnly=1&mismatch=c41d8f02&mrbucket=quilt-lab"
+            )),
             Some(DeepLinkOutcome::LocalOnly)
         );
     }

@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_navigate, use_query_map};
+use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, CommitData, CommitViolation, EntryData, JunkSummary, ViolationField};
 use crate::commands::{CommitWorkflows, WorkflowIntent};
@@ -617,7 +617,7 @@ fn CommitScreen(
     #[prop(optional_no_strip)]
     rules: Option<RulesCheck>,
 ) -> impl IntoView {
-    let query = use_query_map();
+    let query = routes::use_query();
     let ns = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
     let focus = query
         .read_untracked()
@@ -1332,6 +1332,48 @@ mod tests {
         let input = message_input(&el);
         assert_eq!(input.value(), "");
         assert_eq!(input.placeholder(), "Updated 1203 files");
+    }
+
+    thread_local! {
+        static ASKED_FOR: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn recorded(namespace: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        ASKED_FOR.with(|a| a.borrow_mut().push(namespace));
+        answered(String::new())
+    }
+
+    /// The page reads its query as written: decoded twice, `team/q%20report`
+    /// would read as `team/q report`. Valid package names hold no `%`, so
+    /// this guards the reader, not a name a user can create.
+    #[wasm_bindgen_test]
+    async fn a_namespace_holding_a_percent_reads_as_written() {
+        unmount_earlier();
+        ASKED_FOR.with(|a| a.borrow_mut().clear());
+        let namespace = quilt_uri::Namespace::try_from("team/q%20report").unwrap();
+        web_sys::window()
+            .unwrap()
+            .history()
+            .unwrap()
+            .replace_state_with_url(
+                &wasm_bindgen::JsValue::NULL,
+                "",
+                Some(&routes::commit_href(&namespace)),
+            )
+            .unwrap();
+        mount(|| {
+            view! {
+                <Router>
+                    <Routes fallback=|| view! { "no route" }>
+                        <Route path=path!("/commit") view=|| view! { <CommitScreen read=recorded /> } />
+                    </Routes>
+                </Router>
+            }
+        });
+        sleep_ms(80).await;
+        let asked = ASKED_FOR.with(|a| a.borrow().clone());
+        unmount_earlier();
+        assert_eq!(asked.first().map(String::as_str), Some("team/q%20report"));
     }
 
     /// *Create new revision* arrives with the message focused; *Review

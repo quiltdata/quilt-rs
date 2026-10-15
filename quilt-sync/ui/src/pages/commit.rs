@@ -3,7 +3,7 @@ use std::time::Duration;
 use leptos::html;
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_navigate, use_query_map};
+use leptos_router::hooks::use_navigate;
 
 use quilt_uri::S3PackageUri;
 
@@ -31,7 +31,7 @@ pub fn Commit() -> impl IntoView {
     let ui_locked = RwSignal::new(false);
     let refetch = Trigger::new();
 
-    let query = use_query_map();
+    let query = crate::routes::use_query();
     let data = LocalResource::new(move || {
         refetch.track();
         let namespace = query.read().get("namespace").unwrap_or_default();
