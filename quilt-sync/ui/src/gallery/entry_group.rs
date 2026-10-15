@@ -13,6 +13,7 @@ use crate::kit::EntryGroup;
 use crate::kit::EntryRow;
 use crate::kit::EntrySelection;
 use crate::kit::GroupSelection;
+use crate::kit::state_label::StateTone;
 
 /// Enough rows to scroll the heading against. Downloaded, so each carries the
 /// check, not a box — the point of the cell is the heading, not the selection.
@@ -39,7 +40,8 @@ fn marked_group(open: RwSignal<bool>) -> AnyView {
         <Provider value=DiffersId("resolve-differing-entry-group")>
             <EntryGroup
                 name="plate/"
-                count=Signal::derive(|| 2)
+                shown=Signal::derive(|| 2)
+                total=Signal::derive(|| 2)
                 open=open
                 differs=true
                 have_mark=true
@@ -55,10 +57,23 @@ fn marked_group(open: RwSignal<bool>) -> AnyView {
 
 fn settled_group(open: RwSignal<bool>) -> AnyView {
     view! {
-        <EntryGroup name="notes/" count=Signal::derive(|| 3) open=open have_mark=true>
+        <EntryGroup name="notes/" shown=Signal::derive(|| 3)
+                total=Signal::derive(|| 3) open=open have_mark=true>
             <EntryRow name="kickoff-thread.md" size="12 KB" have_mark=true />
             <EntryRow name="intake-upload.md" size="8 KB" have_mark=true />
             <EntryRow name="plate-notes.md" size="4 KB" have_mark=true />
+        </EntryGroup>
+    }
+    .into_any()
+}
+
+/// Three rows of a folder of 54: what a filter or a search leaves of it.
+fn narrowed_group(open: RwSignal<bool>) -> AnyView {
+    view! {
+        <EntryGroup name="raw/" shown=Signal::derive(|| 3) total=Signal::derive(|| 54) open=open>
+            <EntryRow name="plate-03.csv" state="Changed" tone=StateTone::Attention size="4.2 MB" have_mark=true />
+            <EntryRow name="plate-17.csv" state="Changed" tone=StateTone::Attention size="4.0 MB" have_mark=true />
+            <EntryRow name="plate-41.csv" state="New" tone=StateTone::Attention size="3.9 MB" have_mark=true />
         </EntryGroup>
     }
     .into_any()
@@ -115,7 +130,8 @@ fn root_files(pending: RwSignal<bool>, grouped: RwSignal<bool>) -> AnyView {
                     EntrySelection::new(pending, Callback::new(move |next| pending.set(next))),
                 )
             />
-            <EntryGroup name="raw/" count=Signal::derive(|| 2) open=grouped have_mark=true>
+            <EntryGroup name="raw/" shown=Signal::derive(|| 2)
+                total=Signal::derive(|| 2) open=grouped have_mark=true>
                 <EntryRow name="plate-06.csv" size="4.0 MB" have_mark=true />
                 <EntryRow name="plate-07.csv" size="4.1 MB" have_mark=true />
             </EntryGroup>
@@ -143,7 +159,8 @@ fn picks_group(
     selection: impl Fn(usize) -> EntrySelection + Send + Sync + 'static,
 ) -> AnyView {
     view! {
-                <EntryGroup name="raw/" count=Signal::derive(|| 3) open=open selection=picks>
+                <EntryGroup name="raw/" shown=Signal::derive(|| 3)
+                total=Signal::derive(|| 3) open=open selection=picks>
                     {[
                         ("plate-06.csv", "4.0 MB"),
                         ("plate-07.csv", "4.1 MB"),
@@ -174,6 +191,7 @@ pub fn EntryGroupStories() -> impl IntoView {
     let marked_shut = RwSignal::new(false);
     let scroller = RwSignal::new(true);
     let settled = RwSignal::new(true);
+    let narrowed = RwSignal::new(true);
     let pending = RwSignal::new(false);
     let collapsed_row = RwSignal::new(false);
     let grouped = RwSignal::new(true);
@@ -219,7 +237,8 @@ pub fn EntryGroupStories() -> impl IntoView {
             <Cell full=true label="collapsed — the rows are not in the DOM">
                 <EntryGroup
                     name="investigations/2026-09-15-installed-package-page/"
-                    count=Signal::derive(|| 1)
+                    shown=Signal::derive(|| 1)
+                total=Signal::derive(|| 1)
                     open=shut
                     selection=GroupSelection::new(
                         Signal::derive(move || collapsed_row.get().into()),
@@ -248,6 +267,9 @@ pub fn EntryGroupStories() -> impl IntoView {
             <Cell full=true label="every file already here — nothing to select, so no box, and the heading and every row have the check">
                 {settled_group(settled)}
             </Cell>
+            <Cell full=true label="narrowed — a filter or a search hides some of the folder, so the heading says of how many">
+                {narrowed_group(narrowed)}
+            </Cell>
             <Cell full=true label="no group anywhere — Group: None, or a flat package. No gutter to keep">
                 {flat_list(flat)}
             </Cell>
@@ -258,7 +280,8 @@ pub fn EntryGroupStories() -> impl IntoView {
                 <div style="width:100%;max-height:140px;overflow-y:auto">
                     <EntryGroup
                         name="notes/"
-                        count=Signal::derive(|| 6)
+                        shown=Signal::derive(|| 6)
+                total=Signal::derive(|| 6)
                         open=scroller
                         have_mark=true
                     >

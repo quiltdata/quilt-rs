@@ -26,10 +26,14 @@
 //!   under it has one, and the same muted check when every file under it is
 //!   here, so a collapsed folder says either without being opened. The check
 //!   judges the folder whole, not the rows the facet and the search leave, so
-//!   it is true whatever the view shows; the box and the count follow the
-//!   view, because the box acts on it. Under `Ignored` no heading has one.
-//!   Over the cap, a folder the cut runs through has none either: its files
-//!   past the cut were never loaded.
+//!   it is true whatever the view shows; the box follows the view, because
+//!   it acts on it. Under `Ignored` no heading has one. Over the cap, a
+//!   folder the cut runs through has none either: its files past the cut
+//!   were never loaded.
+//! - **A heading counts what it holds of its folder.** `raw/ 54` while the
+//!   view hides none of the folder's files, and `raw/ 3 of 54` once a facet
+//!   or a search hides some. The first number is the rows under the heading,
+//!   collapsed or not; the second is the folder's loaded files in `All`.
 //!   Under whole-package Keeping a folder still receiving files shows neither.
 //! - **The facets filter by state.** `All · Changed · Not downloaded ·
 //!   Ignored`, each with the package's count (the payload's `counts`, not the
@@ -600,20 +604,32 @@ fn differs(differing: &Differing, path: &str) -> bool {
     differing.as_ref().is_some_and(|set| set.contains(path))
 }
 
-/// Each heading the loaded rows draw under `grouping`, and whether every file
-/// under it is here: at least one row that is not ignored, and every such row
-/// here. Built over every loaded row rather than the shown ones, so a facet or
-/// a search that hides a missing file never earns its folder the check.
+/// What a heading knows about its whole folder as loaded, whatever the view
+/// shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Folder {
+    /// Every file under it is here.
+    all_here: bool,
+    /// Its files that are not ignored: the `All` view's rows under it.
+    total: usize,
+}
+
+/// Each heading the loaded rows draw under `grouping`, with its [`Folder`].
+/// Built over every loaded row rather than the shown ones, so the heading's
+/// total is the folder's, and a facet or a search that hides a missing file
+/// never earns its folder the check.
 ///
-/// Over the cap (`truncated`), a folder the cut runs through has files that
-/// were never loaded, so it gets no check whatever its loaded rows say. The
-/// backend sorts by path before it cuts, and the paths under one folder are a
-/// contiguous run of that order, so only a folder holding the last loaded path
-/// can run past the cut: every other folder ends before it or was never
-/// loaded at all. That is the one folder holding it under `TopFolder`, and
-/// that folder and each headed folder above it under `BaseFolder`. A last row
-/// at the root, or under no heading, costs no folder its check.
-fn folders_here(rows: &[Row], grouping: Grouping, truncated: bool) -> BTreeMap<String, bool> {
+/// A folder is all here when it has at least one row that is not ignored, and
+/// every such row is here. Over the cap (`truncated`), a folder the cut runs
+/// through has files that were never loaded, so it gets no check whatever its
+/// loaded rows say. The backend sorts by path before it cuts, and the paths
+/// under one folder are a contiguous run of that order, so only a folder
+/// holding the last loaded path can run past the cut: every other folder ends
+/// before it or was never loaded at all. That is the one folder holding it
+/// under `TopFolder`, and that folder and each headed folder above it under
+/// `BaseFolder`. A last row at the root, or under no heading, costs no folder
+/// its check.
+fn folders(rows: &[Row], grouping: Grouping, truncated: bool) -> BTreeMap<String, Folder> {
     let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
     // The greatest path rather than the last, so the rule holds even if the
     // rows ever arrive out of order.
@@ -625,15 +641,16 @@ fn folders_here(rows: &[Row], grouping: Grouping, truncated: bool) -> BTreeMap<S
                 heading,
                 rows: members,
             } => {
-                let mut tracked = members
+                let tracked: Vec<&Row> = members
                     .iter()
                     .map(|(index, _)| &rows[*index])
                     .filter(|r| !r.ignored)
-                    .peekable();
+                    .collect();
                 let straddles = cut.is_some_and(|last| last.starts_with(heading.as_str()));
                 let all_here =
-                    !straddles && tracked.peek().is_some() && tracked.all(|r| r.place.is_here());
-                Some((heading, all_here))
+                    !straddles && !tracked.is_empty() && tracked.iter().all(|r| r.place.is_here());
+                let total = tracked.len();
+                Some((heading, Folder { all_here, total }))
             }
             Item::Row { .. } => None,
         })
@@ -643,9 +660,9 @@ fn folders_here(rows: &[Row], grouping: Grouping, truncated: bool) -> BTreeMap<S
 /// The rows, grouped as the select says. `collapsed` names the headings the
 /// reader closed; it is the page's, so a re-read that rebuilds these views
 /// finds each folder as the reader left it. `differing` marks rows only; it
-/// never decides which are drawn. `here` is [`folders_here`] over the loaded
-/// rows, read for a heading's check under every `facet` but `Ignored`, which
-/// draws no box and no check on any row and so has nothing to summarise.
+/// never decides which are drawn. `folders` is [`folders`] over the loaded
+/// rows: a heading's total, and its check under every `facet` but `Ignored`,
+/// which draws no box and no check on any row and so has nothing to summarise.
 fn rows_view(
     rows: &[Row],
     grouping: Grouping,
@@ -653,7 +670,7 @@ fn rows_view(
     collapsed: RwSignal<BTreeSet<String>>,
     drawing: Drawing,
     differing: &Differing,
-    here: &BTreeMap<String, bool>,
+    folders: &BTreeMap<String, Folder>,
 ) -> AnyView {
     let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
     let items = group(&paths, grouping);
@@ -671,7 +688,12 @@ fn rows_view(
                 heading,
                 rows: members,
             } => {
-                let count = members.len();
+                let shown = members.len();
+                // The shown rows are some of the loaded ones, so the folder is
+                // always there; the fallback reads one number rather than a
+                // wrong pair.
+                let whole = folders.get(&heading).copied();
+                let total = whole.map_or(shown, |f| f.total);
                 // Collapsed, the heading is where a differing row shows.
                 let holds_marked = members
                     .iter()
@@ -686,8 +708,7 @@ fn rows_view(
                 let pickable = offered(&pickable);
                 // The rows' check, summarised over the whole folder as loaded:
                 // drawn only where no box is.
-                let all_here =
-                    facet != Facet::Ignored && here.get(&heading).copied().unwrap_or(false);
+                let all_here = facet != Facet::Ignored && whole.is_some_and(|f| f.all_here);
                 let members = StoredValue::new(members);
                 let open = RwSignal::new(!collapsed.with_untracked(|c| c.contains(&heading)));
                 let folder = heading.clone();
@@ -717,7 +738,8 @@ fn rows_view(
                     Some(selection) => view! {
                         <EntryGroup
                             name=heading
-                            count=Signal::stored(count)
+                            shown=Signal::stored(shown)
+                            total=Signal::stored(total)
                             open=open
                             selection=selection
                             differs=holds_marked
@@ -729,7 +751,8 @@ fn rows_view(
                     None => view! {
                         <EntryGroup
                             name=heading
-                            count=Signal::stored(count)
+                            shown=Signal::stored(shown)
+                            total=Signal::stored(total)
                             open=open
                             differs=holds_marked
                             have_mark=all_here
@@ -1154,10 +1177,10 @@ fn ready(
         !query.with(String::is_empty) || Facet::from_key(&facet.get()) != Facet::All
     });
     let shown_offered = Signal::derive(move || shown.with(|rs| offered(rs)));
-    // Whether each heading's folder is all here, over every loaded row: keyed
-    // on the grouping alone, so neither the facet nor the search moves it.
-    let here = Memo::new(move |_| {
-        rows.with_value(|rs| folders_here(rs, Grouping::from_label(&grouping.get()), truncated))
+    // Each heading's folder over every loaded row: keyed on the grouping
+    // alone, so neither the facet nor the search moves it.
+    let folders = Memo::new(move |_| {
+        rows.with_value(|rs| self::folders(rs, Grouping::from_label(&grouping.get()), truncated))
     });
     let headed = Signal::derive(move || {
         shown.with(|rs| draws_a_heading(rs, Grouping::from_label(&grouping.get())))
@@ -1177,7 +1200,8 @@ fn ready(
         let f = Facet::from_key(&facet.get());
         shown.with(|rs| {
             if !rs.is_empty() {
-                return here.with(|h| rows_view(rs, g, f, collapsed, drawing, &differing.get(), h));
+                return folders
+                    .with(|fs| rows_view(rs, g, f, collapsed, drawing, &differing.get(), fs));
             }
             // Compact: `Blankslate`'s own padding is taller than this box at
             // the height floor. No action yet — see `Blankslate`.
@@ -1280,6 +1304,39 @@ pub fn FilePaneSkeleton() -> impl IntoView {
 #[cfg(test)]
 mod grouping_tests {
     use super::*;
+
+    /// A folder's total counts every loaded file under it that is not
+    /// ignored, whatever any of them stands at.
+    #[test]
+    fn a_folder_s_total_leaves_its_ignored_files_out() {
+        let rows: Vec<Row> = [
+            ("notes/a.md", "pristine", None),
+            ("notes/b.md", "modified", None),
+            ("raw/.DS_Store", "pristine", Some(".DS_Store")),
+            ("raw/a.csv", "pristine", None),
+            ("raw/b.csv", "remote", None),
+            ("trash/.DS_Store", "pristine", Some(".DS_Store")),
+            ("trash/Thumbs.db", "pristine", Some("Thumbs.db")),
+        ]
+        .into_iter()
+        .map(|(path, status, ignored_by)| {
+            Row::from(EntryData {
+                filename: path.to_string(),
+                size: 0,
+                status: status.to_string(),
+                junky_pattern: None,
+                ignored_by: ignored_by.map(str::to_string),
+                namespace: "team/dataset".try_into().unwrap(),
+            })
+        })
+        .collect();
+        let folders = folders(&rows, Grouping::BaseFolder, false);
+        let totals: Vec<(&str, usize)> = folders
+            .iter()
+            .map(|(heading, f)| (heading.as_str(), f.total))
+            .collect();
+        assert_eq!(totals, [("notes/", 2), ("raw/", 2), ("trash/", 0)]);
+    }
 
     fn row(index: usize, name: &str) -> Item {
         Item::Row {
@@ -3564,6 +3621,92 @@ mod pane_tests {
         );
         assert!(el.query_selector("[title='notes/a.md']").unwrap().is_none());
         assert!(titled(&el, "raw/plate-01.csv"));
+    }
+
+    /// What the heading `folder` says after its name: how many rows it holds,
+    /// and of how many once a view hides some.
+    fn heading_count(el: &web_sys::Element, folder: &str) -> String {
+        let head = el
+            .query_selector(&format!("[title='{folder}']"))
+            .unwrap()
+            .expect("the heading's name")
+            .parent_element()
+            .expect("the heading");
+        text(&head)
+            .strip_prefix(folder)
+            .expect("the heading starts with its name")
+            .to_string()
+    }
+
+    /// `raw/` holds five files the `All` set counts, two of them not
+    /// downloaded, and an ignored file that it does not count.
+    fn raw_folder() -> Vec<EntryData> {
+        vec![
+            entry("notes/a.md", "pristine"),
+            entry("notes/b.md", "pristine"),
+            ignored("raw/.DS_Store"),
+            entry("raw/a-1.csv", "pristine"),
+            entry("raw/a-2.csv", "remote"),
+            entry("raw/b-1.csv", "remote"),
+            entry("raw/b-2.csv", "modified"),
+            entry("raw/b-3.csv", "pristine"),
+        ]
+    }
+
+    /// With nothing hidden a heading reads its one number.
+    #[wasm_bindgen_test]
+    fn a_heading_with_nothing_hidden_reads_one_number() {
+        let el = searchable(RwSignal::new(String::new()), raw_folder());
+        assert_eq!(heading_count(&el, "raw/"), "5", "{}", el.inner_html());
+        assert_eq!(heading_count(&el, "notes/"), "2", "{}", el.inner_html());
+    }
+
+    /// A facet that hides some of a folder's files: its heading reads how many
+    /// it holds of how many the folder has, and a folder it hides none of
+    /// keeps one number.
+    #[wasm_bindgen_test]
+    async fn a_facet_that_hides_files_puts_the_total_in_the_heading() {
+        let (search, facet) = (RwSignal::new(String::new()), RwSignal::new(String::new()));
+        facet.set(Facet::NotDownloaded.key().to_string());
+        let mut entries = raw_folder();
+        entries.push(entry("todo/x.csv", "remote"));
+        entries.push(entry("todo/y.csv", "remote"));
+        let el = driven_pane(entries, Picking::default(), search, facet);
+        leptos::task::tick().await;
+        assert_eq!(heading_count(&el, "raw/"), "2 of 5", "{}", el.inner_html());
+        assert_eq!(heading_count(&el, "todo/"), "2", "{}", el.inner_html());
+    }
+
+    /// A search that hides some of a folder's files does the same.
+    #[wasm_bindgen_test]
+    async fn a_search_that_hides_files_puts_the_total_in_the_heading() {
+        let el = searchable(RwSignal::new(String::new()), raw_folder());
+        type_search(&el, "raw/").await;
+        assert_eq!(heading_count(&el, "raw/"), "5", "{}", el.inner_html());
+        type_search(&el, "raw/a-").await;
+        assert_eq!(heading_count(&el, "raw/"), "2 of 5", "{}", el.inner_html());
+    }
+
+    /// Collapsing hides rows without changing what the heading counts.
+    #[wasm_bindgen_test]
+    async fn a_collapsed_heading_keeps_its_numbers() {
+        let collapsed = RwSignal::new(BTreeSet::from(["raw/".to_string()]));
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(raw_folder(), 8, false)))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=collapsed
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::NotDownloaded.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        });
+        leptos::task::tick().await;
+        assert!(!titled(&el, "raw/a-2.csv"), "{}", el.inner_html());
+        assert_eq!(heading_count(&el, "raw/"), "2 of 5", "{}", el.inner_html());
     }
 
     /// A keystroke that leaves the same rows standing rebuilds nothing: the

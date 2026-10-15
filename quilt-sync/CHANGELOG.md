@@ -28,6 +28,10 @@
 - **New design preview**: the Log in, Set up, Error and Page not found pages, and the page shown while a Quilt link opens, in the new design (<https://github.com/quiltdata/quilt-rs/pull/1127>)
 - **New design preview**: a missing data folder or session opens Set up or Log in, as without the preview (<https://github.com/quiltdata/quilt-rs/pull/1127>)
 
+### Changed
+
+- **New design preview**: a folder heading in the package page's file list reads *3 of 54* when a filter or search hides some of its files
+
 ### Fixed
 
 - Opening a Quilt link that needs a sign-in opens its package after you log in with a code (<https://github.com/quiltdata/quilt-rs/pull/1127>)
