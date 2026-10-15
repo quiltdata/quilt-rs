@@ -31,6 +31,7 @@
 ### Fixed
 
 - Opening a Quilt link that needs a sign-in opens its package after you log in with a code (<https://github.com/quiltdata/quilt-rs/pull/1127>)
+- A package whose name holds `%`, such as `team/q%20report`, opens on its package and commit pages (<https://github.com/quiltdata/quilt-rs/pull/1129>)
 
 ## [v0.22.11] - 2026-10-14
 
