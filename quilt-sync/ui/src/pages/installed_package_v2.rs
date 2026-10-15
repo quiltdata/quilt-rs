@@ -1709,7 +1709,7 @@ mod tests {
     fn the_body_draws_the_file_list_its_own_answer_carries() {
         let el = body(page_data());
         assert!(
-            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+            el.query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
                 .unwrap()
                 .is_some(),
             "markup was {}",
@@ -1727,7 +1727,7 @@ mod tests {
         let el = body(data);
         element_saying(&el, "Could not list this package's files.");
         assert!(
-            el.query_selector("section[aria-label='Files'] [title]")
+            el.query_selector("section[aria-label='Files'] [data-full-name]")
                 .unwrap()
                 .is_none(),
             "markup was {}",
@@ -2627,7 +2627,7 @@ mod tests {
     async fn a_re_read_in_flight_keeps_the_file_list() {
         let el = screen_at(PLAIN, answers_once).await;
         let row = || {
-            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+            el.query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
                 .unwrap()
                 .is_some()
         };
@@ -2646,7 +2646,7 @@ mod tests {
     async fn a_re_read_under_by_design_keeps_the_page() {
         let el = suspended_screen_at(PLAIN, answers_once).await;
         let row = || {
-            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+            el.query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
                 .unwrap()
         };
         assert!(row().is_some(), "listed; markup was {}", el.inner_html());
@@ -2673,7 +2673,7 @@ mod tests {
     async fn an_unchanged_re_read_rebuilds_nothing() {
         let el = suspended_screen_at(PLAIN, settled_read).await;
         let row = el
-            .query_selector("section[aria-label='Files'] [title='a.csv']")
+            .query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
             .unwrap()
             .expect("listed");
 
@@ -2798,9 +2798,11 @@ mod tests {
             .unwrap();
         sleep_ms(40).await;
         let shown = |path: &str| {
-            el.query_selector(&format!("section[aria-label='Files'] [title='{path}']"))
-                .unwrap()
-                .is_some()
+            el.query_selector(&format!(
+                "section[aria-label='Files'] [data-full-name='{path}']"
+            ))
+            .unwrap()
+            .is_some()
         };
         assert!(
             !shown("notes/a.md"),
@@ -2864,7 +2866,7 @@ mod tests {
     async fn another_package_s_read_in_flight_draws_no_stale_files() {
         let el = screen_at(PLAIN, answers_dataset_only).await;
         let row = || {
-            el.query_selector("section[aria-label='Files'] [title='a.csv']")
+            el.query_selector("section[aria-label='Files'] [data-full-name='a.csv']")
                 .unwrap()
                 .is_some()
         };
@@ -3047,12 +3049,14 @@ mod tests {
 
     /// Whether the file list marks the row drawing `path`.
     fn row_marked(el: &web_sys::Element, path: &str) -> bool {
-        el.query_selector(&format!("section[aria-label='Files'] [title='{path}']"))
-            .unwrap()
-            .unwrap_or_else(|| panic!("{path} is listed; markup was {}", el.inner_html()))
-            .closest(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
-            .unwrap()
-            .is_some()
+        el.query_selector(&format!(
+            "section[aria-label='Files'] [data-full-name='{path}']"
+        ))
+        .unwrap()
+        .unwrap_or_else(|| panic!("{path} is listed; markup was {}", el.inner_html()))
+        .closest(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
+        .unwrap()
+        .is_some()
     }
 
     /// In resolve mode the list marks the rows in the page's one differing

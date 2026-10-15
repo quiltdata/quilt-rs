@@ -81,6 +81,7 @@
 //! without the sentence.
 
 use std::cell::Cell;
+use std::cell::RefCell;
 use std::time::Duration;
 
 use leptos::prelude::*;
@@ -91,7 +92,7 @@ use super::Align;
 use super::placement::place;
 use super::unique_id;
 
-stylance::import_crate_style!(style, "src/kit/tooltip.module.scss");
+stylance::import_crate_style!(pub(super) style, "src/kit/tooltip.module.scss");
 
 /// How long the pointer rests before it opens. The common default; shorter
 /// fires on every row a pointer merely crosses in a dense list.
@@ -108,6 +109,9 @@ thread_local! {
     /// When a hover last let one go, in `Date` milliseconds. A pointer
     /// entering a trigger within [`GRACE`] of it is still reading.
     static LET_GO_AT: Cell<f64> = const { Cell::new(f64::NEG_INFINITY) };
+    /// The focus event that last opened one, so a list's names can tell a
+    /// row's own sentence, opened by that same focus, from any other.
+    static OPENED_BY_FOCUS: RefCell<Option<web_sys::Event>> = const { RefCell::new(None) };
 }
 
 /// One tooltip's state: its id, whether it shows, and its pending timer.
@@ -156,6 +160,7 @@ impl TooltipHandle {
             .is_some_and(|element| element.matches(":focus-visible").unwrap_or(false));
         if keyboard {
             self.show();
+            OPENED_BY_FOCUS.set(Some(event.clone()));
         }
     }
 
@@ -166,33 +171,59 @@ impl TooltipHandle {
 
     /// A finger fires `pointerenter` too, and holding it on a mark would open
     /// the sentence after the delay. Touch does nothing.
-    fn pointer_enter(self, event: &web_sys::PointerEvent) {
+    pub(super) fn pointer_enter(self, event: &web_sys::PointerEvent) {
         if event.pointer_type() != "touch" {
             self.enter();
         }
     }
 
-    fn enter(self) {
-        self.cancel();
+    pub(super) fn enter(self) {
         if self.open.get_untracked() {
+            self.cancel();
             return;
         }
-        let warm = SHOWN.get().is_some() || now() - LET_GO_AT.get() < millis(GRACE);
+        self.enter_with(move || self.show());
+    }
+
+    /// A hover began, and `open` decides what it opens when the time comes: at
+    /// once while warm, or after [`DELAY`]. While this one is open that is now,
+    /// so a list's one surface can move to the next name or let go.
+    pub(super) fn enter_with(self, open: impl FnOnce() + 'static) {
+        self.cancel();
+        let warm = self.open.get_untracked()
+            || SHOWN.get().is_some()
+            || now() - LET_GO_AT.get() < millis(GRACE);
         if warm {
-            self.show();
+            open();
         } else {
-            self.later(DELAY, move || self.show());
+            self.later(DELAY, open);
         }
     }
 
-    fn leave(self) {
+    /// Whether this one shows.
+    pub(super) fn is_open(self) -> bool {
+        self.open.get_untracked()
+    }
+
+    /// Whether `event` opened another tooltip, as it bubbled through a row on
+    /// its way to the list: that row's sentence about what it is outranks its
+    /// name. A sentence opened by anything else does not.
+    pub(super) fn another_opened_by(self, event: &web_sys::Event) -> bool {
+        let by_this = OPENED_BY_FOCUS.with_borrow(|last| {
+            last.as_ref()
+                .is_some_and(|last| js_sys::Object::is(last, event))
+        });
+        by_this && SHOWN.get().is_some_and(|other| other != self.open)
+    }
+
+    pub(super) fn leave(self) {
         self.cancel();
         if self.open.get_untracked() {
             self.later(GRACE, move || self.hide(true));
         }
     }
 
-    fn show(self) {
+    pub(super) fn show(self) {
         self.cancel();
         if let Some(other) = SHOWN.get()
             && other != self.open
@@ -205,7 +236,7 @@ impl TooltipHandle {
 
     /// `let_go` is a hover ending, which warms the next trigger; Escape, a
     /// click or a scroll is the reader dismissing it, which does not.
-    fn hide(self, let_go: bool) {
+    pub(super) fn hide(self, let_go: bool) {
         self.cancel();
         if SHOWN.get() == Some(self.open) {
             SHOWN.set(None);
@@ -223,7 +254,7 @@ impl TooltipHandle {
         self.timer.try_set_value(pending);
     }
 
-    fn cancel(self) {
+    pub(super) fn cancel(self) {
         if let Some(Some(pending)) = self.timer.try_update_value(Option::take) {
             pending.clear();
         }
@@ -270,8 +301,38 @@ pub fn Tooltip(
     trigger: impl FnOnce(String) -> AnyView,
 ) -> impl IntoView {
     let handle = handle.unwrap_or_default();
+    let wrapper: NodeRef<leptos::html::Span> = NodeRef::new();
+    let anchor = Signal::derive_local(move || wrapper.get().map(JsCast::unchecked_into));
+
+    view! {
+        <span
+            class=style::root
+            node_ref=wrapper
+            on:pointerenter=move |event| handle.pointer_enter(&event)
+            on:pointerleave=move |_| handle.leave()
+            on:focusin=move |event| handle.focus_in(&event)
+            on:focusout=move |_| handle.focus_out()
+        >
+            {trigger(handle.id())}
+            // Inside the wrapper in the document, though drawn in the top
+            // layer: the pointer crossing onto it has not left the wrapper, so
+            // the sentence stays while it is read.
+            {surface(handle, text, anchor, align, style::surface.to_string())}
+        </span>
+    }
+}
+
+/// The floating sentence, placed against whatever `anchor` holds while open:
+/// a [`Tooltip`]'s own wrapper, or the name a
+/// [`NameTooltip`](super::NameTooltip) last saw the pointer or focus reach.
+pub(super) fn surface(
+    handle: TooltipHandle,
+    text: Signal<String>,
+    anchor: Signal<Option<web_sys::Element>, LocalStorage>,
+    align: Align,
+    class: String,
+) -> impl IntoView {
     let open = handle.open;
-    let anchor: NodeRef<leptos::html::Span> = NodeRef::new();
     let surface: NodeRef<leptos::html::Span> = NodeRef::new();
 
     // Held only while it shows, and only one shows at a time, so a list of
@@ -302,7 +363,8 @@ pub fn Tooltip(
             if !open.try_get_untracked().unwrap_or(false) {
                 return;
             }
-            if let (Some(anchor), Some(surface)) = (anchor.get_untracked(), surface.get_untracked())
+            if let (Some(Some(anchor)), Some(surface)) =
+                (anchor.try_get_untracked(), surface.get_untracked())
             {
                 place(
                     surface.unchecked_ref(),
@@ -344,6 +406,8 @@ pub fn Tooltip(
         });
     };
 
+    // Runs again when the anchor moves while open, which is a list's one
+    // surface following the pointer from one name to the next.
     Effect::new(move |_| {
         let (Some(anchor), Some(surface)) = (anchor.get(), surface.get()) else {
             return;
@@ -372,32 +436,19 @@ pub fn Tooltip(
 
     view! {
         <span
-            class=style::root
-            node_ref=anchor
-            on:pointerenter=move |event| handle.pointer_enter(&event)
-            on:pointerleave=move |_| handle.leave()
-            on:focusin=move |event| handle.focus_in(&event)
-            on:focusout=move |_| handle.focus_out()
+            node_ref=surface
+            id=handle.id()
+            class=class
+            popover="manual"
+            role="tooltip"
+            // Out of the tree, and still a description: a node named
+            // directly by `aria-describedby` is read even when hidden. Left
+            // in, an open surface drawn inside a `<label>` — a selectable
+            // row's `Differs` label is — would join the label's control's name, and a
+            // reader would hear the sentence twice.
+            aria-hidden="true"
         >
-            {trigger(handle.id())}
-            // Inside the wrapper in the document, though drawn in the top
-            // layer: the pointer crossing onto it has not left the wrapper, so
-            // the sentence stays while it is read.
-            <span
-                node_ref=surface
-                id=handle.id()
-                class=style::surface
-                popover="manual"
-                role="tooltip"
-                // Out of the tree, and still a description: a node named
-                // directly by `aria-describedby` is read even when hidden. Left
-                // in, an open surface drawn inside a `<label>` — a selectable
-                // row's `Differs` label is — would join the label's control's name, and a
-                // reader would hear the sentence twice.
-                aria-hidden="true"
-            >
-                {move || text.get()}
-            </span>
+            {move || text.get()}
         </span>
     }
 }

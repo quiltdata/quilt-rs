@@ -76,8 +76,8 @@ use crate::commands::{EntryCounts, EntryData, EntryList, FilesData};
 use crate::kit::state_label::StateTone;
 use crate::kit::{
     Blankslate, Button, ButtonVariant, Card, EntryAction, EntryGroup, EntryRow, EntrySelection,
-    GroupSelection, ListToolbar, LoadFailure, MenuAction, Naming, SearchInput, Segment,
-    SegmentedControl, Select, SelectAll, SkeletonBox, SkeletonText,
+    GroupSelection, ListToolbar, LoadFailure, MenuAction, NameTooltip, Naming, SearchInput,
+    Segment, SegmentedControl, Select, SelectAll, SkeletonBox, SkeletonText,
 };
 use crate::pages::row_menu::{RowCommand, menu_actions};
 use crate::util::{format_size, thousands};
@@ -766,12 +766,14 @@ fn rows_view(
         })
         .collect_view();
     view! {
-        <div
-            class=style::list
-            style=format!("--q-entry-gutter:{}", if headed { "16px" } else { "0px" })
-        >
-            {drawn}
-        </div>
+        <NameTooltip>
+            <div
+                class=style::list
+                style=format!("--q-entry-gutter:{}", if headed { "16px" } else { "0px" })
+            >
+                {drawn}
+            </div>
+        </NameTooltip>
     }
     .into_any()
 }
@@ -2016,10 +2018,10 @@ mod pane_tests {
     }
 
     fn drawn(el: &web_sys::Element) -> Vec<String> {
-        let found = el.query_selector_all("[title]").unwrap();
+        let found = el.query_selector_all("[data-full-name]").unwrap();
         (0..found.length())
             .filter_map(|i| found.get(i)?.dyn_into::<web_sys::Element>().ok())
-            .filter_map(|e| e.get_attribute("title"))
+            .filter_map(|e| e.get_attribute("data-full-name"))
             .collect()
     }
 
@@ -2384,7 +2386,7 @@ mod pane_tests {
                 .unwrap()
                 .expect("inside the list");
             let title = el
-                .query_selector(&format!("[title='{name}']"))
+                .query_selector(&format!("[data-full-name='{name}']"))
                 .unwrap()
                 .expect("titled row");
             text(&title.parent_element().unwrap())
@@ -2429,7 +2431,7 @@ mod pane_tests {
             }
         });
         let titled = |name: &str| {
-            el.query_selector(&format!("[title='{name}']"))
+            el.query_selector(&format!("[data-full-name='{name}']"))
                 .unwrap()
                 .expect("titled row")
         };
@@ -2489,7 +2491,7 @@ mod pane_tests {
 
     fn tick(el: &web_sys::Element, name: &str) {
         let row = el
-            .query_selector(&format!("[title='{name}']"))
+            .query_selector(&format!("[data-full-name='{name}']"))
             .unwrap()
             .expect("titled row")
             .closest("label")
@@ -2522,7 +2524,7 @@ mod pane_tests {
     /// box. A heading's name carries its folder as `title`, as a row's carries
     /// its path.
     fn has_check(el: &web_sys::Element, name: &str) -> bool {
-        el.query_selector(&format!("[title='{name}']"))
+        el.query_selector(&format!("[data-full-name='{name}']"))
             .unwrap()
             .expect("titled row")
             .previous_element_sibling()
@@ -3313,7 +3315,10 @@ mod pane_tests {
             unlisted.inner_html()
         );
         assert!(
-            unlisted.query_selector("[title]").unwrap().is_none(),
+            unlisted
+                .query_selector("[data-full-name]")
+                .unwrap()
+                .is_none(),
             "and no row is drawn without a status"
         );
     }
@@ -3412,7 +3417,9 @@ mod pane_tests {
             el.inner_html()
         );
         assert!(
-            el.query_selector("[title='notes/a.md']").unwrap().is_none(),
+            el.query_selector("[data-full-name='notes/a.md']")
+                .unwrap()
+                .is_none(),
             "its rows stay hidden"
         );
         assert!(collapsed.get_untracked().contains("notes/"));
@@ -3457,7 +3464,7 @@ mod pane_tests {
     }
 
     fn titled(el: &web_sys::Element, path: &str) -> bool {
-        el.query_selector(&format!("[title='{path}']"))
+        el.query_selector(&format!("[data-full-name='{path}']"))
             .unwrap()
             .is_some()
     }
@@ -3619,7 +3626,11 @@ mod pane_tests {
             "back, and still collapsed: {}",
             el.inner_html()
         );
-        assert!(el.query_selector("[title='notes/a.md']").unwrap().is_none());
+        assert!(
+            el.query_selector("[data-full-name='notes/a.md']")
+                .unwrap()
+                .is_none()
+        );
         assert!(titled(&el, "raw/plate-01.csv"));
     }
 
@@ -3627,7 +3638,7 @@ mod pane_tests {
     /// and of how many once a view hides some.
     fn heading_count(el: &web_sys::Element, folder: &str) -> String {
         let head = el
-            .query_selector(&format!("[title='{folder}']"))
+            .query_selector(&format!("[data-full-name='{folder}']"))
             .unwrap()
             .expect("the heading's name")
             .parent_element()
@@ -3722,13 +3733,13 @@ mod pane_tests {
             ],
         );
         let before = el
-            .query_selector("[title='raw/plate-01.csv']")
+            .query_selector("[data-full-name='raw/plate-01.csv']")
             .unwrap()
             .expect("the row");
         type_search(&el, "pla").await;
         type_search(&el, "plat").await;
         let after = el
-            .query_selector("[title='raw/plate-01.csv']")
+            .query_selector("[data-full-name='raw/plate-01.csv']")
             .unwrap()
             .expect("the row");
         assert!(before.is_same_node(Some(&after)), "the row was rebuilt");
@@ -3827,7 +3838,7 @@ mod pane_tests {
             "the tick stands"
         );
         let input: web_sys::HtmlInputElement = el
-            .query_selector("[title='remote-a.csv']")
+            .query_selector("[data-full-name='remote-a.csv']")
             .unwrap()
             .unwrap()
             .closest("label")
@@ -3903,7 +3914,7 @@ mod marks_tests {
     /// The row drawing `path`, if it is drawn and marked.
     fn is_marked(el: &web_sys::Element, path: &str) -> bool {
         let name = el
-            .query_selector(&format!("[title='{path}']"))
+            .query_selector(&format!("[data-full-name='{path}']"))
             .unwrap()
             .unwrap_or_else(|| panic!("{path} is drawn; markup was {}", el.inner_html()));
         name.closest(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
@@ -4001,13 +4012,13 @@ mod marks_tests {
         });
         assert!(is_marked(&el, "plate/a.csv"));
         assert!(
-            el.query_selector("[title='plate/b.csv']")
+            el.query_selector("[data-full-name='plate/b.csv']")
                 .unwrap()
                 .is_some(),
             "an unmarked row is still drawn"
         );
         let row = el
-            .query_selector("[title='plate/a.csv']")
+            .query_selector("[data-full-name='plate/a.csv']")
             .unwrap()
             .unwrap()
             .closest("label")
@@ -4022,7 +4033,7 @@ mod marks_tests {
         search.set("b.csv".to_string());
         crate::test_support::sleep_ms(40).await;
         assert!(
-            el.query_selector("[title='plate/a.csv']")
+            el.query_selector("[data-full-name='plate/a.csv']")
                 .unwrap()
                 .is_none(),
             "a search hides a marked row like any other"
@@ -4090,7 +4101,7 @@ mod marks_tests {
     fn a_collapsed_folder_holding_a_marked_file_says_so() {
         let el = folder_pane(Some(marks(&["plate/a.csv"])));
         assert!(
-            el.query_selector("[title='plate/a.csv']")
+            el.query_selector("[data-full-name='plate/a.csv']")
                 .unwrap()
                 .is_none(),
             "collapsed, the row is not drawn"

@@ -206,7 +206,7 @@ pub fn EntryGroup(
                     }
                     None => view! { <span class=style::nobox /> }.into_any(),
                 }}
-                <span class=style::name title=full_name>{name}</span>
+                <span class=style::name data-full-name=full_name>{name}</span>
                 <Show when=hides_difference>
                     <Tooltip
                         handle=tip
