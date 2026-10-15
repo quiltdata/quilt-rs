@@ -263,6 +263,8 @@ pub(crate) fn LoginScreen(read: PageRead<LoginData>) -> impl IntoView {
         let Some(Ok(data)) = answer.get_untracked() else {
             return;
         };
+        // This command is now the last one, so an earlier failure is not news.
+        outcome.set(None);
         let here = key.get_untracked();
         leptos::task::spawn_local(async move {
             if let Err(e) = commands::open_in_web_browser(data.catalog_url).await {
