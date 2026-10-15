@@ -1,5 +1,4 @@
 use leptos::prelude::*;
-use leptos_router::hooks::use_query_map;
 
 use crate::commands::{self, LoginErrorData};
 use crate::components::buttons;
@@ -12,7 +11,7 @@ pub fn Error() -> impl IntoView {
     let notification = RwSignal::new(None);
     let refetch = Trigger::new();
 
-    let query = use_query_map();
+    let query = crate::routes::use_query();
     let data = LocalResource::new(move || {
         refetch.track();
         let host = query.read().get("host").unwrap_or_default();

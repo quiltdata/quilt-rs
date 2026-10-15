@@ -6,6 +6,7 @@ use crate::commands;
 use crate::components::buttons;
 use crate::components::{Layout, Notification};
 use crate::kit::error_text::ErrorResponse;
+use crate::kit::readable;
 
 /// Handle a command error that left the surface with nothing to render.
 ///
@@ -35,34 +36,66 @@ pub fn handle_or_display_in_shell(
 }
 
 fn handle(error: &str, notification: RwSignal<Option<Notification>>, in_shell: bool) -> AnyView {
-    if let Ok(parsed) = serde_json::from_str::<ErrorResponse>(error) {
-        match parsed.kind.as_str() {
-            "session_absent" => {
-                let host = parsed.host.filter(|h| !h.is_empty());
-                match host {
-                    Some(host) => {
-                        let navigate = use_navigate();
-                        let back = current_path_and_query();
-                        let back_encoded = urlencoding::encode(&back);
-                        navigate(
-                            &format!("/login?host={host}&back={back_encoded}"),
-                            NavigateOptions::default(),
-                        );
-                        ().into_any()
-                    }
-                    None => render_page_error(&parsed.message, notification, in_shell),
-                }
-            }
-            "setup_required" => {
-                let navigate = use_navigate();
-                navigate("/setup", NavigateOptions::default());
-                ().into_any()
-            }
-            _ => render_page_error(&parsed.message, notification, in_shell),
-        }
-    } else {
-        render_page_error(error, notification, in_shell)
+    if let Some(target) = redirect(error) {
+        let navigate = use_navigate();
+        navigate(&target, NavigateOptions::default());
+        return ().into_any();
     }
+    render_page_error(&readable(error), notification, in_shell)
+}
+
+/// Where a load failure sends the reader instead of drawing itself, by the
+/// rules [`handle_or_display`] lists: `/login` for a missing session with a
+/// host, `/setup` for a missing data directory, and `None` for the rest.
+///
+/// For the v2 pages, which draw their own failure in their own frame but go
+/// where v1 goes.
+pub fn redirect(error: &str) -> Option<String> {
+    let parsed = serde_json::from_str::<ErrorResponse>(error).ok()?;
+    match parsed.kind.as_str() {
+        "session_absent" => {
+            let host = parsed.host.filter(|h| !h.is_empty())?;
+            let back = current_path_and_query();
+            let back_encoded = urlencoding::encode(&back);
+            Some(format!("/login?host={host}&back={back_encoded}"))
+        }
+        "setup_required" => Some("/setup".to_string()),
+        _ => None,
+    }
+}
+
+/// For a v2 read that failed on the page at path `on`: go where [`redirect`]
+/// says, replacing this entry so Back does not land on a page that sends the
+/// reader straight back, and say whether it went. The page draws nothing in
+/// place then.
+///
+/// Never to `on` itself, so `/setup` and `/login` reading the error they
+/// exist to fix draw their own failure instead of looping. `on` is the page's
+/// path as it mounted, not the window's now: a page whose first read already
+/// went has not left yet when its second fails.
+pub fn follow_redirect(error: &str, on: &str) -> bool {
+    let Some(target) = redirect(error) else {
+        return false;
+    };
+    if target.split('?').next() == Some(on) {
+        return false;
+    }
+    let navigate = use_navigate();
+    navigate(
+        &target,
+        NavigateOptions {
+            replace: true,
+            ..NavigateOptions::default()
+        },
+    );
+    true
+}
+
+/// The window's path, for [`follow_redirect`]'s `on`.
+pub fn current_path() -> String {
+    web_sys::window()
+        .and_then(|w| w.location().pathname().ok())
+        .unwrap_or_default()
 }
 
 fn render_page_error(
@@ -118,6 +151,23 @@ mod tests {
 
     fn appbars(el: &web_sys::Element) -> u32 {
         el.query_selector_all(".layout-appbar").unwrap().length()
+    }
+
+    #[wasm_bindgen_test]
+    fn sign_in_and_setup_are_the_only_redirects() {
+        let login = redirect(r#"{"kind":"session_absent","message":"m","host":"quilt.test"}"#)
+            .expect("a missing session with a host signs in");
+        assert!(login.starts_with("/login?host=quilt.test&back="), "{login}");
+        assert_eq!(
+            redirect(r#"{"kind":"setup_required","message":"m"}"#).as_deref(),
+            Some("/setup")
+        );
+        assert_eq!(redirect(r#"{"kind":"session_absent","message":"m"}"#), None);
+        assert_eq!(
+            redirect(r#"{"kind":"registry_url_missing","message":"m"}"#),
+            None
+        );
+        assert_eq!(redirect("boom"), None);
     }
 
     #[wasm_bindgen_test]

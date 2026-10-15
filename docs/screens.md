@@ -27,6 +27,25 @@ First-run screen. User picks the home directory for Quilt data.
 
 After submit -> **Installed Packages List**
 
+### Setup (v2)
+
+With *New design preview* on, `/setup` renders this page instead: one card
+with the same explanation, the directory field (chosen with **Browse**, not
+typed) and **Save**. A failed pick or save says so in the band under the
+appbar.
+
+```text
++--[appbar]----------------------------------------------+
+| [logo]                                 [refresh] [gear] |
++---------------------------------------------------------+
+|        Set up QuiltSync                                 |
+|        Select a directory where QuiltSync will ...      |
+|        Set home directory                               |
+|        [ /home/user/QuiltSync__________ ] [Browse]      |
+|        [Save]                                           |
++---------------------------------------------------------+
+```
+
 ---
 
 ### Login
@@ -53,6 +72,29 @@ page that triggered it via `back` parameter.
 ```
 
 After login -> redirect to `back` URL (the page user came from)
+
+### Login (v2)
+
+With *New design preview* on, `/login` renders this page instead: one card
+titled with the host. **Log in with browser** first; then the catalog's
+address with **Open browser**, the **Code** field and **Submit code and Log
+in**, which waits for a code. A failure says so in the band under the
+appbar; opening the browser sign-in says to continue there.
+
+```text
++--[appbar]----------------------------------------------+
+| [logo]                                 [refresh] [gear] |
++---------------------------------------------------------+
+|        Log in to open.quiltdata.com                     |
+|        [Log in with browser]                            |
+|        ------------------------------------------       |
+|        Or visit https://open.quiltdata.com/code ...     |
+|        [Open browser]                                   |
+|        Code                                             |
+|        [ ______________________________ ]               |
+|        [Submit code and Log in]                         |
++---------------------------------------------------------+
+```
 
 ---
 
@@ -827,6 +869,22 @@ Generic error page with recovery options.
 
 Buttons shown depend on context (e.g. [Login] only when
 auth-related).
+
+### Error (v2)
+
+With *New design preview* on, `/error` renders the same title, message and
+buttons centred in the v2 frame; **Login** shows only when there is a host.
+*Open .quilt directory* reports in the band under the appbar. An unknown
+address draws the same shape with *Page not found* and **Go home**.
+
+### Opening a Quilt link (v2)
+
+`/remote-package` runs the link as it opens. With *New design preview* on it
+shows a spinner in the v2 frame, with **Refresh** disabled, then replaces
+itself with the package page. A failure draws the error buttons (Reload page,
+Open .quilt directory, Go home) in the same frame; Reload page runs the link
+again without reloading the window. A link that needs a sign-in or setup goes
+there instead, replacing this page so Back does not run the link again.
 
 ---
 

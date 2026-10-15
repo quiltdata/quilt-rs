@@ -246,7 +246,7 @@ pub struct MergeData {
     pub uri: Option<S3PackageUri>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginData {
     pub host: String,
@@ -254,7 +254,7 @@ pub struct LoginData {
     pub catalog_url: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginErrorData {
     pub title: String,
@@ -352,7 +352,7 @@ pub struct ChangelogEntry {
     pub body: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetupData {
     pub default_home: String,

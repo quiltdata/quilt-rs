@@ -390,7 +390,9 @@ mod tests {
         )
         .await;
         let line = clause.get_bounding_client_rect();
-        assert!(line.top() >= name.bottom(), "under the name");
+        // Within half a pixel: far down the test page the two edges round
+        // apart by a fraction.
+        assert!(line.top() >= name.bottom() - 0.5, "under the name");
         assert!(
             clause.scroll_width() <= clause.client_width(),
             "and not cut: {} of {}",

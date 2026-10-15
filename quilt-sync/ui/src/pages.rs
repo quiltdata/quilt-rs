@@ -2,26 +2,32 @@ mod commit;
 // Not routed yet: the gallery draws these regions, and the port routes them.
 pub mod commit_v2;
 mod error;
+// Public for the gallery, which draws the slate over fixtures.
+pub mod error_v2;
 mod installed_package;
 mod installed_package_v2;
 mod installed_packages_list;
 mod json_editor;
 mod login;
+pub mod login_v2;
 mod main_page;
 mod merge;
 mod not_found;
 mod remote_package;
+mod remote_package_v2;
 pub mod row_menu;
 mod settings;
 // Not routed yet: the gallery draws these cards, and the port routes them.
 pub mod settings_v2;
 mod setup;
+pub mod setup_v2;
 mod status_watch;
 mod v2_page;
 
 pub use commit::Commit;
 pub use commit_v2::{CommitV2, CommitV2Skeleton};
 pub use error::Error;
+pub use error_v2::{ErrorV2, ErrorV2Skeleton, NotFoundV2};
 pub use installed_package::InstalledPackage;
 pub use installed_package_v2::InstalledPackageV2;
 // The page's first paint, for `main.rs` to draw while it decides the page and for
@@ -53,6 +59,7 @@ pub use installed_package_v2::resolve::{
 };
 pub use installed_packages_list::InstalledPackagesList;
 pub use login::Login;
+pub use login_v2::{LoginV2, LoginV2Skeleton};
 pub use main_page::MainPage;
 // The same, for the main page.
 pub use main_page::MainPageSkeleton;
@@ -66,9 +73,11 @@ pub use main_page::{StateStrip, list_region_class, rows_class};
 pub use merge::Merge;
 pub use not_found::NotFound;
 pub use remote_package::RemotePackage;
+pub use remote_package_v2::{RemotePackageV2, RemotePackageV2Skeleton};
 pub use settings::Settings;
 pub use settings_v2::{SettingsV2, SettingsV2Skeleton};
 pub use setup::Setup;
+pub use setup_v2::{SetupV2, SetupV2Skeleton};
 
 #[cfg(test)]
 mod tests {

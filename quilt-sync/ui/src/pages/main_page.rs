@@ -41,6 +41,7 @@ use crate::commands::MainPagePackagesData;
 use crate::commands::MainPageRecentFilesData;
 use crate::commands::MainPageWatcherData;
 use crate::components::appbar::appbar_actions;
+use crate::error_handler::{current_path, follow_redirect};
 use crate::routes::package_page_href;
 use crate::util;
 use grouping::ListRowData;
@@ -795,6 +796,7 @@ fn files_view(
     // payload of its own and stands whatever the other one did, but with no
     // packages there are no addresses and so no Copy buttons.
     addresses: HashMap<Namespace, S3PackageUri>,
+    first_load: FirstLoad,
 ) -> AnyView {
     view! {
         // Three skeleton rows, as the packages view shows in the same position.
@@ -817,6 +819,7 @@ fn files_view(
                 Suspend::new(async move {
                 match recent_files.await {
                     Ok(data) => {
+                        first_load.answered();
                         view! {
                             <recent_files::RecentFilesRegion
                                 files=data.files
@@ -827,6 +830,8 @@ fn files_view(
                         }
                             .into_any()
                     }
+                    // A missing session or setup goes where v1 sends it.
+                    Err(err) if first_load.redirect(&err) => ().into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
                             &format!("get_main_page_recent_files failed: {err}").into(),
@@ -839,6 +844,34 @@ fn files_view(
         </Transition>
     }
     .into_any()
+}
+
+/// Whether a failed read may still send the reader to sign-in or setup, as
+/// v1 does: only while the page has drawn no answer. After that the reader
+/// may be reading or working, and a failed re-read is reported in place.
+#[derive(Clone, Copy)]
+struct FirstLoad {
+    /// The page as it mounted, for the redirect's check against itself.
+    on: StoredValue<String>,
+    drawn: StoredValue<bool>,
+}
+
+impl FirstLoad {
+    fn new() -> Self {
+        Self {
+            on: StoredValue::new(current_path()),
+            drawn: StoredValue::new(false),
+        }
+    }
+
+    /// A read answered, so the page has something on screen.
+    fn answered(self) {
+        self.drawn.set_value(true);
+    }
+
+    fn redirect(self, error: &str) -> bool {
+        !self.drawn.get_value() && follow_redirect(error, &self.on.get_value())
+    }
 }
 
 /// A read of the watcher's payload, for [`MainPageRegions`]' test seam.
@@ -931,6 +964,7 @@ fn MainPageRegions(
     #[prop(optional_no_strip)]
     fetch_watcher: Option<WatcherRead>,
 ) -> impl IntoView {
+    let first_load = FirstLoad::new();
     // In the component body, NOT inside the `Suspend` closure below. A refetch
     // rebuilds that subtree deliberately — it is what re-collapses the queue's
     // expanders (R6) — so a view signal created inside it would reset on every
@@ -1006,9 +1040,12 @@ fn MainPageRegions(
                 {move || Suspend::new(async move {
                     match accounts.await {
                         Ok(data) => {
+                            first_load.answered();
                             view! { <accounts::AccountsBody data=data refresh=reload /> }
                                 .into_any()
                         }
+                        // A missing session or setup goes where v1 sends it.
+                        Err(err) if first_load.redirect(&err) => ().into_any(),
                         Err(err) => {
                             // Logged once, here. The card says it could not read:
                             // rows would claim sessions it has not seen, and no card
@@ -1036,6 +1073,7 @@ fn MainPageRegions(
             {move || Suspend::new(async move {
                 match packages.await {
                     Ok(data) => {
+                        first_load.answered();
                         // The light phase's payload, held for the life of this
                         // resolve: it is the base the store's projection writes
                         // the heavy phase's answers over, and both the store and
@@ -1281,12 +1319,14 @@ fn MainPageRegions(
                                     }
                                 }
                             >
-                                {files_view(recent_files, query, group_files_by, files_retry, addresses.clone())}
+                                {files_view(recent_files, query, group_files_by, files_retry, addresses.clone(), first_load)}
                             </Show>
                             </div>
                         }
                             .into_any()
                     }
+                    // A missing session or setup goes where v1 sends it.
+                    Err(err) if first_load.redirect(&err) => ().into_any(),
                     Err(err) => {
                         web_sys::console::error_1(
                             &format!("get_main_page_packages failed: {err}").into(),
@@ -1310,7 +1350,7 @@ fn MainPageRegions(
                                         view! { <Card>{render_fetch_error(packages_retry)}</Card> }
                                     }
                                 >
-                                    {files_view(recent_files, query, group_files_by, files_retry, HashMap::new())}
+                                    {files_view(recent_files, query, group_files_by, files_retry, HashMap::new(), first_load)}
                                 </Show>
                             </div>
                         }
@@ -2992,6 +3032,34 @@ mod tests {
         );
     }
 
+    /// A fresh app with no data folder: the reads say so, and the page goes to
+    /// `/setup`, replacing its entry, as v1's does, instead of drawing two
+    /// failures.
+    #[wasm_bindgen_test]
+    async fn reads_that_need_setup_go_to_setup() {
+        let window = web_sys::window().unwrap();
+        let history = window.history().unwrap();
+        let was = window.location().href().unwrap();
+        history
+            .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/"))
+            .unwrap();
+        let before = history.length().unwrap();
+        let setup = r#"{"kind":"setup_required","message":"Set up"}"#.to_string();
+        let el = mount_regions(Err(setup.clone()), Err(setup));
+        sleep_ms(50).await;
+
+        let landed = window.location().pathname().unwrap();
+        let text = el.text_content().unwrap();
+        let length = history.length().unwrap();
+        history
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&was))
+            .unwrap();
+        assert_eq!(landed, "/setup");
+        assert_eq!(length, before, "the entry is replaced");
+        assert!(!text.contains(FETCH_ERROR_WORDS), "got: {text}");
+        assert!(!text.contains(ACCOUNTS_ERROR_WORDS), "got: {text}");
+    }
+
     #[wasm_bindgen_test]
     async fn a_failed_packages_read_leaves_no_queue_to_claim_all_is_well() {
         // A failed read is not an empty one: `Everything is Latest — 0 packages`
@@ -4379,6 +4447,7 @@ mod tests {
                 RwSignal::new(GROUP_NONE.to_string()),
                 Trigger::new(),
                 HashMap::new(),
+                FirstLoad::new(),
             )
         });
         leptos::task::tick().await;

@@ -158,9 +158,70 @@ pub fn merge_href(namespace: &Namespace) -> String {
     format!("/merge?namespace={namespace}")
 }
 
+/// A page's query string, each value decoded once.
+///
+/// `leptos_router`'s `use_query_map` decodes each value twice: the browser's
+/// `URLSearchParams` decodes it, then `ParamsMap::insert` unescapes it again.
+/// A value that is itself an encoded address, like the login page's `back`
+/// pointing at a deep link, then loses its own encoding: `quilt%2Bs3` comes
+/// back as `quilt+s3`, unencoded, and its `#` and `&` split it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Query(Vec<(String, String)>);
+
+impl Query {
+    /// Parse a query string, with or without its leading `?`.
+    #[must_use]
+    pub fn parse(search: &str) -> Self {
+        let Ok(params) = web_sys::UrlSearchParams::new_with_str(search) else {
+            return Self::default();
+        };
+        let mut pairs = Vec::new();
+        let entries = js_sys::try_iter(&params).ok().flatten();
+        for pair in entries.into_iter().flatten().flatten() {
+            let pair = js_sys::Array::from(&pair);
+            if let (Some(key), Some(value)) = (pair.get(0).as_string(), pair.get(1).as_string()) {
+                pairs.push((key, value));
+            }
+        }
+        Self(pairs)
+    }
+
+    /// The last value given for `key`, as `ParamsMap::get` answers.
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<String> {
+        self.0
+            .iter()
+            .rev()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+    }
+}
+
+/// The current query, decoded once; see [`Query`]. Use it in place of
+/// `use_query_map` wherever a value may carry encoded text of its own.
+#[must_use]
+pub fn use_query() -> leptos::prelude::Memo<Query> {
+    use leptos::prelude::*;
+    // The route's own URL, as `use_query_map` reads it: it stays put while the
+    // router leaves this route, so a page does not read an address it is not.
+    let url = leptos_router::hooks::use_url();
+    Memo::new(move |_| url.with(|url| Query::parse(url.search())))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `back` that is itself an encoded address keeps its encoding.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn a_query_value_is_decoded_once() {
+        let relay = "/remote-package?uri=quilt%2Bs3%3A%2F%2Fb%23package%3Da%2Fb%26catalog%3Dc";
+        let search = format!("?host=quilt.test&back={}", urlencoding::encode(relay));
+        let query = Query::parse(&search);
+        assert_eq!(query.get("back").as_deref(), Some(relay));
+        assert_eq!(query.get("host").as_deref(), Some("quilt.test"));
+        assert_eq!(query.get("missing"), None);
+    }
 
     fn ns(text: &str) -> Namespace {
         Namespace::try_from(text).expect("a namespace")

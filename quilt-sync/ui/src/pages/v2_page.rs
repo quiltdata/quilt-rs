@@ -28,13 +28,18 @@
 //!    that writes.
 //! 6. One band under the appbar, [`PageHandle::outcome`], keyed to the
 //!    address, so a result that lands after the reader moved on is not drawn.
+//! 7. A read that fails for a missing session or setup goes to `/login` or
+//!    `/setup`, as v1 does, but only before the page has drawn an answer for
+//!    its address. After that the page may hold the reader's work, so a failed
+//!    re-read stays and says so.
 
 use std::future::Future;
 use std::pin::Pin;
 
 use leptos::prelude::*;
 
-use crate::components::appbar::appbar_actions;
+use crate::components::appbar::{appbar_actions, transit_appbar_actions};
+use crate::error_handler::{current_path, follow_redirect};
 use crate::kit::readable;
 use crate::kit::{Banner, BannerVariant, PageLayout};
 
@@ -180,6 +185,11 @@ pub fn V2Page<T, B, D, F>(
     /// itself has none.
     #[prop(optional)]
     actions: Option<AnyView>,
+    /// The page's mount is its operation, so a reload or a Back onto it would
+    /// run it again: *Refresh* is drawn disabled and every way out of the
+    /// appbar replaces this history entry. Wins over `actions`.
+    #[prop(optional)]
+    transit: bool,
 ) -> impl IntoView
 where
     T: Clone + PartialEq + Send + Sync + 'static,
@@ -193,6 +203,9 @@ where
         in_flight,
         ..
     } = page;
+    let on = current_path();
+    // The address whose answer the body last drew.
+    let drawn_for = StoredValue::new(None::<String>);
     view! {
         <PageLayout
             heading=heading
@@ -209,11 +222,28 @@ where
                 }}
             }
                 .into_any()
-            actions=actions.unwrap_or_else(|| appbar_actions(move || reload.notify(), in_flight.into()))
+            actions=if transit {
+                transit_appbar_actions()
+            } else {
+                actions.unwrap_or_else(|| appbar_actions(move || reload.notify(), in_flight.into()))
+            }
+            replace=transit
         >
             {move || match answer.get() {
                 None => skeleton(),
-                Some(Ok(d)) => body(d),
+                Some(Ok(d)) => {
+                    drawn_for.set_value(Some(showing.get_untracked()));
+                    body(d)
+                }
+                // A missing session or setup goes where v1 sends it, but only
+                // from a page with nothing on screen for this address: one
+                // that has drawn may hold the reader's work.
+                Some(Err(e))
+                    if drawn_for.with_value(|k| k.as_deref() != Some(&*showing.get_untracked()))
+                        && follow_redirect(&e, &on) =>
+                {
+                    skeleton()
+                }
                 Some(Err(_)) => failure(),
             }}
         </PageLayout>
@@ -261,6 +291,15 @@ pub(super) fn outcome_band(outcome: RwSignal<Option<Outcome>>, showing: Signal<S
         </Show>
     }
     .into_any()
+}
+
+/// Whether the page that started a command on address `here` is still up and
+/// still on it, for a command whose answer moves the reader on: a late answer
+/// must not take them from wherever they went meanwhile.
+#[must_use]
+pub fn still_here(key: Memo<String>, here: &str) -> bool {
+    // `try_`: the page can be gone by the time the answer lands.
+    key.try_get_untracked().as_deref() == Some(here)
 }
 
 /// A failure the page words, with the engine's text after it.
@@ -500,6 +539,141 @@ mod tests {
 
         sleep_ms(80).await;
         assert!(!page.busy.get_untracked(), "released when it settles");
+    }
+
+    fn setup_required(_: String) -> Pin<Box<dyn Future<Output = Result<u32, String>>>> {
+        Box::pin(async { Err(r#"{"kind":"setup_required","message":"Set up"}"#.to_string()) })
+    }
+
+    fn session_absent(_: String) -> Pin<Box<dyn Future<Output = Result<u32, String>>>> {
+        Box::pin(async {
+            Err(r#"{"kind":"session_absent","message":"Log in","host":"quilt.test"}"#.to_string())
+        })
+    }
+
+    /// The probe at `at`, over `read`: where the window is afterwards, and
+    /// whether the page drew its failure. Puts the window back after.
+    async fn probe_at(at: &str, read: PageRead<u32>) -> (String, String, bool) {
+        let window = web_sys::window().unwrap();
+        let history = window.history().unwrap();
+        let was = window.location().href().unwrap();
+        history
+            .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(at))
+            .unwrap();
+        let before = history.length().unwrap();
+        let el = probe(vec![1], vec![], read).await;
+        let location = window.location();
+        let landed = format!(
+            "{}{}",
+            location.pathname().unwrap(),
+            location.search().unwrap()
+        );
+        assert_eq!(history.length().unwrap(), before, "the entry is replaced");
+        let failed = el.text_content().unwrap_or_default().contains("failed");
+        unmount_earlier();
+        history
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&was))
+            .unwrap();
+        (landed, at.to_string(), failed)
+    }
+
+    /// A read that needs setup goes to `/setup`, as v1 does, and draws no
+    /// failure on the way.
+    #[wasm_bindgen_test]
+    async fn a_read_that_needs_setup_goes_to_setup() {
+        let (landed, _, failed) =
+            probe_at("/installed-package?namespace=team%2Fa", setup_required).await;
+        assert_eq!(landed, "/setup");
+        assert!(!failed);
+    }
+
+    /// A read with no session goes to `/login` for its host, coming back here.
+    #[wasm_bindgen_test]
+    async fn a_read_with_no_session_goes_to_login_and_back() {
+        let (landed, at, failed) =
+            probe_at("/installed-package?namespace=team%2Fa", session_absent).await;
+        let back = urlencoding::encode(&at).into_owned();
+        assert_eq!(landed, format!("/login?host=quilt.test&back={back}"));
+        assert!(!failed);
+    }
+
+    /// Answers 1, then a missing session.
+    fn lapses(_: String) -> Pin<Box<dyn Future<Output = Result<u32, String>>>> {
+        let n = READS.with(|r| {
+            r.set(r.get() + 1);
+            r.get()
+        });
+        Box::pin(async move {
+            if n == 1 {
+                Ok(1)
+            } else {
+                Err(
+                    r#"{"kind":"session_absent","message":"Log in","host":"quilt.test"}"#
+                        .to_string(),
+                )
+            }
+        })
+    }
+
+    /// A page that has drawn its address stays when a re-read finds the
+    /// session gone, and keeps what was typed for when it reads again.
+    #[wasm_bindgen_test]
+    async fn a_failed_re_read_after_an_answer_stays() {
+        let window = web_sys::window().unwrap();
+        let was = window.location().href().unwrap();
+        let history = window.history().unwrap();
+        history
+            .push_state_with_url(
+                &wasm_bindgen::JsValue::NULL,
+                "",
+                Some("/commit?namespace=team%2Fa"),
+            )
+            .unwrap();
+        let el = probe(vec![1], vec![], lapses).await;
+        type_into(&field(&el), "Plate 7");
+        handle().reload.notify();
+        sleep_ms(30).await;
+
+        let landed = window.location().pathname().unwrap();
+        let failed = el.text_content().unwrap_or_default().contains("failed");
+        history
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&was))
+            .unwrap();
+        assert_eq!(landed, "/commit", "the page stayed");
+        assert!(
+            failed,
+            "and said the read failed; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// `/setup` and `/login` reading the error they exist for stay put and say
+    /// so, rather than sending the reader to themselves.
+    #[wasm_bindgen_test]
+    async fn setup_and_login_never_redirect_to_themselves() {
+        let (landed, _, failed) = probe_at("/setup", setup_required).await;
+        assert_eq!(landed, "/setup");
+        assert!(failed, "setup draws its own failure");
+        let (landed, _, failed) = probe_at("/login?host=quilt.test&back=%2F", session_absent).await;
+        assert_eq!(landed, "/login?host=quilt.test&back=%2F");
+        assert!(failed, "login draws its own failure");
+    }
+
+    /// A command's answer moves the reader on only from the page and address
+    /// it started on.
+    #[wasm_bindgen_test]
+    fn a_late_answer_is_still_here_only_on_its_own_page() {
+        let owner = Owner::new();
+        let (key, address) = owner.with(|| {
+            let address = RwSignal::new("team/a".to_string());
+            (Memo::new(move |_| address.get()), address)
+        });
+        assert!(still_here(key, "team/a"));
+        assert!(!still_here(key, "team/b"), "another address");
+        address.set("team/b".to_string());
+        assert!(!still_here(key, "team/a"), "the address changed");
+        owner.cleanup();
+        assert!(!still_here(key, "team/b"), "the page is gone");
     }
 
     /// The band draws an outcome for the address on screen only.
