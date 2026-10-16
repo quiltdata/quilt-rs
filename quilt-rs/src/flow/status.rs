@@ -56,6 +56,9 @@ struct LocateResult {
     files: Vec<(PathBuf, WorkdirFile)>,
     /// Files matched by `.quiltignore`: (`logical_key`, `absolute_path`, `matched_pattern`, size)
     ignored_files: Vec<(PathBuf, PathBuf, String, u64)>,
+    /// Folders matched by `.quiltignore`: (path relative to the package home,
+    /// `matched_pattern`). The walk does not enter them.
+    ignored_dirs: Vec<(PathBuf, String)>,
     /// Newest `mtime` across non-ignored files in the walk. Ignored files
     /// are deliberately excluded — touching a file inside an
     /// `.quiltignore`-matched cache directory must not gate autosync.
@@ -75,6 +78,7 @@ async fn locate_files_in_package_home(
 
     let mut files = Vec::new();
     let mut ignored_files = Vec::new();
+    let mut ignored_dirs = Vec::new();
     let mut most_recent_mtime: Option<SystemTime> = None;
 
     while let Some(dir) = queue.pop_front() {
@@ -94,7 +98,8 @@ async fn locate_files_in_package_home(
                 if file_type.is_dir() {
                     if let Some(gi) = quiltignore {
                         let rel = file_path.strip_prefix(package_home)?;
-                        if quiltignore::is_ignored(gi, rel, true) {
+                        if let Some(pattern) = quiltignore::matched_pattern(gi, rel, true) {
+                            ignored_dirs.push((rel.to_path_buf(), pattern));
                             continue;
                         }
                     }
@@ -140,6 +145,7 @@ async fn locate_files_in_package_home(
     Ok(LocateResult {
         files,
         ignored_files,
+        ignored_dirs,
         most_recent_mtime,
     })
 }
@@ -273,6 +279,7 @@ pub async fn create_status(
 
     let mut status = InstalledPackageStatus::new(lineage.clone().into(), changes);
     status.ignored_files = ignored_files;
+    status.ignored_dirs = locate_result.ignored_dirs;
     status.junky_changes = junky_changes;
     status.most_recent_mtime = locate_result.most_recent_mtime;
     status.latest_hash.clone_from(&lineage.latest_hash);
@@ -285,10 +292,11 @@ pub async fn create_status(
         // a second reporting the *input*, which duplicated `ignored` and dumped the
         // whole file list; the only fact it carried alone is the count now in front.
         // Names live in the per-path `trace` above, for one package at a time.
-        "✔️ Status: {} files walked, {} changes, {} ignored, {} junky",
+        "✔️ Status: {} files walked, {} changes, {} ignored, {} ignored folders, {} junky",
         walked,
         status.changes.len(),
         status.ignored_files.len(),
+        status.ignored_dirs.len(),
         status.junky_changes.len(),
     );
     Ok((lineage, status))
@@ -635,6 +643,37 @@ mod tests {
                 .changes
                 .contains_key(&PathBuf::from("cache/file.txt"))
         );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_quiltignore_directory_recorded_once() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+
+        for path in ["cache/file.txt", "cache/nested/deep.txt", "keep.txt"] {
+            storage
+                .write_byte_stream(working_dir.join(path), ByteStream::from_static(b"x"))
+                .await?;
+        }
+
+        std::fs::write(working_dir.join(".quiltignore"), "cache/\nnested/\n").unwrap();
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        // `cache/nested` matches a rule too, but the walk never enters `cache`.
+        assert_eq!(
+            status.ignored_dirs,
+            vec![(PathBuf::from("cache"), "cache/".to_string())]
+        );
+        assert_eq!(status.ignored_files, Vec::new());
         Ok(())
     }
 

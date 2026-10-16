@@ -1551,6 +1551,7 @@ mod tests {
                     status: "pristine".to_string(),
                     junky_pattern: None,
                     ignored_by: None,
+                    folder: false,
                     namespace: "team/dataset".try_into().unwrap(),
                 }],
                 counts: commands::EntryCounts {
@@ -2695,6 +2696,7 @@ mod tests {
             status: "pristine".to_string(),
             junky_pattern: None,
             ignored_by: None,
+            folder: false,
             namespace: namespace.clone(),
         };
         data.files = commands::FilesData::Listed(commands::EntryList {
@@ -3033,6 +3035,7 @@ mod tests {
             status: "pristine".to_string(),
             junky_pattern: None,
             ignored_by: None,
+            folder: false,
             namespace: "team/dataset".try_into().unwrap(),
         };
         data.files = commands::FilesData::Listed(commands::EntryList {
@@ -3138,6 +3141,7 @@ mod tests {
             status: "pristine".to_string(),
             junky_pattern: None,
             ignored_by: None,
+            folder: false,
             namespace: "team/dataset".try_into().unwrap(),
         };
         data.files = commands::FilesData::Listed(commands::EntryList {

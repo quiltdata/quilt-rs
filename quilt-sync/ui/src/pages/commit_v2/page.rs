@@ -965,7 +965,8 @@ fn column(
     let included = view! {
         <IncludedList
             files=included_files(&d.entries)
-            ignored=d.counts.ignored
+            ignored=d.counts.ignored.saturating_sub(d.counts.ignored_folders)
+            ignored_folders=d.counts.ignored_folders
             on_command=on_command
             totals=(d.counts.changed, d.changed_bytes)
         />
@@ -1232,6 +1233,7 @@ mod tests {
                 changed: 1203,
                 not_downloaded: 0,
                 ignored: 2,
+                ignored_folders: 0,
                 deleted: 1,
             },
             changed_bytes: 2_500_000,
@@ -2113,6 +2115,7 @@ mod tests {
             status: status.to_string(),
             junky_pattern: None,
             ignored_by: None,
+            folder: false,
             namespace: quilt_uri::Namespace::try_from("org/pkg").unwrap(),
         }
     }

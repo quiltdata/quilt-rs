@@ -1804,6 +1804,7 @@ mod tests {
                 changed: 1,
                 not_downloaded: 2,
                 ignored: 0,
+                ignored_folders: 0,
                 deleted: 0,
             }
         );
