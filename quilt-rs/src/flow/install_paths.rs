@@ -179,24 +179,24 @@ async fn swap_staged_into_place(
     for (staged_path, working_dest, row) in staged {
         if let Protect::BaseContent(expected) = protect {
             // An untracked path with nothing on disk has nothing to lose. A
-            // file at an untracked path `base` never had is the user's own,
-            // unless it already holds the incoming bytes, as an interrupted
-            // pull leaves it.
+            // file at an untracked path may also already hold the incoming
+            // bytes, as an interrupted pull leaves it; anything else at one
+            // `base` never had is the user's own.
             let tracked = lineage.paths.contains_key(&row.logical_key);
-            let unchanged = if !tracked && !storage.exists(working_dest).await {
-                true
-            } else if let Some(base_row) = expected.get(&row.logical_key) {
+            let holds = |expected: ManifestRow| async move {
                 matches!(
-                    refresh_hash(storage, working_dest, (*base_row).clone()).await,
+                    refresh_hash(storage, working_dest, expected).await,
                     Ok(None)
                 )
-            } else {
-                tracked
-                    || matches!(
-                        refresh_hash(storage, working_dest, row.clone()).await,
-                        Ok(None)
-                    )
             };
+            let unchanged =
+                if !tracked && (!storage.exists(working_dest).await || holds(row.clone()).await) {
+                    true
+                } else if let Some(base_row) = expected.get(&row.logical_key) {
+                    holds((*base_row).clone()).await
+                } else {
+                    tracked
+                };
             if !unchanged {
                 debug!(
                     "❌ {} changed while the revision was being staged",

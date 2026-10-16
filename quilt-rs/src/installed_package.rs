@@ -998,7 +998,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         // tag resolution, then the manifest fetch, then the walk. The ctor
         // short-circuits `base == latest` before any fetch, so `Ahead` (where
         // `latest == base`) costs no network here.
-        let snapshot = match flow::snapshot_for_pull(
+        let (lineage, snapshot) = match flow::snapshot_for_pull(
             lineage,
             &base,
             &self.paths,
@@ -1009,7 +1009,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await
         {
-            Ok((_, snapshot)) => snapshot,
+            Ok(snapshot) => snapshot,
             Err(Error::PackageOp(PackageOpError::AlreadyUpToDate)) => {
                 return Ok(nothing_to_pull());
             }
@@ -1029,6 +1029,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             &self.storage,
             &package_home,
             &snapshot.status,
+            &lineage.paths,
             &base,
             &snapshot.latest_manifest,
         )

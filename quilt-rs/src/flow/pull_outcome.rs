@@ -11,6 +11,7 @@ use crate::checksum::refresh_hash;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::InstalledPackageStatus;
+use crate::lineage::LineagePaths;
 use crate::manifest::Manifest;
 use crate::object_hash::ObjectHash;
 
@@ -175,7 +176,8 @@ fn same_resulting_content(local: &Change, remote: &RemoteChange, identical: bool
 }
 
 /// The paths [`identical_to_latest`] settled: locally changed, and already
-/// holding exactly what `latest` holds.
+/// holding exactly what `latest` holds — plus the untracked files the walk did
+/// not see that are in the way of the remote's write.
 ///
 /// A newtype with a private field and no `Default`, so the only way to obtain
 /// one is to run the pass. That is the whole point of it. While this was a
@@ -184,20 +186,23 @@ fn same_resulting_content(local: &Change, remote: &RemoteChange, identical: bool
 /// exactly that until the change's verification went looking, which is as clear
 /// a demonstration as one could ask for that a convention is not enough here.
 #[derive(Debug)]
-pub struct Reconciled(BTreeSet<PathBuf>);
+pub struct Reconciled {
+    identical: BTreeSet<PathBuf>,
+    in_the_way: BTreeSet<PathBuf>,
+}
 
 impl Reconciled {
     /// Whether the pass settled this path as already holding `latest`'s bytes.
     #[must_use]
     pub fn contains(&self, path: &Path) -> bool {
-        self.0.contains(path)
+        self.identical.contains(path)
     }
 
     /// Whether the pass settled nothing — the ordinary case, where every
     /// contested path's digests were already comparable.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.identical.is_empty()
     }
 
     /// A reconciliation that was never run. Test-only, and named to say so: a
@@ -206,7 +211,10 @@ impl Reconciled {
     /// working tree.
     #[cfg(test)]
     pub(crate) fn unreconciled() -> Self {
-        Self(BTreeSet::new())
+        Self {
+            identical: BTreeSet::new(),
+            in_the_way: BTreeSet::new(),
+        }
     }
 }
 
@@ -229,7 +237,10 @@ impl Reconciled {
 /// the file already matches that row.
 ///
 /// Ignored files are settled here too, since the walk gives them no hash: one
-/// at a path the remote writes is hashed against `latest`'s row.
+/// at a path the remote writes is hashed against `latest`'s row. So is a file
+/// the walk never saw, inside a folder it skipped whole: at an untracked path
+/// the remote writes, it must hold `latest`'s bytes or `base`'s, or it is in
+/// the way.
 ///
 /// I/O only where the digests cannot be compared: a path whose algorithms
 /// already agree is left to [`classify_pull`]'s own comparison, so a package
@@ -243,10 +254,43 @@ pub async fn identical_to_latest(
     storage: &(impl Storage + Sync),
     working_dir: &Path,
     status: &InstalledPackageStatus,
+    tracked: &LineagePaths,
     base: &Manifest,
     latest: &Manifest,
 ) -> Res<Reconciled> {
     let mut identical = BTreeSet::new();
+    let mut in_the_way = BTreeSet::new();
+    let ignored: BTreeSet<&PathBuf> = status.ignored_files.iter().map(|(p, _, _)| p).collect();
+    for latest_row in &latest.rows {
+        let path = &latest_row.logical_key;
+        if tracked.contains_key(path) || status.changes.contains_key(path) || ignored.contains(path)
+        {
+            continue;
+        }
+        let base_row = base.get_record(path);
+        if base_row.is_some_and(|base_row| base_row.hash == latest_row.hash) {
+            continue;
+        }
+        let file = working_dir.join(path);
+        if !storage.exists(&file).await {
+            continue;
+        }
+        if refresh_hash(storage, &file, latest_row.clone())
+            .await?
+            .is_none()
+        {
+            identical.insert(path.clone());
+            continue;
+        }
+        if let Some(base_row) = base_row
+            && refresh_hash(storage, &file, base_row.clone())
+                .await?
+                .is_none()
+        {
+            continue;
+        }
+        in_the_way.insert(path.clone());
+    }
     // An ignored file has no hash from the walk, so one at a path the remote
     // writes is compared here. An interrupted pull leaves exactly that: the
     // incoming file written, but not yet tracked.
@@ -305,7 +349,10 @@ pub async fn identical_to_latest(
             Err(err) => return Err(err),
         }
     }
-    Ok(Reconciled(identical))
+    Ok(Reconciled {
+        identical,
+        in_the_way,
+    })
 }
 
 /// Classify what a pull would do. Pure — no network, no I/O.
@@ -360,6 +407,7 @@ pub(crate) fn classify_pull_with_delta(
     }
 
     let mut conflicts = ignored_in_the_way(status, delta, identical);
+    conflicts.extend(identical.in_the_way.iter().cloned());
     if status.changes.is_empty() && conflicts.is_empty() {
         // Includes the metadata-only case (empty `delta`): the surgical touch
         // set is empty, but the hashes still advance to `latest`.
@@ -615,8 +663,15 @@ mod tests {
             Change::Modified(local_row),
         )]));
 
-        let identical =
-            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
         let out = classify_pull(&status, &base, &latest, &identical);
 
         assert_eq!(
@@ -651,8 +706,15 @@ mod tests {
             Change::Removed(row("a", b"the old content")),
         )]));
 
-        let identical =
-            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
         assert!(
             identical.is_empty(),
             "a removed path has no content to be identical to"
@@ -719,8 +781,15 @@ mod tests {
         let latest = manifest_of(vec![latest_row]);
         let status = behind(ChangeSet::from([(path.clone(), Change::Added(local_row))]));
 
-        let identical =
-            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
         assert!(
             identical.is_empty(),
             "different bytes are not identical, whatever the algorithms say"
@@ -789,8 +858,15 @@ mod tests {
             Change::Modified(local_row),
         )]));
 
-        let identical =
-            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
         let out = classify_pull(&status, &base, &latest, &identical);
 
         assert_eq!(
@@ -1068,8 +1144,92 @@ mod tests {
         let mut status = behind(ChangeSet::default());
         status.ignored_files = vec![ignored_by_default(".env")];
 
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::CleanUpdate
+        );
+        Ok(())
+    }
+
+    /// A folder the walk skips whole leaves its files out of both `changes`
+    /// and `ignored_files`. The pass still finds one at a path the remote
+    /// writes: different bytes are in the way, `latest`'s bytes are not.
+    #[test(tokio::test)]
+    async fn unseen_file_at_a_remote_write_blocks_unless_it_holds_latest() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let in_the_way = PathBuf::from("node_modules/item.json");
+        let settled = PathBuf::from("node_modules/other.json");
+        for (path, body) in [(&in_the_way, "local"), (&settled, "remote other")] {
+            storage
+                .write_byte_stream(
+                    working_dir.join(path),
+                    ByteStream::from(body.as_bytes().to_vec()),
+                )
+                .await?;
+        }
+        let settled_row = calculate_hash(
+            &storage,
+            &working_dir.join(&settled),
+            &settled,
+            &HostConfig::default(),
+        )
+        .await?;
+
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![
+            row("a", b"1"),
+            row("node_modules/item.json", b"remote"),
+            settled_row,
+        ]);
+        let status = behind(ChangeSet::default());
+
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::Blocked {
+                conflicts: vec![in_the_way]
+            }
+        );
+        Ok(())
+    }
+
+    /// A tracked file the walk saw unchanged is not in `changes` either, but it
+    /// holds `base`'s bytes and the pull replaces it as usual. The pass leaves
+    /// tracked paths alone.
+    #[test(tokio::test)]
+    async fn tracked_unchanged_file_is_not_in_the_way() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("a");
+        storage
+            .write_byte_stream(working_dir.join(&path), ByteStream::from_static(b"base"))
+            .await?;
+
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"2")]);
+        let status = behind(ChangeSet::default());
+        let tracked = LineagePaths::from([(path, crate::lineage::PathState::default())]);
+
         let identical =
-            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+            identical_to_latest(&storage, &working_dir, &status, &tracked, &base, &latest).await?;
         assert_eq!(
             classify_pull(&status, &base, &latest, &identical),
             PullOutcome::CleanUpdate

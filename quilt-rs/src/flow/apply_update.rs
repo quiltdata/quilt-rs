@@ -702,6 +702,70 @@ mod tests {
         Ok(())
     }
 
+    /// An untracked path `base` has, hidden from the walk by the package's
+    /// rules, already holding the incoming bytes: the retry of an interrupted
+    /// pull. Not `base`'s bytes, yet nothing of the user's is at stake.
+    #[test(tokio::test)]
+    async fn an_untracked_file_holding_latest_over_a_base_row_is_taken_over() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OLD".to_string(),
+            origin: None,
+        };
+        let (paths, _domain_tmp) = DomainPaths::from_temp_dir()?;
+        let paths = &paths;
+        let storage = MockStorage::default();
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
+
+        let path = PathBuf::from("hidden.dat");
+        storage
+            .write_byte_stream(wd().join(&path), ByteStream::from_static(b"new bytes"))
+            .await?;
+
+        let mut base = Manifest {
+            rows: vec![row_at("hidden.dat", b"old bytes", "objects/old")],
+            ..Manifest::default()
+        };
+        let lineage = PackageLineage {
+            remote_uri: Some(manifest_uri.clone()),
+            base_hash: "OLD".to_string(),
+            latest_hash: "NEW".to_string(),
+            ..PackageLineage::default()
+        };
+        let latest_manifest = Manifest {
+            rows: vec![row_at("hidden.dat", b"new bytes", "objects/new")],
+            ..Manifest::default()
+        };
+        let new_hash = "deadbeef";
+        let remote = MockRemote::default();
+        publish(&remote, new_hash, &latest_manifest).await?;
+        put_object_at(&remote, "objects/new", b"new bytes").await?;
+
+        let (lineage, applied) = apply_latest_update(
+            lineage,
+            &mut base,
+            paths,
+            &storage,
+            &remote,
+            wd(),
+            Namespace::default(),
+            ManifestUri {
+                hash: new_hash.to_string(),
+                ..manifest_uri
+            },
+            std::slice::from_ref(&path),
+            &LocalWork::Protect,
+        )
+        .await?;
+
+        assert_eq!(applied.installed, vec![path.clone()]);
+        assert!(lineage.paths.contains_key(&path));
+        Ok(())
+    }
+
     /// The Example's *rare* interruption: one that lands inside the closing run
     /// of renames rather than during the fetch. Everything staged, so the swap
     /// begins — and then stops part-way, leaving earlier paths at `latest` and

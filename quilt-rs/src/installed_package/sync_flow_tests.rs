@@ -1166,6 +1166,56 @@ async fn test_ignored_local_file_with_latest_bytes_does_not_block_a_pull() -> Re
     Ok(())
 }
 
+/// The walk skips `node_modules/` whole, so a local file in it is listed
+/// nowhere. A revision adding a different file at that path still blocks,
+/// before anything is written, and the local bytes stay.
+#[test(tokio::test)]
+async fn test_file_in_a_skipped_folder_blocks_a_pull_that_adds_it() -> Res {
+    let latest = format!(
+        "{BASE_MANIFEST}{}",
+        BASE_MANIFEST
+            .lines()
+            .nth(1)
+            .unwrap()
+            .replace("a.txt", "node_modules/item.json")
+    );
+    let (package, _temp_dirs) = behind_package(&latest).await?;
+    package
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://bkt/node_modules/item.json")?,
+            Vec::new(),
+        )
+        .await?;
+    let local = package.package_home().await?.join("node_modules/item.json");
+    package
+        .storage
+        .write_byte_stream(&local, b"{\"local\":true}".to_vec().into())
+        .await?;
+
+    let status = package.status(None).await?;
+    assert!(status.changes.is_empty() && status.ignored_files.is_empty());
+
+    assert_eq!(
+        package.pull_outcome(None).await?.outcome,
+        PullOutcome::Blocked {
+            conflicts: vec![PathBuf::from("node_modules/item.json")]
+        }
+    );
+    let err = package
+        .pull(None, SyncScope::EntirePackage)
+        .await
+        .expect_err("a pull that would replace a local file must not run");
+    assert!(
+        matches!(&err, Error::PackageOp(PackageOpError::PullConflict(paths)) if paths == &vec![PathBuf::from("node_modules/item.json")]),
+        "expected a conflict on node_modules/item.json, got: {err:?}"
+    );
+    assert_eq!(tokio::fs::read(&local).await?, b"{\"local\":true}");
+
+    Ok(())
+}
+
 /// A local-only package (no `remote` in its lineage) has no `latest` tag to
 /// resolve, so `pull_outcome` must short-circuit to `UpToDate` without touching
 /// the network — never propagating the `NoRemote` error `remote()?` would raise.
