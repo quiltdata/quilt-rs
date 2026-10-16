@@ -162,16 +162,6 @@ const fn turns_publishing_on(prev: &AutosyncSettings, next: &AutosyncSettings) -
     !prev.push.enabled && next.push.enabled
 }
 
-/// What a settings write sets off, once the settings lock is released.
-async fn after_autosync_write(watcher: &Watcher, (clear, publishing_on): (bool, bool)) {
-    if clear {
-        watcher.clear_all_paused().await;
-    }
-    if publishing_on {
-        watcher.note_publishing_on().await;
-    }
-}
-
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FsWatcherSettingsData {
@@ -330,18 +320,22 @@ pub async fn update_autosync_settings(
         .app_local_data_dir()
         .map_err(|e| e.to_string())?;
 
-    let changes = {
+    let clear = {
         let mut current = autosync_settings.write().await;
         let merged = merge_autosync_settings_data(&current, &settings);
         merged.save(&data_dir).await.map_err(|e| e.to_string())?;
-        let changes = (
-            clears_pauses(&current, &merged),
-            turns_publishing_on(&current, &merged),
-        );
+        let clear = clears_pauses(&current, &merged);
+        // Under the settings lock: a check that sees publishing on must also
+        // see the new times.
+        if turns_publishing_on(&current, &merged) {
+            watcher.note_publishing_on().await;
+        }
         *current = merged;
-        changes
+        clear
     };
-    after_autosync_write(&watcher, changes).await;
+    if clear {
+        watcher.clear_all_paused().await;
+    }
     Ok(())
 }
 
@@ -393,18 +387,22 @@ async fn write_autosync_patch(
         .app_local_data_dir()
         .map_err(|e| e.to_string())?;
 
-    let changes = {
+    let clear = {
         let mut current = autosync_settings.write().await;
         let next = patch.apply(&current)?;
         next.save(&data_dir).await.map_err(|e| e.to_string())?;
-        let changes = (
-            clears_pauses(&current, &next),
-            turns_publishing_on(&current, &next),
-        );
+        let clear = clears_pauses(&current, &next);
+        // Under the settings lock: a check that sees publishing on must also
+        // see the new times.
+        if turns_publishing_on(&current, &next) {
+            watcher.note_publishing_on().await;
+        }
         *current = next;
-        changes
+        clear
     };
-    after_autosync_write(watcher, changes).await;
+    if clear {
+        watcher.clear_all_paused().await;
+    }
     Ok(())
 }
 

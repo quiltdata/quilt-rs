@@ -6,6 +6,7 @@
 //! just opened". Every gap in what the app knows counts as "first seen", which
 //! waits a full wait: later, never earlier.
 
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
@@ -37,6 +38,9 @@ pub(crate) struct LastChange {
     /// Packages walked since launch. The first walk of each one asks whether it
     /// changed while the app was closed.
     walked: Mutex<BTreeSet<Namespace>>,
+    /// What each package's last walk found changed, so a walk that finds
+    /// something new restarts the wait even when no watcher signal came.
+    last_seen: Mutex<BTreeMap<Namespace, String>>,
 }
 
 impl LastChange {
@@ -45,6 +49,7 @@ impl LastChange {
             store,
             alive_before_start: OnceCell::new(),
             walked: Mutex::new(BTreeSet::new()),
+            last_seen: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -62,10 +67,16 @@ impl LastChange {
     }
 
     /// The folder watcher heard a change in `namespace`.
+    ///
+    /// Also moves `last_alive_at`, so an edit the app saw before it quit is
+    /// not taken for one made while it was closed.
     pub(crate) async fn on_signal(&self, namespace: &Namespace) {
+        self.alive_before_start().await;
+        let now = now();
         self.store
-            .record_change(namespace, now(), ChangeSource::Edit)
+            .record_change(namespace, now, ChangeSource::Edit)
             .await;
+        self.store.set_last_alive_at(now).await;
     }
 
     /// Take a walk's result for `namespace` and return its last-change time,
@@ -79,11 +90,25 @@ impl LastChange {
         home: Option<&Path>,
         status: &InstalledPackageStatus,
     ) -> Option<SystemTime> {
+        let seen = crate::autopull::reporter::changes_fingerprint(&status.changes);
+        let before = self
+            .last_seen
+            .lock()
+            .expect("last_seen lock")
+            .insert(namespace.clone(), seen.clone());
         if status.changes.is_empty() {
             self.store.forget(namespace).await;
             return None;
         }
         let now = now();
+        // Changes no signal announced: the watcher is off, or can't see this
+        // folder.
+        if before.is_some_and(|before| before != seen) {
+            self.store
+                .record_change(namespace, now, ChangeSource::Edit)
+                .await;
+            return Some(now);
+        }
         let first_walk = self
             .walked
             .lock()
@@ -203,17 +228,16 @@ fn change_time(meta: &std::fs::Metadata) -> Option<SystemTime> {
     use std::os::unix::fs::MetadataExt;
     let secs = u64::try_from(meta.ctime()).ok()?;
     let nanos = u32::try_from(meta.ctime_nsec()).ok()?;
-    Some(SystemTime::UNIX_EPOCH + std::time::Duration::new(secs, nanos))
+    // To the millisecond, as `last_alive_at` is kept.
+    let millis = nanos / 1_000_000;
+    Some(SystemTime::UNIX_EPOCH + std::time::Duration::new(secs, millis * 1_000_000))
 }
 
-/// Windows has no ctime in the standard library. A copy gets a new creation
-/// time even when it keeps the edit time, so the later of the two stands in.
+/// Windows has no ctime in the standard library, and copy tools can restore
+/// both the creation and the edit time, so every changed file counts as changed.
 #[cfg(not(unix))]
-fn change_time(meta: &std::fs::Metadata) -> Option<SystemTime> {
-    match (meta.created().ok(), meta.modified().ok()) {
-        (Some(created), Some(modified)) => Some(created.max(modified)),
-        (one, other) => one.or(other),
-    }
+fn change_time(_meta: &std::fs::Metadata) -> Option<SystemTime> {
+    None
 }
 
 #[cfg(test)]
@@ -384,6 +408,43 @@ mod tests {
         clock.on_signal(&ns()).await;
         clock.on_published(&ns()).await;
         assert_eq!(clock.get(&ns()).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_walk_that_finds_new_changes_restarts_the_wait() {
+        // The watcher is off: only walks see the edits.
+        let clock = LastChange::changed_for_test(&ns(), hour()).await;
+        let old = clock.get(&ns()).await;
+        assert_eq!(clock.observe(&ns(), None, &status_with(&["a"])).await, old);
+        assert_eq!(
+            clock.observe(&ns(), None, &status_with(&["a"])).await,
+            old,
+            "the same changes keep the time"
+        );
+        let before = now();
+        let at = clock.observe(&ns(), None, &status_with(&["a", "b"])).await;
+        assert!(at.is_some_and(|at| at >= before));
+    }
+
+    #[tokio::test]
+    async fn an_edit_the_app_saw_is_not_one_made_while_closed() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = PackageStateStore::new(dir.path().join("state.db"));
+        let clock = LastChange::new(store);
+        clock.note_alive().await;
+        std::fs::write(dir.path().join("a"), b"x").unwrap();
+        clock.on_signal(&ns()).await;
+        let saved = clock.get(&ns()).await;
+        drop(clock);
+
+        // Relaunch: the store is the same file.
+        let clock = LastChange::new(PackageStateStore::new(dir.path().join("state.db")));
+        assert_eq!(
+            clock
+                .observe(&ns(), Some(dir.path()), &status_with(&["a"]))
+                .await,
+            saved
+        );
     }
 
     #[tokio::test]

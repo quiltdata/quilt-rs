@@ -102,7 +102,15 @@ pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus
         let _ = write!(out, "{b:02x}");
     }
     out.push(';');
-    for (path, change) in &status.changes {
+    out.push_str(&changes_fingerprint(&status.changes));
+    out
+}
+
+/// Per changed path, its kind and content hash: what the working tree holds,
+/// apart from the remote.
+pub(crate) fn changes_fingerprint(changes: &quilt::lineage::ChangeSet) -> String {
+    let mut out = String::new();
+    for (path, change) in changes {
         let (kind, row) = match change {
             quilt::lineage::Change::Added(r) => ("A", r),
             quilt::lineage::Change::Modified(r) => ("M", r),
