@@ -14,7 +14,6 @@ use std::sync::Mutex;
 use std::time::SystemTime;
 
 use quilt_uri::Namespace;
-use tokio::sync::OnceCell;
 
 use crate::quilt::lineage::InstalledPackageStatus;
 use crate::quilt::state_store::ChangeSource;
@@ -32,51 +31,41 @@ pub(crate) fn now() -> SystemTime {
 
 pub(crate) struct LastChange {
     store: PackageStateStore,
-    /// `last_alive_at` as this session found it, before its first check
-    /// overwrote it.
-    alive_before_start: OnceCell<Option<SystemTime>>,
     /// Packages walked since launch. The first walk of each one asks whether it
     /// changed while the app was closed.
     walked: Mutex<BTreeSet<Namespace>>,
     /// What each package's last walk found changed, so a walk that finds
     /// something new restarts the wait even when no watcher signal came.
     last_seen: Mutex<BTreeMap<Namespace, String>>,
+    /// Packages with a watcher signal since their last walk: that signal
+    /// already set the time for what the walk finds.
+    signalled: Mutex<BTreeSet<Namespace>>,
 }
 
 impl LastChange {
     pub(crate) fn new(store: PackageStateStore) -> Self {
         Self {
             store,
-            alive_before_start: OnceCell::new(),
             walked: Mutex::new(BTreeSet::new()),
             last_seen: Mutex::new(BTreeMap::new()),
+            signalled: Mutex::new(BTreeSet::new()),
         }
-    }
-
-    async fn alive_before_start(&self) -> Option<SystemTime> {
-        *self
-            .alive_before_start
-            .get_or_init(|| self.store.last_alive_at())
-            .await
     }
 
     /// Record that the app is running now. Called by each check.
     pub(crate) async fn note_alive(&self) {
-        self.alive_before_start().await;
         self.store.set_last_alive_at(now()).await;
     }
 
     /// The folder watcher heard a change in `namespace`.
-    ///
-    /// Also moves `last_alive_at`, so an edit the app saw before it quit is
-    /// not taken for one made while it was closed.
     pub(crate) async fn on_signal(&self, namespace: &Namespace) {
-        self.alive_before_start().await;
-        let now = now();
+        self.signalled
+            .lock()
+            .expect("signalled lock")
+            .insert(namespace.clone());
         self.store
-            .record_change(namespace, now, ChangeSource::Edit)
+            .record_change(namespace, now(), ChangeSource::Edit)
             .await;
-        self.store.set_last_alive_at(now).await;
     }
 
     /// Take a walk's result for `namespace` and return its last-change time,
@@ -90,6 +79,11 @@ impl LastChange {
         home: Option<&Path>,
         status: &InstalledPackageStatus,
     ) -> Option<SystemTime> {
+        let signalled = self
+            .signalled
+            .lock()
+            .expect("signalled lock")
+            .remove(namespace);
         let seen = crate::autopull::reporter::changes_fingerprint(&status.changes);
         let before = self
             .last_seen
@@ -103,7 +97,7 @@ impl LastChange {
         let now = now();
         // Changes no signal announced: the watcher is off, or can't see this
         // folder.
-        if before.is_some_and(|before| before != seen) {
+        if !signalled && before.is_some_and(|before| before != seen) {
             self.store
                 .record_change(namespace, now, ChangeSource::Edit)
                 .await;
@@ -117,27 +111,24 @@ impl LastChange {
         if self.store.record_first_seen(namespace, now).await {
             return Some(now);
         }
-        if first_walk {
-            let changed = match (self.alive_before_start().await, home) {
-                (Some(alive), Some(home)) => {
-                    changed_while_closed(home, status.changes.keys(), alive)
-                }
-                _ => true,
-            };
-            if changed {
-                self.store
-                    .record_change(namespace, now, ChangeSource::FirstSeen)
-                    .await;
-                return Some(now);
-            }
-        }
         // A store that can't answer counts as just seen.
-        Some(
+        let Some(saved) = self.store.last_change(namespace).await else {
+            return Some(now);
+        };
+        // The saved time is when the app last saw this package change, so a
+        // changed file with a later ctime changed while the app was not
+        // looking: closed, or before a session that never walked it.
+        if first_walk
+            && home.is_none_or(|home| {
+                changed_while_closed(home, status.changes.keys(), saved.last_change_at)
+            })
+        {
             self.store
-                .last_change(namespace)
-                .await
-                .map_or(now, |a| a.last_change_at),
-        )
+                .record_change(namespace, now, ChangeSource::FirstSeen)
+                .await;
+            return Some(now);
+        }
+        Some(saved.last_change_at)
     }
 
     /// Whether the next walk of `namespace` is its first since launch, the one
@@ -200,7 +191,7 @@ impl LastChange {
     }
 }
 
-/// Whether any of `changed` (paths relative to `home`) changed after `alive`.
+/// Whether any of `changed` (paths relative to `home`) changed after `since`.
 ///
 /// ctime, because no tool can set it: the copies that keep old edit times
 /// (`cp -p`, `rsync -a`, an unzip) still get a new one. A deleted file has none,
@@ -208,13 +199,13 @@ impl LastChange {
 pub(crate) fn changed_while_closed<'a>(
     home: &Path,
     changed: impl IntoIterator<Item = &'a PathBuf>,
-    alive: SystemTime,
+    since: SystemTime,
 ) -> bool {
     changed.into_iter().any(|relative| {
         let mut path = home.join(relative);
         loop {
             if let Ok(meta) = std::fs::symlink_metadata(&path) {
-                return change_time(&meta).is_none_or(|at| at > alive);
+                return change_time(&meta).is_none_or(|at| at > since);
             }
             if path == home || !path.pop() {
                 return true;
@@ -310,15 +301,16 @@ mod tests {
         assert!(clock.get(&ns()).await.is_some_and(|at| at >= before));
     }
 
+    /// ctime is Unix only; on Windows every changed file counts as changed.
+    #[cfg(unix)]
     #[tokio::test]
     async fn after_a_restart_an_untouched_package_keeps_its_time() {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::write(dir.path().join("a"), b"x").unwrap();
         let store = PackageStateStore::in_memory();
-        let saved = now() - hour();
+        // The app saw the change after the file was written.
+        let saved = now() + Duration::from_millis(5);
         store.record_change(&ns(), saved, ChangeSource::Edit).await;
-        // The app was last running after the file changed.
-        store.set_last_alive_at(now() + hour()).await;
         let clock = LastChange::new(store);
         assert_eq!(
             clock
@@ -331,13 +323,14 @@ mod tests {
     #[tokio::test]
     async fn after_a_restart_a_package_changed_while_closed_waits_from_now() {
         let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("a"), b"x").unwrap();
         let store = PackageStateStore::in_memory();
+        // The app last saw a change an hour ago; the file changed since.
         store
             .record_change(&ns(), now() - hour(), ChangeSource::Edit)
             .await;
-        // The app was last running before the file changed.
-        store.set_last_alive_at(now() - hour()).await;
+        std::fs::write(dir.path().join("a"), b"x").unwrap();
+        // Later sessions ran, without walking this package.
+        store.set_last_alive_at(now()).await;
         let clock = LastChange::new(store);
         let before = now();
         let at = clock
@@ -347,26 +340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_restart_check_reads_last_alive_from_before_the_first_check() {
-        let dir = tempfile::TempDir::new().unwrap();
-        std::fs::write(dir.path().join("a"), b"x").unwrap();
-        let store = PackageStateStore::in_memory();
-        store
-            .record_change(&ns(), now() - hour(), ChangeSource::Edit)
-            .await;
-        store.set_last_alive_at(now() - hour()).await;
-        let clock = LastChange::new(store);
-        // The first check runs before the first walk and moves last_alive_at.
-        clock.note_alive().await;
-        let before = now();
-        let at = clock
-            .observe(&ns(), Some(dir.path()), &status_with(&["a"]))
-            .await;
-        assert!(at.is_some_and(|at| at >= before));
-    }
-
-    #[tokio::test]
-    async fn a_saved_time_without_last_alive_waits_from_now() {
+    async fn a_package_whose_folder_is_unknown_waits_from_now() {
         let store = PackageStateStore::in_memory();
         store
             .record_change(&ns(), now() - hour(), ChangeSource::Edit)
@@ -377,6 +351,7 @@ mod tests {
         assert!(at.is_some_and(|at| at >= before));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_deleted_file_is_judged_by_its_folder() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -384,6 +359,26 @@ mod tests {
         let gone = [PathBuf::from("sub/gone.txt")];
         assert!(changed_while_closed(dir.path(), &gone, now() - hour()));
         assert!(!changed_while_closed(dir.path(), &gone, now() + hour()));
+    }
+
+    #[tokio::test]
+    async fn a_walk_after_a_signal_keeps_the_signal_time() {
+        // The walk limit coalesced the signal; the next walk finds what it
+        // announced and must not restart the wait again.
+        let clock = LastChange::changed_for_test(&ns(), hour()).await;
+        assert!(
+            clock
+                .observe(&ns(), None, &status_with(&["a"]))
+                .await
+                .is_some()
+        );
+        clock.on_signal(&ns()).await;
+        let signalled = clock.get(&ns()).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert_eq!(
+            clock.observe(&ns(), None, &status_with(&["a", "b"])).await,
+            signalled
+        );
     }
 
     #[tokio::test]
@@ -426,12 +421,12 @@ mod tests {
         assert!(at.is_some_and(|at| at >= before));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn an_edit_the_app_saw_is_not_one_made_while_closed() {
         let dir = tempfile::TempDir::new().unwrap();
         let store = PackageStateStore::new(dir.path().join("state.db"));
         let clock = LastChange::new(store);
-        clock.note_alive().await;
         std::fs::write(dir.path().join("a"), b"x").unwrap();
         clock.on_signal(&ns()).await;
         let saved = clock.get(&ns()).await;
@@ -447,6 +442,8 @@ mod tests {
         );
     }
 
+    /// Windows refuses to delete a file that is open.
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_store_deleted_while_running_waits_a_full_wait() {
         let dir = tempfile::TempDir::new().unwrap();

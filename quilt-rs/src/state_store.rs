@@ -535,6 +535,8 @@ mod tests {
         Ok(())
     }
 
+    /// Windows refuses to delete a file that is open.
+    #[cfg(unix)]
     #[test(tokio::test)]
     async fn a_file_deleted_while_open_starts_empty() -> Res {
         let dir = tempfile::TempDir::new()?;
