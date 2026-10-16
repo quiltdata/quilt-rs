@@ -2023,7 +2023,7 @@ mod tests {
         });
         assert_eq!(
             serde_json::to_string(&listed).unwrap(),
-            r#"{"kind":"listed","entries":[],"counts":{"all":0,"changed":0,"notDownloaded":0,"ignored":0,"deleted":0},"total":0,"truncated":false}"#,
+            r#"{"kind":"listed","entries":[],"counts":{"all":0,"changed":0,"notDownloaded":0,"ignored":0,"ignoredFolders":0,"deleted":0},"total":0,"truncated":false}"#,
         );
     }
 

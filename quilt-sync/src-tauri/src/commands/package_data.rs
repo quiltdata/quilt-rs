@@ -842,7 +842,7 @@ mod tests {
                 changed: 700,
                 not_downloaded: 700,
                 ignored: 10,
-                ignored_folders: 2,
+                ignored_folders: 0,
                 deleted: 200,
             }
         );
@@ -906,7 +906,7 @@ mod tests {
             changed: 700,
             not_downloaded: 700,
             ignored: 10,
-            ignored_folders: 0,
+            ignored_folders: 2,
             deleted: 200,
         };
         assert_eq!(
