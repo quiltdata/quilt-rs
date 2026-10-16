@@ -91,7 +91,7 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
                     // the inotify slots. Especially important when the user
                     // toggles off in response to the inotify-limit toast.
                     // `reconcile(Vec::new())` is a no-op if already empty.
-                    if let Err(err) = state.subscription.reconcile(Vec::new()) {
+                    if let Err(err) = state.subscription.reconcile(Vec::new(), None) {
                         emit_subscriber_error(state.reporter.as_ref(), &err);
                     }
                     // Re-enabling later should be able to surface the
@@ -179,14 +179,21 @@ pub(crate) async fn process_signal(
     }
 }
 
+/// What the subscription should watch.
+pub(crate) struct Mappings {
+    /// Each installed package's namespace and `package_home`.
+    pub packages: Vec<(Namespace, PathBuf)>,
+    /// The user-wide ignore file. `None` with no packages, since then there is
+    /// nothing for it to re-check.
+    pub user_rules: Option<PathBuf>,
+}
+
 /// Snapshot the current installed-packages list and resolve each one's
 /// `package_home`. Returns `None` if the model itself fails (so the caller
 /// skips reconciliation rather than unwatching every namespace on a
-/// transient error); an empty `Some(_)` is distinct and means "no
+/// transient error); empty `packages` is distinct and means "no
 /// installed packages".
-pub(crate) async fn snapshot_mappings(
-    model: &impl QuiltModel,
-) -> Option<Vec<(Namespace, PathBuf)>> {
+pub(crate) async fn snapshot_mappings(model: &impl QuiltModel) -> Option<Mappings> {
     let pkgs = match model.get_installed_packages_list().await {
         Ok(list) => list,
         Err(err) => {
@@ -204,7 +211,12 @@ pub(crate) async fn snapshot_mappings(
             ),
         }
     }
-    Some(out)
+    // Every package shares the one domain, so any of them knows the path.
+    let user_rules = pkgs.first().map(|pkg| pkg.paths.user_quiltignore());
+    Some(Mappings {
+        packages: out,
+        user_rules,
+    })
 }
 
 async fn reconcile_from_model(state: &mut ReactorState, app_handle: &tauri::AppHandle) {
@@ -216,9 +228,12 @@ async fn reconcile_from_model(state: &mut ReactorState, app_handle: &tauri::AppH
     // the per-namespace signal clock is pruned. Left alone, the map would keep
     // an entry per package ever watched in the session.
     let live: std::collections::BTreeSet<Namespace> =
-        mappings.iter().map(|(ns, _)| ns.clone()).collect();
+        mappings.packages.iter().map(|(ns, _)| ns.clone()).collect();
     state.last_signalled.retain(|ns, _| live.contains(ns));
-    match state.subscription.reconcile(mappings) {
+    match state
+        .subscription
+        .reconcile(mappings.packages, mappings.user_rules)
+    {
         Ok(()) => {
             state.last_reconcile_error_kind = None;
         }
