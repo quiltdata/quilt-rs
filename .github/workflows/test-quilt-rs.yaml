@@ -36,7 +36,7 @@ concurrency:
 jobs:
   workspace:
     name: workspace
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       # This runner has no Tauri system libraries, so it cannot build
@@ -100,7 +100,7 @@ jobs:
 
   cargo-deny:
     name: cargo-deny
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout repository
