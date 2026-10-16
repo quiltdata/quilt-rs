@@ -66,6 +66,9 @@ pub(crate) struct LastChange {
     signalled: Mutex<BTreeSet<Namespace>>,
     /// The time of each pending commit known to be the app's own.
     own_commits: Mutex<BTreeMap<Namespace, SystemTime>>,
+    /// Packages whose own commit no walk has seen yet: the next walk finds
+    /// the committed files gone from the changes, and that is no new edit.
+    fresh_commits: Mutex<BTreeSet<Namespace>>,
 }
 
 impl LastChange {
@@ -76,6 +79,7 @@ impl LastChange {
             last_seen: Mutex::new(BTreeMap::new()),
             signalled: Mutex::new(BTreeSet::new()),
             own_commits: Mutex::new(BTreeMap::new()),
+            fresh_commits: Mutex::new(BTreeSet::new()),
         }
     }
 
@@ -104,6 +108,10 @@ impl LastChange {
                 .lock()
                 .expect("own_commits lock")
                 .insert(namespace.clone(), at);
+            self.fresh_commits
+                .lock()
+                .expect("fresh_commits lock")
+                .insert(namespace.clone());
         }
     }
 
@@ -173,7 +181,12 @@ impl LastChange {
         }
         // Changes no signal announced: the watcher is off, or can't see this
         // folder. Changes that moved into the app's own commit are not new.
-        let into_own_commit = own_commit && status.changes.is_empty();
+        let fresh = self
+            .fresh_commits
+            .lock()
+            .expect("fresh_commits lock")
+            .remove(namespace);
+        let into_own_commit = own_commit && fresh && status.changes.is_empty();
         if !signalled && !into_own_commit && before.is_some_and(|before| before != seen) {
             self.store
                 .record_change(namespace, now, ChangeSource::Edit)
@@ -648,6 +661,25 @@ mod tests {
         let at = clock
             .observe(&ns(), None, &status_with(&["b"]), commit)
             .await;
+        assert!(at.is_some_and(|at| at >= before));
+    }
+
+    #[tokio::test]
+    async fn a_revert_after_the_apps_commit_restarts_the_wait() {
+        let clock = LastChange::changed_for_test(&ns(), hour()).await;
+        clock
+            .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
+            .await;
+        let commit = PendingCommit::At(now());
+        clock.on_own_commit(&ns(), commit);
+        clock.observe(&ns(), None, &status_with(&[]), commit).await;
+        clock
+            .observe(&ns(), None, &status_with(&["b"]), commit)
+            .await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let before = now();
+        // `b` reverted to what the commit holds.
+        let at = clock.observe(&ns(), None, &status_with(&[]), commit).await;
         assert!(at.is_some_and(|at| at >= before));
     }
 
