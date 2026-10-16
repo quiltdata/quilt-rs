@@ -23,11 +23,11 @@
 
 ### Added
 
-- `state_store::PackageStateStore`: an optional store for per-package state the desktop app keeps, at `DomainPaths::state_db` (`.quilt/state.db`), in SQLite. Its first table holds each package's last-change time. No method returns an error: a missing, damaged or deleted file is created again, and the CLI never opens it (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- `state_store::PackageStateStore`: an optional store for per-package state the desktop app keeps, at `DomainPaths::state_db` (`.quilt/state.db`), in SQLite. Its first table holds each package's last-change time. No method returns an error: a missing, damaged or deleted file is created again, and the CLI never opens it (<https://github.com/quiltdata/quilt-rs/pull/1134>)
 
 ### Changed
 
-- **Breaking:** `InstalledPackageStatus::most_recent_mtime` and `InstalledPackageStatus::working_tree_quiet` are removed. Nothing times a publish from file edit times now (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- **Breaking:** `InstalledPackageStatus::most_recent_mtime` and `InstalledPackageStatus::working_tree_quiet` are removed. Nothing times a publish from file edit times now (<https://github.com/quiltdata/quilt-rs/pull/1134>)
 
 ## [v0.44.0] - 2026-10-13
 
