@@ -271,7 +271,8 @@ impl PackageStateStore {
         F: Fn(&rusqlite::Connection) -> Result<T, StoreError> + Clone + Send + 'static,
     {
         let mut open = self.open.lock().await;
-        for attempt in 0..2 {
+        let mut discarded = false;
+        for _ in 0..3 {
             // A file deleted under an open connection would keep answering from
             // the unlinked copy, so its absence means "start again".
             let gone = open
@@ -284,14 +285,25 @@ impl PackageStateStore {
             if open.is_none() {
                 *open = self.open_connection().await;
             }
-            let connection = open.as_ref()?.connection.clone();
+            let current = open.as_ref()?;
+            let (connection, on_disk) = (current.connection.clone(), current.on_disk);
             let op = op.clone();
             match connection.call(move |db| op(db)).await {
                 Ok(value) => return Some(value),
-                Err(tokio_rusqlite::Error::Error(err)) if attempt == 0 && err.is_damage() => {
+                Err(tokio_rusqlite::Error::Error(err))
+                    if on_disk && !discarded && err.is_damage() =>
+                {
                     warn!("state store: {err}; starting a new one");
                     *open = None;
                     self.discard_file();
+                    discarded = true;
+                }
+                // A file that answers but can't keep a write would leave its old
+                // times in charge. Memory keeps the new ones; the file is left
+                // as it is.
+                Err(err) if on_disk => {
+                    warn!("state store: {err}; keeping state in memory");
+                    *open = open_memory_or_log().await;
                 }
                 Err(err) => {
                     warn!("state store: {err}");
@@ -311,35 +323,31 @@ impl PackageStateStore {
                         on_disk: true,
                     });
                 }
-                Err(err) => warn!(
-                    "state store: cannot open {}: {err}; starting a new one",
-                    path.display()
-                ),
-            }
-            self.discard_file();
-            match open_file(path).await {
-                Ok(connection) => {
-                    return Some(Open {
-                        connection,
-                        on_disk: true,
-                    });
+                // Only a damaged file is deleted. Any other failure, such as a
+                // lock or a read error, may pass, and the file may hold good times.
+                Err(err) if err.is_damage() => {
+                    warn!("state store: {}: {err}; starting a new one", path.display());
+                    self.discard_file();
+                    match open_file(path).await {
+                        Ok(connection) => {
+                            return Some(Open {
+                                connection,
+                                on_disk: true,
+                            });
+                        }
+                        Err(err) => warn!(
+                            "state store: cannot create {}: {err}; keeping state in memory",
+                            path.display()
+                        ),
+                    }
                 }
                 Err(err) => warn!(
-                    "state store: cannot create {}: {err}; keeping state in memory",
+                    "state store: cannot open {}: {err}; keeping state in memory",
                     path.display()
                 ),
             }
         }
-        match open_memory().await {
-            Ok(connection) => Some(Open {
-                connection,
-                on_disk: false,
-            }),
-            Err(err) => {
-                warn!("state store: cannot open in memory: {err}");
-                None
-            }
-        }
+        open_memory_or_log().await
     }
 
     fn discard_file(&self) {
@@ -373,6 +381,19 @@ async fn open_file(path: &Path) -> Result<Connection, StoreError> {
     let connection = Connection::open(path).await?;
     migrate(&connection).await?;
     Ok(connection)
+}
+
+async fn open_memory_or_log() -> Option<Open> {
+    match open_memory().await {
+        Ok(connection) => Some(Open {
+            connection,
+            on_disk: false,
+        }),
+        Err(err) => {
+            warn!("state store: cannot open in memory: {err}");
+            None
+        }
+    }
 }
 
 async fn open_memory() -> Result<Connection, StoreError> {
@@ -550,6 +571,38 @@ mod tests {
         assert_eq!(
             store.last_change(&ns()).await.map(|a| a.last_change_at),
             Some(at(2))
+        );
+        Ok(())
+    }
+
+    /// A read-only file opens and answers reads but refuses writes.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_file_that_refuses_writes_keeps_new_times_in_memory() -> Res {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("state.db");
+        PackageStateStore::new(path.clone())
+            .record_change(&ns(), at(1), ChangeSource::Edit)
+            .await;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o444))?;
+
+        let store = PackageStateStore::new(path.clone());
+        store.record_change(&ns(), at(2), ChangeSource::Edit).await;
+        assert_eq!(
+            store.last_change(&ns()).await.map(|a| a.last_change_at),
+            Some(at(2)),
+            "the new time, not the file's old one"
+        );
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
+        assert_eq!(
+            PackageStateStore::new(path)
+                .last_change(&ns())
+                .await
+                .map(|a| a.last_change_at),
+            Some(at(1)),
+            "the file is kept, not deleted"
         );
         Ok(())
     }
