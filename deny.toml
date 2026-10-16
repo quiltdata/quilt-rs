@@ -62,6 +62,13 @@ ignore = [
     # Note this ignore is by advisory id, which is all cargo-deny supports here,
     # so it would also mask a future h2 0.4 regression under the same id.
     { id = "RUSTSEC-2026-0258", reason = "h2 0.3 via mixpanel-rs -> reqwest 0.11 -> hyper 0.14; no patched 0.3 release exists" },
+
+    # --- zip 4.x via tauri-plugin-updater (Windows only) ---
+    # Upstream yanked every zip release before 9.0.3 for extraction bugs.
+    # tauri-plugin-updater, up to 2.14.0 and 3.0.0-alpha, still requires
+    # zip ^4. It only unpacks our own update bundles after checking their
+    # signature. Drop this when the updater moves to zip 9.
+    { crate = "zip@4.6.1", reason = "yanked; tauri-plugin-updater still requires zip ^4" },
 ]
 
 [licenses]
