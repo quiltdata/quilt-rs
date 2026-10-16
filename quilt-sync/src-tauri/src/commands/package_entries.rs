@@ -143,13 +143,13 @@ pub fn entry_list(
             namespace: namespace.clone(),
         });
     }
-    for (filename, pattern, size) in &status.ignored_files {
+    for (filename, ignored_by, size) in &status.ignored_files {
         entries.push(InstalledPackageEntryData {
             filename: filename.display().to_string(),
             size: *size,
             status: "pristine".to_string(),
             junky_pattern: None,
-            ignored_by: Some(pattern.clone()),
+            ignored_by: Some(ignored_by.pattern.clone()),
             namespace: namespace.clone(),
         });
     }
@@ -223,9 +223,14 @@ mod tests {
             PathBuf::from("gone.csv"),
             quilt::lineage::Change::Removed(row()),
         );
-        status
-            .ignored_files
-            .push((PathBuf::from("x.tmp"), "*.tmp".to_string(), 1));
+        status.ignored_files.push((
+            PathBuf::from("x.tmp"),
+            quilt::quiltignore::IgnoredBy {
+                pattern: "*.tmp".to_string(),
+                source: quilt::quiltignore::RuleSource::Default,
+            },
+            1,
+        ));
         let installed: quilt::lineage::LineagePaths =
             ["edited.csv", "gone.csv", "kept.csv", "stray.csv"]
                 .into_iter()

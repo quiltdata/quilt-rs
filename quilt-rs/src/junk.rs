@@ -126,12 +126,15 @@ pub fn check(path: &Path) -> Option<Match> {
     check_dotfile(path)
 }
 
+/// Dotfiles that are data: Zarr stores keep their metadata in them.
+const DATA_DOTFILES: &[&str] = &[".zattrs", ".zarray", ".zgroup", ".zmetadata"];
+
 /// If the first path component starts with `.`, treat it as junk.
-/// Returns `None` for `.quiltignore`.
+/// Returns `None` for `.quiltignore` and Zarr metadata.
 fn check_dotfile(path: &Path) -> Option<Match> {
     let first = path.iter().next()?;
     let name = first.to_str()?;
-    if !name.starts_with('.') || name == ".quiltignore" {
+    if !name.starts_with('.') || name == ".quiltignore" || DATA_DOTFILES.contains(&name) {
         return None;
     }
     // For dot-directories, suggest ".<dir>/"; for dot-files, suggest the exact name.
@@ -223,6 +226,13 @@ mod tests {
     fn detects_gitignore_file() {
         let m = check(&PathBuf::from(".gitignore")).unwrap();
         assert_eq!(m.pattern, ".gitignore");
+    }
+
+    #[test]
+    fn does_not_flag_zarr_metadata() {
+        for name in [".zattrs", ".zarray", ".zgroup", ".zmetadata"] {
+            assert!(check(&PathBuf::from(name)).is_none(), "{name}");
+        }
     }
 
     #[test]

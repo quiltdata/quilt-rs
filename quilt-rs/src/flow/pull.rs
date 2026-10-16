@@ -95,8 +95,15 @@ pub async fn snapshot_for_pull(
 
     // THE WALK, last — so `status` reflects the tree as of just before the
     // caller classifies and applies.
-    let (lineage, status) =
-        flow::status(lineage, storage, base_manifest, package_home, host_config).await?;
+    let (lineage, status) = flow::status(
+        lineage,
+        storage,
+        paths,
+        base_manifest,
+        package_home,
+        host_config,
+    )
+    .await?;
 
     Ok((
         lineage,

@@ -688,7 +688,16 @@ mod tests {
         status.ignored_files = files
             .ignored
             .iter()
-            .map(|path| (path.into(), "*.tmp".to_string(), 1))
+            .map(|path| {
+                (
+                    path.into(),
+                    quilt::quiltignore::IgnoredBy {
+                        pattern: "*.tmp".to_string(),
+                        source: quilt::quiltignore::RuleSource::Default,
+                    },
+                    1,
+                )
+            })
             .collect();
 
         let downloaded: Vec<&String> = files

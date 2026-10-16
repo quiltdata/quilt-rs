@@ -405,6 +405,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let (_, status) = flow::status(
             lineage,
             &self.storage,
+            &self.paths,
             &manifest,
             &package_home,
             host_config,
@@ -474,6 +475,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let (lineage, status) = flow::status(
             lineage,
             &self.storage,
+            &self.paths,
             &manifest,
             &package_home,
             host_config,
@@ -627,6 +629,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let (lineage, status) = flow::status(
             lineage,
             &self.storage,
+            &self.paths,
             &manifest,
             &package_home,
             host_config,
@@ -711,6 +714,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 flow::status(
                     lineage,
                     &self.storage,
+                    &self.paths,
                     &manifest,
                     &package_home,
                     host_config.clone(),
