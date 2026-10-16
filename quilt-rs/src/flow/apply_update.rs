@@ -87,9 +87,10 @@ pub(crate) async fn apply_latest_update(
     // manifest becomes `latest`. `Protect::BaseContent` re-checks a destination
     // against these immediately before overwriting it, which is the only moment
     // that means anything once the whole touch set is staged first.
+    // Untracked paths keep their rows too: a file found at one is safe to
+    // replace only while it still holds `base`'s bytes.
     let base_rows: BTreeMap<PathBuf, ManifestRow> = touched
         .iter()
-        .filter(|path| lineage.paths.contains_key(*path))
         .filter_map(|path| {
             manifest
                 .get_record(path)
@@ -558,6 +559,145 @@ mod tests {
             storage.read_bytes(&wd().join(&path)).await?,
             users_edit.to_vec(),
             "the user's edit was overwritten"
+        );
+        Ok(())
+    }
+
+    /// A path the new revision adds is written only where nothing is. A file
+    /// already there is not tracked, so it is the user's own: here an ignored
+    /// `.env`, which the status walk does not list, standing in for one that
+    /// appeared after the walk.
+    #[test(tokio::test)]
+    async fn a_local_file_at_an_added_path_is_refused_not_overwritten() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OLD".to_string(),
+            origin: None,
+        };
+        let (paths, _domain_tmp) = DomainPaths::from_temp_dir()?;
+        let paths = &paths;
+        let storage = MockStorage::default();
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
+
+        let path = PathBuf::from(".env");
+        let local = b"SECRET=local";
+        storage
+            .write_byte_stream(wd().join(&path), ByteStream::from_static(local))
+            .await?;
+
+        let mut base = Manifest::default();
+        let lineage = PackageLineage {
+            remote_uri: Some(manifest_uri.clone()),
+            base_hash: "OLD".to_string(),
+            latest_hash: "NEW".to_string(),
+            ..PackageLineage::default()
+        };
+        let latest_manifest = Manifest {
+            rows: vec![row_at(".env", b"SECRET=remote", "objects/env")],
+            ..Manifest::default()
+        };
+        let new_hash = "deadbeef";
+        let remote = MockRemote::default();
+        publish(&remote, new_hash, &latest_manifest).await?;
+        put_object_at(&remote, "objects/env", b"SECRET=remote").await?;
+
+        let result = apply_latest_update(
+            lineage,
+            &mut base,
+            paths,
+            &storage,
+            &remote,
+            wd(),
+            Namespace::default(),
+            ManifestUri {
+                hash: new_hash.to_string(),
+                ..manifest_uri
+            },
+            std::slice::from_ref(&path),
+            &LocalWork::Protect,
+        )
+        .await;
+
+        assert!(
+            matches!(
+                result.as_ref().unwrap_err(),
+                crate::Error::PackageOp(crate::error::PackageOpError::PullConflict(paths))
+                    if paths == &vec![path.clone()]
+            ),
+            "expected a PullConflict naming the local file, got: {result:?}"
+        );
+        assert_eq!(
+            storage.read_bytes(&wd().join(&path)).await?,
+            local.to_vec(),
+            "the local file was overwritten"
+        );
+        Ok(())
+    }
+
+    /// The retry of a pull interrupted after it wrote an added path: the file
+    /// is there, untracked, holding exactly the incoming bytes. Nothing of the
+    /// user's is at stake, so the apply finishes and tracks it.
+    #[test(tokio::test)]
+    async fn a_file_at_an_added_path_holding_latest_is_taken_over() -> Res {
+        let manifest_uri = ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("f", "a").into(),
+            hash: "OLD".to_string(),
+            origin: None,
+        };
+        let (paths, _domain_tmp) = DomainPaths::from_temp_dir()?;
+        let paths = &paths;
+        let storage = MockStorage::default();
+        paths
+            .scaffold_for_caching(&storage, &manifest_uri.bucket)
+            .await?;
+
+        let path = PathBuf::from(".env");
+        storage
+            .write_byte_stream(wd().join(&path), ByteStream::from_static(b"SECRET=remote"))
+            .await?;
+
+        let mut base = Manifest::default();
+        let lineage = PackageLineage {
+            remote_uri: Some(manifest_uri.clone()),
+            base_hash: "OLD".to_string(),
+            latest_hash: "NEW".to_string(),
+            ..PackageLineage::default()
+        };
+        let latest_manifest = Manifest {
+            rows: vec![row_at(".env", b"SECRET=remote", "objects/env")],
+            ..Manifest::default()
+        };
+        let new_hash = "deadbeef";
+        let remote = MockRemote::default();
+        publish(&remote, new_hash, &latest_manifest).await?;
+        put_object_at(&remote, "objects/env", b"SECRET=remote").await?;
+
+        let (lineage, applied) = apply_latest_update(
+            lineage,
+            &mut base,
+            paths,
+            &storage,
+            &remote,
+            wd(),
+            Namespace::default(),
+            ManifestUri {
+                hash: new_hash.to_string(),
+                ..manifest_uri
+            },
+            std::slice::from_ref(&path),
+            &LocalWork::Protect,
+        )
+        .await?;
+
+        assert_eq!(applied.installed, vec![path.clone()]);
+        assert!(lineage.paths.contains_key(&path));
+        assert_eq!(
+            storage.read_bytes(&wd().join(&path)).await?,
+            b"SECRET=remote".to_vec()
         );
         Ok(())
     }

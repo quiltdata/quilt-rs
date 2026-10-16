@@ -36,8 +36,9 @@ pub enum PullOutcome {
     },
     /// A path changed on both sides with a different result — either a tracked
     /// path modified/removed on both sides, or a path *added* on both sides
-    /// (present in `latest`, absent from `base`) with different content. Any
-    /// single conflict blocks the whole (atomic) pull.
+    /// (present in `latest`, absent from `base`) with different content, or an
+    /// ignored local file at a path the remote adds or modifies. Any single
+    /// conflict blocks the whole (atomic) pull.
     Blocked { conflicts: Vec<PathBuf> },
 }
 
@@ -227,6 +228,9 @@ impl Reconciled {
 /// [`pull`](super::pull) uses against the base row. `Ok(None)` from it means
 /// the file already matches that row.
 ///
+/// Ignored files are settled here too, since the walk gives them no hash: one
+/// at a path the remote writes is hashed against `latest`'s row.
+///
 /// I/O only where the digests cannot be compared: a path whose algorithms
 /// already agree is left to [`classify_pull`]'s own comparison, so a package
 /// and host in step hash nothing here. Kept out of [`classify_pull`] so that
@@ -243,6 +247,31 @@ pub async fn identical_to_latest(
     latest: &Manifest,
 ) -> Res<Reconciled> {
     let mut identical = BTreeSet::new();
+    // An ignored file has no hash from the walk, so one at a path the remote
+    // writes is compared here. An interrupted pull leaves exactly that: the
+    // incoming file written, but not yet tracked.
+    for (path, _, _) in &status.ignored_files {
+        if status.changes.contains_key(path) {
+            continue;
+        }
+        let Some(latest_row) = latest.get_record(path) else {
+            continue;
+        };
+        if base
+            .get_record(path)
+            .is_some_and(|base_row| base_row.hash == latest_row.hash)
+        {
+            continue;
+        }
+        match refresh_hash(storage, &working_dir.join(path), latest_row.clone()).await {
+            Ok(None) => {
+                identical.insert(path.clone());
+            }
+            Ok(Some(_)) => {}
+            Err(err) if err.is_not_found() => {}
+            Err(err) => return Err(err),
+        }
+    }
     for (path, change) in &status.changes {
         let local_hash = match change {
             Change::Modified(row) | Change::Added(row) => &row.hash,
@@ -329,13 +358,14 @@ pub(crate) fn classify_pull_with_delta(
     if base == latest {
         return PullOutcome::UpToDate;
     }
-    if status.changes.is_empty() {
+
+    let mut conflicts = ignored_in_the_way(status, delta, identical);
+    if status.changes.is_empty() && conflicts.is_empty() {
         // Includes the metadata-only case (empty `delta`): the surgical touch
         // set is empty, but the hashes still advance to `latest`.
         return PullOutcome::CleanUpdate;
     }
 
-    let mut conflicts = Vec::new();
     let mut added = Vec::new();
     let mut modified = Vec::new();
     let mut removed = Vec::new();
@@ -369,8 +399,38 @@ pub(crate) fn classify_pull_with_delta(
             removed,
         }
     } else {
+        conflicts.sort();
         PullOutcome::Blocked { conflicts }
     }
+}
+
+/// Ignored local files at paths the remote writes to.
+///
+/// The status walk leaves an ignored file out of `changes`, so it never meets
+/// the both-changed check above, yet a fetch would replace it all the same. An
+/// ignored file carries no hash, so its content cannot be compared: any one at
+/// a path the remote adds or modifies is a conflict, unless
+/// [`identical_to_latest`] found it already holds `latest`'s bytes. A tracked
+/// file hidden by the package's rules is already a `Removed` change and is left
+/// to that check.
+fn ignored_in_the_way(
+    status: &InstalledPackageStatus,
+    delta: &BTreeMap<PathBuf, RemoteChange>,
+    identical: &Reconciled,
+) -> Vec<PathBuf> {
+    status
+        .ignored_files
+        .iter()
+        .map(|(path, _, _)| path)
+        .filter(|path| !status.changes.contains_key(*path) && !identical.contains(path))
+        .filter(|path| {
+            matches!(
+                delta.get(*path),
+                Some(RemoteChange::Added(_) | RemoteChange::Modified(_))
+            )
+        })
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -393,6 +453,8 @@ mod tests {
     use crate::lineage::UpstreamState;
     use crate::manifest::Manifest;
     use crate::manifest::ManifestRow;
+    use crate::quiltignore::IgnoredBy;
+    use crate::quiltignore::RuleSource;
 
     fn row(key: &str, hash_seed: &[u8]) -> ManifestRow {
         ManifestRow {
@@ -950,6 +1012,129 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    fn ignored_by_default(path: &str) -> (PathBuf, IgnoredBy, u64) {
+        (
+            PathBuf::from(path),
+            IgnoredBy {
+                pattern: path.to_string(),
+                source: RuleSource::Default,
+            },
+            1,
+        )
+    }
+
+    /// An ignored local file is not in `changes`, but a fetch would still
+    /// replace it. With no hash to compare, a remote add at its path blocks.
+    #[test]
+    fn ignored_local_file_at_a_remote_add_blocks() {
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"1"), row(".env", b"remote")]);
+        let mut status = behind(ChangeSet::default());
+        status.ignored_files = vec![ignored_by_default(".env"), ignored_by_default(".DS_Store")];
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &Reconciled::unreconciled()),
+            PullOutcome::Blocked {
+                conflicts: vec![PathBuf::from(".env")]
+            }
+        );
+    }
+
+    /// An interrupted pull can leave the incoming file written but untracked;
+    /// if the rules hide it, the walk lists it as ignored. Holding exactly
+    /// `latest`'s bytes, it is not a conflict, so the retry can finish.
+    #[test(tokio::test)]
+    async fn ignored_local_file_with_latest_bytes_does_not_block() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from(".env");
+        storage
+            .write_byte_stream(
+                working_dir.join(&path),
+                ByteStream::from_static(b"SECRET=remote"),
+            )
+            .await?;
+        let latest_row = calculate_hash(
+            &storage,
+            &working_dir.join(&path),
+            &path,
+            &HostConfig::default(),
+        )
+        .await?;
+
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"1"), latest_row]);
+        let mut status = behind(ChangeSet::default());
+        status.ignored_files = vec![ignored_by_default(".env")];
+
+        let identical =
+            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::CleanUpdate
+        );
+        Ok(())
+    }
+
+    /// Conflicts from ignored files and from changes come out together, in
+    /// path order.
+    #[test]
+    fn ignored_and_changed_conflicts_are_reported_together() {
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"remote"), row(".env", b"remote")]);
+        let mut status = behind(ChangeSet::from([(
+            PathBuf::from("a"),
+            Change::Modified(row("a", b"local")),
+        )]));
+        status.ignored_files = vec![ignored_by_default(".env")];
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &Reconciled::unreconciled()),
+            PullOutcome::Blocked {
+                conflicts: vec![PathBuf::from(".env"), PathBuf::from("a")]
+            }
+        );
+    }
+
+    /// An ignored file the remote leaves alone is no business of a pull.
+    #[test]
+    fn ignored_local_file_elsewhere_does_not_block() {
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"2")]);
+        let mut status = behind(ChangeSet::default());
+        status.ignored_files = vec![ignored_by_default(".env")];
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &Reconciled::unreconciled()),
+            PullOutcome::CleanUpdate
+        );
+    }
+
+    /// A tracked file hidden by the package's rules is already a `Removed`
+    /// change, and the both-changed check decides it: a remote removal agrees.
+    #[test]
+    fn ignored_tracked_file_is_left_to_its_change() {
+        let base = manifest_of(vec![row("a", b"1"), row("b", b"2")]);
+        let latest = manifest_of(vec![row("b", b"2")]);
+        let mut status = behind(ChangeSet::from([(
+            PathBuf::from("a"),
+            Change::Removed(row("a", b"1")),
+        )]));
+        status.ignored_files = vec![(
+            PathBuf::from("a"),
+            IgnoredBy {
+                pattern: "a".to_string(),
+                source: RuleSource::Package { line: 1 },
+            },
+            1,
+        )];
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &Reconciled::unreconciled()),
+            PullOutcome::KeepsLocalChanges {
+                added: vec![],
+                modified: vec![],
+                removed: vec![],
+            }
+        );
     }
 
     /// The delta reports all three kinds, additions included. It is

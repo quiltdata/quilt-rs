@@ -1078,6 +1078,94 @@ async fn test_pull_outcome_metadata_only_names_the_hash_and_no_paths() -> Res {
     Ok(())
 }
 
+/// The status walk hides a new `.env` by default, but a revision that adds
+/// `.env` would still write over it. Both the dry run and the pull treat it as
+/// a conflict, and the local bytes stay as they were.
+#[test(tokio::test)]
+async fn test_ignored_local_file_blocks_a_pull_that_adds_it() -> Res {
+    // `.env` gets the same (empty-content) row as `a.txt`, and the remote
+    // holds those bytes, so nothing but the conflict check stops the fetch.
+    let latest = format!(
+        "{BASE_MANIFEST}{}",
+        BASE_MANIFEST
+            .lines()
+            .nth(1)
+            .unwrap()
+            .replace("a.txt", ".env")
+    );
+    let (package, _temp_dirs) = behind_package(&latest).await?;
+    package
+        .remote
+        .put_object(None, &S3Uri::try_from("s3://bkt/.env")?, Vec::new())
+        .await?;
+    let local = package.package_home().await?.join(".env");
+    package
+        .storage
+        .write_byte_stream(&local, b"SECRET=local".to_vec().into())
+        .await?;
+
+    let preview = package.pull_outcome(None).await?;
+    assert_eq!(
+        preview.outcome,
+        PullOutcome::Blocked {
+            conflicts: vec![PathBuf::from(".env")]
+        }
+    );
+
+    let err = package
+        .pull(None, SyncScope::EntirePackage)
+        .await
+        .expect_err("a pull that would replace an ignored local file must not run");
+    assert!(
+        matches!(&err, Error::PackageOp(PackageOpError::PullConflict(paths)) if paths == &vec![PathBuf::from(".env")]),
+        "expected a conflict on .env, got: {err:?}"
+    );
+    assert_eq!(tokio::fs::read(&local).await?, b"SECRET=local");
+
+    Ok(())
+}
+
+/// The retry of a pull interrupted after it wrote `.env`: the file holds the
+/// incoming bytes but is not tracked, so the walk lists it as ignored. The
+/// retry finishes and tracks it.
+#[test(tokio::test)]
+async fn test_ignored_local_file_with_latest_bytes_does_not_block_a_pull() -> Res {
+    let latest = format!(
+        "{BASE_MANIFEST}{}",
+        BASE_MANIFEST
+            .lines()
+            .nth(1)
+            .unwrap()
+            .replace("a.txt", ".env")
+    );
+    let (package, _temp_dirs) = behind_package(&latest).await?;
+    package
+        .remote
+        .put_object(None, &S3Uri::try_from("s3://bkt/.env")?, Vec::new())
+        .await?;
+    // The row's hash is that of empty content.
+    let local = package.package_home().await?.join(".env");
+    package
+        .storage
+        .write_byte_stream(&local, Vec::new().into())
+        .await?;
+
+    assert!(matches!(
+        package.pull_outcome(None).await?.outcome,
+        PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. }
+    ));
+    package.pull(None, SyncScope::EntirePackage).await?;
+    assert!(
+        package
+            .lineage()
+            .await?
+            .paths
+            .contains_key(&PathBuf::from(".env"))
+    );
+
+    Ok(())
+}
+
 /// A local-only package (no `remote` in its lineage) has no `latest` tag to
 /// resolve, so `pull_outcome` must short-circuit to `UpToDate` without touching
 /// the network — never propagating the `NoRemote` error `remote()?` would raise.
