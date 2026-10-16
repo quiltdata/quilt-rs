@@ -14,6 +14,7 @@ use quilt_uri::{Host, S3PackageUri};
 use crate::Error;
 use crate::autopull::PausedReason;
 use crate::autopull::Watcher;
+use crate::autopull::last_change::PendingCommit;
 use crate::autopull::pull_toast;
 use crate::model;
 use crate::model::QuiltModel;
@@ -67,7 +68,9 @@ pub async fn package_commit(
     let result = package_commit_command(&m, &namespace, &message, &metadata, workflow).await;
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
-        watcher.note_committed(ns).await;
+        watcher
+            .note_committed(ns, pending_commit(&*m, ns).await)
+            .await;
     }
     Notify::new(msg_init)
         .on_success(
@@ -218,6 +221,30 @@ fn auth_failure_message(err: &Error) -> Option<String> {
     })
 }
 
+/// The commit waiting to be pushed on `namespace`, as the lineage says now.
+async fn pending_commit(
+    m: &impl model::QuiltModel,
+    namespace: &quilt_uri::Namespace,
+) -> PendingCommit {
+    match m.get_installed_package(namespace).await {
+        Ok(Some(package)) => m
+            .get_installed_package_lineage(&package)
+            .await
+            .map_or(PendingCommit::Unknown, |lineage| {
+                PendingCommit::of(&lineage)
+            }),
+        _ => PendingCommit::Unknown,
+    }
+}
+
+/// A publish by hand failed: a commit it left pending is the app's own.
+async fn note_publish_failed(m: &impl model::QuiltModel, watcher: &Watcher, namespace: &str) {
+    if let Ok(namespace) = quilt_uri::Namespace::try_from(namespace) {
+        let commit = pending_commit(m, &namespace).await;
+        watcher.note_publish_failed(&namespace, commit);
+    }
+}
+
 async fn package_push_command(
     m: &model::Model,
     namespace: &str,
@@ -297,11 +324,13 @@ pub async fn package_publish(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Publishing package {namespace}");
-    watcher.note_publish_started(&namespace);
     let result = package_publish_command(&*m, &settings, &namespace).await;
-    if let Ok((ns, _)) = &result {
-        watcher.clear_paused(ns).await;
-        watcher.note_published(ns).await;
+    match &result {
+        Ok((ns, _)) => {
+            watcher.clear_paused(ns).await;
+            watcher.note_published(ns).await;
+        }
+        Err(_) => note_publish_failed(&*m, &watcher, &namespace).await,
     }
 
     if let Ok((_, outcome)) = &result {
@@ -370,12 +399,14 @@ pub async fn package_commit_and_push(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Publishing package {namespace}");
-    watcher.note_publish_started(&namespace);
     let result =
         package_commit_and_push_command(&m, &namespace, &message, &metadata, workflow).await;
-    if let Ok((ns, _)) = &result {
-        watcher.clear_paused(ns).await;
-        watcher.note_published(ns).await;
+    match &result {
+        Ok((ns, _)) => {
+            watcher.clear_paused(ns).await;
+            watcher.note_published(ns).await;
+        }
+        Err(_) => note_publish_failed(&*m, &watcher, &namespace).await,
     }
 
     if let Ok((_, outcome)) = &result {

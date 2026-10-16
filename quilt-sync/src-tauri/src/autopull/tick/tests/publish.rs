@@ -1181,7 +1181,13 @@ async fn a_commit_waits_the_wait_before_its_push() -> Result<(), Error> {
         last_change: LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
         ..make_inner_for_run_once(reporter.clone()).await
     };
-    inner.last_change.on_commit(&ns).await;
+    inner
+        .last_change
+        .on_commit(
+            &ns,
+            crate::autopull::last_change::PendingCommit::At(SystemTime::UNIX_EPOCH),
+        )
+        .await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(reporter.published.lock().unwrap().is_empty());

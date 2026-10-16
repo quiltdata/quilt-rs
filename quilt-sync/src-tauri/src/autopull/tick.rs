@@ -12,6 +12,7 @@ use crate::autopull::PausedReason;
 use crate::autopull::WatcherInner;
 use crate::autopull::activity::ActivityOp;
 use crate::autopull::last_change::LastChange;
+use crate::autopull::last_change::PendingCommit;
 use crate::autopull::pull_toast;
 use crate::autopull::reporter::LoginBlock;
 use crate::autopull::reporter::PackageStatusEvent;
@@ -400,7 +401,7 @@ pub(crate) async fn refresh_then_maybe_sync(
             namespace,
             home.as_deref(),
             &status,
-            crate::autopull::last_change::PendingCommit::of(lineage),
+            PendingCommit::of(lineage),
         )
         .await;
     // `lineage` comes from `run_once`'s skip-filter read — re-reading it
@@ -545,7 +546,6 @@ pub(crate) async fn refresh_then_maybe_sync(
         // placeholder, new field) applies identically regardless of who
         // triggered the publish. It publishes on the held lock and reuses
         // `status`, walked under it.
-        last_change.on_publish_started(namespace);
         let published = {
             // The activity line spans the transfer and nothing else: the check never shows.
             let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);
@@ -572,8 +572,17 @@ pub(crate) async fn refresh_then_maybe_sync(
                     publish_arm_at: None,
                 }))
             }
-            Err(err) => classify_sync_err(err)
-                .map(|()| Some(RefreshOutcome::observed(upstream, has_changes, fingerprint))),
+            Err(err) => {
+                // The commit may have landed before the push failed; it is the
+                // app's own, so the retry keeps the package's time.
+                let commit = model
+                    .get_installed_package_lineage(&installed)
+                    .await
+                    .map_or(PendingCommit::Unknown, |l| PendingCommit::of(&l));
+                last_change.on_own_commit(namespace, commit);
+                classify_sync_err(err)
+                    .map(|()| Some(RefreshOutcome::observed(upstream, has_changes, fingerprint)))
+            }
         };
     }
 

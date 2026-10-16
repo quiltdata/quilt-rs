@@ -354,9 +354,10 @@ impl Watcher {
         reporter::WatcherSnapshot { paused }
     }
 
-    /// A package committed by hand: its push waits a full wait from now.
-    pub async fn note_committed(&self, namespace: &Namespace) {
-        self.inner.last_change.on_commit(namespace).await;
+    /// A package committed by hand, leaving `commit` pending: its push waits a
+    /// full wait from now.
+    pub async fn note_committed(&self, namespace: &Namespace, commit: last_change::PendingCommit) {
+        self.inner.last_change.on_commit(namespace, commit).await;
         if self.inner.settings.read().await.push.enabled {
             self.inner
                 .clocks
@@ -367,11 +368,10 @@ impl Watcher {
         }
     }
 
-    /// A publish by hand is starting: the commit it makes is the app's own.
-    pub fn note_publish_started(&self, namespace: &str) {
-        if let Ok(namespace) = Namespace::try_from(namespace) {
-            self.inner.last_change.on_publish_started(&namespace);
-        }
+    /// A publish by hand failed, leaving `commit` pending: the commit is the
+    /// app's own.
+    pub fn note_publish_failed(&self, namespace: &Namespace, commit: last_change::PendingCommit) {
+        self.inner.last_change.on_own_commit(namespace, commit);
     }
 
     /// A package published by hand: its countdown ends at once.
@@ -927,7 +927,9 @@ mod tests {
         }
         let before = DateTime::<Utc>::from(last_change::now());
 
-        watcher.note_committed(&ns).await;
+        watcher
+            .note_committed(&ns, last_change::PendingCommit::At(SystemTime::now()))
+            .await;
 
         let deadline = watcher
             .main_page_facts()
