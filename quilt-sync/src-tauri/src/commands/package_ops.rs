@@ -297,6 +297,7 @@ pub async fn package_publish(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Publishing package {namespace}");
+    watcher.note_publish_started(&namespace);
     let result = package_publish_command(&*m, &settings, &namespace).await;
     if let Ok((ns, _)) = &result {
         watcher.clear_paused(ns).await;
@@ -369,6 +370,7 @@ pub async fn package_commit_and_push(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Publishing package {namespace}");
+    watcher.note_publish_started(&namespace);
     let result =
         package_commit_and_push_command(&m, &namespace, &message, &metadata, workflow).await;
     if let Ok((ns, _)) = &result {

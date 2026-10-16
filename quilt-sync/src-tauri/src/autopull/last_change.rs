@@ -22,11 +22,34 @@ use crate::quilt::state_store::PackageStateStore;
 /// Now, to the millisecond the store keeps, so a time handed out equals the
 /// one read back.
 pub(crate) fn now() -> SystemTime {
-    let since = SystemTime::now()
+    floor_millis(SystemTime::now())
+}
+
+fn floor_millis(at: SystemTime) -> SystemTime {
+    let since = at
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
     SystemTime::UNIX_EPOCH
         + std::time::Duration::from_millis(u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// What a walk knows of the package's commit that waits to be pushed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingCommit {
+    None,
+    /// One waits, made at this time.
+    At(SystemTime),
+    /// The lineage could not be read.
+    Unknown,
+}
+
+impl PendingCommit {
+    pub(crate) fn of(lineage: &crate::quilt::lineage::PackageLineage) -> Self {
+        lineage
+            .commit
+            .as_ref()
+            .map_or(Self::None, |commit| Self::At(commit.timestamp.into()))
+    }
 }
 
 pub(crate) struct LastChange {
@@ -40,6 +63,9 @@ pub(crate) struct LastChange {
     /// Packages with a watcher signal since their last walk: that signal
     /// already set the time for what the walk finds.
     signalled: Mutex<BTreeSet<Namespace>>,
+    /// When the app last started publishing each package. A commit made after
+    /// that is the app's own, left waiting when the push failed.
+    publishing: Mutex<BTreeMap<Namespace, SystemTime>>,
 }
 
 impl LastChange {
@@ -49,6 +75,7 @@ impl LastChange {
             walked: Mutex::new(BTreeSet::new()),
             last_seen: Mutex::new(BTreeMap::new()),
             signalled: Mutex::new(BTreeSet::new()),
+            publishing: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -66,6 +93,23 @@ impl LastChange {
         self.store
             .record_change(namespace, now(), ChangeSource::Edit)
             .await;
+    }
+
+    /// The app is about to publish `namespace`: the commit it makes is its own,
+    /// whether or not the push that follows succeeds.
+    pub(crate) fn on_publish_started(&self, namespace: &Namespace) {
+        self.publishing
+            .lock()
+            .expect("publishing lock")
+            .insert(namespace.clone(), now());
+    }
+
+    fn app_committed(&self, namespace: &Namespace, at: SystemTime) -> bool {
+        self.publishing
+            .lock()
+            .expect("publishing lock")
+            .get(namespace)
+            .is_some_and(|started| *started <= at)
     }
 
     /// The package was committed in the app. The commit is a change: its push
@@ -86,15 +130,14 @@ impl LastChange {
     /// `None` when it has nothing to publish.
     ///
     /// `home` is the package's folder, for the restart check; `None` when it
-    /// could not be resolved, which counts as changed. `pending_commit` says
-    /// whether a commit waits to be pushed; `None` when unknown, which keeps a
-    /// stored time.
+    /// could not be resolved, which counts as changed. An unknown
+    /// `pending_commit` keeps a stored time.
     pub(crate) async fn observe(
         &self,
         namespace: &Namespace,
         home: Option<&Path>,
         status: &InstalledPackageStatus,
-        pending_commit: Option<bool>,
+        pending_commit: PendingCommit,
     ) -> Option<SystemTime> {
         let signalled = self
             .signalled
@@ -110,14 +153,14 @@ impl LastChange {
         let now = now();
         if status.changes.is_empty() {
             match pending_commit {
-                Some(false) => {
+                PendingCommit::None => {
                     self.store.forget(namespace).await;
                     return None;
                 }
                 // Not clean: the commit still has to be pushed, and waits from
                 // the last change, the commit included.
-                Some(true) => {}
-                None => return self.get(namespace).await,
+                PendingCommit::At(_) => {}
+                PendingCommit::Unknown => return self.get(namespace).await,
             }
         }
         // Changes no signal announced: the watcher is off, or can't see this
@@ -141,8 +184,19 @@ impl LastChange {
             return Some(now);
         };
         // The saved time is when the app last saw this package change, so a
-        // changed file with a later ctime changed while the app was not
-        // looking: closed, or before a session that never walked it.
+        // later commit was made where the app could not see it, such as
+        // `quilt commit` in a terminal.
+        if let PendingCommit::At(at) = pending_commit
+            && floor_millis(at) > saved.last_change_at
+            && !self.app_committed(namespace, at)
+        {
+            self.store
+                .record_change(namespace, now, ChangeSource::FirstSeen)
+                .await;
+            return Some(now);
+        }
+        // Likewise a changed file with a later ctime changed while the app was
+        // not looking: closed, or before a session that never walked it.
         if first_walk
             && home.is_none_or(|home| {
                 changed_while_closed(home, status.changes.keys(), saved.last_change_at)
@@ -288,7 +342,7 @@ mod tests {
         let clock = LastChange::new(PackageStateStore::in_memory());
         let before = now();
         let at = clock
-            .observe(&ns(), None, &status_with(&["a"]), Some(false))
+            .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
             .await;
         assert!(at.is_some_and(|at| at >= before));
         assert_eq!(clock.get(&ns()).await, at);
@@ -300,7 +354,7 @@ mod tests {
         clock.on_signal(&ns()).await;
         assert_eq!(
             clock
-                .observe(&ns(), None, &status_with(&[]), Some(false))
+                .observe(&ns(), None, &status_with(&[]), PendingCommit::None)
                 .await,
             None
         );
@@ -317,7 +371,7 @@ mod tests {
         clock.walked.lock().unwrap().insert(ns());
         assert_eq!(
             clock
-                .observe(&ns(), None, &status_with(&["a"]), Some(false))
+                .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
                 .await,
             Some(old)
         );
@@ -348,7 +402,12 @@ mod tests {
         let clock = LastChange::new(store);
         assert_eq!(
             clock
-                .observe(&ns(), Some(dir.path()), &status_with(&["a"]), Some(false))
+                .observe(
+                    &ns(),
+                    Some(dir.path()),
+                    &status_with(&["a"]),
+                    PendingCommit::None
+                )
                 .await,
             Some(saved)
         );
@@ -368,7 +427,12 @@ mod tests {
         let clock = LastChange::new(store);
         let before = now();
         let at = clock
-            .observe(&ns(), Some(dir.path()), &status_with(&["a"]), Some(false))
+            .observe(
+                &ns(),
+                Some(dir.path()),
+                &status_with(&["a"]),
+                PendingCommit::None,
+            )
             .await;
         assert!(at.is_some_and(|at| at >= before));
     }
@@ -382,7 +446,7 @@ mod tests {
         let clock = LastChange::new(store);
         let before = now();
         let at = clock
-            .observe(&ns(), None, &status_with(&["a"]), Some(false))
+            .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
             .await;
         assert!(at.is_some_and(|at| at >= before));
     }
@@ -404,7 +468,7 @@ mod tests {
         let clock = LastChange::changed_for_test(&ns(), hour()).await;
         assert!(
             clock
-                .observe(&ns(), None, &status_with(&["a"]), Some(false))
+                .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
                 .await
                 .is_some()
         );
@@ -413,7 +477,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(5)).await;
         assert_eq!(
             clock
-                .observe(&ns(), None, &status_with(&["a", "b"]), Some(false))
+                .observe(&ns(), None, &status_with(&["a", "b"]), PendingCommit::None)
                 .await,
             signalled
         );
@@ -445,14 +509,19 @@ mod tests {
         // The commit took every change: the tree is clean, the commit unpushed.
         assert_eq!(
             clock
-                .observe(&ns(), None, &status_with(&[]), Some(true))
+                .observe(
+                    &ns(),
+                    None,
+                    &status_with(&[]),
+                    PendingCommit::At(SystemTime::UNIX_EPOCH)
+                )
                 .await,
             committed,
             "a commit waiting to be pushed is not clean"
         );
         assert_eq!(
             clock
-                .observe(&ns(), None, &status_with(&[]), Some(false))
+                .observe(&ns(), None, &status_with(&[]), PendingCommit::None)
                 .await,
             None,
             "pushed and clean"
@@ -466,9 +535,61 @@ mod tests {
         let clock = LastChange::new(PackageStateStore::in_memory());
         let before = now();
         let at = clock
-            .observe(&ns(), None, &status_with(&[]), Some(true))
+            .observe(
+                &ns(),
+                None,
+                &status_with(&[]),
+                PendingCommit::At(SystemTime::UNIX_EPOCH),
+            )
             .await;
         assert!(at.is_some_and(|at| at >= before));
+    }
+
+    #[tokio::test]
+    async fn a_commit_newer_than_the_saved_time_waits_from_now() {
+        // The app saw an edit an hour ago; then `quilt commit` ran in a
+        // terminal, or replaced the commit the app knew of.
+        let clock = LastChange::changed_for_test(&ns(), hour()).await;
+        let committed = PendingCommit::At(now() - Duration::from_mins(1));
+        let before = now();
+        let at = clock
+            .observe(&ns(), None, &status_with(&[]), committed)
+            .await;
+        assert!(at.is_some_and(|at| at >= before));
+    }
+
+    #[tokio::test]
+    async fn a_publish_whose_push_failed_keeps_the_time() {
+        // The retry backs off; it doesn't wait a whole new wait.
+        let clock = LastChange::changed_for_test(&ns(), hour()).await;
+        let saved = clock.get(&ns()).await;
+        clock.on_publish_started(&ns());
+        let committed = PendingCommit::At(now());
+        assert_eq!(
+            clock
+                .observe(&ns(), None, &status_with(&[]), committed)
+                .await,
+            saved
+        );
+    }
+
+    #[tokio::test]
+    async fn a_commit_the_app_made_keeps_its_time() {
+        let clock = LastChange::changed_for_test(&ns(), hour()).await;
+        let committed_at = now();
+        clock.on_commit(&ns()).await;
+        let saved = clock.get(&ns()).await;
+        assert_eq!(
+            clock
+                .observe(
+                    &ns(),
+                    None,
+                    &status_with(&[]),
+                    PendingCommit::At(committed_at)
+                )
+                .await,
+            saved
+        );
     }
 
     #[tokio::test]
@@ -476,7 +597,9 @@ mod tests {
         let clock = LastChange::changed_for_test(&ns(), hour()).await;
         let saved = clock.get(&ns()).await;
         assert_eq!(
-            clock.observe(&ns(), None, &status_with(&[]), None).await,
+            clock
+                .observe(&ns(), None, &status_with(&[]), PendingCommit::Unknown)
+                .await,
             saved
         );
     }
@@ -496,20 +619,20 @@ mod tests {
         let old = clock.get(&ns()).await;
         assert_eq!(
             clock
-                .observe(&ns(), None, &status_with(&["a"]), Some(false))
+                .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
                 .await,
             old
         );
         assert_eq!(
             clock
-                .observe(&ns(), None, &status_with(&["a"]), Some(false))
+                .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
                 .await,
             old,
             "the same changes keep the time"
         );
         let before = now();
         let at = clock
-            .observe(&ns(), None, &status_with(&["a", "b"]), Some(false))
+            .observe(&ns(), None, &status_with(&["a", "b"]), PendingCommit::None)
             .await;
         assert!(at.is_some_and(|at| at >= before));
     }
@@ -529,7 +652,12 @@ mod tests {
         let clock = LastChange::new(PackageStateStore::new(dir.path().join("state.db")));
         assert_eq!(
             clock
-                .observe(&ns(), Some(dir.path()), &status_with(&["a"]), Some(false))
+                .observe(
+                    &ns(),
+                    Some(dir.path()),
+                    &status_with(&["a"]),
+                    PendingCommit::None
+                )
                 .await,
             saved
         );
@@ -551,7 +679,7 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let before = now();
         let at = clock
-            .observe(&ns(), None, &status_with(&["a"]), Some(false))
+            .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
             .await;
         assert!(at.is_some_and(|at| at >= before));
     }

@@ -12,6 +12,7 @@ use crate::autopull::PackageStatusEvent;
 use crate::autopull::SharedAutosyncSettings;
 use crate::autopull::StatusReporter;
 use crate::autopull::Watcher;
+use crate::autopull::last_change::PendingCommit;
 use crate::autopull::pull_cadence;
 use crate::autopull::reporter::SubscriberErrorEvent;
 use crate::fswatcher::settings::SharedFsWatcherSettings;
@@ -187,10 +188,12 @@ pub(crate) async fn process_signal(
             model
                 .get_installed_package_lineage(&pkg)
                 .await
-                .ok()
-                .map(|lineage| lineage.commit.is_some())
+                .map_or(PendingCommit::Unknown, |lineage| {
+                    PendingCommit::of(&lineage)
+                })
         } else {
-            Some(false)
+            // The tick reads the commit on its own walk.
+            PendingCommit::Unknown
         };
         crate::autopull::observe_walk(
             inner,

@@ -367,6 +367,13 @@ impl Watcher {
         }
     }
 
+    /// A publish by hand is starting: the commit it makes is the app's own.
+    pub fn note_publish_started(&self, namespace: &str) {
+        if let Ok(namespace) = Namespace::try_from(namespace) {
+            self.inner.last_change.on_publish_started(&namespace);
+        }
+    }
+
     /// A package published by hand: its countdown ends at once.
     pub async fn note_published(&self, namespace: &Namespace) {
         self.inner.last_change.on_published(namespace).await;
@@ -538,7 +545,7 @@ pub(crate) async fn observe_walk(
     namespace: &Namespace,
     home: Option<&std::path::Path>,
     status: &crate::quilt::lineage::InstalledPackageStatus,
-    pending_commit: Option<bool>,
+    pending_commit: last_change::PendingCommit,
 ) {
     let changed_at = inner
         .last_change

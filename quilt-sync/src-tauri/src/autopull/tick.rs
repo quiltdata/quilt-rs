@@ -400,7 +400,7 @@ pub(crate) async fn refresh_then_maybe_sync(
             namespace,
             home.as_deref(),
             &status,
-            Some(lineage.commit.is_some()),
+            crate::autopull::last_change::PendingCommit::of(lineage),
         )
         .await;
     // `lineage` comes from `run_once`'s skip-filter read — re-reading it
@@ -545,6 +545,7 @@ pub(crate) async fn refresh_then_maybe_sync(
         // placeholder, new field) applies identically regardless of who
         // triggered the publish. It publishes on the held lock and reuses
         // `status`, walked under it.
+        last_change.on_publish_started(namespace);
         let published = {
             // The activity line spans the transfer and nothing else: the check never shows.
             let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);
