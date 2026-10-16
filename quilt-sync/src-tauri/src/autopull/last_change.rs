@@ -137,6 +137,13 @@ impl LastChange {
         status: &InstalledPackageStatus,
         pending_commit: PendingCommit,
     ) -> Option<SystemTime> {
+        // Marked before any early return: the restart check belongs to the
+        // first walk, whatever that walk found.
+        let first_walk = self
+            .walked
+            .lock()
+            .expect("walked lock")
+            .insert(namespace.clone());
         let seen = crate::autopull::reporter::changes_fingerprint(&status.changes);
         let before = self
             .last_seen
@@ -182,11 +189,6 @@ impl LastChange {
                 .await;
             return Some(now);
         }
-        let first_walk = self
-            .walked
-            .lock()
-            .expect("walked lock")
-            .insert(namespace.clone());
         if self.store.record_first_seen(namespace, now).await {
             return Some(now);
         }
@@ -668,6 +670,26 @@ mod tests {
         // `b` reverted to what the commit holds.
         let at = clock.observe(&ns(), None, &status_with(&[]), commit).await;
         assert!(at.is_some_and(|at| at >= before));
+    }
+
+    #[tokio::test]
+    async fn the_restart_check_runs_on_the_first_walk_only() {
+        // Clean at launch, then edited with the watcher off: the wait runs from
+        // when the walk first saw the edit, and later walks keep that time.
+        let clock = LastChange::new(PackageStateStore::in_memory());
+        clock
+            .observe(&ns(), None, &status_with(&[]), PendingCommit::None)
+            .await;
+        let seen = clock
+            .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
+            .await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert_eq!(
+            clock
+                .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
+                .await,
+            seen
+        );
     }
 
     #[tokio::test]
