@@ -61,9 +61,6 @@ pub(crate) struct LastChange {
     /// What each package's last walk found changed, so a walk that finds
     /// something new restarts the wait even when no watcher signal came.
     last_seen: Mutex<BTreeMap<Namespace, String>>,
-    /// Packages with a watcher signal since their last walk: that signal
-    /// already set the time for what the walk finds.
-    signalled: Mutex<BTreeSet<Namespace>>,
     /// The time of each pending commit known to be the app's own.
     own_commits: Mutex<BTreeMap<Namespace, SystemTime>>,
     /// Packages whose own commit no walk has seen yet: the next walk finds
@@ -77,7 +74,6 @@ impl LastChange {
             store,
             walked: Mutex::new(BTreeSet::new()),
             last_seen: Mutex::new(BTreeMap::new()),
-            signalled: Mutex::new(BTreeSet::new()),
             own_commits: Mutex::new(BTreeMap::new()),
             fresh_commits: Mutex::new(BTreeSet::new()),
         }
@@ -90,10 +86,6 @@ impl LastChange {
 
     /// The folder watcher heard a change in `namespace`.
     pub(crate) async fn on_signal(&self, namespace: &Namespace) {
-        self.signalled
-            .lock()
-            .expect("signalled lock")
-            .insert(namespace.clone());
         self.store
             .record_change(namespace, now(), ChangeSource::Edit)
             .await;
@@ -145,11 +137,6 @@ impl LastChange {
         status: &InstalledPackageStatus,
         pending_commit: PendingCommit,
     ) -> Option<SystemTime> {
-        let signalled = self
-            .signalled
-            .lock()
-            .expect("signalled lock")
-            .remove(namespace);
         let seen = crate::autopull::reporter::changes_fingerprint(&status.changes);
         let before = self
             .last_seen
@@ -179,15 +166,17 @@ impl LastChange {
                 PendingCommit::Unknown => return self.get(namespace).await,
             }
         }
-        // Changes no signal announced: the watcher is off, or can't see this
-        // folder. Changes that moved into the app's own commit are not new.
+        // Different changes from the last walk move the time, signal or not: a
+        // walk can't tell which edits an earlier signal covered. This is also
+        // what restarts the wait when the watcher is off. Changes that moved
+        // into the app's own commit are not new.
         let fresh = self
             .fresh_commits
             .lock()
             .expect("fresh_commits lock")
             .remove(namespace);
         let into_own_commit = own_commit && fresh && status.changes.is_empty();
-        if !signalled && !into_own_commit && before.is_some_and(|before| before != seen) {
+        if !into_own_commit && before.is_some_and(|before| before != seen) {
             self.store
                 .record_change(namespace, now, ChangeSource::Edit)
                 .await;
@@ -488,9 +477,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_walk_after_a_signal_keeps_the_signal_time() {
-        // The walk limit coalesced the signal; the next walk finds what it
-        // announced and must not restart the wait again.
+    async fn a_walk_with_new_changes_moves_the_time_even_after_a_signal() {
+        // The walk limit coalesced the signal; the walk can't tell whether a
+        // later edit came after it, so it moves the time.
         let clock = LastChange::changed_for_test(&ns(), hour()).await;
         assert!(
             clock
@@ -499,14 +488,12 @@ mod tests {
                 .is_some()
         );
         clock.on_signal(&ns()).await;
-        let signalled = clock.get(&ns()).await;
+        let signalled = clock.get(&ns()).await.expect("signalled");
         tokio::time::sleep(Duration::from_millis(5)).await;
-        assert_eq!(
-            clock
-                .observe(&ns(), None, &status_with(&["a", "b"]), PendingCommit::None)
-                .await,
-            signalled
-        );
+        let at = clock
+            .observe(&ns(), None, &status_with(&["a", "b"]), PendingCommit::None)
+            .await;
+        assert!(at.is_some_and(|at| at > signalled));
     }
 
     #[tokio::test]

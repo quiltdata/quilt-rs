@@ -298,7 +298,10 @@ impl PackageStateStore {
                     if on_disk && !discarded && err.is_damage() =>
                 {
                     warn!("state store: {err}; starting a new one");
-                    *open = None;
+                    // Closed first: Windows refuses to delete an open file.
+                    if let Some(old) = open.take() {
+                        let _ = old.connection.close().await;
+                    }
                     self.discard_file();
                     discarded = true;
                 }
@@ -383,7 +386,12 @@ async fn open_file(path: &Path) -> Result<Connection, StoreError> {
         std::fs::create_dir_all(parent).map_err(StoreError::Io)?;
     }
     let connection = Connection::open(path).await?;
-    migrate(&connection).await?;
+    if let Err(err) = migrate(&connection).await {
+        // Closed before the caller may delete the file: Windows refuses to
+        // delete an open one.
+        let _ = connection.close().await;
+        return Err(err);
+    }
     Ok(connection)
 }
 
