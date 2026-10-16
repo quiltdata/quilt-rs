@@ -87,17 +87,25 @@ fn quiet_status(
     upstream: UpstreamState,
     changes: quilt::lineage::ChangeSet,
 ) -> quilt::lineage::InstalledPackageStatus {
-    let mut status = quilt::lineage::InstalledPackageStatus::new(upstream, changes);
-    // Far in the past so `working_tree_quiet(now, 30s)` passes. We
-    // would write `Duration::from_hours(1)` but it is 1.87+ and
-    // workspace MSRV is 1.85.
-    #[allow(clippy::duration_suboptimal_units)]
-    let one_hour = Duration::from_secs(3600);
-    status.most_recent_mtime = Some(SystemTime::now() - one_hour);
-    status
+    quilt::lineage::InstalledPackageStatus::new(upstream, changes)
 }
 
-fn make_inner_for_run_once(reporter: Arc<RecordingReporter>) -> WatcherInner {
+/// A clock on which `acme/demo` changed an hour ago: past every wait here.
+async fn quiet_clock() -> LastChange {
+    LastChange::changed_for_test(&("acme", "demo").into(), Duration::from_hours(1)).await
+}
+
+/// `inner_with`, on a [`quiet_clock`].
+async fn quiet_inner_with(
+    aggregator: Arc<crate::autopull::status::SyncTrayAggregator>,
+) -> WatcherInner {
+    WatcherInner {
+        last_change: quiet_clock().await,
+        ..inner_with(aggregator)
+    }
+}
+
+async fn make_inner_for_run_once(reporter: Arc<RecordingReporter>) -> WatcherInner {
     WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
@@ -107,10 +115,11 @@ fn make_inner_for_run_once(reporter: Arc<RecordingReporter>) -> WatcherInner {
         reporter,
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: quiet_clock().await,
     }
 }
 
-fn make_inner_with_flags(
+async fn make_inner_with_flags(
     reporter: Arc<RecordingReporter>,
     pull_enabled: bool,
     push_enabled: bool,
@@ -134,6 +143,7 @@ fn make_inner_with_flags(
         reporter,
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: quiet_clock().await,
     }
 }
 
@@ -160,7 +170,7 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
         });
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     {
@@ -206,7 +216,7 @@ async fn run_once_publishes_on_pending_commit_only() -> Result<(), Error> {
         latest_hash: "h0".to_string(),
         ..quilt::lineage::PackageLineage::default()
     };
-    // No changes → working_tree_quiet passes trivially.
+    // No changes, so no last-change time: nothing to wait for.
     let status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::Ahead, BTreeMap::new());
 
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
@@ -221,7 +231,7 @@ async fn run_once_publishes_on_pending_commit_only() -> Result<(), Error> {
         });
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert_eq!(reporter.published.lock().unwrap().len(), 1);
@@ -232,17 +242,16 @@ async fn run_once_publishes_on_pending_commit_only() -> Result<(), Error> {
 }
 
 #[tokio::test]
-async fn run_once_skips_publish_when_not_quiet() -> Result<(), Error> {
+async fn run_once_skips_publish_while_the_wait_runs() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
     let mut changes = BTreeMap::new();
     changes.insert(
         std::path::PathBuf::from("file.txt"),
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
-    let mut status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
-    // Just edited → not quiet (the quiet window is 300 s by default).
-    let edited_at = SystemTime::now();
-    status.most_recent_mtime = Some(edited_at);
+    let status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
+    // Changed a minute ago; the wait is 300 s by default.
+    let changed_at = SystemTime::now() - Duration::from_mins(1);
 
     let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
@@ -250,19 +259,23 @@ async fn run_once_skips_publish_when_not_quiet() -> Result<(), Error> {
     model.expect_locked_package_publish().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = WatcherInner {
+        last_change: LastChange::changed_for_test(&ns, Duration::from_mins(1)).await,
+        ..make_inner_for_run_once(reporter.clone()).await
+    };
     run_once(&model, &RoleCache::default(), &inner).await?;
 
-    // The deferral has to *write* the arm time, not merely return it: the card's
-    // publish countdown is drawn from this map and from nothing else. Nothing else
-    // asserts an insert ever happens — the other tests cover the returned outcome
-    // and the removal — so a dropped or mis-keyed insert would ship green.
-    assert_eq!(
-        inner.clocks.publish_arm.read().await.get(&ns).copied(),
-        Some(chrono::DateTime::<chrono::Utc>::from(
-            edited_at + Duration::from_secs(300)
-        )),
-        "the last edit plus the quiet window, keyed by the namespace that is waiting"
+    // The deferral has to *record* the waiting package, not merely return its
+    // deadline: the card's publish countdown is drawn from this set and from
+    // nothing else.
+    assert!(inner.clocks.publish_waiting.read().await.contains(&ns));
+    let card = crate::autopull::next_publish_at(&inner, Duration::from_secs(300))
+        .await
+        .expect("waiting");
+    let expected = chrono::DateTime::<chrono::Utc>::from(changed_at + Duration::from_secs(300));
+    assert!(
+        (card - expected).abs() < chrono::Duration::seconds(2),
+        "the last change plus the wait, got {card}, expected {expected}"
     );
 
     assert!(reporter.published.lock().unwrap().is_empty());
@@ -279,14 +292,14 @@ async fn a_deferred_publish_records_when_it_will_arm() -> Result<(), Error> {
     // The one place the arm time is knowable: the branch that today logs
     // "working tree not quiet, deferring" and discards it.
     let ns: Namespace = ("acme", "demo").into();
-    let edited_at = SystemTime::now() - Duration::from_secs(60);
+    let clock = LastChange::changed_for_test(&ns, Duration::from_mins(1)).await;
+    let changed_at = clock.get(&ns).await.expect("seeded");
     let mut changes = BTreeMap::new();
     changes.insert(
         std::path::PathBuf::from("file.txt"),
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
-    let mut status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
-    status.most_recent_mtime = Some(edited_at);
+    let status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
     let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
     let (mut model, _) = fixture_with_lineage_and_status(lineage.clone(), status);
     model.expect_locked_package_publish().times(0);
@@ -296,6 +309,7 @@ async fn a_deferred_publish_records_when_it_will_arm() -> Result<(), Error> {
         &ns,
         &lineage,
         &PublishSettings::default(),
+        &clock,
         Duration::from_secs(300),
         false,
         true,
@@ -308,8 +322,8 @@ async fn a_deferred_publish_records_when_it_will_arm() -> Result<(), Error> {
 
     assert_eq!(
         outcome.publish_arm_at,
-        Some(edited_at + Duration::from_secs(300)),
-        "the arm time is the last edit plus the quiet window, not now plus it"
+        Some(changed_at + Duration::from_secs(300)),
+        "the deadline is the last change plus the wait, not now plus it"
     );
     Ok(())
 }
@@ -345,6 +359,7 @@ async fn a_quiet_tree_that_publishes_records_no_arm_time() -> Result<(), Error> 
         &ns,
         &lineage,
         &PublishSettings::default(),
+        &quiet_clock().await,
         Duration::from_secs(300),
         false,
         true,
@@ -387,15 +402,15 @@ async fn run_once_clears_an_arm_time_when_the_package_stops_waiting() -> Result<
         });
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     // Seeded under the *installed* namespace, so the per-tick `retain` cannot
     // be what removes it — only the arm-time decision can.
     inner
         .clocks
-        .publish_arm
+        .publish_waiting
         .write()
         .await
-        .insert(ns.clone(), Utc::now() + Duration::from_secs(300));
+        .insert(ns.clone());
 
     run_once(&model, &RoleCache::default(), &inner).await?;
 
@@ -404,7 +419,7 @@ async fn run_once_clears_an_arm_time_when_the_package_stops_waiting() -> Result<
         1,
         "the tick must actually publish, or the cleared entry proves nothing"
     );
-    assert!(inner.clocks.publish_arm.read().await.is_empty());
+    assert!(inner.clocks.publish_waiting.read().await.is_empty());
     Ok(())
 }
 
@@ -431,13 +446,13 @@ async fn run_once_clears_an_arm_time_when_the_package_pauses() -> Result<(), Err
     model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     inner
         .clocks
-        .publish_arm
+        .publish_waiting
         .write()
         .await
-        .insert(ns.clone(), Utc::now() + Duration::from_secs(300));
+        .insert(ns.clone());
 
     run_once(&model, &RoleCache::default(), &inner).await?;
 
@@ -448,7 +463,7 @@ async fn run_once_clears_an_arm_time_when_the_package_pauses() -> Result<(), Err
         ),
         "the tick must actually pause, or the cleared entry proves nothing"
     );
-    assert!(inner.clocks.publish_arm.read().await.is_empty());
+    assert!(inner.clocks.publish_waiting.read().await.is_empty());
     Ok(())
 }
 
@@ -477,7 +492,7 @@ async fn run_once_skips_publish_when_behind() -> Result<(), Error> {
     model.expect_locked_package_publish().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(reporter.published.lock().unwrap().is_empty());
@@ -523,7 +538,7 @@ async fn run_once_publishes_local_first_push() -> Result<(), Error> {
         });
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert_eq!(reporter.published.lock().unwrap().len(), 1);
@@ -552,7 +567,7 @@ async fn run_once_pauses_on_classic_diverged() -> Result<(), Error> {
     model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(reporter.published.lock().unwrap().is_empty());
@@ -589,7 +604,7 @@ async fn run_once_pauses_on_foreign_remote_diverged() -> Result<(), Error> {
     model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     let paused = inner.paused.read().await;
@@ -619,7 +634,7 @@ async fn run_once_pauses_on_push_workflow_failure() -> Result<(), Error> {
         });
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     {
@@ -670,7 +685,7 @@ async fn run_once_pauses_on_workflow_validation_rejection() -> Result<(), Error>
         .returning(|_, _, _, _, _, _| Err(workflow_rejection()));
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     // Paused with the validator's own message (naming the rule), no wrapper
@@ -750,7 +765,7 @@ async fn run_once_pauses_and_names_the_role_on_denied_publish() -> Result<(), Er
     model.expect_clear_remote_client_cache().returning(|_| ());
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     {
@@ -808,7 +823,7 @@ async fn run_once_pauses_on_denied_publish_even_when_the_role_is_unknown() -> Re
         .returning(|_| Err(Error::General("registry unreachable".to_string())));
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(matches!(
@@ -842,7 +857,7 @@ async fn run_once_backoffs_on_transient_publish_error() -> Result<(), Error> {
         });
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     // Transient: no paused entry, no status emit, but backoff bumped.
@@ -879,7 +894,7 @@ async fn run_once_login_required_on_publish() -> Result<(), Error> {
         });
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_for_run_once(reporter.clone());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(inner.paused.read().await.is_empty());
@@ -902,20 +917,17 @@ async fn run_once_login_required_on_publish() -> Result<(), Error> {
 
 #[tokio::test]
 async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<(), Error> {
-    // The push-side quiet window must come from
-    // `push.idle_timeout_secs`, not `pull_cadence(...)`.
-    // Concretely: with focused_secs=5 and idle_timeout_secs=60, a
-    // tick taken with most_recent_mtime=30s-ago must NOT publish
-    // (still inside the 60s idle window), even though the pull
-    // cadence (5s) has long elapsed.
+    // The wait must come from `push.idle_timeout_secs`, not
+    // `pull_cadence(...)`. Concretely: with focused_secs=5 and
+    // idle_timeout_secs=60, a tick 30 s after the last change must NOT
+    // publish, even though the pull cadence (5s) has long elapsed.
     let ns: Namespace = ("acme", "demo").into();
     let mut changes = BTreeMap::new();
     changes.insert(
         std::path::PathBuf::from("file.txt"),
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
-    let mut status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
-    status.most_recent_mtime = Some(SystemTime::now() - Duration::from_secs(30));
+    let status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
 
     let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
     let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
@@ -945,6 +957,7 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: LastChange::changed_for_test(&ns, Duration::from_secs(30)).await,
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -977,7 +990,7 @@ async fn run_once_pull_only_does_not_publish_changes() -> Result<(), Error> {
     model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_with_flags(reporter.clone(), true, false);
+    let inner = make_inner_with_flags(reporter.clone(), true, false).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     assert!(reporter.published.lock().unwrap().is_empty());
@@ -1003,7 +1016,7 @@ async fn run_once_push_only_does_not_pull_behind() -> Result<(), Error> {
     model.expect_locked_package_publish().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_with_flags(reporter.clone(), false, true);
+    let inner = make_inner_with_flags(reporter.clone(), false, true).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     let statuses = reporter.statuses.lock().unwrap();
@@ -1028,7 +1041,7 @@ async fn push_only_behind_event(latest: &str) -> Result<PackageStatusEvent, Erro
     model.expect_locked_package_publish().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_with_flags(reporter.clone(), false, true);
+    let inner = make_inner_with_flags(reporter.clone(), false, true).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     let mut statuses = reporter.statuses.lock().unwrap();
@@ -1062,13 +1075,98 @@ async fn a_push_only_tick_reports_a_moved_newer_revision() -> Result<(), Error> 
 }
 
 #[tokio::test]
+async fn a_change_with_no_time_waits_a_full_wait() -> Result<(), Error> {
+    // A delete-only change, a copy that keeps old file times, a package the
+    // watcher can't see: the tick finds changes it has no time for, and waits
+    // a full wait from now.
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("gone.txt"),
+        quilt::lineage::Change::Removed(quilt::manifest::ManifestRow::default()),
+    );
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+    let (mut model, _) =
+        fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
+    model.expect_locked_package_publish().times(0);
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        last_change: LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
+        ..make_inner_for_run_once(reporter.clone()).await
+    };
+    let before = crate::autopull::last_change::now();
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(reporter.published.lock().unwrap().is_empty());
+    assert!(
+        inner
+            .last_change
+            .get(&ns)
+            .await
+            .is_some_and(|at| at >= before)
+    );
+    assert!(inner.clocks.publish_waiting.read().await.contains(&ns));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_publish_by_the_tick_deletes_the_time() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+    let (mut model, _) =
+        fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
+    let ns_for_push = ns.clone();
+    model
+        .expect_locked_package_publish()
+        .times(1)
+        .returning(move |_, _, _, _, _, _| {
+            Ok(quilt::PublishOutcome::CommittedAndPushed(
+                fake_push_outcome(&ns_for_push),
+            ))
+        });
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert_eq!(reporter.published.lock().unwrap().len(), 1);
+    assert_eq!(inner.last_change.get(&ns).await, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn every_tick_records_that_the_app_is_alive() -> Result<(), Error> {
+    // Even with both directions off: a change made while the app runs is not
+    // one made while it was closed.
+    let model = MockQuiltModel::new();
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = make_inner_with_flags(reporter.clone(), false, false).await;
+    let before = crate::autopull::last_change::now();
+    run_once(&model, &RoleCache::default(), &inner).await?;
+    let alive = inner
+        .last_change
+        .store_for_test()
+        .last_alive_at()
+        .await
+        .expect("recorded");
+    assert!(alive >= before);
+    Ok(())
+}
+
+#[tokio::test]
 async fn run_once_both_off_is_a_noop() -> Result<(), Error> {
     // Both flags off: run_once short-circuits before touching the
     // model. The mock has zero expectations to prove no calls are
     // made.
     let model = MockQuiltModel::new();
     let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_with_flags(reporter.clone(), false, false);
+    let inner = make_inner_with_flags(reporter.clone(), false, false).await;
     run_once(&model, &RoleCache::default(), &inner).await?;
     assert!(reporter.statuses.lock().unwrap().is_empty());
     Ok(())
@@ -1106,6 +1204,7 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator,
         clocks: Clocks::default(),
+        last_change: quiet_clock().await,
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
     let after = rx.borrow().clone();
@@ -1162,6 +1261,7 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator,
         clocks: Clocks::default(),
+        last_change: quiet_clock().await,
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
     assert_eq!(rx.borrow().pending_changes, 1);
@@ -1201,7 +1301,12 @@ async fn the_publish_holds_its_activity_while_it_runs() -> Result<(), Error> {
             ))
         });
 
-    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+    run_once(
+        &model,
+        &RoleCache::default(),
+        &quiet_inner_with(Arc::clone(&agg)).await,
+    )
+    .await?;
 
     assert_eq!(
         *seen.lock().unwrap(),
@@ -1237,7 +1342,12 @@ async fn a_failed_publish_clears_its_activity() -> Result<(), Error> {
             )))
         });
 
-    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+    run_once(
+        &model,
+        &RoleCache::default(),
+        &quiet_inner_with(Arc::clone(&agg)).await,
+    )
+    .await?;
 
     assert_eq!(*seen.lock().unwrap(), Some(Some(publishing(&ns))));
     assert_eq!(

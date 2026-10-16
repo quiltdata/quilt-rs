@@ -156,6 +156,22 @@ const fn clears_pauses(prev: &AutosyncSettings, next: &AutosyncSettings) -> bool
     !(prev.pull.enabled || prev.push.enabled) && (next.pull.enabled || next.push.enabled)
 }
 
+/// Whether a write turns publishing on. Every package with changes then waits a
+/// full wait from now, however old its edits are.
+const fn turns_publishing_on(prev: &AutosyncSettings, next: &AutosyncSettings) -> bool {
+    !prev.push.enabled && next.push.enabled
+}
+
+/// What a settings write sets off, once the settings lock is released.
+async fn after_autosync_write(watcher: &Watcher, (clear, publishing_on): (bool, bool)) {
+    if clear {
+        watcher.clear_all_paused().await;
+    }
+    if publishing_on {
+        watcher.note_publishing_on().await;
+    }
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FsWatcherSettingsData {
@@ -314,17 +330,18 @@ pub async fn update_autosync_settings(
         .app_local_data_dir()
         .map_err(|e| e.to_string())?;
 
-    let clear = {
+    let changes = {
         let mut current = autosync_settings.write().await;
         let merged = merge_autosync_settings_data(&current, &settings);
         merged.save(&data_dir).await.map_err(|e| e.to_string())?;
-        let clear = clears_pauses(&current, &merged);
+        let changes = (
+            clears_pauses(&current, &merged),
+            turns_publishing_on(&current, &merged),
+        );
         *current = merged;
-        clear
+        changes
     };
-    if clear {
-        watcher.clear_all_paused().await;
-    }
+    after_autosync_write(&watcher, changes).await;
     Ok(())
 }
 
@@ -376,17 +393,18 @@ async fn write_autosync_patch(
         .app_local_data_dir()
         .map_err(|e| e.to_string())?;
 
-    let clear = {
+    let changes = {
         let mut current = autosync_settings.write().await;
         let next = patch.apply(&current)?;
         next.save(&data_dir).await.map_err(|e| e.to_string())?;
-        let clear = clears_pauses(&current, &next);
+        let changes = (
+            clears_pauses(&current, &next),
+            turns_publishing_on(&current, &next),
+        );
         *current = next;
-        clear
+        changes
     };
-    if clear {
-        watcher.clear_all_paused().await;
-    }
+    after_autosync_write(watcher, changes).await;
     Ok(())
 }
 
@@ -780,6 +798,24 @@ mod tests {
         assert!(clears_pauses(&enabled(false, false), &enabled(false, true)));
         assert!(!clears_pauses(&enabled(true, false), &enabled(true, true)));
         assert!(!clears_pauses(&enabled(true, true), &enabled(false, false)));
+        // Publishing on is its own edge: it restarts every waiting package's
+        // countdown, whatever the pull side does.
+        assert!(turns_publishing_on(
+            &enabled(true, false),
+            &enabled(true, true)
+        ));
+        assert!(turns_publishing_on(
+            &enabled(false, false),
+            &enabled(false, true)
+        ));
+        assert!(!turns_publishing_on(
+            &enabled(true, true),
+            &enabled(false, true)
+        ));
+        assert!(!turns_publishing_on(
+            &enabled(false, true),
+            &enabled(false, false)
+        ));
     }
 
     #[test]

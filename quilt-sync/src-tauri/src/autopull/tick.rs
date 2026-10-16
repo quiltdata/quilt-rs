@@ -11,6 +11,7 @@ use crate::Error;
 use crate::autopull::PausedReason;
 use crate::autopull::WatcherInner;
 use crate::autopull::activity::ActivityOp;
+use crate::autopull::last_change::LastChange;
 use crate::autopull::pull_toast;
 use crate::autopull::reporter::LoginBlock;
 use crate::autopull::reporter::PackageStatusEvent;
@@ -343,7 +344,8 @@ pub(crate) async fn refresh_then_maybe_sync(
     namespace: &Namespace,
     lineage: &quilt::lineage::PackageLineage,
     publish: &PublishSettings,
-    quiet_window: Duration,
+    last_change: &LastChange,
+    wait: Duration,
     pull_enabled: bool,
     push_enabled: bool,
     scope: SyncScope,
@@ -388,6 +390,14 @@ pub(crate) async fn refresh_then_maybe_sync(
     let has_changes = !status.changes.is_empty();
     // Observed-tree fingerprint, taken before the publish path consumes `status`.
     let fingerprint = status_fingerprint(&status);
+    let home = if last_change.first_walk_pending(namespace) {
+        installed.package_home().await.ok()
+    } else {
+        None
+    };
+    let changed_at = last_change
+        .observe(namespace, home.as_deref(), &status)
+        .await;
     // `lineage` comes from `run_once`'s skip-filter read — re-reading it
     // here would cost an extra trait call per tick and open a narrow
     // race window where a commit landing between the two reads would
@@ -512,18 +522,17 @@ pub(crate) async fn refresh_then_maybe_sync(
         )
         && (has_changes || has_pending_commit);
     if publish_eligible {
-        let now = SystemTime::now();
-        if !status.working_tree_quiet(now, quiet_window) {
-            info!("autosync: namespace={namespace} working tree not quiet, deferring");
-            // `working_tree_quiet` returns true when `most_recent_mtime` is
-            // `None`, so reaching here means it is `Some` — the `unwrap_or(now)`
-            // is a total function's shape, not a guess.
-            let edited_at = status.most_recent_mtime.unwrap_or(now);
+        // A pending commit with no changes has no last-change time, so it
+        // publishes now.
+        if let Some(at) =
+            crate::autopull::publish_deadline(changed_at, wait).filter(|at| *at > SystemTime::now())
+        {
+            info!("autosync: namespace={namespace} changed less than the wait ago, deferring");
             return Ok(Some(RefreshOutcome::deferred(
                 upstream,
                 has_changes,
                 fingerprint,
-                edited_at + quiet_window,
+                at,
             )));
         }
         // `publish_locked_with_settings` is the manual one-click Publish
@@ -539,6 +548,7 @@ pub(crate) async fn refresh_then_maybe_sync(
         return match published {
             Ok((outcome, message)) => {
                 info!("autosync: published namespace={namespace}");
+                last_change.on_published(namespace).await;
                 // The pushed revision is `latest` only when it was certified;
                 // otherwise the next tick reads whatever is, and differs.
                 let push = outcome.push();
@@ -625,6 +635,9 @@ pub(crate) async fn run_once(
         let cadence = crate::autopull::pull_cadence(&inner.settings.read().await.pull);
         crate::autopull::arm_next_pull(inner, cadence).await;
     }
+    // Even with both directions off: a change made while the app runs is not a
+    // change made while it was closed.
+    inner.last_change.note_alive().await;
 
     // Cheap pre-check: if both directions are off we have nothing to
     // do. Per-direction gating lives inside `refresh_then_maybe_sync`
@@ -657,20 +670,17 @@ pub(crate) async fn run_once(
         .retain(|ns, _| current.contains(ns));
     inner
         .clocks
-        .publish_arm
+        .publish_waiting
         .write()
         .await
-        .retain(|ns, _| current.contains(ns));
+        .retain(|ns| current.contains(ns));
     inner.aggregator.retain_namespaces(&current);
 
     // Snapshot publish settings once per tick so we don't reacquire the
-    // RwLock per package. Same lifetime for `quiet_window`.
-    //
-    // `quiet_window` is the constant `push.idle_timeout_secs`, apart from
-    // the sleep loop's `pull_cadence(&settings.pull)`, so pull frequency
-    // and push quiet window can be tuned independently.
+    // RwLock per package. Same lifetime for `wait`, which is
+    // `push.idle_timeout_secs`, tuned apart from the pull cadence.
     let publish = inner.publish_settings.read().await.clone();
-    let quiet_window = {
+    let wait = {
         let settings = inner.settings.read().await;
         Duration::from_secs(settings.push.idle_timeout_secs)
     };
@@ -712,7 +722,8 @@ pub(crate) async fn run_once(
             &namespace,
             &lineage,
             &publish,
-            quiet_window,
+            &inner.last_change,
+            wait,
             pull_enabled,
             push_enabled,
             lineage.sync_scope,
@@ -727,16 +738,21 @@ pub(crate) async fn run_once(
             Err(err) => Err(err),
         };
 
-        // One place decides this namespace's arm time. It is armed only by a
-        // quiet-window deferral; a publish, a pull, a pause, a login block and a
+        // One place decides whether this namespace counts down. Only a
+        // deferral does; a publish, a pull, a pause, a login block and a
         // transient failure all mean it is not waiting, and a stale deadline
         // would have the card count down to a moment with no meaning.
         {
-            let mut arm = inner.clocks.publish_arm.write().await;
-            if let Some(at) = result.as_ref().ok().and_then(|o| o.publish_arm_at) {
-                arm.insert(namespace.clone(), at.into());
+            let mut waiting = inner.clocks.publish_waiting.write().await;
+            if result
+                .as_ref()
+                .ok()
+                .and_then(|o| o.publish_arm_at)
+                .is_some()
+            {
+                waiting.insert(namespace.clone());
             } else {
-                arm.remove(&namespace);
+                waiting.remove(&namespace);
             }
         }
 

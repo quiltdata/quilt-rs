@@ -19,6 +19,7 @@ use crate::publish_settings::SharedPublishSettings;
 use crate::telemetry::prelude::*;
 
 pub mod activity;
+pub mod last_change;
 pub mod pull_toast;
 pub mod reporter;
 pub mod settings;
@@ -98,12 +99,10 @@ pub(crate) struct Clocks {
     /// the past; and it is `None` until the first tick *completes*, so an
     /// enabled toggle would read idle for the first cadence of every session.
     pub next_pull_at: RwLock<Option<DateTime<Utc>>>,
-    /// Per namespace: when its quiet window expires and autopush may publish.
-    /// Written only where it is known — the deferral branch of
-    /// `refresh_then_maybe_sync`, which is the one place that holds both
-    /// `most_recent_mtime` and the quiet window — and cleared by any other
-    /// outcome, because any other outcome means the package is not waiting.
-    pub publish_arm: RwLock<BTreeMap<Namespace, DateTime<Utc>>>,
+    /// The packages counting down to a publish. Their deadlines are not kept
+    /// here: each is the stored last-change time plus the wait as it is when
+    /// read, so a new wait applies at once.
+    pub publish_waiting: RwLock<BTreeSet<Namespace>>,
 }
 
 /// Shared, long-lived watcher state. `pub(crate)` so `tick.rs` can read
@@ -117,6 +116,7 @@ pub(crate) struct WatcherInner {
     pub reporter: Arc<dyn StatusReporter>,
     pub aggregator: Arc<SyncTrayAggregator>,
     pub clocks: Clocks,
+    pub last_change: last_change::LastChange,
 }
 
 /// Everything the main page's watcher payload is derived from, read in one call.
@@ -182,6 +182,7 @@ impl Watcher {
         settings: SharedAutosyncSettings,
         publish_settings: SharedPublishSettings,
         reporter: Arc<dyn StatusReporter>,
+        last_change: last_change::LastChange,
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
@@ -194,6 +195,7 @@ impl Watcher {
             reporter,
             aggregator,
             clocks: Clocks::default(),
+            last_change,
         });
         let task_inner = Arc::clone(&inner);
         tauri::async_runtime::spawn(async move {
@@ -352,9 +354,34 @@ impl Watcher {
         reporter::WatcherSnapshot { paused }
     }
 
+    /// A package published by hand: its countdown ends at once.
+    pub async fn note_published(&self, namespace: &Namespace) {
+        self.inner.last_change.on_published(namespace).await;
+        self.inner
+            .clocks
+            .publish_waiting
+            .write()
+            .await
+            .remove(namespace);
+    }
+
+    /// Publishing was just turned on: every package with changes waits a full
+    /// wait from now, however old its edits are.
+    pub async fn note_publishing_on(&self) {
+        let with_changes = self.inner.aggregator.namespaces_with_changes();
+        let moved = self.inner.last_change.on_publishing_on(with_changes).await;
+        self.inner
+            .clocks
+            .publish_waiting
+            .write()
+            .await
+            .extend(moved);
+    }
+
     /// One read, for the main page's watcher payload.
     pub async fn main_page_facts(&self) -> WatcherFacts {
         let settings = self.inner.settings.read().await.clone();
+        let wait = Duration::from_secs(settings.push.idle_timeout_secs);
         let paused = self
             .inner
             .paused
@@ -368,17 +395,9 @@ impl Watcher {
             publish_enabled: settings.push.enabled,
             paused,
             next_pull_at: *self.inner.clocks.next_pull_at.read().await,
-            publish_arm_at: self
-                .inner
-                .clocks
-                .publish_arm
-                .read()
-                .await
-                .values()
-                .min()
-                .copied(),
+            publish_arm_at: next_publish_at(&self.inner, wait).await,
             pull_interval: pull_cadence(&settings.pull),
-            publish_interval: Duration::from_secs(settings.push.idle_timeout_secs),
+            publish_interval: wait,
         }
     }
 
@@ -420,6 +439,9 @@ impl Watcher {
                 reporter,
                 aggregator,
                 clocks: Clocks::default(),
+                last_change: last_change::LastChange::new(
+                    crate::quilt::state_store::PackageStateStore::in_memory(),
+                ),
             }),
         }
     }
@@ -468,63 +490,63 @@ pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
     *inner.clocks.next_pull_at.write().await = Some(Utc::now() + cadence);
 }
 
-/// Record what a freshly observed tree means for this namespace's publish
-/// deadline.
+/// The earliest deadline among the packages waiting to publish, with `wait` as
+/// it is now. `None` when nothing waits, and for a deadline already past: that
+/// package publishes at the next check, so there is nothing to count down to.
+pub(crate) async fn next_publish_at(inner: &WatcherInner, wait: Duration) -> Option<DateTime<Utc>> {
+    let waiting: Vec<Namespace> = inner
+        .clocks
+        .publish_waiting
+        .read()
+        .await
+        .iter()
+        .cloned()
+        .collect();
+    let now = SystemTime::now();
+    let mut next: Option<SystemTime> = None;
+    for namespace in &waiting {
+        let deadline = publish_deadline(inner.last_change.get(namespace).await, wait);
+        if let Some(at) = deadline.filter(|at| *at > now) {
+            next = Some(next.map_or(at, |cur| cur.min(at)));
+        }
+    }
+    next.map(DateTime::<Utc>::from)
+}
+
+/// Hand the file watcher's walk of `namespace` to the last-change clock, and
+/// record whether the package now counts down to a publish.
 ///
 /// For the file watcher, which hears about an edit within its debounce where the
-/// tick can be a whole cadence behind — 30s focused, 120s unfocused, 600s
-/// closed, and editing means unfocused. The tick stays authoritative: it sees
-/// the upstream state, which a local recompute cannot, and clears an arm that
-/// turns out not to apply.
-pub(crate) async fn arm_publish_from_status(
+/// tick can be a whole cadence behind. The tick stays authoritative: it sees the
+/// upstream state, which a local walk cannot, and clears a countdown that turns
+/// out not to apply.
+pub(crate) async fn observe_walk(
     inner: &WatcherInner,
     namespace: &Namespace,
+    home: Option<&std::path::Path>,
     status: &crate::quilt::lineage::InstalledPackageStatus,
 ) {
-    let (push_enabled, quiet_window) = {
-        let settings = inner.settings.read().await;
-        (
-            settings.push.enabled,
-            Duration::from_secs(settings.push.idle_timeout_secs),
-        )
-    };
-    let mut arm = inner.clocks.publish_arm.write().await;
-    match publish_arm_from_status(status, push_enabled, quiet_window) {
-        Some(at) => {
-            arm.insert(namespace.clone(), at.into());
-        }
-        // Cleared, not left alone: a revert leaves a tree with nothing in it,
-        // and a countdown that outlives the changes it was counting for is the
-        // stale deadline the operator watched survive one.
-        None => {
-            arm.remove(namespace);
-        }
+    let changed_at = inner.last_change.observe(namespace, home, status).await;
+    let push_enabled = inner.settings.read().await.push.enabled;
+    let mut waiting = inner.clocks.publish_waiting.write().await;
+    // Removed, not left alone: a revert leaves a tree with nothing in it, and a
+    // countdown that outlives the changes it was counting for is stale.
+    if push_enabled && changed_at.is_some() {
+        waiting.insert(namespace.clone());
+    } else {
+        waiting.remove(namespace);
     }
 }
 
-/// When a package with local changes will publish, if nothing else touches it.
+/// When a package publishes: its last change plus the wait. `None` when it has
+/// no last-change time, which is a package without changes.
 ///
-/// The one place that turns an observed tree into an arm time, so the autopull
-/// tick and the file watcher cannot drift about it. Mirrors the deferral in
-/// `tick.rs`: a publish waits until the working tree has been quiet for the
-/// window, so the moment it becomes possible is the last edit plus that window.
-///
-/// `None` means there is nothing to count down to, which covers three different
-/// situations on purpose: publishing is off, the tree has no changes, and the
-/// tree is ALREADY quiet — that last one publishes on the next tick rather than
-/// at some future moment, so a deadline would be counting to the past.
-pub(crate) fn publish_arm_from_status(
-    status: &crate::quilt::lineage::InstalledPackageStatus,
-    push_enabled: bool,
-    quiet_window: Duration,
+/// The one rule the tick and the Autosync card both read, so they cannot drift.
+pub(crate) fn publish_deadline(
+    last_change: Option<SystemTime>,
+    wait: Duration,
 ) -> Option<SystemTime> {
-    if !push_enabled || status.changes.is_empty() {
-        return None;
-    }
-    if status.working_tree_quiet(SystemTime::now(), quiet_window) {
-        return None;
-    }
-    status.most_recent_mtime.map(|at| at + quiet_window)
+    last_change.map(|at| at + wait)
 }
 
 /// A `WatcherInner` for a test, shared so the two modules that need one do not
@@ -543,6 +565,9 @@ pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
         reporter: Arc::new(reporter::LogReporter),
         aggregator: Arc::new(status::SyncTrayAggregator::new(tx)),
         clocks: Clocks::default(),
+        last_change: last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     }
 }
 
@@ -788,15 +813,38 @@ mod tests {
         }
         let pull_at = Utc::now() + Duration::from_mins(15);
         *watcher.inner_for_test().clocks.next_pull_at.write().await = Some(pull_at);
-        // Two namespaces waiting, arming at different moments: the earliest is the
-        // next thing that will publish, so `.max()` cannot pass this.
-        let earliest = Utc::now() + Duration::from_secs(60);
-        let latest = Utc::now() + Duration::from_secs(600);
-        {
-            let mut arm = watcher.inner_for_test().clocks.publish_arm.write().await;
-            arm.insert(("acme", "early").into(), earliest);
-            arm.insert(("acme", "late").into(), latest);
-        }
+        // Two namespaces waiting, changed at different moments: the earliest
+        // deadline is the next thing that will publish, so `.max()` cannot pass
+        // this. Each deadline is the last change plus the wait of 44 s.
+        let early: Namespace = ("acme", "early").into();
+        let late: Namespace = ("acme", "late").into();
+        let early_change = crate::autopull::last_change::now();
+        let inner = watcher.inner_for_test();
+        inner
+            .last_change
+            .store_for_test()
+            .record_change(
+                &early,
+                early_change,
+                crate::quilt::state_store::ChangeSource::Edit,
+            )
+            .await;
+        inner
+            .last_change
+            .store_for_test()
+            .record_change(
+                &late,
+                early_change + Duration::from_secs(600),
+                crate::quilt::state_store::ChangeSource::Edit,
+            )
+            .await;
+        inner
+            .clocks
+            .publish_waiting
+            .write()
+            .await
+            .extend([early, late]);
+        let earliest = DateTime::<Utc>::from(early_change + Duration::from_secs(44));
 
         let facts = watcher.main_page_facts().await;
         assert!(facts.pull_enabled, "the pull setting, not the push one");
@@ -809,7 +857,7 @@ mod tests {
         assert_eq!(
             facts.publish_arm_at,
             Some(earliest),
-            "the earliest arm across every waiting namespace, not the last"
+            "the earliest deadline across every waiting namespace, not the last"
         );
         assert_eq!(
             facts.pull_interval,
@@ -819,8 +867,65 @@ mod tests {
         assert_eq!(
             facts.publish_interval,
             Duration::from_secs(44),
-            "the quiet window, from the push settings"
+            "the wait, from the push settings"
         );
+    }
+
+    #[tokio::test]
+    async fn a_manual_publish_ends_the_countdown_at_once() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "demo").into();
+        let inner = watcher.inner_for_test();
+        inner.last_change.on_signal(&ns).await;
+        inner
+            .clocks
+            .publish_waiting
+            .write()
+            .await
+            .insert(ns.clone());
+
+        watcher.note_published(&ns).await;
+
+        assert_eq!(inner.last_change.get(&ns).await, None);
+        assert!(inner.clocks.publish_waiting.read().await.is_empty());
+        assert_eq!(watcher.main_page_facts().await.publish_arm_at, None);
+    }
+
+    #[tokio::test]
+    async fn turning_publishing_on_waits_a_full_wait_from_now() {
+        // Edits from yesterday must not publish at the next check.
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "demo").into();
+        let inner = watcher.inner_for_test();
+        inner.settings.write().await.push.idle_timeout_secs = 600;
+        inner
+            .last_change
+            .store_for_test()
+            .record_change(
+                &ns,
+                SystemTime::now() - Duration::from_hours(24),
+                crate::quilt::state_store::ChangeSource::Edit,
+            )
+            .await;
+        let unseen: Namespace = ("acme", "unseen").into();
+        inner.aggregator.note_status(&unseen, true);
+        let before = DateTime::<Utc>::from(last_change::now());
+
+        watcher.note_publishing_on().await;
+
+        for namespace in [&ns, &unseen] {
+            let at = inner.last_change.get(namespace).await.expect("moved");
+            assert!(
+                DateTime::<Utc>::from(at) >= before,
+                "{namespace} moved to now"
+            );
+        }
+        let deadline = watcher
+            .main_page_facts()
+            .await
+            .publish_arm_at
+            .expect("the card counts down at once");
+        assert!(deadline >= before + Duration::from_secs(600));
     }
 
     #[tokio::test]

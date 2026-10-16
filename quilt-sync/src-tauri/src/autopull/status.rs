@@ -262,6 +262,17 @@ impl SyncTrayAggregator {
         self.publish();
     }
 
+    /// The packages the last walk of each found changes in.
+    pub fn namespaces_with_changes(&self) -> std::collections::BTreeSet<Namespace> {
+        let state = self.state.lock().expect("aggregator lock");
+        state
+            .dirty
+            .iter()
+            .filter(|(_, dirty)| **dirty)
+            .map(|(ns, _)| ns.clone())
+            .collect()
+    }
+
     pub fn note_paused(&self, ns: &Namespace, message: &str) {
         self.upsert_error(ns, ErrorKind::Paused, message.to_string());
     }

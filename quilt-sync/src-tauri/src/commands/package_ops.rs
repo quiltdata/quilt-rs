@@ -298,6 +298,7 @@ pub async fn package_publish(
     let result = package_publish_command(&*m, &settings, &namespace).await;
     if let Ok((ns, _)) = &result {
         watcher.clear_paused(ns).await;
+        watcher.note_published(ns).await;
     }
 
     if let Ok((_, outcome)) = &result {
@@ -370,6 +371,7 @@ pub async fn package_commit_and_push(
         package_commit_and_push_command(&m, &namespace, &message, &metadata, workflow).await;
     if let Ok((ns, _)) = &result {
         watcher.clear_paused(ns).await;
+        watcher.note_published(ns).await;
     }
 
     if let Ok((_, outcome)) = &result {

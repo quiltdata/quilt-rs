@@ -103,33 +103,33 @@ pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
                 if !state.settings.read().await.enabled {
                     continue;
                 }
-                if !state.claim_signal(&signal.namespace, Instant::now()).await {
-                    continue;
-                }
-                let model = app_handle.state::<Model>();
-                // Pass the watcher's clocks, so an edit moves the publish
-                // countdown together with the list instead of at the next tick.
-                // The tick comes every 30s while the window is focused, but every
-                // 120s unfocused and 600s closed, and while a user edits a file
-                // the window is not focused.
-                //
-                // This must stay behind `claim_signal` above: the arm time comes
-                // from the status walk, which that gate limits. The countdown
-                // therefore updates exactly as often as the list. Arming it
-                // outside the gate would need its own tree walk.
                 let watcher = app_handle.state::<Watcher>();
-                process_signal(
-                    &*model,
-                    state.reporter.as_ref(),
-                    // `State::inner()` unwraps the guard; `shared()` is the Watcher's own.
-                    Some(watcher.inner().shared()),
-                    signal,
-                )
-                .await;
+                let model = app_handle.state::<Model>();
+                // `State::inner()` unwraps the guard; `shared()` is the Watcher's own.
+                handle_signal(&mut state, &*model, watcher.inner().shared(), signal).await;
             }
             else => break,
         }
     }
+}
+
+/// One signal: move the package's last-change time, then walk it if the walk
+/// limit allows.
+async fn handle_signal(
+    state: &mut ReactorState,
+    model: &impl QuiltModel,
+    inner: &crate::autopull::WatcherInner,
+    signal: MappingSignal,
+) {
+    // Before the walk limit, and without a walk: every change moves the
+    // package's last-change time, even one the limit coalesces.
+    inner.last_change.on_signal(&signal.namespace).await;
+    if !state.claim_signal(&signal.namespace, Instant::now()).await {
+        return;
+    }
+    // Pass the watcher's shared state, so an edit starts the publish countdown
+    // together with the list instead of at the next tick.
+    process_signal(model, state.reporter.as_ref(), Some(inner), signal).await;
 }
 
 pub(crate) async fn process_signal(
@@ -172,10 +172,16 @@ pub(crate) async fn process_signal(
         PackageStatusEvent::from_status(&signal.namespace, &status),
     );
 
-    // Arm the publish countdown from the same status. Without this the card's
-    // countdown waits for the next tick while the list already shows the edit.
+    // The same walk starts or ends the publish countdown. Without this the
+    // card's countdown waits for the next tick while the list already shows
+    // the edit.
     if let Some(inner) = clocks {
-        crate::autopull::arm_publish_from_status(inner, &signal.namespace, &status).await;
+        let home = if inner.last_change.first_walk_pending(&signal.namespace) {
+            pkg.package_home().await.ok()
+        } else {
+            None
+        };
+        crate::autopull::observe_walk(inner, &signal.namespace, home.as_deref(), &status).await;
     }
 }
 
@@ -319,6 +325,39 @@ mod tests {
                 .await,
             "a different package's first signal must not be charged to the busy one",
         );
+    }
+
+    /// A signal the walk limit coalesces still moves the last-change time: the
+    /// countdown restarts on every edit, walked or not.
+    #[tokio::test]
+    async fn a_coalesced_signal_still_moves_the_last_change() {
+        let mut state = state_with_cadence(600);
+        let ns: Namespace = ("acme", "demo").into();
+        let mut model = MockQuiltModel::new();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(fresh_pkg())));
+        model
+            .expect_recompute_local_status()
+            .times(1)
+            .returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::UpToDate,
+                    changes_with_one_file("added"),
+                ))
+            });
+        let inner = crate::autopull::inner_for_tests(crate::autopull::AutosyncSettings::default());
+        let signal = MappingSignal {
+            namespace: ns.clone(),
+        };
+
+        handle_signal(&mut state, &model, &inner, signal.clone()).await;
+        let first = inner.last_change.get(&ns).await.expect("first signal");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        handle_signal(&mut state, &model, &inner, signal).await;
+        let second = inner.last_change.get(&ns).await.expect("second signal");
+
+        assert!(second > first, "the coalesced signal must move the time");
     }
 
     fn changes_with_one_file(kind: &'static str) -> BTreeMap<PathBuf, quilt::lineage::Change> {
@@ -471,24 +510,19 @@ mod tests {
 
     #[tokio::test]
     async fn an_edit_moves_the_publish_countdown_without_waiting_for_a_tick() {
-        // `arm_publish_from_status` is tested on its own in `autopull`; this
-        // tests that `process_signal` calls it. Without the call only the tick
-        // arms the deadline, so the countdown lags the tree by a cadence: 120s
-        // while the window is unfocused, which it is while a user edits a file.
+        // `observe_walk` is tested on its own in `autopull`; this tests that
+        // `process_signal` calls it. Without the call only the tick starts the
+        // countdown, so it lags the tree by a cadence.
         let ns: quilt_uri::Namespace = ("acme", "demo").into();
         let mut model = MockQuiltModel::new();
         model
             .expect_get_installed_package()
             .returning(|_| Ok(Some(fresh_pkg())));
         model.expect_recompute_local_status().returning(|_, _| {
-            let mut status = quilt::lineage::InstalledPackageStatus::new(
+            Ok(quilt::lineage::InstalledPackageStatus::new(
                 quilt::lineage::UpstreamState::UpToDate,
                 changes_with_one_file("added"),
-            );
-            // Just edited, so the quiet window has not elapsed and there IS a
-            // future moment to count to.
-            status.most_recent_mtime = Some(std::time::SystemTime::now());
-            Ok(status)
+            ))
         });
         let reporter = Arc::new(RecordingReporter::default());
         let mut settings = crate::autopull::AutosyncSettings::default();
@@ -506,7 +540,7 @@ mod tests {
         .await;
 
         assert!(
-            inner.clocks.publish_arm.read().await.contains_key(&ns),
+            inner.clocks.publish_waiting.read().await.contains(&ns),
             "the file watcher heard the edit and the clock did not"
         );
     }

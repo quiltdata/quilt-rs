@@ -39,8 +39,13 @@
 
 ### Fixed
 
+- Autopublish waits the full publish wait after the last change it sees, so it no longer publishes at once after you turn publishing on, delete files, copy in files that keep old dates, or reopen the app (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
 - **Create package** refuses a name quilt3 would refuse, such as one with a space or `%`: a name is `prefix/name` using letters, digits, `_` and `-` (<https://github.com/quiltdata/quilt-rs/pull/1131>)
 - Opening a Quilt link that needs a sign-in opens its package after you log in with a code (<https://github.com/quiltdata/quilt-rs/pull/1127>)
+
+### quilt-rs
+
+- Updated [from v0.44.0 to v0.45.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.44.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.22.11] - 2026-10-14
 
