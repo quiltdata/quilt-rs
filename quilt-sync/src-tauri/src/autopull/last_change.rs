@@ -68,16 +68,33 @@ impl LastChange {
             .await;
     }
 
+    /// The package was committed in the app. The commit is a change: its push
+    /// waits a full wait from now.
+    pub(crate) async fn on_commit(&self, namespace: &Namespace) {
+        // The next walk finds the committed files gone from the changes; this
+        // time already covers that.
+        self.signalled
+            .lock()
+            .expect("signalled lock")
+            .insert(namespace.clone());
+        self.store
+            .record_change(namespace, now(), ChangeSource::Commit)
+            .await;
+    }
+
     /// Take a walk's result for `namespace` and return its last-change time,
-    /// `None` when it has no changes.
+    /// `None` when it has nothing to publish.
     ///
     /// `home` is the package's folder, for the restart check; `None` when it
-    /// could not be resolved, which counts as changed.
+    /// could not be resolved, which counts as changed. `pending_commit` says
+    /// whether a commit waits to be pushed; `None` when unknown, which keeps a
+    /// stored time.
     pub(crate) async fn observe(
         &self,
         namespace: &Namespace,
         home: Option<&Path>,
         status: &InstalledPackageStatus,
+        pending_commit: Option<bool>,
     ) -> Option<SystemTime> {
         let signalled = self
             .signalled
@@ -90,11 +107,19 @@ impl LastChange {
             .lock()
             .expect("last_seen lock")
             .insert(namespace.clone(), seen.clone());
-        if status.changes.is_empty() {
-            self.store.forget(namespace).await;
-            return None;
-        }
         let now = now();
+        if status.changes.is_empty() {
+            match pending_commit {
+                Some(false) => {
+                    self.store.forget(namespace).await;
+                    return None;
+                }
+                // Not clean: the commit still has to be pushed, and waits from
+                // the last change, the commit included.
+                Some(true) => {}
+                None => return self.get(namespace).await,
+            }
+        }
         // Changes no signal announced: the watcher is off, or can't see this
         // folder.
         if !signalled && before.is_some_and(|before| before != seen) {
@@ -262,7 +287,9 @@ mod tests {
     async fn a_walk_with_changes_and_no_time_is_first_seen() {
         let clock = LastChange::new(PackageStateStore::in_memory());
         let before = now();
-        let at = clock.observe(&ns(), None, &status_with(&["a"])).await;
+        let at = clock
+            .observe(&ns(), None, &status_with(&["a"]), Some(false))
+            .await;
         assert!(at.is_some_and(|at| at >= before));
         assert_eq!(clock.get(&ns()).await, at);
     }
@@ -271,7 +298,12 @@ mod tests {
     async fn a_clean_walk_deletes_the_time() {
         let clock = LastChange::new(PackageStateStore::in_memory());
         clock.on_signal(&ns()).await;
-        assert_eq!(clock.observe(&ns(), None, &status_with(&[])).await, None);
+        assert_eq!(
+            clock
+                .observe(&ns(), None, &status_with(&[]), Some(false))
+                .await,
+            None
+        );
         assert_eq!(clock.get(&ns()).await, None);
     }
 
@@ -284,7 +316,9 @@ mod tests {
         // Not the first walk: the restart check is behind us.
         clock.walked.lock().unwrap().insert(ns());
         assert_eq!(
-            clock.observe(&ns(), None, &status_with(&["a"])).await,
+            clock
+                .observe(&ns(), None, &status_with(&["a"]), Some(false))
+                .await,
             Some(old)
         );
     }
@@ -314,7 +348,7 @@ mod tests {
         let clock = LastChange::new(store);
         assert_eq!(
             clock
-                .observe(&ns(), Some(dir.path()), &status_with(&["a"]))
+                .observe(&ns(), Some(dir.path()), &status_with(&["a"]), Some(false))
                 .await,
             Some(saved)
         );
@@ -334,7 +368,7 @@ mod tests {
         let clock = LastChange::new(store);
         let before = now();
         let at = clock
-            .observe(&ns(), Some(dir.path()), &status_with(&["a"]))
+            .observe(&ns(), Some(dir.path()), &status_with(&["a"]), Some(false))
             .await;
         assert!(at.is_some_and(|at| at >= before));
     }
@@ -347,7 +381,9 @@ mod tests {
             .await;
         let clock = LastChange::new(store);
         let before = now();
-        let at = clock.observe(&ns(), None, &status_with(&["a"])).await;
+        let at = clock
+            .observe(&ns(), None, &status_with(&["a"]), Some(false))
+            .await;
         assert!(at.is_some_and(|at| at >= before));
     }
 
@@ -368,7 +404,7 @@ mod tests {
         let clock = LastChange::changed_for_test(&ns(), hour()).await;
         assert!(
             clock
-                .observe(&ns(), None, &status_with(&["a"]))
+                .observe(&ns(), None, &status_with(&["a"]), Some(false))
                 .await
                 .is_some()
         );
@@ -376,7 +412,9 @@ mod tests {
         let signalled = clock.get(&ns()).await;
         tokio::time::sleep(Duration::from_millis(5)).await;
         assert_eq!(
-            clock.observe(&ns(), None, &status_with(&["a", "b"])).await,
+            clock
+                .observe(&ns(), None, &status_with(&["a", "b"]), Some(false))
+                .await,
             signalled
         );
     }
@@ -398,6 +436,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_commit_sets_the_time_and_keeps_it_until_the_push() {
+        let clock = LastChange::changed_for_test(&ns(), hour()).await;
+        let before = now();
+        clock.on_commit(&ns()).await;
+        let committed = clock.get(&ns()).await;
+        assert!(committed.is_some_and(|at| at >= before));
+        // The commit took every change: the tree is clean, the commit unpushed.
+        assert_eq!(
+            clock
+                .observe(&ns(), None, &status_with(&[]), Some(true))
+                .await,
+            committed,
+            "a commit waiting to be pushed is not clean"
+        );
+        assert_eq!(
+            clock
+                .observe(&ns(), None, &status_with(&[]), Some(false))
+                .await,
+            None,
+            "pushed and clean"
+        );
+        assert_eq!(clock.get(&ns()).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_commit_made_elsewhere_waits_from_when_the_app_sees_it() {
+        // `quilt commit` in a terminal: no time stored for the package.
+        let clock = LastChange::new(PackageStateStore::in_memory());
+        let before = now();
+        let at = clock
+            .observe(&ns(), None, &status_with(&[]), Some(true))
+            .await;
+        assert!(at.is_some_and(|at| at >= before));
+    }
+
+    #[tokio::test]
+    async fn an_unknown_commit_state_keeps_the_time() {
+        let clock = LastChange::changed_for_test(&ns(), hour()).await;
+        let saved = clock.get(&ns()).await;
+        assert_eq!(
+            clock.observe(&ns(), None, &status_with(&[]), None).await,
+            saved
+        );
+    }
+
+    #[tokio::test]
     async fn a_publish_deletes_the_time() {
         let clock = LastChange::new(PackageStateStore::in_memory());
         clock.on_signal(&ns()).await;
@@ -410,14 +494,23 @@ mod tests {
         // The watcher is off: only walks see the edits.
         let clock = LastChange::changed_for_test(&ns(), hour()).await;
         let old = clock.get(&ns()).await;
-        assert_eq!(clock.observe(&ns(), None, &status_with(&["a"])).await, old);
         assert_eq!(
-            clock.observe(&ns(), None, &status_with(&["a"])).await,
+            clock
+                .observe(&ns(), None, &status_with(&["a"]), Some(false))
+                .await,
+            old
+        );
+        assert_eq!(
+            clock
+                .observe(&ns(), None, &status_with(&["a"]), Some(false))
+                .await,
             old,
             "the same changes keep the time"
         );
         let before = now();
-        let at = clock.observe(&ns(), None, &status_with(&["a", "b"])).await;
+        let at = clock
+            .observe(&ns(), None, &status_with(&["a", "b"]), Some(false))
+            .await;
         assert!(at.is_some_and(|at| at >= before));
     }
 
@@ -436,7 +529,7 @@ mod tests {
         let clock = LastChange::new(PackageStateStore::new(dir.path().join("state.db")));
         assert_eq!(
             clock
-                .observe(&ns(), Some(dir.path()), &status_with(&["a"]))
+                .observe(&ns(), Some(dir.path()), &status_with(&["a"]), Some(false))
                 .await,
             saved
         );
@@ -457,7 +550,9 @@ mod tests {
             .await;
         std::fs::remove_file(&path).unwrap();
         let before = now();
-        let at = clock.observe(&ns(), None, &status_with(&["a"])).await;
+        let at = clock
+            .observe(&ns(), None, &status_with(&["a"]), Some(false))
+            .await;
         assert!(at.is_some_and(|at| at >= before));
     }
 }

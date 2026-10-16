@@ -1160,6 +1160,36 @@ async fn every_tick_records_that_the_app_is_alive() -> Result<(), Error> {
 }
 
 #[tokio::test]
+async fn a_commit_waits_the_wait_before_its_push() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let lineage = quilt::lineage::PackageLineage {
+        commit: Some(quilt::lineage::CommitState {
+            hash: "h_local".to_string(),
+            ..quilt::lineage::CommitState::default()
+        }),
+        remote_uri: Some(remote_for(&ns)),
+        base_hash: "h0".to_string(),
+        latest_hash: "h0".to_string(),
+        ..quilt::lineage::PackageLineage::default()
+    };
+    let status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::Ahead, BTreeMap::new());
+    let (mut model, _) = fixture_with_lineage_and_status(lineage, status);
+    model.expect_locked_package_publish().times(0);
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        last_change: LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
+        ..make_inner_for_run_once(reporter.clone()).await
+    };
+    inner.last_change.on_commit(&ns).await;
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(reporter.published.lock().unwrap().is_empty());
+    assert!(inner.clocks.publish_waiting.read().await.contains(&ns));
+    Ok(())
+}
+
+#[tokio::test]
 async fn run_once_both_off_is_a_noop() -> Result<(), Error> {
     // Both flags off: run_once short-circuits before touching the
     // model. The mock has zero expectations to prove no calls are

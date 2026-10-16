@@ -41,6 +41,8 @@ pub enum ChangeSource {
     PublishingOn,
     /// A walk found changes the app had no time for.
     FirstSeen,
+    /// The package was committed in the app; the commit waits to be pushed.
+    Commit,
 }
 
 impl ChangeSource {
@@ -49,6 +51,7 @@ impl ChangeSource {
             Self::Edit => "edit",
             Self::PublishingOn => "publishing_on",
             Self::FirstSeen => "first_seen",
+            Self::Commit => "commit",
         }
     }
 
@@ -57,6 +60,7 @@ impl ChangeSource {
             "edit" => Some(Self::Edit),
             "publishing_on" => Some(Self::PublishingOn),
             "first_seen" => Some(Self::FirstSeen),
+            "commit" => Some(Self::Commit),
             _ => None,
         }
     }

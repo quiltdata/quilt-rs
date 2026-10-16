@@ -1485,7 +1485,7 @@ async fn a_local_edit_starts_the_countdown_without_waiting_for_a_tick() {
     let ns: Namespace = ("acme", "demo").into();
     let before = DateTime::<Utc>::from(crate::autopull::last_change::now());
 
-    crate::autopull::observe_walk(&inner, &ns, None, &local_status(1)).await;
+    crate::autopull::observe_walk(&inner, &ns, None, &local_status(1), Some(false)).await;
 
     let at = card_deadline(&inner)
         .await
@@ -1505,13 +1505,13 @@ async fn a_tree_with_nothing_in_it_clears_any_deadline() {
     // Reverting a file leaves no changes, so there is nothing to count down to.
     let inner = make_inner(enabled());
     let ns: Namespace = ("acme", "demo").into();
-    crate::autopull::observe_walk(&inner, &ns, None, &local_status(1)).await;
+    crate::autopull::observe_walk(&inner, &ns, None, &local_status(1), Some(false)).await;
     assert!(
         card_deadline(&inner).await.is_some(),
         "precondition: waiting"
     );
 
-    crate::autopull::observe_walk(&inner, &ns, None, &local_status(0)).await;
+    crate::autopull::observe_walk(&inner, &ns, None, &local_status(0), Some(false)).await;
 
     assert!(card_deadline(&inner).await.is_none());
     assert!(inner.last_change.get(&ns).await.is_none());
@@ -1525,7 +1525,7 @@ async fn a_deadline_already_past_is_not_counted_down() {
         last_change: LastChange::changed_for_test(&ns, Duration::from_hours(1)).await,
         ..make_inner(enabled())
     };
-    crate::autopull::observe_walk(&inner, &ns, None, &local_status(1)).await;
+    crate::autopull::observe_walk(&inner, &ns, None, &local_status(1), Some(false)).await;
 
     assert!(card_deadline(&inner).await.is_none());
 }
@@ -1537,7 +1537,7 @@ async fn the_card_reads_the_wait_as_it_is_now() {
         last_change: LastChange::changed_for_test(&ns, Duration::from_mins(1)).await,
         ..make_inner(enabled())
     };
-    crate::autopull::observe_walk(&inner, &ns, None, &local_status(1)).await;
+    crate::autopull::observe_walk(&inner, &ns, None, &local_status(1), Some(false)).await;
 
     let long = crate::autopull::next_publish_at(&inner, Duration::from_mins(10)).await;
     let short = crate::autopull::next_publish_at(&inner, Duration::from_mins(5)).await;
@@ -1552,7 +1552,7 @@ async fn publishing_switched_off_counts_down_to_nothing() {
     let inner = make_inner(settings);
     let ns: Namespace = ("acme", "demo").into();
 
-    crate::autopull::observe_walk(&inner, &ns, None, &local_status(1)).await;
+    crate::autopull::observe_walk(&inner, &ns, None, &local_status(1), Some(false)).await;
 
     assert!(
         card_deadline(&inner).await.is_none(),

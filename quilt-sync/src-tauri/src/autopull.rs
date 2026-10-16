@@ -354,6 +354,19 @@ impl Watcher {
         reporter::WatcherSnapshot { paused }
     }
 
+    /// A package committed by hand: its push waits a full wait from now.
+    pub async fn note_committed(&self, namespace: &Namespace) {
+        self.inner.last_change.on_commit(namespace).await;
+        if self.inner.settings.read().await.push.enabled {
+            self.inner
+                .clocks
+                .publish_waiting
+                .write()
+                .await
+                .insert(namespace.clone());
+        }
+    }
+
     /// A package published by hand: its countdown ends at once.
     pub async fn note_published(&self, namespace: &Namespace) {
         self.inner.last_change.on_published(namespace).await;
@@ -525,8 +538,12 @@ pub(crate) async fn observe_walk(
     namespace: &Namespace,
     home: Option<&std::path::Path>,
     status: &crate::quilt::lineage::InstalledPackageStatus,
+    pending_commit: Option<bool>,
 ) {
-    let changed_at = inner.last_change.observe(namespace, home, status).await;
+    let changed_at = inner
+        .last_change
+        .observe(namespace, home, status, pending_commit)
+        .await;
     let push_enabled = inner.settings.read().await.push.enabled;
     let mut waiting = inner.clocks.publish_waiting.write().await;
     // Removed, not left alone: a revert leaves a tree with nothing in it, and a
@@ -889,6 +906,28 @@ mod tests {
         assert_eq!(inner.last_change.get(&ns).await, None);
         assert!(inner.clocks.publish_waiting.read().await.is_empty());
         assert_eq!(watcher.main_page_facts().await.publish_arm_at, None);
+    }
+
+    #[tokio::test]
+    async fn a_manual_commit_starts_the_countdown_to_its_push() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "demo").into();
+        let inner = watcher.inner_for_test();
+        {
+            let mut settings = inner.settings.write().await;
+            settings.push.enabled = true;
+            settings.push.idle_timeout_secs = 600;
+        }
+        let before = DateTime::<Utc>::from(last_change::now());
+
+        watcher.note_committed(&ns).await;
+
+        let deadline = watcher
+            .main_page_facts()
+            .await
+            .publish_arm_at
+            .expect("the card counts down to the push");
+        assert!(deadline >= before + Duration::from_secs(600));
     }
 
     #[tokio::test]

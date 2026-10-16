@@ -181,7 +181,25 @@ pub(crate) async fn process_signal(
         } else {
             None
         };
-        crate::autopull::observe_walk(inner, &signal.namespace, home.as_deref(), &status).await;
+        // Only a tree with no changes needs it: then a commit waiting to be
+        // pushed is all that keeps the package's time.
+        let pending_commit = if status.changes.is_empty() {
+            model
+                .get_installed_package_lineage(&pkg)
+                .await
+                .ok()
+                .map(|lineage| lineage.commit.is_some())
+        } else {
+            Some(false)
+        };
+        crate::autopull::observe_walk(
+            inner,
+            &signal.namespace,
+            home.as_deref(),
+            &status,
+            pending_commit,
+        )
+        .await;
     }
 }
 

@@ -396,7 +396,12 @@ pub(crate) async fn refresh_then_maybe_sync(
         None
     };
     let changed_at = last_change
-        .observe(namespace, home.as_deref(), &status)
+        .observe(
+            namespace,
+            home.as_deref(),
+            &status,
+            Some(lineage.commit.is_some()),
+        )
         .await;
     // `lineage` comes from `run_once`'s skip-filter read — re-reading it
     // here would cost an extra trait call per tick and open a narrow

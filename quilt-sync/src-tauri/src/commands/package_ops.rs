@@ -67,6 +67,7 @@ pub async fn package_commit(
     let result = package_commit_command(&m, &namespace, &message, &metadata, workflow).await;
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
+        watcher.note_committed(ns).await;
     }
     Notify::new(msg_init)
         .on_success(
@@ -239,6 +240,7 @@ pub async fn package_push(
     let result = package_push_command(&m, &namespace).await;
     if let Ok((ns, _)) = &result {
         watcher.clear_paused(ns).await;
+        watcher.note_published(ns).await;
     }
     // TODO: push-not-certified should be surfaced as a warning, not a success.
     // Currently both outcomes go through the success path because converting to
