@@ -134,6 +134,11 @@ fn main() {
                 ))
             });
 
+            // Only the app opens the package state store; the CLI never does.
+            let last_change =
+                autopull::last_change::LastChange::new(quilt::state_store::PackageStateStore::new(
+                    quilt::paths::DomainPaths::new(data_dir.clone()).state_db(),
+                ));
             app.manage(Model::create(data_dir));
             app.manage(commands::WorkflowRulesCache::default());
             app.manage(commands::RoleCache::default());
@@ -159,6 +164,7 @@ fn main() {
                 autosync_settings.clone(),
                 publish_settings.clone(),
                 reporter.clone(),
+                last_change,
             );
             fswatcher::spawn(
                 app.handle(),
