@@ -63,9 +63,11 @@ pub(crate) struct LastChange {
     /// Packages with a watcher signal since their last walk: that signal
     /// already set the time for what the walk finds.
     signalled: Mutex<BTreeSet<Namespace>>,
-    /// When the app last started publishing each package. A commit made after
-    /// that is the app's own, left waiting when the push failed.
+    /// A publish the app started and no walk has settled yet. A commit made
+    /// after it is the app's own, left waiting when the push failed.
     publishing: Mutex<BTreeMap<Namespace, SystemTime>>,
+    /// The time of each pending commit known to be the app's own.
+    own_commits: Mutex<BTreeMap<Namespace, SystemTime>>,
 }
 
 impl LastChange {
@@ -76,6 +78,7 @@ impl LastChange {
             last_seen: Mutex::new(BTreeMap::new()),
             signalled: Mutex::new(BTreeSet::new()),
             publishing: Mutex::new(BTreeMap::new()),
+            own_commits: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -104,12 +107,36 @@ impl LastChange {
             .insert(namespace.clone(), now());
     }
 
-    fn app_committed(&self, namespace: &Namespace, at: SystemTime) -> bool {
+    /// Whether the pending commit made at `at` is the app's own: already known,
+    /// or made after a publish the app started. The publish is settled by this
+    /// answer, so a later commit is judged afresh.
+    fn own_commit(&self, namespace: &Namespace, at: SystemTime) -> bool {
+        let mut own = self.own_commits.lock().expect("own_commits lock");
+        if own.get(namespace) == Some(&at) {
+            return true;
+        }
+        let mut publishing = self.publishing.lock().expect("publishing lock");
+        if publishing
+            .get(namespace)
+            .is_some_and(|started| *started <= floor_millis(at))
+        {
+            publishing.remove(namespace);
+            own.insert(namespace.clone(), at);
+            return true;
+        }
+        false
+    }
+
+    /// Nothing waits to be pushed: no publish of the app's is in flight.
+    fn settle_publish(&self, namespace: &Namespace) {
         self.publishing
             .lock()
             .expect("publishing lock")
-            .get(namespace)
-            .is_some_and(|started| *started <= at)
+            .remove(namespace);
+        self.own_commits
+            .lock()
+            .expect("own_commits lock")
+            .remove(namespace);
     }
 
     /// The package was committed in the app. The commit is a change: its push
@@ -151,6 +178,13 @@ impl LastChange {
             .expect("last_seen lock")
             .insert(namespace.clone(), seen.clone());
         let now = now();
+        if matches!(pending_commit, PendingCommit::None) {
+            self.settle_publish(namespace);
+        }
+        let own_commit = match pending_commit {
+            PendingCommit::At(at) => self.own_commit(namespace, at),
+            PendingCommit::None | PendingCommit::Unknown => false,
+        };
         if status.changes.is_empty() {
             match pending_commit {
                 PendingCommit::None => {
@@ -164,8 +198,9 @@ impl LastChange {
             }
         }
         // Changes no signal announced: the watcher is off, or can't see this
-        // folder.
-        if !signalled && before.is_some_and(|before| before != seen) {
+        // folder. Changes that moved into the app's own commit are not new.
+        let into_own_commit = own_commit && status.changes.is_empty();
+        if !signalled && !into_own_commit && before.is_some_and(|before| before != seen) {
             self.store
                 .record_change(namespace, now, ChangeSource::Edit)
                 .await;
@@ -188,7 +223,7 @@ impl LastChange {
         // `quilt commit` in a terminal.
         if let PendingCommit::At(at) = pending_commit
             && floor_millis(at) > saved.last_change_at
-            && !self.app_committed(namespace, at)
+            && !own_commit
         {
             self.store
                 .record_change(namespace, now, ChangeSource::FirstSeen)
@@ -226,6 +261,7 @@ impl LastChange {
 
     /// The package published.
     pub(crate) async fn on_published(&self, namespace: &Namespace) {
+        self.settle_publish(namespace);
         self.store.forget(namespace).await;
     }
 
@@ -571,6 +607,52 @@ mod tests {
                 .await,
             saved
         );
+    }
+
+    #[tokio::test]
+    async fn a_failed_push_after_a_walk_keeps_the_time() {
+        // The walk before the publish saw the files; the walk after sees them
+        // in the app's own commit, and must not take that for a new edit.
+        let clock = LastChange::changed_for_test(&ns(), hour()).await;
+        let saved = clock
+            .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
+            .await;
+        clock.on_publish_started(&ns());
+        let committed = PendingCommit::At(now());
+        assert_eq!(
+            clock
+                .observe(&ns(), None, &status_with(&[]), committed)
+                .await,
+            saved
+        );
+        assert_eq!(
+            clock
+                .observe(&ns(), None, &status_with(&[]), committed)
+                .await,
+            saved,
+            "the same commit, walked again"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_later_commit_after_a_publish_is_judged_afresh() {
+        let clock = LastChange::changed_for_test(&ns(), hour()).await;
+        clock.on_publish_started(&ns());
+        let own = now();
+        clock
+            .observe(&ns(), None, &status_with(&[]), PendingCommit::At(own))
+            .await;
+        // `quilt commit` replaces it.
+        let before = now();
+        let at = clock
+            .observe(
+                &ns(),
+                None,
+                &status_with(&[]),
+                PendingCommit::At(own + Duration::from_secs(1)),
+            )
+            .await;
+        assert!(at.is_some_and(|at| at >= before));
     }
 
     #[tokio::test]
