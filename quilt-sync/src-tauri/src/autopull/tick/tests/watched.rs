@@ -3,8 +3,6 @@
 use super::*;
 use quilt_uri::fixtures;
 
-use std::collections::BTreeSet;
-
 fn up_to_date_lineage() -> quilt::lineage::PackageLineage {
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
@@ -67,7 +65,9 @@ fn ns() -> Namespace {
 
 /// Watched since before a walk that found the package clean.
 fn vouched_and_walked(inner: &WatcherInner) {
-    inner.walks.vouch_for(&BTreeSet::from([ns()]));
+    inner
+        .walks
+        .vouch_for(&BTreeMap::from([(ns(), std::path::PathBuf::from("/pkg"))]));
     let start = inner.walks.begin(&ns());
     inner
         .walks

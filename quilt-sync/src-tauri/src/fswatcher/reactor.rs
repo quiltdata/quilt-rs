@@ -184,8 +184,9 @@ async fn drive(state: &mut ReactorState, model: &impl QuiltModel, inner: &Watche
 }
 
 /// One signal. A change moves the package's last-change time at once, with
-/// no walk; a change or a rescan sets its trailing walk; a lost watch stops
-/// the tick from trusting the package's walks.
+/// no walk; a change or a rescan sets its trailing walk; a change of a file
+/// the watcher doesn't walk for leaves the walk to the tick; a lost watch
+/// stops the tick from trusting the package's walks.
 async fn handle_signal(
     state: &mut ReactorState,
     inner: &WatcherInner,
@@ -202,6 +203,7 @@ async fn handle_signal(
             inner.walks.on_signal(&signal.namespace);
             state.trailing.on_signal(&signal.namespace, now);
         }
+        SignalKind::Stale => inner.walks.on_signal(&signal.namespace),
         SignalKind::Lost => inner.walks.forget(&signal.namespace),
     }
 }
@@ -367,11 +369,14 @@ pub(crate) fn note_volumes(state: &mut ReactorState, mappings: &[(Namespace, Pat
 /// Vouch for the packages that are watched and on a local volume, and only
 /// for them.
 fn sync_vouched(state: &ReactorState, inner: &WatcherInner) {
-    let vouched: BTreeSet<Namespace> = state
+    let vouched: BTreeMap<Namespace, PathBuf> = state
         .subscription
         .watched_namespaces()
         .into_iter()
-        .filter(|ns| state.local_volume.get(ns).is_some_and(|(_, local)| *local))
+        .filter_map(|ns| match state.local_volume.get(&ns) {
+            Some((home, true)) => Some((ns, home.clone())),
+            _ => None,
+        })
         .collect();
     inner.walks.vouch_for(&vouched);
 }
@@ -491,7 +496,9 @@ mod tests {
     async fn a_change_moves_the_last_change_and_schedules_a_walk() {
         let (mut state, _tx) = state();
         let inner = crate::autopull::inner_for_tests(crate::autopull::AutosyncSettings::default());
-        inner.walks.vouch_for(&BTreeSet::from([ns()]));
+        inner
+            .walks
+            .vouch_for(&BTreeMap::from([(ns(), PathBuf::from("/pkg"))]));
         let start = inner.walks.begin(&ns());
         inner.walks.record(
             &ns(),
@@ -528,7 +535,9 @@ mod tests {
     async fn a_lost_watch_stops_the_check_trusting_the_package() {
         let (mut state, _tx) = state();
         let inner = crate::autopull::inner_for_tests(crate::autopull::AutosyncSettings::default());
-        inner.walks.vouch_for(&BTreeSet::from([ns()]));
+        inner
+            .walks
+            .vouch_for(&BTreeMap::from([(ns(), PathBuf::from("/pkg"))]));
         let start = inner.walks.begin(&ns());
         inner.walks.record(
             &ns(),

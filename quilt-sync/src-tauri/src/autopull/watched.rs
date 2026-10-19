@@ -1,8 +1,10 @@
 //! The walks of watched packages, kept so the tick can skip its own.
 
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Duration;
+use std::time::Instant;
 
 use quilt_uri::Namespace;
 
@@ -12,11 +14,15 @@ use crate::quilt::lineage::PackageLineage;
 /// The last walk of each package the folder watcher vouches for: watched, on a
 /// local volume, with no events lost.
 ///
-/// A walk is reusable while no signal came after it started. Marks come from
-/// one counter, so a walk that started before a signal, a new watch or a lost
-/// one is older than it, even across a package dropped and watched again.
+/// A walk is reusable while no signal came after it started, for at most
+/// [`MAX_AGE`]: the tick's own walks are what run the stat cache's daily full
+/// hash, and they catch a write no event reported. Marks come from one
+/// counter, so a walk that started before a signal, a new watch or a lost one
+/// is older than it, even across a package dropped and watched again.
 #[derive(Default)]
 pub(crate) struct WatchedWalks(Mutex<State>);
+
+const MAX_AGE: Duration = Duration::from_hours(1);
 
 #[derive(Default)]
 struct State {
@@ -25,6 +31,7 @@ struct State {
 }
 
 struct Package {
+    home: PathBuf,
     /// When the package was last heard from, or started being watched.
     stale_at: u64,
     walk: Option<Walk>,
@@ -32,6 +39,7 @@ struct Package {
 
 struct Walk {
     started: u64,
+    at: Instant,
     lineage: PackageLineage,
     status: InstalledPackageStatus,
 }
@@ -55,16 +63,20 @@ impl WatchedWalks {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Vouch for exactly `live`. A package new to it starts with no walk.
-    pub(crate) fn vouch_for(&self, live: &BTreeSet<Namespace>) {
+    /// Vouch for exactly `live`, each at its home. A package new to it, or
+    /// at a new home, starts with no walk.
+    pub(crate) fn vouch_for(&self, live: &BTreeMap<Namespace, PathBuf>) {
         let mut state = self.state();
-        state.packages.retain(|ns, _| live.contains(ns));
-        for namespace in live {
+        state
+            .packages
+            .retain(|ns, package| live.get(ns) == Some(&package.home));
+        for (namespace, home) in live {
             if !state.packages.contains_key(namespace) {
                 let stale_at = state.next();
                 state.packages.insert(
                     namespace.clone(),
                     Package {
+                        home: home.clone(),
                         stale_at,
                         walk: None,
                     },
@@ -120,6 +132,7 @@ impl WatchedWalks {
         }
         package.walk = Some(Walk {
             started,
+            at: Instant::now(),
             lineage,
             status: status.clone(),
         });
@@ -133,7 +146,8 @@ impl WatchedWalks {
         let state = self.state();
         let package = state.packages.get(namespace)?;
         let walk = package.walk.as_ref()?;
-        (walk.started > package.stale_at).then(|| (walk.lineage.clone(), walk.status.clone()))
+        (walk.started > package.stale_at && walk.at.elapsed() < MAX_AGE)
+            .then(|| (walk.lineage.clone(), walk.status.clone()))
     }
 }
 
@@ -143,6 +157,10 @@ mod tests {
 
     fn ns() -> Namespace {
         ("acme", "demo").into()
+    }
+
+    fn live() -> BTreeMap<Namespace, PathBuf> {
+        BTreeMap::from([(ns(), PathBuf::from("/pkg"))])
     }
 
     fn walked(walks: &WatchedWalks, start: WalkStart) {
@@ -157,7 +175,7 @@ mod tests {
     #[test]
     fn a_walk_is_kept_until_a_signal() {
         let walks = WatchedWalks::default();
-        walks.vouch_for(&BTreeSet::from([ns()]));
+        walks.vouch_for(&live());
         walked(&walks, walks.begin(&ns()));
         assert!(walks.reusable(&ns()).is_some());
 
@@ -168,7 +186,7 @@ mod tests {
     #[test]
     fn a_signal_during_a_walk_makes_it_stale() {
         let walks = WatchedWalks::default();
-        walks.vouch_for(&BTreeSet::from([ns()]));
+        walks.vouch_for(&live());
         let start = walks.begin(&ns());
         walks.on_signal(&ns());
         walked(&walks, start);
@@ -179,14 +197,14 @@ mod tests {
     fn a_walk_from_before_the_watch_is_not_kept() {
         let walks = WatchedWalks::default();
         let start = walks.begin(&ns());
-        walks.vouch_for(&BTreeSet::from([ns()]));
+        walks.vouch_for(&live());
         walked(&walks, start);
         assert!(walks.reusable(&ns()).is_none());
 
-        walks.vouch_for(&BTreeSet::from([ns()]));
+        walks.vouch_for(&live());
         let start = walks.begin(&ns());
         walks.forget(&ns());
-        walks.vouch_for(&BTreeSet::from([ns()]));
+        walks.vouch_for(&live());
         walked(&walks, start);
         assert!(
             walks.reusable(&ns()).is_none(),
@@ -195,11 +213,37 @@ mod tests {
     }
 
     #[test]
+    fn a_new_home_drops_the_walk() {
+        let walks = WatchedWalks::default();
+        walks.vouch_for(&live());
+        walked(&walks, walks.begin(&ns()));
+        walks.vouch_for(&BTreeMap::from([(ns(), PathBuf::from("/elsewhere"))]));
+        assert!(walks.reusable(&ns()).is_none());
+    }
+
+    #[test]
+    fn an_old_walk_is_not_reused() {
+        let walks = WatchedWalks::default();
+        walks.vouch_for(&live());
+        walked(&walks, walks.begin(&ns()));
+        walks
+            .state()
+            .packages
+            .get_mut(&ns())
+            .unwrap()
+            .walk
+            .as_mut()
+            .unwrap()
+            .at -= MAX_AGE;
+        assert!(walks.reusable(&ns()).is_none());
+    }
+
+    #[test]
     fn a_package_no_longer_vouched_for_has_no_walk() {
         let walks = WatchedWalks::default();
-        walks.vouch_for(&BTreeSet::from([ns()]));
+        walks.vouch_for(&live());
         walked(&walks, walks.begin(&ns()));
-        walks.vouch_for(&BTreeSet::new());
+        walks.vouch_for(&BTreeMap::new());
         assert!(walks.reusable(&ns()).is_none());
     }
 }

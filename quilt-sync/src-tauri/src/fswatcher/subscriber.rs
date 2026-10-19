@@ -119,6 +119,9 @@ pub enum SignalKind {
     /// The OS lost events that may cover the package (a queue overflow, a
     /// rescan): walk it, but nothing is known to have changed.
     Rescan,
+    /// A file the watcher doesn't walk for changed (an editor's swap file):
+    /// the status may differ, so the tick walks the package itself.
+    Stale,
     /// The package's watch is gone; the next reconcile makes it again.
     Lost,
 }
@@ -197,10 +200,18 @@ impl Subscription {
             move |result: notify_debouncer_full::DebounceEventResult| {
                 let signals = match result {
                     Ok(events) => {
-                        let watched = watched_for_cb.lock().unwrap();
-                        let changed = affected_namespaces(&events, &watched)
-                            .into_iter()
-                            .map(MappingSignal::changed);
+                        let mut watched = watched_for_cb.lock().unwrap();
+                        let (changed, stale) = screen(&events, &watched);
+                        let lost = drop_removed_roots(&events, &mut watched);
+                        let changed = changed.into_iter().map(MappingSignal::changed);
+                        let stale = stale.into_iter().map(|namespace| MappingSignal {
+                            namespace,
+                            kind: SignalKind::Stale,
+                        });
+                        let lost = lost.into_iter().map(|namespace| MappingSignal {
+                            namespace,
+                            kind: SignalKind::Lost,
+                        });
                         let rescan =
                             rescanned_namespaces(&events, &watched)
                                 .into_iter()
@@ -208,7 +219,11 @@ impl Subscription {
                                     namespace,
                                     kind: SignalKind::Rescan,
                                 });
-                        changed.chain(rescan).collect::<Vec<_>>()
+                        changed
+                            .chain(stale)
+                            .chain(rescan)
+                            .chain(lost)
+                            .collect::<Vec<_>>()
                     }
                     Err(errors) => errors
                         .into_iter()
@@ -356,25 +371,65 @@ fn affected_namespaces(
     events: &[notify_debouncer_full::DebouncedEvent],
     watched: &BTreeMap<Namespace, WatchedRoot>,
 ) -> BTreeSet<Namespace> {
+    screen(events, watched).0
+}
+
+/// [`affected_namespaces`], and apart from them the namespaces where only a
+/// path the [`filter`] drops changed. Those are still in the status, so
+/// they make the tick walk; the app's own `.quilt` state is not.
+fn screen(
+    events: &[notify_debouncer_full::DebouncedEvent],
+    watched: &BTreeMap<Namespace, WatchedRoot>,
+) -> (BTreeSet<Namespace>, BTreeSet<Namespace>) {
     let mut touched = BTreeSet::new();
+    let mut stale = BTreeSet::new();
     for event in events {
         if is_non_content_event(event.kind) || event.need_rescan() {
             continue;
         }
         for path in &event.paths {
-            if filter::is_ignored(path) {
-                continue;
-            }
             let Some((namespace, root)) = namespace_for(path, watched) else {
                 continue;
             };
             if root.excludes(path) {
                 continue;
             }
+            if filter::is_ignored(path) {
+                if !filter::is_app_state(path) {
+                    stale.insert(namespace.clone());
+                }
+                continue;
+            }
             touched.insert(namespace.clone());
         }
     }
-    touched
+    stale.retain(|ns| !touched.contains(ns));
+    (touched, stale)
+}
+
+/// Drop the namespaces whose root was removed or moved away: the OS watch
+/// went with it, and the next reconcile makes a new one.
+fn drop_removed_roots(
+    events: &[notify_debouncer_full::DebouncedEvent],
+    watched: &mut BTreeMap<Namespace, WatchedRoot>,
+) -> Vec<Namespace> {
+    let removed: Vec<Namespace> = watched
+        .iter()
+        .filter(|(_, root)| {
+            events.iter().any(|event| {
+                matches!(
+                    event.kind,
+                    EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))
+                ) && event.paths.iter().any(|p| root.path.starts_with(p))
+                    && !root.path.exists()
+            })
+        })
+        .map(|(ns, _)| ns.clone())
+        .collect();
+    for ns in &removed {
+        watched.remove(ns);
+    }
+    removed
 }
 
 /// The namespaces whose events the OS says it lost: those under a rescan
@@ -553,6 +608,59 @@ mod tests {
             ),
             BTreeSet::from([namespace])
         );
+    }
+
+    /// A swap file is not worth a walk, but it is in the status, so the tick
+    /// must not reuse a walk from before it. The app's `.quilt` state is
+    /// neither.
+    #[test]
+    fn a_swap_file_makes_the_kept_walk_stale() {
+        let namespace: Namespace = ("acme", "demo").into();
+        let watched = BTreeMap::from([(namespace.clone(), unignored("/pkg"))]);
+        let at = |path: &str| {
+            notify_debouncer_full::DebouncedEvent::new(
+                notify::Event {
+                    kind: EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                    paths: vec![PathBuf::from(path)],
+                    attrs: notify::event::EventAttributes::default(),
+                },
+                std::time::Instant::now(),
+            )
+        };
+
+        let (changed, stale) = screen(&[at("/pkg/.notes.md.swp")], &watched);
+        assert!(changed.is_empty());
+        assert_eq!(stale, BTreeSet::from([namespace]));
+        let (changed, stale) = screen(&[at("/pkg/.quilt/state.db")], &watched);
+        assert!(changed.is_empty() && stale.is_empty());
+    }
+
+    #[test]
+    fn a_removed_root_is_dropped_from_the_watch() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("pkg");
+        let namespace: Namespace = ("acme", "demo").into();
+        let mut watched = BTreeMap::from([(
+            namespace.clone(),
+            WatchedRoot {
+                path: root.clone(),
+                quiltignore: None,
+            },
+        )]);
+        let removed = notify_debouncer_full::DebouncedEvent::new(
+            notify::Event {
+                kind: EventKind::Remove(notify::event::RemoveKind::Folder),
+                paths: vec![root],
+                attrs: notify::event::EventAttributes::default(),
+            },
+            std::time::Instant::now(),
+        );
+
+        assert_eq!(
+            drop_removed_roots(&[removed], &mut watched),
+            vec![namespace]
+        );
+        assert!(watched.is_empty());
     }
 
     /// A rescan is not a change: it walks the packages it may cover and moves

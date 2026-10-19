@@ -6,10 +6,7 @@ use crate::quilt;
 /// event for it. Intentionally a small static deny-list — gitignore-style
 /// user filters wait for evidence they are needed.
 pub fn is_ignored(path: &Path) -> bool {
-    if path
-        .components()
-        .any(|c| c.as_os_str() == quilt::paths::DOT_QUILT_DIR)
-    {
+    if is_app_state(path) {
         return true;
     }
     let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
@@ -25,6 +22,12 @@ pub fn is_ignored(path: &Path) -> bool {
             .as_deref(),
         Some("swp" | "tmp"),
     )
+}
+
+/// A path under `.quilt`, where the app keeps its own state.
+pub fn is_app_state(path: &Path) -> bool {
+    path.components()
+        .any(|c| c.as_os_str() == quilt::paths::DOT_QUILT_DIR)
 }
 
 #[cfg(test)]
