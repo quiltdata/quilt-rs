@@ -1,7 +1,8 @@
 //! The hashes of a package's files from earlier walks, keyed by each file's
 //! [`FileStamp`], so a walk hashes only the files that look changed.
 //!
-//! Optional: a walk without one hashes every file, and gets the same answer.
+//! Optional: a walk without one hashes every file. The answers match, except
+//! for a write the stamp can't see, which the cache finds at the next full walk.
 //! An entry is trusted only when every stamp value matches and the platform
 //! gave a change time and a file ID. Tools that restore an edit time (`touch -r`,
 //! `cp -p`, `rsync -a`) cannot restore the change time, so they are seen.

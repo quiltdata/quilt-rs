@@ -39,11 +39,17 @@ pub enum EntryKind {
 /// One folder's entries (not recursive, no "." / ".."), with a stamp each.
 ///
 /// An entry that disappears while the folder is read is left out.
+///
+/// Where the folder call fails but `std::fs` can still list the folder (a file
+/// system without file IDs, such as FAT), the entries come with no change time
+/// and no file ID, so the cache hashes them.
 pub fn read_dir_stamps(dir: &Path) -> io::Result<Vec<(OsString, EntryKind, FileStamp)>> {
     #[cfg(target_os = "macos")]
-    return macos::read_dir_stamps(dir);
+    return macos::read_dir_stamps(dir)
+        .or_else(|err| untrusted::read_dir_stamps(dir).map_err(|_| err));
     #[cfg(windows)]
-    return windows::read_dir_stamps(dir);
+    return windows::read_dir_stamps(dir)
+        .or_else(|err| untrusted::read_dir_stamps(dir).map_err(|_| err));
     #[cfg(not(any(target_os = "macos", windows)))]
     return portable::read_dir_stamps(dir);
 }
@@ -54,6 +60,50 @@ pub fn stamp(path: &Path) -> io::Result<FileStamp> {
     return windows::stamp(path);
     #[cfg(not(windows))]
     return portable::stamp(path);
+}
+
+/// `std::fs` listing with neither a change time nor a file ID: what the folder
+/// calls fall back to.
+#[cfg(any(target_os = "macos", windows))]
+mod untrusted {
+    use super::{EntryKind, FileStamp};
+    use std::ffi::OsString;
+    use std::io;
+    use std::path::Path;
+
+    pub(super) fn read_dir_stamps(dir: &Path) -> io::Result<Vec<(OsString, EntryKind, FileStamp)>> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            // `DirEntry::metadata` does not follow symlinks.
+            let meta = match entry.metadata() {
+                Ok(meta) => meta,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(err),
+            };
+            let file_type = meta.file_type();
+            let kind = if file_type.is_symlink() {
+                EntryKind::Other
+            } else if file_type.is_dir() {
+                EntryKind::Dir
+            } else if file_type.is_file() {
+                EntryKind::File
+            } else {
+                EntryKind::Other
+            };
+            out.push((
+                entry.file_name(),
+                kind,
+                FileStamp {
+                    size: if meta.is_file() { meta.len() } else { 0 },
+                    modified: meta.modified()?,
+                    changed: None,
+                    id: None,
+                },
+            ));
+        }
+        Ok(out)
+    }
 }
 
 /// Time `secs` seconds and `nanos` nanoseconds after the Unix epoch; `secs` may be negative.
@@ -353,12 +403,14 @@ mod windows {
         CloseHandle, ERROR_NO_MORE_FILES, HANDLE, INVALID_HANDLE_VALUE,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAGS_AND_ATTRIBUTES,
-        FILE_ID_EXTD_DIR_INFO, FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY,
-        FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        FILE_STANDARD_INFO, FileBasicInfo, FileIdExtdDirectoryInfo, FileIdExtdDirectoryRestartInfo,
-        FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx, OPEN_EXISTING, SYNCHRONIZE,
+        CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_ATTRIBUTE_TAG_INFO, FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_EXTD_DIR_INFO,
+        FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
+        FileAttributeTagInfo, FileBasicInfo, FileIdExtdDirectoryInfo,
+        FileIdExtdDirectoryRestartInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx,
+        OPEN_EXISTING, SYNCHRONIZE,
     };
 
     const BUF_LEN: usize = 64 * 1024;
@@ -446,8 +498,12 @@ mod windows {
         )
     }
 
-    fn kind_of(attributes: u32) -> EntryKind {
-        if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+    /// A link is a reparse point whose tag is a name surrogate, as std's
+    /// `is_symlink` reads it. Other reparse points, such as cloud files, are
+    /// ordinary files and folders.
+    fn kind_of(attributes: u32, reparse_tag: u32) -> EntryKind {
+        const NAME_SURROGATE: u32 = 0x2000_0000;
+        if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 && reparse_tag & NAME_SURROGATE != 0 {
             EntryKind::Other
         } else if attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
             EntryKind::Dir
@@ -458,15 +514,16 @@ mod windows {
 
     struct Raw {
         attributes: u32,
+        reparse_tag: u32,
         end_of_file: i64,
         last_write: i64,
         change: i64,
-        volume: u64,
-        file_id: [u8; 16],
+        /// Volume serial and file ID, where the file system has them.
+        id: Option<(u64, [u8; 16])>,
     }
 
     fn make_stamp(raw: &Raw) -> io::Result<(EntryKind, FileStamp)> {
-        let kind = kind_of(raw.attributes);
+        let kind = kind_of(raw.attributes, raw.reparse_tag);
         let size = if kind == EntryKind::File {
             u64::try_from(raw.end_of_file).map_err(|_| invalid_data("negative file length"))?
         } else {
@@ -484,9 +541,9 @@ mod windows {
                 size,
                 modified: filetime(raw.last_write)?,
                 changed,
-                id: Some(FileId {
-                    volume: raw.volume,
-                    file: u128::from_le_bytes(raw.file_id),
+                id: raw.id.map(|(volume, file_id)| FileId {
+                    volume,
+                    file: u128::from_le_bytes(file_id),
                 }),
             },
         ))
@@ -556,11 +613,11 @@ mod windows {
             if wide != [dot] && wide != [dot, dot] {
                 let raw = Raw {
                     attributes: read_at(bytes, field(offset_of!(Info, FileAttributes)))?,
+                    reparse_tag: read_at(bytes, field(offset_of!(Info, ReparsePointTag)))?,
                     end_of_file: read_at(bytes, field(offset_of!(Info, EndOfFile)))?,
                     last_write: read_at(bytes, field(offset_of!(Info, LastWriteTime)))?,
                     change: read_at(bytes, field(offset_of!(Info, ChangeTime)))?,
-                    volume,
-                    file_id: read_at(bytes, field(offset_of!(Info, FileId)))?,
+                    id: Some((volume, read_at(bytes, field(offset_of!(Info, FileId)))?)),
                 };
                 let (kind, stamp) = make_stamp(&raw)?;
                 out.push((OsString::from_wide(&wide), kind, stamp));
@@ -583,20 +640,22 @@ mod windows {
             FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
         )?;
         // SAFETY: each class fills the struct it is paired with.
-        let (basic, standard, id) = unsafe {
+        let (basic, standard, tag, id) = unsafe {
             (
                 query::<FILE_BASIC_INFO>(&handle, FileBasicInfo)?,
                 query::<FILE_STANDARD_INFO>(&handle, FileStandardInfo)?,
-                query::<FILE_ID_INFO>(&handle, FileIdInfo)?,
+                query::<FILE_ATTRIBUTE_TAG_INFO>(&handle, FileAttributeTagInfo).ok(),
+                // FAT has no file IDs: such a stamp is never trusted.
+                query::<FILE_ID_INFO>(&handle, FileIdInfo).ok(),
             )
         };
         let raw = Raw {
             attributes: basic.FileAttributes,
+            reparse_tag: tag.map_or(0, |tag| tag.ReparseTag),
             end_of_file: standard.EndOfFile,
             last_write: basic.LastWriteTime,
             change: basic.ChangeTime,
-            volume: id.VolumeSerialNumber,
-            file_id: id.FileId.Identifier,
+            id: id.map(|id| (id.VolumeSerialNumber, id.FileId.Identifier)),
         };
         Ok(make_stamp(&raw)?.1)
     }

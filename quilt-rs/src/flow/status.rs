@@ -81,6 +81,9 @@ fn walk_package_home(package_home: &Path, quiltignore: Option<&Gitignore>) -> Re
     while let Some(dir) = queue.pop_front() {
         let entries = match read_dir_stamps(&dir) {
             Ok(entries) => entries,
+            // A folder that lists but can't be stamped holds files the walk
+            // can't see; skipping it would report them removed.
+            Err(err) if std::fs::read_dir(&dir).is_ok() => return Err(err.into()),
             Err(err) => {
                 warn!("❌ Failed to read directory {}: {}", dir.display(), err);
                 continue;
@@ -1247,6 +1250,24 @@ mod tests {
             row.hash.algorithm(),
             crate::object_hash::MULTIHASH_CRC64_NVME
         );
+        Ok(())
+    }
+
+    /// A folder that lists but can't be searched: its files are there, so the
+    /// walk fails rather than call them removed.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_folder_that_lists_but_cant_be_stamped_is_an_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+        let package = CachedPackage::new().await?;
+        let sub = package.path("sub");
+        std::fs::create_dir(&sub)?;
+        std::fs::write(sub.join("inside.txt"), b"x")?;
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o444))?;
+        let walked = package.walk_without_cache().await;
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755))?;
+        assert!(walked.is_err(), "{walked:?}");
         Ok(())
     }
 

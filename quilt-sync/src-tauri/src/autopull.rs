@@ -198,14 +198,19 @@ impl Watcher {
             clocks: Clocks::default(),
             last_change,
         });
-        let task_inner = Arc::clone(&inner);
+        // Its own task: a package whose catalog is slow to answer its host
+        // config must not hold back the loop.
+        let walk_inner = Arc::clone(&inner);
+        let walk_handle = app_handle.clone();
         tauri::async_runtime::spawn(async move {
-            // Boxed for the same reason as the tick below.
             Box::pin(walk_every_package(
-                &*app_handle.state::<Model>(),
-                &task_inner,
+                &*walk_handle.state::<Model>(),
+                &walk_inner,
             ))
             .await;
+        });
+        let task_inner = Arc::clone(&inner);
+        tauri::async_runtime::spawn(async move {
             loop {
                 let cadence = pull_cadence(&task_inner.settings.read().await.pull);
                 // This deadline covers the sleep, which is when the Autosync
