@@ -590,6 +590,7 @@ fn CommitContent(
                     <UnignorePopup
                         data=data
                         notification=notification
+                        refetch=refetch
                         on_close=move || show_unignore_popup.set(None)
                     />
                 }
@@ -787,10 +788,14 @@ fn CommitEntryRow(
 
     let ignored_by = entry.ignored_by.clone();
     let ns_for_unignore = entry.namespace.clone();
+    let path_for_unignore = entry.filename.clone();
+    let folder = entry.folder;
     let on_unignore = move |_| {
         if let Some(pattern) = ignored_by.clone() {
             show_unignore_popup.set(Some(UnignorePopupData {
                 namespace: ns_for_unignore.to_string(),
+                path: path_for_unignore.clone(),
+                folder,
                 pattern,
                 uri: uri_for_unignore.clone(),
             }));

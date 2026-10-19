@@ -62,10 +62,10 @@ enum WorkdirFile {
 /// What the walk of the package home found, before it is matched with the
 /// manifest.
 #[derive(Default)]
-struct Walked {
+pub(crate) struct Walked {
     /// (`logical_key`, `absolute_path`, kind, stamp) for everything not ignored
     /// that is not a folder.
-    entries: Vec<(PathBuf, PathBuf, EntryKind, FileStamp)>,
+    pub(crate) entries: Vec<(PathBuf, PathBuf, EntryKind, FileStamp)>,
     /// Files matched by an ignore rule: (`logical_key`, rule, size)
     ignored_files: Vec<(PathBuf, quiltignore::IgnoredBy, u64)>,
     /// Folders matched by an ignore rule: (path relative to the package home,
@@ -76,13 +76,13 @@ struct Walked {
 /// What the package already has, so ignore rules other than the package's
 /// spare it: its files, and every folder holding one.
 #[derive(Default)]
-struct Tracked {
-    files: HashSet<PathBuf>,
-    dirs: HashSet<PathBuf>,
+pub(crate) struct Tracked {
+    pub(crate) files: HashSet<PathBuf>,
+    pub(crate) dirs: HashSet<PathBuf>,
 }
 
 impl Tracked {
-    fn new<'a>(keys: impl Iterator<Item = &'a PathBuf>) -> Self {
+    pub(crate) fn new<'a>(keys: impl Iterator<Item = &'a PathBuf>) -> Self {
         let mut tracked = Tracked::default();
         for key in keys {
             for dir in key.ancestors().skip(1) {
@@ -97,7 +97,7 @@ impl Tracked {
 }
 
 /// The whole walk, one folder call at a time. Blocking.
-fn walk_package_home(
+pub(crate) fn walk_package_home(
     package_home: &Path,
     rules: &quiltignore::Rules,
     tracked: &Tracked,

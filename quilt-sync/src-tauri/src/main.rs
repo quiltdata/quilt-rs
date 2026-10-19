@@ -270,6 +270,8 @@ fn main() {
             commands::setup,
             commands::add_to_quiltignore,
             commands::test_quiltignore_pattern,
+            commands::stop_ignoring_preview,
+            commands::stop_ignoring,
             commands::handle_remote_package,
             commands::get_revision_message,
             commands::check_for_update,

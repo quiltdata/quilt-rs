@@ -1797,6 +1797,83 @@ pub async fn add_to_quiltignore(
     .await
 }
 
+/// What *Stop ignoring* writes in one scope, and what the next sync adds.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopePreview {
+    /// The `!` lines, outermost first.
+    pub lines: Vec<String>,
+    pub files: u64,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StopIgnoringPreview {
+    pub this_package: ScopePreview,
+    /// `None` when no user-wide line can bring the path back.
+    pub all_packages: Option<ScopePreview>,
+}
+
+/// Where *Stop ignoring* writes: the package's `.quiltignore`, or the
+/// user-wide one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StopIgnoringScope {
+    ThisPackage,
+    AllPackages,
+}
+
+pub async fn stop_ignoring_preview(
+    namespace: String,
+    path: String,
+    folder: bool,
+) -> Result<StopIgnoringPreview, String> {
+    #[derive(Serialize)]
+    struct Args {
+        namespace: String,
+        path: String,
+        folder: bool,
+    }
+    tauri::invoke(
+        "stop_ignoring_preview",
+        &Args {
+            namespace,
+            path,
+            folder,
+        },
+    )
+    .await
+}
+
+pub async fn stop_ignoring(
+    namespace: String,
+    path: String,
+    folder: bool,
+    scope: StopIgnoringScope,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    #[derive(Serialize)]
+    struct Args {
+        namespace: String,
+        path: String,
+        folder: bool,
+        scope: StopIgnoringScope,
+        uri: Option<S3PackageUri>,
+    }
+    tauri::invoke(
+        "stop_ignoring",
+        &Args {
+            namespace,
+            path,
+            folder,
+            scope,
+            uri,
+        },
+    )
+    .await
+}
+
 pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<bool, String> {
     #[derive(Serialize)]
     struct Args {

@@ -31,6 +31,7 @@ pub enum RowCommand {
     /// Open the unignore popup for the pattern that matched this path.
     StopIgnoring {
         path: String,
+        folder: bool,
         pattern: String,
     },
 }

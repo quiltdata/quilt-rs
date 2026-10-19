@@ -852,9 +852,15 @@ fn row_runner(
                 path,
                 uri,
             })),
-            RowCommand::StopIgnoring { pattern, .. } => {
+            RowCommand::StopIgnoring {
+                path,
+                folder,
+                pattern,
+            } => {
                 files.unignoring.set(Some(UnignorePopupData {
                     namespace,
+                    path,
+                    folder,
                     pattern,
                     uri,
                 }));
@@ -910,10 +916,8 @@ fn copy_outcome(namespace: String, command: &RowCommand) -> Outcome {
 /// They are v1's, which report through a `Notification`; this page reports on
 /// its band instead, so a failure becomes the band's, keyed to the package the
 /// popup was opened for ([`report_popup`]), and a success says nothing there:
-/// the re-read is the report. Adding a pattern re-reads the page itself.
-/// *Stop ignoring* opens `.quiltignore` in the reader's editor; the page
-/// re-reads once it opened, and the watcher, which never screens
-/// `.quiltignore` out, re-reads again when the edit is saved.
+/// the re-read is the report. Each popup re-reads the page itself once its
+/// write lands.
 ///
 /// The page survives a switch of package, so an answer can land after the
 /// reader moved on. Both popups hold the page's lock while they wait, so no
@@ -928,18 +932,11 @@ fn row_popups(files: Files, w: Wiring) -> impl IntoView {
     // so no other `.quiltignore` popup can open before the answer lands.
     let ignore_for = StoredValue::new(String::new());
     let unignore_for = StoredValue::new(String::new());
-    report_popup(
-        said,
-        ignore_for,
-        "Could not ignore this file.",
-        None,
-        w.outcome,
-    );
+    report_popup(said, ignore_for, "Could not ignore this file.", w.outcome);
     report_popup(
         unignore_said,
         unignore_for,
-        "Could not open .quiltignore.",
-        Some(w.reload),
+        "Could not stop ignoring this file.",
         w.outcome,
     );
     view! {
@@ -967,16 +964,17 @@ fn row_popups(files: Files, w: Wiring) -> impl IntoView {
         {move || {
             files.unignoring.get().map(|data| {
                 unignore_for.set_value(data.namespace.clone());
-                let (ns, pattern) = (data.namespace.clone(), data.pattern.clone());
+                let (ns, path) = (data.namespace.clone(), data.path.clone());
                 view! {
                     <UnignorePopup
                         data=data
                         notification=unignore_said
+                        refetch=w.reload
                         on_close=move || {
                             files
                                 .unignoring
                                 .update(|open| {
-                                    close_own(open, |d| d.namespace == ns && d.pattern == pattern);
+                                    close_own(open, |d| d.namespace == ns && d.path == path);
                                 });
                         }
                         lock=w.busy
@@ -990,13 +988,11 @@ fn row_popups(files: Files, w: Wiring) -> impl IntoView {
 /// Turn a v1 popup's `Notification` into this page's band: a failure is news
 /// about `opened_for`, the package the popup was opened for, whichever package
 /// is on screen when it lands (the band drops it if that is another one). A
-/// success says nothing; `then` is what it does besides, since the ignore popup
-/// re-reads the page itself and the unignore popup does not.
+/// success says nothing: the popup re-reads the page itself.
 fn report_popup(
     notice: RwSignal<Option<Notification>>,
     opened_for: StoredValue<String>,
     lead: &'static str,
-    then: Option<Trigger>,
     outcome: RwSignal<Option<Outcome>>,
 ) {
     Effect::new(move |_| {
@@ -1009,8 +1005,6 @@ fn report_popup(
                 lead: lead.to_string(),
                 detail: Some(detail),
             }));
-        } else if let Some(reload) = then {
-            reload.notify();
         }
     });
 }
@@ -1576,13 +1570,7 @@ mod tests {
             let notice = RwSignal::new(None);
             let outcome = RwSignal::new(None);
             let opened_for = StoredValue::new("team/a".to_string());
-            report_popup(
-                notice,
-                opened_for,
-                "Could not ignore this file.",
-                None,
-                outcome,
-            );
+            report_popup(notice, opened_for, "Could not ignore this file.", outcome);
             (notice, outcome)
         });
 
@@ -1613,6 +1601,8 @@ mod tests {
     fn a_popup_s_answer_closes_only_that_popup() {
         let theirs = |ns: &str| UnignorePopupData {
             namespace: ns.to_string(),
+            path: "a.log".to_string(),
+            folder: false,
             pattern: "*.log".to_string(),
             uri: None,
         };
