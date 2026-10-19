@@ -341,16 +341,24 @@ pub enum Scope {
 /// The `!` line for one path: anchored for the package, by name for the user.
 fn stop_line(relative_path: &Path, is_dir: bool, scope: Scope) -> Res<String> {
     let mut names = Vec::new();
+    let unnamable = |why: &str| {
+        Error::Fs(FsError::Write {
+            path: relative_path.to_path_buf(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("the name {why}, so no rule can name it"),
+            ),
+        })
+    };
     for component in relative_path.components() {
-        let name = component.as_os_str().to_str().ok_or_else(|| {
-            Error::Fs(FsError::Write {
-                path: relative_path.to_path_buf(),
-                source: std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "the name is not UTF-8, so no rule can name it",
-                ),
-            })
-        })?;
+        let name = component
+            .as_os_str()
+            .to_str()
+            .ok_or_else(|| unnamable("is not UTF-8"))?;
+        // A rule is one line.
+        if name.contains('\n') {
+            return Err(unnamable("holds a line break"));
+        }
         names.push(escape(name));
     }
     let mut line = match scope {
@@ -896,6 +904,16 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_name_with_a_line_break_is_an_error() {
+        let (_dir, rules) = rules(Some("*.log\n"), None);
+        assert!(
+            rules
+                .stop_ignoring_lines(Path::new("a\nb.log"), false, |_| false, Scope::Package)
+                .is_err()
+        );
     }
 
     #[test]
