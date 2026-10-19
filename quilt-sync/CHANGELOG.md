@@ -25,12 +25,12 @@
 
 - Autopublish waits the full publish wait after the last change it sees, a commit included, so it no longer publishes at once after you turn publishing on, commit, delete files, copy in files that keep old dates, or reopen the app (<https://github.com/quiltdata/quilt-rs/pull/1134>)
 - On Windows, a package left untouched while the app was closed keeps its publish time after a restart (<https://github.com/quiltdata/quilt-rs/pull/1144>)
-- An edit, a removal or an undo shows on the main page a few seconds after it, even right after another change, instead of at the next check (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- An edit, a removal or an undo shows on the main page a few seconds after it, even right after another change, instead of at the next check (<https://github.com/quiltdata/quilt-rs/pull/1145>)
 
 ### Changed
 
 - Checking a package for changes reads only the files that changed since the last check, and the app checks every package when it starts, so changes made while it was closed show at once (<https://github.com/quiltdata/quilt-rs/pull/1144>)
-- The regular check no longer reads a package's files when the folder watcher saw no change in it; it still asks for new revisions. Packages the watcher can't follow, such as on a network drive, are read as before (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- The regular check no longer reads a package's files when the folder watcher saw no change in it; it still asks for new revisions. Packages the watcher can't follow, such as on a network drive, are read as before (<https://github.com/quiltdata/quilt-rs/pull/1145>)
 
 ### quilt-rs
 
