@@ -69,6 +69,22 @@ ignore = [
     # zip ^4. It only unpacks our own update bundles after checking their
     # signature. Drop this when the updater moves to zip 9.
     { crate = "zip@4.6.1", reason = "yanked; tauri-plugin-updater still requires zip ^4" },
+    # The same zip 4 also carries three extraction advisories (SUID bits,
+    # symlink targets, permissions through symlinks), all fixed only in zip 9.
+    # They need an attacker-controlled archive; the updater extracts only our
+    # signed update bundles, and only on Windows.
+    { id = "RUSTSEC-2026-0367", reason = "zip 4 via tauri-plugin-updater; only extracts signed update bundles" },
+    { id = "RUSTSEC-2026-0368", reason = "zip 4 via tauri-plugin-updater; only extracts signed update bundles" },
+    { id = "RUSTSEC-2026-0369", reason = "zip 4 via tauri-plugin-updater; only extracts signed update bundles" },
+
+    # --- zbus 5 helper crates via opener / tauri-plugin-single-instance (Linux only) ---
+    # zbus 6 folded zbus_names, zvariant and zvariant_derive into itself, so the
+    # standalone crates are unmaintained. opener 0.9 and
+    # tauri-plugin-single-instance 2.5 still require zbus 5. Drop these when
+    # both move to zbus 6.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained, via zbus 5 from opener / tauri-plugin-single-instance" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained, via zbus 5 from opener / tauri-plugin-single-instance" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained, via zbus 5 from opener / tauri-plugin-single-instance" },
 ]
 
 [licenses]
