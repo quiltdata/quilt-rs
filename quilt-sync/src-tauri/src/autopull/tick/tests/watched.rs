@@ -139,3 +139,40 @@ async fn a_check_that_may_publish_walks_even_with_a_kept_walk() -> Result<(), Er
     run_once(&model, &RoleCache::default(), &inner).await?;
     Ok(())
 }
+
+/// The wait ends during the check of a kept walk: the tree is walked under
+/// the lock before a publish, and a different tree is not published.
+#[tokio::test]
+async fn a_kept_walk_is_walked_again_before_a_publish() -> Result<(), Error> {
+    // The kept walk still has a file the tree no longer has.
+    let model = model(1, 1, true);
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = inner(reporter.clone());
+    inner.settings.write().await.push.idle_timeout_secs = 0;
+    inner
+        .walks
+        .vouch_for(&BTreeMap::from([(ns(), std::path::PathBuf::from("/pkg"))]));
+    let start = inner.walks.begin(&ns());
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("gone.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    inner.walks.record(
+        &ns(),
+        start,
+        up_to_date_lineage(),
+        &quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes),
+    );
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    let statuses = reporter.statuses.lock().unwrap();
+    assert_eq!(statuses.len(), 1);
+    assert!(
+        !statuses[0].1.has_changes,
+        "the fresh walk is what is reported"
+    );
+    assert!(reporter.published.lock().unwrap().is_empty());
+    Ok(())
+}

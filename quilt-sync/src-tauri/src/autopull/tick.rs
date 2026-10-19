@@ -408,18 +408,10 @@ pub(crate) async fn refresh_then_maybe_sync(
             .filter(|_| walks.still_current(namespace, walk)),
         None => None,
     };
-    let status = if let Some(status) = reused {
-        status
-    } else {
-        let start = walks.begin(namespace);
-        let status = model
-            .locked_package_status(&locked, None)
-            .await
-            .map_err(classify_transient_or_login)?;
-        // `lineage` was read before the lock. Had it changed since, the kept
-        // walk only fails to match, and the next tick walks.
-        walks.record(namespace, start, lineage.clone(), &status);
-        status
+    let reused_walk = reused.is_some();
+    let status = match reused {
+        Some(status) => status,
+        None => walk_locked(model, &locked, walks, namespace, lineage).await?,
     };
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
@@ -577,6 +569,37 @@ pub(crate) async fn refresh_then_maybe_sync(
                 at,
             )));
         }
+        // The wait can end while `latest` is fetched for a kept walk, and a
+        // publish acts on the tree under the lock: walk it now. A different
+        // tree is a new change, with a wait of its own.
+        let status = if reused_walk {
+            let fresh = walk_locked(model, &locked, walks, namespace, lineage).await?;
+            let fresh_fingerprint = status_fingerprint(&fresh);
+            if fresh_fingerprint != fingerprint {
+                let changed_at = last_change
+                    .observe(namespace, None, &fresh, PendingCommit::of(lineage))
+                    .await;
+                let has_changes = !fresh.changes.is_empty();
+                return Ok(Some(
+                    match crate::autopull::publish_deadline(changed_at, wait) {
+                        Some(at) => RefreshOutcome::deferred(
+                            fresh.upstream_state,
+                            has_changes,
+                            fresh_fingerprint,
+                            at,
+                        ),
+                        None => RefreshOutcome::observed(
+                            fresh.upstream_state,
+                            has_changes,
+                            fresh_fingerprint,
+                        ),
+                    },
+                ));
+            }
+            fresh
+        } else {
+            status
+        };
         // `publish_locked_with_settings` is the manual one-click Publish
         // command's path too, so a change to publish settings (new
         // placeholder, new field) applies identically regardless of who
@@ -627,6 +650,26 @@ pub(crate) async fn refresh_then_maybe_sync(
         has_changes,
         fingerprint,
     )))
+}
+
+/// A status walk under the held lock, kept for later checks when the watcher
+/// vouches for the package.
+async fn walk_locked<M: QuiltModel>(
+    model: &M,
+    locked: &M::Locked,
+    walks: &WatchedWalks,
+    namespace: &Namespace,
+    lineage: &quilt::lineage::PackageLineage,
+) -> Result<quilt::lineage::InstalledPackageStatus, WatchError> {
+    let start = walks.begin(namespace);
+    let status = model
+        .locked_package_status(locked, None)
+        .await
+        .map_err(classify_transient_or_login)?;
+    // `lineage` was read before the lock. Had it changed since, the kept walk
+    // only fails to match, and the next tick walks.
+    walks.record(namespace, start, lineage.clone(), &status);
+    Ok(status)
 }
 
 #[derive(Debug, Clone, Copy)]
