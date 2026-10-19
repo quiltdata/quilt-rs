@@ -51,6 +51,7 @@ pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
 // `dot_quilt_dir()`, so `DOT_QUILT_DIR` stays the single source of the prefix
 // and a rename propagates without touching these.
 const LINEAGE_FILE: &str = "data.json";
+const STATE_DB_FILE: &str = "state.db";
 const LOCKS_DIR: &str = "locks";
 
 const INSTALLED_DIR: &str = "installed";
@@ -99,6 +100,13 @@ impl DomainPaths {
     #[must_use]
     pub fn dot_quilt_dir(&self) -> PathBuf {
         self.root_dir.join(DOT_QUILT_DIR)
+    }
+
+    /// The package state store, under `.quilt/`. Optional: see
+    /// [`crate::state_store::PackageStateStore`].
+    #[must_use]
+    pub fn state_db(&self) -> PathBuf {
+        self.dot_quilt_dir().join(STATE_DB_FILE)
     }
 
     /// Directory for files staged mid-write, under `.quilt/`.
@@ -313,6 +321,7 @@ mod tests {
 
         assert_eq!(paths.dot_quilt_dir(), PathBuf::from("foo/bar/.quilt"));
         assert_eq!(paths.lineage(), PathBuf::from("foo/bar/.quilt/data.json"));
+        assert_eq!(paths.state_db(), PathBuf::from("foo/bar/.quilt/state.db"));
         assert_eq!(
             paths.package_lock(&("acme", "demo").into()),
             PathBuf::from("foo/bar/.quilt/locks/acme/demo.lock")

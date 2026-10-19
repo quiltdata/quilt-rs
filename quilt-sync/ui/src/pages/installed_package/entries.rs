@@ -217,6 +217,7 @@ pub(super) fn EntryRow(
         status,
         junky_pattern,
         ignored_by,
+        folder: _,
         namespace,
     } = entry;
 

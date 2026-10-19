@@ -29,6 +29,7 @@ pub mod object_hash;
 mod package_lock;
 pub mod paths;
 pub mod quiltignore;
+pub mod state_store;
 
 pub mod workflow;
 

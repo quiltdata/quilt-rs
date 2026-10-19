@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::SystemTime;
 
 use tracing::trace;
 use tracing::warn;
@@ -57,10 +56,9 @@ struct LocateResult {
     files: Vec<(PathBuf, WorkdirFile)>,
     /// Files matched by an ignore rule: (`logical_key`, `absolute_path`, rule, size)
     ignored_files: Vec<(PathBuf, PathBuf, quiltignore::IgnoredBy, u64)>,
-    /// Newest `mtime` across non-ignored files in the walk. Ignored files
-    /// are deliberately excluded — touching a file inside an
-    /// ignored cache directory must not gate autosync.
-    most_recent_mtime: Option<SystemTime>,
+    /// Folders matched by an ignore rule: (path relative to the package home,
+    /// rule). The walk does not enter them.
+    ignored_dirs: Vec<(PathBuf, quiltignore::IgnoredBy)>,
 }
 
 async fn locate_files_in_package_home(
@@ -92,7 +90,7 @@ async fn locate_files_in_package_home(
 
     let mut files = Vec::new();
     let mut ignored_files = Vec::new();
-    let mut most_recent_mtime: Option<SystemTime> = None;
+    let mut ignored_dirs = Vec::new();
 
     while let Some(dir) = queue.pop_front() {
         let mut dir_entries = match storage.read_dir(&dir).await {
@@ -110,10 +108,9 @@ async fn locate_files_in_package_home(
             if !file_type.is_file() {
                 if file_type.is_dir() {
                     let rel = file_path.strip_prefix(package_home)?;
-                    if rules
-                        .dir_ignored_by(rel, tracked_dirs.contains(rel))
-                        .is_some()
+                    if let Some(ignored_by) = rules.dir_ignored_by(rel, tracked_dirs.contains(rel))
                     {
+                        ignored_dirs.push((rel.to_path_buf(), ignored_by));
                         continue;
                     }
                     queue.push_back(file_path);
@@ -124,12 +121,6 @@ async fn locate_files_in_package_home(
                 continue;
             }
 
-            // One `metadata()` per regular file: ignored files need `len()`
-            // and non-ignored files contribute `modified()` to the
-            // working-tree quiet-window accumulator. The walk already paid
-            // for the `DirEntry`, so this is cheaper than re-statting later.
-            let meta = dir_entry.metadata().await.ok();
-
             let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
             let in_lineage = tracked_paths.contains_key(&logical_key);
             let record = if in_lineage {
@@ -139,12 +130,9 @@ async fn locate_files_in_package_home(
             };
             let tracked = in_lineage || record.is_some();
             if let Some(ignored_by) = rules.file_ignored_by(&logical_key, tracked) {
-                let size = meta.as_ref().map_or(0, std::fs::Metadata::len);
+                let size = dir_entry.metadata().await.map_or(0, |m| m.len());
                 ignored_files.push((logical_key, file_path, ignored_by, size));
                 continue;
-            }
-            if let Some(mtime) = meta.and_then(|m| m.modified().ok()) {
-                most_recent_mtime = Some(most_recent_mtime.map_or(mtime, |cur| cur.max(mtime)));
             }
             if let Some(row) = tracked_paths.remove(&logical_key) {
                 files.push((logical_key, WorkdirFile::Tracked(file_path, row)));
@@ -163,7 +151,7 @@ async fn locate_files_in_package_home(
     Ok(LocateResult {
         files,
         ignored_files,
-        most_recent_mtime,
+        ignored_dirs,
     })
 }
 
@@ -291,8 +279,8 @@ pub async fn create_status(
 
     let mut status = InstalledPackageStatus::new(lineage.clone().into(), changes);
     status.ignored_files = ignored_files;
+    status.ignored_dirs = locate_result.ignored_dirs;
     status.junky_changes = junky_changes;
-    status.most_recent_mtime = locate_result.most_recent_mtime;
     status.latest_hash.clone_from(&lineage.latest_hash);
     trace!(
         // `walked` earns its place by distinguishing two readings of "0 changes":
@@ -303,10 +291,11 @@ pub async fn create_status(
         // a second reporting the *input*, which duplicated `ignored` and dumped the
         // whole file list; the only fact it carried alone is the count now in front.
         // Names live in the per-path `trace` above, for one package at a time.
-        "✔️ Status: {} files walked, {} changes, {} ignored, {} junky",
+        "✔️ Status: {} files walked, {} changes, {} ignored, {} ignored folders, {} junky",
         walked,
         status.changes.len(),
         status.ignored_files.len(),
+        status.ignored_dirs.len(),
         status.junky_changes.len(),
     );
     Ok((lineage, status))
@@ -685,6 +674,44 @@ mod tests {
     }
 
     #[test(tokio::test)]
+    async fn test_quiltignore_directory_recorded_once() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+
+        for path in ["cache/file.txt", "cache/nested/deep.txt", "keep.txt"] {
+            storage
+                .write_byte_stream(working_dir.join(path), ByteStream::from_static(b"x"))
+                .await?;
+        }
+
+        std::fs::write(working_dir.join(".quiltignore"), "cache/\nnested/\n").unwrap();
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &domain_paths(&storage),
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        // `cache/nested` matches a rule too, but the walk never enters `cache`.
+        assert_eq!(
+            status.ignored_dirs,
+            vec![(
+                PathBuf::from("cache"),
+                quiltignore::IgnoredBy {
+                    pattern: "cache/".to_string(),
+                    source: RuleSource::Package { line: 1 },
+                }
+            )]
+        );
+        assert_eq!(status.ignored_files, Vec::new());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
     async fn test_quiltignore_negation() -> Res {
         let storage = MockStorage::default();
         let working_dir = storage.temp_dir.as_ref().join("pkg");
@@ -755,44 +782,6 @@ mod tests {
 
         assert!(!status.changes.contains_key(&PathBuf::from("file.tmp")));
         assert!(status.changes.contains_key(&PathBuf::from("file.txt")));
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_most_recent_mtime_equals_max_file_mtime() -> Res {
-        let storage = MockStorage::default();
-        let working_dir = storage.temp_dir.as_ref().join("pkg");
-        let path_a = working_dir.join("a.txt");
-        let path_b = working_dir.join("b.txt");
-        storage
-            .write_byte_stream(&path_a, ByteStream::from_static(b"a"))
-            .await?;
-        // Make `b.txt` strictly newer than `a.txt`. The sleep must
-        // exceed the mtime resolution of the underlying filesystem,
-        // otherwise both writes share an mtime and `mtime_a.max(mtime_b)
-        // == mtime_a == mtime_b` — the assertion below would then pass
-        // vacuously even if `most_recent_mtime` returned `min` instead
-        // of `max`. 1.1 s covers HFS+ (1 s); FAT32 (2 s) is left
-        // uncovered — out of scope for CI which runs on ext4 / APFS.
-        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
-        storage
-            .write_byte_stream(&path_b, ByteStream::from_static(b"b"))
-            .await?;
-
-        let (_, status) = create_status(
-            PackageLineage::default(),
-            &storage,
-            &domain_paths(&storage),
-            &Manifest::default(),
-            &working_dir,
-            HostConfig::default(),
-        )
-        .await?;
-
-        let mtime_a = std::fs::metadata(&path_a)?.modified()?;
-        let mtime_b = std::fs::metadata(&path_b)?.modified()?;
-        let expected = mtime_a.max(mtime_b);
-        assert_eq!(status.most_recent_mtime, Some(expected));
         Ok(())
     }
 

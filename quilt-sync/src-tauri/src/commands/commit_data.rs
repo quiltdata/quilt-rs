@@ -435,6 +435,7 @@ async fn get_commit_data_from_model(
             status: status_str.to_string(),
             junky_pattern: junky_map.get(filename).cloned(),
             ignored_by: None,
+            folder: false,
             namespace: namespace.clone(),
         });
     }
@@ -459,6 +460,7 @@ async fn get_commit_data_from_model(
             .to_string(),
             junky_pattern: None,
             ignored_by: None,
+            folder: false,
             namespace: namespace.clone(),
         });
     }
@@ -474,6 +476,7 @@ async fn get_commit_data_from_model(
             status: "pristine".to_string(),
             junky_pattern: None,
             ignored_by: Some(ignored_by.pattern.clone()),
+            folder: false,
             namespace: namespace.clone(),
         });
     }

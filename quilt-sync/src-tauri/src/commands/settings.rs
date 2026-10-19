@@ -156,6 +156,12 @@ const fn clears_pauses(prev: &AutosyncSettings, next: &AutosyncSettings) -> bool
     !(prev.pull.enabled || prev.push.enabled) && (next.pull.enabled || next.push.enabled)
 }
 
+/// Whether a write turns publishing on. Every package with changes then waits a
+/// full wait from now, however old its edits are.
+const fn turns_publishing_on(prev: &AutosyncSettings, next: &AutosyncSettings) -> bool {
+    !prev.push.enabled && next.push.enabled
+}
+
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FsWatcherSettingsData {
@@ -319,6 +325,11 @@ pub async fn update_autosync_settings(
         let merged = merge_autosync_settings_data(&current, &settings);
         merged.save(&data_dir).await.map_err(|e| e.to_string())?;
         let clear = clears_pauses(&current, &merged);
+        // Under the settings lock: a check that sees publishing on must also
+        // see the new times.
+        if turns_publishing_on(&current, &merged) {
+            watcher.note_publishing_on().await;
+        }
         *current = merged;
         clear
     };
@@ -381,6 +392,11 @@ async fn write_autosync_patch(
         let next = patch.apply(&current)?;
         next.save(&data_dir).await.map_err(|e| e.to_string())?;
         let clear = clears_pauses(&current, &next);
+        // Under the settings lock: a check that sees publishing on must also
+        // see the new times.
+        if turns_publishing_on(&current, &next) {
+            watcher.note_publishing_on().await;
+        }
         *current = next;
         clear
     };
@@ -780,6 +796,24 @@ mod tests {
         assert!(clears_pauses(&enabled(false, false), &enabled(false, true)));
         assert!(!clears_pauses(&enabled(true, false), &enabled(true, true)));
         assert!(!clears_pauses(&enabled(true, true), &enabled(false, false)));
+        // Publishing on is its own edge: it restarts every waiting package's
+        // countdown, whatever the pull side does.
+        assert!(turns_publishing_on(
+            &enabled(true, false),
+            &enabled(true, true)
+        ));
+        assert!(turns_publishing_on(
+            &enabled(false, false),
+            &enabled(false, true)
+        ));
+        assert!(!turns_publishing_on(
+            &enabled(true, true),
+            &enabled(false, true)
+        ));
+        assert!(!turns_publishing_on(
+            &enabled(false, true),
+            &enabled(false, false)
+        ));
     }
 
     #[test]

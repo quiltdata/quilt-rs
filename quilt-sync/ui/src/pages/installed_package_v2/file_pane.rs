@@ -397,6 +397,10 @@ struct Row {
     ignored: bool,
     /// The pattern that matched it, which *Stop ignoring* names.
     ignored_by: Option<String>,
+    /// An ignored folder: one row named with a trailing `/`, and no size,
+    /// since nothing inside it was walked. `path` has no trailing `/`, so it
+    /// sorts and groups under its parent like a file.
+    folder: bool,
 }
 
 impl From<EntryData> for Row {
@@ -404,9 +408,14 @@ impl From<EntryData> for Row {
         Self {
             place: Place::of(&e.status),
             bytes: e.size,
-            size: format_size(e.size),
+            size: if e.folder {
+                String::new()
+            } else {
+                format_size(e.size)
+            },
             ignored: e.ignored_by.is_some(),
             ignored_by: e.ignored_by,
+            folder: e.folder,
             path: e.filename,
         }
     }
@@ -534,6 +543,11 @@ fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
         menu,
     } = drawing;
     let actions = row_actions(r, menu);
+    let (name, path) = if r.folder {
+        (format!("{name}/"), format!("{}/", r.path))
+    } else {
+        (name, r.path.clone())
+    };
     let state = if r.ignored { None } else { r.place.state() };
     let words = state.map(|(words, _)| words.to_string());
     let tone = state.map_or(StateTone::Neutral, |(_, tone)| tone);
@@ -569,7 +583,7 @@ fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
         Some(action) => view! {
             <EntryRow
                 name=name
-                path=r.path.clone()
+                path=path
                 state=words
                 tone=tone
                 size=r.size.clone()
@@ -583,7 +597,7 @@ fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
         None => view! {
             <EntryRow
                 name=name
-                path=r.path.clone()
+                path=path
                 state=words
                 tone=tone
                 size=r.size.clone()
@@ -1328,6 +1342,7 @@ mod grouping_tests {
                 status: status.to_string(),
                 junky_pattern: None,
                 ignored_by: ignored_by.map(str::to_string),
+                folder: false,
                 namespace: "team/dataset".try_into().unwrap(),
             })
         })
@@ -1492,6 +1507,7 @@ mod facet_tests {
             place: Place::of(status),
             ignored: false,
             ignored_by: None,
+            folder: false,
         };
         let rows = [
             row("raw/a.csv", "modified"),
@@ -1734,6 +1750,7 @@ mod menu_pane_tests {
             status: status.to_string(),
             junky_pattern: None,
             ignored_by: None,
+            folder: false,
             namespace: "team/dataset".try_into().unwrap(),
         };
         let list = FileList {
@@ -1857,6 +1874,7 @@ mod menu_pane_tests {
             status: "pristine".to_string(),
             junky_pattern: None,
             ignored_by: None,
+            folder: false,
             namespace: "team/dataset".try_into().unwrap(),
         };
         let list = FileList {
@@ -1952,6 +1970,7 @@ mod pane_tests {
             status: status.to_string(),
             junky_pattern: None,
             ignored_by: None,
+            folder: false,
             namespace: "team/dataset".try_into().unwrap(),
         }
     }
@@ -1963,12 +1982,24 @@ mod pane_tests {
         }
     }
 
+    /// A folder `.quiltignore` matched, as the backend sends it: no trailing
+    /// slash and no size.
+    fn ignored_folder(path: &str) -> EntryData {
+        EntryData {
+            size: 0,
+            ignored_by: Some(format!("{}/", path.rsplit('/').next().unwrap())),
+            folder: true,
+            ..entry(path, "pristine")
+        }
+    }
+
     /// A whole list: its counts are its own rows', as the backend counts them.
     fn list(entries: Vec<EntryData>, total: usize, truncated: bool) -> FileList {
         let mut counts = EntryCounts::default();
         for e in &entries {
             if e.ignored_by.is_some() {
                 counts.ignored += 1;
+                counts.ignored_folders += usize::from(e.folder);
                 continue;
             }
             counts.all += 1;
@@ -2114,6 +2145,59 @@ mod pane_tests {
         );
     }
 
+    /// An ignored folder is one row under `Ignored`, named with a trailing
+    /// slash and no size, and its facet counts it.
+    #[wasm_bindgen_test]
+    fn an_ignored_folder_is_one_row_named_with_a_slash() {
+        let chosen = RwSignal::new(Facet::Ignored.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(
+                vec![entry("a.csv", "pristine"), ignored_folder("cache")],
+                2,
+                false,
+            )),
+            chosen,
+        );
+        assert_eq!(drawn(&el), ["cache/"]);
+        assert!(facet(&el, "Ignored 1").checked());
+        let row = el
+            .query_selector("[data-full-name='cache/']")
+            .unwrap()
+            .expect("the folder's row");
+        let row_text = text(&row.parent_element().unwrap());
+        assert!(!row_text.contains(" B"), "no size: {row_text}");
+    }
+
+    /// Under `Base folder` an ignored folder sits under its parent's heading
+    /// like a file, never as a heading of its own, and the heading's total
+    /// still leaves it out.
+    #[wasm_bindgen_test]
+    async fn an_ignored_folder_sits_under_its_parent_s_heading() {
+        let (search, facet) = (RwSignal::new(String::new()), RwSignal::new(String::new()));
+        facet.set(Facet::Ignored.key().to_string());
+        let el = driven_pane(
+            vec![
+                entry("data/a.csv", "pristine"),
+                entry("data/b.csv", "pristine"),
+                ignored_folder("data/cache"),
+                ignored("data/x.tmp"),
+            ],
+            Picking::default(),
+            search,
+            facet,
+        );
+        leptos::task::tick().await;
+        assert_eq!(
+            drawn(&el),
+            ["data/", "data/cache/", "data/x.tmp"],
+            "{}",
+            el.inner_html()
+        );
+        facet.set(Facet::All.key().to_string());
+        leptos::task::tick().await;
+        assert_eq!(heading_count(&el, "data/"), "2", "{}", el.inner_html());
+    }
+
     /// A tracked file that `.quiltignore` also matches is two rows, as in v1:
     /// the ignored one under `Ignored`, and the tracked one — here deleted,
     /// since the walk skips it — under `All` and `Changed`. Counts follow rows.
@@ -2195,6 +2279,7 @@ mod pane_tests {
                     changed: 4,
                     not_downloaded: 0,
                     ignored: 0,
+                    ignored_folders: 0,
                     deleted: 0,
                 },
                 ..list(vec![entry("a.csv", "pristine")], 1_500, true)
@@ -2215,6 +2300,7 @@ mod pane_tests {
                 changed: 2,
                 not_downloaded: 17,
                 ignored: 3,
+                ignored_folders: 0,
                 deleted: 0,
             },
             ..list(vec![entry("a.csv", "pristine")], 4_312, true)
@@ -2260,6 +2346,7 @@ mod pane_tests {
             place,
             ignored,
             ignored_by: None,
+            folder: false,
         };
         assert!(r(Place::Missing, false).selectable());
         assert!(!r(Place::Missing, true).selectable());
@@ -2299,6 +2386,7 @@ mod pane_tests {
                 status: status.to_string(),
                 junky_pattern: None,
                 ignored_by: None,
+                folder: false,
                 namespace: "team/dataset".try_into().unwrap(),
             })
         };
@@ -3869,6 +3957,7 @@ mod marks_tests {
             status: status.to_string(),
             junky_pattern: None,
             ignored_by: None,
+            folder: false,
             namespace: "team/dataset".try_into().unwrap(),
         }
     }
@@ -4149,6 +4238,7 @@ mod marks_tests {
                 changed: 1,
                 not_downloaded: 0,
                 ignored: 1,
+                ignored_folders: 0,
                 deleted: 1,
             },
             total: 2,

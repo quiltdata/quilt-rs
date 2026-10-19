@@ -1307,6 +1307,7 @@ fn entries(files: Vec<File>) -> Vec<crate::commands::EntryData> {
             }
             .to_string(),
             ignored_by: (f.mark == Mark::Ignored).then(|| ".DS_Store".to_string()),
+            folder: false,
             filename: f.path,
             size: f.bytes,
             junky_pattern: None,

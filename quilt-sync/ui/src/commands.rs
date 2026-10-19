@@ -60,7 +60,11 @@ pub struct EntryCounts {
     /// Added, modified and deleted.
     pub changed: usize,
     pub not_downloaded: usize,
+    /// Ignored files and folders.
     pub ignored: usize,
+    /// Also inside `ignored`: the folders among them.
+    #[serde(default)]
+    pub ignored_folders: usize,
     /// Also inside `changed`; on its own because the v2 pane's all-downloaded
     /// caption must know about a deleted file past the list cap.
     pub deleted: usize,
@@ -74,6 +78,10 @@ pub struct EntryData {
     pub status: String,
     pub junky_pattern: Option<String>,
     pub ignored_by: Option<String>,
+    /// An ignored folder rather than a file: `filename` has no trailing slash
+    /// and `size` is 0, because nothing inside it was walked.
+    #[serde(default)]
+    pub folder: bool,
     pub namespace: Namespace,
 }
 
@@ -1951,7 +1959,7 @@ mod tests {
         );
         assert_eq!(
             serde_json::from_str::<FilesData>(
-                r#"{"kind":"listed","entries":[],"counts":{"all":0,"changed":0,"notDownloaded":0,"ignored":0,"deleted":0},"total":0,"truncated":false}"#
+                r#"{"kind":"listed","entries":[],"counts":{"all":0,"changed":0,"notDownloaded":0,"ignored":0,"ignoredFolders":0,"deleted":0},"total":0,"truncated":false}"#
             )
             .unwrap(),
             FilesData::Listed(EntryList {
@@ -1967,7 +1975,7 @@ mod tests {
     #[test]
     fn entry_counts_wire_form_is_verbatim() {
         let counts = serde_json::from_str::<EntryCounts>(
-            r#"{"all":1410,"changed":700,"notDownloaded":700,"ignored":10,"deleted":200}"#,
+            r#"{"all":1410,"changed":700,"notDownloaded":700,"ignored":10,"ignoredFolders":2,"deleted":200}"#,
         )
         .unwrap();
 
@@ -1978,6 +1986,7 @@ mod tests {
                 changed: 700,
                 not_downloaded: 700,
                 ignored: 10,
+                ignored_folders: 2,
                 deleted: 200,
             }
         );

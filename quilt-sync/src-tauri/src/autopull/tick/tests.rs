@@ -13,6 +13,7 @@ use crate::autopull::Clocks;
 use crate::autopull::PullSettings;
 use crate::autopull::PushSettings;
 use crate::autopull::activity::AutopullActivity;
+use crate::autopull::last_change::LastChange;
 use crate::autopull::reporter::LogReporter;
 use crate::autopull::reporter::test_support::RecordingReporter;
 use crate::model::MockQuiltModel;
@@ -59,6 +60,7 @@ fn make_inner(settings: AutosyncSettings) -> WatcherInner {
         reporter: Arc::new(LogReporter),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
     }
 }
 
@@ -394,7 +396,7 @@ async fn a_running_tick_advertises_the_next_tick_not_the_one_it_is_serving() -> 
         "precondition: a cold start has nothing armed"
     );
 
-    let before = Utc::now();
+    let before = DateTime::<Utc>::from(crate::autopull::last_change::now());
     run_once(&model, &RoleCache::default(), &inner).await?;
 
     let at = inner
@@ -477,6 +479,9 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -575,6 +580,9 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -657,6 +665,9 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         // Branch-only field (plan 3's `next_pull_at`), so `main`'s own test could
         // not have set it.
         clocks: Clocks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -759,6 +770,9 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -863,6 +877,9 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -957,6 +974,9 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1022,6 +1042,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         &ns,
         &lineage,
         &PublishSettings::default(),
+        &LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
         Duration::from_secs(0),
         true,
         true,
@@ -1106,6 +1127,9 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1176,6 +1200,9 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1242,6 +1269,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         &ns,
         &lineage,
         &PublishSettings::default(),
+        &LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
         Duration::from_secs(0),
         false,
         false,
@@ -1331,6 +1359,9 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1404,7 +1435,7 @@ fn an_unattributed_login_failure_does_not_join_a_hosts_episode() {
 #[tokio::test]
 async fn arming_the_pull_records_a_deadline_one_cadence_out() {
     let inner = make_inner(enabled());
-    let before = Utc::now();
+    let before = DateTime::<Utc>::from(crate::autopull::last_change::now());
     crate::autopull::arm_next_pull(&inner, Duration::from_secs(30)).await;
     let at = inner
         .clocks
@@ -1428,10 +1459,8 @@ async fn nothing_is_armed_before_the_loop_runs() {
     assert!(inner.clocks.next_pull_at.read().await.is_none());
 }
 
-/// A local status with `n` changed files and an mtime the caller sets — the two
-/// fields `publish_arm_from_status` reads. `status_with` in `commands/main_page`
-/// is a different module's fixture; this is the tick's own.
-fn local_status(files: usize, mtime: Option<SystemTime>) -> quilt::lineage::InstalledPackageStatus {
+/// A local status with `n` changed files.
+fn local_status(files: usize) -> quilt::lineage::InstalledPackageStatus {
     let mut changes = quilt::lineage::ChangeSet::new();
     for i in 0..files {
         changes.insert(
@@ -1439,90 +1468,150 @@ fn local_status(files: usize, mtime: Option<SystemTime>) -> quilt::lineage::Inst
             quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
         );
     }
-    let mut status = quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes);
-    status.most_recent_mtime = mtime;
-    status
+    quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes)
+}
+
+/// The card's deadline, with the wait `enabled()` sets.
+async fn card_deadline(inner: &WatcherInner) -> Option<DateTime<Utc>> {
+    crate::autopull::next_publish_at(inner, Duration::from_secs(300)).await
 }
 
 #[tokio::test]
-async fn a_local_edit_arms_the_publish_deadline_without_waiting_for_a_tick() {
-    // A local edit arms the publish deadline directly, without waiting for the
-    // next tick. If only the tick armed it, the countdown would lag the working
-    // tree by a whole cadence. While a user edits a file the window is unfocused
-    // (120s) or closed (600s), so the cadence is long. The package list updates
-    // within the file watcher's debounce, so the card would show "Nothing to
-    // publish" next to "1 file changed".
-    //
-    // The tree is not quiet on purpose: a quiet tree publishes on the next tick
-    // rather than at a future moment, which is the `None` case below.
+async fn a_local_edit_starts_the_countdown_without_waiting_for_a_tick() {
+    // If only the tick started it, the countdown would lag the working tree by
+    // a whole cadence, and the card would show "Nothing to publish" next to
+    // "1 file changed".
     let inner = make_inner(enabled());
     let ns: Namespace = ("acme", "demo").into();
-    let edited_at = SystemTime::now();
-    let status = local_status(1, Some(edited_at));
+    let before = DateTime::<Utc>::from(crate::autopull::last_change::now());
 
-    crate::autopull::arm_publish_from_status(&inner, &ns, &status).await;
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
+        None,
+        &local_status(1),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
 
-    let armed = inner.clocks.publish_arm.read().await;
-    let at = armed
-        .get(&ns)
-        .copied()
-        .expect("an edit must arm a deadline");
+    let at = card_deadline(&inner)
+        .await
+        .expect("an edit must start a countdown");
     // `enabled()` takes `PushSettings::default()`, whose `idle_timeout_secs` is
-    // 300 — so the deadline is five minutes after the edit. Absolute bounds and
-    // a literal, not `at - edited == window`: the latter holds for any window,
-    // including one read from the wrong setting, which is exactly the mistake
-    // this arithmetic could make.
-    let expected: DateTime<Utc> = (edited_at + Duration::from_secs(300)).into();
+    // 300. Absolute bounds and a literal: `at - seen == wait` holds for any wait,
+    // including one read from the wrong setting.
+    let expected = before + Duration::from_secs(300);
     assert!(
-        at >= expected - Duration::from_secs(2) && at <= expected + Duration::from_secs(2),
+        at >= expected && at <= expected + Duration::from_secs(2),
         "expected ~{expected}, got {at}"
     );
 }
 
 #[tokio::test]
 async fn a_tree_with_nothing_in_it_clears_any_deadline() {
-    // The other half, and the one that keeps a stale countdown off the card:
-    // reverting a file leaves no changes, so there is nothing to publish and
-    // nothing to count down to. The operator saw exactly this survive a revert.
+    // Reverting a file leaves no changes, so there is nothing to count down to.
     let inner = make_inner(enabled());
     let ns: Namespace = ("acme", "demo").into();
-    let dirty = local_status(1, Some(SystemTime::now()));
-    crate::autopull::arm_publish_from_status(&inner, &ns, &dirty).await;
-    assert!(
-        inner.clocks.publish_arm.read().await.contains_key(&ns),
-        "precondition: armed"
-    );
-
-    let clean = local_status(0, None);
-    crate::autopull::arm_publish_from_status(&inner, &ns, &clean).await;
-
-    assert!(
-        !inner.clocks.publish_arm.read().await.contains_key(&ns),
-        "a tree with no changes must not leave a countdown behind"
-    );
-}
-
-#[test]
-fn an_already_quiet_tree_has_no_future_moment_to_count_to() {
-    // Quiet means the window has already elapsed, so the next tick publishes
-    // rather than waiting — a deadline here would count down to the past. The
-    // same reason `tick.rs` arms only from its deferral arm.
-    let status = local_status(1, Some(SystemTime::now() - Duration::from_secs(3600)));
-
-    assert_eq!(
-        crate::autopull::publish_arm_from_status(&status, true, Duration::from_secs(30)),
-        None
-    );
-}
-
-#[test]
-fn publishing_switched_off_counts_down_to_nothing() {
-    let status = local_status(1, Some(SystemTime::now()));
-
-    assert_eq!(
-        crate::autopull::publish_arm_from_status(&status, false, Duration::from_secs(30)),
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
         None,
+        &local_status(1),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
+    assert!(
+        card_deadline(&inner).await.is_some(),
+        "precondition: waiting"
+    );
+
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
+        None,
+        &local_status(0),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
+
+    assert!(card_deadline(&inner).await.is_none());
+    assert!(inner.last_change.get(&ns).await.is_none());
+}
+
+#[tokio::test]
+async fn a_deadline_already_past_is_not_counted_down() {
+    // That package publishes at the next check; a deadline would count to the past.
+    let ns: Namespace = ("acme", "demo").into();
+    let inner = WatcherInner {
+        last_change: LastChange::changed_for_test(&ns, Duration::from_hours(1)).await,
+        ..make_inner(enabled())
+    };
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
+        None,
+        &local_status(1),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
+
+    assert!(card_deadline(&inner).await.is_none());
+}
+
+#[tokio::test]
+async fn the_card_reads_the_wait_as_it_is_now() {
+    let ns: Namespace = ("acme", "demo").into();
+    let inner = WatcherInner {
+        last_change: LastChange::changed_for_test(&ns, Duration::from_mins(1)).await,
+        ..make_inner(enabled())
+    };
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
+        None,
+        &local_status(1),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
+
+    let long = crate::autopull::next_publish_at(&inner, Duration::from_mins(10)).await;
+    let short = crate::autopull::next_publish_at(&inner, Duration::from_mins(5)).await;
+    let (long, short) = (long.expect("waiting"), short.expect("waiting"));
+    assert_eq!(long - short, chrono::Duration::minutes(5));
+}
+
+#[tokio::test]
+async fn publishing_switched_off_counts_down_to_nothing() {
+    let mut settings = enabled();
+    settings.push.enabled = false;
+    let inner = make_inner(settings);
+    let ns: Namespace = ("acme", "demo").into();
+
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
+        None,
+        &local_status(1),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
+
+    assert!(
+        card_deadline(&inner).await.is_none(),
         "a deadline for an operation that will not run is a lie"
+    );
+}
+
+#[test]
+fn the_deadline_is_the_last_change_plus_the_wait() {
+    let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
+    assert_eq!(
+        crate::autopull::publish_deadline(Some(at), Duration::from_secs(30)),
+        Some(at + Duration::from_secs(30))
+    );
+    assert_eq!(
+        crate::autopull::publish_deadline(None, Duration::from_secs(30)),
+        None
     );
 }
 
