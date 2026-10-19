@@ -307,11 +307,11 @@ mod tests {
         let package = snakemake();
         assert_eq!(
             package.stop(".DS_Store", false, Scope::AllPackages),
-            Some(vec!["!.DS_Store".to_string()])
+            Some(vec!["!**/.DS_Store".to_string()])
         );
         assert_eq!(
             std::fs::read_to_string(package.paths.user_quiltignore())?,
-            "!.DS_Store\n"
+            "!**/.DS_Store\n"
         );
         assert!(!package.home.join(".quiltignore").exists());
         Ok(())

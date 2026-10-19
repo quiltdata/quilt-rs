@@ -106,7 +106,9 @@ fn read_error(path: &Path, err: impl Into<Box<dyn std::error::Error + Send + Syn
 }
 
 /// Load a rules file. Returns `None` if the file does not exist.
-fn load_file(root: &Path, path: &Path) -> Res<Option<RuleFile>> {
+/// With `switches`, a line that turns a built-in rule off is left out: it
+/// is read by [`switched_off`], not as a rule of the file's own.
+fn load_file(root: &Path, path: &Path, switches: bool) -> Res<Option<RuleFile>> {
     if !path.is_file() {
         return Ok(None);
     }
@@ -115,11 +117,11 @@ fn load_file(root: &Path, path: &Path) -> Res<Option<RuleFile>> {
     // read is not news; what it *excluded* is, and the status line carries that count.
     trace!("Loading {}", path.display());
     let contents = std::fs::read_to_string(path).map_err(|err| read_error(path, err))?;
-    parse_file(root, path, contents).map(Some)
+    parse_file(root, path, contents, switches).map(Some)
 }
 
 /// Build a rules file from its text, as `GitignoreBuilder::add` would, keeping line numbers.
-fn parse_file(root: &Path, path: &Path, contents: String) -> Res<RuleFile> {
+fn parse_file(root: &Path, path: &Path, contents: String, switches: bool) -> Res<RuleFile> {
     let mut builder = GitignoreBuilder::new(root);
     let mut lines = Vec::new();
     for (number, line) in (1u64..).zip(contents.lines()) {
@@ -128,6 +130,9 @@ fn parse_file(root: &Path, path: &Path, contents: String) -> Res<RuleFile> {
         } else {
             line
         };
+        if switches && glob_text(line).is_some_and(|text| switch_of(text).is_some()) {
+            continue;
+        }
         builder
             .add_line(Some(path.to_path_buf()), line)
             .map_err(|err| {
@@ -154,14 +159,14 @@ fn parse_file(root: &Path, path: &Path, contents: String) -> Res<RuleFile> {
 /// Try to load a `.quiltignore` file from the given directory.
 /// Returns `None` if the file does not exist.
 pub fn load(dir: &Path) -> Res<Option<Gitignore>> {
-    Ok(load_file(dir, &dir.join(QUILTIGNORE))?.map(|file| file.gitignore))
+    Ok(load_file(dir, &dir.join(QUILTIGNORE), false)?.map(|file| file.gitignore))
 }
 
 /// The built-in rule a line of the user-wide file turns off, if it is one:
 /// `!` and the rule exactly. Such a line takes the rule out of the built-in
-/// layer, case-insensitive like the rule. Within the user's own lines it
-/// still brings a path back, but the other built-in rules then apply: `!.*/`
-/// must not bring back a `.env` in a dot-folder.
+/// layer, case-insensitive like the rule, and is no rule of the user's own:
+/// `!.*/` must not bring back a `.env` in a dot-folder, nor a file under a
+/// folder the user's own rules hide.
 fn switch_of(text: &str) -> Option<&'static str> {
     let rule = text.strip_prefix('!')?;
     DEFAULT_RULES.iter().copied().find(|r| *r == rule)
@@ -222,8 +227,9 @@ impl Rules {
     /// Load the package's `.quiltignore` and the user-wide `user_file`.
     /// Either may be missing; an unreadable or invalid one is an error.
     pub fn load(package_dir: &Path, user_file: &Path) -> Res<Rules> {
-        let package = load_file(package_dir, &package_dir.join(QUILTIGNORE))?;
-        let user = load_file(package_dir, user_file)?.map(|file| (user_file.to_path_buf(), file));
+        let package = load_file(package_dir, &package_dir.join(QUILTIGNORE), false)?;
+        let user =
+            load_file(package_dir, user_file, true)?.map(|file| (user_file.to_path_buf(), file));
         Ok(Rules {
             package_dir: package_dir.to_path_buf(),
             package,
@@ -250,7 +256,8 @@ impl Rules {
             Scope::AllPackages => self.user.as_ref().map(|(_, file)| file),
         };
         let contents = appended(current.map_or("", |file| file.contents.as_str()), lines);
-        let file = parse_file(&self.package_dir, &path, contents)?;
+        let switches = scope == Scope::AllPackages;
+        let file = parse_file(&self.package_dir, &path, contents, switches)?;
         let (package, user, defaults) = match scope {
             Scope::Package => (Some(file), self.user.clone(), self.defaults.clone()),
             Scope::AllPackages => {
@@ -357,7 +364,6 @@ impl Rules {
                         },
                     });
                 }
-                Match::Whitelist(glob) if switch_of(glob.original()).is_some() => {}
                 Match::Whitelist(_) => return None,
                 Match::None => {}
             }
@@ -412,6 +418,11 @@ fn stop_line(relative_path: &Path, is_dir: bool, scope: Scope) -> Res<String> {
     };
     if is_dir {
         line.push('/');
+    }
+    // `!` and a built-in rule turns the rule off rather than bringing back a
+    // path; `**/` matches the same names and reads as a rule.
+    if switch_of(&line).is_some() {
+        line.insert_str(1, "**/");
     }
     Ok(line)
 }
@@ -512,23 +523,6 @@ pub fn remove_lines(path: &Path, lines: &[String]) -> Res {
     replace_contents(path, &kept)
 }
 
-/// Put `line` first in the rules file at `path`, creating it and its folder
-/// if missing.
-fn prepend_line(path: &Path, line: &str) -> Res {
-    let contents = match std::fs::read_to_string(path) {
-        Ok(contents) => contents,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return append_lines(path, &[line.to_string()]);
-        }
-        Err(err) => return Err(read_error(path, err)),
-    };
-    let (bom, rest) = match contents.strip_prefix('\u{feff}') {
-        Some(rest) => ("\u{feff}", rest),
-        None => ("", contents.as_str()),
-    };
-    replace_contents(path, &format!("{bom}{line}\n{rest}"))
-}
-
 /// Write `contents` beside the file at `path` and move it over the file, so
 /// a reader never sees half of it.
 fn replace_contents(path: &Path, contents: &str) -> Res {
@@ -579,9 +573,8 @@ pub fn default_rules(user_file: &Path) -> Res<Vec<DefaultRule>> {
         .collect())
 }
 
-/// Turn the built-in `rule` on or off for every package: off puts its `!`
-/// line first in the user-wide file at `user_file`, on takes every such line
-/// out.
+/// Turn the built-in `rule` on or off for every package: off adds its `!`
+/// line to the user-wide file at `user_file`, on takes every such line out.
 pub fn set_default_rule(user_file: &Path, rule: &str, on: bool) -> Res {
     if !DEFAULT_RULES.contains(&rule) {
         return Err(Error::Fs(FsError::Write {
@@ -602,8 +595,7 @@ pub fn set_default_rule(user_file: &Path, rule: &str, on: bool) -> Res {
     if off {
         return Ok(());
     }
-    // First, so the user's own lines and later `!` lines still win over it.
-    prepend_line(user_file, &line)
+    append_lines(user_file, &[line])
 }
 
 /// Check whether the given path should be ignored.
@@ -1152,7 +1144,7 @@ mod tests {
         assert_eq!(off(&path), vec![".*/", ".DS_Store"]);
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "!.*/\n!.DS_Store\n"
+            "!.DS_Store\n!.*/\n"
         );
 
         set_default_rule(&path, ".DS_Store", true).unwrap();
@@ -1184,15 +1176,26 @@ mod tests {
             ignored(".venv", true).is_some(),
             "the user's own rule stays"
         );
+        drop(rules);
+        std::fs::write(&user_file, "private/\n!.data/\n").unwrap();
+        set_default_rule(&user_file, ".env", false).unwrap();
+        let rules = Rules::load(dir.path(), &user_file).unwrap();
+        let ignored = |path: &str| rules.ignored_by(Path::new(path), false, false);
+        assert!(
+            ignored("private/.env").is_some(),
+            "under the user's folder rule"
+        );
+        assert_eq!(ignored(".data/.env"), None, "under the user's `!` folder");
     }
 
-    /// A switch line still brings a path back from the user's own rules.
+    /// Stop ignoring for all packages writes a rule, not a switch, so it
+    /// brings a path back from the user's own rules too.
     #[test]
-    fn a_switch_line_still_overrides_the_users_rules() {
+    fn stop_ignoring_for_all_packages_is_never_a_switch() {
         let (_dir, rules) = rules(None, Some(".*\n"));
         assert_eq!(
             lines(&rules, ".DS_Store", false, Scope::AllPackages),
-            Some(vec!["!.DS_Store".to_string()])
+            Some(vec!["!**/.DS_Store".to_string()])
         );
     }
 
