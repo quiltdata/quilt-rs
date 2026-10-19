@@ -152,7 +152,13 @@ async fn get_installed_package_data_from_model(
         counts,
         total,
         truncated,
-    } = entry_list(namespace, &pkg_status, installed_paths, &manifest_entries);
+    } = entry_list(
+        namespace,
+        &pkg_status,
+        installed_paths,
+        &manifest_entries,
+        false,
+    );
 
     // Compute counts from the full source data, not the capped entries_list,
     // so the filter toolbar is shown even when the list is truncated.

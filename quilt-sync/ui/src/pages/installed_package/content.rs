@@ -61,9 +61,7 @@ pub(super) fn InstalledPackageContent(
     // the status-driven banner — see `remote_state_banner`.
     let no_access_reason = data.no_access_reason.clone();
     let banner_no_access_reason = no_access_reason.clone();
-    // This page lists files only, as its ignored count does: an ignored
-    // folder is drawn by the v2 page alone.
-    let entries: Vec<_> = data.entries.into_iter().filter(|e| !e.folder).collect();
+    let entries = data.entries;
     let has_remote_entries = data.has_remote_entries;
     let ignored_count = data.ignored_count;
     let unmodified_count = data.unmodified_count;

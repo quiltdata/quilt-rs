@@ -485,7 +485,13 @@ async fn files_data(
         },
     };
     match m.get_installed_package_records(installed).await {
-        Ok(records) => FilesData::Listed(entry_list(namespace, status, &lineage.paths, &records)),
+        Ok(records) => FilesData::Listed(entry_list(
+            namespace,
+            status,
+            &lineage.paths,
+            &records,
+            true,
+        )),
         Err(err) => FilesData::Unlisted {
             reason: err.to_frontend_string(),
         },
