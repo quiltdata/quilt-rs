@@ -367,6 +367,7 @@ impl Subscription {
 /// already skips ignored subtrees, so such an event could only ever buy a
 /// recompute that finds nothing — and an ignored path is outside the model in
 /// both directions: neither reported, nor a cause of reporting.
+#[cfg(test)]
 fn affected_namespaces(
     events: &[notify_debouncer_full::DebouncedEvent],
     watched: &BTreeMap<Namespace, WatchedRoot>,
