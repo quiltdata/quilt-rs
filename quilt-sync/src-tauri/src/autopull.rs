@@ -15,6 +15,7 @@ use tokio::sync::watch;
 use crate::autopull::status::SyncTrayAggregator;
 use crate::commands::RoleCache;
 use crate::model::Model;
+use crate::model::QuiltModel;
 use crate::publish_settings::SharedPublishSettings;
 use crate::telemetry::prelude::*;
 
@@ -196,6 +197,17 @@ impl Watcher {
             aggregator,
             clocks: Clocks::default(),
             last_change,
+        });
+        // Its own task: a package whose catalog is slow to answer its host
+        // config must not hold back the loop.
+        let walk_inner = Arc::clone(&inner);
+        let walk_handle = app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            Box::pin(walk_every_package(
+                &*walk_handle.state::<Model>(),
+                &walk_inner,
+            ))
+            .await;
         });
         let task_inner = Arc::clone(&inner);
         tauri::async_runtime::spawn(async move {
@@ -562,6 +574,31 @@ pub(crate) async fn observe_walk(
     }
 }
 
+/// Walk every package once at launch, with no pull or publish, as the file
+/// watcher does on a change. Until its first walk the app doesn't know a package has
+/// changes, and the first check is a whole interval away. The stat cache keeps
+/// this cheap, and its values still show what changed while the app was closed.
+pub(crate) async fn walk_every_package(model: &impl QuiltModel, inner: &WatcherInner) {
+    let packages = match model.get_installed_packages_list().await {
+        Ok(packages) => packages,
+        Err(err) => {
+            warn!("autosync: cannot list packages for the startup walk: {err}");
+            return;
+        }
+    };
+    for package in packages {
+        crate::fswatcher::reactor::process_signal(
+            model,
+            inner.reporter.as_ref(),
+            Some(inner),
+            crate::fswatcher::subscriber::MappingSignal {
+                namespace: package.namespace,
+            },
+        )
+        .await;
+    }
+}
+
 /// When a package publishes: its last change plus the wait. `None` when it has
 /// no last-change time, which is a package without changes.
 ///
@@ -606,6 +643,51 @@ mod tests {
     use super::*;
     use reporter::LogReporter;
     use status::TrayMode;
+
+    #[tokio::test]
+    async fn the_startup_walk_sees_every_package_with_changes() {
+        let packages: Vec<Namespace> = vec![("acme", "one").into(), ("acme", "two").into()];
+        let mut model = crate::model::MockQuiltModel::new();
+        let listed = packages.clone();
+        model
+            .expect_get_installed_packages_list()
+            .returning(move || {
+                Ok(listed
+                    .iter()
+                    .map(|ns| {
+                        crate::quilt::LocalDomain::new(std::path::PathBuf::new())
+                            .create_installed_package(ns.clone())
+                    })
+                    .collect())
+            });
+        model.expect_get_installed_package().returning(|ns| {
+            Ok(Some(
+                crate::quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(ns.clone()),
+            ))
+        });
+        model.expect_recompute_local_status().returning(|_, _| {
+            let mut changes = BTreeMap::new();
+            changes.insert(
+                std::path::PathBuf::from("file.txt"),
+                crate::quilt::lineage::Change::Added(crate::quilt::manifest::ManifestRow::default()),
+            );
+            Ok(crate::quilt::lineage::InstalledPackageStatus::new(
+                crate::quilt::lineage::UpstreamState::UpToDate,
+                changes,
+            ))
+        });
+        let inner = inner_for_tests(AutosyncSettings::default());
+
+        walk_every_package(&model, &inner).await;
+
+        for namespace in &packages {
+            assert!(
+                inner.last_change.get(namespace).await.is_some(),
+                "{namespace} has a time before the first check"
+            );
+        }
+    }
 
     /// The retired unfocused and closed intervals are never read.
     #[test]

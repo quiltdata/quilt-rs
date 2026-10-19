@@ -135,11 +135,13 @@ fn main() {
             });
 
             // Only the app opens the package state store; the CLI never does.
+            // One store for the last-change times and the walks' stat cache.
+            let state_store = std::sync::Arc::new(quilt::state_store::PackageStateStore::new(
+                quilt::paths::DomainPaths::new(data_dir.clone()).state_db(),
+            ));
             let last_change =
-                autopull::last_change::LastChange::new(quilt::state_store::PackageStateStore::new(
-                    quilt::paths::DomainPaths::new(data_dir.clone()).state_db(),
-                ));
-            app.manage(Model::create(data_dir));
+                autopull::last_change::LastChange::shared(std::sync::Arc::clone(&state_store));
+            app.manage(Model::create_with_state_store(data_dir, state_store));
             app.manage(commands::WorkflowRulesCache::default());
             app.manage(commands::RoleCache::default());
             app.manage(sync::Mutex::new(app.handle().clone()));

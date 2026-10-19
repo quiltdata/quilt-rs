@@ -18,6 +18,7 @@ pub mod flow;
 pub mod auth;
 pub mod checksum;
 pub mod error;
+pub mod file_stamp;
 mod installed_package;
 pub mod io;
 pub mod junk;
@@ -29,6 +30,7 @@ pub mod object_hash;
 mod package_lock;
 pub mod paths;
 pub mod quiltignore;
+pub mod stat_cache;
 pub mod state_store;
 
 pub mod workflow;

@@ -74,6 +74,7 @@ async fn test_spamming_commit_writes() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     // Make 10 commits with different content
@@ -207,6 +208,7 @@ async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     // Certify pushes the pending commit under the lock it already holds; a
@@ -300,6 +302,7 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     package.certify_latest().await?;
@@ -404,6 +407,7 @@ async fn test_manifest_recovery_from_corruption() -> Res {
         remote: std::sync::Arc::new(remote),
         storage: storage.clone(),
         namespace,
+        state_store: None,
     };
 
     // This should succeed by recovering from cache despite corrupted installed manifest
@@ -674,6 +678,7 @@ async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res
         remote: std::sync::Arc::new(DeniedRemote),
         storage,
         namespace,
+        state_store: None,
     };
 
     let result = package.status(None).await;
@@ -738,6 +743,7 @@ async fn test_status_propagates_a_rejected_credential() -> Res {
         remote: std::sync::Arc::new(RejectedCredentialRemote),
         storage,
         namespace,
+        state_store: None,
     };
 
     // The seam a mocked status call hides: the swallow-and-continue arm
@@ -792,6 +798,7 @@ async fn test_status_propagates_login_required() -> Res {
         remote: std::sync::Arc::new(LoggedOutRemote),
         storage,
         namespace,
+        state_store: None,
     };
 
     // status() should propagate LoginRequired so the UI can show a Login button
@@ -883,6 +890,7 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     // Pull will eventually fail downstream — we have not staged the
@@ -986,6 +994,7 @@ async fn behind_package(
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
     Ok((package, (temp_dir1, temp_dir2)))
 }
@@ -1257,6 +1266,7 @@ async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     assert_eq!(package.pull_outcome(None).await?, empty_up_to_date());
@@ -1328,6 +1338,7 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     assert_eq!(package.pull_outcome(None).await?, empty_up_to_date());
@@ -1391,6 +1402,7 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     assert_eq!(package.pull_outcome(None).await?, empty_up_to_date());
@@ -1462,6 +1474,7 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
             remote: std::sync::Arc::new(remote),
             storage,
             namespace,
+            state_store: None,
         };
         package.status(None).await
     }
@@ -1558,6 +1571,7 @@ async fn state_with(
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
     let report = package.state().await?;
     Ok((report, package.remote.get_object_count(tag_uri)))

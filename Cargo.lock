@@ -5869,6 +5869,7 @@ dependencies = [
  "http-body 1.1.0",
  "ignore",
  "jsonschema",
+ "libc",
  "multibase",
  "multihash",
  "percent-encoding",
@@ -5891,6 +5892,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
