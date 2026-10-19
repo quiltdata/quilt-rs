@@ -387,10 +387,12 @@ pub(crate) async fn refresh_then_maybe_sync(
     // `status` does the cheap tag refresh; an expired token surfaces here. A
     // walk the folder watcher vouches for stands in for the working-tree walk.
     let reused = match walks.reusable(namespace) {
-        Some((walked_lineage, walked)) => model
+        Some((walk, walked_lineage, walked)) => model
             .locked_package_status_from_walk(&locked, &walked_lineage, walked)
             .await
-            .map_err(classify_transient_or_login)?,
+            .map_err(classify_transient_or_login)?
+            // A signal during the remote's answer makes the walk old news.
+            .filter(|_| walks.still_current(namespace, walk)),
         None => None,
     };
     let status = if let Some(status) = reused {

@@ -376,8 +376,8 @@ fn affected_namespaces(
 }
 
 /// [`affected_namespaces`], and apart from them the namespaces where only a
-/// path the [`filter`] drops changed. Those are still in the status, so
-/// they make the tick walk; the app's own `.quilt` state is not.
+/// path the [`filter`] or `.quiltignore` drops changed. Those may be in the
+/// status, so they make the tick walk; the app's own `.quilt` state is not.
 fn screen(
     events: &[notify_debouncer_full::DebouncedEvent],
     watched: &BTreeMap<Namespace, WatchedRoot>,
@@ -392,10 +392,9 @@ fn screen(
             let Some((namespace, root)) = namespace_for(path, watched) else {
                 continue;
             };
-            if root.excludes(path) {
-                continue;
-            }
-            if filter::is_ignored(path) {
+            // Excluded by the matcher as last loaded, which a `.quiltignore`
+            // edit can make out of date until the next reconcile.
+            if root.excludes(path) || filter::is_ignored(path) {
                 if !filter::is_app_state(path) {
                     stale.insert(namespace.clone());
                 }
@@ -408,8 +407,9 @@ fn screen(
     (touched, stale)
 }
 
-/// Drop the namespaces whose root was removed or moved away: the OS watch
-/// went with it, and the next reconcile makes a new one.
+/// Drop the namespaces whose root was removed or moved, even if it is back:
+/// the OS watch went with the old folder, and the next reconcile makes a new
+/// one.
 fn drop_removed_roots(
     events: &[notify_debouncer_full::DebouncedEvent],
     watched: &mut BTreeMap<Namespace, WatchedRoot>,
@@ -422,7 +422,6 @@ fn drop_removed_roots(
                     event.kind,
                     EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))
                 ) && event.paths.iter().any(|p| root.path.starts_with(p))
-                    && !root.path.exists()
             })
         })
         .map(|(ns, _)| ns.clone())
@@ -788,10 +787,13 @@ mod tests {
         // it through the *parent* pattern, with no walk context to lean on.
         tokio::fs::write(dir.path().join(".rumdl_cache/deep.json"), b"{}").await?;
         tokio::time::sleep(Duration::from_millis(400)).await;
-        assert!(
-            rx.try_recv().is_err(),
-            "a write inside an ignored directory must not cost a status walk",
-        );
+        while let Ok(signal) = rx.try_recv() {
+            assert_eq!(
+                signal.kind,
+                SignalKind::Stale,
+                "a write inside an ignored directory must not cost a status walk",
+            );
+        }
 
         // The ignore file is the one path that can never be ignored.
         tokio::fs::write(dir.path().join(".quiltignore"), b".rumdl_cache/\nnotes/\n").await?;

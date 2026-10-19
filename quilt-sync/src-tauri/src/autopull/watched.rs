@@ -142,12 +142,30 @@ impl WatchedWalks {
     pub(crate) fn reusable(
         &self,
         namespace: &Namespace,
-    ) -> Option<(PackageLineage, InstalledPackageStatus)> {
+    ) -> Option<(WalkStart, PackageLineage, InstalledPackageStatus)> {
         let state = self.state();
         let package = state.packages.get(namespace)?;
         let walk = package.walk.as_ref()?;
-        (walk.started > package.stale_at && walk.at.elapsed() < MAX_AGE)
-            .then(|| (walk.lineage.clone(), walk.status.clone()))
+        (walk.started > package.stale_at && walk.at.elapsed() < MAX_AGE).then(|| {
+            (
+                WalkStart(Some(walk.started)),
+                walk.lineage.clone(),
+                walk.status.clone(),
+            )
+        })
+    }
+
+    /// Whether the walk [`Self::reusable`] gave is still current: a signal
+    /// may have come while its status was being used.
+    pub(crate) fn still_current(&self, namespace: &Namespace, walk: WalkStart) -> bool {
+        let Some(started) = walk.0 else {
+            return false;
+        };
+        let state = self.state();
+        state
+            .packages
+            .get(namespace)
+            .is_some_and(|package| package.stale_at < started)
     }
 }
 
@@ -191,6 +209,17 @@ mod tests {
         walks.on_signal(&ns());
         walked(&walks, start);
         assert!(walks.reusable(&ns()).is_none());
+    }
+
+    #[test]
+    fn a_signal_while_the_walk_is_used_makes_it_old_news() {
+        let walks = WatchedWalks::default();
+        walks.vouch_for(&live());
+        walked(&walks, walks.begin(&ns()));
+        let (walk, _, _) = walks.reusable(&ns()).unwrap();
+        assert!(walks.still_current(&ns(), walk));
+        walks.on_signal(&ns());
+        assert!(!walks.still_current(&ns(), walk));
     }
 
     #[test]
