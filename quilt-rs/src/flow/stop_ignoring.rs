@@ -45,7 +45,13 @@ fn lines_for(
     rules.stop_ignoring_lines(
         relative_path,
         is_dir,
-        |path| tracked.files.contains(path) || tracked.dirs.contains(path),
+        |path, is_dir| {
+            if is_dir {
+                tracked.dirs.contains(path)
+            } else {
+                tracked.files.contains(path)
+            }
+        },
         scope,
     )
 }
@@ -141,6 +147,7 @@ mod tests {
     use crate::io::remote::HostConfig;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Change;
+    use crate::lineage::PathState;
 
     struct Package {
         storage: MockStorage,
@@ -308,5 +315,27 @@ mod tests {
         );
         assert!(!package.home.join(".quiltignore").exists());
         Ok(())
+    }
+
+    /// A tracked file replaced by a folder of the same name: the walk checks
+    /// the folder against tracked folders only.
+    #[test]
+    fn a_folder_where_a_tracked_file_was_is_not_tracked() {
+        let package = Package::new(&[("node_modules/a.js", 3)]);
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from("node_modules"), PathState::default());
+        let lines = stop_ignoring(
+            &package.paths,
+            &Manifest::default(),
+            &lineage,
+            &package.home,
+            Path::new("node_modules"),
+            true,
+            Scope::Package,
+        )
+        .unwrap();
+        assert_eq!(lines, Some(vec!["!/node_modules/".to_string()]));
     }
 }

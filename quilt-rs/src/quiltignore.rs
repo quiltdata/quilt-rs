@@ -236,12 +236,13 @@ impl Rules {
     /// still skip, then one for the path itself. Empty when nothing ignores it.
     /// `None` when `scope`'s file cannot bring it back: a package rule hides
     /// it, and the user-wide file is weaker.
-    /// `tracked` says whether the package has the file, or a file in the folder.
+    /// `tracked(path, is_dir)` says whether the package has the file, or a
+    /// file in the folder.
     pub fn stop_ignoring_lines(
         &self,
         relative_path: &Path,
         is_dir: bool,
-        tracked: impl Fn(&Path) -> bool,
+        tracked: impl Fn(&Path, bool) -> bool,
         scope: Scope,
     ) -> Res<Option<Vec<String>>> {
         let mut lines = Vec::new();
@@ -252,12 +253,18 @@ impl Rules {
             prefix.push(component);
             let dir = is_dir || components.peek().is_some();
             let current = rules.as_ref().unwrap_or(self);
-            if current.ignored_by(&prefix, dir, tracked(&prefix)).is_none() {
+            if current
+                .ignored_by(&prefix, dir, tracked(&prefix, dir))
+                .is_none()
+            {
                 continue;
             }
             lines.push(stop_line(&prefix, dir, scope)?);
             let next = self.with_lines(scope, &lines)?;
-            if next.ignored_by(&prefix, dir, tracked(&prefix)).is_some() {
+            if next
+                .ignored_by(&prefix, dir, tracked(&prefix, dir))
+                .is_some()
+            {
                 return Ok(None);
             }
             rules = Some(next);
@@ -765,7 +772,7 @@ mod tests {
             .stop_ignoring_lines(
                 Path::new(path),
                 is_dir,
-                |p| tracked.iter().any(|t| Path::new(t) == p),
+                |p, _| tracked.iter().any(|t| Path::new(t) == p),
                 scope,
             )
             .unwrap()
@@ -916,7 +923,7 @@ mod tests {
         let (_dir, rules) = rules(Some("*.log\n"), None);
         assert!(
             rules
-                .stop_ignoring_lines(Path::new("a\nb.log"), false, |_| false, Scope::Package)
+                .stop_ignoring_lines(Path::new("a\nb.log"), false, |_, _| false, Scope::Package)
                 .is_err()
         );
     }
