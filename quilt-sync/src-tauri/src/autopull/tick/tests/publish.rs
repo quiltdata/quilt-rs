@@ -196,7 +196,7 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
         // The pushed revision became `latest`: the next tick observes that.
         assert_eq!(
             statuses[0].1.fingerprint,
-            crate::autopull::reporter::settled_fingerprint("h2")
+            crate::autopull::reporter::settled_fingerprint("h2", "")
         );
     }
     assert!(inner.paused.read().await.is_empty());

@@ -16,6 +16,7 @@ use crate::autopull::last_change::PendingCommit;
 use crate::autopull::pull_toast;
 use crate::autopull::reporter::LoginBlock;
 use crate::autopull::reporter::PackageStatusEvent;
+use crate::autopull::reporter::ignored_fingerprint;
 use crate::autopull::reporter::settled_fingerprint;
 use crate::autopull::reporter::status_fingerprint;
 use crate::autopull::status::SyncTrayAggregator;
@@ -391,6 +392,8 @@ pub(crate) async fn refresh_then_maybe_sync(
     let has_changes = !status.changes.is_empty();
     // Observed-tree fingerprint, taken before the publish path consumes `status`.
     let fingerprint = status_fingerprint(&status);
+    // A publish or pull leaves ignored files alone, so the settled tree keeps these.
+    let ignored = ignored_fingerprint(&status);
     let home = if last_change.first_walk_pending(namespace) {
         installed.package_home().await.ok()
     } else {
@@ -496,7 +499,7 @@ pub(crate) async fn refresh_then_maybe_sync(
                         // `kept_changes` comes from the outcome (post-pull
                         // truth), not the pre-pull `has_changes`.
                         // The revision the pull reached is `latest` now.
-                        let fingerprint = settled_fingerprint(&report.manifest_uri.hash);
+                        let fingerprint = settled_fingerprint(&report.manifest_uri.hash, &ignored);
                         Ok(Some(RefreshOutcome {
                             pulled: Some(report),
                             ..RefreshOutcome::observed(
@@ -568,7 +571,7 @@ pub(crate) async fn refresh_then_maybe_sync(
                     has_changes: false,
                     published: Some(message),
                     pulled: None,
-                    fingerprint: settled_fingerprint(latest),
+                    fingerprint: settled_fingerprint(latest, &ignored),
                     publish_arm_at: None,
                 }))
             }

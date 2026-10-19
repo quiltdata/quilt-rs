@@ -496,7 +496,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         // observes that, and must find it old news.
         assert_eq!(
             statuses[0].1.fingerprint,
-            crate::autopull::reporter::settled_fingerprint("h1")
+            crate::autopull::reporter::settled_fingerprint("h1", "")
         );
     }
     // The mock's report names no files — the metadata-only shape, whose hashes
