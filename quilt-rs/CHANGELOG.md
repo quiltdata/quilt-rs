@@ -24,14 +24,14 @@
 ### Added
 
 - `state_store::PackageStateStore`: an optional store for per-package state the desktop app keeps, at `DomainPaths::state_db` (`.quilt/state.db`), in SQLite. Its first table holds each package's last-change time. No method returns an error: a missing, damaged or deleted file is created again, and the CLI never opens it (<https://github.com/quiltdata/quilt-rs/pull/1134>)
-- `file_stamp`: `read_dir_stamps` and `stamp` read each file's size, edit time, change time and file ID, a whole folder per call on macOS and Windows (PR_URL)
-- A stat cache in the state store: `flow::status_cached` hashes only the files whose stamp changed since an earlier walk, and once a day hashes every file anyway. `LocalDomain::with_state_store` gives a domain's packages one; the CLI has none and hashes every file as before. With a store, commit and publish hash the changed files again before they name objects by them (PR_URL)
+- `file_stamp`: `read_dir_stamps` and `stamp` read each file's size, edit time, change time and file ID, a whole folder per call on macOS and Windows (<https://github.com/quiltdata/quilt-rs/pull/1144>)
+- A stat cache in the state store: `flow::status_cached` hashes only the files whose stamp changed since an earlier walk, and once a day hashes every file anyway. `LocalDomain::with_state_store` gives a domain's packages one; the CLI has none and hashes every file as before. With a store, commit and publish hash the changed files again before they name objects by them (<https://github.com/quiltdata/quilt-rs/pull/1144>)
 
 ### Changed
 
 - **Breaking:** `InstalledPackageStatus::most_recent_mtime` and `InstalledPackageStatus::working_tree_quiet` are removed. Nothing times a publish from file edit times now (<https://github.com/quiltdata/quilt-rs/pull/1134>)
-- **Breaking:** `InstalledPackage` has a new public field, `state_store` (PR_URL)
-- The status walk reads the package folder in one blocking task instead of one per entry (PR_URL)
+- **Breaking:** `InstalledPackage` has a new public field, `state_store` (<https://github.com/quiltdata/quilt-rs/pull/1144>)
+- The status walk reads the package folder in one blocking task instead of one per entry (<https://github.com/quiltdata/quilt-rs/pull/1144>)
 
 ## [v0.44.0] - 2026-10-13
 
