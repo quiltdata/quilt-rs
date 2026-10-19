@@ -69,6 +69,23 @@ each row adds `fetched`, `true` only when the remote was read just now, a
 `changed_files` count when the files were scanned, and `"access_denied": true`
 when the remote refused your role; `status` keeps its values.
 
+`status` ends with how many files and folders the ignore rules leave out, as
+in `3 ignored files and 1 ignored folder not included`. `--ignored` lists each
+one, a folder as one row, with the rule that ignored it and where the rule
+comes from: `default`, your rules file in the domain folder with its line, or
+the package's `.quiltignore` with its line:
+
+```text
+| path      | rule      | source          |
+| .git/     | .*/       | default         |
+| notes.tmp | *.tmp     | .quiltignore:3  |
+```
+
+Under `--json`, `ignored` holds the `files` and `folders` counts, and with
+`--ignored` a `paths` list whose entries carry `path`, `kind` (`file` or
+`folder`), `rule`, `source` (`default`, `user` or `package`), and `line`,
+`rules_file` and `size` where they apply.
+
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
 `&path=` parameter in the URI.

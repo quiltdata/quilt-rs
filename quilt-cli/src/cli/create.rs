@@ -96,6 +96,7 @@ mod tests {
             .status(status::Input {
                 namespace: ("test", "clean").into(),
                 host_config: None,
+                list_ignored: false,
             })
             .await?;
 
@@ -153,6 +154,7 @@ mod tests {
             .status(status::Input {
                 namespace: ("test", "src").into(),
                 host_config: None,
+                list_ignored: false,
             })
             .await?;
 

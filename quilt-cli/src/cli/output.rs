@@ -191,6 +191,7 @@ mod tests {
 
         let status_out = status::Output {
             status: InstalledPackageStatus::default(),
+            list_ignored: false,
         };
         assert!(status_out.to_json().is_object());
     }
