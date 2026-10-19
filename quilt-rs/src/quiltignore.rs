@@ -377,11 +377,13 @@ fn escape(name: &str) -> String {
     let last = name.chars().count().saturating_sub(1);
     for (i, c) in name.chars().enumerate() {
         // The parser trims trailing whitespace and a trailing `\` before a
-        // folder's `/`, so those go in a class, which it leaves alone.
+        // folder's `/`, so those go in a class, which it leaves alone. A class
+        // matches one byte, so a wider character goes in an alternation.
         if c == '\\' || (i == last && c.is_whitespace()) {
-            glob.push('[');
+            let (open, close) = if c.is_ascii() { ('[', ']') } else { ('{', '}') };
+            glob.push(open);
             glob.push(c);
-            glob.push(']');
+            glob.push(close);
             continue;
         }
         if matches!(c, '*' | '?' | '[' | ']' | '{' | '}') {
@@ -856,14 +858,17 @@ mod tests {
 
     #[test]
     fn stop_ignoring_escapes_glob_characters() {
-        let (_dir, rules) = rules(Some("*.txt\n"), None);
+        let (_dir, rules) = rules(Some("*.txt*\n"), None);
         for name in [
             "a*b[1].txt",
             "x?{y,z}.txt",
             "back\\slash.txt",
             "trailing .txt ",
             "tab.txt\t",
+            "nbsp.txt\u{a0}",
+            "ideographic.txt\u{3000}",
         ] {
+            assert!(rules.file_ignored_by(Path::new(name), false).is_some());
             let found = lines(&rules, name, false, Scope::Package).unwrap();
             let after = rules.with_lines(Scope::Package, &found).unwrap();
             assert!(
