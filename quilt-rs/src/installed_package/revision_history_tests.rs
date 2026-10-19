@@ -130,6 +130,7 @@ async fn package_over<R: Remote>(
         remote: Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
     Ok((package, [home_dir, paths_dir]))
 }

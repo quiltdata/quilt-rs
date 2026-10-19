@@ -54,6 +54,7 @@ async fn test_set_remote_on_local_package() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     package
@@ -115,6 +116,7 @@ async fn test_set_remote_empty_bucket_error() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     let result = package
@@ -227,6 +229,7 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
         remote: std::sync::Arc::new(BadBucketRemote),
         storage,
         namespace,
+        state_store: None,
     };
 
     let result = package
@@ -296,6 +299,7 @@ async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     let result = package
@@ -359,6 +363,7 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     // Same bucket+origin as existing — should be a no-op
@@ -421,6 +426,7 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     package
@@ -493,6 +499,7 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
         remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
+        state_store: None,
     };
 
     // Commit the package (no remote yet, uses default HostConfig)
@@ -599,6 +606,7 @@ async fn test_resolve_workflow_without_remote_is_none_for_every_intent() -> Res 
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     for intent in [
@@ -681,6 +689,7 @@ schemas:
         remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
+        state_store: None,
     };
 
     // Commit the package locally (no remote yet, so no workflow stamped)
@@ -796,6 +805,7 @@ schemas:
         remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
+        state_store: None,
     };
 
     package
@@ -903,6 +913,7 @@ schemas:
         remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
+        state_store: None,
     };
 
     package
@@ -1009,6 +1020,7 @@ async fn package_with_config(
         remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     package

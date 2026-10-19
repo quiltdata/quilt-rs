@@ -138,6 +138,7 @@ impl Rev1Installed {
                 remote: Arc::new(remote),
                 storage,
                 namespace,
+                state_store: None,
             },
             rev1,
             rev2,

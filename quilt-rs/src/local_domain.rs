@@ -8,6 +8,7 @@ use tracing::{debug, info, trace, warn};
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
+use crate::state_store::PackageStateStore;
 use crate::flow;
 use crate::installed_package::InstalledPackage;
 use crate::io::manifest::RowsStream;
@@ -41,6 +42,8 @@ pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     /// handle, release the mutex, and only then await a network round trip.
     /// See [`LocalDomain::remote_handle`].
     remote: Arc<R>,
+    /// Handed to every package; see [`LocalDomain::with_state_store`].
+    state_store: Option<Arc<PackageStateStore>>,
 }
 
 impl<S: Storage + Clone, R: Remote> Clone for LocalDomain<S, R> {
@@ -50,6 +53,7 @@ impl<S: Storage + Clone, R: Remote> Clone for LocalDomain<S, R> {
             lineage: self.lineage.clone(),
             storage: self.storage.clone(),
             remote: Arc::clone(&self.remote),
+            state_store: self.state_store.clone(),
         }
     }
 }
@@ -86,6 +90,7 @@ impl LocalDomain {
             lineage,
             storage,
             remote,
+            state_store: None,
         }
     }
 }
@@ -100,7 +105,16 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
             paths,
             storage,
             remote,
+            state_store: None,
         }
+    }
+
+    /// The domain with its packages' walks using `store`'s stat cache. Only
+    /// the desktop app opens a store.
+    #[must_use]
+    pub fn with_state_store(mut self, store: Arc<PackageStateStore>) -> Self {
+        self.state_store = Some(store);
+        self
     }
 
     pub async fn get_home(&self) -> Res<Home> {
@@ -161,6 +175,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
             paths: self.paths.clone(),
             remote: Arc::clone(&self.remote),
             storage: self.storage.clone(),
+            state_store: self.state_store.clone(),
         }
     }
 
