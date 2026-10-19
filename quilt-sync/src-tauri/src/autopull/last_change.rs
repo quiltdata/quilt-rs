@@ -203,6 +203,12 @@ impl LastChange {
             && floor_millis(at) > saved.last_change_at
             && !own_commit
         {
+            // Known from now on, so a commit dated ahead of the clock restarts
+            // the wait once, not on every walk.
+            self.own_commits
+                .lock()
+                .expect("own_commits lock")
+                .insert(namespace.clone(), at);
             self.store
                 .record_change(namespace, now, ChangeSource::FirstSeen)
                 .await;
@@ -689,6 +695,18 @@ mod tests {
                 .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
                 .await,
             seen
+        );
+    }
+
+    #[tokio::test]
+    async fn a_commit_dated_ahead_of_the_clock_restarts_the_wait_once() {
+        let clock = LastChange::changed_for_test(&ns(), hour()).await;
+        let ahead = PendingCommit::At(now() + hour());
+        let first = clock.observe(&ns(), None, &status_with(&[]), ahead).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert_eq!(
+            clock.observe(&ns(), None, &status_with(&[]), ahead).await,
+            first
         );
     }
 
