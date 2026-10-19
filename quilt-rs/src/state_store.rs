@@ -30,8 +30,6 @@ CREATE TABLE package_activity (
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
 
-const LAST_ALIVE_AT: &str = "last_alive_at";
-
 /// What moved a package's last-change time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeSource {
@@ -235,36 +233,6 @@ impl PackageStateStore {
         .into_iter()
         .filter_map(|key| Namespace::try_from(key.as_str()).ok())
         .collect()
-    }
-
-    /// The last time the app recorded that it was running.
-    pub async fn last_alive_at(&self) -> Option<SystemTime> {
-        self.run(|db| {
-            Ok(db
-                .query_row(
-                    "SELECT value FROM meta WHERE key = ?1",
-                    [LAST_ALIVE_AT],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?)
-        })
-        .await
-        .flatten()
-        .and_then(|value| value.parse::<i64>().ok())
-        .map(from_millis)
-    }
-
-    pub async fn set_last_alive_at(&self, at: SystemTime) {
-        let value = to_millis(at).to_string();
-        self.run(move |db| {
-            db.execute(
-                "INSERT INTO meta (key, value) VALUES (?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = ?2",
-                rusqlite::params![LAST_ALIVE_AT, value],
-            )?;
-            Ok(())
-        })
-        .await;
     }
 
     /// Run `op`, opening the store first if needed. A damaged file is replaced
@@ -517,16 +485,6 @@ mod tests {
         store.forget(&ns()).await;
         assert_eq!(store.last_change(&ns()).await, None);
         assert_eq!(store.namespaces().await, vec![other]);
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn last_alive_at_round_trips() -> Res {
-        let store = PackageStateStore::in_memory();
-        assert_eq!(store.last_alive_at().await, None);
-        store.set_last_alive_at(at(5)).await;
-        store.set_last_alive_at(at(7)).await;
-        assert_eq!(store.last_alive_at().await, Some(at(7)));
         Ok(())
     }
 

@@ -1141,25 +1141,6 @@ async fn a_publish_by_the_tick_deletes_the_time() -> Result<(), Error> {
 }
 
 #[tokio::test]
-async fn every_tick_records_that_the_app_is_alive() -> Result<(), Error> {
-    // Even with both directions off: a change made while the app runs is not
-    // one made while it was closed.
-    let model = MockQuiltModel::new();
-    let reporter = Arc::new(RecordingReporter::default());
-    let inner = make_inner_with_flags(reporter.clone(), false, false).await;
-    let before = crate::autopull::last_change::now();
-    run_once(&model, &RoleCache::default(), &inner).await?;
-    let alive = inner
-        .last_change
-        .store_for_test()
-        .last_alive_at()
-        .await
-        .expect("recorded");
-    assert!(alive >= before);
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_commit_waits_the_wait_before_its_push() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
     let lineage = quilt::lineage::PackageLineage {

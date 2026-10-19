@@ -650,9 +650,6 @@ pub(crate) async fn run_once(
         let cadence = crate::autopull::pull_cadence(&inner.settings.read().await.pull);
         crate::autopull::arm_next_pull(inner, cadence).await;
     }
-    // Even with both directions off: a change made while the app runs is not a
-    // change made while it was closed.
-    inner.last_change.note_alive().await;
 
     // Cheap pre-check: if both directions are off we have nothing to
     // do. Per-direction gating lives inside `refresh_then_maybe_sync`

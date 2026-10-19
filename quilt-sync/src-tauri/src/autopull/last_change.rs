@@ -79,11 +79,6 @@ impl LastChange {
         }
     }
 
-    /// Record that the app is running now. Called by each check.
-    pub(crate) async fn note_alive(&self) {
-        self.store.set_last_alive_at(now()).await;
-    }
-
     /// The folder watcher heard a change in `namespace`.
     pub(crate) async fn on_signal(&self, namespace: &Namespace) {
         self.store
@@ -321,7 +316,7 @@ fn change_time(meta: &std::fs::Metadata) -> Option<SystemTime> {
     use std::os::unix::fs::MetadataExt;
     let secs = u64::try_from(meta.ctime()).ok()?;
     let nanos = u32::try_from(meta.ctime_nsec()).ok()?;
-    // To the millisecond, as `last_alive_at` is kept.
+    // To the millisecond, as the store keeps times.
     let millis = nanos / 1_000_000;
     Some(SystemTime::UNIX_EPOCH + std::time::Duration::new(secs, millis * 1_000_000))
 }
@@ -445,8 +440,6 @@ mod tests {
             .record_change(&ns(), now() - hour(), ChangeSource::Edit)
             .await;
         std::fs::write(dir.path().join("a"), b"x").unwrap();
-        // Later sessions ran, without walking this package.
-        store.set_last_alive_at(now()).await;
         let clock = LastChange::new(store);
         let before = now();
         let at = clock
