@@ -366,15 +366,20 @@ fn stop_line(relative_path: &Path, is_dir: bool, scope: Scope) -> Res<String> {
 /// A name as a gitignore glob that matches only itself.
 fn escape(name: &str) -> String {
     let mut glob = String::with_capacity(name.len());
-    for c in name.chars() {
-        if matches!(c, '\\' | '*' | '?' | '[' | ']' | '{' | '}') {
+    let last = name.chars().count().saturating_sub(1);
+    for (i, c) in name.chars().enumerate() {
+        // The parser trims trailing whitespace and a trailing `\` before a
+        // folder's `/`, so those go in a class, which it leaves alone.
+        if c == '\\' || (i == last && c.is_whitespace()) {
+            glob.push('[');
+            glob.push(c);
+            glob.push(']');
+            continue;
+        }
+        if matches!(c, '*' | '?' | '[' | ']' | '{' | '}') {
             glob.push('\\');
         }
         glob.push(c);
-    }
-    // The parser trims trailing spaces unless the last one is escaped.
-    if glob.ends_with(' ') {
-        glob.insert(glob.len() - 1, '\\');
     }
     glob
 }
@@ -849,6 +854,7 @@ mod tests {
             "x?{y,z}.txt",
             "back\\slash.txt",
             "trailing .txt ",
+            "tab.txt\t",
         ] {
             let found = lines(&rules, name, false, Scope::Package).unwrap();
             let after = rules.with_lines(Scope::Package, &found).unwrap();
@@ -865,6 +871,31 @@ mod tests {
                 .file_ignored_by(Path::new("aZb1.txt"), false)
                 .is_some()
         );
+    }
+
+    #[test]
+    fn stop_ignoring_keeps_trailing_whitespace_and_backslashes() {
+        let (_dir, rules) = rules(Some(".cache*/\n"), None);
+        for scope in [Scope::Package, Scope::AllPackages] {
+            for (name, is_dir) in [
+                ("Icon\r", false),
+                (".cache\\", true),
+                ("sub/.cache\\", true),
+            ] {
+                let found = lines(&rules, name, is_dir, scope);
+                if scope == Scope::AllPackages && is_dir {
+                    // A package rule hides it.
+                    assert_eq!(found, None, "{name:?}");
+                    continue;
+                }
+                let found = found.unwrap_or_else(|| panic!("{name:?} in {scope:?}"));
+                let after = rules.with_lines(scope, &found).unwrap();
+                assert!(
+                    after.ignored_by(Path::new(name), is_dir, false).is_none(),
+                    "{name:?} as {found:?}"
+                );
+            }
+        }
     }
 
     #[test]
