@@ -538,6 +538,7 @@ mod tests {
             .status(status::Input {
                 namespace: namespace.clone(),
                 host_config,
+                list_ignored: false,
             })
             .await?;
         assert_eq!(

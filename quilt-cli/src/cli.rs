@@ -547,9 +547,15 @@ enum Commands {
         set: Option<String>,
     },
     /// Status of the package: modified, up-to-date, outdated
+    ///
+    /// Also says how many files and folders the ignore rules leave out.
     Status {
         #[command(flatten)]
         pkg: PackageRef,
+        /// List each ignored path with the rule that ignored it and where the
+        /// rule comes from: a default rule, or a rules file and its line.
+        #[arg(long)]
+        ignored: bool,
     },
     /// Undo the newest commit, restoring the revision before it
     ///
@@ -791,11 +797,12 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             log::debug!("Role {args:?}");
             Ok(role::command(m, args).await)
         }
-        Commands::Status { pkg } => {
+        Commands::Status { pkg, ignored } => {
             let namespace = pkg.resolve(&m).await?;
             let args = status::Input {
                 namespace,
                 host_config: None,
+                list_ignored: ignored,
             };
 
             log::debug!("Status {args:?}");
@@ -1377,6 +1384,7 @@ mod tests {
             status.command,
             Commands::Status {
                 pkg: PackageRef { namespace: Some(namespace) },
+                ignored: false,
             } if namespace == "demo/sales"
         ));
     }
@@ -1691,12 +1699,22 @@ mod tests {
     }
 
     #[test]
+    fn status_ignored_flag_parses() {
+        let args = Args::try_parse_from(["quilt", "status", "--ignored"]).unwrap();
+        assert!(matches!(
+            args.command,
+            Commands::Status { ignored: true, .. }
+        ));
+    }
+
+    #[test]
     fn package_namespace_flag_is_optional() {
         let inferred = Args::try_parse_from(["quilt", "status"]).unwrap();
         assert!(matches!(
             inferred.command,
             Commands::Status {
                 pkg: PackageRef { namespace: None },
+                ignored: false,
             }
         ));
 
@@ -1706,6 +1724,7 @@ mod tests {
             explicit.command,
             Commands::Status {
                 pkg: PackageRef { namespace: Some(namespace) },
+                ignored: false,
             } if namespace == "demo/sales"
         ));
     }
@@ -2924,7 +2943,13 @@ mod tests {
                 },
             ),
             ("list", Commands::List { fetch: false }),
-            ("status", Commands::Status { pkg: pkg() }),
+            (
+                "status",
+                Commands::Status {
+                    pkg: pkg(),
+                    ignored: false,
+                },
+            ),
             (
                 "commit",
                 Commands::Commit {
@@ -3002,6 +3027,7 @@ mod tests {
                 pkg: PackageRef {
                     namespace: Some("no/such".to_string()),
                 },
+                ignored: false,
             },
         };
 
