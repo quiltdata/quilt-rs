@@ -15,6 +15,7 @@ gives a run with none of your state, which is the quick way to see the
 setup and login pages:
 
 ```sh
+unset QUILT_DOMAIN
 export XDG_DATA_HOME=/tmp/quiltsync-fresh
 just app dev
 ```
