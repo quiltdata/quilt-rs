@@ -398,15 +398,18 @@ pub(crate) fn note_volumes(state: &mut ReactorState, mappings: &[(Namespace, Wat
     }
 }
 
-/// Vouch for the packages that are watched and on a local volume, and only
-/// for them.
+/// Vouch for the packages that are watched and on a local volume, with no
+/// network or FUSE volume mounted inside, and only for them. The mount table
+/// is read each time, so a mount made later is seen.
 fn sync_vouched(state: &ReactorState, inner: &WatcherInner) {
     let vouched: BTreeMap<Namespace, PathBuf> = state
         .subscription
         .watched_namespaces()
         .into_iter()
         .filter_map(|ns| match state.local_volume.get(&ns) {
-            Some((home, true)) => Some((ns, home.clone())),
+            Some((home, true)) if !quilt::file_stamp::remote_mount_under(home) => {
+                Some((ns, home.clone()))
+            }
             _ => None,
         })
         .collect();
