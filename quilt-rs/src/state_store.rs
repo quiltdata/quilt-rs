@@ -5,12 +5,15 @@
 //! returns an error: a failure is logged, the file is created again, and a read
 //! that still fails answers "nothing stored".
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+use multihash::Multihash;
 use quilt_uri::Namespace;
 use tokio::sync::Mutex;
 use tokio_rusqlite::Connection;
@@ -19,16 +22,46 @@ use tokio_rusqlite::rusqlite::OptionalExtension;
 use tracing::info;
 use tracing::warn;
 
-const SCHEMA_VERSION: i64 = 1;
+use crate::file_stamp::FileId;
+use crate::file_stamp::FileStamp;
+use crate::object_hash::ObjectHash;
+use crate::stat_cache::CachedHash;
+use crate::stat_cache::FULL_HASH_EVERY;
+use crate::stat_cache::StatCache;
 
-const SCHEMA: &str = "
+const SCHEMA_VERSION: i64 = 2;
+
+/// Each step takes the schema from the version before it to its own.
+const MIGRATIONS: [&str; 2] = [
+    "
 CREATE TABLE package_activity (
   namespace      TEXT PRIMARY KEY,
   last_change_at INTEGER NOT NULL,
   source         TEXT NOT NULL
 );
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-";
+",
+    // Times are unix nanoseconds; `hash` is the multihash bytes.
+    "
+CREATE TABLE file_stat (
+  namespace TEXT NOT NULL,
+  path      TEXT NOT NULL,
+  algorithm INTEGER NOT NULL,
+  size      INTEGER NOT NULL,
+  mtime     INTEGER NOT NULL,
+  ctime     INTEGER NOT NULL,
+  volume    INTEGER NOT NULL,
+  inode     BLOB NOT NULL,
+  hash      BLOB NOT NULL,
+  saved_at  INTEGER NOT NULL,
+  PRIMARY KEY (namespace, path, algorithm)
+) WITHOUT ROWID;
+CREATE TABLE stat_walk (
+  namespace    TEXT PRIMARY KEY,
+  full_hash_at INTEGER NOT NULL
+);
+",
+];
 
 /// What moved a package's last-change time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,6 +268,114 @@ impl PackageStateStore {
         .collect()
     }
 
+    /// The package's [`StatCache`] for one walk. A walk a day hashes every
+    /// file anyway; so does one the store can't answer.
+    pub async fn stat_cache(&self, namespace: &Namespace) -> StatCache {
+        let key = namespace.to_string();
+        let loaded = self
+            .run(move |db| {
+                let full_hash_at = db
+                    .query_row(
+                        "SELECT full_hash_at FROM stat_walk WHERE namespace = ?1",
+                        [&key],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?;
+                let mut query = db.prepare(
+                    "SELECT path, algorithm, size, mtime, ctime, volume, inode, hash, saved_at
+                     FROM file_stat WHERE namespace = ?1",
+                )?;
+                let rows = query
+                    .query_map([&key], |row| {
+                        Ok(StatRow {
+                            path: row.get(0)?,
+                            algorithm: row.get(1)?,
+                            size: row.get(2)?,
+                            mtime: row.get(3)?,
+                            ctime: row.get(4)?,
+                            volume: row.get(5)?,
+                            inode: row.get(6)?,
+                            hash: row.get(7)?,
+                            saved_at: row.get(8)?,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok((full_hash_at, rows))
+            })
+            .await;
+        let Some((full_hash_at, rows)) = loaded else {
+            return StatCache::new(HashMap::new(), true);
+        };
+        let full = full_hash_at.is_none_or(|at| {
+            SystemTime::now()
+                .duration_since(from_nanos(at))
+                .is_ok_and(|since| since >= FULL_HASH_EVERY)
+        });
+        let saved = rows.into_iter().filter_map(StatRow::into_entry).collect();
+        StatCache::new(saved, full)
+    }
+
+    /// Write what a walk with `cache` changed: new and changed entries, and
+    /// the deletion of files it did not find.
+    pub async fn save_stat_cache(&self, namespace: &Namespace, cache: &StatCache) {
+        let gone = cache.gone();
+        if cache.updates().is_empty() && gone.is_empty() && !cache.is_full() {
+            return;
+        }
+        let key = namespace.to_string();
+        let updates: Arc<Vec<StatRow>> = Arc::new(
+            cache
+                .updates()
+                .iter()
+                .filter_map(|(path, entry)| StatRow::from_entry(path, entry))
+                .collect(),
+        );
+        let gone: Arc<Vec<String>> = Arc::new(
+            gone.iter()
+                .filter_map(|path| path.to_str().map(str::to_owned))
+                .collect(),
+        );
+        let full_hash_at = cache.is_full().then(|| to_nanos(SystemTime::now()));
+        self.run(move |db| {
+            let tx = db.unchecked_transaction()?;
+            {
+                let mut delete =
+                    tx.prepare_cached("DELETE FROM file_stat WHERE namespace = ?1 AND path = ?2")?;
+                for path in gone.iter() {
+                    delete.execute(rusqlite::params![key, path])?;
+                }
+                let mut upsert = tx.prepare_cached(
+                    "INSERT OR REPLACE INTO file_stat
+                     (namespace, path, algorithm, size, mtime, ctime, volume, inode, hash, saved_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                )?;
+                for row in updates.iter() {
+                    upsert.execute(rusqlite::params![
+                        key,
+                        row.path,
+                        row.algorithm,
+                        row.size,
+                        row.mtime,
+                        row.ctime,
+                        row.volume,
+                        row.inode,
+                        row.hash,
+                        row.saved_at,
+                    ])?;
+                }
+                if let Some(at) = full_hash_at {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO stat_walk (namespace, full_hash_at) VALUES (?1, ?2)",
+                        rusqlite::params![key, at],
+                    )?;
+                }
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await;
+    }
+
     /// Run `op`, opening the store first if needed. A damaged file is replaced
     /// and `op` tried once more; any other failure answers `None`.
     async fn run<T, F>(&self, op: F) -> Option<T>
@@ -386,23 +527,95 @@ async fn migrate(connection: &Connection) -> Result<(), StoreError> {
     connection
         .call(|db| {
             let version: i64 = db.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-            match version {
-                0 => {
-                    let tx = db.transaction()?;
-                    tx.execute_batch(SCHEMA)?;
-                    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-                    tx.commit()?;
-                    Ok(())
-                }
-                SCHEMA_VERSION => Ok(()),
-                newer => Err(StoreError::NewerSchema(newer)),
+            if version > SCHEMA_VERSION {
+                return Err(StoreError::NewerSchema(version));
             }
+            if version == SCHEMA_VERSION {
+                return Ok(());
+            }
+            let tx = db.transaction()?;
+            for step in MIGRATIONS
+                .iter()
+                .skip(usize::try_from(version).unwrap_or(0))
+            {
+                tx.execute_batch(step)?;
+            }
+            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            tx.commit()?;
+            Ok(())
         })
         .await
         .map_err(|err| match err {
             tokio_rusqlite::Error::Error(err) => err,
             _ => StoreError::Closed,
         })
+}
+
+/// A `file_stat` row as SQLite holds it.
+struct StatRow {
+    path: String,
+    algorithm: i64,
+    size: i64,
+    mtime: i64,
+    ctime: i64,
+    volume: i64,
+    inode: Vec<u8>,
+    hash: Vec<u8>,
+    saved_at: i64,
+}
+
+impl StatRow {
+    fn from_entry(path: &Path, entry: &CachedHash) -> Option<Self> {
+        let id = entry.stamp.id?;
+        Some(Self {
+            path: path.to_str()?.to_owned(),
+            algorithm: i64::try_from(entry.hash.algorithm()).ok()?,
+            size: i64::try_from(entry.stamp.size).ok()?,
+            mtime: to_nanos(entry.stamp.modified),
+            ctime: to_nanos(entry.stamp.changed?),
+            volume: i64::from_ne_bytes(id.volume.to_ne_bytes()),
+            inode: id.file.to_le_bytes().to_vec(),
+            hash: entry.hash.multihash().to_bytes(),
+            saved_at: to_nanos(entry.saved_at),
+        })
+    }
+
+    /// `None` for a row this build can't read, which then counts as not cached.
+    fn into_entry(self) -> Option<((PathBuf, u64), CachedHash)> {
+        let hash = Multihash::<256>::from_bytes(&self.hash).ok()?;
+        let entry = CachedHash {
+            stamp: FileStamp {
+                size: u64::try_from(self.size).ok()?,
+                modified: from_nanos(self.mtime),
+                changed: Some(from_nanos(self.ctime)),
+                id: Some(FileId {
+                    volume: u64::from_ne_bytes(self.volume.to_ne_bytes()),
+                    file: u128::from_le_bytes(self.inode.try_into().ok()?),
+                }),
+            },
+            hash: ObjectHash::try_from(hash).ok()?,
+            saved_at: from_nanos(self.saved_at),
+        };
+        let algorithm = u64::try_from(self.algorithm).ok()?;
+        (entry.hash.algorithm() == algorithm)
+            .then(|| ((PathBuf::from(self.path), algorithm), entry))
+    }
+}
+
+fn to_nanos(at: SystemTime) -> i64 {
+    match at.duration_since(UNIX_EPOCH) {
+        Ok(since) => i64::try_from(since.as_nanos()).unwrap_or(i64::MAX),
+        Err(before) => i64::try_from(before.duration().as_nanos()).map_or(i64::MIN, |n| -n),
+    }
+}
+
+fn from_nanos(ns: i64) -> SystemTime {
+    let magnitude = Duration::from_nanos(ns.unsigned_abs());
+    if ns >= 0 {
+        UNIX_EPOCH + magnitude
+    } else {
+        UNIX_EPOCH - magnitude
+    }
 }
 
 fn to_millis(at: SystemTime) -> i64 {
@@ -573,6 +786,109 @@ mod tests {
                 .map(|a| a.last_change_at),
             Some(at(1)),
             "the file is kept, not deleted"
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_version_1_file_keeps_its_times_and_gains_the_stat_cache() -> Res {
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("state.db");
+        {
+            let db = rusqlite::Connection::open(&path)?;
+            db.execute_batch(MIGRATIONS[0])?;
+            db.pragma_update(None, "user_version", 1)?;
+            db.execute(
+                "INSERT INTO package_activity VALUES ('acme/demo', 5000, 'edit')",
+                [],
+            )?;
+        }
+        let store = PackageStateStore::new(path);
+        assert_eq!(
+            store.last_change(&ns()).await.map(|a| a.last_change_at),
+            Some(at(5))
+        );
+        assert!(store.stat_cache(&ns()).await.is_full(), "never walked");
+        Ok(())
+    }
+
+    fn cached() -> CachedHash {
+        CachedHash {
+            stamp: FileStamp {
+                size: 3,
+                modified: at(100),
+                changed: Some(at(100)),
+                id: Some(FileId {
+                    volume: u64::MAX,
+                    file: u128::MAX - 1,
+                }),
+            },
+            hash: crate::object_hash::Crc64Hash::default().into(),
+            saved_at: at(200),
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn a_walk_a_day_hashes_everything() -> Res {
+        let store = PackageStateStore::in_memory();
+        let first = store.stat_cache(&ns()).await;
+        assert!(first.is_full(), "no full walk yet");
+        store.save_stat_cache(&ns(), &first).await;
+        assert!(!store.stat_cache(&ns()).await.is_full());
+
+        let a_day_ago = to_nanos(SystemTime::now() - FULL_HASH_EVERY);
+        let key = ns().to_string();
+        store
+            .run(move |db| {
+                db.execute(
+                    "UPDATE stat_walk SET full_hash_at = ?2 WHERE namespace = ?1",
+                    rusqlite::params![key, a_day_ago],
+                )?;
+                Ok(())
+            })
+            .await;
+        assert!(store.stat_cache(&ns()).await.is_full());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn stat_entries_round_trip_and_unseen_ones_are_deleted() -> Res {
+        let store = PackageStateStore::in_memory();
+        let mut cache = store.stat_cache(&ns()).await;
+        cache.record(std::path::Path::new("a"), cached());
+        cache.record(std::path::Path::new("b"), cached());
+        store.save_stat_cache(&ns(), &cache).await;
+
+        let mut cache = store.stat_cache(&ns()).await;
+        let entry = cached();
+        assert_eq!(
+            cache.lookup(
+                std::path::Path::new("a"),
+                &entry.stamp,
+                entry.hash.algorithm()
+            ),
+            Some(&entry.hash)
+        );
+        cache.see(std::path::Path::new("a"));
+        store.save_stat_cache(&ns(), &cache).await;
+
+        let cache = store.stat_cache(&ns()).await;
+        assert_eq!(
+            cache.lookup(
+                std::path::Path::new("b"),
+                &entry.stamp,
+                entry.hash.algorithm()
+            ),
+            None
+        );
+        assert!(
+            cache
+                .lookup(
+                    std::path::Path::new("a"),
+                    &entry.stamp,
+                    entry.hash.algorithm()
+                )
+                .is_some()
         );
         Ok(())
     }

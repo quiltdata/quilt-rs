@@ -6,35 +6,45 @@
 //! row's hash against the file on disk.
 
 use std::path::Path;
-use std::path::PathBuf;
 
 use crate::Res;
-use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::storage::Storage;
 use crate::manifest::ManifestRow;
 use crate::object_hash::Crc64Hash;
 use crate::object_hash::Hash;
+use crate::object_hash::MULTIHASH_CRC64_NVME;
+use crate::object_hash::MULTIHASH_SHA256;
 use crate::object_hash::ObjectHash;
 use crate::object_hash::Sha256ChunkedHash;
 use crate::object_hash::Sha256Hash;
+
+/// Hash the file at `path` with the multihash `algorithm`, and return the hash
+/// with the size read. An algorithm this crate doesn't know hashes as
+/// SHA-256 chunked, the default.
+pub async fn hash_file(
+    storage: &impl Storage,
+    path: &Path,
+    algorithm: u64,
+) -> Res<(ObjectHash, u64)> {
+    let file = storage.open_file(path).await?;
+    let size = file.metadata().await?.len();
+    let hash = match algorithm {
+        MULTIHASH_CRC64_NVME => Crc64Hash::from_reader(file, size).await?.into(),
+        MULTIHASH_SHA256 => Sha256Hash::from_reader(file, size).await?.into(),
+        _ => Sha256ChunkedHash::from_reader(file, size).await?.into(),
+    };
+    Ok((hash, size))
+}
 
 /// Refresh hash for a file using the same algorithm as the reference row
 /// Returns None if hash hasn't changed, Some(ManifestRow) if it has changed
 pub async fn refresh_hash(
     storage: &impl Storage,
-    path: &PathBuf,
+    path: &Path,
     row: ManifestRow,
 ) -> Res<Option<ManifestRow>> {
-    let file = storage.open_file(path).await?;
-    let file_metadata = file.metadata().await?;
-    let size = file_metadata.len();
-
-    let computed_hash = match &row.hash {
-        ObjectHash::Crc64(_) => Crc64Hash::from_reader(file, size).await?.into(),
-        ObjectHash::Sha256(_) => Sha256Hash::from_reader(file, size).await?.into(),
-        ObjectHash::Sha256Chunked(_) => Sha256ChunkedHash::from_reader(file, size).await?.into(),
-    };
+    let (computed_hash, size) = hash_file(storage, path, row.hash.algorithm()).await?;
 
     Ok((computed_hash != row.hash).then(|| ManifestRow {
         hash: computed_hash,
@@ -50,14 +60,7 @@ pub async fn calculate_hash(
     logical_key: &Path,
     host_config: &HostConfig,
 ) -> Res<ManifestRow> {
-    let file = storage.open_file(path).await?;
-    let file_metadata = file.metadata().await?;
-    let size = file_metadata.len();
-
-    let hash = match host_config.checksums {
-        HostChecksums::Crc64 => Crc64Hash::from_reader(file, size).await?.into(),
-        HostChecksums::Sha256Chunked => Sha256ChunkedHash::from_reader(file, size).await?.into(),
-    };
+    let (hash, size) = hash_file(storage, path, host_config.checksums.algorithm_code()).await?;
 
     Ok(ManifestRow {
         logical_key: logical_key.to_path_buf(),
@@ -72,7 +75,7 @@ pub async fn calculate_hash(
 /// Returns None if hash hasn't changed, Some(ManifestRow) if it has changed
 pub async fn verify_hash(
     storage: &impl Storage,
-    path: &PathBuf,
+    path: &Path,
     row: ManifestRow,
     host_config: &HostConfig,
 ) -> Res<Option<ManifestRow>> {
@@ -99,6 +102,7 @@ mod tests {
     use test_log::test;
 
     use std::path::Path;
+    use std::path::PathBuf;
 
     use aws_sdk_s3::primitives::ByteStream;
     use multihash::Multihash;
@@ -132,7 +136,7 @@ mod tests {
             size: file_content.len() as u64,
             ..ManifestRow::default()
         };
-        let result = refresh_hash(&storage, &file_path.to_path_buf(), manifest_row).await?;
+        let result = refresh_hash(&storage, file_path, manifest_row).await?;
         assert!(result.is_none(), "Unchanged file should return None");
 
         Ok(())
@@ -161,7 +165,7 @@ mod tests {
             size: 999, // Wrong size to test that refresh_hash updates it
             ..ManifestRow::default()
         };
-        let result = refresh_hash(&storage, &file_path.to_path_buf(), test_manifest_row).await?;
+        let result = refresh_hash(&storage, file_path, test_manifest_row).await?;
         let refreshed_row = result.expect("Changed hash should return Some");
         assert_eq!(refreshed_row.hash, hash.try_into()?);
         assert_eq!(refreshed_row.size, file_content.len() as u64);
@@ -189,7 +193,7 @@ mod tests {
             ..ManifestRow::default()
         };
 
-        let result = refresh_hash(&storage, &file_path.to_path_buf(), manifest_row).await;
+        let result = refresh_hash(&storage, file_path, manifest_row).await;
         // With valid hash, this should work (though it might return Some due to different file content)
         assert!(result.is_ok());
 
@@ -264,7 +268,7 @@ mod tests {
         assert!(
             verify_hash(
                 &storage,
-                &test_path.to_path_buf(),
+                test_path,
                 manifest_row.clone(),
                 &crc64_host_config,
             )
@@ -279,13 +283,7 @@ mod tests {
             .write_byte_stream(test_path, fixture_content)
             .await?;
 
-        let result = verify_hash(
-            &storage,
-            &test_path.to_path_buf(),
-            manifest_row,
-            &crc64_host_config,
-        )
-        .await?;
+        let result = verify_hash(&storage, test_path, manifest_row, &crc64_host_config).await?;
         assert!(result.is_some(), "Modified file should return Some");
 
         let modified_row = result.unwrap();
@@ -317,7 +315,7 @@ mod tests {
         assert!(
             verify_hash(
                 &storage,
-                &test_path.to_path_buf(),
+                test_path,
                 manifest_row.clone(),
                 &sha256_host_config,
             )
@@ -332,13 +330,7 @@ mod tests {
             .write_byte_stream(test_path, ByteStream::from_static(fixture_content))
             .await?;
 
-        let result = verify_hash(
-            &storage,
-            &test_path.to_path_buf(),
-            manifest_row,
-            &sha256_host_config,
-        )
-        .await?;
+        let result = verify_hash(&storage, test_path, manifest_row, &sha256_host_config).await?;
         assert!(result.is_some(), "Modified file should return Some");
 
         let modified_row = result.unwrap();

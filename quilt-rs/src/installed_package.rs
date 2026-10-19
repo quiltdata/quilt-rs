@@ -37,6 +37,7 @@ use crate::manifest::Workflow;
 use crate::package_lock;
 use crate::paths;
 use crate::paths::copy_cached_to_installed;
+use crate::state_store::PackageStateStore;
 use crate::workflow::WorkflowRules;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
@@ -95,6 +96,9 @@ pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     pub remote: Arc<R>,
     pub storage: S,
     pub namespace: Namespace,
+    /// The desktop app's state store. With one, a walk hashes only the files
+    /// whose stamp changed; the command line has none and hashes every file.
+    pub state_store: Option<Arc<PackageStateStore>>,
 }
 
 impl<S: Storage + Clone, R: Remote> Clone for InstalledPackage<S, R> {
@@ -105,6 +109,7 @@ impl<S: Storage + Clone, R: Remote> Clone for InstalledPackage<S, R> {
             remote: Arc::clone(&self.remote),
             storage: self.storage.clone(),
             namespace: self.namespace.clone(),
+            state_store: self.state_store.clone(),
         }
     }
 }
@@ -380,6 +385,47 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         self.lineage.package_home(&self.storage).await
     }
 
+    /// [`flow::status`], through the state store's stat cache when the
+    /// package has one.
+    async fn walk(
+        &self,
+        lineage: lineage::PackageLineage,
+        manifest: &Manifest,
+        package_home: &PathBuf,
+        host_config: HostConfig,
+    ) -> Res<(lineage::PackageLineage, InstalledPackageStatus)> {
+        let Some(store) = &self.state_store else {
+            return flow::status(lineage, &self.storage, manifest, package_home, host_config).await;
+        };
+        let mut cache = store.stat_cache(&self.namespace).await;
+        let walked = flow::status_cached(
+            lineage,
+            &self.storage,
+            manifest,
+            package_home,
+            host_config,
+            Some(&mut cache),
+        )
+        .await?;
+        store.save_stat_cache(&self.namespace, &cache).await;
+        Ok(walked)
+    }
+
+    /// What a commit is about to name its objects by: with a stat cache, the
+    /// added and modified files are hashed again first.
+    async fn rehash_for_commit(
+        &self,
+        manifest: &Manifest,
+        package_home: &PathBuf,
+        status: InstalledPackageStatus,
+        host_config: &HostConfig,
+    ) -> Res<InstalledPackageStatus> {
+        if self.state_store.is_none() {
+            return Ok(status);
+        }
+        flow::rehash_changes(&self.storage, manifest, package_home, status, host_config).await
+    }
+
     /// Recompute working-tree status against the cached manifest without
     /// contacting the remote. Caller accepts that `upstream_state` reflects
     /// the last-known `latest_hash` rather than a freshly-resolved one;
@@ -402,14 +448,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
-        let (_, status) = flow::status(
-            lineage,
-            &self.storage,
-            &manifest,
-            &package_home,
-            host_config,
-        )
-        .await?;
+        let (_, status) = self
+            .walk(lineage, &manifest, &package_home, host_config)
+            .await?;
         Ok(status)
     }
 
@@ -471,14 +512,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
-        let (lineage, status) = flow::status(
-            lineage,
-            &self.storage,
-            &manifest,
-            &package_home,
-            host_config,
-        )
-        .await?;
+        let (lineage, status) = self
+            .walk(lineage, &manifest, &package_home, host_config)
+            .await?;
         Ok((
             lineage,
             InstalledPackageStatus {
@@ -619,19 +655,17 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
-        // Captured before `host_config` moves into `flow::status`: the commit
+        // Captured before `host_config` moves into the walk: the commit
         // gate fetches the workflow's config + schemas from the same origin the
         // workflow was resolved against.
         let host = host_config.host.clone();
 
-        let (lineage, status) = flow::status(
-            lineage,
-            &self.storage,
-            &manifest,
-            &package_home,
-            host_config,
-        )
-        .await?;
+        let (lineage, status) = self
+            .walk(lineage, &manifest, &package_home, host_config.clone())
+            .await?;
+        let status = self
+            .rehash_for_commit(&manifest, &package_home, status, &host_config)
+            .await?;
 
         let (lineage, commit) = flow::commit(
             lineage,
@@ -708,16 +742,13 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let (lineage, status) = match status_opt {
             Some(status) => (lineage, status),
             None => {
-                flow::status(
-                    lineage,
-                    &self.storage,
-                    &manifest,
-                    &package_home,
-                    host_config.clone(),
-                )
-                .await?
+                self.walk(lineage, &manifest, &package_home, host_config.clone())
+                    .await?
             }
         };
+        let status = self
+            .rehash_for_commit(&manifest, &package_home, status, &host_config)
+            .await?;
 
         let outcome = flow::publish(
             lineage,
@@ -1494,5 +1525,7 @@ mod resolve_comparison_tests;
 mod revision_history_tests;
 #[cfg(test)]
 mod set_remote_tests;
+#[cfg(test)]
+mod stat_cache_tests;
 #[cfg(test)]
 mod sync_flow_tests;

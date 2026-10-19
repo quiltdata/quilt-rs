@@ -83,7 +83,9 @@ pub use reset_to_latest::reset_to_latest;
 pub use resolve_comparison::{ResolveComparison, compare_for_resolve};
 
 pub use status::create_status as status;
+pub use status::create_status_cached as status_cached;
 pub use status::refresh_latest_hash;
+pub use status::rehash_changes;
 pub use undo_commit::undo_commit;
 pub use uninstall_package::uninstall_package;
 pub use uninstall_paths::uninstall_paths;
