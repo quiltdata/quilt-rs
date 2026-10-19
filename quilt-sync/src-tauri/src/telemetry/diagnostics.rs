@@ -235,7 +235,7 @@ mod tests {
         let mut entries = BTreeMap::new();
         for i in 0..archive.len() {
             let mut file = archive.by_index(i).expect("entry by index");
-            let name = file.name().to_string();
+            let name = file.name().expect("entry name").to_string();
             let mut buf = Vec::new();
             file.read_to_end(&mut buf).expect("read entry");
             entries.insert(name, buf);
