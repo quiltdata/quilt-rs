@@ -311,7 +311,7 @@ impl Subscription {
                             namespace,
                             kind: SignalKind::Rescan,
                         });
-                        let lost = drop_removed_roots(&events, &mut watched).into_iter().map(
+                        let lost = mark_removed_roots(&events, &mut watched).into_iter().map(
                             |namespace| MappingSignal {
                                 namespace,
                                 kind: SignalKind::Lost,
@@ -613,50 +613,39 @@ fn reload_edited_rules(
     }
 }
 
-/// The namespaces whose events the OS says it lost: those under a rescan
-/// event's paths, or every one for a rescan with no path.
+/// The namespaces whose events the OS may have lost: every one, when any
+/// event asks for a rescan. The debouncer keeps only the last rescan of a
+/// batch, so its paths can't say which packages the others covered.
 fn rescanned_namespaces(
     events: &[notify_debouncer_full::DebouncedEvent],
     watched: &BTreeMap<Namespace, WatchedRoot>,
 ) -> BTreeSet<Namespace> {
-    let mut rescan = BTreeSet::new();
-    for event in events.iter().filter(|event| event.need_rescan()) {
-        if event.paths.is_empty() {
-            rescan.extend(watched.keys().cloned());
-        }
-        for path in &event.paths {
-            rescan.extend(
-                watched
-                    .iter()
-                    .filter(|(_, root)| path.starts_with(&root.path) || root.path.starts_with(path))
-                    .map(|(ns, _)| ns.clone()),
-            );
-        }
+    if events.iter().any(|event| event.need_rescan()) {
+        watched.keys().cloned().collect()
+    } else {
+        BTreeSet::new()
     }
-    rescan
 }
 
-/// Drop the namespaces whose root was removed or moved, even if it is back:
-/// the OS watch went with the old folder, and the next reconcile makes a new
-/// one.
-fn drop_removed_roots(
+/// Mark for a new watch the namespaces whose root was removed or moved, even
+/// if it is back: the OS watch belongs to the old folder. The next reconcile
+/// tears it down and watches again.
+fn mark_removed_roots(
     events: &[notify_debouncer_full::DebouncedEvent],
     watched: &mut BTreeMap<Namespace, WatchedRoot>,
 ) -> Vec<Namespace> {
-    let removed: Vec<Namespace> = watched
-        .iter()
-        .filter(|(_, root)| {
-            events.iter().any(|event| {
-                matches!(
-                    event.kind,
-                    EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))
-                ) && event.paths.iter().any(|p| root.path.starts_with(p))
-            })
-        })
-        .map(|(ns, _)| ns.clone())
-        .collect();
-    for ns in &removed {
-        watched.remove(ns);
+    let mut removed = Vec::new();
+    for (ns, root) in watched.iter_mut() {
+        let gone = events.iter().any(|event| {
+            matches!(
+                event.kind,
+                EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))
+            ) && event.paths.iter().any(|p| root.path.starts_with(p))
+        });
+        if gone {
+            root.rewatch = true;
+            removed.push(ns.clone());
+        }
     }
     removed
 }
@@ -953,7 +942,7 @@ mod tests {
     }
 
     /// A rescan is not a change: it walks the packages it may cover and moves
-    /// no last-change time. One with no path covers every package.
+    /// no last-change time.
     #[test]
     fn a_rescan_is_reported_apart_from_changes() {
         let demo: Namespace = ("acme", "demo").into();
@@ -976,14 +965,13 @@ mod tests {
 
         let under_one = [rescan(vec![PathBuf::from("/pkg/sub")])];
         assert!(affected_namespaces(&under_one, &watched, None).is_empty());
+        // The debouncer keeps only the last rescan of a batch, so any one
+        // covers every package.
         assert_eq!(
             rescanned_namespaces(&under_one, &watched),
-            BTreeSet::from([demo.clone()])
-        );
-        assert_eq!(
-            rescanned_namespaces(&[rescan(Vec::new())], &watched),
             BTreeSet::from([demo, other])
         );
+        assert!(rescanned_namespaces(&[], &watched).is_empty());
     }
 
     /// A path the rules screen out buys no walk, but the status walk may
@@ -1028,7 +1016,7 @@ mod tests {
     }
 
     #[test]
-    fn a_removed_root_is_dropped_from_the_watch() {
+    fn a_removed_root_is_watched_again() {
         let namespace: Namespace = ("acme", "demo").into();
         let mut watched = BTreeMap::from([(namespace.clone(), unignored("/pkg"))]);
         let removed = notify_debouncer_full::DebouncedEvent::new(
@@ -1041,10 +1029,10 @@ mod tests {
         );
 
         assert_eq!(
-            drop_removed_roots(&[removed], &mut watched),
-            vec![namespace]
+            mark_removed_roots(&[removed], &mut watched),
+            vec![namespace.clone()]
         );
-        assert!(watched.is_empty());
+        assert!(watched[&namespace].rewatch);
     }
 
     #[tokio::test]
