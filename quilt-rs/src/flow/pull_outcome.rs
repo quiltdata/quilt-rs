@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -13,6 +14,7 @@ use crate::lineage::Change;
 use crate::lineage::InstalledPackageStatus;
 use crate::lineage::LineagePaths;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestRow;
 use crate::object_hash::ObjectHash;
 
 /// A *dry-run* verdict of what a [`pull`](super::pull) **would** do, computed
@@ -265,12 +267,18 @@ pub async fn identical_to_latest(
     // Untracked files the walk gave no hash, at paths the remote writes:
     // ignored ones, and ones inside a folder it skipped whole. An interrupted
     // pull leaves such a file holding `latest`'s bytes.
+    let base_rows: HashMap<&Path, &ManifestRow> = base
+        .rows
+        .iter()
+        .rev()
+        .map(|row| (row.logical_key.as_path(), row))
+        .collect();
     for latest_row in &latest.rows {
         let path = &latest_row.logical_key;
         if tracked.contains_key(path) || status.changes.contains_key(path) {
             continue;
         }
-        let base_row = base.get_record(path);
+        let base_row = base_rows.get(path.as_path()).copied();
         if base_row.is_some_and(|base_row| base_row.hash == latest_row.hash) {
             continue;
         }
@@ -278,7 +286,10 @@ pub async fn identical_to_latest(
         if !storage.exists(&file).await {
             continue;
         }
-        let set = if refresh_hash(storage, &file, latest_row.clone())
+        // A folder or pipe there is in the way too, and is never read.
+        let set = if !storage.is_file(&file).await {
+            &mut in_the_way
+        } else if refresh_hash(storage, &file, latest_row.clone())
             .await?
             .is_none()
         {
@@ -1190,6 +1201,40 @@ mod tests {
             classify_pull(&status, &base, &latest, &identical),
             PullOutcome::Blocked {
                 conflicts: vec![in_the_way]
+            }
+        );
+        Ok(())
+    }
+
+    /// A folder where the remote adds a file is in the way, and is not read.
+    #[test(tokio::test)]
+    async fn a_folder_at_a_remote_add_blocks() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        storage
+            .write_byte_stream(
+                working_dir.join(".env/inner"),
+                ByteStream::from_static(b"x"),
+            )
+            .await?;
+
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"1"), row(".env", b"remote")]);
+        let status = behind(ChangeSet::default());
+
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::Blocked {
+                conflicts: vec![PathBuf::from(".env")]
             }
         );
         Ok(())
