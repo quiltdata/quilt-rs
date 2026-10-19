@@ -115,6 +115,7 @@ async fn make_inner_for_run_once(reporter: Arc<RecordingReporter>) -> WatcherInn
         reporter,
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: quiet_clock().await,
     }
 }
@@ -143,6 +144,7 @@ async fn make_inner_with_flags(
         reporter,
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: quiet_clock().await,
     }
 }
@@ -310,6 +312,7 @@ async fn a_deferred_publish_records_when_it_will_arm() -> Result<(), Error> {
         &lineage,
         &PublishSettings::default(),
         &clock,
+        &crate::autopull::watched::WatchedWalks::default(),
         Duration::from_secs(300),
         false,
         true,
@@ -360,6 +363,7 @@ async fn a_quiet_tree_that_publishes_records_no_arm_time() -> Result<(), Error> 
         &lineage,
         &PublishSettings::default(),
         &quiet_clock().await,
+        &crate::autopull::watched::WatchedWalks::default(),
         Duration::from_secs(300),
         false,
         true,
@@ -957,6 +961,7 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: LastChange::changed_for_test(&ns, Duration::from_secs(30)).await,
     };
 
@@ -1221,6 +1226,7 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator,
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: quiet_clock().await,
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1278,6 +1284,7 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator,
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: quiet_clock().await,
     };
     run_once(&model, &RoleCache::default(), &inner).await?;

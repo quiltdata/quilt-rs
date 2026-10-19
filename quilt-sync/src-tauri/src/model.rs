@@ -95,6 +95,17 @@ pub trait QuiltModel {
         package.status(host_config).await
     }
 
+    /// [`Self::locked_package_status`] from an earlier walk, with no walk:
+    /// `None` when the lineage is no longer the walked one.
+    async fn locked_package_status_from_walk(
+        &self,
+        package: &Self::Locked,
+        walked_lineage: &quilt::lineage::PackageLineage,
+        walked: quilt::lineage::InstalledPackageStatus,
+    ) -> Result<Option<quilt::lineage::InstalledPackageStatus>, Error> {
+        package.status_from_walk(walked_lineage, walked).await
+    }
+
     /// Dry-run classifier, under the held lock: what would a pull do right
     /// now? Delegates to the engine's [`quilt::LockedPackage::pull_outcome`];
     /// wrapping it on the trait lets the command route on the verdict
@@ -682,6 +693,12 @@ pub trait LockedOps: Send + Sync + Sized {
         host_config: Option<HostConfig>,
     ) -> Result<quilt::lineage::InstalledPackageStatus, Error>;
 
+    async fn status_from_walk(
+        &self,
+        walked_lineage: &quilt::lineage::PackageLineage,
+        walked: quilt::lineage::InstalledPackageStatus,
+    ) -> Result<Option<quilt::lineage::InstalledPackageStatus>, Error>;
+
     async fn pull_outcome(&self) -> Result<quilt::flow::PullPreview, Error>;
 
     async fn pull_verdict(&self) -> Result<quilt::flow::PullOutcome, Error>;
@@ -723,6 +740,14 @@ impl LockedOps for quilt::LockedPackage {
         host_config: Option<HostConfig>,
     ) -> Result<quilt::lineage::InstalledPackageStatus, Error> {
         Ok(quilt::LockedPackage::status(self, host_config).await?)
+    }
+
+    async fn status_from_walk(
+        &self,
+        walked_lineage: &quilt::lineage::PackageLineage,
+        walked: quilt::lineage::InstalledPackageStatus,
+    ) -> Result<Option<quilt::lineage::InstalledPackageStatus>, Error> {
+        Ok(quilt::LockedPackage::status_from_walk(self, walked_lineage, walked).await?)
     }
 
     async fn pull_outcome(&self) -> Result<quilt::flow::PullPreview, Error> {
@@ -788,6 +813,14 @@ impl LockedOps for quilt_uri::Namespace {
         &self,
         _: Option<HostConfig>,
     ) -> Result<quilt::lineage::InstalledPackageStatus, Error> {
+        unreachable!("a mocked model sets its own status")
+    }
+
+    async fn status_from_walk(
+        &self,
+        _: &quilt::lineage::PackageLineage,
+        _: quilt::lineage::InstalledPackageStatus,
+    ) -> Result<Option<quilt::lineage::InstalledPackageStatus>, Error> {
         unreachable!("a mocked model sets its own status")
     }
 

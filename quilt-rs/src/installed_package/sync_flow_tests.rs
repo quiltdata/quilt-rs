@@ -1502,3 +1502,98 @@ async fn test_state_short_circuits_and_resolves_the_status() -> Res {
 
     Ok(())
 }
+
+/// A kept walk's changes come back under the remote's `latest` read now, and
+/// only while the lineage is the one the walk read.
+#[test(tokio::test)]
+async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "kept").into();
+    let latest = S3Uri::try_from("s3://bkt/.quilt/named_packages/test/kept/latest")?;
+    let write_lineage = async |commit_json: &str| -> Res {
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "test/kept": {{
+                        "commit": {commit_json},
+                        "remote": {{
+                            "bucket": "bkt",
+                            "namespace": "test/kept",
+                            "hash": "abcdef",
+                            "catalog": "quilt.test"
+                        }},
+                        "base_hash": "abcdef",
+                        "latest_hash": "abcdef",
+                        "paths": {{}}
+                    }}
+                }},
+                "home": "{}"
+            }}"#,
+            home.as_ref().display(),
+        );
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+        Ok(())
+    };
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    write_lineage("null").await?;
+    storage
+        .write_byte_stream(
+            paths.installed_manifest(&namespace, "abcdef"),
+            ByteStream::from_static(br#"{"version": "v0"}"#),
+        )
+        .await?;
+    remote.put_object(None, &latest, b"abcdef".to_vec()).await?;
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        paths: paths.clone(),
+        remote: std::sync::Arc::new(remote),
+        storage: storage.clone(),
+        namespace: namespace.clone(),
+        state_store: None,
+    };
+    let package_home = package.package_home().await?;
+    std::fs::write(package_home.join("new.txt"), b"new")?;
+
+    let walked_lineage = package.lineage().await?;
+    let walked = package.status(None).await?;
+    assert_eq!(walked.upstream_state, UpstreamState::UpToDate);
+    assert_eq!(walked.changes.len(), 1);
+
+    package
+        .remote
+        .put_object(None, &latest, b"fedcba".to_vec())
+        .await?;
+    let kept = package
+        .status_from_walk(&walked_lineage, walked.clone())
+        .await?
+        .expect("the lineage is the walked one");
+    assert_eq!(kept.upstream_state, UpstreamState::Behind);
+    assert_eq!(kept.latest_hash, "fedcba");
+    assert!(kept.latest_refreshed);
+    assert_eq!(kept.changes, walked.changes);
+
+    write_lineage(
+        r#"{
+            "timestamp": "2024-01-01T00:00:00Z",
+            "hash": "123456",
+            "prev_hashes": []
+        }"#,
+    )
+    .await?;
+    assert!(
+        package
+            .status_from_walk(&walked_lineage, walked)
+            .await?
+            .is_none(),
+        "a commit since the walk needs a new walk"
+    );
+    Ok(())
+}

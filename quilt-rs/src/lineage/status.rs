@@ -50,7 +50,7 @@ impl fmt::Display for UpstreamState {
 }
 
 /// Status of the package and working directory of the package
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct InstalledPackageStatus {
     /// Current commit vs upstream state
     pub upstream_state: UpstreamState,

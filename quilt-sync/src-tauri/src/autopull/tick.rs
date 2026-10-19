@@ -19,6 +19,7 @@ use crate::autopull::reporter::PackageStatusEvent;
 use crate::autopull::reporter::settled_fingerprint;
 use crate::autopull::reporter::status_fingerprint;
 use crate::autopull::status::SyncTrayAggregator;
+use crate::autopull::watched::WatchedWalks;
 use crate::commands::RoleCache;
 use crate::model;
 use crate::model::QuiltModel;
@@ -346,6 +347,7 @@ pub(crate) async fn refresh_then_maybe_sync(
     lineage: &quilt::lineage::PackageLineage,
     publish: &PublishSettings,
     last_change: &LastChange,
+    walks: &WatchedWalks,
     wait: Duration,
     pull_enabled: bool,
     push_enabled: bool,
@@ -382,11 +384,28 @@ pub(crate) async fn refresh_then_maybe_sync(
     // now?" question asked afterwards.
     let epoch_before = aggregator.apply_epoch(namespace);
 
-    // `status` does the cheap tag refresh; an expired token surfaces here.
-    let status = model
-        .locked_package_status(&locked, None)
-        .await
-        .map_err(classify_transient_or_login)?;
+    // `status` does the cheap tag refresh; an expired token surfaces here. A
+    // walk the folder watcher vouches for stands in for the working-tree walk.
+    let reused = match walks.reusable(namespace) {
+        Some((walked_lineage, walked)) => model
+            .locked_package_status_from_walk(&locked, &walked_lineage, walked)
+            .await
+            .map_err(classify_transient_or_login)?,
+        None => None,
+    };
+    let status = if let Some(status) = reused {
+        status
+    } else {
+        let start = walks.begin(namespace);
+        let status = model
+            .locked_package_status(&locked, None)
+            .await
+            .map_err(classify_transient_or_login)?;
+        // `lineage` was read before the lock. Had it changed since, the kept
+        // walk only fails to match, and the next tick walks.
+        walks.record(namespace, start, lineage.clone(), &status);
+        status
+    };
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
     // Observed-tree fingerprint, taken before the publish path consumes `status`.
@@ -735,6 +754,7 @@ pub(crate) async fn run_once(
             &lineage,
             &publish,
             &inner.last_change,
+            &inner.walks,
             wait,
             pull_enabled,
             push_enabled,

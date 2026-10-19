@@ -168,12 +168,7 @@ fn main() {
                 reporter.clone(),
                 last_change,
             );
-            fswatcher::spawn(
-                app.handle(),
-                fswatcher_settings.clone(),
-                autosync_settings.clone(),
-                &reporter,
-            );
+            fswatcher::spawn(app.handle(), fswatcher_settings.clone(), &reporter);
             autopull::activity::spawn_forwarder(app.handle().clone(), watcher.subscribe_activity());
             app.manage(publish_settings);
             app.manage(autosync_settings);

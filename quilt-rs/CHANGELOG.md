@@ -25,6 +25,9 @@
 
 - `state_store::PackageStateStore`: an optional store for per-package state the desktop app keeps, at `DomainPaths::state_db` (`.quilt/state.db`), in SQLite. Its first table holds each package's last-change time. No method returns an error: a missing, damaged or deleted file is created again, and the CLI never opens it (<https://github.com/quiltdata/quilt-rs/pull/1134>)
 - `file_stamp`: `read_dir_stamps` and `stamp` read each file's size, edit time, change time and file ID, a whole folder per call on macOS and Windows (<https://github.com/quiltdata/quilt-rs/pull/1144>)
+- `LockedPackage::status_from_walk`: a status with the remote's `latest` read now and an earlier walk's changes, while the lineage is the one that walk read (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- `file_stamp::on_local_volume`: whether a folder is on a local volume, not a network share or a FUSE mount (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- `InstalledPackageStatus` is `Clone` (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
 - A stat cache in the state store: `flow::status_cached` hashes only the files whose stamp changed since an earlier walk, and once a day hashes every file anyway. `LocalDomain::with_state_store` gives a domain's packages one; the CLI has none and hashes every file as before. With a store, commit and publish hash the changed files again before they name objects by them (<https://github.com/quiltdata/quilt-rs/pull/1144>)
 
 ### Changed

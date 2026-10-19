@@ -62,6 +62,66 @@ pub fn stamp(path: &Path) -> io::Result<FileStamp> {
     return portable::stamp(path);
 }
 
+/// Whether `path` is on a local volume, whose file events can be trusted: not a
+/// network share or a FUSE mount. `false` when it can't be told.
+#[must_use]
+pub fn on_local_volume(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    return macos::on_local_volume(path);
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    return linux::on_local_volume(path);
+    #[cfg(windows)]
+    return windows::on_local_volume(path);
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    )))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod linux {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+
+    /// `statfs` magic numbers of network and FUSE file systems.
+    const REMOTE: [u32; 9] = [
+        0x6969,      // NFS
+        0x517B,      // SMB
+        0xFF53_4D42, // CIFS
+        0xFE53_4D42, // SMB2
+        0x7375_7245, // Coda
+        0x5346_414F, // AFS
+        0x0102_1997, // 9P
+        0x6573_5546, // FUSE
+        0x00C3_6400, // Ceph
+    ];
+
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "`f_type` is a signed word whose low 32 bits are the magic number"
+    )]
+    pub(super) fn on_local_volume(path: &Path) -> bool {
+        let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: `statfs` is plain data, valid zeroed.
+        let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+        // SAFETY: `path` is NUL-terminated and `fs` is a valid out pointer.
+        if unsafe { libc::statfs(path.as_ptr(), &raw mut fs) } != 0 {
+            return false;
+        }
+        !REMOTE.contains(&(fs.f_type as u32))
+    }
+}
+
 /// `std::fs` listing with neither a change time nor a file ID: what the folder
 /// calls fall back to.
 #[cfg(any(target_os = "macos", windows))]
@@ -248,6 +308,23 @@ mod macos {
         }
     }
 
+    /// A local volume has `MNT_LOCAL`; macFUSE can set it too, so FUSE is
+    /// told by its type name.
+    pub(super) fn on_local_volume(path: &Path) -> bool {
+        let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: `statfs` is plain data, valid zeroed.
+        let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+        // SAFETY: `path` is NUL-terminated and `fs` is a valid out pointer.
+        if unsafe { libc::statfs(path.as_ptr(), &raw mut fs) } != 0 {
+            return false;
+        }
+        // SAFETY: the kernel NUL-terminates `f_fstypename`.
+        let name = unsafe { std::ffi::CStr::from_ptr(fs.f_fstypename.as_ptr()) }.to_bytes();
+        fs.f_flags & libc::MNT_LOCAL.cast_unsigned() != 0 && !name.windows(4).any(|w| w == b"fuse")
+    }
+
     pub(super) fn read_dir_stamps(dir: &Path) -> io::Result<Vec<(OsString, EntryKind, FileStamp)>> {
         let c_path = CString::new(dir.as_os_str().as_bytes())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains a NUL byte"))?;
@@ -409,14 +486,40 @@ mod windows {
         FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
         FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
         FileAttributeTagInfo, FileBasicInfo, FileIdExtdDirectoryInfo,
-        FileIdExtdDirectoryRestartInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx,
-        OPEN_EXISTING, SYNCHRONIZE,
+        FileIdExtdDirectoryRestartInfo, FileIdInfo, FileStandardInfo, GetDriveTypeW,
+        GetFileInformationByHandleEx, OPEN_EXISTING, SYNCHRONIZE,
     };
 
     const BUF_LEN: usize = 64 * 1024;
     const TICKS_PER_SEC: i64 = 10_000_000;
     // 100ns ticks from 1601-01-01 to 1970-01-01.
     const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
+
+    /// `GetDriveTypeW` results, from `WinBase.h`.
+    const DRIVE_REMOVABLE: u32 = 2;
+    const DRIVE_FIXED: u32 = 3;
+    const DRIVE_RAMDISK: u32 = 6;
+
+    /// By the drive letter's type. A `\\server\share` path is a network one.
+    pub(super) fn on_local_volume(path: &Path) -> bool {
+        use std::path::{Component, Prefix};
+        let Ok(absolute) = std::path::absolute(path) else {
+            return false;
+        };
+        let Some(Component::Prefix(prefix)) = absolute.components().next() else {
+            return false;
+        };
+        let (Prefix::Disk(letter) | Prefix::VerbatimDisk(letter)) = prefix.kind() else {
+            return false;
+        };
+        let root: Vec<u16> = format!("{}:\\", char::from(letter))
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        // SAFETY: `root` is NUL-terminated.
+        let kind = unsafe { GetDriveTypeW(root.as_ptr()) };
+        matches!(kind, DRIVE_REMOVABLE | DRIVE_FIXED | DRIVE_RAMDISK)
+    }
 
     struct Handle(HANDLE);
 
@@ -675,6 +778,19 @@ mod tests {
             .into_iter()
             .map(|(name, kind, stamp)| (name, (kind, stamp)))
             .collect()
+    }
+
+    #[test]
+    fn a_temp_folder_is_on_a_local_volume() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(on_local_volume(tmp.path()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_folder_is_not_known_to_be_local() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!on_local_volume(&tmp.path().join("missing")));
     }
 
     #[test]
