@@ -574,8 +574,8 @@ pub(crate) async fn observe_walk(
     }
 }
 
-/// Walk every package once at launch, without the network, as the file watcher
-/// does on a change. Until its first walk the app doesn't know a package has
+/// Walk every package once at launch, with no pull or publish, as the file
+/// watcher does on a change. Until its first walk the app doesn't know a package has
 /// changes, and the first check is a whole interval away. The stat cache keeps
 /// this cheap, and its values still show what changed while the app was closed.
 pub(crate) async fn walk_every_package(model: &impl QuiltModel, inner: &WatcherInner) {
