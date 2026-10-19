@@ -177,13 +177,26 @@ async fn swap_staged_into_place(
         return place_where_absent(storage, staged, lineage).await;
     }
     for (staged_path, working_dest, row) in staged {
-        if let Protect::BaseContent(expected) = protect
-            && let Some(base_row) = expected.get(&row.logical_key)
-        {
-            let unchanged = matches!(
-                refresh_hash(storage, working_dest, (*base_row).clone()).await,
-                Ok(None)
-            );
+        if let Protect::BaseContent(expected) = protect {
+            // An untracked path with nothing on disk has nothing to lose. A
+            // file at an untracked path may also already hold the incoming
+            // bytes, as an interrupted pull leaves it; anything else at one
+            // `base` never had is the user's own.
+            let tracked = lineage.paths.contains_key(&row.logical_key);
+            let holds = |expected: ManifestRow| async move {
+                matches!(
+                    refresh_hash(storage, working_dest, expected).await,
+                    Ok(None)
+                )
+            };
+            let unchanged =
+                if !tracked && (!storage.exists(working_dest).await || holds(row.clone()).await) {
+                    true
+                } else if let Some(base_row) = expected.get(&row.logical_key) {
+                    holds((*base_row).clone()).await
+                } else {
+                    tracked
+                };
             if !unchanged {
                 debug!(
                     "❌ {} changed while the revision was being staged",
@@ -241,7 +254,9 @@ pub(crate) enum Protect<'a> {
     /// Replace a working file only while it still holds the content its row
     /// names. Anything else is an edit that landed after the caller checked,
     /// and overwriting it would lose work that was never committed and cannot
-    /// be recovered — there is no reflog.
+    /// be recovered — there is no reflog. A destination with no row here, such
+    /// as a path the new revision adds, is written only where nothing is or
+    /// where the file already holds the incoming bytes.
     BaseContent(&'a BTreeMap<PathBuf, ManifestRow>),
     /// Overwrite whatever is there. Discarding local work is the operation, so
     /// there is nothing to protect.

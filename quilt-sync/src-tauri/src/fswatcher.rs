@@ -71,8 +71,11 @@ pub fn spawn(
         tauri::async_runtime::block_on(async { snapshot_mappings(model_ref).await })
     };
     if let Some(initial) = initial {
-        reactor::note_volumes(&mut state, &initial);
-        if let Err(err) = state.subscription.reconcile(initial) {
+        reactor::note_volumes(&mut state, &initial.packages);
+        if let Err(err) = state
+            .subscription
+            .reconcile(initial.packages, initial.user_rules)
+        {
             emit_subscriber_error(reporter.as_ref(), &err);
         }
     }

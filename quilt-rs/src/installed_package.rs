@@ -395,12 +395,21 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         host_config: HostConfig,
     ) -> Res<(lineage::PackageLineage, InstalledPackageStatus)> {
         let Some(store) = &self.state_store else {
-            return flow::status(lineage, &self.storage, manifest, package_home, host_config).await;
+            return flow::status(
+                lineage,
+                &self.storage,
+                &self.paths,
+                manifest,
+                package_home,
+                host_config,
+            )
+            .await;
         };
         let mut cache = store.stat_cache(&self.namespace).await;
         let walked = flow::status_cached(
             lineage,
             &self.storage,
+            &self.paths,
             manifest,
             package_home,
             host_config,
@@ -1059,7 +1068,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         // tag resolution, then the manifest fetch, then the walk. The ctor
         // short-circuits `base == latest` before any fetch, so `Ahead` (where
         // `latest == base`) costs no network here.
-        let snapshot = match flow::snapshot_for_pull(
+        let (lineage, snapshot) = match flow::snapshot_for_pull(
             lineage,
             &base,
             &self.paths,
@@ -1070,7 +1079,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await
         {
-            Ok((_, snapshot)) => snapshot,
+            Ok(snapshot) => snapshot,
             Err(Error::PackageOp(PackageOpError::AlreadyUpToDate)) => {
                 return Ok(nothing_to_pull());
             }
@@ -1090,6 +1099,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             &self.storage,
             &package_home,
             &snapshot.status,
+            &lineage.paths,
             &base,
             &snapshot.latest_manifest,
         )

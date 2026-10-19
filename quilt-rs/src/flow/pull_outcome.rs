@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -11,7 +12,9 @@ use crate::checksum::refresh_hash;
 use crate::io::storage::Storage;
 use crate::lineage::Change;
 use crate::lineage::InstalledPackageStatus;
+use crate::lineage::LineagePaths;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestRow;
 use crate::object_hash::ObjectHash;
 
 /// A *dry-run* verdict of what a [`pull`](super::pull) **would** do, computed
@@ -36,8 +39,9 @@ pub enum PullOutcome {
     },
     /// A path changed on both sides with a different result — either a tracked
     /// path modified/removed on both sides, or a path *added* on both sides
-    /// (present in `latest`, absent from `base`) with different content. Any
-    /// single conflict blocks the whole (atomic) pull.
+    /// (present in `latest`, absent from `base`) with different content, or an
+    /// ignored local file at a path the remote adds or modifies. Any single
+    /// conflict blocks the whole (atomic) pull.
     Blocked { conflicts: Vec<PathBuf> },
 }
 
@@ -174,7 +178,8 @@ fn same_resulting_content(local: &Change, remote: &RemoteChange, identical: bool
 }
 
 /// The paths [`identical_to_latest`] settled: locally changed, and already
-/// holding exactly what `latest` holds.
+/// holding exactly what `latest` holds — plus the untracked files the walk did
+/// not see that are in the way of the remote's write.
 ///
 /// A newtype with a private field and no `Default`, so the only way to obtain
 /// one is to run the pass. That is the whole point of it. While this was a
@@ -183,20 +188,25 @@ fn same_resulting_content(local: &Change, remote: &RemoteChange, identical: bool
 /// exactly that until the change's verification went looking, which is as clear
 /// a demonstration as one could ask for that a convention is not enough here.
 #[derive(Debug)]
-pub struct Reconciled(BTreeSet<PathBuf>);
+pub struct Reconciled {
+    identical: BTreeSet<PathBuf>,
+    /// Untracked files that still hold `base`'s bytes: safe to replace.
+    holds_base: BTreeSet<PathBuf>,
+    in_the_way: BTreeSet<PathBuf>,
+}
 
 impl Reconciled {
     /// Whether the pass settled this path as already holding `latest`'s bytes.
     #[must_use]
     pub fn contains(&self, path: &Path) -> bool {
-        self.0.contains(path)
+        self.identical.contains(path)
     }
 
     /// Whether the pass settled nothing — the ordinary case, where every
     /// contested path's digests were already comparable.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.identical.is_empty()
     }
 
     /// A reconciliation that was never run. Test-only, and named to say so: a
@@ -205,7 +215,11 @@ impl Reconciled {
     /// working tree.
     #[cfg(test)]
     pub(crate) fn unreconciled() -> Self {
-        Self(BTreeSet::new())
+        Self {
+            identical: BTreeSet::new(),
+            holds_base: BTreeSet::new(),
+            in_the_way: BTreeSet::new(),
+        }
     }
 }
 
@@ -227,6 +241,10 @@ impl Reconciled {
 /// [`pull`](super::pull) uses against the base row. `Ok(None)` from it means
 /// the file already matches that row.
 ///
+/// Untracked files the walk gave no hash are settled here too: ignored ones,
+/// and ones inside a folder it skipped whole. At a path the remote writes, such
+/// a file must hold `latest`'s bytes or `base`'s, or it is in the way.
+///
 /// I/O only where the digests cannot be compared: a path whose algorithms
 /// already agree is left to [`classify_pull`]'s own comparison, so a package
 /// and host in step hash nothing here. Kept out of [`classify_pull`] so that
@@ -239,10 +257,54 @@ pub async fn identical_to_latest(
     storage: &(impl Storage + Sync),
     working_dir: &Path,
     status: &InstalledPackageStatus,
+    tracked: &LineagePaths,
     base: &Manifest,
     latest: &Manifest,
 ) -> Res<Reconciled> {
     let mut identical = BTreeSet::new();
+    let mut in_the_way = BTreeSet::new();
+    let mut holds_base = BTreeSet::new();
+    // Untracked files the walk gave no hash, at paths the remote writes:
+    // ignored ones, and ones inside a folder it skipped whole. An interrupted
+    // pull leaves such a file holding `latest`'s bytes.
+    let base_rows: HashMap<&Path, &ManifestRow> = base
+        .rows
+        .iter()
+        .rev()
+        .map(|row| (row.logical_key.as_path(), row))
+        .collect();
+    for latest_row in &latest.rows {
+        let path = &latest_row.logical_key;
+        if tracked.contains_key(path) || status.changes.contains_key(path) {
+            continue;
+        }
+        let base_row = base_rows.get(path.as_path()).copied();
+        if base_row.is_some_and(|base_row| base_row.hash == latest_row.hash) {
+            continue;
+        }
+        let file = working_dir.join(path);
+        if !storage.exists(&file).await {
+            continue;
+        }
+        // A folder or pipe there is in the way too, and is never read.
+        let set = if !storage.is_file(&file).await {
+            &mut in_the_way
+        } else if refresh_hash(storage, &file, latest_row.clone())
+            .await?
+            .is_none()
+        {
+            &mut identical
+        } else if let Some(base_row) = base_row
+            && refresh_hash(storage, &file, base_row.clone())
+                .await?
+                .is_none()
+        {
+            &mut holds_base
+        } else {
+            &mut in_the_way
+        };
+        set.insert(path.clone());
+    }
     for (path, change) in &status.changes {
         let local_hash = match change {
             Change::Modified(row) | Change::Added(row) => &row.hash,
@@ -276,7 +338,11 @@ pub async fn identical_to_latest(
             Err(err) => return Err(err),
         }
     }
-    Ok(Reconciled(identical))
+    Ok(Reconciled {
+        identical,
+        holds_base,
+        in_the_way,
+    })
 }
 
 /// Classify what a pull would do. Pure — no network, no I/O.
@@ -329,13 +395,15 @@ pub(crate) fn classify_pull_with_delta(
     if base == latest {
         return PullOutcome::UpToDate;
     }
-    if status.changes.is_empty() {
+
+    let mut conflicts = ignored_in_the_way(status, delta, identical);
+    conflicts.extend(identical.in_the_way.iter().cloned());
+    if status.changes.is_empty() && conflicts.is_empty() {
         // Includes the metadata-only case (empty `delta`): the surgical touch
         // set is empty, but the hashes still advance to `latest`.
         return PullOutcome::CleanUpdate;
     }
 
-    let mut conflicts = Vec::new();
     let mut added = Vec::new();
     let mut modified = Vec::new();
     let mut removed = Vec::new();
@@ -369,8 +437,43 @@ pub(crate) fn classify_pull_with_delta(
             removed,
         }
     } else {
+        conflicts.sort();
         PullOutcome::Blocked { conflicts }
     }
+}
+
+/// Ignored local files at paths the remote writes to.
+///
+/// The status walk leaves an ignored file out of `changes`, so it never meets
+/// the both-changed check above, yet a fetch would replace it all the same. An
+/// ignored file carries no hash, so its content cannot be compared: any one at
+/// a path the remote adds or modifies is a conflict, unless
+/// [`identical_to_latest`] has already judged it. A tracked
+/// file hidden by the package's rules is already a `Removed` change and is left
+/// to that check.
+fn ignored_in_the_way(
+    status: &InstalledPackageStatus,
+    delta: &BTreeMap<PathBuf, RemoteChange>,
+    reconciled: &Reconciled,
+) -> Vec<PathBuf> {
+    status
+        .ignored_files
+        .iter()
+        .map(|(path, _, _)| path)
+        .filter(|path| {
+            !status.changes.contains_key(*path)
+                && !reconciled.identical.contains(*path)
+                && !reconciled.holds_base.contains(*path)
+                && !reconciled.in_the_way.contains(*path)
+        })
+        .filter(|path| {
+            matches!(
+                delta.get(*path),
+                Some(RemoteChange::Added(_) | RemoteChange::Modified(_))
+            )
+        })
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -393,6 +496,8 @@ mod tests {
     use crate::lineage::UpstreamState;
     use crate::manifest::Manifest;
     use crate::manifest::ManifestRow;
+    use crate::quiltignore::IgnoredBy;
+    use crate::quiltignore::RuleSource;
 
     fn row(key: &str, hash_seed: &[u8]) -> ManifestRow {
         ManifestRow {
@@ -553,8 +658,15 @@ mod tests {
             Change::Modified(local_row),
         )]));
 
-        let identical =
-            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
         let out = classify_pull(&status, &base, &latest, &identical);
 
         assert_eq!(
@@ -589,8 +701,15 @@ mod tests {
             Change::Removed(row("a", b"the old content")),
         )]));
 
-        let identical =
-            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
         assert!(
             identical.is_empty(),
             "a removed path has no content to be identical to"
@@ -657,8 +776,15 @@ mod tests {
         let latest = manifest_of(vec![latest_row]);
         let status = behind(ChangeSet::from([(path.clone(), Change::Added(local_row))]));
 
-        let identical =
-            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
         assert!(
             identical.is_empty(),
             "different bytes are not identical, whatever the algorithms say"
@@ -727,8 +853,15 @@ mod tests {
             Change::Modified(local_row),
         )]));
 
-        let identical =
-            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
         let out = classify_pull(&status, &base, &latest, &identical);
 
         assert_eq!(
@@ -950,6 +1083,306 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    fn ignored_by_default(path: &str) -> (PathBuf, IgnoredBy, u64) {
+        (
+            PathBuf::from(path),
+            IgnoredBy {
+                pattern: path.to_string(),
+                source: RuleSource::Default,
+            },
+            1,
+        )
+    }
+
+    /// An ignored local file is not in `changes`, but a fetch would still
+    /// replace it. With no hash to compare, a remote add at its path blocks.
+    #[test]
+    fn ignored_local_file_at_a_remote_add_blocks() {
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"1"), row(".env", b"remote")]);
+        let mut status = behind(ChangeSet::default());
+        status.ignored_files = vec![ignored_by_default(".env"), ignored_by_default(".DS_Store")];
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &Reconciled::unreconciled()),
+            PullOutcome::Blocked {
+                conflicts: vec![PathBuf::from(".env")]
+            }
+        );
+    }
+
+    /// An interrupted pull can leave the incoming file written but untracked;
+    /// if the rules hide it, the walk lists it as ignored. Holding exactly
+    /// `latest`'s bytes, it is not a conflict, so the retry can finish.
+    #[test(tokio::test)]
+    async fn ignored_local_file_with_latest_bytes_does_not_block() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from(".env");
+        storage
+            .write_byte_stream(
+                working_dir.join(&path),
+                ByteStream::from_static(b"SECRET=remote"),
+            )
+            .await?;
+        let latest_row = calculate_hash(
+            &storage,
+            &working_dir.join(&path),
+            &path,
+            &HostConfig::default(),
+        )
+        .await?;
+
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"1"), latest_row]);
+        let mut status = behind(ChangeSet::default());
+        status.ignored_files = vec![ignored_by_default(".env")];
+
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::CleanUpdate
+        );
+        Ok(())
+    }
+
+    /// A folder the walk skips whole leaves its files out of both `changes`
+    /// and `ignored_files`. The pass still finds one at a path the remote
+    /// writes: different bytes are in the way, `latest`'s bytes are not.
+    #[test(tokio::test)]
+    async fn unseen_file_at_a_remote_write_blocks_unless_it_holds_latest() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let in_the_way = PathBuf::from("node_modules/item.json");
+        let settled = PathBuf::from("node_modules/other.json");
+        for (path, body) in [(&in_the_way, "local"), (&settled, "remote other")] {
+            storage
+                .write_byte_stream(
+                    working_dir.join(path),
+                    ByteStream::from(body.as_bytes().to_vec()),
+                )
+                .await?;
+        }
+        let settled_row = calculate_hash(
+            &storage,
+            &working_dir.join(&settled),
+            &settled,
+            &HostConfig::default(),
+        )
+        .await?;
+
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![
+            row("a", b"1"),
+            row("node_modules/item.json", b"remote"),
+            settled_row,
+        ]);
+        let status = behind(ChangeSet::default());
+
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::Blocked {
+                conflicts: vec![in_the_way]
+            }
+        );
+        Ok(())
+    }
+
+    /// A folder where the remote adds a file is in the way, and is not read.
+    #[test(tokio::test)]
+    async fn a_folder_at_a_remote_add_blocks() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        storage
+            .write_byte_stream(
+                working_dir.join(".env/inner"),
+                ByteStream::from_static(b"x"),
+            )
+            .await?;
+
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"1"), row(".env", b"remote")]);
+        let status = behind(ChangeSet::default());
+
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::Blocked {
+                conflicts: vec![PathBuf::from(".env")]
+            }
+        );
+        Ok(())
+    }
+
+    /// A tracked file the walk saw unchanged is not in `changes` either, but it
+    /// holds `base`'s bytes and the pull replaces it as usual. The pass leaves
+    /// tracked paths alone.
+    #[test(tokio::test)]
+    async fn tracked_unchanged_file_is_not_in_the_way() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("a");
+        storage
+            .write_byte_stream(working_dir.join(&path), ByteStream::from_static(b"base"))
+            .await?;
+
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"2")]);
+        let status = behind(ChangeSet::default());
+        let tracked = LineagePaths::from([(path, crate::lineage::PathState::default())]);
+
+        let identical =
+            identical_to_latest(&storage, &working_dir, &status, &tracked, &base, &latest).await?;
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::CleanUpdate
+        );
+        Ok(())
+    }
+
+    /// An untracked ignored file at a path `base` has, still holding `base`'s
+    /// bytes, is no local edit: the pull replaces it like any other.
+    #[test(tokio::test)]
+    async fn ignored_local_file_holding_base_does_not_block() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let path = PathBuf::from("hidden.dat");
+        storage
+            .write_byte_stream(working_dir.join(&path), ByteStream::from_static(b"base"))
+            .await?;
+        let base_row = calculate_hash(
+            &storage,
+            &working_dir.join(&path),
+            &path,
+            &HostConfig::default(),
+        )
+        .await?;
+
+        let base = manifest_of(vec![base_row]);
+        let latest = manifest_of(vec![row("hidden.dat", b"remote")]);
+        let mut status = behind(ChangeSet::default());
+        status.ignored_files = vec![ignored_by_default("hidden.dat")];
+
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::CleanUpdate
+        );
+
+        // Different bytes at the same path are in the way, and named once.
+        storage
+            .write_byte_stream(working_dir.join(&path), ByteStream::from_static(b"edit"))
+            .await?;
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::Blocked {
+                conflicts: vec![path]
+            }
+        );
+        Ok(())
+    }
+
+    /// Conflicts from ignored files and from changes come out together, in
+    /// path order.
+    #[test]
+    fn ignored_and_changed_conflicts_are_reported_together() {
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"remote"), row(".env", b"remote")]);
+        let mut status = behind(ChangeSet::from([(
+            PathBuf::from("a"),
+            Change::Modified(row("a", b"local")),
+        )]));
+        status.ignored_files = vec![ignored_by_default(".env")];
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &Reconciled::unreconciled()),
+            PullOutcome::Blocked {
+                conflicts: vec![PathBuf::from(".env"), PathBuf::from("a")]
+            }
+        );
+    }
+
+    /// An ignored file the remote leaves alone is no business of a pull.
+    #[test]
+    fn ignored_local_file_elsewhere_does_not_block() {
+        let base = manifest_of(vec![row("a", b"1")]);
+        let latest = manifest_of(vec![row("a", b"2")]);
+        let mut status = behind(ChangeSet::default());
+        status.ignored_files = vec![ignored_by_default(".env")];
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &Reconciled::unreconciled()),
+            PullOutcome::CleanUpdate
+        );
+    }
+
+    /// A tracked file hidden by the package's rules is already a `Removed`
+    /// change, and the both-changed check decides it: a remote removal agrees.
+    #[test]
+    fn ignored_tracked_file_is_left_to_its_change() {
+        let base = manifest_of(vec![row("a", b"1"), row("b", b"2")]);
+        let latest = manifest_of(vec![row("b", b"2")]);
+        let mut status = behind(ChangeSet::from([(
+            PathBuf::from("a"),
+            Change::Removed(row("a", b"1")),
+        )]));
+        status.ignored_files = vec![(
+            PathBuf::from("a"),
+            IgnoredBy {
+                pattern: "a".to_string(),
+                source: RuleSource::Package { line: 1 },
+            },
+            1,
+        )];
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &Reconciled::unreconciled()),
+            PullOutcome::KeepsLocalChanges {
+                added: vec![],
+                modified: vec![],
+                removed: vec![],
+            }
+        );
     }
 
     /// The delta reports all three kinds, additions included. It is

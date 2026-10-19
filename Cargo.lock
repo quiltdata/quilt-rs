@@ -5828,7 +5828,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-cli"
-version = "0.36.3-dev"
+version = "0.37.0-dev"
 dependencies = [
  "clap",
  "dirs",
@@ -5897,13 +5897,12 @@ dependencies = [
 
 [[package]]
 name = "quilt-sync"
-version = "0.22.13-dev"
+version = "0.23.0-dev"
 dependencies = [
  "chrono",
  "dotenv",
  "dunce",
  "futures-util",
- "ignore",
  "mixpanel-rs",
  "mockall",
  "notify",

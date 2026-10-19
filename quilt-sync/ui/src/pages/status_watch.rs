@@ -77,7 +77,7 @@ impl StatusWatch {
     /// Act on something that carries no fingerprint to compare.
     ///
     /// A pause is the case: `status_fingerprint` digests the upstream state,
-    /// the newer revision and the changed paths, and a package can pause
+    /// the newer revision, the changed paths and the ignored ones, and a package can pause
     /// without any of them moving — a
     /// workflow rejection, a refused role. So the status stream would report the
     /// same observation, this would call it old news, and the pause would never

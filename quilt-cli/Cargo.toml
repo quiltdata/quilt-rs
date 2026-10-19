@@ -5,7 +5,7 @@ readme = "README.md"
 keywords = ["data", "versioning", "cli", "s3", "reproducibility"]
 categories = ["command-line-utilities", "filesystem", "science"]
 
-version = "0.36.3-dev"
+version = "0.37.0-dev"
 
 # Inherit from workspace
 edition.workspace = true

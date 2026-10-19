@@ -22,6 +22,7 @@ use crate::fswatcher::subscriber::MappingSignal;
 use crate::fswatcher::subscriber::SignalKind;
 use crate::fswatcher::subscriber::SubscriberError;
 use crate::fswatcher::subscriber::Subscription;
+use crate::fswatcher::subscriber::WatchedPackage;
 use crate::model::Model;
 use crate::model::QuiltModel;
 use crate::quilt;
@@ -108,6 +109,11 @@ impl TrailingWalks {
         self.walking.remove(namespace);
     }
 
+    /// Drop the pending walks; the ones running finish.
+    fn clear(&mut self) {
+        self.due.clear();
+    }
+
     fn retain(&mut self, live: &BTreeSet<Namespace>) {
         self.due.retain(|ns, _| live.contains(ns));
     }
@@ -144,10 +150,11 @@ async fn drive(state: &mut ReactorState, model: &impl QuiltModel, inner: &Watche
                     // the inotify slots. Especially important when the user
                     // toggles off in response to the inotify-limit toast.
                     // `reconcile(Vec::new())` is a no-op if already empty.
-                    if let Err(err) = state.subscription.reconcile(Vec::new()) {
+                    if let Err(err) = state.subscription.reconcile(Vec::new(), None) {
                         emit_subscriber_error(state.reporter.as_ref(), &err);
                     }
                     inner.walks.clear();
+                    state.trailing.clear();
                     // Re-enabling later should be able to surface the
                     // inotify-limit toast again if the limit still applies.
                     state.last_reconcile_error_kind = None;
@@ -164,6 +171,10 @@ async fn drive(state: &mut ReactorState, model: &impl QuiltModel, inner: &Watche
                 handle_signal(state, inner, &signal, Instant::now()).await;
             }
             () = tokio::time::sleep_until(next_due.unwrap_or_else(Instant::now)), if next_due.is_some() => {
+                if !state.settings.read().await.enabled {
+                    state.trailing.clear();
+                    continue;
+                }
                 for namespace in state.trailing.take_due(Instant::now()) {
                     let reporter = Arc::clone(&state.reporter);
                     walks.push(async move {
@@ -184,9 +195,8 @@ async fn drive(state: &mut ReactorState, model: &impl QuiltModel, inner: &Watche
 }
 
 /// One signal. A change moves the package's last-change time at once, with
-/// no walk; a change or a rescan sets its trailing walk; a change of a file
-/// the watcher doesn't walk for leaves the walk to the tick; a lost watch
-/// stops the tick from trusting the package's walks.
+/// no walk; a change or a rescan sets its trailing walk; a lost watch stops
+/// the tick from trusting the package's walks.
 async fn handle_signal(
     state: &mut ReactorState,
     inner: &WatcherInner,
@@ -203,7 +213,6 @@ async fn handle_signal(
             inner.walks.on_signal(&signal.namespace);
             state.trailing.on_signal(&signal.namespace, now);
         }
-        SignalKind::Stale => inner.walks.on_signal(&signal.namespace),
         SignalKind::Lost => inner.walks.forget(&signal.namespace),
     }
 }
@@ -287,14 +296,21 @@ pub(crate) async fn process_signal(
     }
 }
 
-/// Snapshot the current installed-packages list and resolve each one's
-/// `package_home`. Returns `None` if the model itself fails (so the caller
+/// What the subscription should watch.
+pub(crate) struct Mappings {
+    /// Each installed package's namespace, home and files.
+    pub packages: Vec<(Namespace, WatchedPackage)>,
+    /// The user-wide ignore file. `None` with no packages, since then there is
+    /// nothing for it to re-check.
+    pub user_rules: Option<PathBuf>,
+}
+
+/// Snapshot the current installed-packages list and read each one's
+/// `package_home` and files from its lineage. Returns `None` if the model itself fails (so the caller
 /// skips reconciliation rather than unwatching every namespace on a
-/// transient error); an empty `Some(_)` is distinct and means "no
+/// transient error); empty `packages` is distinct and means "no
 /// installed packages".
-pub(crate) async fn snapshot_mappings(
-    model: &impl QuiltModel,
-) -> Option<Vec<(Namespace, PathBuf)>> {
+pub(crate) async fn snapshot_mappings(model: &impl QuiltModel) -> Option<Mappings> {
     let pkgs = match model.get_installed_packages_list().await {
         Ok(list) => list,
         Err(err) => {
@@ -304,15 +320,27 @@ pub(crate) async fn snapshot_mappings(
     };
     let mut out = Vec::with_capacity(pkgs.len());
     for pkg in &pkgs {
-        match pkg.package_home().await {
-            Ok(home) => out.push((pkg.namespace.clone(), home)),
+        match pkg.lineage.read(&pkg.storage).await {
+            Ok((home, lineage)) => out.push((
+                pkg.namespace.clone(),
+                WatchedPackage::new(
+                    home,
+                    pkg.paths.user_quiltignore(),
+                    lineage.paths.into_keys(),
+                ),
+            )),
             Err(err) => warn!(
-                "fswatcher: cannot resolve package_home for {}: {err}",
+                "fswatcher: cannot read the lineage of {}: {err}",
                 pkg.namespace
             ),
         }
     }
-    Some(out)
+    // Every package shares the one domain, so any of them knows the path.
+    let user_rules = pkgs.first().map(|pkg| pkg.paths.user_quiltignore());
+    Some(Mappings {
+        packages: out,
+        user_rules,
+    })
 }
 
 async fn reconcile_from_model(
@@ -326,10 +354,13 @@ async fn reconcile_from_model(
     // Reconcile is the one place that learns a package is gone, so it is where
     // the per-namespace state is pruned. Left alone, it would keep an entry per
     // package ever watched in the session.
-    let live: BTreeSet<Namespace> = mappings.iter().map(|(ns, _)| ns.clone()).collect();
+    let live: BTreeSet<Namespace> = mappings.packages.iter().map(|(ns, _)| ns.clone()).collect();
     state.trailing.retain(&live);
-    note_volumes(state, &mappings);
-    match state.subscription.reconcile(mappings) {
+    note_volumes(state, &mappings.packages);
+    match state
+        .subscription
+        .reconcile(mappings.packages, mappings.user_rules)
+    {
         Ok(()) => {
             state.last_reconcile_error_kind = None;
         }
@@ -345,11 +376,12 @@ async fn reconcile_from_model(
 }
 
 /// Read whether each new home is on a local volume, and forget the rest.
-pub(crate) fn note_volumes(state: &mut ReactorState, mappings: &[(Namespace, PathBuf)]) {
+pub(crate) fn note_volumes(state: &mut ReactorState, mappings: &[(Namespace, WatchedPackage)]) {
     state
         .local_volume
         .retain(|ns, _| mappings.iter().any(|(live, _)| live == ns));
-    for (namespace, home) in mappings {
+    for (namespace, package) in mappings {
+        let home = &package.home;
         if state
             .local_volume
             .get(namespace)

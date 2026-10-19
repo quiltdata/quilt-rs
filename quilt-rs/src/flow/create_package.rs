@@ -26,12 +26,14 @@ use crate::quiltignore;
 use quilt_uri::Namespace;
 
 /// Walk a source directory recursively, collecting `(relative_path, absolute_path)` pairs.
-/// Respects `.quiltignore` if present in the source directory.
+/// Respects the ignore rules: the source's `.quiltignore`, the user-wide file and
+/// the built-in defaults. Every file is new to the package.
 async fn walk_source_dir(
     storage: &(impl Storage + Sync),
+    paths: &DomainPaths,
     source: &Path,
 ) -> Res<Vec<(PathBuf, PathBuf)>> {
-    let quiltignore = quiltignore::load(source)?;
+    let rules = quiltignore::Rules::load(source, &paths.user_quiltignore())?;
 
     let mut queue = std::collections::VecDeque::new();
     queue.push_back(source.to_path_buf());
@@ -46,18 +48,14 @@ async fn walk_source_dir(
             let file_type = dir_entry.file_type().await?;
 
             if file_type.is_dir() {
-                if let Some(ref gi) = quiltignore {
-                    let rel = file_path.strip_prefix(source)?;
-                    if quiltignore::is_ignored(gi, rel, true) {
-                        continue;
-                    }
+                let rel = file_path.strip_prefix(source)?;
+                if rules.dir_ignored_by(rel, false).is_some() {
+                    continue;
                 }
                 queue.push_back(file_path);
             } else if file_type.is_file() {
                 let relative = file_path.strip_prefix(source)?.to_path_buf();
-                if let Some(ref gi) = quiltignore
-                    && quiltignore::is_ignored(gi, &relative, false)
-                {
+                if rules.file_ignored_by(&relative, false).is_some() {
                     continue;
                 }
                 files.push((relative, file_path));
@@ -106,7 +104,7 @@ pub async fn create_package(
 
     if let Some(ref source_dir) = source {
         debug!("⏳ Walking source directory: {}", source_dir.display());
-        let source_files = walk_source_dir(storage, source_dir).await?;
+        let source_files = walk_source_dir(storage, paths, source_dir).await?;
         debug!("✔️ Found {} files in source", source_files.len());
 
         for (relative_path, absolute_path) in source_files {
@@ -334,6 +332,39 @@ mod tests {
         assert!(
             pkg.paths.contains_key(&PathBuf::from(".quiltignore")),
             ".quiltignore should be included (not matched by *.log)"
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_create_skips_default_ignored_files() -> Res {
+        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+        let storage = MockStorage::default();
+        let namespace: Namespace = ("test", "defaults").into();
+
+        let source_dir = storage.temp_dir.as_ref().join("source");
+        for name in [".DS_Store", ".git/config", ".zattrs", "data.csv"] {
+            storage
+                .write_byte_stream(source_dir.join(name), ByteStream::from_static(b"x"))
+                .await?;
+        }
+
+        let lineage = create_package(
+            lineage,
+            &paths,
+            &storage,
+            namespace.clone(),
+            Some(source_dir),
+            None,
+        )
+        .await?;
+
+        let pkg = lineage.packages.get(&namespace).unwrap();
+        let keys: Vec<&PathBuf> = pkg.paths.keys().collect();
+        assert_eq!(
+            keys,
+            vec![&PathBuf::from(".zattrs"), &PathBuf::from("data.csv")]
         );
         Ok(())
     }
