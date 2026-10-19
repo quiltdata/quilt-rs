@@ -2,6 +2,31 @@
 
 ## Testing
 
+### A disposable app run
+
+QuiltSync does not read `QUILT_DOMAIN`; only the `quilt` CLI does. The app
+keeps one data folder, `com.quiltdata.quilt-sync` under the platform
+local-data directory, with more than the Quilt domain in it: auth, the home
+folder and the package state, but also the app's settings, logs, telemetry
+identity and webview storage.
+
+On Linux that folder is under `XDG_DATA_HOME`, so pointing the variable at
+an empty directory gives a run with none of your state, which is the quick
+way to see the setup and login pages:
+
+```sh
+XDG_DATA_HOME=/tmp/quiltsync-fresh just app dev
+```
+
+Reuse the directory to keep that state across runs, and delete it to start
+over. Your real `~/.local/share/com.quiltdata.quilt-sync` is not touched.
+`quilt` run in the same shell without `--domain` or `QUILT_DOMAIN` uses the
+same disposable domain, which is handy for inspecting what the app wrote.
+
+On macOS and Windows the location does not follow an environment variable;
+move the folder aside instead (see [docs/telemetry.md](../docs/telemetry.md)
+for where it is).
+
 ### "Golden path" Testing
 
 #### Prerequisites
