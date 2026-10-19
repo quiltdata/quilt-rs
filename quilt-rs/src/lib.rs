@@ -18,6 +18,7 @@ pub mod flow;
 pub mod auth;
 pub mod checksum;
 pub mod error;
+pub mod file_stamp;
 mod installed_package;
 pub mod io;
 pub mod junk;
