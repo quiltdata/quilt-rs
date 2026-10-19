@@ -76,9 +76,16 @@ comes from: `default`, your rules file in the domain folder with its line, or
 the package's `.quiltignore` with its line:
 
 ```text
-| path      | rule      | source          |
-| .git/     | .*/       | default         |
-| notes.tmp | *.tmp     | .quiltignore:3  |
++-----------+-------+----------------+
+| Ignored:                           |
++-----------+-------+----------------+
+| path      | rule  | source         |
++-----------+-------+----------------+
+| .git/     | .*/   | default        |
++-----------+-------+----------------+
+| notes.tmp | *.tmp | .quiltignore:3 |
++-----------+-------+----------------+
+1 ignored file and 1 ignored folder not included
 ```
 
 Under `--json`, `ignored` holds the `files` and `folders` counts, and with
