@@ -24,6 +24,11 @@
 ### Fixed
 
 - Autopublish waits the full publish wait after the last change it sees, a commit included, so it no longer publishes at once after you turn publishing on, commit, delete files, copy in files that keep old dates, or reopen the app (<https://github.com/quiltdata/quilt-rs/pull/1134>)
+- On Windows, a package left untouched while the app was closed keeps its publish time after a restart (PR_URL)
+
+### Changed
+
+- Checking a package for changes reads only the files that changed since the last check, and the app checks every package when it starts, so changes made while it was closed show at once (PR_URL)
 
 ### quilt-rs
 

@@ -655,7 +655,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
-        // Captured before `host_config` moves into `flow::status`: the commit
+        // Captured before `host_config` moves into the walk: the commit
         // gate fetches the workflow's config + schemas from the same origin the
         // workflow was resolved against.
         let host = host_config.host.clone();
@@ -1525,5 +1525,7 @@ mod resolve_comparison_tests;
 mod revision_history_tests;
 #[cfg(test)]
 mod set_remote_tests;
+#[cfg(test)]
+mod stat_cache_tests;
 #[cfg(test)]
 mod sync_flow_tests;

@@ -243,6 +243,7 @@ mod tests {
             remote: std::sync::Arc::new(remote),
             storage,
             namespace: namespace.clone(),
+            state_store: None,
         };
 
         // Commit valid under v1: the `gate` workflow (which declares no

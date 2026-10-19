@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
@@ -54,7 +55,7 @@ impl PendingCommit {
 }
 
 pub(crate) struct LastChange {
-    store: PackageStateStore,
+    store: Arc<PackageStateStore>,
     /// Packages walked since launch. The first walk of each one asks whether it
     /// changed while the app was closed.
     walked: Mutex<BTreeSet<Namespace>>,
@@ -69,7 +70,13 @@ pub(crate) struct LastChange {
 }
 
 impl LastChange {
+    #[cfg(test)]
     pub(crate) fn new(store: PackageStateStore) -> Self {
+        Self::shared(Arc::new(store))
+    }
+
+    /// A clock on a store the app's walks also use, for their stat cache.
+    pub(crate) fn shared(store: Arc<PackageStateStore>) -> Self {
         Self {
             store,
             walked: Mutex::new(BTreeSet::new()),
@@ -290,9 +297,10 @@ impl LastChange {
 
 /// Whether any of `changed` (paths relative to `home`) changed after `since`.
 ///
-/// ctime, because no tool can set it: the copies that keep old edit times
-/// (`cp -p`, `rsync -a`, an unzip) still get a new one. A deleted file has none,
-/// so its nearest existing folder answers, since removing an entry changes it.
+/// The change time, because no tool can set it: the copies that keep old edit
+/// times (`cp -p`, `rsync -a`, an unzip) still get a new one. A deleted file has
+/// none, so its nearest existing folder answers, since removing an entry
+/// changes it. A file system without change times counts as changed.
 pub(crate) fn changed_while_closed<'a>(
     home: &Path,
     changed: impl IntoIterator<Item = &'a PathBuf>,
@@ -301,31 +309,15 @@ pub(crate) fn changed_while_closed<'a>(
     changed.into_iter().any(|relative| {
         let mut path = home.join(relative);
         loop {
-            if let Ok(meta) = std::fs::symlink_metadata(&path) {
-                return change_time(&meta).is_none_or(|at| at > since);
+            if let Ok(stamp) = crate::quilt::file_stamp::stamp(&path) {
+                // To the millisecond, as the store keeps times.
+                return stamp.changed.is_none_or(|at| floor_millis(at) > since);
             }
             if path == home || !path.pop() {
                 return true;
             }
         }
     })
-}
-
-#[cfg(unix)]
-fn change_time(meta: &std::fs::Metadata) -> Option<SystemTime> {
-    use std::os::unix::fs::MetadataExt;
-    let secs = u64::try_from(meta.ctime()).ok()?;
-    let nanos = u32::try_from(meta.ctime_nsec()).ok()?;
-    // To the millisecond, as the store keeps times.
-    let millis = nanos / 1_000_000;
-    Some(SystemTime::UNIX_EPOCH + std::time::Duration::new(secs, millis * 1_000_000))
-}
-
-/// Windows has no ctime in the standard library, and copy tools can restore
-/// both the creation and the edit time, so every changed file counts as changed.
-#[cfg(not(unix))]
-fn change_time(_meta: &std::fs::Metadata) -> Option<SystemTime> {
-    None
 }
 
 #[cfg(test)]
@@ -407,8 +399,6 @@ mod tests {
         assert!(clock.get(&ns()).await.is_some_and(|at| at >= before));
     }
 
-    /// ctime is Unix only; on Windows every changed file counts as changed.
-    #[cfg(unix)]
     #[tokio::test]
     async fn after_a_restart_an_untouched_package_keeps_its_time() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -467,7 +457,6 @@ mod tests {
         assert!(at.is_some_and(|at| at >= before));
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_deleted_file_is_judged_by_its_folder() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -769,7 +758,6 @@ mod tests {
         assert!(at.is_some_and(|at| at >= before));
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn an_edit_the_app_saw_is_not_one_made_while_closed() {
         let dir = tempfile::TempDir::new().unwrap();
