@@ -395,8 +395,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         host_config: HostConfig,
     ) -> Res<(lineage::PackageLineage, InstalledPackageStatus)> {
         let Some(store) = &self.state_store else {
-            return flow::status(lineage, &self.storage, manifest, package_home, host_config)
-                .await;
+            return flow::status(lineage, &self.storage, manifest, package_home, host_config).await;
         };
         let mut cache = store.stat_cache(&self.namespace).await;
         let walked = flow::status_cached(

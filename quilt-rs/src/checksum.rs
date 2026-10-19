@@ -6,7 +6,6 @@
 //! row's hash against the file on disk.
 
 use std::path::Path;
-use std::path::PathBuf;
 
 use crate::Res;
 use crate::io::remote::HostConfig;
@@ -42,7 +41,7 @@ pub async fn hash_file(
 /// Returns None if hash hasn't changed, Some(ManifestRow) if it has changed
 pub async fn refresh_hash(
     storage: &impl Storage,
-    path: &PathBuf,
+    path: &Path,
     row: ManifestRow,
 ) -> Res<Option<ManifestRow>> {
     let (computed_hash, size) = hash_file(storage, path, row.hash.algorithm()).await?;
@@ -76,7 +75,7 @@ pub async fn calculate_hash(
 /// Returns None if hash hasn't changed, Some(ManifestRow) if it has changed
 pub async fn verify_hash(
     storage: &impl Storage,
-    path: &PathBuf,
+    path: &Path,
     row: ManifestRow,
     host_config: &HostConfig,
 ) -> Res<Option<ManifestRow>> {
@@ -103,6 +102,7 @@ mod tests {
     use test_log::test;
 
     use std::path::Path;
+    use std::path::PathBuf;
 
     use aws_sdk_s3::primitives::ByteStream;
     use multihash::Multihash;
@@ -136,7 +136,7 @@ mod tests {
             size: file_content.len() as u64,
             ..ManifestRow::default()
         };
-        let result = refresh_hash(&storage, &file_path.to_path_buf(), manifest_row).await?;
+        let result = refresh_hash(&storage, file_path, manifest_row).await?;
         assert!(result.is_none(), "Unchanged file should return None");
 
         Ok(())
@@ -165,7 +165,7 @@ mod tests {
             size: 999, // Wrong size to test that refresh_hash updates it
             ..ManifestRow::default()
         };
-        let result = refresh_hash(&storage, &file_path.to_path_buf(), test_manifest_row).await?;
+        let result = refresh_hash(&storage, file_path, test_manifest_row).await?;
         let refreshed_row = result.expect("Changed hash should return Some");
         assert_eq!(refreshed_row.hash, hash.try_into()?);
         assert_eq!(refreshed_row.size, file_content.len() as u64);
@@ -193,7 +193,7 @@ mod tests {
             ..ManifestRow::default()
         };
 
-        let result = refresh_hash(&storage, &file_path.to_path_buf(), manifest_row).await;
+        let result = refresh_hash(&storage, file_path, manifest_row).await;
         // With valid hash, this should work (though it might return Some due to different file content)
         assert!(result.is_ok());
 
@@ -268,7 +268,7 @@ mod tests {
         assert!(
             verify_hash(
                 &storage,
-                &test_path.to_path_buf(),
+                test_path,
                 manifest_row.clone(),
                 &crc64_host_config,
             )
@@ -283,13 +283,7 @@ mod tests {
             .write_byte_stream(test_path, fixture_content)
             .await?;
 
-        let result = verify_hash(
-            &storage,
-            &test_path.to_path_buf(),
-            manifest_row,
-            &crc64_host_config,
-        )
-        .await?;
+        let result = verify_hash(&storage, test_path, manifest_row, &crc64_host_config).await?;
         assert!(result.is_some(), "Modified file should return Some");
 
         let modified_row = result.unwrap();
@@ -321,7 +315,7 @@ mod tests {
         assert!(
             verify_hash(
                 &storage,
-                &test_path.to_path_buf(),
+                test_path,
                 manifest_row.clone(),
                 &sha256_host_config,
             )
@@ -336,13 +330,7 @@ mod tests {
             .write_byte_stream(test_path, ByteStream::from_static(fixture_content))
             .await?;
 
-        let result = verify_hash(
-            &storage,
-            &test_path.to_path_buf(),
-            manifest_row,
-            &sha256_host_config,
-        )
-        .await?;
+        let result = verify_hash(&storage, test_path, manifest_row, &sha256_host_config).await?;
         assert!(result.is_some(), "Modified file should return Some");
 
         let modified_row = result.unwrap();

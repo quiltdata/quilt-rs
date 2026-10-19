@@ -377,12 +377,27 @@ mod windows {
         }
     }
 
-    fn open(path: &Path, access: u32, flags: FILE_FLAGS_AND_ATTRIBUTES) -> io::Result<Handle> {
-        let wide: Vec<u16> = path
+    /// `path` as a NUL-terminated `\\?\` path, which has no length limit.
+    /// std adds the same prefix for its own long paths.
+    fn verbatim(path: &Path) -> io::Result<Vec<u16>> {
+        let absolute: Vec<u16> = std::path::absolute(path)?
             .as_os_str()
             .encode_wide()
-            .chain(std::iter::once(0))
             .collect();
+        let wide = |s: &str| s.encode_utf16().collect::<Vec<u16>>();
+        let mut out = if absolute.starts_with(&wide(r"\\?\")) {
+            absolute
+        } else if let Some(share) = absolute.strip_prefix(wide(r"\\").as_slice()) {
+            [wide(r"\\?\UNC\").as_slice(), share].concat()
+        } else {
+            [wide(r"\\?\").as_slice(), &absolute].concat()
+        };
+        out.push(0);
+        Ok(out)
+    }
+
+    fn open(path: &Path, access: u32, flags: FILE_FLAGS_AND_ATTRIBUTES) -> io::Result<Handle> {
+        let wide = verbatim(path)?;
         // SAFETY: `wide` is NUL-terminated; null security attributes and template are allowed.
         let handle = unsafe {
             CreateFileW(

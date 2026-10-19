@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::manifest::ManifestRow;
 
 /// Describes modified states of a file
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Change {
     Modified(ManifestRow), // modified to what
     Added(ManifestRow),    // added what

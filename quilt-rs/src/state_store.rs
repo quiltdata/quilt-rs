@@ -597,7 +597,8 @@ impl StatRow {
             saved_at: from_nanos(self.saved_at),
         };
         let algorithm = u64::try_from(self.algorithm).ok()?;
-        (entry.hash.algorithm() == algorithm).then(|| ((PathBuf::from(self.path), algorithm), entry))
+        (entry.hash.algorithm() == algorithm)
+            .then(|| ((PathBuf::from(self.path), algorithm), entry))
     }
 }
 
@@ -785,6 +786,109 @@ mod tests {
                 .map(|a| a.last_change_at),
             Some(at(1)),
             "the file is kept, not deleted"
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_version_1_file_keeps_its_times_and_gains_the_stat_cache() -> Res {
+        let dir = tempfile::TempDir::new()?;
+        let path = dir.path().join("state.db");
+        {
+            let db = rusqlite::Connection::open(&path)?;
+            db.execute_batch(MIGRATIONS[0])?;
+            db.pragma_update(None, "user_version", 1)?;
+            db.execute(
+                "INSERT INTO package_activity VALUES ('acme/demo', 5000, 'edit')",
+                [],
+            )?;
+        }
+        let store = PackageStateStore::new(path);
+        assert_eq!(
+            store.last_change(&ns()).await.map(|a| a.last_change_at),
+            Some(at(5))
+        );
+        assert!(store.stat_cache(&ns()).await.is_full(), "never walked");
+        Ok(())
+    }
+
+    fn cached() -> CachedHash {
+        CachedHash {
+            stamp: FileStamp {
+                size: 3,
+                modified: at(100),
+                changed: Some(at(100)),
+                id: Some(FileId {
+                    volume: u64::MAX,
+                    file: u128::MAX - 1,
+                }),
+            },
+            hash: crate::object_hash::Crc64Hash::default().into(),
+            saved_at: at(200),
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn a_walk_a_day_hashes_everything() -> Res {
+        let store = PackageStateStore::in_memory();
+        let first = store.stat_cache(&ns()).await;
+        assert!(first.is_full(), "no full walk yet");
+        store.save_stat_cache(&ns(), &first).await;
+        assert!(!store.stat_cache(&ns()).await.is_full());
+
+        let a_day_ago = to_nanos(SystemTime::now() - FULL_HASH_EVERY);
+        let key = ns().to_string();
+        store
+            .run(move |db| {
+                db.execute(
+                    "UPDATE stat_walk SET full_hash_at = ?2 WHERE namespace = ?1",
+                    rusqlite::params![key, a_day_ago],
+                )?;
+                Ok(())
+            })
+            .await;
+        assert!(store.stat_cache(&ns()).await.is_full());
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn stat_entries_round_trip_and_unseen_ones_are_deleted() -> Res {
+        let store = PackageStateStore::in_memory();
+        let mut cache = store.stat_cache(&ns()).await;
+        cache.record(std::path::Path::new("a"), cached());
+        cache.record(std::path::Path::new("b"), cached());
+        store.save_stat_cache(&ns(), &cache).await;
+
+        let mut cache = store.stat_cache(&ns()).await;
+        let entry = cached();
+        assert_eq!(
+            cache.lookup(
+                std::path::Path::new("a"),
+                &entry.stamp,
+                entry.hash.algorithm()
+            ),
+            Some(&entry.hash)
+        );
+        cache.see(std::path::Path::new("a"));
+        store.save_stat_cache(&ns(), &cache).await;
+
+        let cache = store.stat_cache(&ns()).await;
+        assert_eq!(
+            cache.lookup(
+                std::path::Path::new("b"),
+                &entry.stamp,
+                entry.hash.algorithm()
+            ),
+            None
+        );
+        assert!(
+            cache
+                .lookup(
+                    std::path::Path::new("a"),
+                    &entry.stamp,
+                    entry.hash.algorithm()
+                )
+                .is_some()
         );
         Ok(())
     }

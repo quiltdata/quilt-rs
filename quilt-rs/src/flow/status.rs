@@ -402,11 +402,9 @@ pub async fn create_status_cached(
     let quiltignore = quiltignore::load(package_home.as_ref())?;
     let home = package_home.as_ref().to_path_buf();
     let walked_at = SystemTime::now();
-    let walk = tokio::task::spawn_blocking(move || {
-        walk_package_home(&home, quiltignore.as_ref())
-    })
-    .await
-    .map_err(std::io::Error::other)??;
+    let walk = tokio::task::spawn_blocking(move || walk_package_home(&home, quiltignore.as_ref()))
+        .await
+        .map_err(std::io::Error::other)??;
     let files = locate_files(walk.entries, manifest, orig_paths);
     // Captured before the vector is consumed; reported once, on the outcome line.
     let walked = files.len();
@@ -978,7 +976,11 @@ mod tests {
     }
 
     impl Storage for CountingStorage {
-        async fn copy(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res<u64> {
+        async fn copy(
+            &self,
+            from: impl AsRef<Path> + Send,
+            to: impl AsRef<Path> + Send,
+        ) -> Res<u64> {
             self.inner.copy(from, to).await
         }
         async fn create_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
@@ -1166,9 +1168,10 @@ mod tests {
     /// `touch -r` and `cp -p` over a file: new content, same size, the old
     /// edit time put back.
     #[test(tokio::test)]
-    async fn new_content_with_the_edit_time_restored_is_seen() -> Result<(), Box<dyn std::error::Error>> {
+    async fn new_content_with_the_edit_time_restored_is_seen()
+    -> Result<(), Box<dyn std::error::Error>> {
         let package = CachedPackage::new().await?;
-        assert!(package.walk().await?.get(Path::new("tracked.txt")).is_none());
+        assert!(!package.walk().await?.contains_key(Path::new("tracked.txt")));
         let path = package.path("tracked.txt");
         let old = std::fs::metadata(&path)?.modified()?;
         // A change time is never older than the one before it, but it can be
@@ -1180,7 +1183,10 @@ mod tests {
 
         let changes = package.walk().await?;
         assert!(
-            matches!(changes.get(Path::new("tracked.txt")), Some(Change::Modified(_))),
+            matches!(
+                changes.get(Path::new("tracked.txt")),
+                Some(Change::Modified(_))
+            ),
             "{changes:?}"
         );
         assert_eq!(changes, package.walk_without_cache().await?);
@@ -1190,7 +1196,8 @@ mod tests {
     /// `rsync -a`: new content written beside the file, its edit time set to
     /// the old one, then renamed over it.
     #[test(tokio::test)]
-    async fn a_file_replaced_with_the_edit_time_restored_is_seen() -> Result<(), Box<dyn std::error::Error>> {
+    async fn a_file_replaced_with_the_edit_time_restored_is_seen()
+    -> Result<(), Box<dyn std::error::Error>> {
         let package = CachedPackage::new().await?;
         package.walk().await?;
         let path = package.path("new.txt");
@@ -1236,7 +1243,10 @@ mod tests {
         let Some(Change::Added(row)) = changes.get(Path::new("new.txt")) else {
             panic!("{changes:?}");
         };
-        assert_eq!(row.hash.algorithm(), crate::object_hash::MULTIHASH_CRC64_NVME);
+        assert_eq!(
+            row.hash.algorithm(),
+            crate::object_hash::MULTIHASH_CRC64_NVME
+        );
         Ok(())
     }
 

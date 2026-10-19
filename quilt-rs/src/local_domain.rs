@@ -8,7 +8,6 @@ use tracing::{debug, info, trace, warn};
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
-use crate::state_store::PackageStateStore;
 use crate::flow;
 use crate::installed_package::InstalledPackage;
 use crate::io::manifest::RowsStream;
@@ -24,6 +23,7 @@ use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::package_lock;
 use crate::paths;
+use crate::state_store::PackageStateStore;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 

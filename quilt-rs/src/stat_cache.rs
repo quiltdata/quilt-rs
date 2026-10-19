@@ -17,7 +17,7 @@ use crate::file_stamp::FileStamp;
 use crate::object_hash::ObjectHash;
 
 /// How long a package goes between walks that hash every file anyway.
-pub const FULL_HASH_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
+pub const FULL_HASH_EVERY: Duration = Duration::from_hours(24);
 
 /// A file's hash with one algorithm, and the stamp it was taken at.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +66,12 @@ impl StatCache {
 
     /// The saved hash of `key` with `algorithm`, if `stamp` says the file is
     /// the one it was taken from.
-    pub(crate) fn lookup(&self, key: &Path, stamp: &FileStamp, algorithm: u64) -> Option<&ObjectHash> {
+    pub(crate) fn lookup(
+        &self,
+        key: &Path,
+        stamp: &FileStamp,
+        algorithm: u64,
+    ) -> Option<&ObjectHash> {
         if self.full || !trusted(stamp) {
             return None;
         }
@@ -305,7 +310,7 @@ mod tests {
                 saved_at: at(200, 0),
             },
         );
-        assert!(cache.updates().is_empty());
+        assert_eq!(cache.updates(), &[]);
     }
 
     #[test]
@@ -317,7 +322,7 @@ mod tests {
         };
         let mut cache = cache_with(entry.clone(), false);
         cache.record(Path::new("a"), entry.clone());
-        assert!(cache.updates().is_empty(), "the same values");
+        assert_eq!(cache.updates(), &[], "the same values");
 
         let newer = CachedHash {
             stamp: stamp(at(300, 0)),
@@ -356,6 +361,6 @@ mod tests {
         );
         assert_eq!(cache.gone(), vec![PathBuf::from("a")]);
         cache.see(Path::new("a"));
-        assert!(cache.gone().is_empty());
+        assert_eq!(cache.gone(), Vec::<PathBuf>::new());
     }
 }
