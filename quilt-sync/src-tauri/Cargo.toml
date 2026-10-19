@@ -21,7 +21,6 @@ dotenv = "0.15"
 dunce = "1"
 # Named only to hold quilt-rs's `.quiltignore` matcher in the watched-root map;
 # quilt-rs owns the loading and matching (`quilt::quiltignore`).
-ignore.workspace = true
 mockall = "0.15.0"
 opener = { version = "0.9.0", features = ["reveal"] }
 quilt-rs = { path = "../../quilt-rs" }

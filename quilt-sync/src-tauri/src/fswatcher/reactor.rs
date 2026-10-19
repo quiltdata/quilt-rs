@@ -19,6 +19,7 @@ use crate::fswatcher::settings::SharedFsWatcherSettings;
 use crate::fswatcher::subscriber::MappingSignal;
 use crate::fswatcher::subscriber::SubscriberError;
 use crate::fswatcher::subscriber::Subscription;
+use crate::fswatcher::subscriber::WatchedPackage;
 use crate::model::Model;
 use crate::model::QuiltModel;
 use crate::telemetry::prelude::*;
@@ -208,15 +209,15 @@ pub(crate) async fn process_signal(
 
 /// What the subscription should watch.
 pub(crate) struct Mappings {
-    /// Each installed package's namespace and `package_home`.
-    pub packages: Vec<(Namespace, PathBuf)>,
+    /// Each installed package's namespace, home and files.
+    pub packages: Vec<(Namespace, WatchedPackage)>,
     /// The user-wide ignore file. `None` with no packages, since then there is
     /// nothing for it to re-check.
     pub user_rules: Option<PathBuf>,
 }
 
-/// Snapshot the current installed-packages list and resolve each one's
-/// `package_home`. Returns `None` if the model itself fails (so the caller
+/// Snapshot the current installed-packages list and read each one's
+/// `package_home` and files from its lineage. Returns `None` if the model itself fails (so the caller
 /// skips reconciliation rather than unwatching every namespace on a
 /// transient error); empty `packages` is distinct and means "no
 /// installed packages".
@@ -230,10 +231,17 @@ pub(crate) async fn snapshot_mappings(model: &impl QuiltModel) -> Option<Mapping
     };
     let mut out = Vec::with_capacity(pkgs.len());
     for pkg in &pkgs {
-        match pkg.package_home().await {
-            Ok(home) => out.push((pkg.namespace.clone(), home)),
+        match pkg.lineage.read(&pkg.storage).await {
+            Ok((home, lineage)) => out.push((
+                pkg.namespace.clone(),
+                WatchedPackage::new(
+                    home,
+                    pkg.paths.user_quiltignore(),
+                    lineage.paths.into_keys(),
+                ),
+            )),
             Err(err) => warn!(
-                "fswatcher: cannot resolve package_home for {}: {err}",
+                "fswatcher: cannot read the lineage of {}: {err}",
                 pkg.namespace
             ),
         }

@@ -5900,7 +5900,6 @@ dependencies = [
  "chrono",
  "dotenv",
  "dunce",
- "ignore",
  "mixpanel-rs",
  "mockall",
  "notify",
