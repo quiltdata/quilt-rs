@@ -117,8 +117,13 @@ pub enum SignalKind {
     /// Something in the package changed.
     Changed,
     /// The OS lost events that may cover the package (a queue overflow, a
-    /// rescan): walk it, but nothing is known to have changed.
+    /// rescan): walk it, but nothing is known to have changed. Its watch is
+    /// made again at the next reconcile.
     Rescan,
+    /// Only paths the ignore rules screen out changed. The status walk can
+    /// still count some of them (a package's own file the lineage doesn't
+    /// list), so the tick walks the package itself.
+    Stale,
     /// The package's watch is gone; the next reconcile makes it again.
     Lost,
 }
@@ -174,6 +179,9 @@ struct WatchedRoot {
     user_rules: PathBuf,
     rules: Option<quilt::quiltignore::Rules>,
     tracked: HashSet<PathBuf>,
+    /// Events were lost, so the OS watch may miss a folder made meanwhile:
+    /// the next `add` makes it again.
+    rewatch: bool,
 }
 
 impl WatchedRoot {
@@ -184,6 +192,7 @@ impl WatchedRoot {
             user_rules: package.user_rules,
             rules,
             tracked: package.tracked,
+            rewatch: false,
         }
     }
 
@@ -286,23 +295,33 @@ impl Subscription {
                             .map(|rules| rules.file.clone());
                         let mut watched = watched_for_cb.lock().unwrap();
                         reload_edited_rules(&events, &mut watched, user_file.as_deref());
-                        let changed = affected_namespaces(&events, &watched, user_file.as_deref())
-                            .into_iter()
-                            .map(MappingSignal::changed);
-                        let rescan =
-                            rescanned_namespaces(&events, &watched)
-                                .into_iter()
-                                .map(|namespace| MappingSignal {
-                                    namespace,
-                                    kind: SignalKind::Rescan,
-                                });
+                        let (changed, stale) = screen(&events, &watched, user_file.as_deref());
+                        let changed = changed.into_iter().map(MappingSignal::changed);
+                        let stale = stale.into_iter().map(|namespace| MappingSignal {
+                            namespace,
+                            kind: SignalKind::Stale,
+                        });
+                        let rescanned = rescanned_namespaces(&events, &watched);
+                        for namespace in &rescanned {
+                            if let Some(root) = watched.get_mut(namespace) {
+                                root.rewatch = true;
+                            }
+                        }
+                        let rescan = rescanned.into_iter().map(|namespace| MappingSignal {
+                            namespace,
+                            kind: SignalKind::Rescan,
+                        });
                         let lost = drop_removed_roots(&events, &mut watched).into_iter().map(
                             |namespace| MappingSignal {
                                 namespace,
                                 kind: SignalKind::Lost,
                             },
                         );
-                        changed.chain(rescan).chain(lost).collect::<Vec<_>>()
+                        changed
+                            .chain(stale)
+                            .chain(rescan)
+                            .chain(lost)
+                            .collect::<Vec<_>>()
                     }
                     Err(errors) => errors
                         .into_iter()
@@ -353,12 +372,14 @@ impl Subscription {
             package_home
         });
         let root = WatchedRoot::new(package_home.clone(), package);
-        let existing_path = {
+        let (existing_path, rewatch) = {
             let watched = self.watched.lock().unwrap();
-            watched.get(&namespace).map(|w| w.path.clone())
+            watched
+                .get(&namespace)
+                .map_or((None, false), |w| (Some(w.path.clone()), w.rewatch))
         };
         if let Some(existing) = existing_path.as_ref() {
-            if existing == &package_home {
+            if existing == &package_home && !rewatch {
                 // The OS watch is already right, so this stays a no-op for
                 // `notify`, but the rules and the tracked set are replaced.
                 if let Some(entry) = self.watched.lock().unwrap().get_mut(&namespace) {
@@ -490,8 +511,16 @@ impl Subscription {
         self.user_rules.lock().unwrap().is_some()
     }
 
+    /// The namespaces with a live watch: not those waiting to be watched
+    /// again after lost events.
     pub fn watched_namespaces(&self) -> Vec<Namespace> {
-        self.watched.lock().unwrap().keys().cloned().collect()
+        self.watched
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, root)| !root.rewatch)
+            .map(|(ns, _)| ns.clone())
+            .collect()
     }
 }
 
@@ -512,12 +541,24 @@ impl Subscription {
 ///
 /// A change to the user-wide ignore file (`user_rules`) affects every watched
 /// package. Its siblings are not package files, so they resolve to nothing.
+#[cfg(test)]
 fn affected_namespaces(
     events: &[notify_debouncer_full::DebouncedEvent],
     watched: &BTreeMap<Namespace, WatchedRoot>,
     user_rules: Option<&Path>,
 ) -> BTreeSet<Namespace> {
+    screen(events, watched, user_rules).0
+}
+
+/// [`affected_namespaces`], and apart from them the namespaces where only
+/// paths the ignore rules screen out changed.
+fn screen(
+    events: &[notify_debouncer_full::DebouncedEvent],
+    watched: &BTreeMap<Namespace, WatchedRoot>,
+    user_rules: Option<&Path>,
+) -> (BTreeSet<Namespace>, BTreeSet<Namespace>) {
     let mut touched = BTreeSet::new();
+    let mut screened = BTreeSet::new();
     for event in events {
         if is_non_content_event(event.kind) || event.need_rescan() {
             continue;
@@ -534,12 +575,14 @@ fn affected_namespaces(
                 continue;
             };
             if root.excludes(path) {
+                screened.insert(namespace.clone());
                 continue;
             }
             touched.insert(namespace.clone());
         }
     }
-    touched
+    screened.retain(|ns| !touched.contains(ns));
+    (touched, screened)
 }
 
 /// Reload the rules of every package whose rules file an event touched, so
@@ -680,10 +723,13 @@ fn handle_async_error(
         watched
             .lock()
             .unwrap()
-            .keys()
-            .map(|namespace| MappingSignal {
-                namespace: namespace.clone(),
-                kind: SignalKind::Rescan,
+            .iter_mut()
+            .map(|(namespace, root)| {
+                root.rewatch = true;
+                MappingSignal {
+                    namespace: namespace.clone(),
+                    kind: SignalKind::Rescan,
+                }
             })
             .collect()
     } else {
@@ -727,6 +773,7 @@ mod tests {
             user_rules: PathBuf::new(),
             rules: None,
             tracked: HashSet::new(),
+            rewatch: false,
         }
     }
 
@@ -939,6 +986,47 @@ mod tests {
         );
     }
 
+    /// A path the rules screen out buys no walk, but the status walk may
+    /// still count it, so the kept walk must not be reused after it.
+    #[tokio::test]
+    async fn a_screened_out_path_makes_the_kept_walk_stale()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        tokio::fs::write(dir.path().join(".quiltignore"), b"cache/\n").await?;
+        let namespace: Namespace = ("acme", "demo").into();
+        let root = WatchedRoot::new(dir.path().to_path_buf(), untracked(dir.path()));
+        let watched = BTreeMap::from([(namespace.clone(), root)]);
+        let event = notify_debouncer_full::DebouncedEvent::new(
+            notify::Event {
+                kind: EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                paths: vec![dir.path().join("cache/x.json")],
+                attrs: notify::event::EventAttributes::default(),
+            },
+            std::time::Instant::now(),
+        );
+
+        let (changed, stale) = screen(&[event], &watched, None);
+        assert!(changed.is_empty());
+        assert_eq!(stale, BTreeSet::from([namespace]));
+        Ok(())
+    }
+
+    /// Lost events leave the watch untrusted until it is made again.
+    #[tokio::test]
+    async fn a_rescan_makes_the_watch_again() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let (tx, _rx) = mpsc::unbounded_channel::<MappingSignal>();
+        let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
+        let ns: Namespace = ("acme", "demo").into();
+        sub.add(ns.clone(), untracked(dir.path()))?;
+        sub.watched.lock().unwrap().get_mut(&ns).unwrap().rewatch = true;
+        assert_eq!(sub.watched_namespaces(), Vec::<Namespace>::new());
+
+        sub.add(ns.clone(), untracked(dir.path()))?;
+        assert_eq!(sub.watched_namespaces(), vec![ns]);
+        Ok(())
+    }
+
     #[test]
     fn a_removed_root_is_dropped_from_the_watch() {
         let namespace: Namespace = ("acme", "demo").into();
@@ -1049,10 +1137,13 @@ mod tests {
         // it through the *parent* pattern, with no walk context to lean on.
         tokio::fs::write(dir.path().join(".rumdl_cache/deep.json"), b"{}").await?;
         tokio::time::sleep(Duration::from_millis(400)).await;
-        assert!(
-            rx.try_recv().is_err(),
-            "a write inside an ignored directory must not cost a status walk",
-        );
+        while let Ok(signal) = rx.try_recv() {
+            assert_eq!(
+                signal.kind,
+                SignalKind::Stale,
+                "a write inside an ignored directory must not cost a status walk",
+            );
+        }
 
         // The ignore file is the one path that can never be ignored.
         tokio::fs::write(dir.path().join(".quiltignore"), b".rumdl_cache/\nnotes/\n").await?;
@@ -1160,15 +1251,19 @@ mod tests {
 
         tokio::fs::write(dir.path().join(".git/index"), b"x").await?;
         tokio::time::sleep(Duration::from_millis(400)).await;
-        assert!(
-            rx.try_recv().is_err(),
-            "an untracked .git/ write must not signal"
-        );
+        while let Ok(signal) = rx.try_recv() {
+            assert_eq!(
+                signal.kind,
+                SignalKind::Stale,
+                "an untracked .git/ write must not cost a status walk"
+            );
+        }
 
         tokio::fs::write(dir.path().join(".DS_Store"), b"edited").await?;
         let signal = tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await?
             .expect("a tracked file must signal");
+        assert_eq!(signal.kind, SignalKind::Changed);
         assert_eq!(signal.namespace, ns);
         Ok(())
     }

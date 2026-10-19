@@ -195,8 +195,9 @@ async fn drive(state: &mut ReactorState, model: &impl QuiltModel, inner: &Watche
 }
 
 /// One signal. A change moves the package's last-change time at once, with
-/// no walk; a change or a rescan sets its trailing walk; a lost watch stops
-/// the tick from trusting the package's walks.
+/// no walk; a change or a rescan sets its trailing walk; a screened-out path
+/// leaves the walk to the tick; a rescan or a lost watch stops the tick from
+/// trusting the package's walks.
 async fn handle_signal(
     state: &mut ReactorState,
     inner: &WatcherInner,
@@ -209,10 +210,12 @@ async fn handle_signal(
             inner.walks.on_signal(&signal.namespace);
             state.trailing.on_signal(&signal.namespace, now);
         }
+        // Not trusted until its watch is made again and walked after.
         SignalKind::Rescan => {
-            inner.walks.on_signal(&signal.namespace);
+            inner.walks.forget(&signal.namespace);
             state.trailing.on_signal(&signal.namespace, now);
         }
+        SignalKind::Stale => inner.walks.on_signal(&signal.namespace),
         SignalKind::Lost => inner.walks.forget(&signal.namespace),
     }
 }

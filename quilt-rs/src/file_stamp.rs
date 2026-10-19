@@ -84,9 +84,10 @@ pub fn on_local_volume(path: &Path) -> bool {
     }
 }
 
-/// Whether a network or FUSE volume is mounted at or below `path`, where a
-/// walk of `path` would enter it. Reads the mount table only, never the
-/// mounts. `true` when the table can't be read.
+/// Whether a network or FUSE volume holds `path`, or is mounted below it where
+/// a walk of `path` would enter it. Reads the mount table only, never the
+/// mounts, so it sees a mount made after [`on_local_volume`] was asked.
+/// `true` when the table can't be read.
 ///
 /// `false` on Windows: a folder mount there is a reparse point, which the walk
 /// does not follow.
@@ -111,6 +112,29 @@ pub fn remote_mount_under(path: &Path) -> bool {
         let _ = path;
         true
     }
+}
+
+/// Over (mount point, is remote) pairs: whether the mount holding `path` (the
+/// deepest one above it) is remote, or a remote one is mounted below it. The
+/// last of several mounts at one point is the one in use.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+fn remote_at_or_under(
+    mounts: impl Iterator<Item = (std::path::PathBuf, bool)>,
+    path: &Path,
+) -> bool {
+    let mut holder: Option<(usize, bool)> = None;
+    for (at, remote) in mounts {
+        if remote && at.starts_with(path) && at != path {
+            return true;
+        }
+        if path.starts_with(&at) {
+            let depth = at.components().count();
+            if holder.is_none_or(|(deepest, _)| depth >= deepest) {
+                holder = Some((depth, remote));
+            }
+        }
+    }
+    holder.is_some_and(|(_, remote)| remote)
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -191,14 +215,18 @@ mod linux {
     }
 
     pub(super) fn mounts_remote_under(table: &str, path: &Path) -> bool {
-        table.lines().any(|line| {
+        let mounts = table.lines().filter_map(|line| {
             let mut fields = line.split_whitespace();
             let (Some(_), Some(at), Some(fs_type)) = (fields.next(), fields.next(), fields.next())
             else {
-                return false;
+                return None;
             };
-            is_remote_type(fs_type) && Path::new(&unescape(at)).starts_with(path)
-        })
+            Some((
+                std::path::PathBuf::from(unescape(at)),
+                is_remote_type(fs_type),
+            ))
+        });
+        super::remote_at_or_under(mounts, path)
     }
 
     #[cfg(test)]
@@ -213,6 +241,11 @@ mod linux {
             assert!(mounts_remote_under(table, Path::new("/home/u/pkg")));
             assert!(!mounts_remote_under(table, Path::new("/home/u/other")));
             assert!(mounts_remote_under(table, Path::new("/mnt")));
+            // Held by the remote mount.
+            assert!(mounts_remote_under(table, Path::new("/mnt/remote/pkg")));
+            // A local mount over a remote one at the same point is the one in use.
+            let over = "server:/x /data nfs rw 0 0\n/dev/sdb1 /data ext4 rw 0 0\n";
+            assert!(!mounts_remote_under(over, Path::new("/data/pkg")));
             assert!(!mounts_remote_under(
                 "/dev/sda1 / ext4 rw 0 0\n",
                 Path::new("/home/u/pkg")
@@ -435,11 +468,15 @@ mod macos {
         let Some(mounts) = mounts() else {
             return true;
         };
-        mounts.iter().any(|fs| {
+        let mounts = mounts.iter().map(|fs| {
             // SAFETY: the kernel NUL-terminates `f_mntonname`.
             let at = unsafe { std::ffi::CStr::from_ptr(fs.f_mntonname.as_ptr()) };
-            !is_local(fs) && Path::new(std::ffi::OsStr::from_bytes(at.to_bytes())).starts_with(path)
-        })
+            (
+                std::path::PathBuf::from(std::ffi::OsStr::from_bytes(at.to_bytes())),
+                !is_local(fs),
+            )
+        });
+        super::remote_at_or_under(mounts, path)
     }
 
     pub(super) fn on_local_volume(path: &Path) -> bool {
@@ -908,6 +945,24 @@ mod tests {
             .into_iter()
             .map(|(name, kind, stamp)| (name, (kind, stamp)))
             .collect()
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    #[test]
+    fn the_mount_holding_a_folder_counts() {
+        let mounts = || {
+            [
+                (std::path::PathBuf::from("/"), false),
+                (std::path::PathBuf::from("/net"), true),
+                (std::path::PathBuf::from("/net/local"), false),
+                (std::path::PathBuf::from("/home/u/pkg/share"), true),
+            ]
+            .into_iter()
+        };
+        assert!(remote_at_or_under(mounts(), Path::new("/net/pkg")));
+        assert!(!remote_at_or_under(mounts(), Path::new("/net/local/pkg")));
+        assert!(remote_at_or_under(mounts(), Path::new("/home/u/pkg")));
+        assert!(!remote_at_or_under(mounts(), Path::new("/home/u/other")));
     }
 
     #[test]
