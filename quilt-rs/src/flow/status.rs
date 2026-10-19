@@ -69,14 +69,20 @@ async fn locate_files_in_package_home(
     rules: &quiltignore::Rules,
 ) -> Res<LocateResult> {
     let package_home = package_home.as_ref();
+    // Every file the walk meets is looked up here, so the rows are indexed once.
+    let mut manifest_rows: HashMap<&Path, &ManifestRow> = HashMap::new();
+    for row in &manifest.rows {
+        manifest_rows
+            .entry(row.logical_key.as_path())
+            .or_insert(row);
+    }
     // Ignore rules other than the package's never hide what the package has,
     // so a directory holding a tracked file is still entered.
     let mut tracked_dirs = HashSet::new();
-    for key in manifest
-        .rows
-        .iter()
-        .map(|row| &row.logical_key)
-        .chain(tracked_paths.keys())
+    for key in manifest_rows
+        .keys()
+        .copied()
+        .chain(tracked_paths.keys().map(PathBuf::as_path))
     {
         for dir in key.ancestors().skip(1) {
             if dir.as_os_str().is_empty() || !tracked_dirs.insert(dir.to_path_buf()) {
@@ -126,7 +132,7 @@ async fn locate_files_in_package_home(
             let record = if in_lineage {
                 None
             } else {
-                manifest.get_record(&logical_key)
+                manifest_rows.get(logical_key.as_path()).copied()
             };
             let tracked = in_lineage || record.is_some();
             if let Some(ignored_by) = rules.file_ignored_by(&logical_key, tracked) {
