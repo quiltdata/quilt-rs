@@ -332,7 +332,40 @@ pub async fn open_user_ignore_rules(m: tauri::State<'_, model::Model>) -> Result
         quilt::quiltignore::append_lines(&file, &[USER_RULES_HEADER.to_string()])
             .map_err(|e| e.to_string())?;
     }
-    opener::open(&file).map_err(|e| e.to_string())
+    open_in_text_editor(&file)
+}
+
+/// The file has no extension, so the system may have no app for it: macOS
+/// asks for its text editor, and Windows falls back to Notepad.
+fn open_in_text_editor(file: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-t")
+            .arg(file)
+            .status()
+            .map_err(|e| e.to_string())
+            .and_then(|status| {
+                status
+                    .success()
+                    .then_some(())
+                    .ok_or_else(|| format!("Could not open {}", file.display()))
+            })
+    }
+    #[cfg(target_os = "windows")]
+    {
+        opener::open(file).or_else(|_| {
+            std::process::Command::new("notepad.exe")
+                .arg(file)
+                .spawn()
+                .map(drop)
+                .map_err(|e| e.to_string())
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        opener::open(file).map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]

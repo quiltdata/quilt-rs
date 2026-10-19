@@ -106,7 +106,9 @@ fn read_error(path: &Path, err: impl Into<Box<dyn std::error::Error + Send + Syn
 }
 
 /// Load a rules file. Returns `None` if the file does not exist.
-fn load_file(root: &Path, path: &Path) -> Res<Option<RuleFile>> {
+/// With `switches`, a line that turns a built-in rule off is left out: see
+/// [`switched_off`].
+fn load_file(root: &Path, path: &Path, switches: bool) -> Res<Option<RuleFile>> {
     if !path.is_file() {
         return Ok(None);
     }
@@ -115,11 +117,11 @@ fn load_file(root: &Path, path: &Path) -> Res<Option<RuleFile>> {
     // read is not news; what it *excluded* is, and the status line carries that count.
     trace!("Loading {}", path.display());
     let contents = std::fs::read_to_string(path).map_err(|err| read_error(path, err))?;
-    parse_file(root, path, contents).map(Some)
+    parse_file(root, path, contents, switches).map(Some)
 }
 
 /// Build a rules file from its text, as `GitignoreBuilder::add` would, keeping line numbers.
-fn parse_file(root: &Path, path: &Path, contents: String) -> Res<RuleFile> {
+fn parse_file(root: &Path, path: &Path, contents: String, switches: bool) -> Res<RuleFile> {
     let mut builder = GitignoreBuilder::new(root);
     let mut lines = Vec::new();
     for (number, line) in (1u64..).zip(contents.lines()) {
@@ -128,6 +130,9 @@ fn parse_file(root: &Path, path: &Path, contents: String) -> Res<RuleFile> {
         } else {
             line
         };
+        if switches && glob_text(line).is_some_and(|text| switch_of(text).is_some()) {
+            continue;
+        }
         builder
             .add_line(Some(path.to_path_buf()), line)
             .map_err(|err| {
@@ -154,23 +159,45 @@ fn parse_file(root: &Path, path: &Path, contents: String) -> Res<RuleFile> {
 /// Try to load a `.quiltignore` file from the given directory.
 /// Returns `None` if the file does not exist.
 pub fn load(dir: &Path) -> Res<Option<Gitignore>> {
-    Ok(load_file(dir, &dir.join(QUILTIGNORE))?.map(|file| file.gitignore))
+    Ok(load_file(dir, &dir.join(QUILTIGNORE), false)?.map(|file| file.gitignore))
+}
+
+/// The built-in rule a line of the user-wide file turns off, if it is one:
+/// `!` and the rule exactly. Such a line takes the rule out of the built-in
+/// layer, case-insensitive like the rule, rather than bringing back all it
+/// matches: `!.*/` must not bring back a `.env` in a dot-folder.
+fn switch_of(text: &str) -> Option<&'static str> {
+    let rule = text.strip_prefix('!')?;
+    DEFAULT_RULES.iter().copied().find(|r| *r == rule)
+}
+
+/// The built-in rules `contents` turns off.
+fn switched_off(contents: &str) -> Vec<&'static str> {
+    contents
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .filter_map(glob_text)
+        .filter_map(switch_of)
+        .collect()
+}
+
+/// The built-in layer without the rules in `off`.
+fn build_defaults(off: &[&str]) -> Gitignore {
+    let mut builder = GitignoreBuilder::new("/");
+    builder
+        .case_insensitive(true)
+        .expect("case_insensitive never fails");
+    for line in DEFAULT_RULES.iter().filter(|rule| !off.contains(rule)) {
+        builder
+            .add_line(None, line)
+            .expect("built-in ignore rule parses");
+    }
+    builder.build().expect("built-in ignore rules build")
 }
 
 fn defaults() -> &'static Gitignore {
     static INSTANCE: OnceLock<Gitignore> = OnceLock::new();
-    INSTANCE.get_or_init(|| {
-        let mut builder = GitignoreBuilder::new("/");
-        builder
-            .case_insensitive(true)
-            .expect("case_insensitive never fails");
-        for line in DEFAULT_RULES {
-            builder
-                .add_line(None, line)
-                .expect("built-in ignore rule parses");
-        }
-        builder.build().expect("built-in ignore rules build")
-    })
+    INSTANCE.get_or_init(|| build_defaults(&[]))
 }
 
 /// The ignore rules for one package, strongest first: the package's
@@ -185,17 +212,27 @@ pub struct Rules {
     package: Option<RuleFile>,
     user: Option<(PathBuf, RuleFile)>,
     user_file: PathBuf,
+    /// The built-in layer, when the user-wide file turns some of it off.
+    defaults: Option<Gitignore>,
+}
+
+/// The built-in layer `user` leaves, unless it is the whole of it.
+fn defaults_left(user: Option<&RuleFile>) -> Option<Gitignore> {
+    let off = switched_off(user.map_or("", |file| file.contents.as_str()));
+    (!off.is_empty()).then(|| build_defaults(&off))
 }
 
 impl Rules {
     /// Load the package's `.quiltignore` and the user-wide `user_file`.
     /// Either may be missing; an unreadable or invalid one is an error.
     pub fn load(package_dir: &Path, user_file: &Path) -> Res<Rules> {
-        let package = load_file(package_dir, &package_dir.join(QUILTIGNORE))?;
-        let user = load_file(package_dir, user_file)?.map(|file| (user_file.to_path_buf(), file));
+        let package = load_file(package_dir, &package_dir.join(QUILTIGNORE), false)?;
+        let user =
+            load_file(package_dir, user_file, true)?.map(|file| (user_file.to_path_buf(), file));
         Ok(Rules {
             package_dir: package_dir.to_path_buf(),
             package,
+            defaults: defaults_left(user.as_ref().map(|(_, file)| file)),
             user,
             user_file: user_file.to_path_buf(),
         })
@@ -218,16 +255,20 @@ impl Rules {
             Scope::AllPackages => self.user.as_ref().map(|(_, file)| file),
         };
         let contents = appended(current.map_or("", |file| file.contents.as_str()), lines);
-        let file = parse_file(&self.package_dir, &path, contents)?;
-        let (package, user) = match scope {
-            Scope::Package => (Some(file), self.user.clone()),
-            Scope::AllPackages => (self.package.clone(), Some((path, file))),
+        let file = parse_file(&self.package_dir, &path, contents, scope == Scope::AllPackages)?;
+        let (package, user, defaults) = match scope {
+            Scope::Package => (Some(file), self.user.clone(), self.defaults.clone()),
+            Scope::AllPackages => {
+                let defaults = defaults_left(Some(&file));
+                (self.package.clone(), Some((path, file)), defaults)
+            }
         };
         Ok(Rules {
             package_dir: self.package_dir.clone(),
             package,
             user,
             user_file: self.user_file.clone(),
+            defaults,
         })
     }
 
@@ -325,7 +366,8 @@ impl Rules {
                 Match::None => {}
             }
         }
-        match defaults().matched_path_or_any_parents(relative_path, is_dir) {
+        let defaults = self.defaults.as_ref().unwrap_or_else(|| defaults());
+        match defaults.matched_path_or_any_parents(relative_path, is_dir) {
             Match::Ignore(glob) => Some(IgnoredBy {
                 pattern: glob.original().to_string(),
                 source: RuleSource::Default,
@@ -509,16 +551,12 @@ pub fn default_rules(user_file: &Path) -> Res<Vec<DefaultRule>> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(read_error(user_file, err)),
     };
-    let lines: Vec<&str> = contents
-        .trim_start_matches('\u{feff}')
-        .lines()
-        .filter_map(glob_text)
-        .collect();
+    let off = switched_off(&contents);
     Ok(DEFAULT_RULES
         .iter()
         .map(|rule| DefaultRule {
             rule,
-            on: !lines.contains(&off_line(rule).as_str()),
+            on: !off.contains(rule),
         })
         .collect())
 }
@@ -1058,7 +1096,11 @@ mod tests {
     fn remove_lines_keeps_the_rest_as_written() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join(".quiltignore");
-        std::fs::write(&path, "\u{feff}!.env\r\n# note\r\n*.log\r\n!.env  \r\n!.envy").unwrap();
+        std::fs::write(
+            &path,
+            "\u{feff}!.env\r\n# note\r\n*.log\r\n!.env  \r\n!.envy",
+        )
+        .unwrap();
         remove_lines(&path, &["!.env".to_string()]).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
@@ -1082,7 +1124,7 @@ mod tests {
                 .collect()
         };
         assert_eq!(default_rules(&path).unwrap().len(), DEFAULT_RULES.len());
-        assert!(off(&path).is_empty());
+        assert_eq!(off(&path), Vec::<&str>::new());
 
         set_default_rule(&path, ".DS_Store", false).unwrap();
         set_default_rule(&path, ".DS_Store", false).unwrap();
@@ -1098,6 +1140,27 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "!.*/\n");
 
         assert!(set_default_rule(&path, "*.csv", false).is_err());
+    }
+
+    /// A rule turned off is out of the built-in layer, whatever the case of
+    /// the name, and the other rules still apply inside what it matched.
+    #[test]
+    fn a_default_rule_turned_off_leaves_the_others_on() {
+        let dir = TempDir::new().unwrap();
+        let user_file = dir.path().join("user.quiltignore");
+        std::fs::write(&user_file, "# mine\n.venv/\n").unwrap();
+        set_default_rule(&user_file, ".*/", false).unwrap();
+        set_default_rule(&user_file, "*.pem", false).unwrap();
+        let rules = Rules::load(dir.path(), &user_file).unwrap();
+        let ignored = |path: &str, is_dir| rules.ignored_by(Path::new(path), is_dir, false);
+        assert_eq!(ignored(".mydata", true), None);
+        assert_eq!(ignored(".mydata/a.csv", false), None);
+        assert_eq!(ignored("key.PEM", false), None);
+        assert_eq!(
+            ignored(".mydata/.env", false).map(|by| by.source),
+            Some(RuleSource::Default)
+        );
+        assert!(ignored(".venv", true).is_some(), "the user's own rule stays");
     }
 
     /// The line a switch writes is one the layers read as bringing the files back.

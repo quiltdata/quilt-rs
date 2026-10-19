@@ -44,10 +44,10 @@ use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::PageLayout;
 use crate::pages::settings_v2::{
-    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, IgnoreRulesCard, PublishingCard,
-    PublishingDialog, PublishingForm, ReportBody, ReportDialog, ReportFooter, ReportState, Saved,
-    SettingsHeader, SettingsLayout, SignOutDialog, StorageCard, StorageSize, SyncingCard,
-    TroubleshootingCard, metadata_error, minutes_shown, sign_out_consequence,
+    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, IgnoreRulesCard,
+    PublishingCard, PublishingDialog, PublishingForm, ReportBody, ReportDialog, ReportFooter,
+    ReportState, Saved, SettingsHeader, SettingsLayout, SignOutDialog, StorageCard, StorageSize,
+    SyncingCard, TroubleshootingCard, metadata_error, minutes_shown, sign_out_consequence,
 };
 use quilt_sync_ui::commands::{LogEnv, PublishSettingsData};
 
@@ -73,14 +73,39 @@ fn narrow(card: AnyView) -> AnyView {
 
 // ── Ignore rules ──
 
-const USER_RULES: &str = "/Users/a-user/Library/Application Support/com.quiltdata.quilt-sync/.quiltignore";
+const USER_RULES: &str =
+    "/Users/a-user/Library/Application Support/com.quiltdata.quilt-sync/.quiltignore";
 
 /// The built-in rules, as quilt-rs lists them when this was written.
 const BUILT_IN: &[&str] = &[
-    ".*/", ".DS_Store", ".DS_Store?", "._*", ".LSOverride", ".VolumeIcon.icns", "Icon[\r]",
-    "Thumbs.db", "ehthumbs.db", "desktop.ini", "$RECYCLE.BIN/", ".directory", ".nfs*", "~$*",
-    ".~lock.*#", ".#*", "\\#*\\#", "*.swp", "*.swo", "*~", ".env", ".env.*", ".netrc", "*.pem",
-    "*.code-workspace", "__pycache__/", "*.py[cod]", "node_modules/",
+    ".*/",
+    ".DS_Store",
+    ".DS_Store?",
+    "._*",
+    ".LSOverride",
+    ".VolumeIcon.icns",
+    "Icon[\r]",
+    "Thumbs.db",
+    "ehthumbs.db",
+    "desktop.ini",
+    "$RECYCLE.BIN/",
+    ".directory",
+    ".nfs*",
+    "~$*",
+    ".~lock.*#",
+    ".#*",
+    "\\#*\\#",
+    "*.swp",
+    "*.swo",
+    "*~",
+    ".env",
+    ".env.*",
+    ".netrc",
+    "*.pem",
+    "*.code-workspace",
+    "__pycache__/",
+    "*.py[cod]",
+    "node_modules/",
 ];
 
 /// The card with `off` turned off, or the unreadable file's line.

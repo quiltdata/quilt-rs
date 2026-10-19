@@ -63,10 +63,10 @@ use crate::kit::{
 
 use super::super::v2_page::{PageHandle, PageRead, V2Page, critical, hold};
 use super::{
-    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, IgnoreRulesCard, PublishingCard,
-    PublishingDialog, ReportDialog, ReportState, Saved, SettingsHeader, SettingsLayout,
-    SignOutDialog, StorageCard, StorageSize, SyncingCard, TroubleshootingCard, log_level_label,
-    minutes_secs, minutes_shown,
+    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, IgnoreRulesCard,
+    PublishingCard, PublishingDialog, ReportDialog, ReportState, Saved, SettingsHeader,
+    SettingsLayout, SignOutDialog, StorageCard, StorageSize, SyncingCard, TroubleshootingCard,
+    log_level_label, minutes_secs, minutes_shown,
 };
 
 use super::style;
@@ -84,7 +84,10 @@ pub(crate) enum Write {
     LogLevel(String),
     Publishing(PublishSettingsData),
     /// A built-in ignore rule turned on or off for every package.
-    IgnoreRule { rule: String, on: bool },
+    IgnoreRule {
+        rule: String,
+        on: bool,
+    },
 }
 
 /// What the page reads and writes, as parameters so a test can answer
@@ -1450,7 +1453,11 @@ mod tests {
             },
             ignore_rules: IgnoreRulesData {
                 file: "/data/.quiltignore".to_string(),
-                rules: Some(vec![rule(".*/", true), rule(".DS_Store", false), rule("*.pem", true)]),
+                rules: Some(vec![
+                    rule(".*/", true),
+                    rule(".DS_Store", false),
+                    rule("*.pem", true),
+                ]),
             },
         }
     }
@@ -1821,7 +1828,11 @@ mod tests {
         unreadable.ignore_rules.rules = None;
         let el = page(vec![unreadable]).await;
         let card = el.query_selector("[data-ignore-rules]").unwrap().unwrap();
-        assert!(card.query_selector("input[type=checkbox]").unwrap().is_none());
+        assert!(
+            card.query_selector("input[type=checkbox]")
+                .unwrap()
+                .is_none()
+        );
         assert!(
             card.text_content()
                 .unwrap_or_default()
