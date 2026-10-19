@@ -23,17 +23,17 @@
 
 ### Added
 
-- Ignore rules in three layers: the built-in `quiltignore::DEFAULT_RULES` (every dot-folder, OS and editor clutter, secrets, caches, `node_modules/`; Zarr metadata such as `.zattrs` stays in), then the user-wide `.quiltignore` at `DomainPaths::user_quiltignore`, then the package's `.quiltignore`. The last matching line wins, so `!pattern` brings a path back. The first two hide new files only; a file the package has stays. `quiltignore::Rules` applies them, and `quiltignore::IgnoredBy` names the matching rule and its source (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- Ignore rules in three layers: the built-in `quiltignore::DEFAULT_RULES` (every dot-folder, OS and editor clutter, secrets, caches, `node_modules/`; Zarr metadata such as `.zattrs` stays in), then the user-wide `.quiltignore` at `DomainPaths::user_quiltignore`, then the package's `.quiltignore`. The last matching line wins, so `!pattern` brings a path back. The first two hide new files only; a file the package has stays. `quiltignore::Rules` applies them, and `quiltignore::IgnoredBy` names the matching rule and its source (<https://github.com/quiltdata/quilt-rs/pull/1143>)
 - `state_store::PackageStateStore`: an optional store for per-package state the desktop app keeps, at `DomainPaths::state_db` (`.quilt/state.db`), in SQLite. Its first table holds each package's last-change time. No method returns an error: a missing, damaged or deleted file is created again, and the CLI never opens it (<https://github.com/quiltdata/quilt-rs/pull/1134>)
 
 ### Changed
 
-- **Breaking:** `flow::status` takes `&DomainPaths`, and `InstalledPackageStatus::ignored_files` and `ignored_dirs` carry a `quiltignore::IgnoredBy` instead of the pattern string (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- **Breaking:** `flow::status` takes `&DomainPaths`, and `InstalledPackageStatus::ignored_files` and `ignored_dirs` carry a `quiltignore::IgnoredBy` instead of the pattern string (<https://github.com/quiltdata/quilt-rs/pull/1143>)
 - **Breaking:** `InstalledPackageStatus::most_recent_mtime` and `InstalledPackageStatus::working_tree_quiet` are removed. Nothing times a publish from file edit times now (<https://github.com/quiltdata/quilt-rs/pull/1134>)
 
 ### Fixed
 
-- A pull no longer overwrites an ignored local file at a path the remote adds or changes: it stops with a conflict, unless the file already holds the old or the new content (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- A pull no longer overwrites an ignored local file at a path the remote adds or changes: it stops with a conflict, unless the file already holds the old or the new content (<https://github.com/quiltdata/quilt-rs/pull/1143>)
 
 ## [v0.44.0] - 2026-10-13
 

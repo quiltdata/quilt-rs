@@ -23,7 +23,7 @@
 
 ### Changed
 
-- New files that are OS or editor clutter, secrets or caches (`.DS_Store`, `.git/`, `.venv/`, `.env`, `node_modules/` and similar) no longer go into a package. Files already in a package stay. Rules of your own for every package go in `.quiltignore` in the app's data folder, and a package's `.quiltignore` can bring a file back with `!pattern` (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- New files that are OS or editor clutter, secrets or caches (`.DS_Store`, `.git/`, `.venv/`, `.env`, `node_modules/` and similar) no longer go into a package. Files already in a package stay. Rules of your own for every package go in `.quiltignore` in the app's data folder, and a package's `.quiltignore` can bring a file back with `!pattern` (<https://github.com/quiltdata/quilt-rs/pull/1143>)
 
 ### Fixed
 
