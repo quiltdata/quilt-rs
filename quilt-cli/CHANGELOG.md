@@ -21,6 +21,10 @@
 
 ## [v0.37.0-dev]
 
+### Added
+
+- `quilt status` says how many files and folders the ignore rules leave out, and `quilt status --ignored` lists each one with its rule and where the rule comes from: a default rule, or a rules file and its line. `--json` gains the counts, and the list with `--ignored` (<https://github.com/quiltdata/quilt-rs/pull/1146>)
+
 ### Changed
 
 - `quilt create` and `quilt status` leave out new files that are OS or editor clutter, secrets or caches (`.DS_Store`, `.git/`, `.venv/`, `.env`, `node_modules/` and similar). Files already in a package stay. Rules of your own for every package go in `.quiltignore` in the domain folder (<https://github.com/quiltdata/quilt-rs/pull/1143>)
