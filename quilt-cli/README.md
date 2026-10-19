@@ -131,6 +131,8 @@ before or after the command, so `quilt --domain <path> list` and
   Without the flag, `quilt` reads the domain from `QUILT_DOMAIN`, so
   `export QUILT_DOMAIN=<path>` points every command in a shell at one domain.
   The flag wins over the variable, and an empty `QUILT_DOMAIN` counts as unset.
+  QuiltSync does not read `QUILT_DOMAIN`, so a domain set this way is not
+  the one the app uses.
 - `--format text|json` — format of the command's result: human-readable
   `text` (the default) or machine-readable `json`. Every command accepts it.
   Without the flag, `quilt` reads the format from `QUILT_FORMAT`, so
