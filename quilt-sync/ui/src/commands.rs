@@ -322,6 +322,23 @@ pub struct ExperimentalSettingsData {
     pub main_page_v2: bool,
 }
 
+/// One built-in ignore rule, and whether it is on.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DefaultRuleData {
+    pub rule: String,
+    pub on: bool,
+}
+
+/// The built-in ignore rules, and the user-wide file that turns them off.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct IgnoreRulesData {
+    pub file: String,
+    /// `None` when the file could not be read.
+    pub rules: Option<Vec<DefaultRuleData>>,
+}
+
 /// What `QUILT_LOG` does to the saved log level.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
@@ -351,6 +368,8 @@ pub struct SettingsData {
     pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
     pub experimental: ExperimentalSettingsData,
+    #[serde(default)]
+    pub ignore_rules: IgnoreRulesData,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -1379,6 +1398,21 @@ pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
         enabled: bool,
     }
     tauri::invoke("update_fswatcher_settings", &Args { enabled }).await
+}
+
+/// Turn a built-in ignore rule on or off for every package.
+pub async fn set_default_ignore_rule(rule: String, on: bool) -> Result<(), String> {
+    #[derive(Serialize)]
+    struct Args {
+        rule: String,
+        on: bool,
+    }
+    tauri::invoke("set_default_ignore_rule", &Args { rule, on }).await
+}
+
+/// Open the user-wide ignore rules file, creating it if missing.
+pub async fn open_user_ignore_rules() -> Result<(), String> {
+    tauri::invoke_unit("open_user_ignore_rules").await
 }
 
 /// Save the log level (`default`, `trace`, …); it applies after a restart.

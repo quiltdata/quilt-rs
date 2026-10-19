@@ -190,6 +190,44 @@ impl From<ExperimentalSettings> for ExperimentalSettingsData {
     }
 }
 
+/// One built-in ignore rule, and whether it is on.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DefaultRuleData {
+    pub rule: String,
+    pub on: bool,
+}
+
+/// The built-in ignore rules, and the user-wide file that turns them off.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct IgnoreRulesData {
+    pub file: String,
+    /// `None` when the file could not be read.
+    pub rules: Option<Vec<DefaultRuleData>>,
+}
+
+impl IgnoreRulesData {
+    fn read(file: &std::path::Path) -> Self {
+        let rules = quilt::quiltignore::default_rules(file)
+            .inspect_err(|err| tracing::warn!("Could not read {}: {err}", file.display()))
+            .ok()
+            .map(|rules| {
+                rules
+                    .into_iter()
+                    .map(|d| DefaultRuleData {
+                        rule: d.rule.to_string(),
+                        on: d.on,
+                    })
+                    .collect()
+            });
+        Self {
+            file: file.display().to_string(),
+            rules,
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
@@ -208,6 +246,7 @@ pub struct SettingsData {
     pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
     pub experimental: ExperimentalSettingsData,
+    pub ignore_rules: IgnoreRulesData,
 }
 
 #[tauri::command]
@@ -247,6 +286,7 @@ pub async fn get_settings_data(
     let autosync_data = AutosyncSettingsData::from(autosync_settings.read().await.clone());
     let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());
     let experimental_data = ExperimentalSettingsData::from(experimental.read().await.clone());
+    let user_rules = m.get_quilt().lock().await.user_quiltignore();
 
     Ok(SettingsData {
         version: app.version.to_string(),
@@ -263,7 +303,36 @@ pub async fn get_settings_data(
         autosync: autosync_data,
         fswatcher: fswatcher_data,
         experimental: experimental_data,
+        ignore_rules: IgnoreRulesData::read(&user_rules),
     })
+}
+
+/// Turn a built-in ignore rule on or off for every package. The file watcher
+/// sees the user-wide file change and checks every package again.
+#[tauri::command]
+pub async fn set_default_ignore_rule(
+    m: tauri::State<'_, model::Model>,
+    rule: String,
+    on: bool,
+) -> Result<(), String> {
+    let file = m.get_quilt().lock().await.user_quiltignore();
+    quilt::quiltignore::set_default_rule(&file, &rule, on).map_err(|e| e.to_string())
+}
+
+/// The first line of a user-wide rules file *Edit my rules* creates.
+const USER_RULES_HEADER: &str =
+    "# Your ignore rules for every package, one gitignore pattern per line.";
+
+/// Open the user-wide rules file in the default application, creating it
+/// first if missing.
+#[tauri::command]
+pub async fn open_user_ignore_rules(m: tauri::State<'_, model::Model>) -> Result<(), String> {
+    let file = m.get_quilt().lock().await.user_quiltignore();
+    if !file.exists() {
+        quilt::quiltignore::append_lines(&file, &[USER_RULES_HEADER.to_string()])
+            .map_err(|e| e.to_string())?;
+    }
+    opener::open(&file).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -44,7 +44,7 @@ use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::PageLayout;
 use crate::pages::settings_v2::{
-    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, PublishingCard,
+    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, IgnoreRulesCard, PublishingCard,
     PublishingDialog, PublishingForm, ReportBody, ReportDialog, ReportFooter, ReportState, Saved,
     SettingsHeader, SettingsLayout, SignOutDialog, StorageCard, StorageSize, SyncingCard,
     TroubleshootingCard, metadata_error, minutes_shown, sign_out_consequence,
@@ -69,6 +69,34 @@ fn column(card: AnyView) -> AnyView {
 /// A card at the column's width in the app's smallest window.
 fn narrow(card: AnyView) -> AnyView {
     view! { <div class="g-stack" style="max-width:608px">{card}</div> }.into_any()
+}
+
+// ── Ignore rules ──
+
+const USER_RULES: &str = "/Users/a-user/Library/Application Support/com.quiltdata.quilt-sync/.quiltignore";
+
+/// The built-in rules, as quilt-rs lists them when this was written.
+const BUILT_IN: &[&str] = &[
+    ".*/", ".DS_Store", ".DS_Store?", "._*", ".LSOverride", ".VolumeIcon.icns", "Icon[\r]",
+    "Thumbs.db", "ehthumbs.db", "desktop.ini", "$RECYCLE.BIN/", ".directory", ".nfs*", "~$*",
+    ".~lock.*#", ".#*", "\\#*\\#", "*.swp", "*.swo", "*~", ".env", ".env.*", ".netrc", "*.pem",
+    "*.code-workspace", "__pycache__/", "*.py[cod]", "node_modules/",
+];
+
+/// The card with `off` turned off, or the unreadable file's line.
+fn ignore_rules(off: &[&str], readable: bool, saved: Option<Saved>) -> AnyView {
+    let rules = readable.then(|| BUILT_IN.iter().map(ToString::to_string).collect());
+    let off = RwSignal::new(off.iter().map(ToString::to_string).collect());
+    view! {
+        <IgnoreRulesCard
+            rules=rules
+            off=off
+            file=USER_RULES
+            on_edit=noop()
+            saved=Signal::stored(saved)
+        />
+    }
+    .into_any()
 }
 
 // ── Syncing ──
@@ -355,6 +383,7 @@ fn whole_page(width: u32, height: u32) -> AnyView {
                         .into_any()
                     troubleshooting=troubleshooting(LogEnv::Unset, "Default", false)
                     about=view! { <AboutCard version=VERSION on_release_notes=noop() /> }.into_any()
+                    ignore_rules=ignore_rules(&[], true, None)
                 />
             </PageLayout>
         </div>
@@ -363,7 +392,8 @@ fn whole_page(width: u32, height: u32) -> AnyView {
 }
 
 const NOTE: &str = "The settings page v2. From a 1024px window, two cards to a row: Syncing and \
-    Accounts, Storage and App, Publishing and Troubleshooting, Experimental and About. Narrower, \
+    Accounts, Storage and App, Publishing and Troubleshooting, Experimental and About, then Ignore \
+    rules alone. Narrower, \
     the same order in one column. Toggles, selects and minute fields save as they change and say \
     Saved; Publishing is read-only, edited in a popup with Save. Routed at /settings under New \
     design preview.";
@@ -517,6 +547,18 @@ pub fn SettingsPageScene() -> impl IntoView {
             </Cell>
             <Cell full=true label="About">
                 {column(view! { <AboutCard version=VERSION on_release_notes=noop() /> }.into_any())}
+            </Cell>
+            <Cell full=true label="Ignore rules — every built-in rule on">
+                {column(ignore_rules(&[], true, None))}
+            </Cell>
+            <Cell full=true label="Ignore rules — two turned off, one just saved">
+                {column(ignore_rules(&[".*/", "*.pem"], true, Some(Saved::IgnoreRule(23))))}
+            </Cell>
+            <Cell full=true label="Ignore rules — narrow">
+                {narrow(ignore_rules(&[".env"], true, None))}
+            </Cell>
+            <Cell full=true label="Ignore rules — your rules file could not be read">
+                {column(ignore_rules(&[], false, None))}
             </Cell>
             <Cell wide=true label="Report a problem — empty">
                 {report("", ReportState::Writing)}

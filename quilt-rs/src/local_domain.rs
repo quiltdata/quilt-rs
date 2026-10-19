@@ -117,6 +117,13 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         self
     }
 
+    /// The user-wide ignore rules file, which every package reads below its
+    /// own `.quiltignore`.
+    #[must_use]
+    pub fn user_quiltignore(&self) -> std::path::PathBuf {
+        self.paths.user_quiltignore()
+    }
+
     pub async fn get_home(&self) -> Res<Home> {
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         Ok(lineage.home)

@@ -22,6 +22,7 @@ use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
+use crate::kit::Checkbox;
 use crate::kit::ConfirmDialog;
 use crate::kit::Dialog;
 use crate::kit::FormControl;
@@ -57,6 +58,8 @@ pub enum Saved {
     Tray,
     DesignPreview,
     LogLevel,
+    /// The built-in ignore rule at this index of the card's list.
+    IgnoreRule(usize),
 }
 
 /// Whether `row`'s own save is out: its control is held still until it
@@ -194,12 +197,14 @@ pub fn SettingsHeader(
 
 /// The page's cards, in rows of two on a wide window: Syncing and Accounts,
 /// the two the main page's strip shows, then Storage and App, Publishing and
-/// Troubleshooting, Experimental and About. Narrow, the same order in one column.
+/// Troubleshooting, Experimental and About, and Ignore rules. Narrow, the same
+/// order in one column.
 #[component]
 pub fn SettingsLayout(
     header: AnyView,
     syncing: AnyView,
     publishing: AnyView,
+    ignore_rules: AnyView,
     accounts: AnyView,
     app: AnyView,
     storage: AnyView,
@@ -220,6 +225,8 @@ pub fn SettingsLayout(
                 {troubleshooting}
                 {experimental}
                 {about}
+                // Last, so its long list stretches no other card's row.
+                {ignore_rules}
             </TwoColumns>
         </div>
     }
@@ -510,6 +517,106 @@ where
                 sealed=running
             />
         </FormDialog>
+    }
+}
+
+// ── Ignore rules ──
+
+pub const IGNORE_RULES_USE: &str = "New files that match a built-in rule stay out of every \
+     package. Turn a rule off to let them in. Your rules come after these, and a package's own \
+     .quiltignore after both; the last match wins.";
+
+pub const IGNORE_RULES_UNREADABLE: &str =
+    "Could not read your rules, so the built-in rules can't be switched here.";
+
+/// A built-in rule as the card names it: a control character as its escape,
+/// so the macOS `Icon\r` rule reads as written.
+#[must_use]
+pub fn rule_shown(rule: &str) -> String {
+    rule.chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_default().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+/// The built-in ignore rules, each with a box: off writes its `!` line into
+/// the reader's rules file, on takes it out. **Edit my rules** opens the file.
+#[component]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a component's props are owned; the body reads them from there"
+)]
+pub fn IgnoreRulesCard(
+    /// The built-in rules, in order; `None` when the reader's file could not
+    /// be read.
+    rules: Option<Vec<String>>,
+    /// The rules turned off, as the page holds them.
+    off: RwSignal<std::collections::BTreeSet<String>>,
+    /// The reader's rules file.
+    #[prop(into)]
+    file: String,
+    on_edit: Callback<()>,
+    #[prop(optional, into)] saved: Signal<Option<Saved>>,
+    #[prop(optional, into)] pending: Signal<Vec<Saved>>,
+) -> impl IntoView {
+    let list = match rules {
+        None => view! { <p class=style::quiet>{IGNORE_RULES_UNREADABLE}</p> }.into_any(),
+        Some(rules) => {
+            let items = rules
+                .into_iter()
+                .enumerate()
+                .map(|(i, rule)| {
+                    let row = Saved::IgnoreRule(i);
+                    let shown = rule_shown(&rule);
+                    let on = {
+                        let rule = rule.clone();
+                        Signal::derive(move || off.with(|off| !off.contains(&rule)).into())
+                    };
+                    view! {
+                        <li>
+                            <label class=style::rule>
+                                <Checkbox
+                                    state=on
+                                    on_toggle=move |next: bool| {
+                                        off.update(|off| {
+                                            if next {
+                                                off.remove(&rule);
+                                            } else {
+                                                off.insert(rule.clone());
+                                            }
+                                        });
+                                    }
+                                    disabled=saving(pending, row)
+                                />
+                                <code class=style::code>{shown}</code>
+                            </label>
+                            {saved_note(saved, row)}
+                        </li>
+                    }
+                })
+                .collect_view();
+            view! { <ul class=style::rules aria-label="Built-in rules">{items}</ul> }.into_any()
+        }
+    };
+    view! {
+        <Card title="Ignore rules">
+            <p class=style::lead>{IGNORE_RULES_USE}</p>
+            <ValueRow
+                name="Your rules"
+                value=path_value(file)
+                action=view! { <Button on_click=move |_| on_edit.run(())>"Edit my rules"</Button> }
+                    .into_any()
+            />
+            <div>
+                <p class=style::field_name>"Built-in rules"</p>
+                {list}
+            </div>
+        </Card>
     }
 }
 

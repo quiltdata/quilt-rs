@@ -446,6 +446,108 @@ pub fn append_lines(path: &Path, lines: &[String]) -> Res {
     file.write_all(text.as_bytes()).map_err(write_error)
 }
 
+/// Take every line that reads as one of `lines` out of the rules file at
+/// `path`, leaving the rest as it is. A missing file has none to take.
+pub fn remove_lines(path: &Path, lines: &[String]) -> Res {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(read_error(path, err)),
+    };
+    let kept: String = contents
+        .split_inclusive('\n')
+        .enumerate()
+        .filter(|(number, line)| {
+            let line = line.trim_end_matches(['\n', '\r']);
+            let line = if *number == 0 {
+                line.trim_start_matches('\u{feff}')
+            } else {
+                line
+            };
+            !glob_text(line).is_some_and(|text| lines.iter().any(|l| l == text))
+        })
+        .map(|(_, line)| line)
+        .collect();
+    if kept == contents {
+        return Ok(());
+    }
+    // Written beside the file and moved over it, so a reader never sees half of it.
+    let write_error = |source| {
+        Error::Fs(FsError::Write {
+            path: path.to_path_buf(),
+            source,
+        })
+    };
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(write_error)?;
+    std::io::Write::write_all(&mut temp, kept.as_bytes()).map_err(write_error)?;
+    if let Ok(metadata) = std::fs::metadata(path) {
+        std::fs::set_permissions(temp.path(), metadata.permissions()).map_err(write_error)?;
+    }
+    temp.persist(path).map_err(|err| write_error(err.error))?;
+    Ok(())
+}
+
+/// One of [`DEFAULT_RULES`], and whether it is on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefaultRule {
+    pub rule: &'static str,
+    /// Off while the user-wide file has the rule's `!` line.
+    pub on: bool,
+}
+
+/// The line in the user-wide file that turns a built-in rule off.
+fn off_line(rule: &str) -> String {
+    format!("!{rule}")
+}
+
+/// Each of [`DEFAULT_RULES`], in order, and whether the user-wide file at
+/// `user_file` turns it off. A missing file turns none off.
+pub fn default_rules(user_file: &Path) -> Res<Vec<DefaultRule>> {
+    let contents = match std::fs::read_to_string(user_file) {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(read_error(user_file, err)),
+    };
+    let lines: Vec<&str> = contents
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .filter_map(glob_text)
+        .collect();
+    Ok(DEFAULT_RULES
+        .iter()
+        .map(|rule| DefaultRule {
+            rule,
+            on: !lines.contains(&off_line(rule).as_str()),
+        })
+        .collect())
+}
+
+/// Turn the built-in `rule` on or off for every package: off adds its `!`
+/// line to the user-wide file at `user_file`, on takes every such line out.
+pub fn set_default_rule(user_file: &Path, rule: &str, on: bool) -> Res {
+    if !DEFAULT_RULES.contains(&rule) {
+        return Err(Error::Fs(FsError::Write {
+            path: user_file.to_path_buf(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{rule:?} is not a built-in rule"),
+            ),
+        }));
+    }
+    let line = off_line(rule);
+    if on {
+        return remove_lines(user_file, &[line]);
+    }
+    let off = default_rules(user_file)?
+        .iter()
+        .any(|default| default.rule == rule && !default.on);
+    if off {
+        return Ok(());
+    }
+    append_lines(user_file, &[line])
+}
+
 /// Check whether the given path should be ignored.
 /// `relative_path` is the logical key (relative to the package home).
 /// `is_dir` must be `true` for directories (so `dir/` patterns work).
@@ -950,5 +1052,76 @@ mod tests {
         assert!(Rules::load(dir.path(), &user_file).is_err());
         std::fs::write(&user_file, "ok\na{b\n").unwrap();
         assert!(Rules::load(dir.path(), &user_file).is_err());
+    }
+
+    #[test]
+    fn remove_lines_keeps_the_rest_as_written() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".quiltignore");
+        std::fs::write(&path, "\u{feff}!.env\r\n# note\r\n*.log\r\n!.env  \r\n!.envy").unwrap();
+        remove_lines(&path, &["!.env".to_string()]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# note\r\n*.log\r\n!.envy"
+        );
+        let missing = dir.path().join("missing");
+        remove_lines(&missing, &["!.env".to_string()]).unwrap();
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn a_default_rule_is_off_while_the_user_file_has_its_line() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("domain").join(".quiltignore");
+        let off = |path: &Path| -> Vec<&str> {
+            default_rules(path)
+                .unwrap()
+                .into_iter()
+                .filter(|d| !d.on)
+                .map(|d| d.rule)
+                .collect()
+        };
+        assert_eq!(default_rules(&path).unwrap().len(), DEFAULT_RULES.len());
+        assert!(off(&path).is_empty());
+
+        set_default_rule(&path, ".DS_Store", false).unwrap();
+        set_default_rule(&path, ".DS_Store", false).unwrap();
+        set_default_rule(&path, ".*/", false).unwrap();
+        assert_eq!(off(&path), vec![".*/", ".DS_Store"]);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "!.DS_Store\n!.*/\n"
+        );
+
+        set_default_rule(&path, ".DS_Store", true).unwrap();
+        assert_eq!(off(&path), vec![".*/"]);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "!.*/\n");
+
+        assert!(set_default_rule(&path, "*.csv", false).is_err());
+    }
+
+    /// The line a switch writes is one the layers read as bringing the files back.
+    #[test]
+    fn a_default_rule_turned_off_lets_its_files_in() {
+        let dir = TempDir::new().unwrap();
+        let user_file = dir.path().join("user.quiltignore");
+        for rule in DEFAULT_RULES {
+            set_default_rule(&user_file, rule, false).unwrap();
+        }
+        let rules = Rules::load(dir.path(), &user_file).unwrap();
+        for (path, is_dir) in [
+            (".snakemake", true),
+            (".DS_Store", false),
+            ("Icon\r", false),
+            ("#draft#", false),
+            ("a.pyc", false),
+            ("node_modules", true),
+        ] {
+            assert_eq!(
+                rules.ignored_by(Path::new(path), is_dir, false),
+                None,
+                "{path:?}"
+            );
+        }
     }
 }
