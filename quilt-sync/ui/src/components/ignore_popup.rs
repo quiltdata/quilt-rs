@@ -233,16 +233,29 @@ fn scope_of(value: &str) -> commands::StopIgnoringScope {
     }
 }
 
-/// What the next sync adds, in a sentence.
-fn adds_sentence(files: u64, bytes: u64) -> String {
+/// What the next sync adds, in a sentence. The count is this package's; a
+/// user-wide line also brings the same paths back in every other package.
+fn adds_sentence(scope: commands::StopIgnoringScope, files: u64, bytes: u64) -> String {
+    let all = scope == commands::StopIgnoringScope::AllPackages;
+    let (target, rest) = if all {
+        (
+            "this package",
+            ", and the same paths in your other packages",
+        )
+    } else {
+        ("the package", "")
+    };
     match files {
-        0 => "This adds no files to the package on the next sync.".to_string(),
+        0 if all => "This adds no files to this package on the next sync, but brings back \
+                     the same paths in your other packages."
+            .to_string(),
+        0 => format!("This adds no files to {target} on the next sync."),
         1 => format!(
-            "This adds 1 file ({}) to the package on the next sync.",
+            "This adds 1 file ({}) to {target} on the next sync{rest}.",
             format_size(bytes)
         ),
         n => format!(
-            "This adds {} files ({}) to the package on the next sync.",
+            "This adds {} files ({}) to {target} on the next sync{rest}.",
             thousands(usize::try_from(n).unwrap_or(usize::MAX)),
             format_size(bytes)
         ),
@@ -390,7 +403,9 @@ fn StopIgnoringForm(
             };
             let caption = {
                 let chosen = chosen.clone();
-                Signal::derive(move || chosen().map(|c| adds_sentence(c.files, c.bytes)))
+                Signal::derive(move || {
+                    chosen().map(|c| adds_sentence(scope_of(&scope.get()), c.files, c.bytes))
+                })
             };
             let lines = move || {
                 let destination = match scope_of(&scope.get()) {
@@ -585,7 +600,8 @@ mod tests {
         element_saying(&el, "Adds !.snakemake/ to your rules for every package");
         element_saying(
             &el,
-            "This adds 1 file (300\u{a0}B) to the package on the next sync.",
+            "This adds 1 file (300\u{a0}B) to this package on the next sync, \
+             and the same paths in your other packages.",
         );
     }
 
@@ -617,17 +633,39 @@ mod tests {
 
     #[test]
     fn the_sentence_counts_files_and_size() {
+        use commands::StopIgnoringScope::ThisPackage;
         assert_eq!(
-            adds_sentence(0, 0),
+            adds_sentence(ThisPackage, 0, 0),
             "This adds no files to the package on the next sync."
         );
         assert_eq!(
-            adds_sentence(1, 44_000),
+            adds_sentence(ThisPackage, 1, 44_000),
             "This adds 1 file (44.0\u{a0}kB) to the package on the next sync."
         );
         assert_eq!(
-            adds_sentence(5412, 210_000_000),
+            adds_sentence(ThisPackage, 5412, 210_000_000),
             "This adds 5,412 files (210.0\u{a0}MB) to the package on the next sync."
+        );
+    }
+
+    /// A user-wide line applies to every package, and the count is this one's.
+    #[test]
+    fn the_all_packages_sentence_says_other_packages_change_too() {
+        use commands::StopIgnoringScope::AllPackages;
+        assert_eq!(
+            adds_sentence(AllPackages, 5412, 210_000_000),
+            "This adds 5,412 files (210.0\u{a0}MB) to this package on the next sync, \
+             and the same paths in your other packages."
+        );
+        assert_eq!(
+            adds_sentence(AllPackages, 1, 44_000),
+            "This adds 1 file (44.0\u{a0}kB) to this package on the next sync, \
+             and the same paths in your other packages."
+        );
+        assert_eq!(
+            adds_sentence(AllPackages, 0, 0),
+            "This adds no files to this package on the next sync, but brings back \
+             the same paths in your other packages."
         );
     }
 
