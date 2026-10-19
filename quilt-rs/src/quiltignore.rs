@@ -255,7 +255,12 @@ impl Rules {
             Scope::AllPackages => self.user.as_ref().map(|(_, file)| file),
         };
         let contents = appended(current.map_or("", |file| file.contents.as_str()), lines);
-        let file = parse_file(&self.package_dir, &path, contents, scope == Scope::AllPackages)?;
+        let file = parse_file(
+            &self.package_dir,
+            &path,
+            contents,
+            scope == Scope::AllPackages,
+        )?;
         let (package, user, defaults) = match scope {
             Scope::Package => (Some(file), self.user.clone(), self.defaults.clone()),
             Scope::AllPackages => {
@@ -1160,7 +1165,10 @@ mod tests {
             ignored(".mydata/.env", false).map(|by| by.source),
             Some(RuleSource::Default)
         );
-        assert!(ignored(".venv", true).is_some(), "the user's own rule stays");
+        assert!(
+            ignored(".venv", true).is_some(),
+            "the user's own rule stays"
+        );
     }
 
     /// The line a switch writes is one the layers read as bringing the files back.
