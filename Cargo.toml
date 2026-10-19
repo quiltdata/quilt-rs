@@ -59,6 +59,7 @@ tabled = "0.22.0"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.53.3", features = ["full"] }
+tokio-rusqlite = { version = "0.8.0", features = ["bundled"] }
 tokio-stream = "0.1.19"
 tracing = { version = "0.1.44", features = ["log"] }
 tracing-subscriber = "0.3.23"
