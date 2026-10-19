@@ -217,7 +217,7 @@ pub(super) fn EntryRow(
         status,
         junky_pattern,
         ignored_by,
-        folder: _,
+        folder,
         namespace,
     } = entry;
 
@@ -325,7 +325,7 @@ pub(super) fn EntryRow(
     };
 
     let ns_for_ignore = namespace.clone();
-    let path_for_ignore = filename;
+    let path_for_ignore = filename.clone();
     let on_ignore = move |_| {
         if let Some(pattern) = junky_pattern.clone() {
             show_ignore_popup.set(Some(IgnorePopupData {
@@ -342,6 +342,8 @@ pub(super) fn EntryRow(
         if let Some(pattern) = ignored_by.clone() {
             show_unignore_popup.set(Some(UnignorePopupData {
                 namespace: ns_for_unignore.to_string(),
+                path: filename.clone(),
+                folder,
                 pattern,
                 uri: uri_for_unignore.clone(),
             }));

@@ -469,7 +469,7 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
     else {
         return Signal::stored(Vec::new());
     };
-    let commands = row_commands(&r.path, r.place, r.ignored_by.as_deref(), reach);
+    let commands = row_commands(&r.path, r.folder, r.place, r.ignored_by.as_deref(), reach);
     Signal::derive(move || {
         let busy = busy.get();
         menu_actions(&commands, on_command)
@@ -492,6 +492,7 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
 /// not read `junky_pattern`, and the popup is prefilled with the path instead.
 fn row_commands(
     path: &str,
+    folder: bool,
     place: Place,
     ignored_by: Option<&str>,
     reach: Reach,
@@ -502,6 +503,7 @@ fn row_commands(
     if let Some(pattern) = ignored_by {
         return vec![RowCommand::StopIgnoring {
             path,
+            folder,
             pattern: pattern.to_string(),
         }];
     }
@@ -1579,6 +1581,7 @@ mod menu_tests {
     ) -> Vec<&'static str> {
         row_commands(
             "raw/a.csv",
+            false,
             Place::of(status),
             ignored_by,
             Reach { remote, catalog },
@@ -1618,6 +1621,7 @@ mod menu_tests {
     fn grouped(status: &str, ignored_by: Option<&str>, remote: bool) -> String {
         let commands = row_commands(
             "raw/a.csv",
+            false,
             Place::of(status),
             ignored_by,
             Reach {
@@ -1678,6 +1682,7 @@ mod menu_tests {
         assert_eq!(
             row_commands(
                 "a.tmp",
+                false,
                 Place::Here,
                 Some("*.tmp"),
                 Reach {
@@ -1687,6 +1692,7 @@ mod menu_tests {
             ),
             [RowCommand::StopIgnoring {
                 path: "a.tmp".to_string(),
+                folder: false,
                 pattern: "*.tmp".to_string(),
             }]
         );
@@ -1716,6 +1722,7 @@ mod menu_tests {
         assert_eq!(
             row_commands(
                 "raw/a.csv",
+                false,
                 Place::New,
                 None,
                 Reach {

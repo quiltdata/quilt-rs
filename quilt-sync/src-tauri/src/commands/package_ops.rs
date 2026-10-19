@@ -1,10 +1,10 @@
 //! Package lifecycle commands: commit, push, publish, pull, create,
 //! uninstall, remote configuration, and quiltignore edits.
 
-use std::io::Write;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use serde::Deserialize;
 use serde::Serialize;
 
 use quilt_rs::io::remote::WorkflowIntent;
@@ -973,26 +973,9 @@ async fn add_to_quiltignore_command(
 ) -> Result<(), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let package_home = m.package_home(&namespace).await?;
-    let quiltignore_path = package_home.join(".quiltignore");
-
     // Take only the first line to prevent injecting multiple rules
     let pattern = pattern.lines().next().unwrap_or(pattern);
-
-    // Read first to check trailing newline, before opening for append
-    let needs_newline = std::fs::read_to_string(&quiltignore_path)
-        .is_ok_and(|s| !s.is_empty() && !s.ends_with('\n'));
-
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&quiltignore_path)
-        .map_err(|e| format!("Failed to open .quiltignore: {e}"))?;
-
-    if needs_newline {
-        writeln!(file).map_err(|e| e.to_string())?;
-    }
-    writeln!(file, "{pattern}").map_err(|e| e.to_string())?;
-
+    quilt::quiltignore::append_lines(&package_home.join(".quiltignore"), &[pattern.to_string()])?;
     Ok(())
 }
 
@@ -1018,6 +1001,154 @@ pub async fn add_to_quiltignore(
             msg_ok,
             msg_err,
         )
+}
+
+/// What *Stop ignoring* writes in one scope, and what the next sync adds.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopePreview {
+    /// The `!` lines, outermost first.
+    pub lines: Vec<String>,
+    pub files: u64,
+    pub bytes: u64,
+}
+
+impl From<quilt::flow::StopIgnoring> for ScopePreview {
+    fn from(s: quilt::flow::StopIgnoring) -> Self {
+        Self {
+            lines: s.lines,
+            files: s.files,
+            bytes: s.bytes,
+        }
+    }
+}
+
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StopIgnoringPreview {
+    pub this_package: ScopePreview,
+    /// `None` when a rule in the package's own `.quiltignore` hides the path,
+    /// which no user-wide line can bring back.
+    pub all_packages: Option<ScopePreview>,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StopIgnoringScope {
+    ThisPackage,
+    AllPackages,
+}
+
+impl From<StopIgnoringScope> for quilt::quiltignore::Scope {
+    fn from(scope: StopIgnoringScope) -> Self {
+        match scope {
+            StopIgnoringScope::ThisPackage => Self::Package,
+            StopIgnoringScope::AllPackages => Self::AllPackages,
+        }
+    }
+}
+
+/// How the popup names a path: a folder with a trailing `/`.
+fn shown_path(path: &str, folder: bool) -> String {
+    if folder {
+        format!("{path}/")
+    } else {
+        path.to_string()
+    }
+}
+
+async fn stop_ignoring_preview_command(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+    path: &str,
+    folder: bool,
+) -> Result<StopIgnoringPreview, Error> {
+    use quilt::quiltignore::Scope;
+
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let installed = installed_package(m, &namespace).await?;
+    let path = PathBuf::from(path);
+    let (this_package, all_packages) = tokio::join!(
+        installed.preview_stop_ignoring(&path, folder, Scope::Package),
+        installed.preview_stop_ignoring(&path, folder, Scope::AllPackages),
+    );
+    let this_package = this_package?.ok_or_else(|| {
+        Error::General(format!(
+            "This package cannot stop ignoring {}",
+            path.display()
+        ))
+    })?;
+    Ok(StopIgnoringPreview {
+        this_package: this_package.into(),
+        all_packages: all_packages?.map(ScopePreview::from),
+    })
+}
+
+#[tauri::command]
+pub async fn stop_ignoring_preview(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+    path: String,
+    folder: bool,
+) -> Result<StopIgnoringPreview, String> {
+    Box::pin(stop_ignoring_preview_command(
+        &*m, &namespace, &path, folder,
+    ))
+    .await
+    .map_err(|err| match err {
+        Error::General(msg) => msg,
+        err => format!("Could not count the files to add: {err}"),
+    })
+}
+
+async fn stop_ignoring_command(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+    path: &str,
+    folder: bool,
+    scope: StopIgnoringScope,
+) -> Result<Option<Vec<String>>, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let installed = installed_package(m, &namespace).await?;
+    Ok(installed
+        .stop_ignoring(&PathBuf::from(path), folder, scope.into())
+        .await?)
+}
+
+#[tauri::command]
+pub async fn stop_ignoring(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    namespace: String,
+    path: String,
+    folder: bool,
+    scope: StopIgnoringScope,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    let shown = shown_path(&path, folder);
+    let notify = Notify::new(format!("Stop ignoring {shown} ({scope:?})")).on_success(
+        &tracing,
+        MixpanelEvent::QuiltignorePatternAdded(PackageEvent::for_uri(uri.as_ref())),
+    );
+    let result = stop_ignoring_command(&*m, &namespace, &path, folder, scope).await;
+    let msg_ok = match (&result, scope) {
+        (Ok(Some(lines)), _) if lines.is_empty() => format!("{shown} is no longer ignored"),
+        (_, StopIgnoringScope::ThisPackage) => format!("Stopped ignoring {shown} in this package"),
+        (_, StopIgnoringScope::AllPackages) => format!("Stopped ignoring {shown} in all packages"),
+    };
+    let result = result.and_then(|lines| {
+        lines.map(|_| ()).ok_or_else(|| {
+            Error::General(format!(
+                "A rule in this package's .quiltignore hides {shown}; \
+                 stop ignoring it in this package instead."
+            ))
+        })
+    });
+    let msg_err = |err: &Error| match err {
+        Error::General(msg) => msg.clone(),
+        err => format!("Failed to stop ignoring {shown}: {err}"),
+    };
+    notify.map(result, msg_ok, msg_err)
 }
 
 #[tauri::command]

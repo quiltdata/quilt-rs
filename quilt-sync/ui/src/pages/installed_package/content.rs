@@ -467,6 +467,7 @@ pub(super) fn InstalledPackageContent(
                     <UnignorePopup
                         data=data
                         notification=notification
+                        refetch=refetch
                         on_close=move || show_unignore_popup.set(None)
                     />
                 }

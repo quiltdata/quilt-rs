@@ -65,9 +65,12 @@ pub struct IgnoredBy {
 }
 
 /// A loaded rules file, with the text and line number of each line that became a glob.
+#[derive(Clone)]
 struct RuleFile {
     gitignore: Gitignore,
     lines: Vec<(String, u64)>,
+    /// The file as read, so lines can be added to it in memory.
+    contents: String,
 }
 
 impl RuleFile {
@@ -102,8 +105,7 @@ fn read_error(path: &Path, err: impl Into<Box<dyn std::error::Error + Send + Syn
     })
 }
 
-/// Load a rules file line by line, as `GitignoreBuilder::add` would, keeping line numbers.
-/// Returns `None` if the file does not exist.
+/// Load a rules file. Returns `None` if the file does not exist.
 fn load_file(root: &Path, path: &Path) -> Res<Option<RuleFile>> {
     if !path.is_file() {
         return Ok(None);
@@ -113,6 +115,11 @@ fn load_file(root: &Path, path: &Path) -> Res<Option<RuleFile>> {
     // read is not news; what it *excluded* is, and the status line carries that count.
     trace!("Loading {}", path.display());
     let contents = std::fs::read_to_string(path).map_err(|err| read_error(path, err))?;
+    parse_file(root, path, contents).map(Some)
+}
+
+/// Build a rules file from its text, as `GitignoreBuilder::add` would, keeping line numbers.
+fn parse_file(root: &Path, path: &Path, contents: String) -> Res<RuleFile> {
     let mut builder = GitignoreBuilder::new(root);
     let mut lines = Vec::new();
     for (number, line) in (1u64..).zip(contents.lines()) {
@@ -137,7 +144,11 @@ fn load_file(root: &Path, path: &Path) -> Res<Option<RuleFile>> {
         }
     }
     let gitignore = builder.build().map_err(|err| read_error(path, err))?;
-    Ok(Some(RuleFile { gitignore, lines }))
+    Ok(RuleFile {
+        gitignore,
+        lines,
+        contents,
+    })
 }
 
 /// Try to load a `.quiltignore` file from the given directory.
@@ -170,8 +181,10 @@ fn defaults() -> &'static Gitignore {
 /// Only the package layer can hide a path the package already has; the other two
 /// apply to new files only, so personal rules never change a shared package.
 pub struct Rules {
+    package_dir: PathBuf,
     package: Option<RuleFile>,
     user: Option<(PathBuf, RuleFile)>,
+    user_file: PathBuf,
 }
 
 impl Rules {
@@ -180,7 +193,76 @@ impl Rules {
     pub fn load(package_dir: &Path, user_file: &Path) -> Res<Rules> {
         let package = load_file(package_dir, &package_dir.join(QUILTIGNORE))?;
         let user = load_file(package_dir, user_file)?.map(|file| (user_file.to_path_buf(), file));
-        Ok(Rules { package, user })
+        Ok(Rules {
+            package_dir: package_dir.to_path_buf(),
+            package,
+            user,
+            user_file: user_file.to_path_buf(),
+        })
+    }
+
+    /// The file a [`Scope`]'s lines go to.
+    #[must_use]
+    pub fn file(&self, scope: Scope) -> PathBuf {
+        match scope {
+            Scope::Package => self.package_dir.join(QUILTIGNORE),
+            Scope::AllPackages => self.user_file.clone(),
+        }
+    }
+
+    /// These rules with `lines` added to the end of `scope`'s file, in memory.
+    pub fn with_lines(&self, scope: Scope, lines: &[String]) -> Res<Rules> {
+        let path = self.file(scope);
+        let current = match scope {
+            Scope::Package => self.package.as_ref(),
+            Scope::AllPackages => self.user.as_ref().map(|(_, file)| file),
+        };
+        let contents = appended(current.map_or("", |file| file.contents.as_str()), lines);
+        let file = parse_file(&self.package_dir, &path, contents)?;
+        let (package, user) = match scope {
+            Scope::Package => (Some(file), self.user.clone()),
+            Scope::AllPackages => (self.package.clone(), Some((path, file))),
+        };
+        Ok(Rules {
+            package_dir: self.package_dir.clone(),
+            package,
+            user,
+            user_file: self.user_file.clone(),
+        })
+    }
+
+    /// The `!` lines that bring back the file or folder at `relative_path` in
+    /// `scope`, outermost first: one for each folder above it the walk would
+    /// still skip, then one for the path itself. Empty when nothing ignores it.
+    /// `None` when `scope`'s file cannot bring it back: a package rule hides
+    /// it, and the user-wide file is weaker.
+    /// `tracked` says whether the package has the file, or a file in the folder.
+    pub fn stop_ignoring_lines(
+        &self,
+        relative_path: &Path,
+        is_dir: bool,
+        tracked: impl Fn(&Path) -> bool,
+        scope: Scope,
+    ) -> Res<Option<Vec<String>>> {
+        let mut lines = Vec::new();
+        let mut rules = None;
+        let mut prefix = PathBuf::new();
+        let mut components = relative_path.components().peekable();
+        while let Some(component) = components.next() {
+            prefix.push(component);
+            let dir = is_dir || components.peek().is_some();
+            let current = rules.as_ref().unwrap_or(self);
+            if current.ignored_by(&prefix, dir, tracked(&prefix)).is_none() {
+                continue;
+            }
+            lines.push(stop_line(&prefix, dir, scope)?);
+            let next = self.with_lines(scope, &lines)?;
+            if next.ignored_by(&prefix, dir, tracked(&prefix)).is_some() {
+                return Ok(None);
+            }
+            rules = Some(next);
+        }
+        Ok(Some(lines))
     }
 
     /// The rule ignoring the directory at `relative_path`, if any.
@@ -244,6 +326,102 @@ impl Rules {
             Match::Whitelist(_) | Match::None => None,
         }
     }
+}
+
+/// Where *Stop ignoring* writes its `!` lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// The package's `.quiltignore`, anchored to the path: `!/.snakemake/`.
+    /// It travels with the package.
+    Package,
+    /// The user-wide file, by name only: `!.snakemake/`. Personal.
+    AllPackages,
+}
+
+/// The `!` line for one path: anchored for the package, by name for the user.
+fn stop_line(relative_path: &Path, is_dir: bool, scope: Scope) -> Res<String> {
+    let mut names = Vec::new();
+    for component in relative_path.components() {
+        let name = component.as_os_str().to_str().ok_or_else(|| {
+            Error::Fs(FsError::Write {
+                path: relative_path.to_path_buf(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "the name is not UTF-8, so no rule can name it",
+                ),
+            })
+        })?;
+        names.push(escape(name));
+    }
+    let mut line = match scope {
+        Scope::Package => format!("!/{}", names.join("/")),
+        Scope::AllPackages => format!("!{}", names.last().map_or("", String::as_str)),
+    };
+    if is_dir {
+        line.push('/');
+    }
+    Ok(line)
+}
+
+/// A name as a gitignore glob that matches only itself.
+fn escape(name: &str) -> String {
+    let mut glob = String::with_capacity(name.len());
+    for c in name.chars() {
+        if matches!(c, '\\' | '*' | '?' | '[' | ']' | '{' | '}') {
+            glob.push('\\');
+        }
+        glob.push(c);
+    }
+    // The parser trims trailing spaces unless the last one is escaped.
+    if glob.ends_with(' ') {
+        glob.insert(glob.len() - 1, '\\');
+    }
+    glob
+}
+
+/// `contents` with `lines` after it, each on a line of its own.
+fn appended(contents: &str, lines: &[String]) -> String {
+    let mut text = contents.to_string();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    for line in lines {
+        text.push_str(line);
+        text.push('\n');
+    }
+    text
+}
+
+/// Add `lines` to the end of the rules file at `path`, creating it and its
+/// folder if missing.
+pub fn append_lines(path: &Path, lines: &[String]) -> Res {
+    use std::io::Write;
+
+    let write_error = |source| {
+        Error::Fs(FsError::Write {
+            path: path.to_path_buf(),
+            source,
+        })
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|source| {
+            Error::Fs(FsError::DirectoryCreate {
+                path: dir.to_path_buf(),
+                source,
+            })
+        })?;
+    }
+    let needs_newline = std::fs::read(path).is_ok_and(|s| !s.is_empty() && !s.ends_with(b"\n"));
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(write_error)?;
+    let mut text = appended("", lines);
+    if needs_newline {
+        text.insert(0, '\n');
+    }
+    file.write_all(text.as_bytes()).map_err(write_error)
 }
 
 /// Check whether the given path should be ignored.
@@ -554,6 +732,152 @@ mod tests {
             rules
                 .file_ignored_by(Path::new(".quiltignore"), false)
                 .is_some()
+        );
+    }
+
+    fn lines(rules: &Rules, path: &str, is_dir: bool, scope: Scope) -> Option<Vec<String>> {
+        lines_tracking(rules, path, is_dir, scope, &[])
+    }
+
+    fn lines_tracking(
+        rules: &Rules,
+        path: &str,
+        is_dir: bool,
+        scope: Scope,
+        tracked: &[&str],
+    ) -> Option<Vec<String>> {
+        rules
+            .stop_ignoring_lines(
+                Path::new(path),
+                is_dir,
+                |p| tracked.iter().any(|t| Path::new(t) == p),
+                scope,
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn stop_ignoring_a_default_folder() {
+        let (_dir, rules) = rules(None, None);
+        assert_eq!(
+            lines(&rules, ".snakemake", true, Scope::Package),
+            Some(vec!["!/.snakemake/".to_string()])
+        );
+        assert_eq!(
+            lines(&rules, "runs/.snakemake", true, Scope::Package),
+            Some(vec!["!/runs/.snakemake/".to_string()])
+        );
+        assert_eq!(
+            lines(&rules, "runs/.snakemake", true, Scope::AllPackages),
+            Some(vec!["!.snakemake/".to_string()])
+        );
+        for scope in [Scope::Package, Scope::AllPackages] {
+            let after = rules
+                .with_lines(scope, &lines(&rules, ".snakemake", true, scope).unwrap())
+                .unwrap();
+            assert!(
+                after
+                    .dir_ignored_by(Path::new(".snakemake"), false)
+                    .is_none()
+            );
+            assert!(
+                after
+                    .file_ignored_by(Path::new(".snakemake/log/a.txt"), false)
+                    .is_none()
+            );
+            assert!(after.dir_ignored_by(Path::new(".git"), false).is_some());
+        }
+    }
+
+    #[test]
+    fn stop_ignoring_a_path_nothing_ignores_writes_nothing() {
+        let (_dir, rules) = rules(None, None);
+        assert_eq!(
+            lines(&rules, "data.csv", false, Scope::Package),
+            Some(vec![])
+        );
+    }
+
+    /// The walk enters a folder that holds a tracked file, so its new file
+    /// needs only its own line.
+    #[test]
+    fn stop_ignoring_a_file_in_a_tracked_folder() {
+        let (_dir, rules) = rules(None, None);
+        assert_eq!(
+            lines_tracking(&rules, ".git/HEAD", false, Scope::Package, &[".git"]),
+            Some(vec!["!/.git/HEAD".to_string()])
+        );
+    }
+
+    #[test]
+    fn stop_ignoring_under_an_ignored_parent_writes_a_line_for_it() {
+        let (_dir, rules) = rules(Some("cache/\n*.log\n"), Some("*.tmp\n"));
+        assert_eq!(
+            lines(&rules, "cache/a.log", false, Scope::Package),
+            Some(vec!["!/cache/".to_string(), "!/cache/a.log".to_string()])
+        );
+        // A folder brought back brings back what is in it, unless a rule
+        // in the same file names the file itself.
+        assert_eq!(
+            lines(&rules, "cache/a.tmp", false, Scope::Package),
+            Some(vec!["!/cache/".to_string()])
+        );
+        let (_dir, user) = super::tests::rules(None, Some("cache/\n*.log\n"));
+        assert_eq!(
+            lines(&user, "cache/a.log", false, Scope::AllPackages),
+            Some(vec!["!cache/".to_string(), "!a.log".to_string()])
+        );
+    }
+
+    /// The package's own rules are stronger than the user-wide file.
+    #[test]
+    fn all_packages_cannot_undo_a_package_rule() {
+        let (_dir, rules) = rules(Some("*.csv\nraw/\n"), None);
+        assert_eq!(lines(&rules, "a.csv", false, Scope::AllPackages), None);
+        assert_eq!(lines(&rules, "raw/b.txt", false, Scope::AllPackages), None);
+        assert_eq!(
+            lines(&rules, "a.csv", false, Scope::Package),
+            Some(vec!["!/a.csv".to_string()])
+        );
+    }
+
+    #[test]
+    fn stop_ignoring_escapes_glob_characters() {
+        let (_dir, rules) = rules(Some("*.txt\n"), None);
+        for name in [
+            "a*b[1].txt",
+            "x?{y,z}.txt",
+            "back\\slash.txt",
+            "trailing .txt ",
+        ] {
+            let found = lines(&rules, name, false, Scope::Package).unwrap();
+            let after = rules.with_lines(Scope::Package, &found).unwrap();
+            assert!(
+                after.file_ignored_by(Path::new(name), false).is_none(),
+                "{name:?} as {found:?}"
+            );
+        }
+        let found = lines(&rules, "a*b[1].txt", false, Scope::Package).unwrap();
+        assert_eq!(found, vec!["!/a\\*b\\[1\\].txt".to_string()]);
+        let after = rules.with_lines(Scope::Package, &found).unwrap();
+        assert!(
+            after
+                .file_ignored_by(Path::new("aZb1.txt"), false)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn append_lines_starts_each_on_a_line_of_its_own() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(".quiltignore");
+        append_lines(&path, &["!/a/".to_string()]).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "!/a/\n");
+        std::fs::write(&path, "*.log").unwrap();
+        append_lines(&path, &["!/a/".to_string(), "!/a/b".to_string()]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "*.log\n!/a/\n!/a/b\n"
         );
     }
 

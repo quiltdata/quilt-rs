@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
 
 use tracing::log;
@@ -37,6 +38,7 @@ use crate::manifest::Workflow;
 use crate::package_lock;
 use crate::paths;
 use crate::paths::copy_cached_to_installed;
+use crate::quiltignore::Scope;
 use crate::state_store::PackageStateStore;
 use crate::workflow::WorkflowRules;
 use quilt_uri::Host;
@@ -383,6 +385,47 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     pub async fn package_home(&self) -> Res<PathBuf> {
         self.lineage.package_home(&self.storage).await
+    }
+
+    /// [`flow::preview_stop_ignoring`] for the file or folder at `path`.
+    pub async fn preview_stop_ignoring(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        scope: Scope,
+    ) -> Res<Option<flow::StopIgnoring>> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let manifest = self.manifest_from_lineage(&lineage).await?;
+        flow::preview_stop_ignoring(
+            &self.paths,
+            &manifest,
+            &lineage,
+            &package_home,
+            path,
+            is_dir,
+            scope,
+        )
+        .await
+    }
+
+    /// [`flow::stop_ignoring`] for the file or folder at `path`.
+    pub async fn stop_ignoring(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        scope: Scope,
+    ) -> Res<Option<Vec<String>>> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let manifest = self.manifest_from_lineage(&lineage).await?;
+        flow::stop_ignoring(
+            &self.paths,
+            &manifest,
+            &lineage,
+            &package_home,
+            path,
+            is_dir,
+            scope,
+        )
     }
 
     /// [`flow::status`], through the state store's stat cache when the

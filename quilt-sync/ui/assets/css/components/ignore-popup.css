@@ -57,3 +57,16 @@
   font-family: monospace;
   font-weight: 500;
 }
+
+.unignore-popup code {
+  font-family: monospace;
+}
+
+.unignore-popup .unignore-error {
+  color: var(--q-ui-palette-error);
+}
+
+.unignore-popup .ignore-actions {
+  display: flex;
+  gap: var(--q-ui-size-2);
+}
