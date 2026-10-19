@@ -1551,7 +1551,9 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         is_dir: bool,
         scope: Scope,
     ) -> Res<Option<Vec<String>>> {
-        self.package.stop_ignoring_unlocked(path, is_dir, scope).await
+        self.package
+            .stop_ignoring_unlocked(path, is_dir, scope)
+            .await
     }
 
     pub async fn pull(
