@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
-use std::time::Duration;
-use std::time::SystemTime;
 
 use serde::Serialize;
 
@@ -66,12 +64,6 @@ pub struct InstalledPackageStatus {
     pub ignored_dirs: Vec<(PathBuf, String)>,
     /// Files in changes that are also flagged as junk — (path, suggested pattern)
     pub junky_changes: Vec<(PathBuf, String)>,
-    /// Most recent `mtime` across non-ignored files in the working tree.
-    /// `None` when the package has no such files. Used by autosync's
-    /// quiet-window guard to skip the publish branch during a save burst.
-    /// Future-dated `mtime`s are clamped to `now` at compare time in
-    /// `working_tree_quiet`, not here.
-    pub most_recent_mtime: Option<SystemTime>,
     /// This status was read against the remote's `latest` tip fetched just
     /// now, including a remote with no `latest` tag for a package never
     /// published: that is an answer, not an outage. `false` when the package has no remote, when the remote could not
@@ -94,7 +86,6 @@ impl InstalledPackageStatus {
             ignored_files: Vec::new(),
             ignored_dirs: Vec::new(),
             junky_changes: Vec::new(),
-            most_recent_mtime: None,
             latest_refreshed: false,
             latest_hash: String::new(),
         }
@@ -114,58 +105,5 @@ impl InstalledPackageStatus {
             upstream_state: UpstreamState::Local,
             ..Default::default()
         }
-    }
-
-    /// True when no tracked file was modified within `quiet_window` of
-    /// `now`. Defensive: a `mtime` strictly later than `now` (clock
-    /// skew, file dated in the future) is clamped to `now`.
-    #[must_use]
-    pub fn working_tree_quiet(&self, now: SystemTime, quiet_window: Duration) -> bool {
-        let Some(mtime) = self.most_recent_mtime else {
-            return true;
-        };
-        let mtime = mtime.min(now);
-        now.duration_since(mtime).is_ok_and(|d| d >= quiet_window)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn working_tree_quiet_no_files_is_true() {
-        let status = InstalledPackageStatus::default();
-        assert!(status.working_tree_quiet(SystemTime::now(), Duration::from_secs(30)));
-    }
-
-    #[test]
-    fn working_tree_quiet_recent_mtime_is_not_quiet() {
-        let now = SystemTime::now();
-        let status = InstalledPackageStatus {
-            most_recent_mtime: Some(now - Duration::from_secs(1)),
-            ..InstalledPackageStatus::default()
-        };
-        assert!(!status.working_tree_quiet(now, Duration::from_secs(30)));
-    }
-
-    #[test]
-    fn working_tree_quiet_old_mtime_is_quiet() {
-        let now = SystemTime::now();
-        let status = InstalledPackageStatus {
-            most_recent_mtime: Some(now - Duration::from_mins(1)),
-            ..InstalledPackageStatus::default()
-        };
-        assert!(status.working_tree_quiet(now, Duration::from_secs(30)));
-    }
-
-    #[test]
-    fn working_tree_quiet_future_mtime_clamps_to_now() {
-        let now = SystemTime::now();
-        let status = InstalledPackageStatus {
-            most_recent_mtime: Some(now + Duration::from_mins(5)),
-            ..InstalledPackageStatus::default()
-        };
-        assert!(!status.working_tree_quiet(now, Duration::from_secs(30)));
     }
 }
