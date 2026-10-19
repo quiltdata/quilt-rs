@@ -124,3 +124,18 @@ async fn a_lineage_changed_since_the_walk_makes_the_check_walk() -> Result<(), E
     run_once(&model, &RoleCache::default(), &inner).await?;
     Ok(())
 }
+
+/// A check that may publish walks: the publish must act on what the tree
+/// holds now, and an edit can still be in the watcher's debounce.
+#[tokio::test]
+async fn a_check_that_may_publish_walks_even_with_a_kept_walk() -> Result<(), Error> {
+    let model = model(1, 0, true);
+    let inner = WatcherInner {
+        last_change: LastChange::changed_for_test(&ns(), Duration::from_hours(3)).await,
+        ..inner(Arc::new(RecordingReporter::default()))
+    };
+    vouched_and_walked(&inner);
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+    Ok(())
+}

@@ -381,7 +381,8 @@ pub(crate) fn note_volumes(state: &mut ReactorState, mappings: &[(Namespace, Wat
         .local_volume
         .retain(|ns, _| mappings.iter().any(|(live, _)| live == ns));
     for (namespace, package) in mappings {
-        let home = &package.home;
+        // Canonical like the subscription's root, for the mount table.
+        let home = &dunce::canonicalize(&package.home).unwrap_or_else(|_| package.home.clone());
         if state
             .local_volume
             .get(namespace)
@@ -402,10 +403,14 @@ pub(crate) fn note_volumes(state: &mut ReactorState, mappings: &[(Namespace, Wat
 /// network or FUSE volume mounted inside, and only for them. The mount table
 /// is read each time, so a mount made later is seen.
 fn sync_vouched(state: &ReactorState, inner: &WatcherInner) {
+    // An unwatched user-wide ignore file could change what every package
+    // holds without a signal.
+    let rules_watched = state.subscription.user_rules_watched();
     let vouched: BTreeMap<Namespace, PathBuf> = state
         .subscription
         .watched_namespaces()
         .into_iter()
+        .filter(|_| rules_watched)
         .filter_map(|ns| match state.local_volume.get(&ns) {
             Some((home, true)) if !quilt::file_stamp::remote_mount_under(home) => {
                 Some((ns, home.clone()))

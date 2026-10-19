@@ -415,19 +415,26 @@ mod macos {
         fs.f_flags & libc::MNT_LOCAL.cast_unsigned() != 0 && !name.windows(4).any(|w| w == b"fuse")
     }
 
+    /// The mount table, copied into a buffer of its own (`getmntinfo` shares
+    /// one across the process). `None` when it can't be read.
+    fn mounts() -> Option<Vec<libc::statfs>> {
+        // SAFETY: a null buffer asks only for the count.
+        let count = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+        // Room for mounts made between the two calls.
+        let room = usize::try_from(count).ok()? + 8;
+        // SAFETY: `statfs` is plain data, valid zeroed.
+        let mut mounts: Vec<libc::statfs> = vec![unsafe { std::mem::zeroed() }; room];
+        let bytes = libc::c_int::try_from(room * size_of::<libc::statfs>()).ok()?;
+        // SAFETY: `mounts` holds `bytes` bytes of `statfs` entries.
+        let filled = unsafe { libc::getfsstat(mounts.as_mut_ptr(), bytes, libc::MNT_NOWAIT) };
+        mounts.truncate(usize::try_from(filled).ok()?);
+        Some(mounts)
+    }
+
     pub(super) fn remote_mount_under(path: &Path) -> bool {
-        let mut mounts: *mut libc::statfs = std::ptr::null_mut();
-        // SAFETY: `getmntinfo` points `mounts` at its own buffer, valid until
-        // the next call on this thread, and returns how many entries it holds.
-        let count = unsafe { libc::getmntinfo(&raw mut mounts, libc::MNT_NOWAIT) };
-        let Ok(count) = usize::try_from(count) else {
+        let Some(mounts) = mounts() else {
             return true;
         };
-        if count == 0 || mounts.is_null() {
-            return true;
-        }
-        // SAFETY: as above, `count` entries starting at `mounts`.
-        let mounts = unsafe { std::slice::from_raw_parts(mounts, count) };
         mounts.iter().any(|fs| {
             // SAFETY: the kernel NUL-terminates `f_mntonname`.
             let at = unsafe { std::ffi::CStr::from_ptr(fs.f_mntonname.as_ptr()) };

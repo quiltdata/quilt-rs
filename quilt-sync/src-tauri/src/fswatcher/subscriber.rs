@@ -484,6 +484,12 @@ impl Subscription {
         }
     }
 
+    /// Whether the user-wide ignore file is watched, so an edit of it reaches
+    /// every package.
+    pub fn user_rules_watched(&self) -> bool {
+        self.user_rules.lock().unwrap().is_some()
+    }
+
     pub fn watched_namespaces(&self) -> Vec<Namespace> {
         self.watched.lock().unwrap().keys().cloned().collect()
     }

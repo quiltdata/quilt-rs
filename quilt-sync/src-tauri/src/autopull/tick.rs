@@ -387,7 +387,19 @@ pub(crate) async fn refresh_then_maybe_sync(
 
     // `status` does the cheap tag refresh; an expired token surfaces here. A
     // walk the folder watcher vouches for stands in for the working-tree walk.
-    let reused = match walks.reusable(namespace) {
+    // Only a check that can't publish reuses a walk: a publish acts on what
+    // the tree holds under the lock, and an event can still be in the
+    // debounce.
+    let may_publish = push_enabled
+        && (lineage.commit.is_some()
+            || crate::autopull::publish_deadline(last_change.get(namespace).await, wait)
+                .is_some_and(|at| at <= SystemTime::now()));
+    let kept = if may_publish {
+        None
+    } else {
+        walks.reusable(namespace)
+    };
+    let reused = match kept {
         Some((walk, walked_lineage, walked)) => model
             .locked_package_status_from_walk(&locked, &walked_lineage, walked)
             .await
