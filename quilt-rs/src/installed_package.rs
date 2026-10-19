@@ -408,8 +408,19 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         .await
     }
 
-    /// [`flow::stop_ignoring`] for the file or folder at `path`.
+    /// [`flow::stop_ignoring`] for the file or folder at `path`. Like every
+    /// writer here it holds the package's lock, so a pull or reset never
+    /// replaces `.quiltignore` under it.
     pub async fn stop_ignoring(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        scope: Scope,
+    ) -> Res<Option<Vec<String>>> {
+        Box::pin(self.lock().await?.stop_ignoring(path, is_dir, scope)).await
+    }
+
+    async fn stop_ignoring_unlocked(
         &self,
         path: &Path,
         is_dir: bool,
@@ -1532,6 +1543,15 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
 
     pub async fn set_sync_scope(&self, scope: SyncScope) -> Res<()> {
         self.package.set_sync_scope_unlocked(scope).await
+    }
+
+    pub async fn stop_ignoring(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        scope: Scope,
+    ) -> Res<Option<Vec<String>>> {
+        self.package.stop_ignoring_unlocked(path, is_dir, scope).await
     }
 
     pub async fn pull(
