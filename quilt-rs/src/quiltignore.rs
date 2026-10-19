@@ -40,7 +40,6 @@ pub const DEFAULT_RULES: &[&str] = &[
     ".env.*",
     ".netrc",
     "*.pem",
-    "*.key",
     "*.code-workspace",
     "__pycache__/",
     "*.py[cod]",
@@ -424,6 +423,15 @@ mod tests {
             assert!(rules.file_ignored_by(Path::new(name), false).is_none());
             let nested = Path::new("img.zarr/0").join(name);
             assert!(rules.file_ignored_by(&nested, false).is_none());
+        }
+    }
+
+    /// `*.key` is left out: it is also how Keynote saves a presentation.
+    #[test]
+    fn defaults_keep_keynote_decks() {
+        let (_dir, rules) = rules(None, None);
+        for name in ["deck.key", "talks/Deck.KEY"] {
+            assert!(rules.file_ignored_by(Path::new(name), false).is_none());
         }
     }
 
