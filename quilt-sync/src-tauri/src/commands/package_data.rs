@@ -152,7 +152,13 @@ async fn get_installed_package_data_from_model(
         counts,
         total,
         truncated,
-    } = entry_list(namespace, &pkg_status, installed_paths, &manifest_entries);
+    } = entry_list(
+        namespace,
+        &pkg_status,
+        installed_paths,
+        &manifest_entries,
+        false,
+    );
 
     // Compute counts from the full source data, not the capped entries_list,
     // so the filter toolbar is shown even when the list is truncated.
@@ -842,6 +848,7 @@ mod tests {
                 changed: 700,
                 not_downloaded: 700,
                 ignored: 10,
+                ignored_folders: 0,
                 deleted: 200,
             }
         );
@@ -868,6 +875,7 @@ mod tests {
                 changed: 6,
                 not_downloaded: 5,
                 ignored: 6,
+                ignored_folders: 0,
                 deleted: 3,
             }
         );
@@ -904,11 +912,12 @@ mod tests {
             changed: 700,
             not_downloaded: 700,
             ignored: 10,
+            ignored_folders: 2,
             deleted: 200,
         };
         assert_eq!(
             serde_json::to_string(&counts).unwrap(),
-            r#"{"all":1410,"changed":700,"notDownloaded":700,"ignored":10,"deleted":200}"#,
+            r#"{"all":1410,"changed":700,"notDownloaded":700,"ignored":10,"ignoredFolders":2,"deleted":200}"#,
         );
     }
 

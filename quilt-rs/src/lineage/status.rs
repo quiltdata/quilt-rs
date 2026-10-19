@@ -58,6 +58,10 @@ pub struct InstalledPackageStatus {
     pub changes: ChangeSet,
     /// Files matched by `.quiltignore` — (path, `matched_by` pattern, size in bytes)
     pub ignored_files: Vec<(PathBuf, String, u64)>,
+    /// Folders matched by `.quiltignore` — (path, `matched_by` pattern).
+    /// Nothing inside them is walked, so they carry no size and no
+    /// folder nested in one is listed.
+    pub ignored_dirs: Vec<(PathBuf, String)>,
     /// Files in changes that are also flagged as junk — (path, suggested pattern)
     pub junky_changes: Vec<(PathBuf, String)>,
     /// This status was read against the remote's `latest` tip fetched just
@@ -80,6 +84,7 @@ impl InstalledPackageStatus {
             upstream_state,
             changes,
             ignored_files: Vec::new(),
+            ignored_dirs: Vec::new(),
             junky_changes: Vec::new(),
             latest_refreshed: false,
             latest_hash: String::new(),

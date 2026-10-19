@@ -800,12 +800,27 @@ pub fn cut_words(shown: usize, total: usize) -> String {
     format!("Showing {shown} of {total} files. All {total} are included.")
 }
 
-fn ignored_words(n: usize) -> String {
-    if n == 1 {
-        "1 ignored file not included".to_string()
-    } else {
-        format!("{n} ignored files not included")
-    }
+/// How many ignored files and folders the revision leaves out; `None` when
+/// it leaves out nothing.
+fn ignored_words(files: usize, folders: usize) -> Option<String> {
+    let plural = |n: usize, one: &str| {
+        if n == 1 {
+            format!("1 ignored {one}")
+        } else {
+            format!("{n} ignored {one}s")
+        }
+    };
+    let words = match (files, folders) {
+        (0, 0) => return None,
+        (files, 0) => plural(files, "file"),
+        (0, folders) => plural(folders, "folder"),
+        (files, folders) => format!(
+            "{} and {}",
+            plural(files, "file"),
+            plural(folders, "folder")
+        ),
+    };
+    Some(format!("{words} not included"))
 }
 
 /// The items a row's `[⋯]` offers. Every file here differs from the published
@@ -824,8 +839,9 @@ fn row_commands(file: &IncludedFile) -> Vec<RowCommand> {
     commands
 }
 
-/// The changed files, then how many ignored files are left out. No facets and
-/// no search: narrowing what will be published only hides some of it.
+/// The changed files, then how many ignored files and folders are left out.
+/// No facets and no search: narrowing what will be published only hides some
+/// of it.
 #[component]
 #[allow(
     clippy::needless_pass_by_value,
@@ -833,7 +849,11 @@ fn row_commands(file: &IncludedFile) -> Vec<RowCommand> {
 )]
 pub fn IncludedList(
     files: Vec<IncludedFile>,
+    /// Ignored files, not counting `ignored_folders`.
     ignored: usize,
+    /// Ignored folders, each counted once whatever it holds.
+    #[prop(optional)]
+    ignored_folders: usize,
     /// What a row's `[⋯]` chose.
     on_command: Callback<RowCommand>,
     /// The heading's `(files, bytes)` when `files` is not all of them: the
@@ -896,14 +916,8 @@ pub fn IncludedList(
                     "What's included"
                     <span class=style::tally>{tally}</span>
                 </h3>
-                {(ignored > 0)
-                    .then(|| {
-                        view! {
-                            <p class=style::quiet>
-                                {ignored_words(ignored)}
-                            </p>
-                        }
-                    })}
+                {ignored_words(ignored, ignored_folders)
+                    .map(|words| view! { <p class=style::quiet>{words}</p> })}
             </div>
             {rows}
             {cut.map(|words| view! { <p class=style::quiet>{words}</p> })}
@@ -1293,6 +1307,7 @@ pub(crate) mod tests {
             "What's included".to_string(),
             cut_words(1000, 2000),
         ];
+        all.extend(ignored_words(3, 1));
         for primary in [
             Primary::Files(1),
             Primary::Files(3),
@@ -1321,6 +1336,22 @@ pub(crate) mod tests {
         }
         for words in &all {
             assert_eq!(banned_in(words), None, "{words:?}");
+        }
+    }
+
+    #[test]
+    fn the_ignored_line_counts_files_and_folders_apart() {
+        assert_eq!(ignored_words(0, 0), None);
+        let cases = [
+            (1, 0, "1 ignored file not included"),
+            (5, 0, "5 ignored files not included"),
+            (0, 1, "1 ignored folder not included"),
+            (0, 2, "2 ignored folders not included"),
+            (3, 1, "3 ignored files and 1 ignored folder not included"),
+            (1, 2, "1 ignored file and 2 ignored folders not included"),
+        ];
+        for (files, folders, words) in cases {
+            assert_eq!(ignored_words(files, folders).as_deref(), Some(words));
         }
     }
 
