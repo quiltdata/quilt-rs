@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
 use std::path::PathBuf;
@@ -7,7 +8,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use ignore::gitignore::Gitignore;
 use notify::ErrorKind;
 use notify::EventKind;
 use notify::RecommendedWatcher;
@@ -111,39 +111,118 @@ pub struct MappingSignal {
     pub namespace: Namespace,
 }
 
-/// A watched package: where it lives, and what it asks to have ignored.
+/// A package to watch: its home, the user-wide ignore file, and what it has.
+#[derive(Clone)]
+pub struct WatchedPackage {
+    pub home: PathBuf,
+    pub user_rules: PathBuf,
+    /// The package's files and every directory holding one, relative to `home`.
+    tracked: HashSet<PathBuf>,
+}
+
+impl WatchedPackage {
+    /// `files` are the package's logical keys.
+    pub fn new(
+        home: PathBuf,
+        user_rules: PathBuf,
+        files: impl IntoIterator<Item = PathBuf>,
+    ) -> Self {
+        let mut tracked = HashSet::new();
+        for file in files {
+            for dir in file.ancestors().skip(1) {
+                if dir.as_os_str().is_empty() || !tracked.insert(dir.to_path_buf()) {
+                    break;
+                }
+            }
+            tracked.insert(file);
+        }
+        WatchedPackage {
+            home,
+            user_rules,
+            tracked,
+        }
+    }
+}
+
+/// A watched package: where it lives, its ignore rules, and what it has.
 ///
-/// The matcher is cached rather than loaded per event; `add` refreshes it, so a
-/// reconcile is the pickup point for an edited `.quiltignore`.
+/// The rules are cached rather than loaded per event. `add` refreshes them and
+/// the tracked set, and so does an event on either rules file.
 struct WatchedRoot {
     path: PathBuf,
-    quiltignore: Option<Gitignore>,
+    user_rules: PathBuf,
+    rules: Option<quilt::quiltignore::Rules>,
+    tracked: HashSet<PathBuf>,
 }
 
 impl WatchedRoot {
-    /// Whether `path` is excluded by this package's `.quiltignore`.
+    fn new(path: PathBuf, package: WatchedPackage) -> Self {
+        let rules = load_rules(&path, &package.user_rules);
+        WatchedRoot {
+            path,
+            user_rules: package.user_rules,
+            rules,
+            tracked: package.tracked,
+        }
+    }
+
+    fn reload_rules(&mut self) {
+        self.rules = load_rules(&self.path, &self.user_rules);
+    }
+
+    /// Whether the ignore rules hide `path`, as the status walk would.
     ///
     /// Never the ignore file itself: editing it moves the changeset, so it is
-    /// always a real change — and that is what keeps a stale matcher
-    /// self-correcting.
+    /// always a real change.
     fn excludes(&self, path: &Path) -> bool {
-        let Some(gi) = self.quiltignore.as_ref() else {
+        let Some(rules) = self.rules.as_ref() else {
             return false;
         };
-        // `matched_path_or_any_parents` panics on a path outside the matcher's
-        // root, so the relative key has to come from a checked strip, not from
-        // the prefix test that resolved the namespace.
+        // The matcher panics on a path outside its root, so the relative key
+        // has to come from a checked strip, not from the prefix test that
+        // resolved the namespace.
         let Ok(relative) = path.strip_prefix(&self.path) else {
             return false;
         };
         if relative == Path::new(QUILTIGNORE_FILE) {
             return false;
         }
-        // `is_dir: false` is safe for a leaf: the matcher tests every *parent*
-        // as a directory, so `cache/` matches `cache/x.tmp` without a stat —
-        // which a removed path could not supply anyway.
-        quilt::quiltignore::is_ignored(gi, relative, false)
+        // A tracked directory is one holding a tracked file.
+        let tracked = self.tracked.contains(relative);
+        // The matcher tests every parent as a directory, so `cache/` matches
+        // `cache/x.tmp` without a stat. Only the path itself needs one, and a
+        // removed path reads as a file.
+        if path.is_dir() {
+            rules.dir_ignored_by(relative, tracked).is_some()
+        } else {
+            rules.file_ignored_by(relative, tracked).is_some()
+        }
     }
+}
+
+/// A failure to read the rules leaves them absent rather than failing the
+/// watch: not screening is the safe direction. It costs walks, where wrongly
+/// screening would drop real changes.
+fn load_rules(package_home: &Path, user_rules: &Path) -> Option<quilt::quiltignore::Rules> {
+    quilt::quiltignore::Rules::load(package_home, user_rules)
+        .inspect_err(|err| {
+            warn!(
+                "fswatcher: ignore rules for {} unreadable, not screening ignored paths: {err}",
+                package_home.display(),
+            );
+        })
+        .ok()
+}
+
+/// The user-wide ignore file, which lives outside every package home and so
+/// gets its own watch on its directory.
+#[derive(Clone, PartialEq)]
+struct UserRules {
+    /// The file, canonical like the package roots, for matching events.
+    file: PathBuf,
+    /// The directory this subscription watches for it. `None` when a package
+    /// watch already covers that directory recursively.
+    dir: Option<PathBuf>,
 }
 
 /// Owns the OS-level subscription and the namespace ↔ root mapping. The
@@ -153,6 +232,7 @@ impl WatchedRoot {
 pub struct Subscription {
     debouncer: Debouncer<RecommendedWatcher, RecommendedCache>,
     watched: Arc<Mutex<BTreeMap<Namespace, WatchedRoot>>>,
+    user_rules: Arc<Mutex<Option<UserRules>>>,
 }
 
 impl Subscription {
@@ -169,13 +249,24 @@ impl Subscription {
         let watched: Arc<Mutex<BTreeMap<Namespace, WatchedRoot>>> =
             Arc::new(Mutex::new(BTreeMap::new()));
         let watched_for_cb = Arc::clone(&watched);
+        let user_rules: Arc<Mutex<Option<UserRules>>> = Arc::new(Mutex::new(None));
+        let user_rules_for_cb = Arc::clone(&user_rules);
         let reporter_for_cb = Arc::clone(reporter);
         let debouncer = new_debouncer(
             debounce,
             None,
             move |result: notify_debouncer_full::DebounceEventResult| match result {
                 Ok(events) => {
-                    let touched = affected_namespaces(&events, &watched_for_cb.lock().unwrap());
+                    let user_file = user_rules_for_cb
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .map(|rules| rules.file.clone());
+                    let touched = {
+                        let mut watched = watched_for_cb.lock().unwrap();
+                        reload_edited_rules(&events, &mut watched, user_file.as_deref());
+                        affected_namespaces(&events, &watched, user_file.as_deref())
+                    };
                     for namespace in touched {
                         let signal = MappingSignal {
                             namespace: namespace.clone(),
@@ -187,13 +278,22 @@ impl Subscription {
                 }
                 Err(errors) => {
                     for err in errors {
-                        handle_async_error(&watched_for_cb, reporter_for_cb.as_ref(), err);
+                        handle_async_error(
+                            &watched_for_cb,
+                            &user_rules_for_cb,
+                            reporter_for_cb.as_ref(),
+                            err,
+                        );
                     }
                 }
             },
         )
         .map_err(|err| classify(err, None))?;
-        Ok(Self { debouncer, watched })
+        Ok(Self {
+            debouncer,
+            watched,
+            user_rules,
+        })
     }
 
     /// Idempotent: a duplicate `add` for the same namespace + root is a no-op.
@@ -201,8 +301,9 @@ impl Subscription {
     pub fn add(
         &mut self,
         namespace: Namespace,
-        package_home: PathBuf,
+        package: WatchedPackage,
     ) -> Result<(), SubscriberError> {
+        let package_home = package.home.clone();
         // macOS FSEvents reports canonical paths (/private/var/...); store the
         // canonical root so namespace_for() can match those events. `dunce` is
         // used instead of `std::fs::canonicalize` to avoid `\\?\` UNC prefixes
@@ -214,16 +315,7 @@ impl Subscription {
             );
             package_home
         });
-        // A failure to read `.quiltignore` leaves the matcher absent rather
-        // than failing the watch: not screening is the safe direction — it
-        // costs walks, where wrongly screening would drop real changes.
-        let quiltignore = quilt::quiltignore::load(&package_home).unwrap_or_else(|err| {
-            warn!(
-                "fswatcher: {}/{QUILTIGNORE_FILE} unreadable, not screening ignored paths: {err}",
-                package_home.display(),
-            );
-            None
-        });
+        let root = WatchedRoot::new(package_home.clone(), package);
         let existing_path = {
             let watched = self.watched.lock().unwrap();
             watched.get(&namespace).map(|w| w.path.clone())
@@ -231,10 +323,9 @@ impl Subscription {
         if let Some(existing) = existing_path.as_ref() {
             if existing == &package_home {
                 // The OS watch is already right, so this stays a no-op for
-                // `notify` — but the matcher is replaced, which is what makes
-                // a reconcile the refresh point for an edited `.quiltignore`.
+                // `notify`, but the rules and the tracked set are replaced.
                 if let Some(entry) = self.watched.lock().unwrap().get_mut(&namespace) {
-                    entry.quiltignore = quiltignore;
+                    *entry = root;
                 }
                 return Ok(());
             }
@@ -245,13 +336,7 @@ impl Subscription {
             .watch(&package_home, RecursiveMode::Recursive)
         {
             Ok(()) => {
-                self.watched.lock().unwrap().insert(
-                    namespace,
-                    WatchedRoot {
-                        path: package_home,
-                        quiltignore,
-                    },
-                );
+                self.watched.lock().unwrap().insert(namespace, root);
                 Ok(())
             }
             Err(err) => Err(classify(err, Some(&namespace))),
@@ -265,13 +350,74 @@ impl Subscription {
         }
     }
 
+    /// Watch the user-wide ignore file, or stop watching it with `None`.
+    ///
+    /// The file may not exist yet, so its directory is watched instead. A
+    /// failure is only logged: package watches do not depend on it, and the
+    /// next reconcile retries.
+    fn set_user_rules(&mut self, file: Option<PathBuf>) {
+        let wanted = file.and_then(|file| {
+            let dir = file.parent()?.to_path_buf();
+            let name = file.file_name()?.to_owned();
+            // Same canonical form as the package roots, so events match.
+            let dir = dunce::canonicalize(&dir).unwrap_or(dir);
+            let file = dir.join(name);
+            // A second watch on a path inside a recursive one would share its
+            // OS watch on some backends, and unwatching it would break the
+            // package watch.
+            let covered = self
+                .watched
+                .lock()
+                .unwrap()
+                .values()
+                .any(|root| dir.starts_with(&root.path));
+            Some(UserRules {
+                file,
+                dir: (!covered).then_some(dir),
+            })
+        });
+        let current = self.user_rules.lock().unwrap().clone();
+        if current == wanted {
+            return;
+        }
+        let current_dir = current.and_then(|rules| rules.dir);
+        let wanted_dir = wanted.as_ref().and_then(|rules| rules.dir.clone());
+        let mut dir_ok = true;
+        if current_dir != wanted_dir {
+            // A package watch that now covers the directory may have taken
+            // over the OS watch on it, so that one is left in place.
+            let covered = wanted.as_ref().is_some_and(|rules| rules.dir.is_none());
+            if let Some(dir) = current_dir.as_ref()
+                && !covered
+            {
+                let _ = self.debouncer.unwatch(dir);
+            }
+            if let Some(dir) = wanted_dir.as_ref()
+                && let Err(err) = self.debouncer.watch(dir, RecursiveMode::NonRecursive)
+            {
+                warn!(
+                    "fswatcher: cannot watch {} for user-wide ignore rules: {err}",
+                    dir.display(),
+                );
+                dir_ok = false;
+            }
+        }
+        *self.user_rules.lock().unwrap() = if dir_ok { wanted } else { None };
+    }
+
     /// Incrementally reconcile the watched set with `desired`. Drops
     /// namespaces no longer present; adds (or updates the root of)
     /// namespaces that are. `Subscription::add` is already idempotent
     /// for an unchanged (namespace, path) pair, so a no-op reconcile is
     /// cheap.
-    pub fn reconcile(&mut self, desired: Vec<(Namespace, PathBuf)>) -> Result<(), SubscriberError> {
-        let desired_map: BTreeMap<Namespace, PathBuf> = desired.into_iter().collect();
+    ///
+    /// `user_rules` is the user-wide ignore file; see `set_user_rules`.
+    pub fn reconcile(
+        &mut self,
+        desired: Vec<(Namespace, WatchedPackage)>,
+        user_rules: Option<PathBuf>,
+    ) -> Result<(), SubscriberError> {
+        let desired_map: BTreeMap<Namespace, WatchedPackage> = desired.into_iter().collect();
         let stale: Vec<Namespace> = self
             .watched
             .lock()
@@ -284,15 +430,17 @@ impl Subscription {
             self.remove(ns);
         }
         let mut first_err: Option<SubscriberError> = None;
-        for (namespace, package_home) in desired_map {
+        for (namespace, package) in desired_map {
             let ns_display = namespace.to_string();
-            if let Err(err) = self.add(namespace, package_home) {
+            if let Err(err) = self.add(namespace, package) {
                 warn!("fswatcher: reconcile add({ns_display}) failed: {err}");
                 if first_err.is_none() {
                     first_err = Some(err);
                 }
             }
         }
+        // After the packages, so it knows which directories they cover.
+        self.set_user_rules(user_rules);
         match first_err {
             Some(err) => Err(err),
             None => Ok(()),
@@ -315,13 +463,17 @@ impl Subscription {
 /// to ignore. Unknown top-level event kinds still pass through because they may
 /// be a backend's only representation of a content mutation.
 ///
-/// A path the package's own `.quiltignore` excludes is dropped too. The walk
-/// already skips ignored subtrees, so such an event could only ever buy a
-/// recompute that finds nothing — and an ignored path is outside the model in
-/// both directions: neither reported, nor a cause of reporting.
+/// A path the ignore rules hide is dropped too. The walk skips it as well, so
+/// such an event could only ever buy a recompute that finds nothing, and an
+/// ignored path is outside the model in both directions: neither reported, nor
+/// a cause of reporting.
+///
+/// A change to the user-wide ignore file (`user_rules`) affects every watched
+/// package. Its siblings are not package files, so they resolve to nothing.
 fn affected_namespaces(
     events: &[notify_debouncer_full::DebouncedEvent],
     watched: &BTreeMap<Namespace, WatchedRoot>,
+    user_rules: Option<&Path>,
 ) -> BTreeSet<Namespace> {
     let mut touched = BTreeSet::new();
     for event in events {
@@ -329,6 +481,10 @@ fn affected_namespaces(
             continue;
         }
         for path in &event.paths {
+            if user_rules == Some(path.as_path()) {
+                touched.extend(watched.keys().cloned());
+                continue;
+            }
             if filter::is_ignored(path) {
                 continue;
             }
@@ -342,6 +498,34 @@ fn affected_namespaces(
         }
     }
     touched
+}
+
+/// Reload the rules of every package whose rules file an event touched, so
+/// that the rest of the batch and later events are screened by the new rules.
+fn reload_edited_rules(
+    events: &[notify_debouncer_full::DebouncedEvent],
+    watched: &mut BTreeMap<Namespace, WatchedRoot>,
+    user_rules: Option<&Path>,
+) {
+    let mut edited = BTreeSet::new();
+    for path in events
+        .iter()
+        .filter(|event| !is_non_content_event(event.kind))
+        .flat_map(|event| &event.paths)
+    {
+        if user_rules == Some(path.as_path()) {
+            edited.extend(watched.keys().cloned());
+        } else if let Some((namespace, root)) = namespace_for(path, watched)
+            && path.strip_prefix(&root.path).ok() == Some(Path::new(QUILTIGNORE_FILE))
+        {
+            edited.insert(namespace.clone());
+        }
+    }
+    for namespace in edited {
+        if let Some(root) = watched.get_mut(&namespace) {
+            root.reload_rules();
+        }
+    }
 }
 
 fn is_non_content_event(kind: EventKind) -> bool {
@@ -371,10 +555,22 @@ fn namespace_for<'a>(
 ///    logged to the console).
 fn handle_async_error(
     watched: &Arc<Mutex<BTreeMap<Namespace, WatchedRoot>>>,
+    user_rules: &Arc<Mutex<Option<UserRules>>>,
     reporter: &dyn StatusReporter,
     err: notify::Error,
 ) {
     warn!("fswatcher: async subscriber error: {err}");
+    {
+        let mut user_rules = user_rules.lock().unwrap();
+        if user_rules
+            .as_ref()
+            .and_then(|rules| rules.dir.as_ref())
+            .is_some_and(|dir| err.paths.contains(dir))
+        {
+            // Forget the lost watch so the next reconcile sets it up again.
+            *user_rules = None;
+        }
+    }
     let affected: Vec<Namespace> = {
         let mut watched = watched.lock().unwrap();
         let to_drop: Vec<Namespace> = watched
@@ -415,8 +611,15 @@ mod tests {
     fn unignored(path: &str) -> WatchedRoot {
         WatchedRoot {
             path: PathBuf::from(path),
-            quiltignore: None,
+            user_rules: PathBuf::new(),
+            rules: None,
+            tracked: HashSet::new(),
         }
+    }
+
+    /// A package with no files yet and no user-wide rules file.
+    fn untracked(home: &Path) -> WatchedPackage {
+        WatchedPackage::new(home.to_path_buf(), home.with_extension("user-rules"), [])
     }
 
     fn debounced(kind: EventKind) -> notify_debouncer_full::DebouncedEvent {
@@ -445,14 +648,19 @@ mod tests {
         ];
 
         assert!(
-            affected_namespaces(&[debounced(EventKind::Access(AccessKind::Read))], &watched)
-                .is_empty()
+            affected_namespaces(
+                &[debounced(EventKind::Access(AccessKind::Read))],
+                &watched,
+                None
+            )
+            .is_empty()
         );
         for metadata in metadata_kinds {
             assert!(
                 affected_namespaces(
                     &[debounced(EventKind::Modify(ModifyKind::Metadata(metadata)))],
                     &watched,
+                    None,
                 )
                 .is_empty(),
                 "metadata event {metadata:?} must not trigger a status walk"
@@ -471,9 +679,117 @@ mod tests {
                     DataChange::Content,
                 )))],
                 &watched,
+                None,
             ),
             BTreeSet::from([namespace])
         );
+    }
+
+    fn modified(path: &str) -> notify_debouncer_full::DebouncedEvent {
+        notify_debouncer_full::DebouncedEvent::new(
+            notify::Event {
+                kind: EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+                paths: vec![PathBuf::from(path)],
+                attrs: notify::event::EventAttributes::default(),
+            },
+            std::time::Instant::now(),
+        )
+    }
+
+    #[test]
+    fn the_user_rules_file_wakes_every_package_and_its_siblings_wake_none() {
+        let a: Namespace = ("acme", "a").into();
+        let b: Namespace = ("acme", "b").into();
+        let watched = BTreeMap::from([
+            (a.clone(), unignored("/domain/a")),
+            (b.clone(), unignored("/elsewhere/b")),
+        ]);
+        let user_rules = Some(Path::new("/domain/.quiltignore"));
+
+        assert_eq!(
+            affected_namespaces(&[modified("/domain/.quiltignore")], &watched, user_rules),
+            BTreeSet::from([a.clone(), b]),
+        );
+        assert!(
+            affected_namespaces(&[modified("/domain/notes.txt")], &watched, user_rules).is_empty(),
+        );
+        assert_eq!(
+            affected_namespaces(&[modified("/domain/a/file.txt")], &watched, user_rules),
+            BTreeSet::from([a]),
+            "package events are unchanged",
+        );
+    }
+
+    #[tokio::test]
+    async fn editing_the_user_rules_file_signals_every_package()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let domain = TempDir::new()?;
+        let elsewhere = TempDir::new()?;
+        tokio::fs::create_dir(domain.path().join("a")).await?;
+        let a: Namespace = ("acme", "a").into();
+        let b: Namespace = ("acme", "b").into();
+
+        let (tx, mut rx) = mpsc::channel::<MappingSignal>(64);
+        let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
+        let user_file = domain.path().join(".quiltignore");
+        let desired = vec![
+            (
+                a.clone(),
+                WatchedPackage::new(domain.path().join("a"), user_file.clone(), []),
+            ),
+            (
+                b.clone(),
+                WatchedPackage::new(elsewhere.path().to_path_buf(), user_file.clone(), []),
+            ),
+        ];
+        let user_rules = Some(user_file);
+        sub.reconcile(desired.clone(), user_rules.clone())?;
+        // A repeat reconcile keeps the same watch.
+        sub.reconcile(desired, user_rules)?;
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        while rx.try_recv().is_ok() {}
+
+        tokio::fs::write(domain.path().join("notes.txt"), b"x").await?;
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "another file next to the user-wide rules is not a package change",
+        );
+
+        tokio::fs::write(domain.path().join(".quiltignore"), b"*.log\n").await?;
+        let mut signalled = BTreeSet::new();
+        while signalled.len() < 2 {
+            let signal = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await?
+                .expect("editing the user-wide rules must signal");
+            signalled.insert(signal.namespace);
+        }
+        assert_eq!(signalled, BTreeSet::from([a, b]));
+        Ok(())
+    }
+
+    /// A package home above the domain root already watches the directory
+    /// recursively, so the subscription must not add (and later drop) its own.
+    #[tokio::test]
+    async fn the_user_rules_directory_is_not_watched_twice()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let home = TempDir::new()?;
+        tokio::fs::create_dir(home.path().join("domain")).await?;
+        let (tx, _rx) = mpsc::channel::<MappingSignal>(16);
+        let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
+        sub.reconcile(
+            vec![(("acme", "demo").into(), untracked(home.path()))],
+            Some(home.path().join("domain/.quiltignore")),
+        )?;
+        let rules = sub
+            .user_rules
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("rules are known");
+        assert!(rules.file.ends_with("domain/.quiltignore"));
+        assert_eq!(rules.dir, None);
+        Ok(())
     }
 
     #[tokio::test]
@@ -482,7 +798,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<MappingSignal>(16);
         let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
         let ns: Namespace = ("acme", "demo").into();
-        sub.add(ns.clone(), dir.path().to_path_buf())?;
+        sub.add(ns.clone(), untracked(dir.path()))?;
 
         // Give notify a moment to attach the watch before writing.
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -515,7 +831,7 @@ mod tests {
 
         let (tx, mut rx) = mpsc::channel::<MappingSignal>(64);
         let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
-        sub.add(("acme", "demo").into(), dir.path().to_path_buf())?;
+        sub.add(("acme", "demo").into(), untracked(dir.path()))?;
         // Let the watch attach and the seeding events drain.
         tokio::time::sleep(Duration::from_millis(400)).await;
         while rx.try_recv().is_ok() {}
@@ -558,7 +874,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<MappingSignal>(64);
         let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
         let ns: Namespace = ("acme", "demo").into();
-        sub.add(ns.clone(), dir.path().to_path_buf())?;
+        sub.add(ns.clone(), untracked(dir.path()))?;
         tokio::time::sleep(Duration::from_millis(400)).await;
         while rx.try_recv().is_ok() {}
 
@@ -580,14 +896,124 @@ mod tests {
         Ok(())
     }
 
+    /// The built-in rules hide only paths the package does not have, as in the
+    /// status walk; the package's own rules hide any path.
+    #[test]
+    fn the_ignore_rules_screen_events_as_the_walk_does() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        std::fs::write(dir.path().join(".quiltignore"), "cache/\n")?;
+        std::fs::create_dir(dir.path().join(".git"))?;
+        let ns: Namespace = ("acme", "demo").into();
+        let package = WatchedPackage::new(
+            dir.path().to_path_buf(),
+            dir.path().with_extension("user-rules"),
+            [".DS_Store", ".github/ci.yml", "cache/kept.csv"].map(PathBuf::from),
+        );
+        let watched = BTreeMap::from([(
+            ns.clone(),
+            WatchedRoot::new(dir.path().to_path_buf(), package),
+        )]);
+        let signals = |rel: &str| {
+            let path = dir.path().join(rel);
+            !affected_namespaces(&[modified(path.to_str().unwrap())], &watched, None).is_empty()
+        };
+
+        for rel in [".git", ".git/index", "node_modules/x.js", "sub/.DS_Store"] {
+            assert!(
+                !signals(rel),
+                "{rel} is untracked and hidden by the defaults"
+            );
+        }
+        for rel in [
+            ".DS_Store",
+            ".github",
+            ".github/ci.yml",
+            "notes.txt",
+            ".quiltignore",
+        ] {
+            assert!(signals(rel), "{rel} must signal");
+        }
+        assert!(
+            !signals(".github/other.yml"),
+            "an untracked sibling stays hidden"
+        );
+        for rel in ["cache/x.tmp", "cache/kept.csv"] {
+            assert!(!signals(rel), "the package's rules hide {rel}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_edited_user_rules_file_is_picked_up_at_once() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        let user_file = dir.path().with_extension("user-rules");
+        let ns: Namespace = ("acme", "demo").into();
+        let package = WatchedPackage::new(dir.path().to_path_buf(), user_file.clone(), []);
+        let mut watched = BTreeMap::from([(
+            ns.clone(),
+            WatchedRoot::new(dir.path().to_path_buf(), package),
+        )]);
+        let log = dir.path().join("run.log");
+        let log = log.to_str().unwrap();
+        assert_eq!(
+            affected_namespaces(&[modified(log)], &watched, Some(&user_file)),
+            BTreeSet::from([ns]),
+        );
+
+        std::fs::write(&user_file, "*.log\n")?;
+        reload_edited_rules(
+            &[modified(user_file.to_str().unwrap())],
+            &mut watched,
+            Some(&user_file),
+        );
+        assert!(affected_namespaces(&[modified(log)], &watched, Some(&user_file)).is_empty());
+        Ok(())
+    }
+
+    /// A busy git folder must not signal, or each write would push back the
+    /// next autopublish; a file the package has signals whatever its name.
+    #[tokio::test]
+    async fn an_untracked_git_folder_does_not_signal_but_a_tracked_dotfile_does()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new()?;
+        tokio::fs::create_dir(dir.path().join(".git")).await?;
+        tokio::fs::write(dir.path().join(".DS_Store"), b"seed").await?;
+
+        let (tx, mut rx) = mpsc::channel::<MappingSignal>(64);
+        let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
+        let ns: Namespace = ("acme", "demo").into();
+        let package = WatchedPackage::new(
+            dir.path().to_path_buf(),
+            dir.path().with_extension("user-rules"),
+            [PathBuf::from(".DS_Store")],
+        );
+        sub.add(ns.clone(), package)?;
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        while rx.try_recv().is_ok() {}
+
+        tokio::fs::write(dir.path().join(".git/index"), b"x").await?;
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert!(
+            rx.try_recv().is_err(),
+            "an untracked .git/ write must not signal"
+        );
+
+        tokio::fs::write(dir.path().join(".DS_Store"), b"edited").await?;
+        let signal = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await?
+            .expect("a tracked file must signal");
+        assert_eq!(signal.namespace, ns);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn add_is_idempotent_same_root() -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new()?;
         let (tx, _rx) = mpsc::channel::<MappingSignal>(16);
         let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
         let ns: Namespace = ("acme", "demo").into();
-        sub.add(ns.clone(), dir.path().to_path_buf())?;
-        sub.add(ns.clone(), dir.path().to_path_buf())?;
+        sub.add(ns.clone(), untracked(dir.path()))?;
+        sub.add(ns.clone(), untracked(dir.path()))?;
         assert_eq!(sub.watched_namespaces(), vec![ns]);
         Ok(())
     }
@@ -598,7 +1024,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel::<MappingSignal>(16);
         let mut sub = Subscription::new(Duration::from_millis(50), tx, &test_reporter())?;
         let ns: Namespace = ("acme", "demo").into();
-        sub.add(ns.clone(), dir.path().to_path_buf())?;
+        sub.add(ns.clone(), untracked(dir.path()))?;
         sub.remove(&ns);
         assert_eq!(sub.watched_namespaces(), [] as [Namespace; 0]);
         Ok(())

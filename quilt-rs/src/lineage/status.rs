@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::manifest::ManifestRow;
+use crate::quiltignore;
 
 /// Describes modified states of a file
 #[derive(Debug, Clone, PartialEq)]
@@ -56,12 +57,12 @@ pub struct InstalledPackageStatus {
     pub upstream_state: UpstreamState,
     /// File changes vs current commit (visible + junky files only)
     pub changes: ChangeSet,
-    /// Files matched by `.quiltignore` — (path, `matched_by` pattern, size in bytes)
-    pub ignored_files: Vec<(PathBuf, String, u64)>,
-    /// Folders matched by `.quiltignore` — (path, `matched_by` pattern).
+    /// Files matched by an ignore rule — (path, the rule and its source, size in bytes)
+    pub ignored_files: Vec<(PathBuf, quiltignore::IgnoredBy, u64)>,
+    /// Folders matched by an ignore rule — (path, the rule and its source).
     /// Nothing inside them is walked, so they carry no size and no
     /// folder nested in one is listed.
-    pub ignored_dirs: Vec<(PathBuf, String)>,
+    pub ignored_dirs: Vec<(PathBuf, quiltignore::IgnoredBy)>,
     /// Files in changes that are also flagged as junk — (path, suggested pattern)
     pub junky_changes: Vec<(PathBuf, String)>,
     /// This status was read against the remote's `latest` tip fetched just

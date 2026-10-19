@@ -49,8 +49,8 @@ pub struct PackageStatusEvent {
     pub status: String,
     pub has_changes: bool,
     /// Digest of the observation this event reports — the upstream state,
-    /// the newer revision it was computed against and, per changed path, its
-    /// kind and content hash. Two events with
+    /// the newer revision it was computed against, per changed path its kind
+    /// and content hash, and per ignored path the rule that ignored it. Two events with
     /// equal fingerprints describe the same working tree and remote, so a
     /// consumer that already acted on one can ignore the other. Assembled
     /// here with `status`/`has_changes` from a single `status` so the three
@@ -78,15 +78,23 @@ impl PackageStatusEvent {
 /// Two recompute results with the same fingerprint produce the same view, so
 /// the second need not be acted on.
 ///
-/// Format: `<upstream>;<hex(latest)>;<hex(path)>:<kind>:<hash>;<hex(path)>:<kind>:<hash>;...`
+/// Format: `<upstream>;<hex(latest)>;<changes>|<ignored>`, where `<changes>`
+/// is `<hex(path)>:<kind>:<hash>;` per changed path and `<ignored>` is
+/// `file:<hex(path)>:<source>:<hex(pattern)>:<size>;` per ignored file, then
+/// `dir:<hex(path)>:<source>:<hex(pattern)>;` per ignored folder. `<source>`
+/// is `default`, `user:<hex(rules path)>:<line>` or `package:<line>`.
 /// `latest` is the newer revision the status was computed against, so a
 /// remote that moves from one newer revision to the next, leaving the package
-/// behind with the same changes, is a new observation.
-/// Paths are walked in `BTreeMap` order (sorted by `PathBuf`), so the output
-/// is deterministic without an explicit sort. A path can hold arbitrary bytes
-/// — non-UTF-8 names on Linux, or the `:`/`;` delimiters (kind is A/M/D, the
+/// behind with the same changes, is a new observation. The ignored rows are
+/// the page's Ignored facet, so a new rule for an ignored file, or a newly
+/// ignored file, is a new observation too.
+/// Changed paths are walked in `BTreeMap` order (sorted by `PathBuf`); ignored
+/// rows arrive in walk order and are sorted by path here, so the output is
+/// deterministic. A path can hold arbitrary bytes
+/// — non-UTF-8 names on Linux, or the `:`/`;`/`|` delimiters (kind is A/M/D, the
 /// hash is hex/base64) — so it is **hex-encoded from its lossless bytes**, and
-/// so is `latest`, which is hex today but is not relied on to stay so. Hex is
+/// so are `latest`, the patterns and the user rules path, which can hold
+/// delimiters too. Hex is
 /// `0-9a-f` only, so it is both lossless and delimiter-free, keeping the
 /// digest **injective**: different inputs give different digests, so a
 /// consumer never skips a real refetch, and the same status always gives the
@@ -98,16 +106,17 @@ impl PackageStatusEvent {
 pub(crate) fn status_fingerprint(status: &quilt::lineage::InstalledPackageStatus) -> String {
     let mut out = String::new();
     let _ = write!(out, "{};", status.upstream_state);
-    for b in status.latest_hash.bytes() {
-        let _ = write!(out, "{b:02x}");
-    }
+    push_hex(&mut out, status.latest_hash.as_bytes());
     out.push(';');
     out.push_str(&changes_fingerprint(&status.changes));
+    out.push('|');
+    out.push_str(&ignored_fingerprint(status));
     out
 }
 
 /// Per changed path, its kind and content hash: what the working tree holds,
-/// apart from the remote.
+/// apart from the remote. Ignored rows stay out: they are never published, so
+/// they must not move the last-change time that paces autopublish.
 pub(crate) fn changes_fingerprint(changes: &quilt::lineage::ChangeSet) -> String {
     let mut out = String::new();
     for (path, change) in changes {
@@ -116,33 +125,87 @@ pub(crate) fn changes_fingerprint(changes: &quilt::lineage::ChangeSet) -> String
             quilt::lineage::Change::Modified(r) => ("M", r),
             quilt::lineage::Change::Removed(r) => ("D", r),
         };
-        for b in path.as_os_str().as_encoded_bytes() {
-            let _ = write!(out, "{b:02x}");
-        }
+        push_hex(&mut out, path.as_os_str().as_encoded_bytes());
         let _ = write!(out, ":{kind}:{};", row.hash);
     }
     out
 }
 
+/// The `<ignored>` part of [`status_fingerprint`]: per ignored file and
+/// folder, the rule that ignored it, and the size of each ignored file.
+pub(crate) fn ignored_fingerprint(status: &quilt::lineage::InstalledPackageStatus) -> String {
+    let mut out = String::new();
+    let mut files: Vec<_> = status.ignored_files.iter().collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, ignored_by, size) in files {
+        out.push_str("file:");
+        push_ignored_by(&mut out, path, ignored_by);
+        let _ = write!(out, ":{size};");
+    }
+    let mut dirs: Vec<_> = status.ignored_dirs.iter().collect();
+    dirs.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, ignored_by) in dirs {
+        out.push_str("dir:");
+        push_ignored_by(&mut out, path, ignored_by);
+        out.push(';');
+    }
+    out
+}
+
+/// `<hex(path)>:<source>:<hex(pattern)>`
+fn push_ignored_by(
+    out: &mut String,
+    path: &std::path::Path,
+    ignored_by: &quilt::quiltignore::IgnoredBy,
+) {
+    push_hex(out, path.as_os_str().as_encoded_bytes());
+    out.push(':');
+    match &ignored_by.source {
+        quilt::quiltignore::RuleSource::Default => out.push_str("default"),
+        quilt::quiltignore::RuleSource::User { path, line } => {
+            out.push_str("user:");
+            push_hex(out, path.as_os_str().as_encoded_bytes());
+            let _ = write!(out, ":{line}");
+        }
+        quilt::quiltignore::RuleSource::Package { line } => {
+            let _ = write!(out, "package:{line}");
+        }
+    }
+    out.push(':');
+    push_hex(out, ignored_by.pattern.as_bytes());
+}
+
+fn push_hex(out: &mut String, bytes: &[u8]) {
+    for b in bytes {
+        let _ = write!(out, "{b:02x}");
+    }
+}
+
 /// Fingerprint of a clean, up-to-date working tree whose `latest` is
-/// `latest` — the state a package reaches right after a successful publish,
-/// and after a pull that kept no local work, with the revision it reached as
-/// `latest`. The mutation paths in the tick don't hold a post-mutation
-/// `InstalledPackageStatus` to fingerprint directly, but the observation they
-/// represent is a settled `UpToDate` tree, and this names it, so the next
-/// tick's observation of that tree matches it. (A pull that *kept* local
-/// changes reads this too; it understates by one changed-path digest, which
-/// the next tick's real observation corrects — a redundant refetch at worst,
-/// never a missed one. So does an empty `latest`, for a publish that did not
-/// become `latest`.)
-pub(crate) fn settled_fingerprint(latest: &str) -> String {
-    status_fingerprint(&quilt::lineage::InstalledPackageStatus {
+/// `latest` and whose ignored rows digest to `ignored` — the state a package
+/// reaches right after a successful publish, and after a pull that kept no
+/// local work, with the revision it reached as `latest`. The mutation paths in
+/// the tick don't hold a post-mutation `InstalledPackageStatus` to fingerprint
+/// directly, but the observation they represent is a settled `UpToDate` tree,
+/// and this names it, so the next tick's observation of that tree matches it.
+/// Neither a publish nor a pull touches an ignored file, so `ignored` is the
+/// [`ignored_fingerprint`] of the status read before the mutation. (A pull
+/// that *kept* local changes reads this too; it understates by one
+/// changed-path digest, which the next tick's real observation corrects — a
+/// redundant refetch at worst, never a missed one. So does an empty `latest`,
+/// for a publish that did not become `latest`, and a pull that brings a
+/// `.quiltignore` changing which rule ignores a file. Only the open page reads
+/// this digest, never the autosync decisions.)
+pub(crate) fn settled_fingerprint(latest: &str, ignored: &str) -> String {
+    let mut out = status_fingerprint(&quilt::lineage::InstalledPackageStatus {
         latest_hash: latest.to_string(),
         ..quilt::lineage::InstalledPackageStatus::new(
             quilt::lineage::UpstreamState::UpToDate,
             std::collections::BTreeMap::new(),
         )
-    })
+    });
+    out.push_str(ignored);
+    out
 }
 
 /// Payload emitted to the UI after autosync publishes a package. The UI
@@ -726,8 +789,157 @@ mod tests {
                 std::collections::BTreeMap::new(),
             )
         };
-        assert_eq!(settled_fingerprint("cafe"), status_fingerprint(&observed));
-        assert_ne!(settled_fingerprint("cafe"), settled_fingerprint(""));
+        assert_eq!(
+            settled_fingerprint("cafe", ""),
+            status_fingerprint(&observed)
+        );
+        assert_ne!(settled_fingerprint("cafe", ""), settled_fingerprint("", ""));
+    }
+
+    fn ignored_by(
+        pattern: &str,
+        source: quilt::quiltignore::RuleSource,
+    ) -> quilt::quiltignore::IgnoredBy {
+        quilt::quiltignore::IgnoredBy {
+            pattern: pattern.to_string(),
+            source,
+        }
+    }
+
+    /// An up-to-date package with no changes and `.env` ignored by `by`.
+    fn with_ignored_env(
+        by: quilt::quiltignore::IgnoredBy,
+    ) -> quilt::lineage::InstalledPackageStatus {
+        let mut status = behind_with_latest("cafe");
+        status.upstream_state = quilt::lineage::UpstreamState::UpToDate;
+        status.ignored_files = vec![(std::path::PathBuf::from(".env"), by, 12)];
+        status
+    }
+
+    #[test]
+    fn fingerprint_names_the_rule_that_ignored_a_file() {
+        // A user-wide rule now ignores `.env` instead of the default one: the
+        // page shows a different rule, so it must refetch.
+        use quilt::quiltignore::RuleSource;
+        let by_default =
+            status_fingerprint(&with_ignored_env(ignored_by(".env", RuleSource::Default)));
+        let by_user = status_fingerprint(&with_ignored_env(ignored_by(
+            ".env",
+            RuleSource::User {
+                path: std::path::PathBuf::from("/home/u/.quiltignore"),
+                line: 1,
+            },
+        )));
+        let by_other_pattern =
+            status_fingerprint(&with_ignored_env(ignored_by(".env*", RuleSource::Default)));
+        let by_package = status_fingerprint(&with_ignored_env(ignored_by(
+            ".env",
+            RuleSource::Package { line: 1 },
+        )));
+        assert_ne!(by_default, by_user);
+        assert_ne!(by_default, by_other_pattern);
+        assert_ne!(by_default, by_package);
+        assert_ne!(by_user, by_package);
+        assert_ne!(by_default, status_fingerprint(&behind_with_latest("cafe")));
+    }
+
+    #[test]
+    fn fingerprint_names_the_size_of_an_ignored_file() {
+        let by = ignored_by(".env", quilt::quiltignore::RuleSource::Default);
+        let mut grown = with_ignored_env(by.clone());
+        grown.ignored_files[0].2 = 13;
+        assert_ne!(
+            status_fingerprint(&with_ignored_env(by)),
+            status_fingerprint(&grown)
+        );
+    }
+
+    #[test]
+    fn fingerprint_names_ignored_folders_apart_from_files() {
+        use quilt::quiltignore::RuleSource;
+        let mut plain = behind_with_latest("cafe");
+        plain.upstream_state = quilt::lineage::UpstreamState::UpToDate;
+        let folder = |pattern: &str| {
+            let mut status = behind_with_latest("cafe");
+            status.upstream_state = quilt::lineage::UpstreamState::UpToDate;
+            status.ignored_dirs = vec![(
+                std::path::PathBuf::from("node_modules"),
+                ignored_by(pattern, RuleSource::Default),
+            )];
+            status
+        };
+        let a = status_fingerprint(&folder("node_modules/"));
+        let b = status_fingerprint(&folder("node_*/"));
+        assert_ne!(a, b, "a different rule for the folder is a new observation");
+        assert_ne!(a, status_fingerprint(&plain));
+
+        // The same row as a file is a different observation from a folder.
+        let mut as_file = plain;
+        as_file.ignored_files = vec![(
+            std::path::PathBuf::from("node_modules"),
+            ignored_by("node_modules/", RuleSource::Default),
+            0,
+        )];
+        assert_ne!(a, status_fingerprint(&as_file));
+    }
+
+    #[test]
+    fn fingerprint_of_ignored_rows_ignores_walk_order() {
+        // The walk reads folders in whatever order the filesystem gives, so
+        // the same rows must digest the same in any order.
+        use quilt::quiltignore::RuleSource;
+        let row = |name: &str| {
+            (
+                std::path::PathBuf::from(name),
+                ignored_by(name, RuleSource::Package { line: 2 }),
+                1,
+            )
+        };
+        let mut one = behind_with_latest("cafe");
+        one.ignored_files = vec![row(".env"), row(".netrc")];
+        let mut other = behind_with_latest("cafe");
+        other.ignored_files = vec![row(".netrc"), row(".env")];
+        assert_eq!(status_fingerprint(&one), status_fingerprint(&one));
+        assert_eq!(status_fingerprint(&one), status_fingerprint(&other));
+    }
+
+    #[test]
+    fn fingerprint_hex_encodes_patterns_and_the_user_rules_path() {
+        use quilt::quiltignore::RuleSource;
+        let fp = status_fingerprint(&with_ignored_env(ignored_by(
+            "a;b|c",
+            RuleSource::User {
+                path: std::path::PathBuf::from("/x;y|z"),
+                line: 3,
+            },
+        )));
+        assert!(fp.contains(&hex("a;b|c")), "got: {fp}");
+        assert!(fp.contains(&hex("/x;y|z")), "got: {fp}");
+        assert!(!fp.contains("a;b|c") && !fp.contains("/x;y|z"), "got: {fp}");
+    }
+
+    #[test]
+    fn changes_fingerprint_leaves_ignored_rows_out() {
+        // Ignored files are never published, so they must not move the
+        // last-change time that paces autopublish.
+        let plain = behind_with_latest("cafe");
+        let ignored = with_ignored_env(ignored_by(".env", quilt::quiltignore::RuleSource::Default));
+        assert_eq!(
+            changes_fingerprint(&plain.changes),
+            changes_fingerprint(&ignored.changes)
+        );
+    }
+
+    #[test]
+    fn settled_fingerprint_keeps_the_ignored_rows() {
+        // A publish leaves ignored files alone, so the tree it settles on
+        // still shows them, and the next tick must find that old news.
+        let observed =
+            with_ignored_env(ignored_by(".env", quilt::quiltignore::RuleSource::Default));
+        assert_eq!(
+            settled_fingerprint("cafe", &ignored_fingerprint(&observed)),
+            status_fingerprint(&observed)
+        );
     }
 
     #[test]

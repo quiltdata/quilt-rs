@@ -95,8 +95,15 @@ pub async fn snapshot_for_pull(
 
     // THE WALK, last — so `status` reflects the tree as of just before the
     // caller classifies and applies.
-    let (lineage, status) =
-        flow::status(lineage, storage, base_manifest, package_home, host_config).await?;
+    let (lineage, status) = flow::status(
+        lineage,
+        storage,
+        paths,
+        base_manifest,
+        package_home,
+        host_config,
+    )
+    .await?;
 
     Ok((
         lineage,
@@ -294,6 +301,7 @@ pub async fn pull_package(
         storage,
         &working_dir,
         &snapshot.status,
+        &lineage.paths,
         manifest,
         &snapshot.latest_manifest,
     )
@@ -630,8 +638,15 @@ mod tests {
             ChangeSet::from([(written.clone(), Change::Modified(local_row))]),
         );
 
-        let identical =
-            identical_to_latest(&storage, &working_dir, &status, &base, &latest).await?;
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
         assert!(
             identical.contains(&written),
             "the file the interrupted apply wrote already holds latest's content"

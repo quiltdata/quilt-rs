@@ -3,28 +3,11 @@ use std::path::Path;
 use crate::quilt;
 
 /// Returns true if a path should be ignored even when `notify` reports an
-/// event for it. Intentionally a small static deny-list — gitignore-style
-/// user filters wait for evidence they are needed.
+/// event for it: the app's own bookkeeping under `.quilt`. OS and editor
+/// clutter is left to the ignore rules, which spare files the package has.
 pub fn is_ignored(path: &Path) -> bool {
-    if path
-        .components()
+    path.components()
         .any(|c| c.as_os_str() == quilt::paths::DOT_QUILT_DIR)
-    {
-        return true;
-    }
-    let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-        return false;
-    };
-    if matches!(name, ".DS_Store" | "Thumbs.db") || name.starts_with("~$") {
-        return true;
-    }
-    matches!(
-        path.extension()
-            .and_then(|s| s.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("swp" | "tmp"),
-    )
 }
 
 #[cfg(test)]
@@ -40,21 +23,9 @@ mod tests {
     }
 
     #[test]
-    fn ignores_os_noise() {
-        assert!(is_ignored(&PathBuf::from("/x/y/.DS_Store")));
-        assert!(is_ignored(&PathBuf::from("/x/y/Thumbs.db")));
-    }
-
-    #[test]
-    fn ignores_editor_swap_files() {
-        assert!(is_ignored(&PathBuf::from("a/.foo.swp")));
-        assert!(is_ignored(&PathBuf::from("a/foo.tmp")));
-        assert!(is_ignored(&PathBuf::from("a/~$doc.docx")));
-    }
-
-    #[test]
     fn passes_ordinary_files() {
         assert!(!is_ignored(&PathBuf::from("a/b/c.txt")));
         assert!(!is_ignored(&PathBuf::from("README.md")));
+        assert!(!is_ignored(&PathBuf::from("/x/y/.DS_Store")));
     }
 }

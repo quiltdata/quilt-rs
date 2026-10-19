@@ -157,13 +157,13 @@ pub fn entry_list(
             namespace: namespace.clone(),
         });
     }
-    for (filename, pattern, size) in &status.ignored_files {
+    for (filename, ignored_by, size) in &status.ignored_files {
         entries.push(InstalledPackageEntryData {
             filename: filename.display().to_string(),
             size: *size,
             status: "pristine".to_string(),
             junky_pattern: None,
-            ignored_by: Some(pattern.clone()),
+            ignored_by: Some(ignored_by.pattern.clone()),
             folder: false,
             namespace: namespace.clone(),
         });
@@ -173,13 +173,13 @@ pub fn entry_list(
     } else {
         &[]
     };
-    for (path, pattern) in ignored_dirs {
+    for (path, ignored_by) in ignored_dirs {
         entries.push(InstalledPackageEntryData {
             filename: path.display().to_string(),
             size: 0,
             status: "pristine".to_string(),
             junky_pattern: None,
-            ignored_by: Some(pattern.clone()),
+            ignored_by: Some(ignored_by.pattern.clone()),
             folder: true,
             namespace: namespace.clone(),
         });
@@ -255,12 +255,21 @@ mod tests {
             PathBuf::from("gone.csv"),
             quilt::lineage::Change::Removed(row()),
         );
-        status
-            .ignored_files
-            .push((PathBuf::from("x.tmp"), "*.tmp".to_string(), 1));
-        status
-            .ignored_dirs
-            .push((PathBuf::from("cache"), "cache/".to_string()));
+        status.ignored_files.push((
+            PathBuf::from("x.tmp"),
+            quilt::quiltignore::IgnoredBy {
+                pattern: "*.tmp".to_string(),
+                source: quilt::quiltignore::RuleSource::Default,
+            },
+            1,
+        ));
+        status.ignored_dirs.push((
+            PathBuf::from("cache"),
+            quilt::quiltignore::IgnoredBy {
+                pattern: "cache/".to_string(),
+                source: quilt::quiltignore::RuleSource::Package { line: 1 },
+            },
+        ));
         let installed: quilt::lineage::LineagePaths =
             ["edited.csv", "gone.csv", "kept.csv", "stray.csv"]
                 .into_iter()
@@ -293,9 +302,13 @@ mod tests {
     fn ignored_folders_take_no_place_in_v1_s_list() {
         let mut status = quilt::lineage::InstalledPackageStatus::default();
         for i in 0..ENTRIES_CAP {
-            status
-                .ignored_dirs
-                .push((PathBuf::from(format!("a{i:04}")), "a*/".to_string()));
+            status.ignored_dirs.push((
+                PathBuf::from(format!("a{i:04}")),
+                quilt::quiltignore::IgnoredBy {
+                    pattern: "a*/".to_string(),
+                    source: quilt::quiltignore::RuleSource::Package { line: 1 },
+                },
+            ));
         }
         let installed: quilt::lineage::LineagePaths =
             [(PathBuf::from("z.csv"), quilt::lineage::PathState::default())]

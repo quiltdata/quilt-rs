@@ -466,7 +466,7 @@ async fn get_commit_data_from_model(
     }
 
     // Ignored files
-    for (filename, pattern, size) in &status.ignored_files {
+    for (filename, ignored_by, size) in &status.ignored_files {
         if entries_list.len() >= ENTRIES_CAP {
             break;
         }
@@ -475,7 +475,7 @@ async fn get_commit_data_from_model(
             size: *size,
             status: "pristine".to_string(),
             junky_pattern: None,
-            ignored_by: Some(pattern.clone()),
+            ignored_by: Some(ignored_by.pattern.clone()),
             folder: false,
             namespace: namespace.clone(),
         });
@@ -1644,7 +1644,10 @@ mod tests {
         );
         status.ignored_files.push((
             std::path::PathBuf::from("scratch.tmp"),
-            "*.tmp".to_string(),
+            quilt::quiltignore::IgnoredBy {
+                pattern: "*.tmp".to_string(),
+                source: quilt::quiltignore::RuleSource::Default,
+            },
             7,
         ));
         // System files past the cap still warn: `new/1100.csv` sorts after

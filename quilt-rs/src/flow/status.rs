@@ -1,10 +1,10 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use ignore::gitignore::Gitignore;
 use tracing::trace;
 use tracing::warn;
 
@@ -28,6 +28,7 @@ use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
 use crate::object_hash::ObjectHash;
+use crate::paths::DomainPaths;
 use crate::quiltignore;
 use crate::stat_cache::CachedHash;
 use crate::stat_cache::StatCache;
@@ -65,15 +66,42 @@ struct Walked {
     /// (`logical_key`, `absolute_path`, kind, stamp) for everything not ignored
     /// that is not a folder.
     entries: Vec<(PathBuf, PathBuf, EntryKind, FileStamp)>,
-    /// Files matched by `.quiltignore`: (`logical_key`, `matched_pattern`, size)
-    ignored_files: Vec<(PathBuf, String, u64)>,
-    /// Folders matched by `.quiltignore`: (path relative to the package home,
-    /// `matched_pattern`). The walk does not enter them.
-    ignored_dirs: Vec<(PathBuf, String)>,
+    /// Files matched by an ignore rule: (`logical_key`, rule, size)
+    ignored_files: Vec<(PathBuf, quiltignore::IgnoredBy, u64)>,
+    /// Folders matched by an ignore rule: (path relative to the package home,
+    /// rule). The walk does not enter them.
+    ignored_dirs: Vec<(PathBuf, quiltignore::IgnoredBy)>,
+}
+
+/// What the package already has, so ignore rules other than the package's
+/// spare it: its files, and every folder holding one.
+#[derive(Default)]
+struct Tracked {
+    files: HashSet<PathBuf>,
+    dirs: HashSet<PathBuf>,
+}
+
+impl Tracked {
+    fn new<'a>(keys: impl Iterator<Item = &'a PathBuf>) -> Self {
+        let mut tracked = Tracked::default();
+        for key in keys {
+            for dir in key.ancestors().skip(1) {
+                if dir.as_os_str().is_empty() || !tracked.dirs.insert(dir.to_path_buf()) {
+                    break;
+                }
+            }
+            tracked.files.insert(key.clone());
+        }
+        tracked
+    }
 }
 
 /// The whole walk, one folder call at a time. Blocking.
-fn walk_package_home(package_home: &Path, quiltignore: Option<&Gitignore>) -> Res<Walked> {
+fn walk_package_home(
+    package_home: &Path,
+    rules: &quiltignore::Rules,
+    tracked: &Tracked,
+) -> Res<Walked> {
     let mut walked = Walked::default();
     let mut queue = VecDeque::new();
     queue.push_back(package_home.to_path_buf());
@@ -94,21 +122,21 @@ fn walk_package_home(package_home: &Path, quiltignore: Option<&Gitignore>) -> Re
             let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
             match kind {
                 EntryKind::Dir => {
-                    if let Some(gi) = quiltignore
-                        && let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, true)
+                    if let Some(ignored_by) =
+                        rules.dir_ignored_by(&logical_key, tracked.dirs.contains(&logical_key))
                     {
-                        walked.ignored_dirs.push((logical_key, pattern));
+                        walked.ignored_dirs.push((logical_key, ignored_by));
                         continue;
                     }
                     queue.push_back(file_path);
                 }
                 EntryKind::File => {
-                    if let Some(gi) = quiltignore
-                        && let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false)
+                    if let Some(ignored_by) =
+                        rules.file_ignored_by(&logical_key, tracked.files.contains(&logical_key))
                     {
                         walked
                             .ignored_files
-                            .push((logical_key, pattern, stamp.size));
+                            .push((logical_key, ignored_by, stamp.size));
                         continue;
                     }
                     walked.entries.push((logical_key, file_path, kind, stamp));
@@ -125,6 +153,13 @@ fn locate_files(
     manifest: &Manifest,
     mut tracked_paths: HashMap<PathBuf, ManifestRow>,
 ) -> Vec<(PathBuf, WorkdirFile)> {
+    // Every file the walk met is looked up here, so the rows are indexed once.
+    let mut manifest_rows: HashMap<&Path, &ManifestRow> = HashMap::new();
+    for row in &manifest.rows {
+        manifest_rows
+            .entry(row.logical_key.as_path())
+            .or_insert(row);
+    }
     let mut files = Vec::with_capacity(walked.len());
     for (logical_key, file_path, kind, stamp) in walked {
         if kind != EntryKind::File {
@@ -134,7 +169,7 @@ fn locate_files(
         }
         if let Some(row) = tracked_paths.remove(&logical_key) {
             files.push((logical_key, WorkdirFile::Tracked(file_path, stamp, row)));
-        } else if let Some(row) = manifest.get_record(&logical_key) {
+        } else if let Some(row) = manifest_rows.get(logical_key.as_path()).copied() {
             files.push((
                 logical_key,
                 WorkdirFile::NotTracked(file_path, stamp, row.clone()),
@@ -335,11 +370,21 @@ pub async fn rehash_changes(
 pub async fn create_status(
     lineage: PackageLineage,
     storage: &(impl Storage + Sync),
+    paths: &DomainPaths,
     manifest: &Manifest,
     package_home: impl AsRef<Path>,
     host_config: HostConfig,
 ) -> Res<(PackageLineage, InstalledPackageStatus)> {
-    create_status_cached(lineage, storage, manifest, package_home, host_config, None).await
+    create_status_cached(
+        lineage,
+        storage,
+        paths,
+        manifest,
+        package_home,
+        host_config,
+        None,
+    )
+    .await
 }
 
 /// [`create_status`], hashing only the files whose stamp differs from what
@@ -349,6 +394,7 @@ pub async fn create_status(
 pub async fn create_status_cached(
     lineage: PackageLineage,
     storage: &(impl Storage + Sync),
+    paths: &DomainPaths,
     manifest: &Manifest,
     package_home: impl AsRef<Path>,
     host_config: HostConfig,
@@ -402,10 +448,17 @@ pub async fn create_status_cached(
     }
     trace!("✔️ Found {} paths in lineage", orig_paths.len());
 
-    let quiltignore = quiltignore::load(package_home.as_ref())?;
+    let rules = quiltignore::Rules::load(package_home.as_ref(), &paths.user_quiltignore())?;
+    let tracked = Tracked::new(
+        manifest
+            .rows
+            .iter()
+            .map(|row| &row.logical_key)
+            .chain(orig_paths.keys()),
+    );
     let home = package_home.as_ref().to_path_buf();
     let walked_at = SystemTime::now();
-    let walk = tokio::task::spawn_blocking(move || walk_package_home(&home, quiltignore.as_ref()))
+    let walk = tokio::task::spawn_blocking(move || walk_package_home(&home, &rules, &tracked))
         .await
         .map_err(std::io::Error::other)??;
     let files = locate_files(walk.entries, manifest, orig_paths);
@@ -462,7 +515,13 @@ mod tests {
     use crate::lineage::UpstreamState;
     use crate::object_hash::Crc64Hash;
     use crate::object_hash::Sha256ChunkedHash;
+    use crate::quiltignore::RuleSource;
     use quilt_uri::ManifestUri;
+
+    /// Domain paths inside the storage's temp dir, so no test reads a real user-wide rules file.
+    fn domain_paths(storage: &MockStorage) -> DomainPaths {
+        DomainPaths::new(storage.temp_dir.path().join("domain"))
+    }
 
     /// Helper to create a `PackageLineage` with a dummy remote (avoids Local state).
     /// Uses a non-empty hash so the lineage isn't treated as "never pushed".
@@ -491,6 +550,7 @@ mod tests {
         let (_lineage, status) = create_status(
             lineage_with_remote(PackageLineage::default()),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
@@ -513,9 +573,12 @@ mod tests {
             ..PackageLineage::default()
         });
 
+        let storage = MockStorage::default();
+
         let (_lineage, status) = create_status(
             lineage,
-            &MockStorage::default(),
+            &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
@@ -541,9 +604,12 @@ mod tests {
             ..PackageLineage::default()
         });
 
+        let storage = MockStorage::default();
+
         let (_, status) = create_status(
             lineage,
-            &MockStorage::default(),
+            &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
@@ -565,9 +631,12 @@ mod tests {
             ..PackageLineage::default()
         });
 
+        let storage = MockStorage::default();
+
         let (_, status) = create_status(
             lineage,
-            &MockStorage::default(),
+            &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
@@ -605,6 +674,7 @@ mod tests {
         let (_, status) = create_status(
             lineage.clone(),
             &storage,
+            &domain_paths(&storage),
             &manifest,
             &working_dir,
             HostConfig::default(),
@@ -618,6 +688,7 @@ mod tests {
         let (_, status) = create_status(
             lineage,
             &storage,
+            &domain_paths(&storage),
             &manifest,
             working_dir,
             HostConfig::default(),
@@ -650,6 +721,7 @@ mod tests {
         let (_, status) = create_status(
             lineage,
             &storage,
+            &domain_paths(&storage),
             &manifest,
             working_dir.clone(),
             HostConfig::default(),
@@ -694,8 +766,15 @@ mod tests {
             host: None,
         };
 
-        let (_, status) =
-            create_status(lineage, &storage, &manifest, working_dir, host_config).await?;
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            working_dir,
+            host_config,
+        )
+        .await?;
 
         let added_file = status.changes.get(&file_path).unwrap();
         if let Change::Added(added_row) = added_file {
@@ -739,6 +818,7 @@ mod tests {
         let (_, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             &working_dir,
             HostConfig::default(),
@@ -773,6 +853,7 @@ mod tests {
         let (_, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             &working_dir,
             HostConfig::default(),
@@ -804,6 +885,7 @@ mod tests {
         let (_, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             &working_dir,
             HostConfig::default(),
@@ -813,7 +895,13 @@ mod tests {
         // `cache/nested` matches a rule too, but the walk never enters `cache`.
         assert_eq!(
             status.ignored_dirs,
-            vec![(PathBuf::from("cache"), "cache/".to_string())]
+            vec![(
+                PathBuf::from("cache"),
+                quiltignore::IgnoredBy {
+                    pattern: "cache/".to_string(),
+                    source: RuleSource::Package { line: 1 },
+                }
+            )]
         );
         assert_eq!(status.ignored_files, Vec::new());
         Ok(())
@@ -842,6 +930,7 @@ mod tests {
         let (_, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             &working_dir,
             HostConfig::default(),
@@ -880,6 +969,7 @@ mod tests {
         let (_, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             &working_dir,
             HostConfig::default(),
@@ -908,6 +998,7 @@ mod tests {
         let (_, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             &working_dir,
             HostConfig::default(),
@@ -952,6 +1043,7 @@ mod tests {
         let (_, status) = create_status(
             lineage,
             &storage,
+            &domain_paths(&storage),
             &manifest,
             &working_dir,
             HostConfig::default(),
@@ -994,6 +1086,9 @@ mod tests {
         }
         async fn exists(&self, path: impl AsRef<Path>) -> bool {
             self.inner.exists(path).await
+        }
+        async fn is_file(&self, path: impl AsRef<Path>) -> bool {
+            self.inner.is_file(path).await
         }
         async fn modified_timestamp(
             &self,
@@ -1104,12 +1199,18 @@ mod tests {
             self.home.path().join(name)
         }
 
+        /// A domain root with no user-wide rules file.
+        fn domain_paths(&self) -> DomainPaths {
+            DomainPaths::new(self.home.path().join("no-domain"))
+        }
+
         async fn walk_with(&self, host_config: HostConfig) -> Res<ChangeSet> {
             let namespace = ("acme", "demo").into();
             let mut cache = self.store.stat_cache(&namespace).await;
             let (_, status) = create_status_cached(
                 self.lineage.clone(),
                 &self.storage,
+                &self.domain_paths(),
                 &self.manifest,
                 self.home.path(),
                 host_config,
@@ -1128,6 +1229,7 @@ mod tests {
             let (_, status) = create_status(
                 self.lineage.clone(),
                 &self.storage,
+                &self.domain_paths(),
                 &self.manifest,
                 self.home.path(),
                 HostConfig::default(),
@@ -1277,6 +1379,7 @@ mod tests {
         let (_, mut status) = create_status(
             package.lineage.clone(),
             &package.storage,
+            &package.domain_paths(),
             &package.manifest,
             package.home.path(),
             HostConfig::default(),
@@ -1303,6 +1406,7 @@ mod tests {
         let (lineage, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
@@ -1311,6 +1415,195 @@ mod tests {
         assert_eq!(status.upstream_state, UpstreamState::Local);
         assert!(status.changes.is_empty());
         assert!(lineage.remote_uri.is_none());
+        Ok(())
+    }
+
+    async fn write_files(storage: &MockStorage, dir: &Path, names: &[&str]) -> Res {
+        for name in names {
+            storage
+                .write_byte_stream(dir.join(name), ByteStream::from_static(b"x"))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// A lineage and manifest that track the given files exactly as they are on disk.
+    async fn track_files(
+        storage: &MockStorage,
+        dir: &Path,
+        names: &[&str],
+    ) -> Res<(PackageLineage, Manifest)> {
+        let mut lineage = PackageLineage::default();
+        let mut manifest = Manifest::default();
+        for name in names {
+            let row = calculate_hash(
+                storage,
+                &dir.join(name),
+                Path::new(name),
+                &HostConfig::default(),
+            )
+            .await?;
+            lineage.paths.insert(
+                PathBuf::from(name),
+                PathState {
+                    hash: row.hash.clone().into(),
+                    ..PathState::default()
+                },
+            );
+            manifest.rows.push(row);
+        }
+        Ok((lineage, manifest))
+    }
+
+    fn ignored_source(status: &InstalledPackageStatus, path: &str) -> Option<RuleSource> {
+        status
+            .ignored_files
+            .iter()
+            .find(|(key, _, _)| key == Path::new(path))
+            .map(|(_, ignored_by, _)| ignored_by.source.clone())
+    }
+
+    #[test(tokio::test)]
+    async fn test_defaults_ignore_new_clutter_but_keep_zarr_metadata() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+        write_files(
+            &storage,
+            &working_dir,
+            &[
+                ".DS_Store",
+                ".env",
+                ".git/config",
+                ".venv/bin/python",
+                ".zattrs",
+                ".zarray",
+                ".zgroup",
+                "img.zarr/0/.zarray",
+                "data.csv",
+            ],
+        )
+        .await?;
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &domain_paths(&storage),
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        let changes: Vec<&Path> = status.changes.keys().map(PathBuf::as_path).collect();
+        assert_eq!(
+            changes,
+            [
+                ".zarray",
+                ".zattrs",
+                ".zgroup",
+                "data.csv",
+                "img.zarr/0/.zarray"
+            ]
+            .map(Path::new)
+            .to_vec()
+        );
+        assert_eq!(
+            ignored_source(&status, ".DS_Store"),
+            Some(RuleSource::Default)
+        );
+        assert_eq!(ignored_source(&status, ".env"), Some(RuleSource::Default));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_defaults_leave_tracked_files_alone() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+        write_files(&storage, &working_dir, &[".DS_Store", ".git/config"]).await?;
+        let (lineage, manifest) =
+            track_files(&storage, &working_dir, &[".DS_Store", ".git/config"]).await?;
+        write_files(&storage, &working_dir, &[".git/HEAD"]).await?;
+
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert!(status.changes.is_empty(), "{:?}", status.changes);
+        assert_eq!(ignored_source(&status, ".DS_Store"), None);
+        assert_eq!(ignored_source(&status, ".git/config"), None);
+        assert_eq!(
+            ignored_source(&status, ".git/HEAD"),
+            Some(RuleSource::Default)
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_user_rules_apply_to_new_files_only() -> Res {
+        let storage = MockStorage::default();
+        let paths = domain_paths(&storage);
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+        write_files(&storage, &working_dir, &["kept.tmp", "new.tmp", ".env"]).await?;
+        let (lineage, manifest) = track_files(&storage, &working_dir, &["kept.tmp"]).await?;
+        std::fs::create_dir_all(paths.user_quiltignore().parent().unwrap())?;
+        std::fs::write(paths.user_quiltignore(), "# mine\n*.tmp\n!.env\n")?;
+
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &paths,
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert_eq!(
+            ignored_source(&status, "new.tmp"),
+            Some(RuleSource::User {
+                path: paths.user_quiltignore(),
+                line: 2,
+            })
+        );
+        assert_eq!(ignored_source(&status, "kept.tmp"), None);
+        assert!(!status.changes.contains_key(Path::new("kept.tmp")));
+        assert!(matches!(
+            status.changes.get(Path::new(".env")),
+            Some(Change::Added(_))
+        ));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_package_rule_wins_over_user_rule() -> Res {
+        let storage = MockStorage::default();
+        let paths = domain_paths(&storage);
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+        write_files(&storage, &working_dir, &["a.tmp"]).await?;
+        std::fs::write(working_dir.join(".quiltignore"), "*.log\na.tmp\n")?;
+        std::fs::create_dir_all(paths.user_quiltignore().parent().unwrap())?;
+        std::fs::write(paths.user_quiltignore(), "*.tmp\n")?;
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &paths,
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        let (_, ignored_by, _) = &status.ignored_files[0];
+        assert_eq!(ignored_by.pattern, "a.tmp");
+        assert_eq!(ignored_by.source, RuleSource::Package { line: 2 });
+        assert!(status.changes.contains_key(Path::new(".quiltignore")));
         Ok(())
     }
 }

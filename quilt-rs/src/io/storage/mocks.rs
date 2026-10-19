@@ -92,6 +92,11 @@ impl Storage for MockStorage {
         fs::metadata(rel_path).await.is_ok()
     }
 
+    async fn is_file(&self, path: impl AsRef<std::path::Path>) -> bool {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        fs::metadata(rel_path).await.is_ok_and(|m| m.is_file())
+    }
+
     /// Return the current time as the modified timestamp.
     async fn modified_timestamp(
         &self,

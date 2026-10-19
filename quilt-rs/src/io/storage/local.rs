@@ -85,6 +85,10 @@ impl Storage for LocalStorage {
         fs::metadata(path).await.is_ok()
     }
 
+    async fn is_file(&self, path: impl AsRef<Path>) -> bool {
+        fs::metadata(path).await.is_ok_and(|m| m.is_file())
+    }
+
     async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {
         let modified = fs::metadata(path).await.map(|m| m.modified())??;
         Ok(DateTime::<Utc>::from(modified))

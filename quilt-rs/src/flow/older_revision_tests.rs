@@ -200,6 +200,7 @@ impl Rev1Installed {
         let (_, status) = flow::status(
             lineage,
             &self.storage,
+            &self.domain_paths,
             &manifest,
             &self.package_home,
             HostConfig::default(),

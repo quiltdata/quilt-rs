@@ -47,6 +47,9 @@ pub trait Storage {
     /// Check if a path exists in the filesystem.
     fn exists(&self, path: impl AsRef<Path>) -> impl Future<Output = bool>;
 
+    /// Check if a path is a regular file, following links.
+    fn is_file(&self, path: impl AsRef<Path>) -> impl Future<Output = bool>;
+
     /// Get the timestamp of the last modification of a file.
     fn modified_timestamp(
         &self,
@@ -126,6 +129,10 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
 
     async fn exists(&self, path: impl AsRef<Path>) -> bool {
         (**self).exists(path).await
+    }
+
+    async fn is_file(&self, path: impl AsRef<Path>) -> bool {
+        (**self).is_file(path).await
     }
 
     async fn modified_timestamp(&self, path: impl AsRef<Path>) -> Res<DateTime<Utc>> {

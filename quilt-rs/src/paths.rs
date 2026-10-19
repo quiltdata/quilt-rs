@@ -195,6 +195,13 @@ impl DomainPaths {
         self.objects_dir().join(hex::encode(hash))
     }
 
+    /// User-wide ignore rules, shared by `QuiltSync` and the CLI. They apply
+    /// to every package, below each package's own `.quiltignore`.
+    #[must_use]
+    pub fn user_quiltignore(&self) -> PathBuf {
+        self.root_dir.join(".quiltignore")
+    }
+
     /// What directories are essential when we initiate `LocalDomain`
     fn required(&self) -> Vec<PathBuf> {
         vec![
