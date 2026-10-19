@@ -207,7 +207,8 @@ mod tests {
         let changes = [
             FileStamp { size: 4, ..saved },
             FileStamp {
-                modified: at(100, 1),
+                // A microsecond: Windows keeps times in 100 ns steps.
+                modified: at(100, 1_000),
                 ..saved
             },
             // `touch -r` or `cp -p`: the edit time restored, the change time new.
