@@ -245,6 +245,15 @@ impl LastChange {
             .map(|a| a.last_change_at)
     }
 
+    /// A pull changed the tree. The changes it kept are not new, so the next
+    /// walk keeps the time.
+    pub(crate) fn on_pulled(&self, namespace: &Namespace) {
+        self.last_seen
+            .lock()
+            .expect("last_seen lock")
+            .remove(namespace);
+    }
+
     /// The package published.
     pub(crate) async fn on_published(&self, namespace: &Namespace) {
         self.own_commits
@@ -379,6 +388,28 @@ mod tests {
         let clock = LastChange::new(store);
         // Not the first walk: the restart check is behind us.
         clock.walked.lock().unwrap().insert(ns());
+        assert_eq!(
+            clock
+                .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
+                .await,
+            Some(old)
+        );
+    }
+
+    #[tokio::test]
+    async fn changes_a_pull_kept_keep_the_time() {
+        let store = PackageStateStore::in_memory();
+        let old = now() - hour();
+        store.record_change(&ns(), old, ChangeSource::Edit).await;
+        let clock = LastChange::new(store);
+        clock.walked.lock().unwrap().insert(ns());
+        clock
+            .observe(&ns(), None, &status_with(&["a", "b"]), PendingCommit::None)
+            .await;
+
+        // The pull resolved `b` and kept `a`.
+        clock.on_pulled(&ns());
+
         assert_eq!(
             clock
                 .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)

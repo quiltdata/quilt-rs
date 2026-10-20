@@ -901,6 +901,9 @@ pub(crate) async fn sync_package(
             // `report_toast` is the metadata-only revision: hashes advanced
             // and no file moved, and an entry that stands until dismissed
             // must not say nothing.
+            if outcome.pulled.is_some() {
+                inner.last_change.on_pulled(&namespace);
+            }
             if let Some(report) = outcome.pulled.as_ref()
                 && let Some(toast) = pull_toast::report_toast(&namespace, report)
             {
