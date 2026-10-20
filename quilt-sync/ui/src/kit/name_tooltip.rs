@@ -12,6 +12,9 @@
 //!
 //! A row only marks its name with `data-full-name`, holding the whole of it —
 //! the whole path, where the row shows only the part under a group heading.
+//! Other cut text in a row, such as an ignored row's rule, carries
+//! `data-full-text` instead, so a list's names stay the elements with
+//! `data-full-name`.
 //!
 //! # Only when it is cut
 //!
@@ -47,8 +50,8 @@ use super::Align;
 use super::TooltipHandle;
 use super::tooltip::{style, surface};
 
-/// What a name carries for this to find it.
-const NAMED: &str = "[data-full-name]";
+/// What a name, or other text that may be cut, carries for this to find it.
+const NAMED: &str = "[data-full-name], [data-full-text]";
 
 #[component]
 pub fn NameTooltip(
@@ -95,7 +98,11 @@ pub fn NameTooltip(
             handle.leave();
             return;
         }
-        text.set(name.get_attribute("data-full-name").unwrap_or_default());
+        text.set(
+            name.get_attribute("data-full-name")
+                .or_else(|| name.get_attribute("data-full-text"))
+                .unwrap_or_default(),
+        );
         anchor.set(Some(name));
         handle.show();
     };
@@ -208,6 +215,8 @@ mod tests {
                 ("name", row::name),
                 ("open", row::open),
                 ("state", row::state),
+                ("noted", row::noted),
+                ("note", row::note),
                 ("size", row::size),
             ],
         );
@@ -532,6 +541,29 @@ mod tests {
             showing(&el).as_deref(),
             Some(format!("raw/2026/{leaf}").as_str())
         );
+        escape();
+    }
+
+    /// An ignored row's rule, cut in a narrow row, shows whole too.
+    #[wasm_bindgen_test]
+    async fn a_cut_note_shows_whole() {
+        unmount_earlier();
+        row_style();
+        let note = "instrument-export-*.tmp · This package's .quiltignore, line 12";
+        let el = mount(move || {
+            view! {
+                <div style="width:320px">
+                    <NameTooltip>
+                        <EntryRow name="raw/plate-07/scratch.tmp" size="1 kB" note=note plain=true />
+                    </NameTooltip>
+                </div>
+            }
+        });
+        let cut = element_saying(&el, note);
+        assert!(cut.scroll_width() > cut.client_width(), "the note is cut");
+        hover(&cut);
+        sleep_ms(600).await;
+        assert_eq!(showing(&el).as_deref(), Some(note));
         escape();
     }
 

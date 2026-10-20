@@ -22,11 +22,41 @@ pub struct InstalledPackageEntryData {
     pub size: u64,
     pub status: String,
     pub junky_pattern: Option<String>,
-    pub ignored_by: Option<String>,
+    pub ignored_by: Option<IgnoredByData>,
     /// An ignored folder, not a file: `filename` is its path without a
     /// trailing slash, and `size` is 0 because the walk never enters it.
     pub folder: bool,
     pub namespace: quilt_uri::Namespace,
+}
+
+/// The rule that ignored an entry: its line as written, and where it came from.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+pub struct IgnoredByData {
+    pub pattern: String,
+    pub source: RuleSourceData,
+}
+
+/// Where an ignore rule came from. Lines are 1-based.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RuleSourceData {
+    Default,
+    User { line: u64 },
+    Package { line: u64 },
+}
+
+impl From<&quilt::quiltignore::IgnoredBy> for IgnoredByData {
+    fn from(by: &quilt::quiltignore::IgnoredBy) -> Self {
+        use quilt::quiltignore::RuleSource;
+        Self {
+            pattern: by.pattern.clone(),
+            source: match by.source {
+                RuleSource::Default => RuleSourceData::Default,
+                RuleSource::User { line, .. } => RuleSourceData::User { line },
+                RuleSource::Package { line } => RuleSourceData::Package { line },
+            },
+        }
+    }
 }
 
 /// The v2 file pane's facet counts, over the whole package rather than the
@@ -163,7 +193,7 @@ pub fn entry_list(
             size: *size,
             status: "pristine".to_string(),
             junky_pattern: None,
-            ignored_by: Some(ignored_by.pattern.clone()),
+            ignored_by: Some(ignored_by.into()),
             folder: false,
             namespace: namespace.clone(),
         });
@@ -179,7 +209,7 @@ pub fn entry_list(
             size: 0,
             status: "pristine".to_string(),
             junky_pattern: None,
-            ignored_by: Some(ignored_by.pattern.clone()),
+            ignored_by: Some(ignored_by.into()),
             folder: true,
             namespace: namespace.clone(),
         });
@@ -331,5 +361,61 @@ mod tests {
         let v2 = entry_list(&namespace, &status, &installed, &records, true);
         assert_eq!((v2.total, v2.truncated), (ENTRIES_CAP + 1, true));
         assert_eq!(v2.counts.ignored_folders, ENTRIES_CAP);
+    }
+
+    /// Each ignored entry carries its rule's source, as the UI reads it; the
+    /// user-wide file's path stays behind, since the row names it in words.
+    #[test]
+    fn ignored_entries_carry_the_rule_s_source() {
+        use quilt::quiltignore::{IgnoredBy, RuleSource};
+        let mut status = quilt::lineage::InstalledPackageStatus::default();
+        status.ignored_files.push((
+            PathBuf::from(".DS_Store"),
+            IgnoredBy {
+                pattern: ".DS_Store".to_string(),
+                source: RuleSource::Default,
+            },
+            1,
+        ));
+        status.ignored_files.push((
+            PathBuf::from("a.tmp"),
+            IgnoredBy {
+                pattern: "*.tmp".to_string(),
+                source: RuleSource::User {
+                    path: PathBuf::from("/domain/.quiltignore"),
+                    line: 4,
+                },
+            },
+            1,
+        ));
+        status.ignored_dirs.push((
+            PathBuf::from("cache"),
+            IgnoredBy {
+                pattern: "cache/".to_string(),
+                source: RuleSource::Package { line: 2 },
+            },
+        ));
+        let namespace = quilt_uri::Namespace::try_from("org/pkg").unwrap();
+
+        let list = entry_list(
+            &namespace,
+            &status,
+            &quilt::lineage::LineagePaths::default(),
+            &BTreeMap::new(),
+            true,
+        );
+        let sources: Vec<_> = list
+            .entries
+            .iter()
+            .map(|e| serde_json::to_value(&e.ignored_by).unwrap())
+            .collect();
+        assert_eq!(
+            sources,
+            [
+                serde_json::json!({ "pattern": ".DS_Store", "source": { "kind": "default" } }),
+                serde_json::json!({ "pattern": "*.tmp", "source": { "kind": "user", "line": 4 } }),
+                serde_json::json!({ "pattern": "cache/", "source": { "kind": "package", "line": 2 } }),
+            ]
+        );
     }
 }

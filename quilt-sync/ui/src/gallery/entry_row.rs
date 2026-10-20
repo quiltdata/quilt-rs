@@ -35,8 +35,9 @@ fn open(name: &'static str, into: RwSignal<String>) -> EntryAction {
 
 const STATES: &str = "The resting state is silent: `Downloaded` is what most of a seven- \
                       hundred row list is, and printing it seven hundred times spends \
-                      attention on the one thing that needs none. An ignored file is silent \
-                      too, because the Ignored facet is the only view that shows them. Only \
+                      attention on the one thing that needs none. An ignored file has no state \
+                      either, because the Ignored facet is the only view that shows them; \
+                      it names its rule and the rule's source instead. Only \
                       a downloadable row carries a box — a tick on a file already here has \
                       nothing to act on, and it is what made `select all 56` disagree with \
                       `download 17`. The boxless rows keep the column's width, so the names \
@@ -128,8 +129,21 @@ fn click_rule(opened: RwSignal<String>) -> AnyView {
                     actions=menu()
                 />
             </Cell>
-            <Cell full=true label="ignored — silent, and inert for the same reason">
-                <EntryRow name=".DS_Store" size="6 KB" actions=menu() />
+            <Cell full=true label="ignored — no state, inert, and naming its rule and where it came from">
+                <EntryRow
+                    name=".DS_Store"
+                    size="6 KB"
+                    note=".DS_Store · Built-in rule"
+                    actions=menu()
+                />
+            </Cell>
+            <Cell full=true label="ignored by a line of the package's own file — in a narrow row, the name and the note both truncate">
+                <EntryRow
+                    name="raw/plate-07/scratch.tmp"
+                    size="2.1 MB"
+                    note="*.tmp · This package's .quiltignore, line 2"
+                    actions=menu()
+                />
             </Cell>
             <Cell full=true label="what the last click opened">
                 <span class="g-note">{move || opened.get()}</span>

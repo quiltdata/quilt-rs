@@ -70,6 +70,56 @@ pub struct EntryCounts {
     pub deleted: usize,
 }
 
+/// The rule that ignored an entry: its line as written, and where it came from.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct IgnoredBy {
+    pub pattern: String,
+    pub source: RuleSource,
+}
+
+impl IgnoredBy {
+    #[must_use]
+    pub fn new(pattern: impl Into<String>, source: RuleSource) -> Self {
+        Self {
+            pattern: pattern.into(),
+            source,
+        }
+    }
+
+    /// The rule and its source, as an ignored row names them:
+    /// `*.tmp · Your rules, line 4`.
+    #[must_use]
+    pub fn words(&self) -> String {
+        format!("{} · {}", self.pattern, self.source.words())
+    }
+}
+
+/// Where an ignore rule came from. Lines are 1-based.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum RuleSource {
+    Default,
+    /// The user-wide rules file, `$QUILT_DOMAIN/.quiltignore`.
+    User {
+        line: u64,
+    },
+    /// The package's own `.quiltignore`.
+    Package {
+        line: u64,
+    },
+}
+
+impl RuleSource {
+    #[must_use]
+    pub fn words(self) -> String {
+        match self {
+            Self::Default => "Built-in rule".to_string(),
+            Self::User { line } => format!("Your rules, line {line}"),
+            Self::Package { line } => format!("This package's .quiltignore, line {line}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EntryData {
@@ -77,7 +127,7 @@ pub struct EntryData {
     pub size: u64,
     pub status: String,
     pub junky_pattern: Option<String>,
-    pub ignored_by: Option<String>,
+    pub ignored_by: Option<IgnoredBy>,
     /// An ignored folder rather than a file: `filename` has no trailing slash
     /// and `size` is 0, because nothing inside it was walked.
     #[serde(default)]

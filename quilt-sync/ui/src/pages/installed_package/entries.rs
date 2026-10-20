@@ -338,8 +338,9 @@ pub(super) fn EntryRow(
     };
 
     let ns_for_unignore = namespace;
+    let pattern = ignored_by.map(|by| by.pattern);
     let on_unignore = move |_| {
-        if let Some(pattern) = ignored_by.clone() {
+        if let Some(pattern) = pattern.clone() {
             show_unignore_popup.set(Some(UnignorePopupData {
                 namespace: ns_for_unignore.to_string(),
                 path: filename.clone(),

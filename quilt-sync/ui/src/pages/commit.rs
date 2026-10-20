@@ -786,7 +786,7 @@ fn CommitEntryRow(
         }
     };
 
-    let ignored_by = entry.ignored_by.clone();
+    let ignored_by = entry.ignored_by.as_ref().map(|by| by.pattern.clone());
     let ns_for_unignore = entry.namespace.clone();
     let path_for_unignore = entry.filename.clone();
     let folder = entry.folder;

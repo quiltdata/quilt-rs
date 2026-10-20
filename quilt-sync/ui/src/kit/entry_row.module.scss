@@ -132,6 +132,22 @@
   min-width: 132px;
 }
 
+/* An ignored row's rule and source, in the slot a state would take. The slot
+ * may shrink for it, down to a label's width, and the words truncate rather
+ * than push the name out of the row. */
+.state.noted {
+  flex: 0 1 auto;
+}
+
+.note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+}
+
 .size {
   flex: 0 0 64px;
   text-align: right;

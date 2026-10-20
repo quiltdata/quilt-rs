@@ -475,7 +475,7 @@ async fn get_commit_data_from_model(
             size: *size,
             status: "pristine".to_string(),
             junky_pattern: None,
-            ignored_by: Some(ignored_by.pattern.clone()),
+            ignored_by: Some(ignored_by.into()),
             folder: false,
             namespace: namespace.clone(),
         });

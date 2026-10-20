@@ -72,7 +72,7 @@ use std::time::Duration;
 
 use leptos::prelude::*;
 
-use crate::commands::{EntryCounts, EntryData, EntryList, FilesData};
+use crate::commands::{EntryCounts, EntryData, EntryList, FilesData, IgnoredBy};
 use crate::kit::state_label::StateTone;
 use crate::kit::{
     Blankslate, Button, ButtonVariant, Card, EntryAction, EntryGroup, EntryRow, EntrySelection,
@@ -395,8 +395,9 @@ struct Row {
     /// Matched by `.quiltignore`. Drawn only under [`Facet::Ignored`], where
     /// the view already says it, so the row carries no label and no click.
     ignored: bool,
-    /// The pattern that matched it, which *Stop ignoring* names.
-    ignored_by: Option<String>,
+    /// The rule that matched it: the row names it and its source, and *Stop
+    /// ignoring* names its pattern.
+    ignored_by: Option<IgnoredBy>,
     /// An ignored folder: one row named with a trailing `/`, and no size,
     /// since nothing inside it was walked. `path` has no trailing `/`, so it
     /// sorts and groups under its parent like a file.
@@ -469,7 +470,8 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
     else {
         return Signal::stored(Vec::new());
     };
-    let commands = row_commands(&r.path, r.folder, r.place, r.ignored_by.as_deref(), reach);
+    let pattern = r.ignored_by.as_ref().map(|by| by.pattern.as_str());
+    let commands = row_commands(&r.path, r.folder, r.place, pattern, reach);
     Signal::derive(move || {
         let busy = busy.get();
         menu_actions(&commands, on_command)
@@ -551,6 +553,7 @@ fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
         (name, r.path.clone())
     };
     let state = if r.ignored { None } else { r.place.state() };
+    let note = r.ignored_by.as_ref().map(IgnoredBy::words);
     let words = state.map(|(words, _)| words.to_string());
     let tone = state.map_or(StateTone::Neutral, |(_, tone)| tone);
     let action = match r.place {
@@ -589,6 +592,7 @@ fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
                 state=words
                 tone=tone
                 size=r.size.clone()
+                note=note.clone()
                 action=action
                 actions=actions
                 differs=differs
@@ -603,6 +607,7 @@ fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
                 state=words
                 tone=tone
                 size=r.size.clone()
+                note=note.clone()
                 actions=actions
                 differs=differs
             />
@@ -1343,7 +1348,8 @@ mod grouping_tests {
                 size: 0,
                 status: status.to_string(),
                 junky_pattern: None,
-                ignored_by: ignored_by.map(str::to_string),
+                ignored_by: ignored_by
+                    .map(|p| IgnoredBy::new(p, crate::commands::RuleSource::Default)),
                 folder: false,
                 namespace: "team/dataset".try_into().unwrap(),
             })
@@ -1984,7 +1990,10 @@ mod pane_tests {
 
     fn ignored(path: &str) -> EntryData {
         EntryData {
-            ignored_by: Some(".DS_Store".to_string()),
+            ignored_by: Some(IgnoredBy::new(
+                ".DS_Store",
+                crate::commands::RuleSource::Default,
+            )),
             ..entry(path, "pristine")
         }
     }
@@ -1994,7 +2003,10 @@ mod pane_tests {
     fn ignored_folder(path: &str) -> EntryData {
         EntryData {
             size: 0,
-            ignored_by: Some(format!("{}/", path.rsplit('/').next().unwrap())),
+            ignored_by: Some(IgnoredBy::new(
+                format!("{}/", path.rsplit('/').next().unwrap()),
+                crate::commands::RuleSource::Default,
+            )),
             folder: true,
             ..entry(path, "pristine")
         }
@@ -2119,7 +2131,10 @@ mod pane_tests {
                 vec![
                     ignored(".DS_Store"),
                     EntryData {
-                        ignored_by: Some("*.tmp".to_string()),
+                        ignored_by: Some(IgnoredBy::new(
+                            "*.tmp",
+                            crate::commands::RuleSource::Default,
+                        )),
                         ..entry("scratch.tmp", "remote")
                     },
                     entry("here.txt", "pristine"),
@@ -2152,6 +2167,45 @@ mod pane_tests {
         );
     }
 
+    /// Each ignored row names its rule and where the rule came from.
+    #[wasm_bindgen_test]
+    fn ignored_rows_name_their_rule_s_source() {
+        use crate::commands::RuleSource;
+        let by = |path: &str, pattern: &str, source| EntryData {
+            ignored_by: Some(IgnoredBy::new(pattern, source)),
+            ..entry(path, "pristine")
+        };
+        let chosen = RwSignal::new(Facet::Ignored.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(
+                vec![
+                    by(".DS_Store", ".DS_Store", RuleSource::Default),
+                    by("a.tmp", "*.tmp", RuleSource::User { line: 4 }),
+                    EntryData {
+                        folder: true,
+                        size: 0,
+                        ..by("cache", "cache/", RuleSource::Package { line: 2 })
+                    },
+                ],
+                3,
+                false,
+            )),
+            chosen,
+        );
+        let list = el
+            .query_selector(&format!(".{}", style::list))
+            .unwrap()
+            .expect("the list");
+        let words = text(&list);
+        for note in [
+            ".DS_Store · Built-in rule",
+            "*.tmp · Your rules, line 4",
+            "cache/ · This package's .quiltignore, line 2",
+        ] {
+            assert!(words.contains(note), "{note:?} in {words}");
+        }
+    }
+
     /// An ignored folder is one row under `Ignored`, named with a trailing
     /// slash and no size, and its facet counts it.
     #[wasm_bindgen_test]
@@ -2172,7 +2226,11 @@ mod pane_tests {
             .unwrap()
             .expect("the folder's row");
         let row_text = text(&row.parent_element().unwrap());
-        assert!(!row_text.contains(" B"), "no size: {row_text}");
+        // Its rule's note has no line number, so any digit would be a size.
+        assert!(
+            !row_text.chars().any(|c| c.is_ascii_digit()),
+            "no size: {row_text}"
+        );
     }
 
     /// Under `Base folder` an ignored folder sits under its parent's heading
@@ -4235,7 +4293,10 @@ mod marks_tests {
     async fn both_rows_of_an_ignored_tracked_path_are_marked() {
         let facet = RwSignal::new(Facet::All.key().to_string());
         let ignored = EntryData {
-            ignored_by: Some("plate/".to_string()),
+            ignored_by: Some(IgnoredBy::new(
+                "plate/",
+                crate::commands::RuleSource::Default,
+            )),
             ..entry("plate/a.csv", "pristine")
         };
         let listing = Listing::Ready(FileList {
