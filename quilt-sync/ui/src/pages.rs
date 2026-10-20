@@ -70,8 +70,6 @@ pub use main_page::queue::action_href;
 // The page's layout classes, so the gallery's whole-page scenes lay their fixture
 // rows out by the page's own rules rather than a copy of them.
 pub use main_page::{StateStrip, list_region_class, rows_class};
-// Each package's autosync state, drawn only by the gallery so far.
-pub use main_page::package_autosync;
 pub use merge::Merge;
 pub use not_found::NotFound;
 pub use remote_package::RemotePackage;

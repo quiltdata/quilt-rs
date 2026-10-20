@@ -90,10 +90,6 @@ pub fn QueueRow(
     /// Reactive: it arrives on a payload of its own, after the row is drawn.
     #[prop(optional, into)]
     detail: MaybeProp<String>,
-    /// A line under the first, such as the package's autosync state. Above
-    /// `detail`, which is longer.
-    #[prop(optional_no_strip)]
-    note: Option<AnyView>,
 ) -> impl IntoView {
     // Both or neither, enforced here rather than at each of the three places the pair
     // draws — the glyph, the edge rule and the clause.
@@ -162,7 +158,6 @@ pub fn QueueRow(
     // the gap would do nothing.
     let body = view! {
         <div class=style::line>{line}</div>
-        {note.map(|note| view! { <div class=style::note>{note}</div> })}
         {move || detail.get().map(|detail| view! { <p class=style::detail>{detail}</p> })}
     };
 
