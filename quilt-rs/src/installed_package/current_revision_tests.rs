@@ -15,7 +15,7 @@ async fn current_revision_reads_only_the_selected_installed_manifest() -> Res {
 
     let namespace: Namespace = ("demo", "sales").into();
     let before = Utc::now();
-    let package = domain
+    let (package, _) = domain
         .create_package(namespace.clone(), None, Some("initial import".to_string()))
         .await?;
     let snapshot = package.lineage().await?;
@@ -66,7 +66,7 @@ async fn current_revision_prefers_a_pending_commit_over_the_remote_hash() -> Res
     domain.set_home(temp_dir.path()).await?;
 
     let namespace: Namespace = ("demo", "pending").into();
-    let package = domain
+    let (package, _) = domain
         .create_package(namespace.clone(), None, Some("local work".to_string()))
         .await?;
     let pending_hash = package

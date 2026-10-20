@@ -2376,7 +2376,7 @@ mod tests {
         let m = crate::model::Model::create(dir.path());
         m.set_home(dir.path().join("home")).await.expect("home");
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
-        let package = m
+        let (package, _) = m
             .package_create(ns.clone(), None, None)
             .await
             .expect("create");

@@ -23,7 +23,7 @@ async fn the_count_is_the_manifest_files_and_parses_none_of_them() -> Res {
     domain.set_home(temp_dir.path()).await?;
 
     let namespace: Namespace = ("demo", "sales").into();
-    let package = domain
+    let (package, _) = domain
         .create_package(namespace.clone(), None, Some("initial import".to_string()))
         .await?;
 
@@ -61,7 +61,7 @@ async fn a_stranded_temp_file_is_not_a_revision() -> Res {
     domain.set_home(temp_dir.path()).await?;
 
     let namespace: Namespace = ("demo", "sales").into();
-    let package = domain
+    let (package, _) = domain
         .create_package(namespace.clone(), None, Some("initial import".to_string()))
         .await?;
 

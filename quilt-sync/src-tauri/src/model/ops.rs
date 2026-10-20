@@ -322,7 +322,7 @@ pub async fn package_create(
     namespace: quilt_uri::Namespace,
     source: Option<PathBuf>,
     message: Option<String>,
-) -> Result<quilt::InstalledPackage, Error> {
+) -> Result<(quilt::InstalledPackage, quilt::flow::LeftOut), Error> {
     model.package_create(namespace, source, message).await
 }
 

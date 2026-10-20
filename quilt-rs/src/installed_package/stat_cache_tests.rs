@@ -21,7 +21,7 @@ async fn a_commit_hashes_what_it_commits_whatever_the_cache_says() -> Res {
     let domain = LocalDomain::new(temp_dir.path()).with_state_store(Arc::clone(&store));
     domain.set_home(temp_dir.path()).await?;
     let namespace: Namespace = ("demo", "cached").into();
-    let package = domain
+    let (package, _) = domain
         .create_package(namespace.clone(), None, Some("empty".to_string()))
         .await?;
 
