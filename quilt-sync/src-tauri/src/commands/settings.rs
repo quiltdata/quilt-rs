@@ -336,6 +336,7 @@ pub async fn update_autosync_settings(
     if clear {
         watcher.clear_all_paused().await;
     }
+    watcher.settings_changed();
     Ok(())
 }
 
@@ -403,6 +404,7 @@ async fn write_autosync_patch(
     if clear {
         watcher.clear_all_paused().await;
     }
+    watcher.settings_changed();
     Ok(())
 }
 

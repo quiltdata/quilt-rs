@@ -48,10 +48,9 @@ fn fixture_with_lineage_and_status(
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
-    let status_mutex = std::sync::Mutex::new(Some(status));
     model
         .expect_locked_package_status()
-        .returning(move |_, _| Ok(status_mutex.lock().unwrap().take().unwrap()));
+        .returning(move |_, _| Ok(status.clone()));
     // `model::publish_locked_with_settings` routes the workflow lookup
     // through the trait. These fixtures use default publish settings, so it
     // sends `WorkflowIntent::BucketDefault`; the per-remote workflow gets enforced by `flow::publish_package` from

@@ -16,6 +16,7 @@ use std::time::SystemTime;
 
 use quilt_uri::Namespace;
 
+use crate::quilt::lineage::Change;
 use crate::quilt::lineage::InstalledPackageStatus;
 use crate::quilt::state_store::ChangeSource;
 use crate::quilt::state_store::PackageStateStore;
@@ -245,6 +246,41 @@ impl LastChange {
             .map(|a| a.last_change_at)
     }
 
+    /// A pull changed the tree: `before` is the walk before it, `after` one
+    /// after it, and `kept` the paths the pull said it keeps. The changes it
+    /// kept are not new, so the next walk compares with `after`. Any other
+    /// difference, such as an edit or an undo during the pull, moves the time
+    /// to now.
+    pub(crate) async fn on_pulled(
+        &self,
+        namespace: &Namespace,
+        before: &InstalledPackageStatus,
+        after: &InstalledPackageStatus,
+        kept: &BTreeSet<PathBuf>,
+    ) {
+        self.last_seen.lock().expect("last_seen lock").insert(
+            namespace.clone(),
+            crate::autopull::reporter::changes_fingerprint(&after.changes),
+        );
+        let kept = after.changes.keys().eq(kept.iter())
+            && after.changes.iter().all(|(path, change)| {
+                match (change, before.changes.get(path)) {
+                    (
+                        Change::Added(row) | Change::Modified(row),
+                        Some(Change::Added(was) | Change::Modified(was)),
+                    ) => row.hash == was.hash,
+                    // A removal's row is the base's, which the pull moved.
+                    (Change::Removed(_), Some(Change::Removed(_))) => true,
+                    _ => false,
+                }
+            });
+        if !kept {
+            self.store
+                .record_change(namespace, now(), ChangeSource::Edit)
+                .await;
+        }
+    }
+
     /// The package published.
     pub(crate) async fn on_published(&self, namespace: &Namespace) {
         self.own_commits
@@ -343,6 +379,10 @@ mod tests {
         status
     }
 
+    fn paths(paths: &[&str]) -> BTreeSet<PathBuf> {
+        paths.iter().map(PathBuf::from).collect()
+    }
+
     fn hour() -> Duration {
         Duration::from_hours(1)
     }
@@ -385,6 +425,83 @@ mod tests {
                 .await,
             Some(old)
         );
+    }
+
+    #[tokio::test]
+    async fn changes_a_pull_kept_keep_the_time() {
+        let store = PackageStateStore::in_memory();
+        let old = now() - hour();
+        store.record_change(&ns(), old, ChangeSource::Edit).await;
+        let clock = LastChange::new(store);
+        clock.walked.lock().unwrap().insert(ns());
+        clock
+            .observe(&ns(), None, &status_with(&["a", "b"]), PendingCommit::None)
+            .await;
+
+        // The pull resolved `b` and kept `a`.
+        clock
+            .on_pulled(
+                &ns(),
+                &status_with(&["a", "b"]),
+                &status_with(&["a"]),
+                &paths(&["a"]),
+            )
+            .await;
+
+        assert_eq!(
+            clock
+                .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
+                .await,
+            Some(old)
+        );
+        let edited = clock
+            .observe(&ns(), None, &status_with(&["a", "c"]), PendingCommit::None)
+            .await;
+        assert!(
+            edited.is_some_and(|at| at > old),
+            "an edit after the pull is new"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_edit_during_a_pull_moves_the_time() {
+        let store = PackageStateStore::in_memory();
+        let old = now() - hour();
+        store.record_change(&ns(), old, ChangeSource::Edit).await;
+        let clock = LastChange::new(store);
+        clock.walked.lock().unwrap().insert(ns());
+
+        clock
+            .on_pulled(
+                &ns(),
+                &status_with(&["a"]),
+                &status_with(&["a", "c"]),
+                &paths(&["a"]),
+            )
+            .await;
+
+        assert!(clock.get(&ns()).await.is_some_and(|at| at > old));
+    }
+
+    #[tokio::test]
+    async fn an_undo_during_a_pull_moves_the_time() {
+        let store = PackageStateStore::in_memory();
+        let old = now() - hour();
+        store.record_change(&ns(), old, ChangeSource::Edit).await;
+        let clock = LastChange::new(store);
+        clock.walked.lock().unwrap().insert(ns());
+
+        // The pull kept both; `b` was undone while it ran.
+        clock
+            .on_pulled(
+                &ns(),
+                &status_with(&["a", "b"]),
+                &status_with(&["a"]),
+                &paths(&["a", "b"]),
+            )
+            .await;
+
+        assert!(clock.get(&ns()).await.is_some_and(|at| at > old));
     }
 
     #[tokio::test]

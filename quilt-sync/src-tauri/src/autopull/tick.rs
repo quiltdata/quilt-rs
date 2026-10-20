@@ -483,14 +483,20 @@ pub(crate) async fn refresh_then_maybe_sync(
         // (all-empty lists ⇒ clean tree after apply). Residual: changes made
         // DURING the pull are still invisible until the next tick — inherent
         // to a dry-run-then-apply split, not fixed here.
-        let kept_changes = match &outcome {
+        let kept_paths: BTreeSet<std::path::PathBuf> = match &outcome {
             PullOutcome::KeepsLocalChanges {
                 added,
                 modified,
                 removed,
-            } => !(added.is_empty() && modified.is_empty() && removed.is_empty()),
-            _ => false,
+            } => added
+                .iter()
+                .chain(modified)
+                .chain(removed)
+                .cloned()
+                .collect(),
+            _ => BTreeSet::new(),
         };
+        let kept_changes = !kept_paths.is_empty();
         match outcome {
             PullOutcome::Blocked { conflicts } => {
                 if !verdict_held_still(aggregator, namespace, epoch_before) {
@@ -519,6 +525,18 @@ pub(crate) async fn refresh_then_maybe_sync(
                 return match applied {
                     Ok(report) => {
                         info!("autosync: pulled namespace={namespace}");
+                        if kept_changes {
+                            match model.locked_package_status(&locked, None).await {
+                                Ok(after) => {
+                                    last_change
+                                        .on_pulled(namespace, &status, &after, &kept_paths)
+                                        .await;
+                                }
+                                Err(err) => warn!(
+                                    "autosync: walk after the pull of {namespace} failed: {err}"
+                                ),
+                            }
+                        }
                         // Kept work leaves a dirty tree: `UpToDate` +
                         // `kept_changes` is the intended post-pull state.
                         // `kept_changes` comes from the outcome (post-pull
@@ -776,144 +794,184 @@ pub(crate) async fn run_once(
         Duration::from_secs(settings.push.idle_timeout_secs)
     };
 
+    let run = PassSettings {
+        publish,
+        wait,
+        pull_enabled,
+        push_enabled,
+    };
     let now = Instant::now();
     for pkg in packages {
-        let namespace = pkg.namespace.clone();
+        sync_package(model, roles, inner, &pkg, &run, now).await;
+    }
+    inner.reschedule_publish();
 
-        // Skip Local / misconfigured packages without a network round-trip.
-        let lineage = match model.get_installed_package_lineage(&pkg).await {
-            Ok(l) => l,
-            Err(err) => {
-                warn!("autosync: lineage read failed for {namespace}: {err}");
-                continue;
-            }
-        };
-        let Some(remote) = lineage.remote_uri.as_ref() else {
-            continue;
-        };
-        // The origin is what makes every outcome below attributable: the loop
-        // declines to work on a package without one, so `report_*` can require a
-        // host rather than accept an absent one.
-        let Some(origin) = remote.origin.as_ref() else {
-            continue;
-        };
-        if remote.bucket.is_empty() {
-            continue;
+    Ok(())
+}
+
+/// The settings one pass reads, snapshot once.
+pub(crate) struct PassSettings {
+    pub publish: PublishSettings,
+    pub wait: Duration,
+    pub pull_enabled: bool,
+    pub push_enabled: bool,
+}
+
+/// What [`sync_package`] did with a package.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Pass {
+    /// It can't be synced now: no remote, no catalog origin, paused, in
+    /// backoff, or its lineage could not be read.
+    Skipped,
+    /// Another writer holds it.
+    Busy,
+    /// It was observed, and pulled, published, deferred or paused.
+    Done,
+}
+
+/// One package's pass: refresh, then pull, publish or pause. The check runs
+/// it over every package, the publish timer over one whose deadline came.
+#[allow(clippy::too_many_lines, reason = "cohesive autosync pass sequence")]
+pub(crate) async fn sync_package(
+    model: &impl QuiltModel,
+    roles: &RoleCache,
+    inner: &WatcherInner,
+    pkg: &quilt::InstalledPackage,
+    run: &PassSettings,
+    now: Instant,
+) -> Pass {
+    let namespace = pkg.namespace.clone();
+
+    // Skip Local / misconfigured packages without a network round-trip.
+    let lineage = match model.get_installed_package_lineage(pkg).await {
+        Ok(l) => l,
+        Err(err) => {
+            warn!("autosync: lineage read failed for {namespace}: {err}");
+            return Pass::Skipped;
         }
+    };
+    let Some(remote) = lineage.remote_uri.as_ref() else {
+        return Pass::Skipped;
+    };
+    // The origin is what makes every outcome below attributable: the loop
+    // declines to work on a package without one, so `report_*` can require a
+    // host rather than accept an absent one.
+    let Some(origin) = remote.origin.as_ref() else {
+        return Pass::Skipped;
+    };
+    if remote.bucket.is_empty() {
+        return Pass::Skipped;
+    }
 
-        if inner.paused.read().await.contains_key(&namespace) {
-            continue;
-        }
-        if !is_backoff_due(&*inner.backoff.read().await, &namespace, now) {
-            continue;
-        }
+    if inner.paused.read().await.contains_key(&namespace) {
+        return Pass::Skipped;
+    }
+    if !is_backoff_due(&*inner.backoff.read().await, &namespace, now) {
+        return Pass::Skipped;
+    }
 
-        let result = refresh_then_maybe_sync(
-            model,
-            &namespace,
-            &lineage,
-            &publish,
-            &inner.last_change,
-            &inner.walks,
-            wait,
-            pull_enabled,
-            push_enabled,
-            lineage.sync_scope,
-            &inner.aggregator,
-        )
-        .await;
-        // Another writer holds the package: nothing was observed, so nothing
-        // is reported, and its pause, backoff and arm time stand as they were.
-        let result = match result {
-            Ok(None) => continue,
-            Ok(Some(outcome)) => Ok(outcome),
-            Err(err) => Err(err),
-        };
+    let result = refresh_then_maybe_sync(
+        model,
+        &namespace,
+        &lineage,
+        &run.publish,
+        &inner.last_change,
+        &inner.walks,
+        run.wait,
+        run.pull_enabled,
+        run.push_enabled,
+        lineage.sync_scope,
+        &inner.aggregator,
+    )
+    .await;
+    // Another writer holds the package: nothing was observed, so nothing
+    // is reported, and its pause, backoff and arm time stand as they were.
+    let result = match result {
+        Ok(None) => return Pass::Busy,
+        Ok(Some(outcome)) => Ok(outcome),
+        Err(err) => Err(err),
+    };
 
-        // One place decides whether this namespace counts down. Only a
-        // deferral does; a publish, a pull, a pause, a login block and a
-        // transient failure all mean it is not waiting, and a stale deadline
-        // would have the card count down to a moment with no meaning.
-        {
-            let mut waiting = inner.clocks.publish_waiting.write().await;
-            if result
-                .as_ref()
-                .ok()
-                .and_then(|o| o.publish_arm_at)
-                .is_some()
-            {
-                waiting.insert(namespace.clone());
-            } else {
-                waiting.remove(&namespace);
-            }
-        }
-
-        match result {
-            Ok(outcome) => {
-                inner.backoff.write().await.remove(&namespace);
-                inner.login_blocked.write().await.remove(&namespace);
-                if let Some(message) = outcome.published.as_deref() {
-                    inner.reporter.report_published(&namespace, origin, message);
-                }
-                // What the pull brought, if it brought anything. `None` from
-                // `report_toast` is the metadata-only revision: hashes advanced
-                // and no file moved, and an entry that stands until dismissed
-                // must not say nothing.
-                if let Some(report) = outcome.pulled.as_ref()
-                    && let Some(toast) = pull_toast::report_toast(&namespace, report)
-                {
-                    inner.reporter.report_pulled(&namespace, toast);
-                }
-                inner.reporter.report_status(
-                    &namespace,
-                    PackageStatusEvent {
-                        namespace: namespace.clone(),
-                        status: outcome.upstream.to_string(),
-                        has_changes: outcome.has_changes,
-                        fingerprint: outcome.fingerprint,
-                    },
-                );
-                inner.aggregator.clear_error(&namespace);
-                inner
-                    .aggregator
-                    .note_status(&namespace, outcome.has_changes);
-            }
-            Err(WatchError::LoginRequired(host)) => {
-                // Backoff until the user re-auths; the Ok arm clears it.
-                bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
-                // The episode is per *deployment*, not per package: one expired
-                // session blocks every package on that host, and they arrive one
-                // per loop iteration. Asking whether any other namespace is
-                // already blocked on this host — before inserting this one — is
-                // what makes it countable once.
-                let block = {
-                    let mut blocked = inner.login_blocked.write().await;
-                    let block = login_episode(&blocked, host.as_ref());
-                    blocked.insert(namespace.clone(), host.clone());
-                    block
-                };
-                inner.reporter.report_login_required(host.as_ref(), block);
-                inner.aggregator.note_login_required(&namespace, host);
-            }
-            Err(WatchError::Conflict(reason)) => {
-                // Only a `RoleDenied` needs this, and only it pays for it:
-                // the lookup is cached per host and the namespace is about
-                // to be paused, so a denied host costs at most one `/me`
-                // per role switch — not one per tick.
-                let reason = name_denied_role(model, roles, Some(origin), reason).await;
-                pause(inner, &namespace, origin, reason).await;
-            }
-            Err(WatchError::Transient(err)) => {
-                bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
-                warn!("autosync: transient error for {namespace}: {err}");
-                // Transient: don't touch the aggregator's error map — a
-                // network blip should not flip the tray to Error. The
-                // next tick either clears or escalates.
-            }
+    // One place decides whether this namespace counts down. A deferral does,
+    // and so does a pull that kept local changes: their publish is due now.
+    // A publish, a pause, a login block and a transient failure all mean it is
+    // not waiting, and a stale deadline would have the card count down to a
+    // moment with no meaning.
+    {
+        let mut waiting = inner.clocks.publish_waiting.write().await;
+        if result.as_ref().is_ok_and(|o| {
+            o.publish_arm_at.is_some() || (run.push_enabled && o.pulled.is_some() && o.has_changes)
+        }) {
+            waiting.insert(namespace.clone());
+        } else {
+            waiting.remove(&namespace);
         }
     }
 
-    Ok(())
+    match result {
+        Ok(outcome) => {
+            inner.backoff.write().await.remove(&namespace);
+            inner.login_blocked.write().await.remove(&namespace);
+            if let Some(message) = outcome.published.as_deref() {
+                inner.reporter.report_published(&namespace, origin, message);
+            }
+            // What the pull brought, if it brought anything. `None` from
+            // `report_toast` is the metadata-only revision: hashes advanced
+            // and no file moved, and an entry that stands until dismissed
+            // must not say nothing.
+            if let Some(report) = outcome.pulled.as_ref()
+                && let Some(toast) = pull_toast::report_toast(&namespace, report)
+            {
+                inner.reporter.report_pulled(&namespace, toast);
+            }
+            inner.reporter.report_status(
+                &namespace,
+                PackageStatusEvent {
+                    namespace: namespace.clone(),
+                    status: outcome.upstream.to_string(),
+                    has_changes: outcome.has_changes,
+                    fingerprint: outcome.fingerprint,
+                },
+            );
+            inner.aggregator.clear_error(&namespace);
+            inner
+                .aggregator
+                .note_status(&namespace, outcome.has_changes);
+        }
+        Err(WatchError::LoginRequired(host)) => {
+            // Backoff until the user re-auths; the Ok arm clears it.
+            bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
+            // The episode is per *deployment*, not per package: one expired
+            // session blocks every package on that host, and they arrive one
+            // per loop iteration. Asking whether any other namespace is
+            // already blocked on this host — before inserting this one — is
+            // what makes it countable once.
+            let block = {
+                let mut blocked = inner.login_blocked.write().await;
+                let block = login_episode(&blocked, host.as_ref());
+                blocked.insert(namespace.clone(), host.clone());
+                block
+            };
+            inner.reporter.report_login_required(host.as_ref(), block);
+            inner.aggregator.note_login_required(&namespace, host);
+        }
+        Err(WatchError::Conflict(reason)) => {
+            // Only a `RoleDenied` needs this, and only it pays for it:
+            // the lookup is cached per host and the namespace is about
+            // to be paused, so a denied host costs at most one `/me`
+            // per role switch — not one per tick.
+            let reason = name_denied_role(model, roles, Some(origin), reason).await;
+            pause(inner, &namespace, origin, reason).await;
+        }
+        Err(WatchError::Transient(err)) => {
+            bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
+            warn!("autosync: transient error for {namespace}: {err}");
+            // Transient: don't touch the aggregator's error map — a
+            // network blip should not flip the tray to Error. The
+            // next tick either clears or escalates.
+        }
+    }
+    Pass::Done
 }
 
 /// Pause `namespace` for `reason` and announce it: the paused map the tick

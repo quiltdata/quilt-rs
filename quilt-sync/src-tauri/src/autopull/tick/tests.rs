@@ -733,12 +733,14 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         std::path::PathBuf::from("local.txt"),
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
+    // The second walk is the one after the pull.
     model
         .expect_locked_package_status()
-        .return_once(move |_, _| {
+        .times(2)
+        .returning(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
-                changes,
+                changes.clone(),
             ))
         });
     // Dry run: the surgical update reconciles cleanly, keeping the local add.
@@ -795,6 +797,10 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         );
     }
     assert!(inner.paused.read().await.is_empty());
+    assert!(
+        inner.clocks.publish_waiting.read().await.contains(&ns),
+        "the kept work counts down, so the publish timer takes it next"
+    );
     Ok(())
 }
 

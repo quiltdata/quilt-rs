@@ -32,6 +32,7 @@
 - Autopublish waits the full publish wait after the last change it sees, a commit included, so it no longer publishes at once after you turn publishing on, commit, delete files, copy in files that keep old dates, or reopen the app (<https://github.com/quiltdata/quilt-rs/pull/1134>)
 - On Windows, a package left untouched while the app was closed keeps its publish time after a restart (<https://github.com/quiltdata/quilt-rs/pull/1144>)
 - An edit, a removal or an undo shows on the main page a few seconds after it, even right after another change, instead of at the next check (<https://github.com/quiltdata/quilt-rs/pull/1145>)
+- Autopublish publishes when the publish wait ends, not at the next check after it: a one-minute wait publishes about a minute after the last change, and turning pulling off no longer changes when it publishes (<https://github.com/quiltdata/quilt-rs/pull/1151>)
 
 ### quilt-rs
 
