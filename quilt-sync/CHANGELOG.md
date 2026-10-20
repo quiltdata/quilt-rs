@@ -19,31 +19,38 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.23.0-dev]
+## [v0.23.0] - 2026-10-20
 
 ### Added
 
-- **New design preview**: Settings has an **Ignore rules** card. **Open file** opens your own rules for every package, and **Review…** lists the built-in rules by group, so you can turn one off to let its new files in (<https://github.com/quiltdata/quilt-rs/pull/1149>)
-- **New design preview**: each file or folder under *Ignored* on the package page names the rule that hid it and where the rule came from: *Built-in rule*, *Your rules, line 4* or *This package's .quiltignore, line 2* (<https://github.com/quiltdata/quilt-rs/pull/1155>)
-- Creating a package from a folder says how many files and folders the ignore rules left out, such as "2 files and 1 folder were left out by ignore rules" (<https://github.com/quiltdata/quilt-rs/pull/1158>)
+- **Stop ignoring** brings an ignored file or folder back for this package or for all packages, and says how many files that adds. It used to open `.quiltignore` in an editor (<https://github.com/quiltdata/quilt-rs/pull/1147>)
+- **New design preview**: the package page lists each ignored file and folder with the rule that hid it and where the rule came from, such as *Built-in rule* or *This package's .quiltignore, line 2*. Settings has an **Ignore rules** card to open your own rules and turn built-in rules off
+  - <https://github.com/quiltdata/quilt-rs/pull/1136>
+  - <https://github.com/quiltdata/quilt-rs/pull/1149>
+  - <https://github.com/quiltdata/quilt-rs/pull/1155>
+- Creating a package from a folder says how many files and folders the ignore rules left out (<https://github.com/quiltdata/quilt-rs/pull/1158>)
 
 ### Changed
 
-- New files that are OS or editor clutter, secrets or caches (`.DS_Store`, `.git/`, `.venv/`, `.env`, `node_modules/` and similar) no longer go into a package. Files already in a package stay. Rules of your own for every package go in `.quiltignore` in the app's data folder, and a package's `.quiltignore` can bring a file back with `!pattern` (<https://github.com/quiltdata/quilt-rs/pull/1143>)
-- Checking a package for changes reads only the files that changed since the last check, and the app checks every package when it starts, so changes made while it was closed show at once (<https://github.com/quiltdata/quilt-rs/pull/1144>)
-- The regular check no longer reads a package's files when the folder watcher saw no change in it; it still asks for new revisions. Packages the watcher can't follow, such as on a network drive, are read as before (<https://github.com/quiltdata/quilt-rs/pull/1145>)
-- **New design preview**: the main page's Autosync card shows each package with changes beside its own ring: up to three, soonest first, then *and N more*. A publishing, retrying or paused package shows that instead, a paused one no longer hides the others or stops the *Get new revisions* ring, and a line says how many packages changed while the app was closed. The card updates as soon as a package's state changes (<https://github.com/quiltdata/quilt-rs/pull/1156>)
+- New OS and editor clutter, secrets and caches (`.DS_Store`, `.git/`, `.venv/`, `.env`, `node_modules/` and similar) no longer go into a package. Files already in a package stay. Put your own rules for every package in `.quiltignore` in the app's data folder; a package's `.quiltignore` can bring a file back with `!pattern`
+  - <https://github.com/quiltdata/quilt-rs/pull/1143>
+  - <https://github.com/quiltdata/quilt-rs/pull/1150>
+- Checking for changes is faster: the app reads only the files that changed since the last check, and skips packages the folder watcher saw no change in. It checks every package when it starts, so changes made while it was closed show at once
+  - <https://github.com/quiltdata/quilt-rs/pull/1144>
+  - <https://github.com/quiltdata/quilt-rs/pull/1145>
+- **New design preview**: the main page's Autosync card shows a ring for each package with changes, soonest first, and says how many packages changed while the app was closed (<https://github.com/quiltdata/quilt-rs/pull/1156>)
 
 ### Fixed
 
-- Autopublish waits the full publish wait after the last change it sees, a commit included, so it no longer publishes at once after you turn publishing on, commit, delete files, copy in files that keep old dates, or reopen the app (<https://github.com/quiltdata/quilt-rs/pull/1134>)
-- On Windows, a package left untouched while the app was closed keeps its publish time after a restart (<https://github.com/quiltdata/quilt-rs/pull/1144>)
-- An edit, a removal or an undo shows on the main page a few seconds after it, even right after another change, instead of at the next check (<https://github.com/quiltdata/quilt-rs/pull/1145>)
-- Autopublish publishes when the publish wait ends, not at the next check after it: a one-minute wait publishes about a minute after the last change, and turning pulling off no longer changes when it publishes (<https://github.com/quiltdata/quilt-rs/pull/1151>)
+- Autopublish publishes when the publish wait after the last change ends. It no longer publishes at once after you commit, turn publishing on, copy in files with old dates or reopen the app, and no longer waits for the next check
+  - <https://github.com/quiltdata/quilt-rs/pull/1134>
+  - <https://github.com/quiltdata/quilt-rs/pull/1144>
+  - <https://github.com/quiltdata/quilt-rs/pull/1151>
+- An edit, a removal or an undo shows on the main page within a few seconds (<https://github.com/quiltdata/quilt-rs/pull/1145>)
 
 ### quilt-rs
 
-- Updated [from v0.44.0 to v0.45.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.44.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.44.0 to v0.45.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.44.0...quilt-rs/v0.45.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.22.12] - 2026-10-16
 
