@@ -22,6 +22,7 @@ mod accounts;
 mod autosync;
 mod create_package;
 mod grouping;
+pub mod package_autosync;
 pub mod queue;
 mod recent_files;
 mod toolbar_memory;
