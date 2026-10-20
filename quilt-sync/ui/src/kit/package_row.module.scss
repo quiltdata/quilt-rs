@@ -49,6 +49,15 @@
   white-space: nowrap;
 }
 
+/* The namespace and a note under it, in the namespace's place. Only rows with a
+ * note have it, so the others keep their single line. */
+.lines {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
 /* The same column as `FileRow`'s, duplicated so one can move without the other:
  * a 104px floor that holds `RelativeTime`'s widest phrase, never a cap. */
 .time {
