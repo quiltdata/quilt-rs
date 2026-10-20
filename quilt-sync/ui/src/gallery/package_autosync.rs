@@ -27,14 +27,14 @@ fn in_min(minutes: f64) -> f64 {
 fn waiting(minutes: f64) -> PackageAutosync {
     PackageAutosync::Waiting {
         publish_at: in_min(minutes),
-        first_seen_at_start: false,
+        changed_while_closed: false,
     }
 }
 
 fn first_seen(minutes: f64) -> PackageAutosync {
     PackageAutosync::Waiting {
         publish_at: in_min(minutes),
-        first_seen_at_start: true,
+        changed_while_closed: true,
     }
 }
 
@@ -133,7 +133,7 @@ fn CountingScenes() -> impl IntoView {
             title="Scene · five changed packages"
             note="The screenshot this work started from: five packages with changes and a \
                   card that said nothing to publish. Now each package with changes has its own \
-                  ring, soonest first; past three the stack is simply full. No clock times: a ring \
+                  ring, soonest first; past three, a plain label counts the rest. No clock times: a ring \
                   shows how far along a wait is without promising a minute."
         >
             <PerPackage packages=screenshot() />
@@ -225,7 +225,7 @@ fn TroubleScenes() -> impl IntoView {
         <Scene
             title="Scene · every kind at once"
             note="Publishing first, then the waits, then the troubles. Four packages, so \
-                  the paused one is past the cap and not drawn."
+                  the paused one is past the cap and counted in the label under the stack."
         >
             <PerPackage packages=vec![
                 pkg("user/package-a", waiting(20.0)),

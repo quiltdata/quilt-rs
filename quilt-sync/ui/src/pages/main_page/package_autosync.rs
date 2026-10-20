@@ -20,8 +20,7 @@ use crate::kit::countdown::EpochMillis;
 
 stylance::import_crate_style!(style, "src/pages/main_page/package_autosync.module.scss");
 
-/// The most marks the stack draws. Past it the stack is simply full: a longer
-/// queue gets no count.
+/// The most marks the stack draws; the rest are counted under it.
 const STACK_MAX: usize = 3;
 
 /// One package's autosync state.
@@ -30,9 +29,13 @@ pub enum PackageAutosync {
     NoChanges,
     Waiting {
         publish_at: EpochMillis,
-        /// The app first saw these changes at launch, so they changed while it was
-        /// closed and the wait started then.
-        first_seen_at_start: bool,
+        /// A changed file is known to have changed after the app last saw this
+        /// package, so it changed while the app was closed and the wait started at
+        /// launch. Only that proof sets it: a package with no saved time, a file
+        /// whose change time can't be read, or a commit made outside the app also
+        /// waits from launch, but without it. The card's startup line counts only
+        /// these, so it may leave a package out and never claims one it can't show.
+        changed_while_closed: bool,
     },
     Publishing,
     Retrying {
@@ -88,6 +91,8 @@ pub enum PublishCard {
     NothingToPublish,
     Stack {
         items: Vec<StackItem>,
+        /// Packages with changes past [`STACK_MAX`].
+        more: usize,
         /// Waiting packages first seen at launch.
         first_seen: usize,
     },
@@ -142,9 +147,9 @@ impl PublishCard {
                     PackageAutosync::NoChanges | PackageAutosync::Off => return None,
                     PackageAutosync::Waiting {
                         publish_at,
-                        first_seen_at_start,
+                        changed_while_closed,
                     } => {
-                        if *first_seen_at_start {
+                        if *changed_while_closed {
                             first_seen += 1;
                         }
                         Mark::Ring {
@@ -172,8 +177,13 @@ impl PublishCard {
             let (a, b) = (a.mark.order(), b.mark.order());
             a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
         });
+        let more = items.len().saturating_sub(STACK_MAX);
         items.truncate(STACK_MAX);
-        Self::Stack { items, first_seen }
+        Self::Stack {
+            items,
+            more,
+            first_seen,
+        }
     }
 
     /// `2 packages changed while QuiltSync was closed; their wait started at launch.`
@@ -225,7 +235,7 @@ pub fn publish_trailing(card: &PublishCard, wait_ms: f64, ring_title: &str) -> A
     match card {
         PublishCard::Off => view! { "Off" }.into_any(),
         PublishCard::NothingToPublish => view! { "nothing to publish" }.into_any(),
-        PublishCard::Stack { items, .. } => {
+        PublishCard::Stack { items, more, .. } => {
             let marks = items
                 .iter()
                 .map(|item| {
@@ -239,7 +249,10 @@ pub fn publish_trailing(card: &PublishCard, wait_ms: f64, ring_title: &str) -> A
                     }
                 })
                 .collect_view();
-            view! { <span class=style::stack>{marks}</span> }.into_any()
+            let more = (*more > 0).then(|| {
+                view! { <span class=style::name>{format!("and {more} more")}</span> }
+            });
+            view! { <span class=style::stack>{marks} {more}</span> }.into_any()
         }
     }
 }
@@ -257,14 +270,14 @@ mod tests {
     fn waiting(at: f64) -> PackageAutosync {
         PackageAutosync::Waiting {
             publish_at: at,
-            first_seen_at_start: false,
+            changed_while_closed: false,
         }
     }
 
     fn first_seen(at: f64) -> PackageAutosync {
         PackageAutosync::Waiting {
             publish_at: at,
-            first_seen_at_start: true,
+            changed_while_closed: true,
         }
     }
 
@@ -348,21 +361,26 @@ mod tests {
                 PackageAutosync::Publishing,
             ],
         );
-        let PublishCard::Stack { items, .. } = &card else {
+        let PublishCard::Stack { items, more, .. } = &card else {
             panic!("expected a stack");
         };
         let order: Vec<u8> = items.iter().map(|item| item.mark.order().0).collect();
-        assert_eq!(order, [0, 1, 2], "the paused one is past the cap");
+        assert_eq!(order, [0, 1, 2]);
+        assert_eq!(*more, 1, "the paused one is past the cap and counted");
     }
 
     #[test]
-    fn the_stack_keeps_the_soonest() {
+    fn the_stack_keeps_the_soonest_and_counts_the_rest() {
         let card = card(true, (0..5).map(|i| waiting(f64::from(5 - i))).collect());
         assert_eq!(names(&card), ["user/p4", "user/p3", "user/p2"]);
+        let PublishCard::Stack { more, .. } = card else {
+            panic!("expected a stack");
+        };
+        assert_eq!(more, 2);
     }
 
     #[test]
-    fn the_startup_sentence_counts_only_packages_first_seen_at_start() {
+    fn the_startup_sentence_counts_only_packages_changed_while_closed() {
         let two = card(true, vec![first_seen(9.0), waiting(1.0), first_seen(8.0)]);
         assert_eq!(
             two.startup_sentence().as_deref(),
