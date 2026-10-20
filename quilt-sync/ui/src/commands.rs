@@ -322,11 +322,13 @@ pub struct ExperimentalSettingsData {
     pub main_page_v2: bool,
 }
 
-/// One built-in ignore rule, and whether it is on.
+/// One built-in ignore rule, its place in the popup, and whether it is on.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DefaultRuleData {
     pub rule: String,
+    pub group: String,
+    pub about: String,
     pub on: bool,
 }
 
@@ -1400,14 +1402,13 @@ pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
     tauri::invoke("update_fswatcher_settings", &Args { enabled }).await
 }
 
-/// Turn a built-in ignore rule on or off for every package.
-pub async fn set_default_ignore_rule(rule: String, on: bool) -> Result<(), String> {
+/// Turn off exactly the built-in ignore rules in `off`, for every package.
+pub async fn set_default_ignore_rules(off: Vec<String>) -> Result<(), String> {
     #[derive(Serialize)]
     struct Args {
-        rule: String,
-        on: bool,
+        off: Vec<String>,
     }
-    tauri::invoke("set_default_ignore_rule", &Args { rule, on }).await
+    tauri::invoke("set_default_ignore_rules", &Args { off }).await
 }
 
 /// Open the user-wide ignore rules file, creating it if missing.

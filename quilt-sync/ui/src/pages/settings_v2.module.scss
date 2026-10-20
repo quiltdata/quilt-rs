@@ -162,26 +162,26 @@
   font: inherit;
 }
 
-// The built-in ignore rules: two columns of short lines, so the list stays
-// about as tall as the other cards.
+// The built-in rules in the popup, a group at a time.
+.rule_group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .rules {
-  columns: 2;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .rules li {
-  display: flex;
-  align-items: center;
-  gap: var(--q-space-2);
-  break-inside: avoid;
   padding: 2px 0;
 }
 
 .rule {
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  align-items: baseline;
   gap: var(--q-space-2);
   cursor: pointer;
 }

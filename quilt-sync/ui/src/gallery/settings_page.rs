@@ -44,10 +44,11 @@ use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::PageLayout;
 use crate::pages::settings_v2::{
-    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, IgnoreRulesCard,
-    PublishingCard, PublishingDialog, PublishingForm, ReportBody, ReportDialog, ReportFooter,
-    ReportState, Saved, SettingsHeader, SettingsLayout, SignOutDialog, StorageCard, StorageSize,
-    SyncingCard, TroubleshootingCard, metadata_error, minutes_shown, sign_out_consequence,
+    AboutCard, AccountHost, AccountsCard, AppCard, BuiltInRule, ExperimentalCard, IgnoreRulesCard,
+    IgnoreRulesForm, PublishingCard, PublishingDialog, PublishingForm, ReportBody, ReportDialog,
+    ReportFooter, ReportState, Saved, SettingsHeader, SettingsLayout, SignOutDialog, StorageCard,
+    StorageSize, SyncingCard, TroubleshootingCard, metadata_error, minutes_shown,
+    sign_out_consequence,
 };
 use quilt_sync_ui::commands::{LogEnv, PublishSettingsData};
 
@@ -76,52 +77,52 @@ fn narrow(card: AnyView) -> AnyView {
 const USER_RULES: &str =
     "/Users/a-user/Library/Application Support/com.quiltdata.quilt-sync/.quiltignore";
 
-/// The built-in rules, as quilt-rs lists them when this was written.
-const BUILT_IN: &[&str] = &[
-    ".*/",
-    ".DS_Store",
-    ".DS_Store?",
-    "._*",
-    ".LSOverride",
-    ".VolumeIcon.icns",
-    "Icon[\r]",
-    "Thumbs.db",
-    "ehthumbs.db",
-    "desktop.ini",
-    "$RECYCLE.BIN/",
-    ".directory",
-    ".nfs*",
-    "~$*",
-    ".~lock.*#",
-    ".#*",
-    "\\#*\\#",
-    "*.swp",
-    "*.swo",
-    "*~",
-    ".env",
-    ".env.*",
-    ".netrc",
-    "*.pem",
-    "*.code-workspace",
-    "__pycache__/",
-    "*.py[cod]",
-    "node_modules/",
+/// Some built-in rules with their words, as the popup groups them.
+const BUILT_IN: &[(&str, &str, &str)] = &[
+    (
+        ".*/",
+        "Hidden folders",
+        "Any folder whose name starts with a dot, such as .git or .venv",
+    ),
+    (".DS_Store", "macOS", "Finder's folder settings"),
+    (
+        "._*",
+        "macOS",
+        "File details macOS keeps on drives it doesn't own",
+    ),
+    ("Icon[\r]", "macOS", "A folder's custom icon"),
+    ("Thumbs.db", "Windows", "Picture thumbnails"),
+    ("desktop.ini", "Windows", "A folder's view settings"),
+    ("~$*", "Editors and office lock files", "Office lock files"),
+    ("*.swp", "Editors and office lock files", "Vim swap files"),
+    (".env", "Secrets", "Environment secrets"),
+    ("*.pem", "Secrets", "Keys and certificates"),
+    ("__pycache__/", "Python and Node", "Compiled Python"),
+    (
+        "node_modules/",
+        "Python and Node",
+        "Installed Node packages",
+    ),
 ];
 
-/// The card with `off` turned off, or the unreadable file's line.
-fn ignore_rules(off: &[&str], readable: bool, saved: Option<Saved>) -> AnyView {
-    let rules = readable.then(|| BUILT_IN.iter().map(ToString::to_string).collect());
+fn ignore_rules(readable: bool) -> AnyView {
+    view! { <IgnoreRulesCard file=USER_RULES readable=readable on_open=noop() on_review=noop() /> }
+        .into_any()
+}
+
+/// The popup's checklist, inline, with `off` turned off.
+fn rules_form(off: &[&str]) -> AnyView {
+    let rules = BUILT_IN
+        .iter()
+        .map(|(rule, group, about)| BuiltInRule {
+            rule: (*rule).to_string(),
+            group: (*group).to_string(),
+            about: (*about).to_string(),
+        })
+        .collect();
     let off = RwSignal::new(off.iter().map(ToString::to_string).collect());
-    view! {
-        <IgnoreRulesCard
-            rules=rules
-            off=off
-            file=USER_RULES
-            on_edit=noop()
-            saved=Signal::stored(saved)
-        />
-    }
-    .into_any()
+    view! { <div class="g-stack" style="max-width:640px"><IgnoreRulesForm rules=rules off=off /></div> }
+        .into_any()
 }
 
 // ── Syncing ──
@@ -408,7 +409,7 @@ fn whole_page(width: u32, height: u32) -> AnyView {
                         .into_any()
                     troubleshooting=troubleshooting(LogEnv::Unset, "Default", false)
                     about=view! { <AboutCard version=VERSION on_release_notes=noop() /> }.into_any()
-                    ignore_rules=ignore_rules(&[], true, None)
+                    ignore_rules=ignore_rules(true)
                 />
             </PageLayout>
         </div>
@@ -573,17 +574,17 @@ pub fn SettingsPageScene() -> impl IntoView {
             <Cell full=true label="About">
                 {column(view! { <AboutCard version=VERSION on_release_notes=noop() /> }.into_any())}
             </Cell>
-            <Cell full=true label="Ignore rules — every built-in rule on">
-                {column(ignore_rules(&[], true, None))}
-            </Cell>
-            <Cell full=true label="Ignore rules — two turned off, one just saved">
-                {column(ignore_rules(&[".*/", "*.pem"], true, Some(Saved::IgnoreRule(23))))}
+            <Cell full=true label="Ignore rules — the card: your rules file with Open file, and Review…">
+                {column(ignore_rules(true))}
             </Cell>
             <Cell full=true label="Ignore rules — narrow">
-                {narrow(ignore_rules(&[".env"], true, None))}
+                {narrow(ignore_rules(true))}
             </Cell>
-            <Cell full=true label="Ignore rules — your rules file could not be read">
-                {column(ignore_rules(&[], false, None))}
+            <Cell full=true label="Ignore rules — your rules file could not be read: Review… is off">
+                {column(ignore_rules(false))}
+            </Cell>
+            <Cell full=true label="Built-in rules popup — the checklist, two rules turned off; Confirm saves, Cancel or ✕ discards">
+                {rules_form(&[".*/", "*.pem"])}
             </Cell>
             <Cell wide=true label="Report a problem — empty">
                 {report("", ReportState::Writing)}

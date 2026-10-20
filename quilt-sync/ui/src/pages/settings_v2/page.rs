@@ -11,7 +11,8 @@
 //! - every control's value ([`Fields`]): the toggles, the minute fields as
 //!   typed, the log level;
 //! - the Publishing popup: open or not, and its draft;
-//! - which built-in ignore rules are off, and whether the reader has opened
+//! - the built-in rules popup: open or not, and its draft of the rules
+//!   turned off; and whether the reader has opened
 //!   their rules file to edit, so coming back to the window reads it again;
 //! - what each control last wrote ([`Written`]), so a value the page seeds
 //!   from a read is never written back;
@@ -63,10 +64,10 @@ use crate::kit::{
 
 use super::super::v2_page::{PageHandle, PageRead, V2Page, critical, hold};
 use super::{
-    AboutCard, AccountHost, AccountsCard, AppCard, ExperimentalCard, IgnoreRulesCard,
-    PublishingCard, PublishingDialog, ReportDialog, ReportState, Saved, SettingsHeader,
-    SettingsLayout, SignOutDialog, StorageCard, StorageSize, SyncingCard, TroubleshootingCard,
-    log_level_label, minutes_secs, minutes_shown,
+    AboutCard, AccountHost, AccountsCard, AppCard, BuiltInRule, ExperimentalCard, IgnoreRulesCard,
+    IgnoreRulesDialog, PublishingCard, PublishingDialog, ReportDialog, ReportState, Saved,
+    SettingsHeader, SettingsLayout, SignOutDialog, StorageCard, StorageSize, SyncingCard,
+    TroubleshootingCard, log_level_label, minutes_secs, minutes_shown,
 };
 
 use super::style;
@@ -83,11 +84,8 @@ pub(crate) enum Write {
     /// Lowercase, as the backend names it.
     LogLevel(String),
     Publishing(PublishSettingsData),
-    /// A built-in ignore rule turned on or off for every package.
-    IgnoreRule {
-        rule: String,
-        on: bool,
-    },
+    /// Exactly these built-in ignore rules off, for every package.
+    IgnoreRules(Vec<String>),
 }
 
 /// What the page reads and writes, as parameters so a test can answer
@@ -130,7 +128,7 @@ fn write_setting(write: Write) -> Answer<()> {
                 )
                 .await
             }
-            Write::IgnoreRule { rule, on } => commands::set_default_ignore_rule(rule, on).await,
+            Write::IgnoreRules(off) => commands::set_default_ignore_rules(off).await,
         }
     })
 }
@@ -228,8 +226,8 @@ struct Fixed {
     logs_dir_is_temporary: bool,
     changelog: Vec<ChangelogEntry>,
     ignore_file: String,
-    /// The built-in rules, in order; `None` when the file could not be read.
-    ignore_rules: Option<Vec<String>>,
+    /// Whether the reader's rules file could be read.
+    ignore_readable: bool,
 }
 
 impl Fixed {
@@ -244,11 +242,7 @@ impl Fixed {
             logs_dir_is_temporary: d.logs_dir_is_temporary,
             changelog: d.changelog.clone(),
             ignore_file: d.ignore_rules.file.clone(),
-            ignore_rules: d
-                .ignore_rules
-                .rules
-                .as_ref()
-                .map(|rules| rules.iter().map(|r| r.rule.clone()).collect()),
+            ignore_readable: d.ignore_rules.rules.is_some(),
         }
     }
 }
@@ -305,7 +299,8 @@ struct Fields {
     design_preview: RwSignal<bool>,
     /// One of `LOG_LEVELS`.
     log_level: RwSignal<String>,
-    /// The built-in ignore rules turned off.
+    /// The built-in rules popup's draft: the rules turned off, filled from
+    /// what is stored as it opens.
     rules_off: RwSignal<BTreeSet<String>>,
     /// The Publishing popup's draft, filled from what is stored as it opens.
     template: RwSignal<String>,
@@ -354,6 +349,8 @@ struct Written {
     design_preview: StoredValue<bool>,
     log_level: StoredValue<String>,
     rules_off: StoredValue<BTreeSet<String>>,
+    /// The built-in rules as the popup lists them, from the last read.
+    rules: RwSignal<Vec<BuiltInRule>>,
     /// Reactive, because the Publishing card draws it.
     publishing: RwSignal<PublishSettingsData>,
     /// Whether the first read has seeded the fields.
@@ -372,6 +369,7 @@ impl Written {
             design_preview: StoredValue::new(false),
             log_level: StoredValue::new(String::new()),
             rules_off: StoredValue::new(BTreeSet::new()),
+            rules: RwSignal::new(Vec::new()),
             publishing: RwSignal::new(PublishSettingsData::default()),
             seeded: StoredValue::new(false),
         }
@@ -417,7 +415,18 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
             .filter(|r| !r.on)
             .map(|r| r.rule.clone())
             .collect();
-        seed(fields.rules_off, written.rules_off, off);
+        written.rules_off.set_value(off);
+        let listed: Vec<BuiltInRule> = rules
+            .iter()
+            .map(|r| BuiltInRule {
+                rule: r.rule.clone(),
+                group: r.group.clone(),
+                about: r.about.clone(),
+            })
+            .collect();
+        if written.rules.with_untracked(|was| *was != listed) {
+            written.rules.set(listed);
+        }
     }
     for (field, was, stored) in [
         (
@@ -802,30 +811,6 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         written.log_level.set_value(label.clone());
         save(Saved::LogLevel, Write::LogLevel(label.to_lowercase()));
     });
-    // A box saves the one rule it changed. Its index names the row, for the
-    // row's *Saved* and to hold the box while the save is out.
-    Effect::new(move |_| {
-        let now = fields.rules_off.get();
-        let was = written.rules_off.get_value();
-        if was == now {
-            return;
-        }
-        written.rules_off.set_value(now.clone());
-        let rules = fixed.with_untracked(|f| match f {
-            Some(Ok(f)) => f.ignore_rules.clone().unwrap_or_default(),
-            _ => Vec::new(),
-        });
-        for rule in now.symmetric_difference(&was) {
-            let Some(at) = rules.iter().position(|r| r == rule) else {
-                continue;
-            };
-            let write = Write::IgnoreRule {
-                rule: rule.clone(),
-                on: !now.contains(rule),
-            };
-            save(Saved::IgnoreRule(at), write);
-        }
-    });
     // Off this page once the preview's off is saved and the queue has run:
     // `/` asks again which design is on, and this page would stay the one it
     // is until the reader moved. A failed save stays here, in the band.
@@ -1150,9 +1135,10 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
 
     // ── Ignore rules ──
     // The file opens in another app. When the reader comes back to the
-    // window, the page reads again, so the boxes show what they wrote there.
+    // window, the page reads again, so Review… starts from what they wrote
+    // there. An open popup keeps its draft.
     let editing_rules = RwSignal::new(false);
-    let on_edit_rules = Callback::new(move |()| {
+    let on_open_rules = Callback::new(move |()| {
         outcome.set(None);
         leptos::task::spawn_local(async move {
             match (io.edit_rules)().await {
@@ -1177,6 +1163,31 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         }
     });
     on_cleanup(move || focus.remove());
+    // The popup and its draft are the page's, like Publishing's.
+    let rules_open = RwSignal::new(false);
+    let on_review_rules = Callback::new(move |()| {
+        fields.rules_off.set(written.rules_off.get_value());
+        rules_open.set(true);
+    });
+    // Confirm waits for its own write on the queue, holding the page's lock.
+    // A failure keeps the popup open with the draft.
+    let save_rules = move || {
+        let draft = fields.rules_off.get_untracked();
+        async move {
+            let before = written.rules_off.get_value();
+            if before == draft {
+                return Ok(());
+            }
+            written.rules_off.set_value(draft.clone());
+            let (reply, answer) = reply();
+            let write = Write::IgnoreRules(draft.into_iter().collect());
+            saves.push(None, write, Some(reply), io, page);
+            hold(busy, outcome, answer).await.map_err(|detail| {
+                written.rules_off.try_set_value(before);
+                format!("{SAVE_FAILED} {detail}")
+            })
+        }
+    };
 
     // ── The body, rebuilt only when the fixed text changes ──
     let just_saved: Signal<Option<Saved>> = saves.saved.into();
@@ -1264,12 +1275,10 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 ignore_rules=view! {
                     <div class=style::slot data-ignore-rules>
                         <IgnoreRulesCard
-                            rules=f.ignore_rules
-                            off=fields.rules_off
                             file=f.ignore_file
-                            on_edit=on_edit_rules
-                            saved=just_saved
-                            pending=pending
+                            readable=f.ignore_readable
+                            on_open=on_open_rules
+                            on_review=on_review_rules
                         />
                     </div>
                 }
@@ -1324,6 +1333,13 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             on_send=on_send
         />
         <ReleaseNotes open=notes_open entries=Signal::derive(notes) />
+        <IgnoreRulesDialog
+            open=rules_open
+            rules=written.rules
+            off=fields.rules_off
+            save=save_rules
+            running=busy
+        />
         <PublishingDialog
             open=publishing_open
             template=fields.template
@@ -1422,8 +1438,23 @@ mod tests {
     fn rule(rule: &str, on: bool) -> DefaultRuleData {
         DefaultRuleData {
             rule: rule.to_string(),
+            group: if rule == "*.pem" { "Secrets" } else { "macOS" }.to_string(),
+            about: format!("About {rule}"),
             on,
         }
+    }
+
+    /// Review… pressed: the popup, open.
+    async fn open_rules(el: &web_sys::Element) -> web_sys::Element {
+        let card = el.query_selector("[data-ignore-rules]").unwrap().unwrap();
+        button_saying(&card, "Review…").click();
+        sleep_ms(10).await;
+        rules_popup(el).expect("the popup opened")
+    }
+
+    fn rules_popup(el: &web_sys::Element) -> Option<web_sys::Element> {
+        el.query_selector("dialog[open][aria-label='Built-in rules']")
+            .unwrap()
     }
 
     fn settings() -> SettingsData {
@@ -1720,81 +1751,112 @@ mod tests {
         );
     }
 
-    /// A save's re-read finds news the body draws, so the body is rebuilt;
-    /// half-typed minutes and an unsaved Publishing draft survive it, and the
-    /// loading frame never comes back.
-    /// A rule's box shows the stored state; off and on again each write that
-    /// one rule, and the box is held while its save is out.
+    /// The popup starts from what is stored; Confirm writes the set chosen,
+    /// once, and closes.
     #[wasm_bindgen_test]
-    async fn a_rule_box_writes_only_its_rule() {
-        // Each save's re-read finds what it wrote.
-        let mut pem_off = settings();
-        pem_off.ignore_rules.rules = Some(vec![
-            rule(".*/", true),
-            rule(".DS_Store", false),
-            rule("*.pem", false),
-        ]);
-        let mut both = pem_off.clone();
-        both.ignore_rules.rules = Some(vec![
+    async fn confirm_writes_the_rules_chosen() {
+        let mut saved = settings();
+        saved.ignore_rules.rules = Some(vec![
             rule(".*/", true),
             rule(".DS_Store", true),
             rule("*.pem", false),
         ]);
-        let el = page(vec![settings(), pem_off, both]).await;
-        assert!(toggle(&el, ".*/").checked());
-        assert!(!toggle(&el, ".DS_Store").checked(), "stored off");
+        let el = page(vec![settings(), saved]).await;
+        let dialog = open_rules(&el).await;
+        assert!(toggle(&dialog, ".*/").checked());
+        assert!(!toggle(&dialog, ".DS_Store").checked(), "stored off");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Secrets")
+        );
 
-        WRITE_DELAY.with(|d| d.set(40));
-        toggle(&el, "*.pem").click();
+        toggle(&dialog, ".DS_Store").click();
+        toggle(&dialog, "*.pem").click();
         sleep_ms(10).await;
-        assert!(toggle(&el, "*.pem").disabled(), "held while it saves");
-        assert!(!toggle(&el, ".*/").disabled(), "the others are not");
-        sleep_ms(80).await;
-        assert!(!toggle(&el, "*.pem").disabled());
+        assert_eq!(writes(), Vec::new(), "nothing saved before Confirm");
+        button_saying(&dialog, "Confirm").click();
+        sleep_ms(60).await;
 
-        WRITE_DELAY.with(|d| d.set(0));
-        toggle(&el, ".DS_Store").click();
-        sleep_ms(50).await;
         assert_eq!(
             writes(),
-            vec![
-                Write::IgnoreRule {
-                    rule: "*.pem".to_string(),
-                    on: false,
-                },
-                Write::IgnoreRule {
-                    rule: ".DS_Store".to_string(),
-                    on: true,
-                },
-            ]
+            vec![Write::IgnoreRules(vec!["*.pem".to_string()])]
         );
-        assert!(!toggle(&el, "*.pem").checked());
-        assert!(toggle(&el, ".DS_Store").checked());
+        assert!(rules_popup(&el).is_none(), "Confirm closed it");
+        let dialog = open_rules(&el).await;
+        assert!(
+            !toggle(&dialog, "*.pem").checked(),
+            "the next open starts from the read"
+        );
+        assert!(toggle(&dialog, ".DS_Store").checked());
     }
 
-    /// A rule turned off elsewhere, such as in the file, shows on the next
-    /// read and is not written back.
+    /// Cancel writes nothing, and the next open starts from what is stored.
     #[wasm_bindgen_test]
-    async fn a_rule_changed_in_the_file_shows_without_being_written_back() {
-        let mut edited = settings();
-        edited.ignore_rules.rules = Some(vec![
-            rule(".*/", false),
-            rule(".DS_Store", false),
-            rule("*.pem", true),
-        ]);
-        let el = page(vec![settings(), edited]).await;
+    async fn cancel_discards_the_draft() {
+        let el = page(vec![settings()]).await;
+        let dialog = open_rules(&el).await;
+        toggle(&dialog, ".*/").click();
+        sleep_ms(10).await;
+        button_saying(&dialog, "Cancel").click();
+        sleep_ms(20).await;
+        assert!(rules_popup(&el).is_none());
+        let dialog = open_rules(&el).await;
+        assert!(toggle(&dialog, ".*/").checked());
+        assert_eq!(writes(), Vec::new());
+    }
 
+    /// A re-read while the popup is open, such as another row's save, keeps
+    /// the draft.
+    #[wasm_bindgen_test]
+    async fn a_re_read_keeps_the_rules_draft() {
+        let mut later = settings();
+        later.version = "0.0.2".to_string();
+        let el = page(vec![settings(), later]).await;
+        let dialog = open_rules(&el).await;
+        toggle(&dialog, ".*/").click();
         toggle(&el, WATCH).click();
-        sleep_ms(50).await;
-
-        assert!(!toggle(&el, ".*/").checked(), "the stored value shows");
-        assert_eq!(writes(), vec![Write::Watch(false)]);
+        sleep_ms(60).await;
+        assert_eq!(reads(), 2, "the save read the page again");
+        assert!(rules_popup(&el).is_some(), "the popup is still open");
+        assert!(!toggle(&dialog, ".*/").checked(), "with the draft");
     }
 
-    /// Edit my rules opens the file; coming back to the window reads the
-    /// page again, once.
+    /// Confirm holds the page's lock, and a failure stays in the popup with
+    /// the draft.
     #[wasm_bindgen_test]
-    async fn edit_my_rules_reads_again_on_coming_back() {
+    async fn confirm_holds_the_lock_and_keeps_a_failed_draft() {
+        let el = page(vec![settings()]).await;
+        WRITE_DELAY.with(|d| d.set(60));
+        WRITE_FAILS.with(|f| f.set(true));
+        let dialog = open_rules(&el).await;
+        toggle(&dialog, ".*/").click();
+        sleep_ms(10).await;
+        button_saying(&dialog, "Confirm").click();
+        sleep_ms(10).await;
+        let role: web_sys::HtmlSelectElement = el
+            .query_selector("[data-accounts] select")
+            .unwrap()
+            .expect("the switcher")
+            .unchecked_into();
+        assert!(role.disabled(), "held while Confirm saves");
+        sleep_ms(120).await;
+        assert!(rules_popup(&el).is_some(), "a failure keeps it open");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("disk full"),
+            "with the reason"
+        );
+        assert!(!toggle(&dialog, ".*/").checked(), "and the draft");
+    }
+
+    /// Open file opens the file; coming back to the window reads the page
+    /// again, once.
+    #[wasm_bindgen_test]
+    async fn open_file_reads_again_on_coming_back() {
         let el = page(vec![settings()]).await;
         let window = web_sys::window().unwrap();
         let focus = || {
@@ -1807,7 +1869,7 @@ mod tests {
         assert_eq!(reads(), 1, "no read before the file was opened");
 
         let card = el.query_selector("[data-ignore-rules]").unwrap().unwrap();
-        button_saying(&card, "Edit my rules").click();
+        button_saying(&card, "Open file").click();
         sleep_ms(20).await;
         assert_eq!(RULE_EDITS.with(Cell::get), 1);
 
@@ -1821,26 +1883,25 @@ mod tests {
         no_loading_frame(&el);
     }
 
-    /// An unreadable rules file draws no boxes, and Edit my rules stays.
+    /// An unreadable rules file disables Review…, and Open file stays.
     #[wasm_bindgen_test]
-    async fn an_unreadable_rules_file_draws_no_boxes() {
+    async fn an_unreadable_rules_file_disables_review() {
         let mut unreadable = settings();
         unreadable.ignore_rules.rules = None;
         let el = page(vec![unreadable]).await;
         let card = el.query_selector("[data-ignore-rules]").unwrap().unwrap();
-        assert!(
-            card.query_selector("input[type=checkbox]")
-                .unwrap()
-                .is_none()
-        );
+        assert!(button_saying(&card, "Review…").disabled());
         assert!(
             card.text_content()
                 .unwrap_or_default()
                 .contains(super::super::IGNORE_RULES_UNREADABLE)
         );
-        button_saying(&card, "Edit my rules");
+        assert!(!button_saying(&card, "Open file").disabled());
     }
 
+    /// A save's re-read finds news the body draws, so the body is rebuilt;
+    /// half-typed minutes and an unsaved Publishing draft survive it, and the
+    /// loading frame never comes back.
     #[wasm_bindgen_test]
     async fn a_re_read_keeps_what_the_reader_has_not_saved() {
         let mut later = settings();

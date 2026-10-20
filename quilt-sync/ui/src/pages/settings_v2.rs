@@ -58,8 +58,6 @@ pub enum Saved {
     Tray,
     DesignPreview,
     LogLevel,
-    /// The built-in ignore rule at this index of the card's list.
-    IgnoreRule(usize),
 }
 
 /// Whether `row`'s own save is out: its control is held still until it
@@ -523,13 +521,23 @@ where
 // ── Ignore rules ──
 
 pub const IGNORE_RULES_USE: &str = "New files that match a built-in rule stay out of every \
-     package. Turn a rule off to let them in. Your rules come after these, and a package's own \
-     .quiltignore after both; the last match wins.";
+     package. Your rules apply to every package too, and a package's own .quiltignore wins over \
+     both.";
 
 pub const IGNORE_RULES_UNREADABLE: &str =
-    "Could not read your rules, so the built-in rules can't be switched here.";
+    "Could not read your rules file, so the built-in rules can't be reviewed. Open it to see why.";
 
-/// A built-in rule as the card names it: a control character as its escape,
+/// One built-in ignore rule as the popup lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuiltInRule {
+    pub rule: String,
+    /// The heading it is listed under.
+    pub group: String,
+    /// A few words on what it keeps out.
+    pub about: String,
+}
+
+/// A built-in rule as the popup names it: a control character as its escape,
 /// so the macOS `Icon\r` rule reads as written.
 #[must_use]
 pub fn rule_shown(rule: &str) -> String {
@@ -544,39 +552,84 @@ pub fn rule_shown(rule: &str) -> String {
         .collect()
 }
 
-/// The built-in ignore rules, each with a box: off writes its `!` line into
-/// the reader's rules file, on takes it out. **Edit my rules** opens the file.
+/// What keeps new files out: a short description, the reader's rules file
+/// with **Open file**, and the built-in rules with **Review…**, which opens
+/// [`IgnoreRulesDialog`].
 #[component]
 #[allow(
     clippy::needless_pass_by_value,
     reason = "a component's props are owned; the body reads them from there"
 )]
 pub fn IgnoreRulesCard(
-    /// The built-in rules, in order; `None` when the reader's file could not
-    /// be read.
-    rules: Option<Vec<String>>,
-    /// The rules turned off, as the page holds them.
-    off: RwSignal<std::collections::BTreeSet<String>>,
     /// The reader's rules file.
     #[prop(into)]
     file: String,
-    on_edit: Callback<()>,
-    #[prop(optional, into)] saved: Signal<Option<Saved>>,
-    #[prop(optional, into)] pending: Signal<Vec<Saved>>,
+    /// Whether the file could be read; if not, there is nothing to review.
+    readable: bool,
+    /// Opens the file, creating it if missing.
+    on_open: Callback<()>,
+    on_review: Callback<()>,
 ) -> impl IntoView {
-    let list = match rules {
-        None => view! { <p class=style::quiet>{IGNORE_RULES_UNREADABLE}</p> }.into_any(),
-        Some(rules) => {
-            let items = rules
+    let note = (!readable).then_some(IGNORE_RULES_UNREADABLE);
+    let review = view! {
+        <Button disabled=!readable on_click=move |_| on_review.run(())>"Review…"</Button>
+    }
+    .into_any();
+    view! {
+        <Card title="Ignore rules">
+            <p class=style::lead>{IGNORE_RULES_USE}</p>
+            <ValueRow
+                name="Your rules"
+                value=path_value(file)
+                action=view! { <Button on_click=move |_| on_open.run(())>"Open file"</Button> }
+                    .into_any()
+            />
+            {match note {
+                Some(note) => view! {
+                    <ValueRow name="Built-in rules" note=note action=review />
+                }
+                .into_any(),
+                None => view! { <ValueRow name="Built-in rules" action=review /> }.into_any(),
+            }}
+        </Card>
+    }
+}
+
+/// The popup's checklist: each group under its heading, each rule with a
+/// box and its words. A box off is the rule turned off. Apart from the
+/// dialog so the gallery can draw it inline.
+#[component]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "a component's props are owned; the body reads them from there"
+)]
+pub fn IgnoreRulesForm(
+    /// In the order listed; a group's rules are next to each other.
+    rules: Vec<BuiltInRule>,
+    /// The rules turned off, as the draft holds them.
+    off: RwSignal<std::collections::BTreeSet<String>>,
+    /// While a save is out.
+    #[prop(optional, into)]
+    sealed: Signal<bool>,
+) -> impl IntoView {
+    let mut groups: Vec<(String, Vec<BuiltInRule>)> = Vec::new();
+    for rule in rules {
+        match groups.last_mut() {
+            Some((group, rows)) if *group == rule.group => rows.push(rule),
+            _ => groups.push((rule.group.clone(), vec![rule])),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(group, rows)| {
+            let items = rows
                 .into_iter()
-                .enumerate()
-                .map(|(i, rule)| {
-                    let row = Saved::IgnoreRule(i);
-                    let shown = rule_shown(&rule);
+                .map(|BuiltInRule { rule, about, .. }| {
                     let on = {
                         let rule = rule.clone();
                         Signal::derive(move || off.with(|off| !off.contains(&rule)).into())
                     };
+                    let shown = rule_shown(&rule);
                     view! {
                         <li>
                             <label class=style::rule>
@@ -591,32 +644,53 @@ pub fn IgnoreRulesCard(
                                             }
                                         });
                                     }
-                                    disabled=saving(pending, row)
+                                    disabled=sealed
                                 />
                                 <code class=style::code>{shown}</code>
+                                <span class=style::quiet>{about}</span>
                             </label>
-                            {saved_note(saved, row)}
                         </li>
                     }
                 })
                 .collect_view();
-            view! { <ul class=style::rules aria-label="Built-in rules">{items}</ul> }.into_any()
-        }
-    };
+            view! {
+                <fieldset class=style::rule_group>
+                    <legend class=style::field_name>{group}</legend>
+                    <ul class=style::rules>{items}</ul>
+                </fieldset>
+            }
+        })
+        .collect_view()
+}
+
+/// *Built-in rules*, as the modal **Review…** opens: [`IgnoreRulesForm`],
+/// saved by **Confirm**. The boxes are the caller's draft; Cancel or ✕ leaves
+/// it, and the caller fills it again on the next open.
+#[component]
+pub fn IgnoreRulesDialog<F, Fut>(
+    open: RwSignal<bool>,
+    #[prop(into)] rules: Signal<Vec<BuiltInRule>>,
+    off: RwSignal<std::collections::BTreeSet<String>>,
+    /// Writes the draft. Its `Err` stays in the dialog.
+    save: F,
+    /// The page's lock, which Confirm holds too.
+    #[prop(optional, into)]
+    running: Signal<bool>,
+) -> impl IntoView
+where
+    F: Fn() -> Fut + 'static,
+    Fut: Future<Output = Result<(), String>> + 'static,
+{
     view! {
-        <Card title="Ignore rules">
-            <p class=style::lead>{IGNORE_RULES_USE}</p>
-            <ValueRow
-                name="Your rules"
-                value=path_value(file)
-                action=view! { <Button on_click=move |_| on_edit.run(())>"Edit my rules"</Button> }
-                    .into_any()
-            />
-            <div>
-                <p class=style::field_name>"Built-in rules"</p>
-                {list}
-            </div>
-        </Card>
+        <FormDialog
+            open=open
+            title="Built-in rules"
+            submit=Submit::new("Confirm", save)
+            running=running
+            wide=true
+        >
+            {move || view! { <IgnoreRulesForm rules=rules.get() off=off sealed=running /> }}
+        </FormDialog>
     }
 }
 

@@ -124,6 +124,17 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         self.paths.user_quiltignore()
     }
 
+    /// [`crate::quiltignore::set_default_rules`] on the user-wide file, holding
+    /// its lock so *Stop ignoring* for all packages never writes between the
+    /// read and the write.
+    pub async fn set_default_rules(&self, off: &[&str]) -> Res {
+        let _held = self
+            .storage
+            .lock_exclusive(self.paths.user_quiltignore_lock())
+            .await?;
+        crate::quiltignore::set_default_rules(&self.paths.user_quiltignore(), off)
+    }
+
     pub async fn get_home(&self) -> Res<Home> {
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
         Ok(lineage.home)
@@ -415,6 +426,31 @@ mod tests {
     use test_log::test;
 
     use crate::lineage::PackageLineage;
+
+    /// Setting the built-in rules waits for the user-wide file's lock, which
+    /// *Stop ignoring* for all packages holds across its read and write.
+    #[test(tokio::test)]
+    async fn set_default_rules_waits_for_the_user_rules_lock() -> Res<()> {
+        let temp_dir = TempDir::new()?;
+        let domain = LocalDomain::new(temp_dir.path());
+        let held = domain
+            .storage
+            .lock_exclusive(domain.paths.user_quiltignore_lock())
+            .await?;
+        let writer = {
+            let domain = domain.clone();
+            tokio::spawn(async move { domain.set_default_rules(&[".env"]).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!domain.user_quiltignore().exists(), "it waited");
+        drop(held);
+        writer.await.expect("the writer ran")?;
+        assert_eq!(
+            std::fs::read_to_string(domain.user_quiltignore())?,
+            "!.env\n"
+        );
+        Ok(())
+    }
 
     #[test(tokio::test)]
     async fn test_list_installed_packages() -> Res<()> {

@@ -23,7 +23,7 @@
 
 ### Added
 
-- **New design preview**: Settings lists the built-in ignore rules, each with a box. Turn one off to let its new files into every package; **Edit my rules** opens your own rules file (<https://github.com/quiltdata/quilt-rs/pull/1149>)
+- **New design preview**: Settings has an **Ignore rules** card. **Open file** opens your own rules for every package, and **Review…** lists the built-in rules by group, so you can turn one off to let its new files in (<https://github.com/quiltdata/quilt-rs/pull/1149>)
 
 ### Changed
 
