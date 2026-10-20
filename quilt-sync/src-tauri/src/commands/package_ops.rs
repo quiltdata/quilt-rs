@@ -927,6 +927,10 @@ pub async fn package_create(
     // where it is the only context.
     let msg_err = |err: &Error| format!("Failed to create package: {}", err.user_facing());
 
+    let notify = Notify::new(msg_init).on_success(
+        &tracing,
+        MixpanelEvent::PackageCreated(PackageEvent::hostless()),
+    );
     let result = package_create_command(m.inner(), &namespace, source, message).await;
     if let Some(toast) = result
         .as_ref()
@@ -935,12 +939,7 @@ pub async fn package_create(
     {
         toasts.post(toast).await;
     }
-    Notify::new(msg_init)
-        .on_success(
-            &tracing,
-            MixpanelEvent::PackageCreated(PackageEvent::hostless()),
-        )
-        .map(result, msg_ok, msg_err)
+    notify.map(result, msg_ok, msg_err)
 }
 
 async fn package_install_paths_command(
