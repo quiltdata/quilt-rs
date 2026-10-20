@@ -291,9 +291,12 @@ fn AutosyncListener(reload: Trigger) -> impl IntoView {
             reload.notify();
         }
     });
-    let changed = crate::tauri::listen::<serde::de::IgnoredAny>(
+    // Read again once the listener is live: a change between the first read
+    // and the registration fired unheard.
+    let changed = crate::tauri::listen_then::<serde::de::IgnoredAny>(
         commands::AUTOSYNC_CHANGED_EVENT,
         move |_| reload.notify(),
+        move || reload.notify(),
     );
     let activity = crate::tauri::listen::<serde::de::IgnoredAny>(
         commands::AUTOPULL_ACTIVITY_EVENT,

@@ -582,6 +582,10 @@ pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
 /// Each package's autosync state, with `wait` as it is now. The first that
 /// holds wins: publishing, paused, off (publishing off and changes found),
 /// retrying (in backoff with changes), waiting. Any other package is left out.
+///
+/// A package has changes when the last check found some, it counts down, or it
+/// has a last-change time: a failed publish takes it out of the countdown but
+/// keeps its time.
 pub(crate) async fn package_states(
     inner: &WatcherInner,
     paused: &BTreeMap<Namespace, PausedReason>,
@@ -598,30 +602,31 @@ pub(crate) async fn package_states(
     let backoff = inner.backoff.read().await.clone();
     let mut namespaces: BTreeSet<Namespace> = with_changes.union(&waiting).cloned().collect();
     namespaces.extend(paused.keys().cloned());
+    namespaces.extend(backoff.keys().cloned());
     namespaces.extend(publishing.clone());
 
     let (now, wall) = (std::time::Instant::now(), Utc::now());
     let mut states = Vec::new();
     for namespace in namespaces {
+        let last_change = inner.last_change.get(&namespace).await;
+        let has_changes = with_changes.contains(&namespace)
+            || waiting.contains(&namespace)
+            || last_change.is_some();
         let state = if publishing.as_ref() == Some(&namespace) {
             PackageAutosync::Publishing
         } else if let Some(reason) = paused.get(&namespace) {
             PackageAutosync::Paused(reason.clone())
+        } else if !has_changes {
+            continue;
         } else if !push_enabled {
-            if !with_changes.contains(&namespace) {
-                continue;
-            }
             PackageAutosync::Off
         } else if let Some(failed) = backoff.get(&namespace) {
-            if !with_changes.contains(&namespace) && !waiting.contains(&namespace) {
-                continue;
-            }
             PackageAutosync::Retrying {
                 error: failed.error.clone(),
                 next_try_at: wall + failed.next_attempt.saturating_duration_since(now),
             }
         } else if waiting.contains(&namespace)
-            && let Some(at) = publish_deadline(inner.last_change.get(&namespace).await, wait)
+            && let Some(at) = publish_deadline(last_change, wait)
         {
             PackageAutosync::Waiting {
                 publish_at: at.into(),
@@ -1300,6 +1305,28 @@ mod tests {
         assert_eq!(error, "Could not reach S3");
         assert!(next_try_at > before + Duration::from_secs(25));
         assert!(next_try_at <= Utc::now() + Duration::from_secs(30));
+    }
+
+    #[tokio::test]
+    async fn a_failed_first_publish_still_reads_retrying() {
+        // A walk counted it down; the failed pass took it out of the
+        // countdown and never told the tray it had changes.
+        let watcher = publishing_watcher().await;
+        let ns: Namespace = ("acme", "demo").into();
+        let inner = watcher.inner_for_test();
+        inner.last_change.on_signal(&ns).await;
+        inner.backoff.write().await.insert(
+            ns.clone(),
+            tick::BackoffState {
+                next_attempt: std::time::Instant::now(),
+                consecutive_failures: 1,
+                error: "Could not reach S3".to_string(),
+            },
+        );
+        assert!(matches!(
+            state_of(&watcher, &ns).await,
+            Some(PackageAutosync::Retrying { .. })
+        ));
     }
 
     #[tokio::test]
