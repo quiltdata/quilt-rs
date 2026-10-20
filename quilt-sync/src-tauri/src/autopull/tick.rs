@@ -483,14 +483,20 @@ pub(crate) async fn refresh_then_maybe_sync(
         // (all-empty lists ⇒ clean tree after apply). Residual: changes made
         // DURING the pull are still invisible until the next tick — inherent
         // to a dry-run-then-apply split, not fixed here.
-        let kept_changes = match &outcome {
+        let kept_paths: BTreeSet<std::path::PathBuf> = match &outcome {
             PullOutcome::KeepsLocalChanges {
                 added,
                 modified,
                 removed,
-            } => !(added.is_empty() && modified.is_empty() && removed.is_empty()),
-            _ => false,
+            } => added
+                .iter()
+                .chain(modified)
+                .chain(removed)
+                .cloned()
+                .collect(),
+            _ => BTreeSet::new(),
         };
+        let kept_changes = !kept_paths.is_empty();
         match outcome {
             PullOutcome::Blocked { conflicts } => {
                 if !verdict_held_still(aggregator, namespace, epoch_before) {
@@ -522,7 +528,9 @@ pub(crate) async fn refresh_then_maybe_sync(
                         if kept_changes {
                             match model.locked_package_status(&locked, None).await {
                                 Ok(after) => {
-                                    last_change.on_pulled(namespace, &status, &after).await;
+                                    last_change
+                                        .on_pulled(namespace, &status, &after, &kept_paths)
+                                        .await;
                                 }
                                 Err(err) => warn!(
                                     "autosync: walk after the pull of {namespace} failed: {err}"
