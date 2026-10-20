@@ -9,11 +9,7 @@ use crate::Scene;
 use crate::commands::PausedReasonData;
 use crate::kit::Card;
 use crate::kit::Countdown;
-use crate::kit::PackageRow;
-use crate::kit::PackageState;
-use crate::kit::Site;
 use crate::kit::ToggleRow;
-use crate::kit::render;
 use quilt_sync_ui::pages::StateStrip;
 use quilt_sync_ui::pages::package_autosync::PackageAutosync;
 use quilt_sync_ui::pages::package_autosync::PublishCard;
@@ -49,46 +45,26 @@ fn retrying() -> PackageAutosync {
     }
 }
 
-/// One fake package: what its rows say, and what autosync is doing with it.
+/// One fake package and what autosync is doing with it.
 #[derive(Clone)]
 struct Pkg {
     namespace: &'static str,
-    state: PackageState,
     autosync: PackageAutosync,
 }
 
-fn pkg(namespace: &'static str, state: PackageState, autosync: PackageAutosync) -> Pkg {
+fn pkg(namespace: &'static str, autosync: PackageAutosync) -> Pkg {
     Pkg {
         namespace,
-        state,
         autosync,
     }
 }
 
-fn changed(namespace: &'static str, files: usize, autosync: PackageAutosync) -> Pkg {
-    pkg(namespace, PackageState::PendingChanges { files }, autosync)
-}
-
 fn latest(namespace: &'static str) -> Pkg {
-    pkg(namespace, PackageState::Latest, PackageAutosync::NoChanges)
+    pkg(namespace, PackageAutosync::NoChanges)
 }
 
-fn list_row(pkg: &Pkg) -> AnyView {
-    let rendered = render(&pkg.state, Site::ListRow);
-    view! {
-        <PackageRow
-            namespace=pkg.namespace
-            href="#package-autosync"
-            changed_at=in_min(-12.0)
-            state=rendered.words
-            tone=rendered.tone
-        />
-    }
-    .into_any()
-}
-
-/// The card on fake packages, and the list under it. The publish toggle is live:
-/// turning it off shows `Off`.
+/// The card on fake packages. The publish toggle is live: turning it off shows
+/// `Off`.
 #[component]
 fn PerPackage(packages: Vec<Pkg>, #[prop(optional)] off: bool) -> impl IntoView {
     let pull = RwSignal::new(true);
@@ -129,18 +105,17 @@ fn PerPackage(packages: Vec<Pkg>, #[prop(optional)] off: bool) -> impl IntoView 
                 />
             </Card>
         </StateStrip>
-        <div class="g-rows">{packages.iter().map(list_row).collect_view()}</div>
     }
 }
 
 /// The screenshot this work started from: five packages with changes.
 fn screenshot() -> Vec<Pkg> {
     vec![
-        changed("user/package-a", 2, waiting(118.0)),
-        changed("user/package-b", 1, waiting(97.0)),
-        changed("user/qc-plates-2026-08", 14, waiting(64.0)),
-        changed("team/rnaseq-batch-2026-07-31", 3, waiting(110.0)),
-        changed("org/dataset-c", 6, waiting(81.0)),
+        pkg("user/package-a", waiting(118.0)),
+        pkg("user/package-b", waiting(97.0)),
+        pkg("user/qc-plates-2026-08", waiting(64.0)),
+        pkg("team/rnaseq-batch-2026-07-31", waiting(110.0)),
+        pkg("org/dataset-c", waiting(81.0)),
         latest("user/scratch"),
         latest("user/reference-genomes"),
     ]
@@ -158,7 +133,7 @@ fn CountingScenes() -> impl IntoView {
             title="Scene · five changed packages"
             note="The screenshot this work started from: five packages with changes and a \
                   card that said nothing to publish. Now each package with changes has its own \
-                  ring, soonest first; past three, the rest are counted. No clock times: a ring \
+                  ring, soonest first; past three the stack is simply full. No clock times: a ring \
                   shows how far along a wait is without promising a minute."
         >
             <PerPackage packages=screenshot() />
@@ -169,9 +144,9 @@ fn CountingScenes() -> impl IntoView {
                   package's name to the left as a hint. Soonest first."
         >
             <PerPackage packages=vec![
-                changed("user/package-a", 2, waiting(20.0)),
-                changed("user/package-b", 1, waiting(55.0)),
-                changed("org/dataset-c", 4, waiting(90.0)),
+                pkg("user/package-a", waiting(20.0)),
+                pkg("user/package-b", waiting(55.0)),
+                pkg("org/dataset-c", waiting(90.0)),
                 latest("user/scratch"),
             ] />
         </Scene>
@@ -183,8 +158,8 @@ fn CountingScenes() -> impl IntoView {
             <PerPackage
                 off=true
                 packages=vec![
-                    changed("user/package-a", 2, waiting(20.0)),
-                    changed("user/package-b", 1, waiting(55.0)),
+                    pkg("user/package-a", waiting(20.0)),
+                    pkg("user/package-b", waiting(55.0)),
                     latest("user/scratch"),
                 ]
             />
@@ -202,19 +177,16 @@ fn TroubleScenes() -> impl IntoView {
                   unchanged and still carries the conflict."
         >
             <PerPackage packages=vec![
-                changed("user/package-a", 2, waiting(20.0)),
+                pkg("user/package-a", waiting(20.0)),
                 pkg(
                     "org/dataset-c",
-                    PackageState::PullConflict {
-                        files: vec!["a.csv".to_string(), "b.csv".to_string()],
-                    },
                     PackageAutosync::Paused {
                         reason: PausedReasonData::PullConflict {
                             files: vec!["a.csv".to_string(), "b.csv".to_string()],
                         },
                     },
                 ),
-                changed("user/package-b", 1, waiting(55.0)),
+                pkg("user/package-b", waiting(55.0)),
                 latest("user/scratch"),
             ] />
         </Scene>
@@ -223,7 +195,7 @@ fn TroubleScenes() -> impl IntoView {
             note="Retrying in the package's place in the stack; hover it for the error."
         >
             <PerPackage packages=vec![
-                changed("user/package-a", 2, retrying()),
+                pkg("user/package-a", retrying()),
                 latest("user/scratch"),
             ] />
         </Scene>
@@ -234,9 +206,9 @@ fn TroubleScenes() -> impl IntoView {
                   launch waits as usual."
         >
             <PerPackage packages=vec![
-                changed("user/package-a", 2, first_seen(WAIT_MIN - 1.0)),
-                changed("user/package-b", 7, first_seen(WAIT_MIN - 1.0)),
-                changed("org/dataset-c", 1, waiting(30.0)),
+                pkg("user/package-a", first_seen(WAIT_MIN - 1.0)),
+                pkg("user/package-b", first_seen(WAIT_MIN - 1.0)),
+                pkg("org/dataset-c", waiting(30.0)),
                 latest("user/scratch"),
             ] />
         </Scene>
@@ -245,23 +217,22 @@ fn TroubleScenes() -> impl IntoView {
             note="A spinner while a package publishes; the others still count down."
         >
             <PerPackage packages=vec![
-                changed("user/package-a", 2, PackageAutosync::Publishing),
-                changed("user/package-b", 1, waiting(55.0)),
+                pkg("user/package-a", PackageAutosync::Publishing),
+                pkg("user/package-b", waiting(55.0)),
                 latest("user/scratch"),
             ] />
         </Scene>
         <Scene
             title="Scene · every kind at once"
             note="Publishing first, then the waits, then the troubles. Four packages, so \
-                  the paused one is past the cap and counted as one more."
+                  the paused one is past the cap and not drawn."
         >
             <PerPackage packages=vec![
-                changed("user/package-a", 2, waiting(20.0)),
-                changed("user/package-b", 1, PackageAutosync::Publishing),
-                changed("user/package-e", 3, retrying()),
+                pkg("user/package-a", waiting(20.0)),
+                pkg("user/package-b", PackageAutosync::Publishing),
+                pkg("user/package-e", retrying()),
                 pkg(
                     "team/imaging-cohort-b",
-                    PackageState::Paused,
                     PackageAutosync::Paused {
                         reason: PausedReasonData::Other {
                             message: "package does not satisfy the workflow".to_string(),
