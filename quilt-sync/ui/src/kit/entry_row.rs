@@ -239,7 +239,8 @@ pub fn EntryRow(
     tone: StateTone,
     /// Muted words in the state's slot, for a row with no state: an ignored
     /// file's rule and its source. The name gives up width to it, and both
-    /// truncate.
+    /// truncate; the list's [`NameTooltip`](super::NameTooltip) shows a cut
+    /// note whole.
     #[prop(optional, into)]
     note: MaybeProp<String>,
     /// Already formatted — the kit has no opinion about units.
@@ -309,7 +310,7 @@ pub fn EntryRow(
             // like any labels, and the slot grows for them.
             <span class=move || state_class(note.with(Option::is_some))>
                 {tip.map(differs_label)}
-                {move || note.get().map(|words| view! { <span class=style::note>{words}</span> })}
+                {move || note.get().map(note_words)}
                 {move || {
                     state.get().map(|words| view! { <StateLabel tone=tone>{words}</StateLabel> })
                 }}
@@ -399,6 +400,12 @@ pub fn EntryRow(
             }}
         </div>
     }
+}
+
+/// A row's `note`, marked so the list's tooltip can show it whole when cut.
+fn note_words(words: String) -> impl IntoView {
+    let full = words.clone();
+    view! { <span class=style::note data-full-text=full>{words}</span> }
 }
 
 /// The state slot's class: one holding a `note` may shrink for it.
