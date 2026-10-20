@@ -468,8 +468,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_walk_with_new_changes_moves_the_time_even_after_a_signal() {
-        // The walk limit coalesced the signal; the walk can't tell whether a
-        // later edit came after it, so it moves the time.
+        // The walk can't tell whether an edit came after the signal, so it
+        // moves the time.
         let clock = LastChange::changed_for_test(&ns(), hour()).await;
         assert!(
             clock

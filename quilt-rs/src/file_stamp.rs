@@ -62,6 +62,198 @@ pub fn stamp(path: &Path) -> io::Result<FileStamp> {
     return portable::stamp(path);
 }
 
+/// Whether `path` is on a local volume, whose file events can be trusted: not a
+/// network share or a FUSE mount. `false` when it can't be told.
+#[must_use]
+pub fn on_local_volume(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    return macos::on_local_volume(path);
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    return linux::on_local_volume(path);
+    #[cfg(windows)]
+    return windows::on_local_volume(path);
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    )))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+/// Whether a network or FUSE volume holds `path`, or is mounted below it where
+/// a walk of `path` would enter it. Reads the mount table only, never the
+/// mounts, so it sees a mount made after [`on_local_volume`] was asked.
+/// `true` when the table can't be read.
+///
+/// `false` on Windows: a folder mount there is a reparse point, which the walk
+/// does not follow.
+#[must_use]
+pub fn remote_mount_under(path: &Path) -> bool {
+    #[cfg(target_os = "macos")]
+    return macos::remote_mount_under(path);
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    return linux::remote_mount_under(path);
+    #[cfg(windows)]
+    {
+        let _ = path;
+        false
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "android",
+        windows
+    )))]
+    {
+        let _ = path;
+        true
+    }
+}
+
+/// Over (mount point, is remote) pairs: whether the mount holding `path` (the
+/// deepest one above it) is remote, or a remote one is mounted below it. The
+/// last of several mounts at one point is the one in use.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+fn remote_at_or_under(
+    mounts: impl Iterator<Item = (std::path::PathBuf, bool)>,
+    path: &Path,
+) -> bool {
+    let mut holder: Option<(usize, bool)> = None;
+    for (at, remote) in mounts {
+        if remote && at.starts_with(path) && at != path {
+            return true;
+        }
+        if path.starts_with(&at) {
+            let depth = at.components().count();
+            if holder.is_none_or(|(deepest, _)| depth >= deepest) {
+                holder = Some((depth, remote));
+            }
+        }
+    }
+    holder.is_some_and(|(_, remote)| remote)
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+mod linux {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+
+    /// `statfs` magic numbers of network and FUSE file systems.
+    const REMOTE: [u32; 9] = [
+        0x6969,      // NFS
+        0x517B,      // SMB
+        0xFF53_4D42, // CIFS
+        0xFE53_4D42, // SMB2
+        0x7375_7245, // Coda
+        0x5346_414F, // AFS
+        0x0102_1997, // 9P
+        0x6573_5546, // FUSE
+        0x00C3_6400, // Ceph
+    ];
+
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "`f_type` is a signed word whose low 32 bits are the magic number"
+    )]
+    pub(super) fn on_local_volume(path: &Path) -> bool {
+        let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: `statfs` is plain data, valid zeroed.
+        let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+        // SAFETY: `path` is NUL-terminated and `fs` is a valid out pointer.
+        if unsafe { libc::statfs(path.as_ptr(), &raw mut fs) } != 0 {
+            return false;
+        }
+        !REMOTE.contains(&(fs.f_type as u32))
+    }
+
+    /// File system types in `/proc/self/mounts` that `REMOTE` stands for.
+    fn is_remote_type(fs_type: &str) -> bool {
+        matches!(
+            fs_type,
+            "nfs" | "nfs4" | "smbfs" | "cifs" | "smb3" | "coda" | "afs" | "9p" | "ceph"
+        ) || fs_type == "fuse"
+            || fs_type.starts_with("fuse.")
+    }
+
+    /// A mount point as the table writes it: space, tab, newline and
+    /// backslash as octal escapes.
+    fn unescape(field: &str) -> std::ffi::OsString {
+        use std::os::unix::ffi::OsStringExt;
+        let bytes = field.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\\'
+                && let Some(code) = bytes
+                    .get(i + 1..i + 4)
+                    .and_then(|oct| std::str::from_utf8(oct).ok())
+                    .and_then(|oct| u8::from_str_radix(oct, 8).ok())
+            {
+                out.push(code);
+                i += 4;
+            } else {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+        std::ffi::OsString::from_vec(out)
+    }
+
+    pub(super) fn remote_mount_under(path: &Path) -> bool {
+        let Ok(table) = std::fs::read_to_string("/proc/self/mounts") else {
+            return true;
+        };
+        mounts_remote_under(&table, path)
+    }
+
+    pub(super) fn mounts_remote_under(table: &str, path: &Path) -> bool {
+        let mounts = table.lines().filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let (Some(_), Some(at), Some(fs_type)) = (fields.next(), fields.next(), fields.next())
+            else {
+                return None;
+            };
+            Some((
+                std::path::PathBuf::from(unescape(at)),
+                is_remote_type(fs_type),
+            ))
+        });
+        super::remote_at_or_under(mounts, path)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_remote_mount_inside_the_folder_is_found() {
+            let table = "/dev/sda1 / ext4 rw 0 0\n\
+                         server:/data /home/u/pkg/shared\\040dir nfs4 rw 0 0\n\
+                         sshfs#me@host: /mnt/remote fuse.sshfs rw 0 0\n";
+            assert!(mounts_remote_under(table, Path::new("/home/u/pkg")));
+            assert!(!mounts_remote_under(table, Path::new("/home/u/other")));
+            assert!(mounts_remote_under(table, Path::new("/mnt")));
+            // Held by the remote mount.
+            assert!(mounts_remote_under(table, Path::new("/mnt/remote/pkg")));
+            // A local mount over a remote one at the same point is the one in use.
+            let over = "server:/x /data nfs rw 0 0\n/dev/sdb1 /data ext4 rw 0 0\n";
+            assert!(!mounts_remote_under(over, Path::new("/data/pkg")));
+            assert!(!mounts_remote_under(
+                "/dev/sda1 / ext4 rw 0 0\n",
+                Path::new("/home/u/pkg")
+            ));
+        }
+    }
+}
+
 /// `std::fs` listing with neither a change time nor a file ID: what the folder
 /// calls fall back to.
 #[cfg(any(target_os = "macos", windows))]
@@ -248,6 +440,58 @@ mod macos {
         }
     }
 
+    /// Whether a mounted file system is local: `MNT_LOCAL`, and not FUSE,
+    /// which macFUSE can mark local too.
+    fn is_local(fs: &libc::statfs) -> bool {
+        // SAFETY: the kernel NUL-terminates `f_fstypename`.
+        let name = unsafe { std::ffi::CStr::from_ptr(fs.f_fstypename.as_ptr()) }.to_bytes();
+        fs.f_flags & libc::MNT_LOCAL.cast_unsigned() != 0 && !name.windows(4).any(|w| w == b"fuse")
+    }
+
+    /// The mount table, copied into a buffer of its own (`getmntinfo` shares
+    /// one across the process). `None` when it can't be read.
+    fn mounts() -> Option<Vec<libc::statfs>> {
+        // SAFETY: a null buffer asks only for the count.
+        let count = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+        // Room for mounts made between the two calls.
+        let room = usize::try_from(count).ok()? + 8;
+        // SAFETY: `statfs` is plain data, valid zeroed.
+        let mut mounts: Vec<libc::statfs> = vec![unsafe { std::mem::zeroed() }; room];
+        let bytes = libc::c_int::try_from(room * size_of::<libc::statfs>()).ok()?;
+        // SAFETY: `mounts` holds `bytes` bytes of `statfs` entries.
+        let filled = unsafe { libc::getfsstat(mounts.as_mut_ptr(), bytes, libc::MNT_NOWAIT) };
+        mounts.truncate(usize::try_from(filled).ok()?);
+        Some(mounts)
+    }
+
+    pub(super) fn remote_mount_under(path: &Path) -> bool {
+        let Some(mounts) = mounts() else {
+            return true;
+        };
+        let mounts = mounts.iter().map(|fs| {
+            // SAFETY: the kernel NUL-terminates `f_mntonname`.
+            let at = unsafe { std::ffi::CStr::from_ptr(fs.f_mntonname.as_ptr()) };
+            (
+                std::path::PathBuf::from(std::ffi::OsStr::from_bytes(at.to_bytes())),
+                !is_local(fs),
+            )
+        });
+        super::remote_at_or_under(mounts, path)
+    }
+
+    pub(super) fn on_local_volume(path: &Path) -> bool {
+        let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+            return false;
+        };
+        // SAFETY: `statfs` is plain data, valid zeroed.
+        let mut fs: libc::statfs = unsafe { std::mem::zeroed() };
+        // SAFETY: `path` is NUL-terminated and `fs` is a valid out pointer.
+        if unsafe { libc::statfs(path.as_ptr(), &raw mut fs) } != 0 {
+            return false;
+        }
+        is_local(&fs)
+    }
+
     pub(super) fn read_dir_stamps(dir: &Path) -> io::Result<Vec<(OsString, EntryKind, FileStamp)>> {
         let c_path = CString::new(dir.as_os_str().as_bytes())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains a NUL byte"))?;
@@ -409,14 +653,40 @@ mod windows {
         FILE_ID_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
         FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO,
         FileAttributeTagInfo, FileBasicInfo, FileIdExtdDirectoryInfo,
-        FileIdExtdDirectoryRestartInfo, FileIdInfo, FileStandardInfo, GetFileInformationByHandleEx,
-        OPEN_EXISTING, SYNCHRONIZE,
+        FileIdExtdDirectoryRestartInfo, FileIdInfo, FileStandardInfo, GetDriveTypeW,
+        GetFileInformationByHandleEx, OPEN_EXISTING, SYNCHRONIZE,
     };
 
     const BUF_LEN: usize = 64 * 1024;
     const TICKS_PER_SEC: i64 = 10_000_000;
     // 100ns ticks from 1601-01-01 to 1970-01-01.
     const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
+
+    /// `GetDriveTypeW` results, from `WinBase.h`.
+    const DRIVE_REMOVABLE: u32 = 2;
+    const DRIVE_FIXED: u32 = 3;
+    const DRIVE_RAMDISK: u32 = 6;
+
+    /// By the drive letter's type. A `\\server\share` path is a network one.
+    pub(super) fn on_local_volume(path: &Path) -> bool {
+        use std::path::{Component, Prefix};
+        let Ok(absolute) = std::path::absolute(path) else {
+            return false;
+        };
+        let Some(Component::Prefix(prefix)) = absolute.components().next() else {
+            return false;
+        };
+        let (Prefix::Disk(letter) | Prefix::VerbatimDisk(letter)) = prefix.kind() else {
+            return false;
+        };
+        let root: Vec<u16> = format!("{}:\\", char::from(letter))
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        // SAFETY: `root` is NUL-terminated.
+        let kind = unsafe { GetDriveTypeW(root.as_ptr()) };
+        matches!(kind, DRIVE_REMOVABLE | DRIVE_FIXED | DRIVE_RAMDISK)
+    }
 
     struct Handle(HANDLE);
 
@@ -675,6 +945,38 @@ mod tests {
             .into_iter()
             .map(|(name, kind, stamp)| (name, (kind, stamp)))
             .collect()
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
+    #[test]
+    fn the_mount_holding_a_folder_counts() {
+        let mounts = || {
+            [
+                (std::path::PathBuf::from("/"), false),
+                (std::path::PathBuf::from("/net"), true),
+                (std::path::PathBuf::from("/net/local"), false),
+                (std::path::PathBuf::from("/home/u/pkg/share"), true),
+            ]
+            .into_iter()
+        };
+        assert!(remote_at_or_under(mounts(), Path::new("/net/pkg")));
+        assert!(!remote_at_or_under(mounts(), Path::new("/net/local/pkg")));
+        assert!(remote_at_or_under(mounts(), Path::new("/home/u/pkg")));
+        assert!(!remote_at_or_under(mounts(), Path::new("/home/u/other")));
+    }
+
+    #[test]
+    fn a_temp_folder_is_on_a_local_volume() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(on_local_volume(tmp.path()));
+        assert!(!remote_mount_under(tmp.path()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_folder_is_not_known_to_be_local() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!on_local_volume(&tmp.path().join("missing")));
     }
 
     #[test]

@@ -530,9 +530,39 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         host_config_opt: Option<HostConfig>,
     ) -> Res<(lineage::PackageLineage, InstalledPackageStatus)> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let (lineage, latest_refreshed) = self.refresh_latest(lineage).await?;
+        let manifest = self.manifest().await?;
 
+        let host_config = match host_config_opt {
+            Some(hc) => hc,
+            None => match lineage.remote_uri.as_ref() {
+                Some(remote_uri) if !remote_uri.bucket.is_empty() => {
+                    self.remote.host_config(remote_uri.origin.as_ref()).await?
+                }
+                _ => HostConfig::default(),
+            },
+        };
+
+        let (lineage, status) = self
+            .walk(lineage, &manifest, &package_home, host_config)
+            .await?;
+        Ok((
+            lineage,
+            InstalledPackageStatus {
+                latest_refreshed,
+                ..status
+            },
+        ))
+    }
+
+    /// `lineage` with the remote's `latest` fetched, and whether it was. Only a
+    /// remote that can't be reached keeps the last-known tip.
+    async fn refresh_latest(
+        &self,
+        lineage: lineage::PackageLineage,
+    ) -> Res<(lineage::PackageLineage, bool)> {
         // Only refresh latest hash if we have a remote
-        let (lineage, latest_refreshed) = match lineage.remote_uri.as_ref() {
+        Ok(match lineage.remote_uri.as_ref() {
             Some(_) => match flow::refresh_latest_hash(lineage.clone(), &*self.remote).await {
                 Ok(lineage) => (lineage, true),
                 Err(Error::Login(LoginError::NoSession(_))) => {
@@ -562,29 +592,33 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
                 }
             },
             None => (lineage, false),
-        };
-        let manifest = self.manifest().await?;
+        })
+    }
 
-        let host_config = match host_config_opt {
-            Some(hc) => hc,
-            None => match lineage.remote_uri.as_ref() {
-                Some(remote_uri) if !remote_uri.bucket.is_empty() => {
-                    self.remote.host_config(remote_uri.origin.as_ref()).await?
-                }
-                _ => HostConfig::default(),
-            },
+    /// [`Self::status`] without the working-tree walk: the changes of an earlier
+    /// walk, `walked`, under a fresh upstream state. `walked_lineage` is the
+    /// lineage that walk read; `None` when the package's lineage has changed
+    /// since (its `latest` aside), and the caller should walk.
+    async fn status_from_walk(
+        &self,
+        walked_lineage: &lineage::PackageLineage,
+        walked: InstalledPackageStatus,
+    ) -> Res<Option<InstalledPackageStatus>> {
+        let lineage = self.lineage().await?;
+        let without_latest = |l: &lineage::PackageLineage| lineage::PackageLineage {
+            latest_hash: String::new(),
+            ..l.clone()
         };
-
-        let (lineage, status) = self
-            .walk(lineage, &manifest, &package_home, host_config)
-            .await?;
-        Ok((
-            lineage,
-            InstalledPackageStatus {
-                latest_refreshed,
-                ..status
-            },
-        ))
+        if without_latest(&lineage) != without_latest(walked_lineage) {
+            return Ok(None);
+        }
+        let (lineage, latest_refreshed) = self.refresh_latest(lineage).await?;
+        Ok(Some(InstalledPackageStatus {
+            upstream_state: lineage.clone().into(),
+            latest_refreshed,
+            latest_hash: lineage.latest_hash,
+            ..walked
+        }))
     }
 
     /// This package's [`PackageState`](lineage::PackageState), as every front
@@ -1482,6 +1516,18 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
     /// [`InstalledPackage::status`], read under the lock.
     pub async fn status(&self, host_config_opt: Option<HostConfig>) -> Res<InstalledPackageStatus> {
         self.package.status(host_config_opt).await
+    }
+
+    /// [`InstalledPackage::status`] without the walk, from an earlier walk's
+    /// status and the lineage it read: the remote's `latest` is fetched, and
+    /// the walk's changes are kept. `None` when the lineage under the lock is
+    /// not the walked one (its `latest` aside); then the caller walks.
+    pub async fn status_from_walk(
+        &self,
+        walked_lineage: &lineage::PackageLineage,
+        walked: InstalledPackageStatus,
+    ) -> Res<Option<InstalledPackageStatus>> {
+        self.package.status_from_walk(walked_lineage, walked).await
     }
 
     /// [`InstalledPackage::pull_outcome`], read under the lock.

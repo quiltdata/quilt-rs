@@ -34,6 +34,7 @@ fn pulled(uri: quilt_uri::ManifestUri) -> quilt::flow::PullReport {
 }
 
 mod publish;
+mod watched;
 
 /// Hex of an ASCII string, matching the per-byte path encoding in the status
 /// fingerprint — for asserting a path appears hex-encoded in an outcome digest.
@@ -60,6 +61,7 @@ fn make_inner(settings: AutosyncSettings) -> WatcherInner {
         reporter: Arc::new(LogReporter),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
     }
 }
@@ -479,6 +481,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -580,6 +583,7 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -665,6 +669,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         // Branch-only field (plan 3's `next_pull_at`), so `main`'s own test could
         // not have set it.
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -770,6 +775,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -877,6 +883,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -974,6 +981,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -1043,6 +1051,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         &lineage,
         &PublishSettings::default(),
         &LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
+        &crate::autopull::watched::WatchedWalks::default(),
         Duration::from_secs(0),
         true,
         true,
@@ -1127,6 +1136,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -1200,6 +1210,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -1270,6 +1281,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         &lineage,
         &PublishSettings::default(),
         &LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
+        &crate::autopull::watched::WatchedWalks::default(),
         Duration::from_secs(0),
         false,
         false,
@@ -1359,6 +1371,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
