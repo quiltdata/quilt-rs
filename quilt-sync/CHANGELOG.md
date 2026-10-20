@@ -30,6 +30,7 @@
 - New files that are OS or editor clutter, secrets or caches (`.DS_Store`, `.git/`, `.venv/`, `.env`, `node_modules/` and similar) no longer go into a package. Files already in a package stay. Rules of your own for every package go in `.quiltignore` in the app's data folder, and a package's `.quiltignore` can bring a file back with `!pattern` (<https://github.com/quiltdata/quilt-rs/pull/1143>)
 - Checking a package for changes reads only the files that changed since the last check, and the app checks every package when it starts, so changes made while it was closed show at once (<https://github.com/quiltdata/quilt-rs/pull/1144>)
 - The regular check no longer reads a package's files when the folder watcher saw no change in it; it still asks for new revisions. Packages the watcher can't follow, such as on a network drive, are read as before (<https://github.com/quiltdata/quilt-rs/pull/1145>)
+- **New design preview**: the main page's Autosync card shows each package with changes beside its own ring: up to three, soonest first, then *and N more*. A publishing, retrying or paused package shows that instead, a paused one no longer hides the others or stops the *Get new revisions* ring, and a line says how many packages changed while the app was closed. The card updates as soon as a package's state changes (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
 
 ### Fixed
 

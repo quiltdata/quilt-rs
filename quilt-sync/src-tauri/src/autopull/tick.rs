@@ -690,10 +690,12 @@ async fn walk_locked<M: QuiltModel>(
     Ok(status)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct BackoffState {
     pub next_attempt: Instant,
     pub consecutive_failures: u32,
+    /// What the last attempt failed on, for the Autosync card.
+    pub error: String,
 }
 
 // 2, 4, 8, 16, 32, 64 s, then capped.
@@ -714,11 +716,14 @@ fn bump_backoff(
     backoff: &mut BTreeMap<Namespace, BackoffState>,
     namespace: &Namespace,
     now: Instant,
+    error: String,
 ) {
     let entry = backoff.entry(namespace.clone()).or_insert(BackoffState {
         next_attempt: now,
         consecutive_failures: 0,
+        error: String::new(),
     });
+    entry.error = error;
     entry.consecutive_failures = entry.consecutive_failures.saturating_add(1);
     entry.next_attempt = now + backoff_duration(entry.consecutive_failures);
 }
@@ -940,7 +945,11 @@ pub(crate) async fn sync_package(
         }
         Err(WatchError::LoginRequired(host)) => {
             // Backoff until the user re-auths; the Ok arm clears it.
-            bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
+            let error = host.as_ref().map_or_else(
+                || "Sign-in required".to_string(),
+                |host| format!("Sign in to {host}"),
+            );
+            bump_backoff(&mut *inner.backoff.write().await, &namespace, now, error);
             // The episode is per *deployment*, not per package: one expired
             // session blocks every package on that host, and they arrive one
             // per loop iteration. Asking whether any other namespace is
@@ -964,13 +973,19 @@ pub(crate) async fn sync_package(
             pause(inner, &namespace, origin, reason).await;
         }
         Err(WatchError::Transient(err)) => {
-            bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
+            bump_backoff(
+                &mut *inner.backoff.write().await,
+                &namespace,
+                now,
+                err.to_string(),
+            );
             warn!("autosync: transient error for {namespace}: {err}");
             // Transient: don't touch the aggregator's error map — a
             // network blip should not flip the tray to Error. The
             // next tick either clears or escalates.
         }
     }
+    inner.reporter.report_autosync_changed();
     Pass::Done
 }
 
@@ -998,6 +1013,7 @@ pub(crate) async fn pause(
     inner
         .reporter
         .report_paused(namespace, origin, reason.clone());
+    inner.reporter.report_autosync_changed();
     // Heuristic status from the refusal reason — flow::pull /
     // flow::publish don't expose the post-attempt state
     // directly. The string `"error"` is **reserved** for "we

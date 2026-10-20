@@ -23,14 +23,16 @@ use std::time::Duration;
 
 use leptos::prelude::*;
 
+use super::package_autosync::PublishCard;
+use super::package_autosync::publish_detail;
+use super::package_autosync::publish_trailing;
 use crate::commands;
+use crate::commands::AutosyncStateData;
 use crate::commands::MainPageWatcherData;
 use crate::commands::ToggleActivityData;
 use crate::commands::ToggleStateData;
 use crate::kit::Card;
 use crate::kit::Countdown;
-use crate::kit::StateLabel;
-use crate::kit::StateTone;
 use crate::kit::ToggleRow;
 use crate::kit::ToggleRowSkeleton;
 
@@ -113,27 +115,42 @@ fn delay_until(deadline: Option<f64>, now: f64) -> Option<Duration> {
     ))
 }
 
-/// The trailing slot: a ring while the machinery is counting down, the caller's
-/// idle words while it has nothing to do, and `Paused` when it stopped.
-///
-/// `Attention`, not `Danger`: a pause is a state the user can clear, and every
-/// reason's fix is already some queue row's action.
-fn trailing(toggle: &ToggleStateData, title: String, idle: &'static str, repeat: bool) -> AnyView {
+/// The pull's trailing slot: a ring while the next check counts down,
+/// `not checking` while the toggle is off.
+fn pull_trailing(toggle: &ToggleStateData, title: String) -> AnyView {
     match toggle.activity {
         ToggleActivityData::Armed => view! {
             <Countdown
                 deadline=toggle.deadline
                 interval=toggle.interval_ms
                 title=title
-                repeat=repeat
+                repeat=true
             />
         }
         .into_any(),
-        ToggleActivityData::Idle => view! { {idle} }.into_any(),
-        ToggleActivityData::Paused => {
-            view! { <StateLabel tone=StateTone::Attention>"Paused"</StateLabel> }.into_any()
-        }
+        ToggleActivityData::Idle => view! { "not checking" }.into_any(),
     }
+}
+
+/// The soonest moment the payload goes stale: the next check, or a package's
+/// deadline or next try still ahead. A deadline already past is left to the
+/// watcher's change event.
+fn next_deadline(data: &MainPageWatcherData, now: f64) -> Option<f64> {
+    let packages = data
+        .publish
+        .packages
+        .iter()
+        .filter_map(|p| match p.state {
+            AutosyncStateData::Waiting { publish_at, .. } => Some(publish_at),
+            AutosyncStateData::Retrying { next_try_at, .. } => Some(next_try_at),
+            _ => None,
+        })
+        .filter(|at| *at > now);
+    data.pull
+        .deadline
+        .into_iter()
+        .chain(packages)
+        .min_by(f64::total_cmp)
 }
 
 /// The card, on one payload. Split from [`AutosyncCard`] so it can be tested
@@ -147,23 +164,20 @@ fn AutosyncBody(data: MainPageWatcherData, reload: Trigger) -> impl IntoView {
     let publish_checked = RwSignal::new(data.publish.enabled);
     let pull_every = human_interval(data.pull.interval_ms);
     let publish_after = human_interval(data.publish.interval_ms);
+    let card = PublishCard::from_payload(&data.publish);
 
     // The only clock in this card. Not an interval: `Countdown` draws itself from
     // CSS and needs a correct deadline, not a tick — so the single thing the UI
-    // must do is ask again when this deadline expires. The earlier of the two
-    // deadlines, because whichever expires first is the one that makes the payload
-    // stale.
+    // must do is ask again when the earliest deadline expires.
     //
     // One `set_timeout` per body, and a body is rebuilt per payload, so the
     // handle's lifetime is the deadline's lifetime. `on_cleanup` clears it when the
     // payload is replaced or the page unmounts — the same shape
     // `components/set_remote_popup.rs` uses for its debounce.
-    let armed = [&data.pull, &data.publish]
-        .into_iter()
-        .filter_map(|t| t.deadline)
-        .min_by(f64::total_cmp);
+    let now = js_sys::Date::now();
+    let armed = next_deadline(&data, now);
     let timer: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
-    if let Some(delay) = delay_until(armed, js_sys::Date::now())
+    if let Some(delay) = delay_until(armed, now)
         && let Ok(handle) = set_timeout_with_handle(move || reload.notify(), delay)
     {
         timer.set_value(Some(handle));
@@ -219,11 +233,9 @@ fn AutosyncBody(data: MainPageWatcherData, reload: Trigger) -> impl IntoView {
                 // the behaviour the comment there records replacing.
                 sublabel=format!("Every {pull_every}, keeping any local changes")
                 checked=pull_checked
-                trailing=trailing(
+                trailing=pull_trailing(
                     &data.pull,
                     format!("Checks for new revisions every {pull_every}"),
-                    "not checking",
-                    true,
                 )
             />
             <ToggleRow
@@ -235,15 +247,15 @@ fn AutosyncBody(data: MainPageWatcherData, reload: Trigger) -> impl IntoView {
                 // one publish, not four.
                 sublabel=format!("After {publish_after} of inactivity")
                 checked=publish_checked
-                trailing=trailing(
-                    &data.publish,
+                trailing=publish_trailing(
+                    &card,
+                    data.publish.interval_ms,
                     // Matches the sublabel above rather than restating the rule a
                     // second way: two phrasings of one condition is how they
                     // drift apart.
-                    format!("Publishes after {publish_after} of inactivity"),
-                    "nothing to publish",
-                    false,
+                    &format!("Publishes after {publish_after} of inactivity"),
                 )
+                detail=view! { {publish_detail(&card)} }.into_any()
             />
         </Card>
     }
@@ -262,7 +274,8 @@ pub(super) fn autosync_skeleton() -> AnyView {
     .into_any()
 }
 
-/// Refetch when the window becomes visible again.
+/// Refetch when the window becomes visible again, when the watcher says a
+/// package's state may have changed, and when a transfer starts or ends.
 ///
 /// Split into its own component so it can be mounted alone in a test, and kept out
 /// of [`AutosyncBody`] because the body is replaced on every payload while this
@@ -278,7 +291,19 @@ fn AutosyncListener(reload: Trigger) -> impl IntoView {
             reload.notify();
         }
     });
-    on_cleanup(move || handle.remove());
+    let changed = crate::tauri::listen::<serde::de::IgnoredAny>(
+        commands::AUTOSYNC_CHANGED_EVENT,
+        move |_| reload.notify(),
+    );
+    let activity = crate::tauri::listen::<serde::de::IgnoredAny>(
+        commands::AUTOPULL_ACTIVITY_EVENT,
+        move |_| reload.notify(),
+    );
+    on_cleanup(move || {
+        handle.remove();
+        drop(changed);
+        drop(activity);
+    });
 }
 
 /// The card's payload resource, and the two triggers that refetch it.
@@ -357,6 +382,40 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
+    use crate::commands::PackageAutosyncData;
+    use crate::commands::PausedReasonData;
+    use crate::commands::PublishStateData;
+
+    fn publish(enabled: bool, packages: Vec<(&str, AutosyncStateData)>) -> PublishStateData {
+        PublishStateData {
+            enabled,
+            interval_ms: 300_000.0,
+            packages: packages
+                .into_iter()
+                .map(|(namespace, state)| PackageAutosyncData {
+                    namespace: namespace.try_into().unwrap(),
+                    state,
+                })
+                .collect(),
+        }
+    }
+
+    fn waiting_in_ms(ms: f64, changed_while_closed: bool) -> AutosyncStateData {
+        AutosyncStateData::Waiting {
+            publish_at: js_sys::Date::now() + ms,
+            changed_while_closed,
+        }
+    }
+
+    fn pull_idle() -> ToggleStateData {
+        ToggleStateData {
+            enabled: true,
+            activity: ToggleActivityData::Idle,
+            deadline: None,
+            interval_ms: 60_000.0,
+        }
+    }
+
     /// Pull armed `ms` from now, publish with nothing to do.
     fn armed_in_ms(ms: f64) -> MainPageWatcherData {
         MainPageWatcherData {
@@ -366,13 +425,18 @@ mod tests {
                 deadline: Some(js_sys::Date::now() + ms),
                 interval_ms: 60_000.0,
             },
-            publish: ToggleStateData {
-                enabled: true,
-                activity: ToggleActivityData::Idle,
-                deadline: None,
-                interval_ms: 300_000.0,
-            },
+            publish: publish(true, vec![]),
             paused: Vec::new(),
+        }
+    }
+
+    fn with_packages(
+        enabled: bool,
+        packages: Vec<(&str, AutosyncStateData)>,
+    ) -> MainPageWatcherData {
+        MainPageWatcherData {
+            publish: publish(enabled, packages),
+            ..armed_in_ms(23_000.0)
         }
     }
 
@@ -393,21 +457,19 @@ mod tests {
         armed_in_ms(23_000.0)
     }
 
-    /// Both directions stopped, and both settings still ON — §4.2's whole point.
+    /// One paused package and no clock running: nothing schedules a refetch.
     fn paused_payload() -> MainPageWatcherData {
         MainPageWatcherData {
-            pull: ToggleStateData {
-                enabled: true,
-                activity: ToggleActivityData::Paused,
-                deadline: None,
-                interval_ms: 60_000.0,
-            },
-            publish: ToggleStateData {
-                enabled: true,
-                activity: ToggleActivityData::Paused,
-                deadline: None,
-                interval_ms: 300_000.0,
-            },
+            pull: pull_idle(),
+            publish: publish(
+                true,
+                vec![(
+                    "team/plate-07",
+                    AutosyncStateData::Paused {
+                        reason: PausedReasonData::Diverged,
+                    },
+                )],
+            ),
             paused: Vec::new(),
         }
     }
@@ -423,15 +485,83 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn a_paused_toggle_draws_no_ring_and_offers_nothing_to_press() {
+    fn a_paused_package_sits_beside_a_waiting_one_and_offers_nothing_to_press() {
         // §5: the card REPORTS, the queue acts. Every `PausedReason` is user-fixable
         // and its fix is already some queue row's action, so there is no [Resume]
-        // here or anywhere — and v1's "push manually to resume" must not reappear.
-        let el = mount(|| view! { <AutosyncBody data=paused_payload() reload=Trigger::new() /> });
+        // here or anywhere.
+        let data = with_packages(
+            true,
+            vec![
+                (
+                    "team/plate-07",
+                    AutosyncStateData::Paused {
+                        reason: PausedReasonData::Diverged,
+                    },
+                ),
+                ("team/plate-08", waiting_in_ms(60_000.0, false)),
+            ],
+        );
+        let el = mount(move || view! { <AutosyncBody data=data.clone() reload=Trigger::new() /> });
         let text = el.text_content().unwrap();
         assert!(text.contains("Paused"), "got: {text}");
-        assert_eq!(rings(&el), 0, "a stopped countdown must not keep counting");
+        assert!(text.contains("team/plate-07"), "got: {text}");
+        assert!(text.contains("team/plate-08"), "got: {text}");
+        assert!(!text.contains("nothing to publish"), "got: {text}");
+        assert_eq!(rings(&el), 2, "the pull's ring and the waiting package's");
         assert!(!text.to_lowercase().contains("resume"), "got: {text}");
+    }
+
+    #[wasm_bindgen_test]
+    fn publishing_off_reads_off_whatever_the_packages_hold() {
+        let data = with_packages(false, vec![("team/a", AutosyncStateData::Off)]);
+        let el = mount(move || view! { <AutosyncBody data=data.clone() reload=Trigger::new() /> });
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Off"), "got: {text}");
+        assert!(!text.contains("team/a"), "got: {text}");
+        assert_eq!(rings(&el), 1, "only the pull's ring");
+    }
+
+    #[wasm_bindgen_test]
+    fn the_stack_names_three_and_counts_the_rest() {
+        let data = with_packages(
+            true,
+            (1..=5)
+                .map(|i| {
+                    (
+                        ["team/a", "team/b", "team/c", "team/d", "team/e"][i - 1],
+                        waiting_in_ms(f64::from(u32::try_from(i).unwrap()) * 60_000.0, false),
+                    )
+                })
+                .collect(),
+        );
+        let el = mount(move || view! { <AutosyncBody data=data.clone() reload=Trigger::new() /> });
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("team/a") && text.contains("team/c"),
+            "got: {text}"
+        );
+        assert!(!text.contains("team/d"), "got: {text}");
+        assert!(text.contains("and 2 more"), "got: {text}");
+        assert_eq!(rings(&el), 4, "the pull's ring and three waits");
+    }
+
+    #[wasm_bindgen_test]
+    fn the_launch_line_counts_only_proved_changes() {
+        let data = with_packages(
+            true,
+            vec![
+                ("team/a", waiting_in_ms(60_000.0, true)),
+                ("team/b", waiting_in_ms(90_000.0, false)),
+            ],
+        );
+        let el = mount(move || view! { <AutosyncBody data=data.clone() reload=Trigger::new() /> });
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains(
+                "1 package changed while QuiltSync was closed; its wait started at launch."
+            ),
+            "got: {text}"
+        );
     }
 
     #[wasm_bindgen_test]
@@ -478,6 +608,39 @@ mod tests {
         assert_eq!(human_interval(30_000.0), "30s");
         assert_eq!(human_interval(300_000.0), "5 min");
         assert_eq!(human_interval(90_000.0), "90s");
+    }
+
+    #[test]
+    fn the_payload_goes_stale_at_its_soonest_deadline_still_ahead() {
+        let data = MainPageWatcherData {
+            pull: ToggleStateData {
+                deadline: Some(5_000.0),
+                activity: ToggleActivityData::Armed,
+                ..pull_idle()
+            },
+            publish: publish(
+                true,
+                vec![
+                    (
+                        "team/due",
+                        AutosyncStateData::Waiting {
+                            publish_at: 500.0,
+                            changed_while_closed: false,
+                        },
+                    ),
+                    (
+                        "team/next",
+                        AutosyncStateData::Retrying {
+                            error: String::new(),
+                            next_try_at: 3_000.0,
+                        },
+                    ),
+                ],
+            ),
+            paused: Vec::new(),
+        };
+        assert_eq!(next_deadline(&data, 1_000.0), Some(3_000.0));
+        assert_eq!(next_deadline(&paused_payload(), 1_000.0), None);
     }
 
     #[test]

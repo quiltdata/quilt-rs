@@ -6,12 +6,14 @@
 //! promises no minute. The card says `nothing to publish` only when no package has
 //! changes, and a paused package sits in the stack beside the others.
 //!
-//! Only the gallery draws this so far. The watcher payload still carries one
-//! deadline per toggle, and [`super::autosync`] draws the card from that.
+//! The main page's card builds it from the watcher's payload; the gallery from
+//! fake data.
 
 use leptos::prelude::*;
 
+use crate::commands::AutosyncStateData;
 use crate::commands::PausedReasonData;
+use crate::commands::PublishStateData;
 use crate::kit::Countdown;
 use crate::kit::Spinner;
 use crate::kit::StateLabel;
@@ -47,6 +49,31 @@ pub enum PackageAutosync {
     },
     /// The package has changes and the publish toggle is off.
     Off,
+}
+
+impl From<&AutosyncStateData> for PackageAutosync {
+    fn from(state: &AutosyncStateData) -> Self {
+        match state {
+            AutosyncStateData::Waiting {
+                publish_at,
+                changed_while_closed,
+            } => Self::Waiting {
+                publish_at: *publish_at,
+                changed_while_closed: *changed_while_closed,
+            },
+            AutosyncStateData::Publishing => Self::Publishing,
+            AutosyncStateData::Retrying { error, next_try_at } => Self::Retrying {
+                error: error.clone(),
+                next_try_at: *next_try_at,
+            },
+            AutosyncStateData::Paused { reason } => Self::Paused {
+                reason: reason.clone(),
+            },
+            AutosyncStateData::Off => Self::Off,
+            // Nothing it could say would be true.
+            AutosyncStateData::Unrecognised => Self::NoChanges,
+        }
+    }
 }
 
 /// What one package's mark in the stack draws.
@@ -135,6 +162,16 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 }
 
 impl PublishCard {
+    /// The card for the watcher's publish payload.
+    pub fn from_payload(publish: &PublishStateData) -> Self {
+        let packages: Vec<(String, PackageAutosync)> = publish
+            .packages
+            .iter()
+            .map(|p| (p.namespace.to_string(), PackageAutosync::from(&p.state)))
+            .collect();
+        Self::of(publish.enabled, &packages)
+    }
+
     pub fn of(enabled: bool, packages: &[(String, PackageAutosync)]) -> Self {
         if !enabled {
             return Self::Off;
@@ -393,6 +430,93 @@ mod tests {
             Some("1 package changed while QuiltSync was closed; its wait started at launch.")
         );
         assert_eq!(card(true, vec![waiting(1.0)]).startup_sentence(), None);
+    }
+
+    fn payload(enabled: bool, states: Vec<(&str, AutosyncStateData)>) -> PublishStateData {
+        PublishStateData {
+            enabled,
+            interval_ms: 60_000.0,
+            packages: states
+                .into_iter()
+                .map(|(namespace, state)| crate::commands::PackageAutosyncData {
+                    namespace: namespace.try_into().unwrap(),
+                    state,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn the_payload_maps_each_state_onto_its_mark() {
+        let card = PublishCard::from_payload(&payload(
+            true,
+            vec![
+                (
+                    "user/closed",
+                    AutosyncStateData::Waiting {
+                        publish_at: 9.0,
+                        changed_while_closed: true,
+                    },
+                ),
+                (
+                    "user/stuck",
+                    AutosyncStateData::Paused {
+                        reason: PausedReasonData::Diverged,
+                    },
+                ),
+                ("user/busy", AutosyncStateData::Publishing),
+                (
+                    "user/flaky",
+                    AutosyncStateData::Retrying {
+                        error: "Could not reach S3".to_string(),
+                        next_try_at: 1.0,
+                    },
+                ),
+                ("user/odd", AutosyncStateData::Unrecognised),
+            ],
+        ));
+        let PublishCard::Stack {
+            items,
+            more,
+            first_seen,
+        } = &card
+        else {
+            panic!("expected a stack, got {card:?}");
+        };
+        assert_eq!(
+            items,
+            &[
+                StackItem {
+                    namespace: "user/busy".to_string(),
+                    mark: Mark::Publishing,
+                },
+                StackItem {
+                    namespace: "user/closed".to_string(),
+                    mark: Mark::Ring { publish_at: 9.0 },
+                },
+                StackItem {
+                    namespace: "user/flaky".to_string(),
+                    mark: Mark::Retrying {
+                        hint: "Could not reach S3. Tries again soon.".to_string(),
+                    },
+                },
+            ]
+        );
+        assert_eq!(*more, 1, "the paused one, past the cap");
+        assert_eq!(*first_seen, 1);
+    }
+
+    #[test]
+    fn the_payload_with_publishing_off_reads_off() {
+        let card = PublishCard::from_payload(&payload(
+            false,
+            vec![("user/changed", AutosyncStateData::Off)],
+        ));
+        assert_eq!(card, PublishCard::Off);
+        assert_eq!(
+            PublishCard::from_payload(&payload(true, vec![])),
+            PublishCard::NothingToPublish
+        );
     }
 
     #[test]
