@@ -302,6 +302,32 @@ mod tests {
         Ok(())
     }
 
+    /// A new file in a folder the package has files in needs the folder's
+    /// line, which brings back the folder's other new files too.
+    #[test(tokio::test)]
+    async fn a_new_file_in_a_tracked_folder_brings_back_the_folder() {
+        let package = Package::new(&[(".git/config", 3), (".git/HEAD", 5), (".git/refs/x", 7)]);
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from(".git/config"), PathState::default());
+        let preview = preview_stop_ignoring(
+            &package.paths,
+            &Manifest::default(),
+            &lineage,
+            &package.home,
+            Path::new(".git/HEAD"),
+            false,
+            Scope::Package,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(preview.lines, vec!["!/.git/".to_string()]);
+        // The tracked file was never ignored, so it is not counted.
+        assert_eq!((preview.files, preview.bytes), (2, 12));
+    }
+
     /// A tracked file replaced by a folder of the same name: the walk checks
     /// the folder against tracked folders only.
     #[test]
