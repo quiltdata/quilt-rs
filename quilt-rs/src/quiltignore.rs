@@ -467,7 +467,16 @@ pub fn remove_lines(path: &Path, lines: &[String]) -> Res {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(err) => return Err(read_error(path, err)),
     };
-    let kept: String = contents
+    let kept = without_lines(&contents, lines);
+    if kept == contents {
+        return Ok(());
+    }
+    replace_contents(path, &kept)
+}
+
+/// `contents` without the lines that read as one of `lines`.
+fn without_lines(contents: &str, lines: &[String]) -> String {
+    contents
         .split_inclusive('\n')
         .enumerate()
         .filter(|(number, line)| {
@@ -480,11 +489,7 @@ pub fn remove_lines(path: &Path, lines: &[String]) -> Res {
             !glob_text(line).is_some_and(|text| lines.iter().any(|l| l == text))
         })
         .map(|(_, line)| line)
-        .collect();
-    if kept == contents {
-        return Ok(());
-    }
-    replace_contents(path, &kept)
+        .collect()
 }
 
 /// Write `contents` beside the file at `path` and move it over the file, so
@@ -550,7 +555,8 @@ pub fn default_rules(user_file: &Path) -> Res<Vec<DefaultRule>> {
 
 /// Make the user-wide file at `user_file` turn off exactly the built-in
 /// rules in `off`: the `!rule` lines of the others come out, and the
-/// missing ones go at the end.
+/// missing ones go at the end. The file is replaced once, so a failure
+/// leaves it as it was.
 pub fn set_default_rules(user_file: &Path, off: &[&str]) -> Res {
     if let Some(unknown) = off.iter().find(|rule| !DEFAULT_RULES.contains(rule)) {
         return Err(Error::Fs(FsError::Write {
@@ -566,18 +572,36 @@ pub fn set_default_rules(user_file: &Path, off: &[&str]) -> Res {
         .filter(|rule| !off.contains(rule))
         .map(|rule| off_line(rule))
         .collect();
-    remove_lines(user_file, &on)?;
-    let lines = rule_lines(user_file)?;
+    let contents = match std::fs::read_to_string(user_file) {
+        Ok(contents) => Some(contents),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => return Err(read_error(user_file, err)),
+    };
+    let kept = without_lines(contents.as_deref().unwrap_or(""), &on);
+    let lines: Vec<&str> = kept
+        .trim_start_matches('\u{feff}')
+        .lines()
+        .filter_map(glob_text)
+        .collect();
     let missing: Vec<String> = DEFAULT_RULES
         .iter()
         .filter(|rule| off.contains(rule))
         .map(|rule| off_line(rule))
-        .filter(|line| !lines.contains(line))
+        .filter(|line| !lines.contains(&line.as_str()))
         .collect();
-    if missing.is_empty() {
+    let next = appended(&kept, &missing);
+    if contents.as_deref() == Some(next.as_str()) || (contents.is_none() && next.is_empty()) {
         return Ok(());
     }
-    append_lines(user_file, &missing)
+    if let Some(dir) = user_file.parent() {
+        std::fs::create_dir_all(dir).map_err(|source| {
+            Error::Fs(FsError::DirectoryCreate {
+                path: dir.to_path_buf(),
+                source,
+            })
+        })?;
+    }
+    replace_contents(user_file, &next)
 }
 
 /// Check whether the given path should be ignored.
@@ -1207,6 +1231,13 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             "# mine\n*.tmp\n!.DS_Store\n!.*/\n"
+        );
+
+        set_default_rules(&path, &["*.pem"]).unwrap();
+        assert_eq!(off(&path), vec!["*.pem"], "two on and one off in one save");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# mine\n*.tmp\n!*.pem\n"
         );
 
         set_default_rules(&path, &[".*/"]).unwrap();
