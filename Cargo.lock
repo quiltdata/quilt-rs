@@ -5902,6 +5902,7 @@ dependencies = [
  "chrono",
  "dotenv",
  "dunce",
+ "futures-util",
  "mixpanel-rs",
  "mockall",
  "notify",

@@ -168,18 +168,14 @@ fn main() {
                 reporter.clone(),
                 last_change,
             );
-            fswatcher::spawn(
-                app.handle(),
-                fswatcher_settings.clone(),
-                autosync_settings.clone(),
-                &reporter,
-            );
             autopull::activity::spawn_forwarder(app.handle().clone(), watcher.subscribe_activity());
             app.manage(publish_settings);
             app.manage(autosync_settings);
-            app.manage(fswatcher_settings);
             app.manage(experimental_settings);
             app.manage(watcher);
+            // After the watcher is managed: the reactor reads its shared state.
+            fswatcher::spawn(app.handle(), fswatcher_settings.clone(), &reporter);
+            app.manage(fswatcher_settings);
             app.manage(quit::QuitGate::default());
 
             // The tray controller needs the autosync settings (for

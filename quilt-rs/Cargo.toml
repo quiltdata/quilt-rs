@@ -58,7 +58,7 @@ quilt-uri = { path = "../quilt-uri", version = "0.4.2" }
 url.workspace = true
 uuid.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]

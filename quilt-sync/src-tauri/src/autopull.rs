@@ -26,6 +26,7 @@ pub mod reporter;
 pub mod settings;
 pub mod status;
 pub mod tick;
+pub mod watched;
 
 pub use reporter::PackageStatusEvent;
 pub use reporter::StatusReporter;
@@ -118,6 +119,9 @@ pub(crate) struct WatcherInner {
     pub aggregator: Arc<SyncTrayAggregator>,
     pub clocks: Clocks,
     pub last_change: last_change::LastChange,
+    /// The folder watcher's walks, which the tick reuses for the packages it
+    /// vouches for.
+    pub walks: watched::WatchedWalks,
 }
 
 /// Everything the main page's watcher payload is derived from, read in one call.
@@ -196,6 +200,7 @@ impl Watcher {
             reporter,
             aggregator,
             clocks: Clocks::default(),
+            walks: crate::autopull::watched::WatchedWalks::default(),
             last_change,
         });
         // Its own task: a package whose catalog is slow to answer its host
@@ -471,6 +476,7 @@ impl Watcher {
                 reporter,
                 aggregator,
                 clocks: Clocks::default(),
+                walks: crate::autopull::watched::WatchedWalks::default(),
                 last_change: last_change::LastChange::new(
                     crate::quilt::state_store::PackageStateStore::in_memory(),
                 ),
@@ -591,9 +597,7 @@ pub(crate) async fn walk_every_package(model: &impl QuiltModel, inner: &WatcherI
             model,
             inner.reporter.as_ref(),
             Some(inner),
-            crate::fswatcher::subscriber::MappingSignal {
-                namespace: package.namespace,
-            },
+            crate::fswatcher::subscriber::MappingSignal::changed(package.namespace),
         )
         .await;
     }
@@ -626,6 +630,7 @@ pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
         reporter: Arc::new(reporter::LogReporter),
         aggregator: Arc::new(status::SyncTrayAggregator::new(tx)),
         clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
         last_change: last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -666,6 +671,9 @@ mod tests {
                     .create_installed_package(ns.clone()),
             ))
         });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|_| Ok(crate::quilt::lineage::PackageLineage::default()));
         model.expect_recompute_local_status().returning(|_, _| {
             let mut changes = BTreeMap::new();
             changes.insert(
