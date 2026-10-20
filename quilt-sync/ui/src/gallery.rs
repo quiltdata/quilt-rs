@@ -73,6 +73,7 @@ mod gallery {
     pub mod load_failure;
     pub mod name_tooltip;
     pub mod old_revisions_inline;
+    pub mod package_autosync;
     pub mod package_header;
     pub mod packages;
     pub mod page;
@@ -270,6 +271,11 @@ const ENTRIES: &[Entry] = &[
         Scenes / "Main page",
         "A strip that could not load",
         state_strip::StripErrorScene
+    ),
+    entry!(
+        Scenes / "Main page",
+        "Autosync per package",
+        package_autosync::PerPackageScene
     ),
     entry!(
         Scenes / "Main page",
