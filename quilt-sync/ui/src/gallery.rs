@@ -73,6 +73,7 @@ mod gallery {
     pub mod load_failure;
     pub mod name_tooltip;
     pub mod old_revisions_inline;
+    pub mod package_autosync;
     pub mod package_header;
     pub mod packages;
     pub mod page;
@@ -244,6 +245,11 @@ const ENTRIES: &[Entry] = &[
     entry!(Core, "ToggleRow", toggle_row::ToggleRowStories),
     entry!(Core, "Tooltip", tooltip::TooltipStories),
     entry!(Core, "TwoColumns", two_columns::TwoColumnsStories),
+    entry!(
+        Combined,
+        "Autosync on package rows",
+        package_autosync::RowNoteStories
+    ),
     entry!(Combined, "File list", file_list::FileListStories),
     entry!(
         Combined,
@@ -270,6 +276,11 @@ const ENTRIES: &[Entry] = &[
         Scenes / "Main page",
         "A strip that could not load",
         state_strip::StripErrorScene
+    ),
+    entry!(
+        Scenes / "Main page",
+        "Autosync per package",
+        package_autosync::PerPackageScene
     ),
     entry!(
         Scenes / "Main page",
