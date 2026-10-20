@@ -128,6 +128,7 @@ async fn run_passes(
                     .write()
                     .await
                     .remove(&namespace);
+                inner.reporter.report_autosync_changed();
             }
             Pass::Done => {}
         }

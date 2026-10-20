@@ -1006,22 +1006,16 @@ pub struct MainPagePackageData {
     pub role_switch_host: Option<String>,
 }
 
-/// Whether a direction's machinery is counting down, waiting, or stopped.
-///
-/// A closed set with **no catch-all**, unlike [`PausedReasonData`]: these three
-/// are the whole vocabulary of the toggle's trailing slot (§4.2), a fourth would
-/// be a design change rather than a wire addition, and `#[serde(other)]` does
-/// not apply to a plainly-serialized unit enum anyway. Drift is caught by
+/// Whether the pull's next check is counting down. Drift is caught by
 /// `main_page_watcher_data_wire_form_is_verbatim`.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ToggleActivityData {
     Armed,
     Idle,
-    Paused,
 }
 
-/// UI-side mirror of the backend's `ToggleState`.
+/// UI-side mirror of the backend's `ToggleState`, the pull direction.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToggleStateData {
@@ -1075,12 +1069,56 @@ pub struct PausedPackageData {
     pub reason: PausedReasonData,
 }
 
+/// One package's autosync state. UI-side mirror of the backend's
+/// `AutosyncStateDto`; times are epoch milliseconds. `Unrecognised` lets a
+/// state added to the backend degrade instead of failing the payload.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum AutosyncStateData {
+    Waiting {
+        publish_at: f64,
+        changed_while_closed: bool,
+    },
+    Publishing,
+    Retrying {
+        error: String,
+        next_try_at: f64,
+    },
+    Paused {
+        reason: PausedReasonData,
+    },
+    Off,
+    #[serde(other)]
+    Unrecognised,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageAutosyncData {
+    pub namespace: Namespace,
+    pub state: AutosyncStateData,
+}
+
+/// The publish direction: the setting, the wait, and each package with
+/// something to show. A package that isn't listed has no changes.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishStateData {
+    pub enabled: bool,
+    pub interval_ms: f64,
+    pub packages: Vec<PackageAutosyncData>,
+}
+
 /// Payload 3: the watcher's own state. Returned by `get_main_page_watcher`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPageWatcherData {
     pub pull: ToggleStateData,
-    pub publish: ToggleStateData,
+    pub publish: PublishStateData,
     /// Read only by the wire-form test. The queue reads the resolved package
     /// state, never this pause map. A pause with no state of its own, such as a
     /// workflow rejection, reaches the queue as `PackageState::Paused`, which the
@@ -1093,6 +1131,10 @@ pub struct MainPageWatcherData {
 pub async fn get_main_page_watcher() -> Result<MainPageWatcherData, String> {
     tauri::invoke_unit("get_main_page_watcher").await
 }
+
+/// A package's autosync state may have changed: read the watcher's payload
+/// again. Carries nothing. Kept in lockstep with the backend.
+pub const AUTOSYNC_CHANGED_EVENT: &str = "autosync-changed";
 
 /// One host in the Accounts card, as it arrives.
 ///
@@ -2588,38 +2630,64 @@ mod tests {
 
     /// The mirror struct must deserialize the exact JSON the backend's
     /// `quilt_sync::commands::main_page::the_watcher_payload_serializes_the_wire_shape`
-    /// pins. Character-for-character: a literal the backend does not emit looks like
-    /// a guard and proves nothing (plan 2's Fix 2).
+    /// pins.
     #[test]
     fn main_page_watcher_data_wire_form_is_verbatim() {
+        use super::AutosyncStateData;
         let data = serde_json::from_str::<super::MainPageWatcherData>(
-            r#"{"pull":{"enabled":true,"activity":"paused","deadline":null,"intervalMs":30000.0},"publish":{"enabled":true,"activity":"paused","deadline":null,"intervalMs":300000.0},"paused":[{"namespace":"team/plate-07","reason":{"kind":"pull_conflict","files":["a.csv","b.csv"]}}]}"#,
+            r#"{"pull":{"enabled":true,"activity":"armed","deadline":1754500030000.0,"intervalMs":30000.0},"publish":{"enabled":true,"intervalMs":300000.0,"packages":[{"namespace":"team/a","state":{"kind":"waiting","publishAt":1754500030000.0,"changedWhileClosed":true}},{"namespace":"team/b","state":{"kind":"publishing"}},{"namespace":"team/c","state":{"kind":"retrying","error":"Could not reach S3","nextTryAt":1754500030000.0}},{"namespace":"team/plate-07","state":{"kind":"paused","reason":{"kind":"pull_conflict","files":["a.csv","b.csv"]}}},{"namespace":"team/e","state":{"kind":"off"}}]},"paused":[{"namespace":"team/plate-07","reason":{"kind":"pull_conflict","files":["a.csv","b.csv"]}}]}"#,
         )
         .unwrap();
         assert!(data.pull.enabled);
-        assert_eq!(data.pull.activity, super::ToggleActivityData::Paused);
-        assert_eq!(data.pull.deadline, None);
+        assert_eq!(data.pull.activity, super::ToggleActivityData::Armed);
+        assert_eq!(data.pull.deadline, Some(1_754_500_030_000.0));
         assert!((data.pull.interval_ms - 30_000.0).abs() < f64::EPSILON);
         assert!((data.publish.interval_ms - 300_000.0).abs() < f64::EPSILON);
+        let states: Vec<_> = data
+            .publish
+            .packages
+            .iter()
+            .map(|p| (p.namespace.to_string(), p.state.clone()))
+            .collect();
+        let conflict = super::PausedReasonData::PullConflict {
+            files: vec!["a.csv".to_string(), "b.csv".to_string()],
+        };
+        assert_eq!(
+            states,
+            [
+                (
+                    "team/a".to_string(),
+                    AutosyncStateData::Waiting {
+                        publish_at: 1_754_500_030_000.0,
+                        changed_while_closed: true,
+                    }
+                ),
+                ("team/b".to_string(), AutosyncStateData::Publishing),
+                (
+                    "team/c".to_string(),
+                    AutosyncStateData::Retrying {
+                        error: "Could not reach S3".to_string(),
+                        next_try_at: 1_754_500_030_000.0,
+                    }
+                ),
+                (
+                    "team/plate-07".to_string(),
+                    AutosyncStateData::Paused {
+                        reason: conflict.clone()
+                    }
+                ),
+                ("team/e".to_string(), AutosyncStateData::Off),
+            ]
+        );
         assert_eq!(data.paused.len(), 1);
-        assert_eq!(data.paused[0].namespace.to_string(), "team/plate-07");
-        match &data.paused[0].reason {
-            super::PausedReasonData::PullConflict { files } => {
-                assert_eq!(files, &["a.csv".to_string(), "b.csv".to_string()]);
-            }
-            other => panic!("expected a pull conflict with two paths, got {other:?}"),
-        }
+        assert_eq!(data.paused[0].reason, conflict);
     }
 
     #[test]
-    fn an_armed_toggle_arrives_with_its_deadline() {
-        let data = serde_json::from_str::<super::MainPageWatcherData>(
-            r#"{"pull":{"enabled":true,"activity":"armed","deadline":1754500030000.0,"intervalMs":30000.0},"publish":{"enabled":false,"activity":"idle","deadline":null,"intervalMs":300000.0},"paused":[]}"#,
-        )
-        .unwrap();
-        assert_eq!(data.pull.activity, super::ToggleActivityData::Armed);
-        assert_eq!(data.pull.deadline, Some(1_754_500_030_000.0));
-        assert_eq!(data.publish.activity, super::ToggleActivityData::Idle);
+    fn an_unknown_package_state_degrades_instead_of_failing_the_payload() {
+        let state =
+            serde_json::from_str::<super::AutosyncStateData>(r#"{"kind":"thinking"}"#).unwrap();
+        assert_eq!(state, super::AutosyncStateData::Unrecognised);
     }
 
     #[test]

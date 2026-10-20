@@ -133,10 +133,31 @@ pub(crate) struct WatcherInner {
 
 impl WatcherInner {
     /// A deadline may have come earlier, or a package may have started
-    /// counting down: the publish timer reads them again.
+    /// counting down: the publish timer reads them again, and the window
+    /// reads the packages' states again.
     pub(crate) fn reschedule_publish(&self) {
         self.clocks.publish_timer.notify_one();
+        self.reporter.report_autosync_changed();
     }
+}
+
+/// One package's autosync state, for the main page's Autosync card. A package
+/// with no changes has none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PackageAutosync {
+    Waiting {
+        publish_at: DateTime<Utc>,
+        /// The restart check proved it changed while the app was closed.
+        changed_while_closed: bool,
+    },
+    Publishing,
+    Retrying {
+        error: String,
+        next_try_at: DateTime<Utc>,
+    },
+    Paused(PausedReason),
+    /// It has changes and publishing is off.
+    Off,
 }
 
 /// Everything the main page's watcher payload is derived from, read in one call.
@@ -152,10 +173,8 @@ pub struct WatcherFacts {
     /// Every paused namespace with its reason, from one read of the map.
     pub paused: Vec<(Namespace, PausedReason)>,
     pub next_pull_at: Option<DateTime<Utc>>,
-    /// The **earliest** arm time across every namespace waiting out its quiet
-    /// window — the next thing that will publish, which is what one countdown
-    /// can honestly represent. `None` when nothing is waiting.
-    pub publish_arm_at: Option<DateTime<Utc>>,
+    /// Each package with something to show, by namespace.
+    pub packages: Vec<(Namespace, PackageAutosync)>,
     /// The cadence the loop is actually sleeping: the one check interval.
     pub pull_interval: Duration,
     pub publish_interval: Duration,
@@ -431,6 +450,7 @@ impl Watcher {
             .write()
             .await
             .remove(namespace);
+        self.inner.reporter.report_autosync_changed();
     }
 
     /// Publishing was just turned on: every package with changes waits a full
@@ -457,20 +477,13 @@ impl Watcher {
     pub async fn main_page_facts(&self) -> WatcherFacts {
         let settings = self.inner.settings.read().await.clone();
         let wait = Duration::from_secs(settings.push.idle_timeout_secs);
-        let paused = self
-            .inner
-            .paused
-            .read()
-            .await
-            .iter()
-            .map(|(ns, reason)| (ns.clone(), reason.clone()))
-            .collect();
+        let paused: BTreeMap<Namespace, PausedReason> = self.inner.paused.read().await.clone();
         WatcherFacts {
             pull_enabled: settings.pull.enabled,
             publish_enabled: settings.push.enabled,
-            paused,
+            packages: package_states(&self.inner, &paused, settings.push.enabled, wait).await,
+            paused: paused.into_iter().collect(),
             next_pull_at: *self.inner.clocks.next_pull_at.read().await,
-            publish_arm_at: next_publish_at(&self.inner, wait).await,
             pull_interval: pull_cadence(&settings.pull),
             publish_interval: wait,
         }
@@ -566,27 +579,79 @@ pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
     *inner.clocks.next_pull_at.write().await = Some(Utc::now() + cadence);
 }
 
-/// The earliest deadline among the packages waiting to publish, with `wait` as
-/// it is now. `None` when nothing waits, and for a deadline already past: that
-/// package publishes at the next check, so there is nothing to count down to.
-pub(crate) async fn next_publish_at(inner: &WatcherInner, wait: Duration) -> Option<DateTime<Utc>> {
-    let waiting: Vec<Namespace> = inner
-        .clocks
-        .publish_waiting
-        .read()
-        .await
-        .iter()
-        .cloned()
-        .collect();
-    let now = SystemTime::now();
-    let mut next: Option<SystemTime> = None;
-    for namespace in &waiting {
-        let deadline = publish_deadline(inner.last_change.get(namespace).await, wait);
-        if let Some(at) = deadline.filter(|at| *at > now) {
-            next = Some(next.map_or(at, |cur| cur.min(at)));
-        }
+/// Each package's autosync state, with `wait` as it is now. The first that
+/// holds wins: publishing, paused, off (publishing off and changes found),
+/// retrying (in backoff with changes), waiting. Any other package is left out.
+///
+/// A package has changes when it counts down or has a last-change time: a
+/// failed publish takes it out of the countdown but keeps its time, and a walk
+/// that finds no changes deletes the time.
+pub(crate) async fn package_states(
+    inner: &WatcherInner,
+    paused: &BTreeMap<Namespace, PausedReason>,
+    push_enabled: bool,
+    wait: Duration,
+) -> Vec<(Namespace, PackageAutosync)> {
+    let publishing = inner
+        .aggregator
+        .activity()
+        .filter(|activity| activity.op == activity::ActivityOp::Publish)
+        .map(|activity| activity.namespace);
+    let waiting = inner.clocks.publish_waiting.read().await.clone();
+    let backoff = inner.backoff.read().await.clone();
+    let mut namespaces: BTreeSet<Namespace> =
+        inner.last_change.namespaces().await.into_iter().collect();
+    namespaces.extend(waiting.iter().cloned());
+    namespaces.extend(paused.keys().cloned());
+    namespaces.extend(backoff.keys().cloned());
+    namespaces.extend(publishing.clone());
+
+    let (now, wall) = (std::time::Instant::now(), Utc::now());
+    let mut states = Vec::new();
+    for namespace in namespaces {
+        let last_change = inner.last_change.get(&namespace).await;
+        let has_changes = waiting.contains(&namespace) || last_change.is_some();
+        let state = if publishing.as_ref() == Some(&namespace) {
+            PackageAutosync::Publishing
+        } else if let Some(reason) = paused.get(&namespace) {
+            PackageAutosync::Paused(reason.clone())
+        } else if !has_changes {
+            continue;
+        } else if !push_enabled {
+            PackageAutosync::Off
+        } else if let Some(failed) = backoff.get(&namespace) {
+            PackageAutosync::Retrying {
+                error: failed.error.clone(),
+                next_try_at: wall + failed.next_attempt.saturating_duration_since(now),
+            }
+        } else if waiting.contains(&namespace)
+            && let Some(at) = publish_deadline(last_change, wait)
+        {
+            PackageAutosync::Waiting {
+                publish_at: at.into(),
+                changed_while_closed: inner.last_change.changed_while_closed(&namespace),
+            }
+        } else {
+            continue;
+        };
+        states.push((namespace, state));
     }
-    next.map(DateTime::<Utc>::from)
+    states
+}
+
+/// The earliest deadline among the waiting packages, as the card would show it.
+#[cfg(test)]
+pub(crate) async fn next_publish_at(inner: &WatcherInner, wait: Duration) -> Option<DateTime<Utc>> {
+    let paused = inner.paused.read().await.clone();
+    let push_enabled = inner.settings.read().await.push.enabled;
+    package_states(inner, &paused, push_enabled, wait)
+        .await
+        .into_iter()
+        .filter_map(|(_, state)| match state {
+            PackageAutosync::Waiting { publish_at, .. } => Some(publish_at),
+            _ => None,
+        })
+        .min()
 }
 
 /// Hand the file watcher's walk of `namespace` to the last-change clock, and
@@ -616,6 +681,7 @@ pub(crate) async fn observe_walk(
         inner.reschedule_publish();
     } else {
         waiting.remove(namespace);
+        inner.reporter.report_autosync_changed();
     }
 }
 
@@ -957,8 +1023,8 @@ mod tests {
         let watcher = Watcher::new_for_test(Arc::new(LogReporter));
         {
             let mut settings = watcher.inner_for_test().settings.write().await;
-            settings.pull.enabled = true;
-            settings.push.enabled = false;
+            settings.pull.enabled = false;
+            settings.push.enabled = true;
             settings.pull.focused_secs = 11;
             settings.pull.unfocused_secs = 22;
             settings.pull.closed_secs = 33;
@@ -966,9 +1032,8 @@ mod tests {
         }
         let pull_at = Utc::now() + Duration::from_mins(15);
         *watcher.inner_for_test().clocks.next_pull_at.write().await = Some(pull_at);
-        // Two namespaces waiting, changed at different moments: the earliest
-        // deadline is the next thing that will publish, so `.max()` cannot pass
-        // this. Each deadline is the last change plus the wait of 44 s.
+        // Two namespaces waiting, changed at different moments, each with its
+        // own deadline: the last change plus the wait of 44 s.
         let early: Namespace = ("acme", "early").into();
         let late: Namespace = ("acme", "late").into();
         let early_change = crate::autopull::last_change::now();
@@ -996,21 +1061,24 @@ mod tests {
             .publish_waiting
             .write()
             .await
-            .extend([early, late]);
-        let earliest = DateTime::<Utc>::from(early_change + Duration::from_secs(44));
+            .extend([early.clone(), late.clone()]);
+        let deadline = |after: u64| PackageAutosync::Waiting {
+            publish_at: DateTime::<Utc>::from(early_change + Duration::from_secs(after)),
+            changed_while_closed: false,
+        };
 
         let facts = watcher.main_page_facts().await;
-        assert!(facts.pull_enabled, "the pull setting, not the push one");
-        assert!(!facts.publish_enabled, "the push setting, not the pull one");
+        assert!(!facts.pull_enabled, "the pull setting, not the push one");
+        assert!(facts.publish_enabled, "the push setting, not the pull one");
         assert_eq!(
             facts.next_pull_at,
             Some(pull_at),
             "the pull clock belongs in the pull slot"
         );
         assert_eq!(
-            facts.publish_arm_at,
-            Some(earliest),
-            "the earliest deadline across every waiting namespace, not the last"
+            facts.packages,
+            [(early, deadline(44)), (late, deadline(644))],
+            "each waiting package with its own deadline"
         );
         assert_eq!(
             facts.pull_interval,
@@ -1041,7 +1109,7 @@ mod tests {
 
         assert_eq!(inner.last_change.get(&ns).await, None);
         assert!(inner.clocks.publish_waiting.read().await.is_empty());
-        assert_eq!(watcher.main_page_facts().await.publish_arm_at, None);
+        assert_eq!(watcher.main_page_facts().await.packages, Vec::new());
     }
 
     #[tokio::test]
@@ -1060,10 +1128,8 @@ mod tests {
             .note_committed(&ns, last_change::PendingCommit::At(SystemTime::now()))
             .await;
 
-        let deadline = watcher
-            .main_page_facts()
+        let deadline = next_publish_at(inner, Duration::from_secs(600))
             .await
-            .publish_arm_at
             .expect("the card counts down to the push");
         assert!(deadline >= before + Duration::from_secs(600));
     }
@@ -1074,7 +1140,11 @@ mod tests {
         let watcher = Watcher::new_for_test(Arc::new(LogReporter));
         let ns: Namespace = ("acme", "demo").into();
         let inner = watcher.inner_for_test();
-        inner.settings.write().await.push.idle_timeout_secs = 600;
+        {
+            let mut settings = inner.settings.write().await;
+            settings.push.enabled = true;
+            settings.push.idle_timeout_secs = 600;
+        }
         inner
             .last_change
             .store_for_test()
@@ -1097,10 +1167,8 @@ mod tests {
                 "{namespace} moved to now"
             );
         }
-        let deadline = watcher
-            .main_page_facts()
+        let deadline = next_publish_at(inner, Duration::from_secs(600))
             .await
-            .publish_arm_at
             .expect("the card counts down at once");
         assert!(deadline >= before + Duration::from_secs(600));
     }
@@ -1112,8 +1180,300 @@ mod tests {
         // counting down to a moment with no meaning.
         let watcher = Watcher::new_for_test(Arc::new(LogReporter));
         let facts = watcher.main_page_facts().await;
-        assert_eq!(facts.publish_arm_at, None);
+        assert_eq!(facts.packages, Vec::new());
         assert_eq!(facts.next_pull_at, None);
+    }
+
+    /// A watcher with publishing on and a wait of 600 s.
+    async fn publishing_watcher() -> Watcher {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        {
+            let mut settings = watcher.inner_for_test().settings.write().await;
+            settings.push.enabled = true;
+            settings.push.idle_timeout_secs = 600;
+        }
+        watcher
+    }
+
+    async fn state_of(watcher: &Watcher, namespace: &Namespace) -> Option<PackageAutosync> {
+        watcher
+            .main_page_facts()
+            .await
+            .packages
+            .into_iter()
+            .find(|(ns, _)| ns == namespace)
+            .map(|(_, state)| state)
+    }
+
+    /// Changed and counting down, as a walk leaves it.
+    async fn waiting(watcher: &Watcher, namespace: &Namespace) {
+        let inner = watcher.inner_for_test();
+        inner.last_change.on_signal(namespace).await;
+        inner.aggregator.note_status(namespace, true);
+        inner
+            .clocks
+            .publish_waiting
+            .write()
+            .await
+            .insert(namespace.clone());
+    }
+
+    #[tokio::test]
+    async fn a_waiting_package_carries_its_deadline_and_no_closed_proof() {
+        let watcher = publishing_watcher().await;
+        let ns: Namespace = ("acme", "demo").into();
+        waiting(&watcher, &ns).await;
+        let at = watcher.inner_for_test().last_change.get(&ns).await.unwrap();
+        assert_eq!(
+            state_of(&watcher, &ns).await,
+            Some(PackageAutosync::Waiting {
+                publish_at: DateTime::<Utc>::from(at + Duration::from_secs(600)),
+                changed_while_closed: false,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn the_running_publish_reads_publishing() {
+        let watcher = publishing_watcher().await;
+        let ns: Namespace = ("acme", "demo").into();
+        waiting(&watcher, &ns).await;
+        let inner = watcher.inner_for_test();
+        let _publishing = inner
+            .aggregator
+            .activity_guard(activity::ActivityOp::Publish, &ns);
+        assert_eq!(
+            state_of(&watcher, &ns).await,
+            Some(PackageAutosync::Publishing)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_running_pull_is_not_publishing() {
+        let watcher = publishing_watcher().await;
+        let ns: Namespace = ("acme", "demo").into();
+        waiting(&watcher, &ns).await;
+        let inner = watcher.inner_for_test();
+        let _pulling = inner
+            .aggregator
+            .activity_guard(activity::ActivityOp::Pull, &ns);
+        assert!(matches!(
+            state_of(&watcher, &ns).await,
+            Some(PackageAutosync::Waiting { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn one_paused_package_leaves_the_others_waiting() {
+        let watcher = publishing_watcher().await;
+        let stuck: Namespace = ("acme", "stuck").into();
+        let fine: Namespace = ("acme", "fine").into();
+        watcher
+            .pause_for_test(stuck.clone(), PausedReason::Diverged)
+            .await;
+        waiting(&watcher, &fine).await;
+        assert_eq!(
+            state_of(&watcher, &stuck).await,
+            Some(PackageAutosync::Paused(PausedReason::Diverged))
+        );
+        assert!(matches!(
+            state_of(&watcher, &fine).await,
+            Some(PackageAutosync::Waiting { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_failing_package_with_changes_reads_retrying() {
+        let watcher = publishing_watcher().await;
+        let ns: Namespace = ("acme", "demo").into();
+        let inner = watcher.inner_for_test();
+        inner.last_change.on_signal(&ns).await;
+        inner.backoff.write().await.insert(
+            ns.clone(),
+            tick::BackoffState {
+                next_attempt: std::time::Instant::now() + Duration::from_secs(30),
+                consecutive_failures: 1,
+                error: "Could not reach S3".to_string(),
+            },
+        );
+        let before = Utc::now();
+        let Some(PackageAutosync::Retrying { error, next_try_at }) = state_of(&watcher, &ns).await
+        else {
+            panic!("expected retrying");
+        };
+        assert_eq!(error, "Could not reach S3");
+        assert!(next_try_at > before + Duration::from_secs(25));
+        assert!(next_try_at <= Utc::now() + Duration::from_secs(30));
+    }
+
+    #[tokio::test]
+    async fn a_failed_first_publish_still_reads_retrying() {
+        // A walk counted it down; the failed pass took it out of the
+        // countdown and never told the tray it had changes.
+        let watcher = publishing_watcher().await;
+        let ns: Namespace = ("acme", "demo").into();
+        let inner = watcher.inner_for_test();
+        inner.last_change.on_signal(&ns).await;
+        inner.backoff.write().await.insert(
+            ns.clone(),
+            tick::BackoffState {
+                next_attempt: std::time::Instant::now(),
+                consecutive_failures: 1,
+                error: "Could not reach S3".to_string(),
+            },
+        );
+        assert!(matches!(
+            state_of(&watcher, &ns).await,
+            Some(PackageAutosync::Retrying { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_failed_push_of_a_commit_alone_still_reads_retrying() {
+        // No uncommitted files: the tray counts it clean, but the commit keeps
+        // its time until a publish lands.
+        let watcher = publishing_watcher().await;
+        let ns: Namespace = ("acme", "demo").into();
+        watcher
+            .note_committed(&ns, last_change::PendingCommit::At(SystemTime::now()))
+            .await;
+        let inner = watcher.inner_for_test();
+        inner.aggregator.note_status(&ns, false);
+        inner.clocks.publish_waiting.write().await.remove(&ns);
+        inner.backoff.write().await.insert(
+            ns.clone(),
+            tick::BackoffState {
+                next_attempt: std::time::Instant::now(),
+                consecutive_failures: 1,
+                error: "Could not reach S3".to_string(),
+            },
+        );
+        assert!(matches!(
+            state_of(&watcher, &ns).await,
+            Some(PackageAutosync::Retrying { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_failing_pull_with_nothing_to_publish_is_left_out() {
+        // The tray may still count it changed from an earlier check; a walk
+        // that found nothing deleted its time.
+        let watcher = publishing_watcher().await;
+        let ns: Namespace = ("acme", "demo").into();
+        let inner = watcher.inner_for_test();
+        inner.aggregator.note_status(&ns, true);
+        inner.backoff.write().await.insert(
+            ns.clone(),
+            tick::BackoffState {
+                next_attempt: std::time::Instant::now(),
+                consecutive_failures: 1,
+                error: "Could not reach S3".to_string(),
+            },
+        );
+        assert_eq!(state_of(&watcher, &ns).await, None);
+    }
+
+    #[tokio::test]
+    async fn with_publishing_off_a_changed_package_reads_off() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        watcher.inner_for_test().settings.write().await.push.enabled = false;
+        let changed: Namespace = ("acme", "changed").into();
+        let clean: Namespace = ("acme", "clean").into();
+        let inner = watcher.inner_for_test();
+        inner.last_change.on_signal(&changed).await;
+        inner.aggregator.note_status(&clean, true);
+        assert_eq!(
+            state_of(&watcher, &changed).await,
+            Some(PackageAutosync::Off)
+        );
+        assert_eq!(state_of(&watcher, &clean).await, None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn only_a_proved_change_while_closed_is_flagged() {
+        let watcher = publishing_watcher().await;
+        let ns: Namespace = ("acme", "demo").into();
+        let inner = watcher.inner_for_test();
+        inner
+            .last_change
+            .store_for_test()
+            .record_change(
+                &ns,
+                SystemTime::now() - Duration::from_hours(1),
+                crate::quilt::state_store::ChangeSource::Edit,
+            )
+            .await;
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a"), b"x").unwrap();
+        let mut status = crate::quilt::lineage::InstalledPackageStatus::default();
+        status.changes.insert(
+            std::path::PathBuf::from("a"),
+            crate::quilt::lineage::Change::Added(crate::quilt::manifest::ManifestRow::default()),
+        );
+        observe_walk(
+            inner,
+            &ns,
+            Some(dir.path()),
+            &status,
+            last_change::PendingCommit::None,
+        )
+        .await;
+        assert!(matches!(
+            state_of(&watcher, &ns).await,
+            Some(PackageAutosync::Waiting {
+                changed_while_closed: true,
+                ..
+            })
+        ));
+
+        let unknown: Namespace = ("acme", "unknown").into();
+        inner
+            .last_change
+            .store_for_test()
+            .record_change(
+                &unknown,
+                SystemTime::now() - Duration::from_hours(1),
+                crate::quilt::state_store::ChangeSource::Edit,
+            )
+            .await;
+        observe_walk(
+            inner,
+            &unknown,
+            None,
+            &status,
+            last_change::PendingCommit::None,
+        )
+        .await;
+        assert!(matches!(
+            state_of(&watcher, &unknown).await,
+            Some(PackageAutosync::Waiting {
+                changed_while_closed: false,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_walk_tells_the_window_to_read_again() {
+        let reporter = Arc::new(reporter::test_support::RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let ns: Namespace = ("acme", "demo").into();
+        let status = crate::quilt::lineage::InstalledPackageStatus::default();
+        observe_walk(
+            watcher.inner_for_test(),
+            &ns,
+            None,
+            &status,
+            last_change::PendingCommit::None,
+        )
+        .await;
+        assert_eq!(
+            reporter
+                .autosync_changed
+                .load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
     }
 
     #[tokio::test]

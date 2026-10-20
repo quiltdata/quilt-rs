@@ -1558,8 +1558,9 @@ async fn a_tree_with_nothing_in_it_clears_any_deadline() {
 }
 
 #[tokio::test]
-async fn a_deadline_already_past_is_not_counted_down() {
-    // That package publishes at the next check; a deadline would count to the past.
+async fn a_deadline_already_past_still_shows_the_package_waiting() {
+    // That package publishes at the next pass; hiding it would read as nothing
+    // to publish while it has changes.
     let ns: Namespace = ("acme", "demo").into();
     let inner = WatcherInner {
         last_change: LastChange::changed_for_test(&ns, Duration::from_hours(1)).await,
@@ -1574,7 +1575,11 @@ async fn a_deadline_already_past_is_not_counted_down() {
     )
     .await;
 
-    assert!(card_deadline(&inner).await.is_none());
+    assert!(
+        card_deadline(&inner)
+            .await
+            .is_some_and(|at| at < Utc::now())
+    );
 }
 
 #[tokio::test]

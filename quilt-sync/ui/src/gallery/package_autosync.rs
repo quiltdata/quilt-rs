@@ -1,7 +1,7 @@
 //! Each package's autosync state, stacked on the Autosync card's publish toggle.
 //!
-//! Fake data only. The app's card still reads one deadline per toggle; these
-//! scenes show what it says once the watcher sends a state per package.
+//! Fake data through the same `PackageAutosync` and `PublishCard` the main
+//! page's card builds from the watcher's payload.
 
 use leptos::prelude::*;
 

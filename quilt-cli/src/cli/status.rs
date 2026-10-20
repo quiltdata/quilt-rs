@@ -114,7 +114,7 @@ fn ignored_words(files: usize, folders: usize) -> Option<String> {
 /// Where a rule came from, as `file:line` for a rules file.
 fn source_words(source: &RuleSource) -> String {
     match source {
-        RuleSource::Default => "default".to_string(),
+        RuleSource::Default => "built-in".to_string(),
         RuleSource::User { path, line } => format!("{}:{line}", path.display()),
         RuleSource::Package { line } => format!(".quiltignore:{line}"),
     }
@@ -214,7 +214,7 @@ impl Render for Output {
                 .into_iter()
                 .map(|i| {
                     let (source, rules_file, line) = match &i.by.source {
-                        RuleSource::Default => ("default", None, None),
+                        RuleSource::Default => ("built-in", None, None),
                         RuleSource::User { path, line } => {
                             ("user", Some(path.display().to_string()), Some(*line))
                         }
@@ -295,7 +295,7 @@ mod tests {
         );
     }
 
-    /// One ignored path from each rule source: a folder by a default rule, a
+    /// One ignored path from each rule source: a folder by a built-in rule, a
     /// file by the user's rules, a file by the package's `.quiltignore`.
     fn ignored_output(list_ignored: bool) -> Output {
         let mut status =
@@ -359,7 +359,7 @@ mod tests {
                 .filter(|cell| !cell.is_empty())
                 .collect::<Vec<_>>()
         };
-        assert_eq!(row(".git/"), [".git/", ".*/", "default"]);
+        assert_eq!(row(".git/"), [".git/", ".*/", "built-in"]);
         assert_eq!(
             row("data/raw.bak"),
             ["data/raw.bak", "*.bak", "/domain/.quiltignore:2"]
@@ -406,7 +406,7 @@ mod tests {
                 "files": 2,
                 "folders": 1,
                 "paths": [
-                    {"path": ".git/", "kind": "folder", "rule": ".*/", "source": "default"},
+                    {"path": ".git/", "kind": "folder", "rule": ".*/", "source": "built-in"},
                     {
                         "path": "data/raw.bak",
                         "kind": "file",
@@ -631,11 +631,11 @@ mod tests {
         .await?;
         let text = format!("{output}");
         assert!(
-            text.contains("| .DS_Store | .DS_Store | default |"),
+            text.contains("| .DS_Store | .DS_Store | built-in |"),
             "{text}"
         );
         assert!(
-            text.contains("| .git/     | .*/       | default |"),
+            text.contains("| .git/     | .*/       | built-in |"),
             "{text}"
         );
         assert!(!text.contains(".git/HEAD"), "{text}");

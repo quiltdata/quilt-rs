@@ -3,9 +3,9 @@
 //! Three regions: the state strip — Autosync beside Accounts — the attention
 //! queue, and the list. The list region is two views of one roster, Packages and
 //! Recent files, behind the toggle in its toolbar. `Transition`, never
-//! `Suspense` (§6): a later plan
-//! will wire a refetch on every autosync transition, publish and pause, and a
-//! `Suspense` boundary re-shows its fallback each time, so the page would strobe.
+//! `Suspense` (§6): the Autosync card refetches on every autosync change,
+//! publish and pause, and a `Suspense` boundary re-shows its fallback each time,
+//! so the page would strobe.
 //! Today `reload` fires from the Refresh button and from a role switch, which
 //! moves the package rows as surely as it moves the Accounts card.
 //!
@@ -1916,6 +1916,103 @@ mod tests {
                 </leptos_router::components::Router>
             }
         })
+    }
+
+    /// A watcher with two packages waiting, one paused, and publishing on.
+    fn watcher_with_packages()
+    -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<MainPageWatcherData, String>>>>
+    {
+        use crate::commands::AutosyncStateData;
+        use crate::commands::PackageAutosyncData;
+        let at = js_sys::Date::now() + 60_000.0;
+        let package = |namespace: &str, state| PackageAutosyncData {
+            namespace: namespace.try_into().unwrap(),
+            state,
+        };
+        let data = MainPageWatcherData {
+            pull: crate::commands::ToggleStateData {
+                enabled: true,
+                activity: crate::commands::ToggleActivityData::Idle,
+                deadline: None,
+                interval_ms: 180_000.0,
+            },
+            publish: crate::commands::PublishStateData {
+                enabled: true,
+                interval_ms: 600_000.0,
+                packages: vec![
+                    package(
+                        "team/waiting-a",
+                        AutosyncStateData::Waiting {
+                            publish_at: at,
+                            changed_while_closed: true,
+                        },
+                    ),
+                    package(
+                        "team/paused",
+                        AutosyncStateData::Paused {
+                            reason: crate::commands::PausedReasonData::Diverged,
+                        },
+                    ),
+                    package(
+                        "team/waiting-b",
+                        AutosyncStateData::Waiting {
+                            publish_at: at + 1_000.0,
+                            changed_while_closed: false,
+                        },
+                    ),
+                ],
+            },
+            paused: Vec::new(),
+        };
+        Box::pin(async move { Ok(data) })
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_main_page_card_stacks_each_package_from_the_watcher() {
+        forget_toolbar();
+        let reload = Trigger::new();
+        let el = mount(move || {
+            let packages = LocalResource::new(|| {
+                std::future::pending::<Result<MainPagePackagesData, String>>()
+            });
+            let accounts = LocalResource::new(|| {
+                std::future::pending::<Result<MainPageAccountsData, String>>()
+            });
+            let watcher: WatcherRead = watcher_with_packages;
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        fetch_watcher=Some(watcher)
+                    />
+                </leptos_router::components::Router>
+            }
+        });
+        sleep_ms(50).await;
+        let read = |el: &web_sys::Element| el.text_content().unwrap();
+        let text = read(&el);
+        for name in ["team/waiting-a", "team/waiting-b", "team/paused"] {
+            assert!(text.contains(name), "{name} in the stack: {text}");
+        }
+        assert!(text.contains("Paused"), "{text}");
+        assert!(!text.contains("nothing to publish"), "{text}");
+        assert!(
+            text.contains("1 package changed while QuiltSync was closed"),
+            "{text}"
+        );
+
+        // A Refresh reads the watcher again and keeps the same card.
+        reload.notify();
+        sleep_ms(50).await;
+        let text = read(&el);
+        assert!(text.contains("team/waiting-a"), "after a re-read: {text}");
+        assert_eq!(
+            text.matches("Publish your changes").count(),
+            1,
+            "one card, not a second one: {text}"
+        );
     }
 
     /// The page whose packages read answers only after `delay_ms`, so a test can
