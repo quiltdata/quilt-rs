@@ -63,9 +63,6 @@ pub fn PackageRow(
     /// user decides, and a decision offered and withdrawn is not a decision.
     #[prop(optional, into)]
     provisional: MaybeProp<bool>,
-    /// A second line under the namespace, such as the package's autosync state.
-    #[prop(optional_no_strip)]
-    note: Option<AnyView>,
 ) -> impl IntoView {
     // One computed string: Leptos rejects two `class` attributes on an element, and
     // the row dims as a whole rather than the label dimming alone — see the
@@ -83,19 +80,7 @@ pub fn PackageRow(
     let full_namespace = namespace.clone();
     view! {
         <a class=class href=href>
-            {match note {
-                Some(note) => view! {
-                    <span class=style::lines>
-                        <span class=style::namespace title=full_namespace>{namespace}</span>
-                        {note}
-                    </span>
-                }
-                    .into_any(),
-                None => view! {
-                    <span class=style::namespace title=full_namespace>{namespace}</span>
-                }
-                    .into_any(),
-            }}
+            <span class=style::namespace title=full_namespace>{namespace}</span>
             <span class=style::time>
                 {move || changed_at
                     .get()
