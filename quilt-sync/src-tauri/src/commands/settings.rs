@@ -190,6 +190,125 @@ impl From<ExperimentalSettings> for ExperimentalSettingsData {
     }
 }
 
+/// Each built-in ignore rule as Settings shows it: its group, and a few
+/// words on what it keeps out. In the order the popup lists them; one row
+/// for each of `quiltignore::DEFAULT_RULES`.
+const RULE_WORDS: &[(&str, &str, &str)] = &[
+    (
+        ".*/",
+        "Hidden folders",
+        "Any folder whose name starts with a dot, such as .git or .venv",
+    ),
+    (".DS_Store", "macOS", "Finder's folder settings"),
+    (
+        ".DS_Store?",
+        "macOS",
+        "Finder's folder settings, renamed on another system",
+    ),
+    (
+        "._*",
+        "macOS",
+        "File details macOS keeps on drives it doesn't own",
+    ),
+    (".LSOverride", "macOS", "A folder's custom app choice"),
+    (".VolumeIcon.icns", "macOS", "A drive's custom icon"),
+    ("Icon[\r]", "macOS", "A folder's custom icon"),
+    ("Thumbs.db", "Windows", "Picture thumbnails"),
+    ("ehthumbs.db", "Windows", "Media Center thumbnails"),
+    ("desktop.ini", "Windows", "A folder's view settings"),
+    ("$RECYCLE.BIN/", "Windows", "A drive's Recycle Bin"),
+    (
+        ".directory",
+        "Linux and network drives",
+        "A KDE folder's view settings",
+    ),
+    (
+        ".nfs*",
+        "Linux and network drives",
+        "Files a network drive keeps while they are open",
+    ),
+    ("~$*", "Editors and office lock files", "Office lock files"),
+    (
+        ".~lock.*#",
+        "Editors and office lock files",
+        "LibreOffice lock files",
+    ),
+    (".#*", "Editors and office lock files", "Emacs lock files"),
+    (
+        "\\#*\\#",
+        "Editors and office lock files",
+        "Emacs auto-saves",
+    ),
+    ("*.swp", "Editors and office lock files", "Vim swap files"),
+    (
+        "*.swo",
+        "Editors and office lock files",
+        "More Vim swap files",
+    ),
+    ("*~", "Editors and office lock files", "Editor backups"),
+    (
+        "*.code-workspace",
+        "Editors and office lock files",
+        "VS Code workspace settings",
+    ),
+    (".env", "Secrets", "Environment secrets"),
+    (".env.*", "Secrets", "Their variants, such as .env.local"),
+    (".netrc", "Secrets", "Saved logins"),
+    ("*.pem", "Secrets", "Keys and certificates"),
+    ("__pycache__/", "Python and Node", "Compiled Python"),
+    ("*.py[cod]", "Python and Node", "Compiled Python files"),
+    (
+        "node_modules/",
+        "Python and Node",
+        "Installed Node packages",
+    ),
+];
+
+/// One built-in ignore rule, its place in the popup, and whether it is on.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DefaultRuleData {
+    pub rule: String,
+    pub group: String,
+    pub about: String,
+    pub on: bool,
+}
+
+/// The built-in ignore rules, and the user-wide file that turns them off.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct IgnoreRulesData {
+    pub file: String,
+    /// `None` when the file could not be read.
+    pub rules: Option<Vec<DefaultRuleData>>,
+}
+
+impl IgnoreRulesData {
+    fn read(file: &std::path::Path) -> Self {
+        let rules = quilt::quiltignore::default_rules(file)
+            .inspect_err(|err| tracing::warn!("Could not read {}: {err}", file.display()))
+            .ok()
+            .map(|rules| {
+                RULE_WORDS
+                    .iter()
+                    .filter_map(|(rule, group, about)| {
+                        let on = rules.iter().find(|d| d.rule == *rule)?.on;
+                        Some(DefaultRuleData {
+                            rule: (*rule).to_string(),
+                            group: (*group).to_string(),
+                            about: (*about).to_string(),
+                            on,
+                        })
+                    })
+                    .collect()
+            });
+        Self {
+            file: file.display().to_string(),
+            rules,
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsData {
@@ -208,6 +327,7 @@ pub struct SettingsData {
     pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
     pub experimental: ExperimentalSettingsData,
+    pub ignore_rules: IgnoreRulesData,
 }
 
 #[tauri::command]
@@ -247,6 +367,7 @@ pub async fn get_settings_data(
     let autosync_data = AutosyncSettingsData::from(autosync_settings.read().await.clone());
     let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());
     let experimental_data = ExperimentalSettingsData::from(experimental.read().await.clone());
+    let user_rules = m.get_quilt().lock().await.user_quiltignore();
 
     Ok(SettingsData {
         version: app.version.to_string(),
@@ -263,7 +384,74 @@ pub async fn get_settings_data(
         autosync: autosync_data,
         fswatcher: fswatcher_data,
         experimental: experimental_data,
+        ignore_rules: IgnoreRulesData::read(&user_rules),
     })
+}
+
+/// Turn off exactly the built-in ignore rules in `off`, for every package.
+/// The file watcher sees the user-wide file change and checks every package
+/// again.
+#[tauri::command]
+pub async fn set_default_ignore_rules(
+    m: tauri::State<'_, model::Model>,
+    off: Vec<String>,
+) -> Result<(), String> {
+    // A clone, so the domain's mutex is not held while the file's lock waits.
+    let domain = m.get_quilt().lock().await.clone();
+    let off: Vec<&str> = off.iter().map(String::as_str).collect();
+    domain
+        .set_default_rules(&off)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The first line of a user-wide rules file *Open file* creates.
+const USER_RULES_HEADER: &str =
+    "# Your ignore rules for every package, one gitignore pattern per line.";
+
+/// Open the user-wide rules file in the default application, creating it
+/// first if missing.
+#[tauri::command]
+pub async fn open_user_ignore_rules(m: tauri::State<'_, model::Model>) -> Result<(), String> {
+    let file = m.get_quilt().lock().await.user_quiltignore();
+    if !file.exists() {
+        quilt::quiltignore::append_lines(&file, &[USER_RULES_HEADER.to_string()])
+            .map_err(|e| e.to_string())?;
+    }
+    open_in_text_editor(&file)
+}
+
+/// The file has no extension, so the system may have no app for it: macOS
+/// asks for its text editor, and Windows falls back to Notepad.
+fn open_in_text_editor(file: &std::path::Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-t")
+            .arg(file)
+            .status()
+            .map_err(|e| e.to_string())
+            .and_then(|status| {
+                status
+                    .success()
+                    .then_some(())
+                    .ok_or_else(|| format!("Could not open {}", file.display()))
+            })
+    }
+    #[cfg(target_os = "windows")]
+    {
+        opener::open(file).or_else(|_| {
+            std::process::Command::new("notepad.exe")
+                .arg(file)
+                .spawn()
+                .map(drop)
+                .map_err(|e| e.to_string())
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        opener::open(file).map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]
@@ -508,6 +696,16 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::Error;
+
+    /// A built-in rule added or removed in quilt-rs needs its words here.
+    #[test]
+    fn every_built_in_rule_has_one_row_of_words() {
+        let mut rows: Vec<&str> = RULE_WORDS.iter().map(|(rule, ..)| *rule).collect();
+        let mut rules = quilt::quiltignore::DEFAULT_RULES.to_vec();
+        rows.sort_unstable();
+        rules.sort_unstable();
+        assert_eq!(rows, rules);
+    }
 
     #[test]
     fn data_from_settings_projects_focused_onto_pull_interval() {

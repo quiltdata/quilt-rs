@@ -21,6 +21,10 @@
 
 ## [v0.23.0-dev]
 
+### Added
+
+- **New design preview**: Settings has an **Ignore rules** card. **Open file** opens your own rules for every package, and **Review…** lists the built-in rules by group, so you can turn one off to let its new files in (<https://github.com/quiltdata/quilt-rs/pull/1149>)
+
 ### Changed
 
 - New files that are OS or editor clutter, secrets or caches (`.DS_Store`, `.git/`, `.venv/`, `.env`, `node_modules/` and similar) no longer go into a package. Files already in a package stay. Rules of your own for every package go in `.quiltignore` in the app's data folder, and a package's `.quiltignore` can bring a file back with `!pattern` (<https://github.com/quiltdata/quilt-rs/pull/1143>)

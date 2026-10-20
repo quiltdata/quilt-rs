@@ -244,6 +244,8 @@ fn main() {
             commands::get_toasts,
             commands::dismiss_toast,
             commands::update_fswatcher_settings,
+            commands::set_default_ignore_rules,
+            commands::open_user_ignore_rules,
             commands::update_log_settings,
             commands::update_experimental_settings,
             commands::get_main_page_packages,

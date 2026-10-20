@@ -428,6 +428,14 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     ) -> Res<Option<Vec<String>>> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let manifest = self.manifest_from_lineage(&lineage).await?;
+        let _user_rules = match scope {
+            Scope::AllPackages => Some(
+                self.storage
+                    .lock_exclusive(self.paths.user_quiltignore_lock())
+                    .await?,
+            ),
+            Scope::Package => None,
+        };
         flow::stop_ignoring(
             &self.paths,
             &manifest,

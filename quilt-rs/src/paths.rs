@@ -202,6 +202,13 @@ impl DomainPaths {
         self.root_dir.join(".quiltignore")
     }
 
+    /// Held by every writer of [`Self::user_quiltignore`] across its read and
+    /// its write, so two writers never lose each other's lines.
+    #[must_use]
+    pub fn user_quiltignore_lock(&self) -> PathBuf {
+        self.locks_dir().join("user-quiltignore.lock")
+    }
+
     /// What directories are essential when we initiate `LocalDomain`
     fn required(&self) -> Vec<PathBuf> {
         vec![

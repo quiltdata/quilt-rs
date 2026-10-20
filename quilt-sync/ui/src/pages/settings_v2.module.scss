@@ -161,3 +161,27 @@
   white-space: pre-wrap;
   font: inherit;
 }
+
+// The built-in rules in the popup, a group at a time.
+.rule_group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.rules {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rules li {
+  padding: 2px 0;
+}
+
+.rule {
+  display: flex;
+  align-items: baseline;
+  gap: var(--q-space-2);
+  cursor: pointer;
+}

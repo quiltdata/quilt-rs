@@ -348,6 +348,7 @@ mod tests {
                 entire_package_sync: false,
                 main_page_v2,
             },
+            ignore_rules: commands::IgnoreRulesData::default(),
         }
     }
 
