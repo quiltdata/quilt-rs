@@ -493,8 +493,11 @@ fn without_lines(contents: &str, lines: &[String]) -> String {
 }
 
 /// Write `contents` beside the file at `path` and move it over the file, so
-/// a reader never sees half of it.
+/// a reader never sees half of it. A symlink is followed, so the file it
+/// points at is the one replaced.
 fn replace_contents(path: &Path, contents: &str) -> Res {
+    let target = std::fs::canonicalize(path).ok();
+    let path = target.as_deref().unwrap_or(path);
     let write_error = |source| {
         Error::Fs(FsError::Write {
             path: path.to_path_buf(),
@@ -1207,6 +1210,23 @@ mod tests {
         let missing = dir.path().join("missing");
         remove_lines(&missing, &["!.env".to_string()]).unwrap();
         assert!(!missing.exists());
+    }
+
+    /// A rules file that is a link to another file stays one.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_rules_file_is_written_through_the_link() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("shared.quiltignore");
+        let link = dir.path().join(".quiltignore");
+        std::fs::write(&target, "*.tmp\n").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        set_default_rules(&link, &[".env"]).unwrap();
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "*.tmp\n!.env\n");
+        set_default_rules(&link, &[]).unwrap();
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "*.tmp\n");
     }
 
     #[test]
