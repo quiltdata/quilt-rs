@@ -307,3 +307,26 @@ async fn the_timer_waits_for_a_running_check() {
     timer.await;
     assert_eq!(published(&reporter), 1);
 }
+
+#[tokio::test]
+async fn publishing_turned_off_during_a_check_stops_the_waiting_timer() {
+    let (inner, reporter) = inner(Duration::from_mins(1), true, true);
+    let model = model(1, 0, false);
+    let inner = changed(inner, Duration::from_secs(61)).await;
+    let roles = RoleCache::default();
+    let mut held = BTreeMap::new();
+
+    let check = inner.clocks.passes.lock().await;
+    let timer = publish_due(&model, &roles, &inner, &mut held);
+    tokio::pin!(timer);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut timer)
+            .await
+            .is_err()
+    );
+    inner.settings.write().await.push.enabled = false;
+    drop(check);
+
+    assert_eq!(timer.await, None);
+    assert_eq!(published(&reporter), 0);
+}

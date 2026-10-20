@@ -58,6 +58,9 @@ pub(crate) async fn publish_due(
     inner: &WatcherInner,
     held: &mut BTreeMap<Namespace, Instant>,
 ) -> Option<Instant> {
+    // Before the settings and the deadlines are read: a check can change
+    // either while it runs.
+    let _passes = inner.clocks.passes.lock().await;
     let settings = inner.settings.read().await.clone();
     if !settings.push.enabled {
         return None;
@@ -82,7 +85,6 @@ pub(crate) async fn publish_due(
         }
     }
     if !due.is_empty() {
-        let _passes = inner.clocks.passes.lock().await;
         inner.aggregator.note_tick_started();
         run_passes(model, roles, inner, &run, due, held).await;
         inner.aggregator.note_tick_ended_ok();
