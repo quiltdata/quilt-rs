@@ -176,8 +176,11 @@ fn defaults() -> &'static Gitignore {
 /// The ignore rules for one package, strongest first: the package's
 /// `.quiltignore`, the user-wide file, then [`DEFAULT_RULES`].
 ///
-/// The first layer with a matching line decides, and within a layer the last
-/// matching line wins, so a `!pattern` brings a path back from weaker layers.
+/// As in git, a path is decided level by level from its top folder down. At
+/// each level the strongest layer with a line matching that folder or file
+/// decides, and within a layer the last matching line wins. An ignored folder
+/// ignores everything under it, so a `!folder/` line in a stronger layer brings
+/// the folder back but not the files in it that a weaker layer names.
 /// Only the package layer can hide a path the package already has; the other two
 /// apply to new files only, so personal rules never change a shared package.
 pub struct Rules {
@@ -232,17 +235,17 @@ impl Rules {
     }
 
     /// The `!` lines that bring back the file or folder at `relative_path` in
-    /// `scope`, outermost first: one for each folder above it the walk would
-    /// still skip, then one for the path itself. Empty when nothing ignores it.
+    /// `scope`, outermost first: one for each folder above it whose rule would
+    /// still hide it, then one for the path itself. Empty when nothing ignores it.
     /// `None` when `scope`'s file cannot bring it back: a package rule hides
     /// it, and the user-wide file is weaker.
-    /// `tracked(path, is_dir)` says whether the package has the file, or a
-    /// file in the folder.
+    /// `tracked` says whether the package has the file, or a file in the
+    /// folder.
     pub fn stop_ignoring_lines(
         &self,
         relative_path: &Path,
         is_dir: bool,
-        tracked: impl Fn(&Path, bool) -> bool,
+        tracked: bool,
         scope: Scope,
     ) -> Res<Option<Vec<String>>> {
         let mut lines = Vec::new();
@@ -253,18 +256,12 @@ impl Rules {
             prefix.push(component);
             let dir = is_dir || components.peek().is_some();
             let current = rules.as_ref().unwrap_or(self);
-            if current
-                .ignored_by(&prefix, dir, tracked(&prefix, dir))
-                .is_none()
-            {
+            if current.ignored_by(&prefix, dir, tracked).is_none() {
                 continue;
             }
             lines.push(stop_line(&prefix, dir, scope)?);
             let next = self.with_lines(scope, &lines)?;
-            if next
-                .ignored_by(&prefix, dir, tracked(&prefix, dir))
-                .is_some()
-            {
+            if next.ignored_by(&prefix, dir, tracked).is_some() {
                 return Ok(None);
             }
             rules = Some(next);
@@ -287,11 +284,30 @@ impl Rules {
     }
 
     fn ignored_by(&self, relative_path: &Path, is_dir: bool, tracked: bool) -> Option<IgnoredBy> {
+        // A tracked path has only tracked folders above it, so `tracked` holds
+        // at every level.
+        let mut prefix = PathBuf::new();
+        let mut components = relative_path.components().peekable();
+        while let Some(component) = components.next() {
+            prefix.push(component);
+            let dir = is_dir || components.peek().is_some();
+            let by = self.level_ignored_by(&prefix, dir, tracked);
+            if by.is_some() {
+                return by;
+            }
+        }
+        None
+    }
+
+    /// The rule ignoring `relative_path` itself, not counting its folders.
+    fn level_ignored_by(
+        &self,
+        relative_path: &Path,
+        is_dir: bool,
+        tracked: bool,
+    ) -> Option<IgnoredBy> {
         if let Some(file) = &self.package {
-            match file
-                .gitignore
-                .matched_path_or_any_parents(relative_path, is_dir)
-            {
+            match file.gitignore.matched(relative_path, is_dir) {
                 Match::Ignore(glob) => {
                     return Some(IgnoredBy {
                         pattern: glob.original().to_string(),
@@ -308,10 +324,7 @@ impl Rules {
             return None;
         }
         if let Some((path, file)) = &self.user {
-            match file
-                .gitignore
-                .matched_path_or_any_parents(relative_path, is_dir)
-            {
+            match file.gitignore.matched(relative_path, is_dir) {
                 Match::Ignore(glob) => {
                     return Some(IgnoredBy {
                         pattern: glob.original().to_string(),
@@ -325,7 +338,7 @@ impl Rules {
                 Match::None => {}
             }
         }
-        match defaults().matched_path_or_any_parents(relative_path, is_dir) {
+        match defaults().matched(relative_path, is_dir) {
             Match::Ignore(glob) => Some(IgnoredBy {
                 pattern: glob.original().to_string(),
                 source: RuleSource::Default,
@@ -757,8 +770,84 @@ mod tests {
         );
     }
 
+    /// A `!` on a folder in a stronger layer brings the folder back, not the
+    /// clutter in it.
+    #[test]
+    fn a_folder_brought_back_keeps_its_clutter_out() {
+        let (_dir, user) = rules(None, Some("!.*/\n"));
+        assert!(user.dir_ignored_by(Path::new(".mydata"), false).is_none());
+        assert!(
+            user.file_ignored_by(Path::new(".mydata/a.csv"), false)
+                .is_none()
+        );
+        let by = user
+            .file_ignored_by(Path::new(".mydata/.env"), false)
+            .unwrap();
+        assert_eq!(
+            (by.pattern.as_str(), by.source),
+            (".env", RuleSource::Default)
+        );
+
+        let (_dir, package) = rules(Some("!/.snakemake/\n"), None);
+        assert!(
+            package
+                .file_ignored_by(Path::new(".snakemake/x/log.txt"), false)
+                .is_none()
+        );
+        let by = package
+            .file_ignored_by(Path::new(".snakemake/x/.DS_Store"), false)
+            .unwrap();
+        assert_eq!(
+            (by.pattern.as_str(), by.source),
+            (".DS_Store", RuleSource::Default)
+        );
+        // The personal layers still never hide a tracked file.
+        assert!(
+            package
+                .file_ignored_by(Path::new(".snakemake/x/.DS_Store"), true)
+                .is_none()
+        );
+    }
+
+    /// As in git, a file under an ignored folder stays ignored, whatever names it.
+    #[test]
+    fn an_ignored_folder_ignores_everything_under_it() {
+        let (_dir, rules) = rules(Some("cache/\n!cache/a.log\n"), Some("!b.log\n"));
+        for file in ["cache/a.log", "cache/b.log"] {
+            let by = rules.file_ignored_by(Path::new(file), false).unwrap();
+            assert_eq!(by.pattern, "cache/", "{file}");
+        }
+        // A tracked file there is untracked by the package rule.
+        assert!(
+            rules
+                .file_ignored_by(Path::new("cache/a.log"), true)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_whitelist_after_a_rule_brings_back_a_file() {
+        let (_dir, rules) = rules(Some("*.log\n!important.log\n"), Some("*.tmp\n!keep.tmp\n"));
+        assert!(
+            rules
+                .file_ignored_by(Path::new("debug.log"), false)
+                .is_some()
+        );
+        assert!(
+            rules
+                .file_ignored_by(Path::new("logs/important.log"), false)
+                .is_none()
+        );
+        assert!(rules.file_ignored_by(Path::new("a.tmp"), false).is_some());
+        assert!(
+            rules
+                .file_ignored_by(Path::new("sub/keep.tmp"), false)
+                .is_none()
+        );
+    }
+
     fn lines(rules: &Rules, path: &str, is_dir: bool, scope: Scope) -> Option<Vec<String>> {
-        lines_tracking(rules, path, is_dir, scope, &[])
+        lines_tracking(rules, path, is_dir, scope, false)
     }
 
     fn lines_tracking(
@@ -766,15 +855,10 @@ mod tests {
         path: &str,
         is_dir: bool,
         scope: Scope,
-        tracked: &[&str],
+        tracked: bool,
     ) -> Option<Vec<String>> {
         rules
-            .stop_ignoring_lines(
-                Path::new(path),
-                is_dir,
-                |p, _| tracked.iter().any(|t| Path::new(t) == p),
-                scope,
-            )
+            .stop_ignoring_lines(Path::new(path), is_dir, tracked, scope)
             .unwrap()
     }
 
@@ -820,14 +904,19 @@ mod tests {
         );
     }
 
-    /// The walk enters a folder that holds a tracked file, so its new file
-    /// needs only its own line.
+    /// A folder rule hides the new files in a folder the package has files
+    /// in, so a new file there needs the folder's line, as in git.
     #[test]
-    fn stop_ignoring_a_file_in_a_tracked_folder() {
+    fn stop_ignoring_a_new_file_in_a_tracked_folder() {
         let (_dir, rules) = rules(None, None);
         assert_eq!(
-            lines_tracking(&rules, ".git/HEAD", false, Scope::Package, &[".git"]),
-            Some(vec!["!/.git/HEAD".to_string()])
+            lines(&rules, ".git/HEAD", false, Scope::Package),
+            Some(vec!["!/.git/".to_string()])
+        );
+        // A tracked file there is not ignored at all.
+        assert_eq!(
+            lines_tracking(&rules, ".git/config", false, Scope::Package, true),
+            Some(vec![])
         );
     }
 
@@ -839,9 +928,13 @@ mod tests {
             Some(vec!["!/cache/".to_string(), "!/cache/a.log".to_string()])
         );
         // A folder brought back brings back what is in it, unless a rule
-        // in the same file names the file itself.
+        // names the file itself.
         assert_eq!(
             lines(&rules, "cache/a.tmp", false, Scope::Package),
+            Some(vec!["!/cache/".to_string(), "!/cache/a.tmp".to_string()])
+        );
+        assert_eq!(
+            lines(&rules, "cache/a.txt", false, Scope::Package),
             Some(vec!["!/cache/".to_string()])
         );
         let (_dir, user) = super::tests::rules(None, Some("cache/\n*.log\n"));
@@ -923,7 +1016,7 @@ mod tests {
         let (_dir, rules) = rules(Some("*.log\n"), None);
         assert!(
             rules
-                .stop_ignoring_lines(Path::new("a\nb.log"), false, |_, _| false, Scope::Package)
+                .stop_ignoring_lines(Path::new("a\nb.log"), false, false, Scope::Package)
                 .is_err()
         );
     }

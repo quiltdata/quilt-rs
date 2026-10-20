@@ -42,18 +42,12 @@ fn lines_for(
     is_dir: bool,
     scope: Scope,
 ) -> Res<Option<Vec<String>>> {
-    rules.stop_ignoring_lines(
-        relative_path,
-        is_dir,
-        |path, is_dir| {
-            if is_dir {
-                tracked.dirs.contains(path)
-            } else {
-                tracked.files.contains(path)
-            }
-        },
-        scope,
-    )
+    let tracked = if is_dir {
+        tracked.dirs.contains(relative_path)
+    } else {
+        tracked.files.contains(relative_path)
+    };
+    rules.stop_ignoring_lines(relative_path, is_dir, tracked, scope)
 }
 
 /// What stopping to ignore `relative_path` in `scope` would write and bring
@@ -100,21 +94,12 @@ pub async fn preview_stop_ignoring(
     }))
 }
 
-/// Whether the walk under `rules` left out the file at `key`: the file or a
-/// folder above it is ignored.
+/// Whether the walk under `rules` left out the file at `key`. A file's rule
+/// counts the folders above it, so this is the walk's answer too.
 fn was_ignored(rules: &Rules, tracked: &Tracked, key: &Path) -> bool {
     rules
         .file_ignored_by(key, tracked.files.contains(key))
         .is_some()
-        || key
-            .ancestors()
-            .skip(1)
-            .filter(|dir| !dir.as_os_str().is_empty())
-            .any(|dir| {
-                rules
-                    .dir_ignored_by(dir, tracked.dirs.contains(dir))
-                    .is_some()
-            })
 }
 
 /// Write the `!` lines that bring `relative_path` back in `scope`, and return
@@ -315,6 +300,32 @@ mod tests {
         );
         assert!(!package.home.join(".quiltignore").exists());
         Ok(())
+    }
+
+    /// A new file in a folder the package has files in needs the folder's
+    /// line, which brings back the folder's other new files too.
+    #[test(tokio::test)]
+    async fn a_new_file_in_a_tracked_folder_brings_back_the_folder() {
+        let package = Package::new(&[(".git/config", 3), (".git/HEAD", 5), (".git/refs/x", 7)]);
+        let mut lineage = PackageLineage::default();
+        lineage
+            .paths
+            .insert(PathBuf::from(".git/config"), PathState::default());
+        let preview = preview_stop_ignoring(
+            &package.paths,
+            &Manifest::default(),
+            &lineage,
+            &package.home,
+            Path::new(".git/HEAD"),
+            false,
+            Scope::Package,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(preview.lines, vec!["!/.git/".to_string()]);
+        // The tracked file was never ignored, so it is not counted.
+        assert_eq!((preview.files, preview.bytes), (2, 12));
     }
 
     /// A tracked file replaced by a folder of the same name: the walk checks

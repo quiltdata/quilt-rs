@@ -1606,4 +1606,38 @@ mod tests {
         assert!(status.changes.contains_key(Path::new(".quiltignore")));
         Ok(())
     }
+
+    #[test(tokio::test)]
+    async fn test_folder_brought_back_keeps_its_clutter_out() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+        write_files(
+            &storage,
+            &working_dir,
+            &[".snakemake/x/log.txt", ".snakemake/x/.DS_Store"],
+        )
+        .await?;
+        std::fs::write(working_dir.join(".quiltignore"), "!/.snakemake/\n")?;
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &domain_paths(&storage),
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert!(
+            status
+                .changes
+                .contains_key(Path::new(".snakemake/x/log.txt"))
+        );
+        assert_eq!(
+            ignored_source(&status, ".snakemake/x/.DS_Store"),
+            Some(RuleSource::Default)
+        );
+        Ok(())
+    }
 }
