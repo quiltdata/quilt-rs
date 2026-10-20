@@ -36,6 +36,7 @@ pub use browse::cache_remote_manifest;
 pub use certify_latest::certify_latest;
 pub use commit::UserMeta;
 pub use commit::commit_package as commit;
+pub use create_package::LeftOut;
 pub use create_package::create_package as create;
 pub use gc::GcReport;
 pub use gc::Pruned;

@@ -17,6 +17,8 @@ pub struct Input {
 #[derive(Debug)]
 pub struct Output {
     pub installed_package: quilt_rs::InstalledPackage,
+    /// What the ignore rules kept out of the source folder.
+    pub left_out: quilt_rs::flow::LeftOut,
 }
 
 impl std::fmt::Display for Output {
@@ -25,7 +27,11 @@ impl std::fmt::Display for Output {
             f,
             "Created package \"{}\"",
             self.installed_package.namespace
-        )
+        )?;
+        if !self.left_out.is_empty() {
+            write!(f, "\n{}", self.left_out)?;
+        }
+        Ok(())
     }
 }
 
@@ -33,6 +39,10 @@ impl Render for Output {
     fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "namespace": self.installed_package.namespace.to_string(),
+            "ignored": {
+                "files": self.left_out.files.len(),
+                "folders": self.left_out.dirs.len(),
+            },
         })
     }
 }
@@ -49,10 +59,13 @@ pub async fn model(
         message,
     }: Input,
 ) -> Result<Output, Error> {
-    let installed_package = local_domain
+    let (installed_package, left_out) = local_domain
         .create_package(namespace, source, message)
         .await?;
-    Ok(Output { installed_package })
+    Ok(Output {
+        installed_package,
+        left_out,
+    })
 }
 
 #[cfg(test)]
@@ -166,6 +179,35 @@ mod tests {
     }
 
     #[test(tokio::test)]
+    async fn says_what_the_ignore_rules_left_out() -> Result<(), Error> {
+        let (m, temp_dir) = create_model_in_temp_dir().await?;
+
+        let source_dir = temp_dir.path().join("my_source");
+        std::fs::create_dir_all(source_dir.join(".git"))?;
+        std::fs::write(source_dir.join(".git/config"), "x")?;
+        std::fs::write(source_dir.join(".DS_Store"), "x")?;
+        std::fs::write(source_dir.join("data.csv"), "a,b,c")?;
+
+        let output = m
+            .create(Input {
+                namespace: ("test", "left").into(),
+                source: Some(source_dir),
+                message: None,
+            })
+            .await?;
+
+        assert_eq!(
+            output.to_string(),
+            "Created package \"test/left\"\n1 file and 1 folder were left out by ignore rules"
+        );
+        assert_eq!(
+            output.to_json()["ignored"],
+            serde_json::json!({"files": 1, "folders": 1})
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
     async fn json_carries_the_namespace() -> Result<(), Error> {
         let (m, _temp_dir) = create_model_in_temp_dir().await?;
 
@@ -177,7 +219,10 @@ mod tests {
             })
             .await?;
 
-        assert_eq!(output.to_json().to_string(), r#"{"namespace":"test/pkg"}"#);
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"namespace":"test/pkg","ignored":{"files":0,"folders":0}}"#
+        );
         Ok(())
     }
 }

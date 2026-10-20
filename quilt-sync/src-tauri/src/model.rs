@@ -491,7 +491,7 @@ pub trait QuiltModel {
         namespace: quilt_uri::Namespace,
         source: Option<PathBuf>,
         message: Option<String>,
-    ) -> Result<quilt::InstalledPackage, Error> {
+    ) -> Result<(quilt::InstalledPackage, quilt::flow::LeftOut), Error> {
         // On a clone, with the domain mutex released: the create waits on the
         // package's lock, and every other command needs the mutex meanwhile.
         let quilt = self.get_quilt().lock().await.clone();
@@ -1064,7 +1064,7 @@ mod domain_writer_tests {
         let model = Model::create(dir.path());
         model.set_home(dir.path().join("home")).await?;
         let namespace: quilt_uri::Namespace = ("acme", "demo").into();
-        let installed = model.package_create(namespace.clone(), None, None).await?;
+        let (installed, _) = model.package_create(namespace.clone(), None, None).await?;
 
         // Another writer of the package, a download say, holds its lock.
         let downloading = installed.lock().await?;

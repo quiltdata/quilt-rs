@@ -234,13 +234,13 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         namespace: Namespace,
         source: Option<PathBuf>,
         message: Option<String>,
-    ) -> Res<InstalledPackage<S, R>> {
+    ) -> Res<(InstalledPackage<S, R>, flow::LeftOut)> {
         info!("Creating package: {}", namespace);
         let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
 
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
 
-        let lineage = flow::create(
+        let (lineage, left_out) = flow::create(
             lineage,
             &self.paths,
             &self.storage,
@@ -253,7 +253,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
         self.insert_package(lineage, &namespace).await?;
 
         info!("Successfully created package: {}", namespace);
-        Ok(self.create_installed_package(namespace))
+        Ok((self.create_installed_package(namespace), left_out))
     }
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {

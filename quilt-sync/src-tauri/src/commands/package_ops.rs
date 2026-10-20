@@ -882,18 +882,38 @@ async fn package_create_command(
     namespace: &str,
     source: Option<String>,
     message: Option<String>,
-) -> Result<(), Error> {
+) -> Result<quilt::flow::LeftOut, Error> {
     check_new_name(namespace)?;
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let source = source.map(PathBuf::from);
-    model::package_create(m, namespace, source, message).await?;
-    Ok(())
+    let (_, left_out) = model::package_create(m, namespace, source, message).await?;
+    Ok(left_out)
 }
 
+/// The toast saying what the ignore rules kept out of a package created from
+/// a folder; `None` when they kept nothing out.
+fn left_out_toast(
+    namespace: &str,
+    left_out: &quilt::flow::LeftOut,
+) -> Option<crate::toast::ToastDraft> {
+    (!left_out.is_empty()).then(|| crate::toast::ToastDraft {
+        kind: crate::toast::ToastKind::Info,
+        title: Some(namespace.to_string()),
+        body: format!("{left_out}."),
+        groups: Vec::new(),
+        timeout_ms: None,
+    })
+}
+
+/// Create a package, from a folder when `source` is given.
+///
+/// What the ignore rules left out goes to the toast stack: the v2 dialog
+/// closes on success, and only the stack outlives it.
 #[tauri::command]
 pub async fn package_create(
     m: tauri::State<'_, model::Model>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    toasts: tauri::State<'_, ToastCenter>,
     namespace: String,
     source: Option<String>,
     message: Option<String>,
@@ -907,16 +927,20 @@ pub async fn package_create(
     // where it is the only context.
     let msg_err = |err: &Error| format!("Failed to create package: {}", err.user_facing());
 
+    let result = package_create_command(m.inner(), &namespace, source, message).await;
+    if let Some(toast) = result
+        .as_ref()
+        .ok()
+        .and_then(|left_out| left_out_toast(&namespace, left_out))
+    {
+        toasts.post(toast).await;
+    }
     Notify::new(msg_init)
         .on_success(
             &tracing,
             MixpanelEvent::PackageCreated(PackageEvent::hostless()),
         )
-        .map(
-            package_create_command(m.inner(), &namespace, source, message).await,
-            msg_ok,
-            msg_err,
-        )
+        .map(result, msg_ok, msg_err)
 }
 
 async fn package_install_paths_command(
@@ -1446,7 +1470,7 @@ mod tests {
         use crate::model::QuiltModel;
         let model = crate::model::Model::create(dir.path());
         model.set_home(dir.path().join("home")).await.expect("home");
-        let package = model
+        let (package, _) = model
             .package_create(("acme", "demo").into(), None, None)
             .await
             .expect("create");
@@ -1840,7 +1864,7 @@ mod tests {
                 .set_home(dir.path().join("home"))
                 .await
                 .expect("home");
-            let package = model
+            let (package, _) = model
                 .package_create(("acme", "demo").into(), None, None)
                 .await
                 .expect("create");
@@ -2297,6 +2321,35 @@ mod tests {
             .expect_err("a dirty tree refuses");
 
         assert!(err.to_string().contains("value.txt"), "got: {err}");
+    }
+
+    /// A create from a folder says what the ignore rules left out, and a
+    /// create that left nothing out says nothing.
+    #[tokio::test]
+    async fn the_create_toast_counts_what_was_left_out() -> Result<(), Error> {
+        let dir = tempfile::TempDir::new()?;
+        let model = crate::model::Model::create(dir.path());
+        model.set_home(dir.path().join("home")).await?;
+        let source = tempfile::TempDir::new()?;
+        std::fs::create_dir_all(source.path().join(".git"))?;
+        std::fs::write(source.path().join(".git/config"), "x")?;
+        std::fs::write(source.path().join(".DS_Store"), "x")?;
+        std::fs::write(source.path().join("data.csv"), "a,b")?;
+        let source = Some(source.path().display().to_string());
+
+        let left_out =
+            super::package_create_command(&model, "acme/demo", source.clone(), None).await?;
+        let toast = super::left_out_toast("acme/demo", &left_out).expect("a toast");
+        assert_eq!(toast.kind, crate::toast::ToastKind::Info);
+        assert_eq!(toast.title.as_deref(), Some("acme/demo"));
+        assert_eq!(
+            toast.body,
+            "1 file and 1 folder were left out by ignore rules."
+        );
+
+        let left_out = super::package_create_command(&model, "acme/empty", None, None).await?;
+        assert_eq!(super::left_out_toast("acme/empty", &left_out), None);
+        Ok(())
     }
 
     /// The toast reads gc's sentence after the removal, or names the busy

@@ -23,7 +23,52 @@ use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
 use crate::paths::DomainPaths;
 use crate::quiltignore;
+use crate::quiltignore::IgnoredBy;
 use quilt_uri::Namespace;
+
+/// What the ignore rules kept out of a package created from a folder.
+/// The paths are relative to the source; an ignored folder is one item, not walked into.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LeftOut {
+    pub files: Vec<(PathBuf, IgnoredBy)>,
+    pub dirs: Vec<(PathBuf, IgnoredBy)>,
+}
+
+impl LeftOut {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty() && self.dirs.is_empty()
+    }
+}
+
+/// "2 files and 1 folder were left out by ignore rules", or nothing when nothing was.
+impl std::fmt::Display for LeftOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fn count(n: usize, noun: &str) -> Option<String> {
+            match n {
+                0 => None,
+                1 => Some(format!("1 {noun}")),
+                n => Some(format!("{n} {noun}s")),
+            }
+        }
+        let words: Vec<String> = [
+            count(self.files.len(), "file"),
+            count(self.dirs.len(), "folder"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if words.is_empty() {
+            return Ok(());
+        }
+        let verb = if self.files.len() + self.dirs.len() == 1 {
+            "was"
+        } else {
+            "were"
+        };
+        write!(f, "{} {verb} left out by ignore rules", words.join(" and "))
+    }
+}
 
 /// Walk a source directory recursively, collecting `(relative_path, absolute_path)` pairs.
 /// Respects the ignore rules: the source's `.quiltignore`, the user-wide file and
@@ -32,13 +77,14 @@ async fn walk_source_dir(
     storage: &(impl Storage + Sync),
     paths: &DomainPaths,
     source: &Path,
-) -> Res<Vec<(PathBuf, PathBuf)>> {
+) -> Res<(Vec<(PathBuf, PathBuf)>, LeftOut)> {
     let rules = quiltignore::Rules::load(source, &paths.user_quiltignore())?;
 
     let mut queue = std::collections::VecDeque::new();
     queue.push_back(source.to_path_buf());
 
     let mut files = Vec::new();
+    let mut left_out = LeftOut::default();
 
     while let Some(dir) = queue.pop_front() {
         let mut dir_entries = storage.read_dir(&dir).await?;
@@ -49,13 +95,15 @@ async fn walk_source_dir(
 
             if file_type.is_dir() {
                 let rel = file_path.strip_prefix(source)?;
-                if rules.dir_ignored_by(rel, false).is_some() {
+                if let Some(by) = rules.dir_ignored_by(rel, false) {
+                    left_out.dirs.push((rel.to_path_buf(), by));
                     continue;
                 }
                 queue.push_back(file_path);
             } else if file_type.is_file() {
                 let relative = file_path.strip_prefix(source)?.to_path_buf();
-                if rules.file_ignored_by(&relative, false).is_some() {
+                if let Some(by) = rules.file_ignored_by(&relative, false) {
+                    left_out.files.push((relative, by));
                     continue;
                 }
                 files.push((relative, file_path));
@@ -64,7 +112,9 @@ async fn walk_source_dir(
     }
 
     files.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(files)
+    left_out.files.sort_by(|a, b| a.0.cmp(&b.0));
+    left_out.dirs.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok((files, left_out))
 }
 
 /// Create a new local-only package.
@@ -75,6 +125,9 @@ async fn walk_source_dir(
 ///
 /// An initial commit is created so that `status` shows a clean state
 /// (like `git init` + initial commit).
+///
+/// Also returns what the ignore rules left out of `source`: those files stay
+/// there, and the new package never sees them.
 pub async fn create_package(
     lineage: DomainLineage,
     paths: &DomainPaths,
@@ -82,7 +135,7 @@ pub async fn create_package(
     namespace: Namespace,
     source: Option<PathBuf>,
     message: Option<String>,
-) -> Res<DomainLineage> {
+) -> Res<(DomainLineage, LeftOut)> {
     if lineage.packages.contains_key(&namespace) {
         return Err(Error::InstallPackage(
             InstallPackageError::AlreadyInstalled(namespace),
@@ -101,10 +154,12 @@ pub async fn create_package(
 
     let mut rows: Vec<Res<ManifestRow>> = Vec::new();
     let mut lineage_paths: BTreeMap<PathBuf, PathState> = BTreeMap::new();
+    let mut left_out = LeftOut::default();
 
     if let Some(ref source_dir) = source {
         debug!("⏳ Walking source directory: {}", source_dir.display());
-        let source_files = walk_source_dir(storage, paths, source_dir).await?;
+        let source_files;
+        (source_files, left_out) = walk_source_dir(storage, paths, source_dir).await?;
         debug!("✔️ Found {} files in source", source_files.len());
 
         for (relative_path, absolute_path) in source_files {
@@ -185,7 +240,7 @@ pub async fn create_package(
     lineage.packages.insert(namespace.clone(), package_lineage);
 
     info!("✔️ Successfully created package: {}", namespace);
-    Ok(lineage)
+    Ok((lineage, left_out))
 }
 
 #[cfg(test)]
@@ -206,7 +261,7 @@ mod tests {
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "pkg").into();
 
-        let lineage =
+        let (lineage, _) =
             create_package(lineage, &paths, &storage, namespace.clone(), None, None).await?;
 
         assert!(lineage.packages.contains_key(&namespace));
@@ -226,7 +281,7 @@ mod tests {
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "pkg").into();
 
-        let lineage =
+        let (lineage, _) =
             create_package(lineage, &paths, &storage, namespace.clone(), None, None).await?;
 
         let result = create_package(lineage, &paths, &storage, namespace.clone(), None, None).await;
@@ -261,7 +316,7 @@ mod tests {
             )
             .await?;
 
-        let lineage = create_package(
+        let (lineage, _) = create_package(
             lineage,
             &paths,
             &storage,
@@ -309,7 +364,7 @@ mod tests {
             )
             .await?;
 
-        let lineage = create_package(
+        let (lineage, left_out) = create_package(
             lineage,
             &paths,
             &storage,
@@ -333,6 +388,18 @@ mod tests {
             pkg.paths.contains_key(&PathBuf::from(".quiltignore")),
             ".quiltignore should be included (not matched by *.log)"
         );
+        assert_eq!(
+            left_out.files,
+            vec![(
+                PathBuf::from("notes.log"),
+                IgnoredBy {
+                    pattern: "*.log".to_string(),
+                    source: quiltignore::RuleSource::Package { line: 1 },
+                }
+            )]
+        );
+        assert_eq!(left_out.dirs, Vec::new());
+        assert_eq!(left_out.to_string(), "1 file was left out by ignore rules");
         Ok(())
     }
 
@@ -350,7 +417,7 @@ mod tests {
                 .await?;
         }
 
-        let lineage = create_package(
+        let (lineage, left_out) = create_package(
             lineage,
             &paths,
             &storage,
@@ -366,7 +433,45 @@ mod tests {
             keys,
             vec![&PathBuf::from(".zattrs"), &PathBuf::from("data.csv")]
         );
+        // The ignored folder is one item; its contents are not walked.
+        let default = |pattern: &str| IgnoredBy {
+            pattern: pattern.to_string(),
+            source: quiltignore::RuleSource::Default,
+        };
+        assert_eq!(
+            left_out,
+            LeftOut {
+                files: vec![(PathBuf::from(".DS_Store"), default(".DS_Store"))],
+                dirs: vec![(PathBuf::from(".git"), default(".*/"))],
+            }
+        );
+        assert_eq!(
+            left_out.to_string(),
+            "1 file and 1 folder were left out by ignore rules"
+        );
         Ok(())
+    }
+
+    #[test]
+    fn left_out_says_nothing_when_empty() {
+        assert_eq!(LeftOut::default().to_string(), "");
+        let by = || IgnoredBy {
+            pattern: "x".to_string(),
+            source: quiltignore::RuleSource::Default,
+        };
+        let left_out = LeftOut {
+            files: vec![("a".into(), by()), ("b".into(), by())],
+            dirs: vec![("c".into(), by()), ("d".into(), by())],
+        };
+        assert_eq!(
+            left_out.to_string(),
+            "2 files and 2 folders were left out by ignore rules"
+        );
+        let folder = LeftOut {
+            files: Vec::new(),
+            dirs: vec![("c".into(), by())],
+        };
+        assert_eq!(folder.to_string(), "1 folder was left out by ignore rules");
     }
 
     #[test(tokio::test)]
@@ -376,7 +481,7 @@ mod tests {
         let storage = MockStorage::default();
         let namespace: Namespace = ("test", "msg").into();
 
-        let lineage = create_package(
+        let (lineage, _) = create_package(
             lineage,
             &paths,
             &storage,
