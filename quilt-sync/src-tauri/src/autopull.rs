@@ -21,6 +21,7 @@ use crate::telemetry::prelude::*;
 
 pub mod activity;
 pub mod last_change;
+pub mod publish_timer;
 pub mod pull_toast;
 pub mod reporter;
 pub mod settings;
@@ -105,6 +106,8 @@ pub(crate) struct Clocks {
     /// here: each is the stored last-change time plus the wait as it is when
     /// read, so a new wait applies at once.
     pub publish_waiting: RwLock<BTreeSet<Namespace>>,
+    /// Wakes the publish timer to read the deadlines again.
+    pub publish_timer: tokio::sync::Notify,
 }
 
 /// Shared, long-lived watcher state. `pub(crate)` so `tick.rs` can read
@@ -122,6 +125,14 @@ pub(crate) struct WatcherInner {
     /// The folder watcher's walks, which the tick reuses for the packages it
     /// vouches for.
     pub walks: watched::WatchedWalks,
+}
+
+impl WatcherInner {
+    /// A deadline may have come earlier, or a package may have started
+    /// counting down: the publish timer reads them again.
+    pub(crate) fn reschedule_publish(&self) {
+        self.clocks.publish_timer.notify_one();
+    }
 }
 
 /// Everything the main page's watcher payload is derived from, read in one call.
@@ -214,6 +225,16 @@ impl Watcher {
             ))
             .await;
         });
+        let timer_inner = Arc::clone(&inner);
+        let timer_handle = app_handle.clone();
+        tauri::async_runtime::spawn(async move {
+            Box::pin(publish_timer::run(
+                &*timer_handle.state::<Model>(),
+                &timer_handle.state::<RoleCache>(),
+                &timer_inner,
+            ))
+            .await;
+        });
         let task_inner = Arc::clone(&inner);
         tauri::async_runtime::spawn(async move {
             loop {
@@ -268,6 +289,7 @@ impl Watcher {
         self.inner.paused.write().await.remove(namespace);
         self.inner.login_blocked.write().await.remove(namespace);
         self.inner.aggregator.note_cleared(namespace);
+        self.inner.reschedule_publish();
     }
 
     /// Take back a [`PausedReason::PullConflict`] the pull dry run no longer
@@ -323,6 +345,7 @@ impl Watcher {
         for ns in &namespaces {
             self.inner.aggregator.note_cleared(ns);
         }
+        self.inner.reschedule_publish();
     }
 
     /// Forget every pause caused by a role denial. Called by `switch_role`
@@ -353,6 +376,7 @@ impl Watcher {
         for namespace in &cleared {
             self.inner.aggregator.note_cleared(namespace);
         }
+        self.inner.reschedule_publish();
     }
 
     /// Point-in-time view of the paused set, used by the
@@ -382,6 +406,7 @@ impl Watcher {
                 .write()
                 .await
                 .insert(namespace.clone());
+            self.inner.reschedule_publish();
         }
     }
 
@@ -413,6 +438,13 @@ impl Watcher {
             .write()
             .await
             .extend(moved);
+        self.inner.reschedule_publish();
+    }
+
+    /// Autosync's settings changed: a new wait or publishing turned on or off
+    /// moves every deadline.
+    pub fn settings_changed(&self) {
+        self.inner.reschedule_publish();
     }
 
     /// One read, for the main page's watcher payload.
@@ -575,6 +607,7 @@ pub(crate) async fn observe_walk(
     // countdown that outlives the changes it was counting for is stale.
     if push_enabled && changed_at.is_some() {
         waiting.insert(namespace.clone());
+        inner.reschedule_publish();
     } else {
         waiting.remove(namespace);
     }

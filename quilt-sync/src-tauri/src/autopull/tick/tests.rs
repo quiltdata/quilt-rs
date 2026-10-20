@@ -795,6 +795,10 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         );
     }
     assert!(inner.paused.read().await.is_empty());
+    assert!(
+        inner.clocks.publish_waiting.read().await.contains(&ns),
+        "the kept work counts down, so the publish timer takes it next"
+    );
     Ok(())
 }
 
