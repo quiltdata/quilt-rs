@@ -2198,7 +2198,7 @@ mod pane_tests {
             .expect("the list");
         let words = text(&list);
         for note in [
-            ".DS_Store · Default rule",
+            ".DS_Store · Built-in rule",
             "*.tmp · Your rules, line 4",
             "cache/ · This package's .quiltignore, line 2",
         ] {

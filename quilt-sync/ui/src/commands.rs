@@ -113,7 +113,7 @@ impl RuleSource {
     #[must_use]
     pub fn words(self) -> String {
         match self {
-            Self::Default => "Default rule".to_string(),
+            Self::Default => "Built-in rule".to_string(),
             Self::User { line } => format!("Your rules, line {line}"),
             Self::Package { line } => format!("This package's .quiltignore, line {line}"),
         }

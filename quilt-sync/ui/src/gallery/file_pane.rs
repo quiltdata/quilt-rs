@@ -73,7 +73,7 @@
 //!   heading for a group of one* has its evidence, and this view is where it
 //!   shows.
 //! - **Three rows with one name differ by their rule's source.** Each
-//!   `.DS_Store` row names the line that hid it — the default rule, your
+//!   `.DS_Store` row names the line that hid it — the built-in rule, your
 //!   rules, this package's `.quiltignore` — and that note is the only thing
 //!   in the row that tells them apart.
 //! - **The loading state had to reserve two heights, not one.** The toolbar

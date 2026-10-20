@@ -133,7 +133,7 @@ fn click_rule(opened: RwSignal<String>) -> AnyView {
                 <EntryRow
                     name=".DS_Store"
                     size="6 KB"
-                    note=".DS_Store · Default rule"
+                    note=".DS_Store · Built-in rule"
                     actions=menu()
                 />
             </Cell>
