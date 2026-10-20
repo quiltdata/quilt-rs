@@ -72,15 +72,43 @@ pub(crate) async fn publish_due(
     let wall = SystemTime::now();
     held.retain(|_, until| *until > now);
 
+    let mut due = Vec::new();
     for namespace in waiting(inner).await {
         if due_at(inner, &namespace, run.wait, held, (now, wall))
             .await
-            .is_none_or(|at| at > now)
+            .is_some_and(|at| at <= now)
         {
-            continue;
+            due.push(namespace);
         }
+    }
+    if !due.is_empty() {
+        let _passes = inner.clocks.passes.lock().await;
+        inner.aggregator.note_tick_started();
+        run_passes(model, roles, inner, &run, due, held).await;
+        inner.aggregator.note_tick_ended_ok();
+    }
+
+    let clock = (Instant::now(), SystemTime::now());
+    let mut next: Option<Instant> = None;
+    for namespace in waiting(inner).await {
+        if let Some(at) = due_at(inner, &namespace, run.wait, held, clock).await {
+            next = Some(next.map_or(at, |cur| cur.min(at)));
+        }
+    }
+    next
+}
+
+async fn run_passes(
+    model: &impl QuiltModel,
+    roles: &RoleCache,
+    inner: &WatcherInner,
+    run: &PassSettings,
+    due: Vec<Namespace>,
+    held: &mut BTreeMap<Namespace, Instant>,
+) {
+    for namespace in due {
         let pass = match model.get_installed_package(&namespace).await {
-            Ok(Some(pkg)) => sync_package(model, roles, inner, &pkg, &run, Instant::now()).await,
+            Ok(Some(pkg)) => sync_package(model, roles, inner, &pkg, run, Instant::now()).await,
             Ok(None) => Pass::Skipped,
             Err(err) => {
                 warn!("autosync: publish timer cannot read {namespace}: {err}");
@@ -102,15 +130,6 @@ pub(crate) async fn publish_due(
             Pass::Done => {}
         }
     }
-
-    let clock = (Instant::now(), SystemTime::now());
-    let mut next: Option<Instant> = None;
-    for namespace in waiting(inner).await {
-        if let Some(at) = due_at(inner, &namespace, run.wait, held, clock).await {
-            next = Some(next.map_or(at, |cur| cur.min(at)));
-        }
-    }
-    next
 }
 
 async fn waiting(inner: &WatcherInner) -> Vec<Namespace> {

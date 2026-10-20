@@ -285,3 +285,25 @@ async fn a_reschedule_wakes_the_sleeping_timer() {
         .await
         .expect("woken");
 }
+
+#[tokio::test]
+async fn the_timer_waits_for_a_running_check() {
+    let (inner, reporter) = inner(Duration::from_mins(1), true, true);
+    let model = model(1, 1, false);
+    let inner = changed(inner, Duration::from_secs(61)).await;
+
+    let roles = RoleCache::default();
+    let mut held = BTreeMap::new();
+    let check = inner.clocks.passes.lock().await;
+    let timer = publish_due(&model, &roles, &inner, &mut held);
+    tokio::pin!(timer);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut timer)
+            .await
+            .is_err(),
+        "no publish while the check runs"
+    );
+    drop(check);
+    timer.await;
+    assert_eq!(published(&reporter), 1);
+}

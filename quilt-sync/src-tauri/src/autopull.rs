@@ -108,6 +108,10 @@ pub(crate) struct Clocks {
     pub publish_waiting: RwLock<BTreeSet<Namespace>>,
     /// Wakes the publish timer to read the deadlines again.
     pub publish_timer: tokio::sync::Notify,
+    /// Held by a check and by the publish timer while they run passes, so at
+    /// most one transfer runs: the activity line and the tray's syncing mode
+    /// each keep one.
+    pub passes: tokio::sync::Mutex<()>,
 }
 
 /// Shared, long-lived watcher state. `pub(crate)` so `tick.rs` can read
@@ -244,6 +248,7 @@ impl Watcher {
                 // because by then this deadline is already in the past.
                 arm_next_pull(&task_inner, cadence).await;
                 tokio::time::sleep(cadence).await;
+                let _passes = task_inner.clocks.passes.lock().await;
                 task_inner.aggregator.note_tick_started();
                 let model_state = app_handle.state::<Model>();
                 // Same `state::<..>()` route as `Model`, and for the same
@@ -328,6 +333,7 @@ impl Watcher {
         let mut event = PackageStatusEvent::from_status(namespace, status);
         event.fingerprint = format!("unpaused;{}", event.fingerprint);
         self.inner.reporter.report_status(namespace, event);
+        self.inner.reschedule_publish();
         true
     }
 
