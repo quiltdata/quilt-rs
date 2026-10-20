@@ -496,12 +496,13 @@ fn without_lines(contents: &str, lines: &[String]) -> String {
 /// a reader never sees half of it. A symlink is followed, so the file it
 /// points at is the one replaced.
 fn replace_contents(path: &Path, contents: &str) -> Res {
-    let path = &link_target(path).map_err(|source| {
+    let target = link_target(path).map_err(|source| {
         Error::Fs(FsError::Write {
             path: path.to_path_buf(),
             source,
         })
     })?;
+    let path = target.as_path();
     let write_error = |source| {
         Error::Fs(FsError::Write {
             path: path.to_path_buf(),
