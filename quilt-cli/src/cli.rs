@@ -553,7 +553,7 @@ enum Commands {
         #[command(flatten)]
         pkg: PackageRef,
         /// List each ignored path with the rule that ignored it and where the
-        /// rule comes from: a default rule, or a rules file and its line.
+        /// rule comes from: a built-in rule, or a rules file and its line.
         #[arg(long)]
         ignored: bool,
     },
