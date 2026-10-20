@@ -37,7 +37,7 @@
 - **Breaking:** `flow::status` and `flow::status_cached` take `&DomainPaths`, and `InstalledPackageStatus::ignored_files` and `ignored_dirs` carry a `quiltignore::IgnoredBy` instead of the pattern string (<https://github.com/quiltdata/quilt-rs/pull/1143>)
 - **Breaking:** `InstalledPackageStatus::most_recent_mtime` and `InstalledPackageStatus::working_tree_quiet` are removed. Nothing times a publish from file edit times now (<https://github.com/quiltdata/quilt-rs/pull/1134>)
 - **Breaking:** `InstalledPackage` has a new public field, `state_store` (<https://github.com/quiltdata/quilt-rs/pull/1144>)
-- **Breaking:** `LocalDomain::create_package` and `flow::create` also return a `flow::LeftOut`: the files and folders the ignore rules kept out of the source folder, each with its `IgnoredBy`. Its `Display` is the count line, such as "2 files and 1 folder were left out by ignore rules" (PRLINK)
+- **Breaking:** `LocalDomain::create_package` and `flow::create` also return a `flow::LeftOut`: the files and folders the ignore rules kept out of the source folder, each with its `IgnoredBy`. Its `Display` is the count line, such as "2 files and 1 folder were left out by ignore rules" (<https://github.com/quiltdata/quilt-rs/pull/1158>)
 - The status walk reads the package folder in one blocking task instead of one per entry (<https://github.com/quiltdata/quilt-rs/pull/1144>)
 
 ### Fixed

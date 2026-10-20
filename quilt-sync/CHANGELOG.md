@@ -25,7 +25,7 @@
 
 - **New design preview**: Settings has an **Ignore rules** card. **Open file** opens your own rules for every package, and **Review…** lists the built-in rules by group, so you can turn one off to let its new files in (<https://github.com/quiltdata/quilt-rs/pull/1149>)
 - **New design preview**: each file or folder under *Ignored* on the package page names the rule that hid it and where the rule came from: *Built-in rule*, *Your rules, line 4* or *This package's .quiltignore, line 2* (<https://github.com/quiltdata/quilt-rs/pull/1155>)
-- Creating a package from a folder says how many files and folders the ignore rules left out, such as "2 files and 1 folder were left out by ignore rules" (PRLINK)
+- Creating a package from a folder says how many files and folders the ignore rules left out, such as "2 files and 1 folder were left out by ignore rules" (<https://github.com/quiltdata/quilt-rs/pull/1158>)
 
 ### Changed
 

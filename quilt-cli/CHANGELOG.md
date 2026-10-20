@@ -24,7 +24,7 @@
 ### Added
 
 - `quilt status` says how many files and folders the ignore rules leave out, and `quilt status --ignored` lists each one with its rule and where the rule comes from: a default rule, or a rules file and its line. `--json` gains the counts, and the list with `--ignored` (<https://github.com/quiltdata/quilt-rs/pull/1146>)
-- `quilt create` from a folder says how many files and folders the ignore rules left out, and `--json` gains the counts (PRLINK)
+- `quilt create` from a folder says how many files and folders the ignore rules left out, and `--json` gains the counts (<https://github.com/quiltdata/quilt-rs/pull/1158>)
 
 ### Changed
 
