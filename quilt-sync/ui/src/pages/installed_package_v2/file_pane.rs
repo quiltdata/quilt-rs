@@ -2226,7 +2226,11 @@ mod pane_tests {
             .unwrap()
             .expect("the folder's row");
         let row_text = text(&row.parent_element().unwrap());
-        assert!(!row_text.contains(" B"), "no size: {row_text}");
+        // Its rule's note has no line number, so any digit would be a size.
+        assert!(
+            !row_text.chars().any(|c| c.is_ascii_digit()),
+            "no size: {row_text}"
+        );
     }
 
     /// Under `Base folder` an ignored folder sits under its parent's heading
