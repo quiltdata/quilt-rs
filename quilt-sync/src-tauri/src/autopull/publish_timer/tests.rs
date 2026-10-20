@@ -260,7 +260,7 @@ async fn a_paused_package_waits_for_its_pause_to_clear() {
 
 #[tokio::test]
 async fn a_package_with_no_remote_stops_counting_down() {
-    let (inner, _) = inner(Duration::from_mins(1), true, true);
+    let (inner, reporter) = inner(Duration::from_mins(1), true, true);
     let mut model = MockQuiltModel::new();
     model
         .expect_get_installed_package()
@@ -274,6 +274,13 @@ async fn a_package_with_no_remote_stops_counting_down() {
 
     assert_eq!(next, None);
     assert!(inner.clocks.publish_waiting.read().await.is_empty());
+    assert_eq!(
+        reporter
+            .autosync_changed
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "the card hears the countdown ended"
+    );
 }
 
 #[tokio::test]

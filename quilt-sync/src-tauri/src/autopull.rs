@@ -1329,6 +1329,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failed_push_of_a_commit_alone_still_reads_retrying() {
+        // No uncommitted files: the tray counts it clean, but the commit keeps
+        // its time until a publish lands.
+        let watcher = publishing_watcher().await;
+        let ns: Namespace = ("acme", "demo").into();
+        watcher
+            .note_committed(&ns, last_change::PendingCommit::At(SystemTime::now()))
+            .await;
+        let inner = watcher.inner_for_test();
+        inner.aggregator.note_status(&ns, false);
+        inner.clocks.publish_waiting.write().await.remove(&ns);
+        inner.backoff.write().await.insert(
+            ns.clone(),
+            tick::BackoffState {
+                next_attempt: std::time::Instant::now(),
+                consecutive_failures: 1,
+                error: "Could not reach S3".to_string(),
+            },
+        );
+        assert!(matches!(
+            state_of(&watcher, &ns).await,
+            Some(PackageAutosync::Retrying { .. })
+        ));
+    }
+
+    #[tokio::test]
     async fn a_failing_pull_with_nothing_to_publish_is_left_out() {
         // The tray may still count it changed from an earlier check; a walk
         // that found nothing deleted its time.
