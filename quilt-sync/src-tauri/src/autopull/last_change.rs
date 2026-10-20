@@ -16,6 +16,7 @@ use std::time::SystemTime;
 
 use quilt_uri::Namespace;
 
+use crate::quilt::lineage::Change;
 use crate::quilt::lineage::InstalledPackageStatus;
 use crate::quilt::state_store::ChangeSource;
 use crate::quilt::state_store::PackageStateStore;
@@ -245,13 +246,36 @@ impl LastChange {
             .map(|a| a.last_change_at)
     }
 
-    /// A pull changed the tree, and `status` is a walk after it. The changes
-    /// it kept are not new, so the next walk compares with these.
-    pub(crate) fn on_pulled(&self, namespace: &Namespace, status: &InstalledPackageStatus) {
+    /// A pull changed the tree: `before` is the walk before it, `after` one
+    /// after it. The changes the pull kept are not new, so the next walk
+    /// compares with `after`. A change `before` did not hold, such as an edit
+    /// during the pull, moves the time to now.
+    pub(crate) async fn on_pulled(
+        &self,
+        namespace: &Namespace,
+        before: &InstalledPackageStatus,
+        after: &InstalledPackageStatus,
+    ) {
         self.last_seen.lock().expect("last_seen lock").insert(
             namespace.clone(),
-            crate::autopull::reporter::changes_fingerprint(&status.changes),
+            crate::autopull::reporter::changes_fingerprint(&after.changes),
         );
+        let kept = after.changes.iter().all(|(path, change)| {
+            match (change, before.changes.get(path)) {
+                (
+                    Change::Added(row) | Change::Modified(row),
+                    Some(Change::Added(was) | Change::Modified(was)),
+                ) => row.hash == was.hash,
+                // A removal's row is the base's, which the pull moved.
+                (Change::Removed(_), Some(Change::Removed(_))) => true,
+                _ => false,
+            }
+        });
+        if !kept {
+            self.store
+                .record_change(namespace, now(), ChangeSource::Edit)
+                .await;
+        }
     }
 
     /// The package published.
@@ -408,7 +432,9 @@ mod tests {
             .await;
 
         // The pull resolved `b` and kept `a`.
-        clock.on_pulled(&ns(), &status_with(&["a"]));
+        clock
+            .on_pulled(&ns(), &status_with(&["a", "b"]), &status_with(&["a"]))
+            .await;
 
         assert_eq!(
             clock
@@ -423,6 +449,21 @@ mod tests {
             edited.is_some_and(|at| at > old),
             "an edit after the pull is new"
         );
+    }
+
+    #[tokio::test]
+    async fn an_edit_during_a_pull_moves_the_time() {
+        let store = PackageStateStore::in_memory();
+        let old = now() - hour();
+        store.record_change(&ns(), old, ChangeSource::Edit).await;
+        let clock = LastChange::new(store);
+        clock.walked.lock().unwrap().insert(ns());
+
+        clock
+            .on_pulled(&ns(), &status_with(&["a"]), &status_with(&["a", "c"]))
+            .await;
+
+        assert!(clock.get(&ns()).await.is_some_and(|at| at > old));
     }
 
     #[tokio::test]

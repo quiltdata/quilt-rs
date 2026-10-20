@@ -521,7 +521,9 @@ pub(crate) async fn refresh_then_maybe_sync(
                         info!("autosync: pulled namespace={namespace}");
                         if kept_changes {
                             match model.locked_package_status(&locked, None).await {
-                                Ok(after) => last_change.on_pulled(namespace, &after),
+                                Ok(after) => {
+                                    last_change.on_pulled(namespace, &status, &after).await;
+                                }
                                 Err(err) => warn!(
                                     "autosync: walk after the pull of {namespace} failed: {err}"
                                 ),
