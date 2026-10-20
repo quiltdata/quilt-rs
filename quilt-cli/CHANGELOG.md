@@ -19,20 +19,22 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.37.0-dev]
+## [v0.37.0] - 2026-10-20
 
 ### Added
 
-- `quilt status` says how many files and folders the ignore rules leave out, and `quilt status --ignored` lists each one with its rule and where the rule comes from: a built-in rule, or a rules file and its line. `--json` gains the counts, and the list with `--ignored` (<https://github.com/quiltdata/quilt-rs/pull/1146>, <https://github.com/quiltdata/quilt-rs/pull/1157>)
-- `quilt create` from a folder says how many files and folders the ignore rules left out, and `--json` gains the counts (<https://github.com/quiltdata/quilt-rs/pull/1158>)
+- `quilt status` and `quilt create` say how many files and folders the ignore rules left out, and `--json` gains the counts. `quilt status --ignored` lists each one with the rule that matched it: a built-in rule, or a rules file and line
+  - <https://github.com/quiltdata/quilt-rs/pull/1146>
+  - <https://github.com/quiltdata/quilt-rs/pull/1157>
+  - <https://github.com/quiltdata/quilt-rs/pull/1158>
 
 ### Changed
 
-- `quilt create` and `quilt status` leave out new files that are OS or editor clutter, secrets or caches (`.DS_Store`, `.git/`, `.venv/`, `.env`, `node_modules/` and similar). Files already in a package stay. Rules of your own for every package go in `.quiltignore` in the domain folder (<https://github.com/quiltdata/quilt-rs/pull/1143>)
+- `quilt create` and `quilt status` leave out new OS and editor clutter, secrets and caches (`.DS_Store`, `.git/`, `.venv/`, `.env`, `node_modules/` and similar). Files already in a package stay. Put your own rules for every package in `.quiltignore` in the domain folder (<https://github.com/quiltdata/quilt-rs/pull/1143>)
 
 ### quilt-rs
 
-- Updated [from v0.44.0 to v0.45.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.44.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.44.0 to v0.45.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.44.0...quilt-rs/v0.45.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.36.2] - 2026-10-13
 

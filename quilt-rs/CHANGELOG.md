@@ -19,30 +19,34 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.45.0-dev]
+## [v0.45.0] - 2026-10-20
 
 ### Added
 
-- Ignore rules in three layers: the built-in `quiltignore::DEFAULT_RULES` (every dot-folder, OS and editor clutter, secrets, caches, `node_modules/`; Zarr metadata such as `.zattrs` stays in), then the user-wide `.quiltignore` at `DomainPaths::user_quiltignore`, then the package's `.quiltignore`. As in git, a path is decided level by level: at each folder the strongest matching layer decides, so `!pattern` brings a path back, but a `!` on a folder does not bring back the files in it that a weaker layer names. The first two hide new files only; a file the package has stays. `quiltignore::Rules` applies them, and `quiltignore::IgnoredBy` names the matching rule and its source (<https://github.com/quiltdata/quilt-rs/pull/1143>, <https://github.com/quiltdata/quilt-rs/pull/1150>)
-- `quiltignore::default_rules` and `quiltignore::set_default_rules` read and set the built-in rules turned off for every package: off is an ordinary `!rule` line in the user-wide file. `LocalDomain::set_default_rules` does it holding `DomainPaths::user_quiltignore_lock`, which *Stop ignoring* for all packages now holds too, so neither loses the other's lines. `quiltignore::remove_lines` takes lines out of a rules file, and `LocalDomain::user_quiltignore` names the user-wide file (<https://github.com/quiltdata/quilt-rs/pull/1149>)
-- `state_store::PackageStateStore`: an optional store for per-package state the desktop app keeps, at `DomainPaths::state_db` (`.quilt/state.db`), in SQLite. Its first table holds each package's last-change time. No method returns an error: a missing, damaged or deleted file is created again, and the CLI never opens it (<https://github.com/quiltdata/quilt-rs/pull/1134>)
-- `file_stamp`: `read_dir_stamps` and `stamp` read each file's size, edit time, change time and file ID, a whole folder per call on macOS and Windows (<https://github.com/quiltdata/quilt-rs/pull/1144>)
-- `LockedPackage::status_from_walk`: a status with the remote's `latest` read now and an earlier walk's changes, while the lineage is the one that walk read (<https://github.com/quiltdata/quilt-rs/pull/1145>)
-- `file_stamp::on_local_volume` and `file_stamp::remote_mount_under`: whether a folder is on a local volume, and whether a network share or a FUSE mount sits inside it (<https://github.com/quiltdata/quilt-rs/pull/1145>)
-- `InstalledPackageStatus` is `Clone` (<https://github.com/quiltdata/quilt-rs/pull/1145>)
-- A stat cache in the state store: `flow::status_cached` hashes only the files whose stamp changed since an earlier walk, and once a day hashes every file anyway. `LocalDomain::with_state_store` gives a domain's packages one; the CLI has none and hashes every file as before. With a store, commit and publish hash the changed files again before they name objects by them (<https://github.com/quiltdata/quilt-rs/pull/1144>)
+- Ignore rules come in three layers: the built-in `quiltignore::DEFAULT_RULES` (dot-folders, OS and editor clutter, secrets, caches, `node_modules/`), the user-wide `.quiltignore` at `DomainPaths::user_quiltignore`, and the package's `.quiltignore`. As in git, a stronger layer can bring a path back with `!pattern`. The first two layers hide new files only. `quiltignore::Rules` applies them, and `quiltignore::IgnoredBy` names the rule that matched and where it came from
+  - <https://github.com/quiltdata/quilt-rs/pull/1143>
+  - <https://github.com/quiltdata/quilt-rs/pull/1150>
+- `flow::stop_ignoring` and `flow::preview_stop_ignoring`, also on `InstalledPackage`, bring an ignored file or folder back for one package or for all, and count the files that adds (<https://github.com/quiltdata/quilt-rs/pull/1147>)
+- `LocalDomain::set_default_rules`, `quiltignore::default_rules` and `quiltignore::set_default_rules` read and set which built-in rules are off for every package, and `quiltignore::remove_lines` takes lines out of a rules file (<https://github.com/quiltdata/quilt-rs/pull/1149>)
+- `state_store::PackageStateStore`: an optional SQLite store at `DomainPaths::state_db` for the desktop app's per-package state, such as each package's last-change time. The CLI does not use it (<https://github.com/quiltdata/quilt-rs/pull/1134>)
+- `flow::status_cached` hashes only the files that changed since the last walk, but hashes every file once a day and when the state store cannot be read. `LocalDomain::with_state_store` turns it on; without a store, as in the CLI, every file is hashed as before. `file_stamp` reads the file stamps it compares, and tells whether a folder is on a local volume or holds a network or FUSE mount
+  - <https://github.com/quiltdata/quilt-rs/pull/1144>
+  - <https://github.com/quiltdata/quilt-rs/pull/1145>
+- `LockedPackage::status_from_walk` builds a status from an earlier walk's changes and the remote's current `latest`, and `InstalledPackageStatus` is `Clone` (<https://github.com/quiltdata/quilt-rs/pull/1145>)
 
 ### Changed
 
-- **Breaking:** `flow::status` and `flow::status_cached` take `&DomainPaths`, and `InstalledPackageStatus::ignored_files` and `ignored_dirs` carry a `quiltignore::IgnoredBy` instead of the pattern string (<https://github.com/quiltdata/quilt-rs/pull/1143>)
-- **Breaking:** `InstalledPackageStatus::most_recent_mtime` and `InstalledPackageStatus::working_tree_quiet` are removed. Nothing times a publish from file edit times now (<https://github.com/quiltdata/quilt-rs/pull/1134>)
+- **Breaking:** `InstalledPackageStatus` has a new field, `ignored_dirs`, and both `ignored_files` and `ignored_dirs` carry a `quiltignore::IgnoredBy` instead of the pattern string. `flow::status` and `flow::status_cached` take `&DomainPaths`
+  - <https://github.com/quiltdata/quilt-rs/pull/1136>
+  - <https://github.com/quiltdata/quilt-rs/pull/1143>
+- **Breaking:** `InstalledPackageStatus::most_recent_mtime` and `InstalledPackageStatus::working_tree_quiet` are removed (<https://github.com/quiltdata/quilt-rs/pull/1134>)
 - **Breaking:** `InstalledPackage` has a new public field, `state_store` (<https://github.com/quiltdata/quilt-rs/pull/1144>)
-- **Breaking:** `LocalDomain::create_package` and `flow::create` also return a `flow::LeftOut`: the files and folders the ignore rules kept out of the source folder, each with its `IgnoredBy`. Its `Display` is the count line, such as "2 files and 1 folder were left out by ignore rules" (<https://github.com/quiltdata/quilt-rs/pull/1158>)
-- The status walk reads the package folder in one blocking task instead of one per entry (<https://github.com/quiltdata/quilt-rs/pull/1144>)
+- **Breaking:** `LocalDomain::create_package` and `flow::create` also return a `flow::LeftOut`: what the ignore rules kept out of the source folder (<https://github.com/quiltdata/quilt-rs/pull/1158>)
+- The status walk is faster: it reads the package folder in one blocking task (<https://github.com/quiltdata/quilt-rs/pull/1144>)
 
 ### Fixed
 
-- A pull no longer overwrites an ignored local file at a path the remote adds or changes: it stops with a conflict, unless the file already holds the old or the new content (<https://github.com/quiltdata/quilt-rs/pull/1143>)
+- A pull no longer overwrites an ignored local file at a path the remote adds or changes: it stops with a conflict (<https://github.com/quiltdata/quilt-rs/pull/1143>)
 
 ## [v0.44.0] - 2026-10-13
 
