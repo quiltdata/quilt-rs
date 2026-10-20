@@ -519,6 +519,14 @@ pub(crate) async fn refresh_then_maybe_sync(
                 return match applied {
                     Ok(report) => {
                         info!("autosync: pulled namespace={namespace}");
+                        if kept_changes {
+                            match model.locked_package_status(&locked, None).await {
+                                Ok(after) => last_change.on_pulled(namespace, &after),
+                                Err(err) => warn!(
+                                    "autosync: walk after the pull of {namespace} failed: {err}"
+                                ),
+                            }
+                        }
                         // Kept work leaves a dirty tree: `UpToDate` +
                         // `kept_changes` is the intended post-pull state.
                         // `kept_changes` comes from the outcome (post-pull
@@ -901,9 +909,6 @@ pub(crate) async fn sync_package(
             // `report_toast` is the metadata-only revision: hashes advanced
             // and no file moved, and an entry that stands until dismissed
             // must not say nothing.
-            if outcome.pulled.is_some() {
-                inner.last_change.on_pulled(&namespace);
-            }
             if let Some(report) = outcome.pulled.as_ref()
                 && let Some(toast) = pull_toast::report_toast(&namespace, report)
             {

@@ -245,13 +245,13 @@ impl LastChange {
             .map(|a| a.last_change_at)
     }
 
-    /// A pull changed the tree. The changes it kept are not new, so the next
-    /// walk keeps the time.
-    pub(crate) fn on_pulled(&self, namespace: &Namespace) {
-        self.last_seen
-            .lock()
-            .expect("last_seen lock")
-            .remove(namespace);
+    /// A pull changed the tree, and `status` is a walk after it. The changes
+    /// it kept are not new, so the next walk compares with these.
+    pub(crate) fn on_pulled(&self, namespace: &Namespace, status: &InstalledPackageStatus) {
+        self.last_seen.lock().expect("last_seen lock").insert(
+            namespace.clone(),
+            crate::autopull::reporter::changes_fingerprint(&status.changes),
+        );
     }
 
     /// The package published.
@@ -408,13 +408,20 @@ mod tests {
             .await;
 
         // The pull resolved `b` and kept `a`.
-        clock.on_pulled(&ns());
+        clock.on_pulled(&ns(), &status_with(&["a"]));
 
         assert_eq!(
             clock
                 .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
                 .await,
             Some(old)
+        );
+        let edited = clock
+            .observe(&ns(), None, &status_with(&["a", "c"]), PendingCommit::None)
+            .await;
+        assert!(
+            edited.is_some_and(|at| at > old),
+            "an edit after the pull is new"
         );
     }
 
