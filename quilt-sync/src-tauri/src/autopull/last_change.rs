@@ -268,6 +268,11 @@ impl LastChange {
         !self.walked.lock().expect("walked lock").contains(namespace)
     }
 
+    /// Every package with a stored last-change time: those with changes.
+    pub(crate) async fn namespaces(&self) -> Vec<Namespace> {
+        self.store.namespaces().await
+    }
+
     /// The stored last-change time, without a walk.
     pub(crate) async fn get(&self, namespace: &Namespace) -> Option<SystemTime> {
         self.store

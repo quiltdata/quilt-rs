@@ -583,9 +583,9 @@ pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
 /// holds wins: publishing, paused, off (publishing off and changes found),
 /// retrying (in backoff with changes), waiting. Any other package is left out.
 ///
-/// A package has changes when the last check found some, it counts down, or it
-/// has a last-change time: a failed publish takes it out of the countdown but
-/// keeps its time.
+/// A package has changes when it counts down or has a last-change time: a
+/// failed publish takes it out of the countdown but keeps its time, and a walk
+/// that finds no changes deletes the time.
 pub(crate) async fn package_states(
     inner: &WatcherInner,
     paused: &BTreeMap<Namespace, PausedReason>,
@@ -597,10 +597,11 @@ pub(crate) async fn package_states(
         .activity()
         .filter(|activity| activity.op == activity::ActivityOp::Publish)
         .map(|activity| activity.namespace);
-    let with_changes = inner.aggregator.namespaces_with_changes();
     let waiting = inner.clocks.publish_waiting.read().await.clone();
     let backoff = inner.backoff.read().await.clone();
-    let mut namespaces: BTreeSet<Namespace> = with_changes.union(&waiting).cloned().collect();
+    let mut namespaces: BTreeSet<Namespace> =
+        inner.last_change.namespaces().await.into_iter().collect();
+    namespaces.extend(waiting.iter().cloned());
     namespaces.extend(paused.keys().cloned());
     namespaces.extend(backoff.keys().cloned());
     namespaces.extend(publishing.clone());
@@ -609,9 +610,7 @@ pub(crate) async fn package_states(
     let mut states = Vec::new();
     for namespace in namespaces {
         let last_change = inner.last_change.get(&namespace).await;
-        let has_changes = with_changes.contains(&namespace)
-            || waiting.contains(&namespace)
-            || last_change.is_some();
+        let has_changes = waiting.contains(&namespace) || last_change.is_some();
         let state = if publishing.as_ref() == Some(&namespace) {
             PackageAutosync::Publishing
         } else if let Some(reason) = paused.get(&namespace) {
@@ -1288,7 +1287,7 @@ mod tests {
         let watcher = publishing_watcher().await;
         let ns: Namespace = ("acme", "demo").into();
         let inner = watcher.inner_for_test();
-        inner.aggregator.note_status(&ns, true);
+        inner.last_change.on_signal(&ns).await;
         inner.backoff.write().await.insert(
             ns.clone(),
             tick::BackoffState {
@@ -1331,10 +1330,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_failing_pull_with_nothing_to_publish_is_left_out() {
+        // The tray may still count it changed from an earlier check; a walk
+        // that found nothing deleted its time.
         let watcher = publishing_watcher().await;
         let ns: Namespace = ("acme", "demo").into();
         let inner = watcher.inner_for_test();
-        inner.aggregator.note_status(&ns, false);
+        inner.aggregator.note_status(&ns, true);
         inner.backoff.write().await.insert(
             ns.clone(),
             tick::BackoffState {
@@ -1353,8 +1354,8 @@ mod tests {
         let changed: Namespace = ("acme", "changed").into();
         let clean: Namespace = ("acme", "clean").into();
         let inner = watcher.inner_for_test();
-        inner.aggregator.note_status(&changed, true);
-        inner.aggregator.note_status(&clean, false);
+        inner.last_change.on_signal(&changed).await;
+        inner.aggregator.note_status(&clean, true);
         assert_eq!(
             state_of(&watcher, &changed).await,
             Some(PackageAutosync::Off)
