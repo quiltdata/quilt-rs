@@ -38,6 +38,9 @@ pub const LOGIN_REQUIRED_EVENT: &str = "autosync-login-required";
 pub const SUBSCRIBER_ERROR_EVENT: &str = "fswatcher-subscriber-error";
 pub const PUBLISHED_EVENT: &str = "autosync-published";
 pub const PAUSED_EVENT: &str = "autosync-paused";
+/// Tells the window a package's autosync state may have changed, so it reads
+/// the main page's watcher payload again. No payload.
+pub const AUTOSYNC_CHANGED_EVENT: &str = "autosync-changed";
 
 /// Payload emitted to the UI when a package's upstream state changes after
 /// a watcher tick. Mirrors the camelCase shape of `RefreshedPackageStatus`
@@ -334,6 +337,11 @@ pub trait StatusReporter: Send + Sync + 'static {
     /// [`TauriEventReporter`] — the toast would silently never appear.
     /// Requiring an implementation makes that a compile error instead.
     fn report_pulled(&self, namespace: &Namespace, toast: ReportToast);
+
+    /// A package's autosync state may have changed: a walk, a pass, a pause,
+    /// a commit or a settings change. Without a default, for the same reason
+    /// as [`Self::report_pulled`].
+    fn report_autosync_changed(&self);
 }
 
 /// Stderr/log-only reporter. Used in tests where no Tauri runtime is
@@ -343,6 +351,8 @@ pub trait StatusReporter: Send + Sync + 'static {
 pub struct LogReporter;
 
 impl StatusReporter for LogReporter {
+    fn report_autosync_changed(&self) {}
+
     fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
         info!(
             "autosync: pulled namespace={namespace} kind={:?} body={}",
@@ -467,6 +477,10 @@ impl StatusReporter for TelemetryReporter {
     /// events for what it did.
     fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
         self.inner.report_pulled(namespace, toast);
+    }
+
+    fn report_autosync_changed(&self) {
+        self.inner.report_autosync_changed();
     }
 }
 
@@ -598,6 +612,12 @@ impl StatusReporter for TauriEventReporter {
         };
         if let Err(err) = self.handle.emit(PUBLISHED_EVENT, &payload) {
             warn!("autosync: failed to emit {PUBLISHED_EVENT}: {err}");
+        }
+    }
+
+    fn report_autosync_changed(&self) {
+        if let Err(err) = self.handle.emit(AUTOSYNC_CHANGED_EVENT, ()) {
+            warn!("autosync: failed to emit {AUTOSYNC_CHANGED_EVENT}: {err}");
         }
     }
 }
@@ -1066,9 +1086,16 @@ pub(crate) mod test_support {
         /// What each pull was reported as bringing, so a test can assert the
         /// wording rather than merely that something was posted.
         pub pulled: Mutex<Vec<(Namespace, ReportToast)>>,
+        /// How many times the window was told a state may have changed.
+        pub autosync_changed: std::sync::atomic::AtomicUsize,
     }
 
     impl StatusReporter for RecordingReporter {
+        fn report_autosync_changed(&self) {
+            self.autosync_changed
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+
         fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
             self.pulled.lock().unwrap().push((namespace.clone(), toast));
         }

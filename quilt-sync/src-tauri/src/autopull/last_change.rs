@@ -68,6 +68,9 @@ pub(crate) struct LastChange {
     /// Packages whose own commit no walk has seen yet: the next walk finds
     /// the committed files gone from the changes, and that is no new edit.
     fresh_commits: Mutex<BTreeSet<Namespace>>,
+    /// Packages the restart check proved changed while the app was closed,
+    /// until their time moves again.
+    closed_changes: Mutex<BTreeSet<Namespace>>,
 }
 
 impl LastChange {
@@ -84,14 +87,42 @@ impl LastChange {
             last_seen: Mutex::new(BTreeMap::new()),
             own_commits: Mutex::new(BTreeMap::new()),
             fresh_commits: Mutex::new(BTreeSet::new()),
+            closed_changes: Mutex::new(BTreeSet::new()),
         }
+    }
+
+    /// Every write of a time goes through here, so a later one drops the
+    /// proof that the package changed while the app was closed.
+    async fn record(&self, namespace: &Namespace, at: SystemTime, source: ChangeSource) {
+        self.closed_changes
+            .lock()
+            .expect("closed_changes lock")
+            .remove(namespace);
+        self.store.record_change(namespace, at, source).await;
+    }
+
+    async fn forget(&self, namespace: &Namespace) {
+        self.closed_changes
+            .lock()
+            .expect("closed_changes lock")
+            .remove(namespace);
+        self.store.forget(namespace).await;
+    }
+
+    /// Whether the restart check proved `namespace` changed while the app was
+    /// closed: a changed file's change time is later than the saved time. No
+    /// saved time, an unreadable change time and a commit made outside the app
+    /// also wait from launch, but don't count.
+    pub(crate) fn changed_while_closed(&self, namespace: &Namespace) -> bool {
+        self.closed_changes
+            .lock()
+            .expect("closed_changes lock")
+            .contains(namespace)
     }
 
     /// The folder watcher heard a change in `namespace`.
     pub(crate) async fn on_signal(&self, namespace: &Namespace) {
-        self.store
-            .record_change(namespace, now(), ChangeSource::Edit)
-            .await;
+        self.record(namespace, now(), ChangeSource::Edit).await;
     }
 
     /// The app left `commit` pending on `namespace`: by its own commit, or by
@@ -122,9 +153,7 @@ impl LastChange {
     /// waits a full wait from now.
     pub(crate) async fn on_commit(&self, namespace: &Namespace, commit: PendingCommit) {
         self.on_own_commit(namespace, commit);
-        self.store
-            .record_change(namespace, now(), ChangeSource::Commit)
-            .await;
+        self.record(namespace, now(), ChangeSource::Commit).await;
     }
 
     /// Take a walk's result for `namespace` and return its last-change time,
@@ -167,7 +196,7 @@ impl LastChange {
         if status.changes.is_empty() {
             match pending_commit {
                 PendingCommit::None => {
-                    self.store.forget(namespace).await;
+                    self.forget(namespace).await;
                     return None;
                 }
                 // Not clean: the commit still has to be pushed, and waits from
@@ -187,9 +216,7 @@ impl LastChange {
             .remove(namespace);
         let into_own_commit = own_commit && fresh && status.changes.is_empty();
         if !into_own_commit && before.is_some_and(|before| before != seen) {
-            self.store
-                .record_change(namespace, now, ChangeSource::Edit)
-                .await;
+            self.record(namespace, now, ChangeSource::Edit).await;
             return Some(now);
         }
         if self.store.record_first_seen(namespace, now).await {
@@ -212,22 +239,25 @@ impl LastChange {
                 .lock()
                 .expect("own_commits lock")
                 .insert(namespace.clone(), at);
-            self.store
-                .record_change(namespace, now, ChangeSource::FirstSeen)
-                .await;
+            self.record(namespace, now, ChangeSource::FirstSeen).await;
             return Some(now);
         }
         // Likewise a changed file with a later ctime changed while the app was
         // not looking: closed, or before a session that never walked it.
-        if first_walk
-            && home.is_none_or(|home| {
+        if first_walk {
+            let closed = home.map_or(Closed::Unknown, |home| {
                 changed_while_closed(home, status.changes.keys(), saved.last_change_at)
-            })
-        {
-            self.store
-                .record_change(namespace, now, ChangeSource::FirstSeen)
-                .await;
-            return Some(now);
+            });
+            if closed != Closed::Unchanged {
+                self.record(namespace, now, ChangeSource::FirstSeen).await;
+                if closed == Closed::Proved {
+                    self.closed_changes
+                        .lock()
+                        .expect("closed_changes lock")
+                        .insert(namespace.clone());
+                }
+                return Some(now);
+            }
         }
         Some(saved.last_change_at)
     }
@@ -236,6 +266,11 @@ impl LastChange {
     /// that needs the package's folder.
     pub(crate) fn first_walk_pending(&self, namespace: &Namespace) -> bool {
         !self.walked.lock().expect("walked lock").contains(namespace)
+    }
+
+    /// Every package with a stored last-change time: those with changes.
+    pub(crate) async fn namespaces(&self) -> Vec<Namespace> {
+        self.store.namespaces().await
     }
 
     /// The stored last-change time, without a walk.
@@ -275,9 +310,7 @@ impl LastChange {
                 }
             });
         if !kept {
-            self.store
-                .record_change(namespace, now(), ChangeSource::Edit)
-                .await;
+            self.record(namespace, now(), ChangeSource::Edit).await;
         }
     }
 
@@ -287,7 +320,7 @@ impl LastChange {
             .lock()
             .expect("own_commits lock")
             .remove(namespace);
-        self.store.forget(namespace).await;
+        self.forget(namespace).await;
     }
 
     /// Publishing was turned on. `with_changes` is what the last walks found;
@@ -301,8 +334,7 @@ impl LastChange {
         moved.extend(self.store.namespaces().await);
         let now = now();
         for namespace in &moved {
-            self.store
-                .record_change(namespace, now, ChangeSource::PublishingOn)
+            self.record(namespace, now, ChangeSource::PublishingOn)
                 .await;
         }
         moved
@@ -331,29 +363,52 @@ impl LastChange {
     }
 }
 
+/// What the restart check found in a package's changed files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Closed {
+    /// None changed after the saved time.
+    Unchanged,
+    /// One has a change time later than the saved time.
+    Proved,
+    /// One has no change time to read, so it counts as changed.
+    Unknown,
+}
+
 /// Whether any of `changed` (paths relative to `home`) changed after `since`.
 ///
 /// The change time, because no tool can set it: the copies that keep old edit
 /// times (`cp -p`, `rsync -a`, an unzip) still get a new one. A deleted file has
 /// none, so its nearest existing folder answers, since removing an entry
-/// changes it. A file system without change times counts as changed.
+/// changes it. A file system without change times counts as changed, but not
+/// as proved.
 pub(crate) fn changed_while_closed<'a>(
     home: &Path,
     changed: impl IntoIterator<Item = &'a PathBuf>,
     since: SystemTime,
-) -> bool {
-    changed.into_iter().any(|relative| {
+) -> Closed {
+    let mut found = Closed::Unchanged;
+    for relative in changed {
         let mut path = home.join(relative);
-        loop {
+        let file = loop {
             if let Ok(stamp) = crate::quilt::file_stamp::stamp(&path) {
                 // To the millisecond, as the store keeps times.
-                return stamp.changed.is_none_or(|at| floor_millis(at) > since);
+                break match stamp.changed {
+                    Some(at) if floor_millis(at) > since => Closed::Proved,
+                    Some(_) => Closed::Unchanged,
+                    None => Closed::Unknown,
+                };
             }
             if path == home || !path.pop() {
-                return true;
+                break Closed::Unknown;
             }
+        };
+        match file {
+            Closed::Proved => return Closed::Proved,
+            Closed::Unknown => found = Closed::Unknown,
+            Closed::Unchanged => {}
         }
-    })
+    }
+    found
 }
 
 #[cfg(test)]
@@ -536,6 +591,7 @@ mod tests {
                 .await,
             Some(saved)
         );
+        assert!(!clock.changed_while_closed(&ns()));
     }
 
     #[tokio::test]
@@ -558,6 +614,16 @@ mod tests {
             )
             .await;
         assert!(at.is_some_and(|at| at >= before));
+        assert!(
+            clock.changed_while_closed(&ns()),
+            "the change time proves it"
+        );
+
+        clock.on_signal(&ns()).await;
+        assert!(
+            !clock.changed_while_closed(&ns()),
+            "an edit in this session is no longer one made while closed"
+        );
     }
 
     #[tokio::test]
@@ -572,6 +638,26 @@ mod tests {
             .observe(&ns(), None, &status_with(&["a"]), PendingCommit::None)
             .await;
         assert!(at.is_some_and(|at| at >= before));
+        assert!(
+            !clock.changed_while_closed(&ns()),
+            "an unknown folder proves nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_package_with_no_saved_time_is_not_proved_changed_while_closed() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("a"), b"x").unwrap();
+        let clock = LastChange::new(PackageStateStore::in_memory());
+        clock
+            .observe(
+                &ns(),
+                Some(dir.path()),
+                &status_with(&["a"]),
+                PendingCommit::None,
+            )
+            .await;
+        assert!(!clock.changed_while_closed(&ns()));
     }
 
     #[test]
@@ -579,8 +665,14 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         std::fs::create_dir(dir.path().join("sub")).unwrap();
         let gone = [PathBuf::from("sub/gone.txt")];
-        assert!(changed_while_closed(dir.path(), &gone, now() - hour()));
-        assert!(!changed_while_closed(dir.path(), &gone, now() + hour()));
+        assert_eq!(
+            changed_while_closed(dir.path(), &gone, now() - hour()),
+            Closed::Proved
+        );
+        assert_eq!(
+            changed_while_closed(dir.path(), &gone, now() + hour()),
+            Closed::Unchanged
+        );
     }
 
     #[tokio::test]
