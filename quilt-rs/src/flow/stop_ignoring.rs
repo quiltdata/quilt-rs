@@ -42,18 +42,12 @@ fn lines_for(
     is_dir: bool,
     scope: Scope,
 ) -> Res<Option<Vec<String>>> {
-    rules.stop_ignoring_lines(
-        relative_path,
-        is_dir,
-        |path, is_dir| {
-            if is_dir {
-                tracked.dirs.contains(path)
-            } else {
-                tracked.files.contains(path)
-            }
-        },
-        scope,
-    )
+    let tracked = if is_dir {
+        tracked.dirs.contains(relative_path)
+    } else {
+        tracked.files.contains(relative_path)
+    };
+    rules.stop_ignoring_lines(relative_path, is_dir, tracked, scope)
 }
 
 /// What stopping to ignore `relative_path` in `scope` would write and bring
@@ -100,21 +94,12 @@ pub async fn preview_stop_ignoring(
     }))
 }
 
-/// Whether the walk under `rules` left out the file at `key`: the file or a
-/// folder above it is ignored.
+/// Whether the walk under `rules` left out the file at `key`. A file's rule
+/// counts the folders above it, so this is the walk's answer too.
 fn was_ignored(rules: &Rules, tracked: &Tracked, key: &Path) -> bool {
     rules
         .file_ignored_by(key, tracked.files.contains(key))
         .is_some()
-        || key
-            .ancestors()
-            .skip(1)
-            .filter(|dir| !dir.as_os_str().is_empty())
-            .any(|dir| {
-                rules
-                    .dir_ignored_by(dir, tracked.dirs.contains(dir))
-                    .is_some()
-            })
 }
 
 /// Write the `!` lines that bring `relative_path` back in `scope`, and return
