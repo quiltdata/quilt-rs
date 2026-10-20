@@ -496,8 +496,12 @@ fn without_lines(contents: &str, lines: &[String]) -> String {
 /// a reader never sees half of it. A symlink is followed, so the file it
 /// points at is the one replaced.
 fn replace_contents(path: &Path, contents: &str) -> Res {
-    let target = std::fs::canonicalize(path).ok();
-    let path = target.as_deref().unwrap_or(path);
+    let path = &link_target(path).map_err(|source| {
+        Error::Fs(FsError::Write {
+            path: path.to_path_buf(),
+            source,
+        })
+    })?;
     let write_error = |source| {
         Error::Fs(FsError::Write {
             path: path.to_path_buf(),
@@ -512,6 +516,27 @@ fn replace_contents(path: &Path, contents: &str) -> Res {
     }
     temp.persist(path).map_err(|err| write_error(err.error))?;
     Ok(())
+}
+
+/// The file `path` names, after its symlinks, whether or not that file exists
+/// yet.
+fn link_target(path: &Path) -> std::io::Result<PathBuf> {
+    // As many links as Linux follows before it gives up.
+    const MOST_LINKS: usize = 40;
+    let mut path = path.to_path_buf();
+    for _ in 0..MOST_LINKS {
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let target = std::fs::read_link(&path)?;
+                path = match path.parent() {
+                    Some(dir) if target.is_relative() => dir.join(target),
+                    _ => target,
+                };
+            }
+            _ => return Ok(path),
+        }
+    }
+    Err(std::io::Error::other("too many symlinks"))
 }
 
 /// One of [`DEFAULT_RULES`], and whether it is on.
@@ -1227,6 +1252,14 @@ mod tests {
         set_default_rules(&link, &[]).unwrap();
         assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "*.tmp\n");
+
+        // A link to a file not made yet: the save makes it.
+        let dangling = dir.path().join("dangling.quiltignore");
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink("dangling.quiltignore", &link).unwrap();
+        set_default_rules(&link, &[".env"]).unwrap();
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&dangling).unwrap(), "!.env\n");
     }
 
     #[test]
