@@ -72,7 +72,7 @@ when the remote refused your role; `status` keeps its values.
 `status` ends with how many files and folders the ignore rules leave out, as
 in `3 ignored files and 1 ignored folder not included`. `--ignored` lists each
 one, a folder as one row, with the rule that ignored it and where the rule
-comes from: `default`, your rules file in the domain folder with its line, or
+comes from: `built-in`, your rules file in the domain folder with its line, or
 the package's `.quiltignore` with its line:
 
 ```text
@@ -81,7 +81,7 @@ the package's `.quiltignore` with its line:
 +-----------+-------+----------------+
 | path      | rule  | source         |
 +-----------+-------+----------------+
-| .git/     | .*/   | default        |
+| .git/     | .*/   | built-in       |
 +-----------+-------+----------------+
 | notes.tmp | *.tmp | .quiltignore:3 |
 +-----------+-------+----------------+
@@ -90,7 +90,7 @@ the package's `.quiltignore` with its line:
 
 Under `--json`, `ignored` holds the `files` and `folders` counts, and with
 `--ignored` a `paths` list whose entries carry `path`, `kind` (`file` or
-`folder`), `rule`, `source` (`default`, `user` or `package`), and `line`,
+`folder`), `rule`, `source` (`built-in`, `user` or `package`), and `line`,
 `rules_file` and `size` where they apply.
 
 `install` fetches the package manifest and starts tracking it; files are
