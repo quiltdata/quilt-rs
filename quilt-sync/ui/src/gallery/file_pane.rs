@@ -72,6 +72,10 @@
 //!   is headings and all three rows have the same name. §6's *suppress the
 //!   heading for a group of one* has its evidence, and this view is where it
 //!   shows.
+//! - **Three rows with one name differ by their rule's source.** Each
+//!   `.DS_Store` row names the line that hid it — the default rule, your
+//!   rules, this package's `.quiltignore` — and that note is the only thing
+//!   in the row that tells them apart.
 //! - **The loading state had to reserve two heights, not one.** The toolbar
 //!   wraps to 68px and the list is 313, and a skeleton shorter than either moves
 //!   the page under the reader at the moment data lands — the same jump the
@@ -543,6 +547,7 @@ fn row(
     let words = state.map(|(words, _)| words.to_string());
     let tone = state.map_or(StateTone::Neutral, |(_, tone)| tone);
     let actions = menu(r.mark, format!("{} ({})", r.path, r.size), confirm);
+    let note = (r.mark == Mark::Ignored).then(|| ignored_by(&r.path).words());
 
     match (r.pick, boxes) {
         (Some(i), true) => view! {
@@ -551,6 +556,7 @@ fn row(
                 state=words
                 tone=tone
                 size=r.size.clone()
+                note=note.clone()
                 differs=marked
                 action=EntryAction::Select(
                     EntrySelection::new(
@@ -568,6 +574,7 @@ fn row(
                 state=words
                 tone=tone
                 size=r.size.clone()
+                note=note.clone()
                 differs=marked
                 have_mark=true
                 action=EntryAction::Open(Callback::new(|()| ()))
@@ -581,6 +588,7 @@ fn row(
                 state=words
                 tone=tone
                 size=r.size.clone()
+                note=note.clone()
                 differs=marked
                 actions=actions
             />
@@ -1290,6 +1298,18 @@ fn replace_mine(open: RwSignal<bool>) -> AnyView {
     .into_any()
 }
 
+/// The rule that hid an ignored file of this scene. One `.DS_Store` per source,
+/// so the `Ignored` facet shows all three.
+fn ignored_by(path: &str) -> crate::commands::IgnoredBy {
+    use crate::commands::RuleSource;
+    let source = match path {
+        "notes/.DS_Store" => RuleSource::User { line: 4 },
+        "raw/.DS_Store" => RuleSource::Package { line: 2 },
+        _ => RuleSource::Default,
+    };
+    crate::commands::IgnoredBy::new(".DS_Store", source)
+}
+
 /// This scene's package as the page read's entries: sorted by path, ignored
 /// files included for the pane's `Ignored` facet.
 fn entries(files: Vec<File>) -> Vec<crate::commands::EntryData> {
@@ -1306,7 +1326,7 @@ fn entries(files: Vec<File>) -> Vec<crate::commands::EntryData> {
                 Mark::Missing => "remote",
             }
             .to_string(),
-            ignored_by: (f.mark == Mark::Ignored).then(|| ".DS_Store".to_string()),
+            ignored_by: (f.mark == Mark::Ignored).then(|| ignored_by(&f.path)),
             folder: false,
             filename: f.path,
             size: f.bytes,

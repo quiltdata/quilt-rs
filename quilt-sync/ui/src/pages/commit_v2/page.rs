@@ -2123,7 +2123,10 @@ mod tests {
     #[test]
     fn the_list_is_the_changed_files_in_the_page_s_words() {
         let mut ignored = entry("tmp/x.tmp", "pristine");
-        ignored.ignored_by = Some("*.tmp".to_string());
+        ignored.ignored_by = Some(crate::commands::IgnoredBy::new(
+            "*.tmp",
+            crate::commands::RuleSource::Default,
+        ));
         let files = included_files(&[
             entry("a.csv", "added"),
             entry("b.csv", "modified"),

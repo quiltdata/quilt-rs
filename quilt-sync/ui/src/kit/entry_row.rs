@@ -17,6 +17,11 @@
 //! view that shows those, so every row in it is ignored and the label would
 //! repeat what the facet already said.
 //!
+//! An ignored row says something else in that slot instead: its rule and where
+//! the rule came from, `*.tmp · Your rules, line 4`, as a muted `note`. It is
+//! not a label, since it is not a state, and it is the one fact that tells two
+//! ignored rows apart.
+//!
 //! # A click does the thing this row can do
 //!
 //! Where the file is decides both the box and the gesture, so they are **one
@@ -232,6 +237,11 @@ pub fn EntryRow(
     /// How loudly. Ignored when `state` is absent.
     #[prop(optional)]
     tone: StateTone,
+    /// Muted words in the state's slot, for a row with no state: an ignored
+    /// file's rule and its source. The name gives up width to it, and both
+    /// truncate.
+    #[prop(optional, into)]
+    note: MaybeProp<String>,
     /// Already formatted — the kit has no opinion about units.
     #[prop(into)]
     size: String,
@@ -297,8 +307,9 @@ pub fn EntryRow(
             // ragged ones cannot be. A row that differs puts `Differs` in the
             // same slot, before the place's label: the two stack right-aligned
             // like any labels, and the slot grows for them.
-            <span class=style::state>
+            <span class=move || state_class(note.with(Option::is_some))>
                 {tip.map(differs_label)}
+                {move || note.get().map(|words| view! { <span class=style::note>{words}</span> })}
                 {move || {
                     state.get().map(|words| view! { <StateLabel tone=tone>{words}</StateLabel> })
                 }}
@@ -387,6 +398,15 @@ pub fn EntryRow(
                     .into_any()
             }}
         </div>
+    }
+}
+
+/// The state slot's class: one holding a `note` may shrink for it.
+fn state_class(noted: bool) -> String {
+    if noted {
+        format!("{} {}", style::state, style::noted)
+    } else {
+        String::from(style::state)
     }
 }
 
