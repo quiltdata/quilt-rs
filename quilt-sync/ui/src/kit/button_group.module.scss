@@ -54,16 +54,24 @@
   height: 14px;
 }
 
-.button:hover {
+.button:hover:not(:disabled) {
   position: relative;
   z-index: 1;
   background: var(--q-overlay-hover);
   border-color: var(--q-borderColor-emphasis);
 }
 
-.button:active {
+.button:active:not(:disabled) {
   background: var(--q-overlay-active);
   transform: translate(1px, 1px);
+}
+
+/* As `Button`'s. */
+.button:disabled {
+  cursor: not-allowed;
+  color: var(--q-fgColor-disabled);
+  border-color: var(--q-borderColor-muted);
+  background: var(--q-overlay-hover);
 }
 
 /* Above its neighbours, or the shared edge clips half the ring. */

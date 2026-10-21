@@ -11,18 +11,10 @@
 //!
 //! **The row is `kit::PageHeader`, the one the page draws.** Its menu is not
 //! drawn either: it is the page's own, from `pages::menu_items` over a fixture
-//! payload, with the handlers dropped.
+//! payload, with the handlers dropped. The location group's remote side
+//! follows the payload's catalog URL, as the page's does.
 //!
-//! # Ahead of the page
-//!
-//! The scene shows the target design before the page has it. `Open folder` is
-//! a [`ButtonGroup`](crate::kit::ButtonGroup) with the catalog page and the
-//! Quilt URI beside it, which collapses to icons in a narrow window, and so
-//! `[⋯]` no longer lists `Open in catalog`: the scene filters it out of the
-//! page's menu. The page still draws `Open folder` and the old menu.
-//!
-//! What is still this scene's own is the
-//! choice of primary: the page's header takes a payload where this takes a bare
+//! What is still this scene's own is the choice of primary: the page's header takes a payload where this takes a bare
 //! state, and with it an `action_open` the whole-page scene's resolve cell
 //! needs. Worth collapsing into the page's header in time, because a scene that
 //! hand-picks what a region would pick is a scene that stops being true the
@@ -76,7 +68,7 @@ use crate::kit::SplitButton;
 use crate::kit::SplitOption;
 use crate::kit::StateLabel;
 use crate::kit::render;
-use crate::pages::{MenuCommand, MenuItem, menu_items};
+use crate::pages::{MenuItem, menu_items};
 
 const NAMESPACE: &str = "user/plate-07";
 
@@ -196,20 +188,21 @@ fn scene_payload() -> commands::PackageHeaderData {
 /// The page's menu, with its handlers dropped. The scene has no Tauri
 /// runtime and nothing to run against; what it is for is the arrangement,
 /// which is the part `menu_items` decides.
-///
-/// Less `Open in catalog`, which the location group holds in the target
-/// design. The page's menu still lists it.
 fn scene_menu() -> Vec<MenuItem> {
     menu_items(&scene_payload(), false)
-        .into_iter()
-        .filter(|item| !matches!(item.command, MenuCommand::OpenInCatalog(_)))
-        .collect()
 }
 
-/// Whether the package has a catalog page for the location group's remote
-/// side. Not until it is published.
+/// Whether the location group has its remote side, decided as the page
+/// decides it: by whether a catalog URL can be built. Only `NoRemote` comes
+/// without a remote; a bucket chosen but never published has one already.
 fn has_catalog_page(state: &PackageState) -> bool {
-    !matches!(state, PackageState::NoRemote | PackageState::Unpublished)
+    let uri = match state {
+        PackageState::NoRemote => None,
+        _ => scene_payload().uri,
+    };
+    uri.as_ref()
+        .and_then(quilt_sync_ui::util::catalog_url)
+        .is_some()
 }
 
 /// The header at one state.
@@ -366,10 +359,7 @@ fn narrow_states() -> Vec<(&'static str, PackageState)> {
             "608px — a newer revision exists upstream",
             PackageState::Behind,
         ),
-        (
-            "608px — has a bucket, never published",
-            PackageState::Unpublished,
-        ),
+        ("608px — no bucket chosen yet", PackageState::NoRemote),
     ]
 }
 
@@ -389,11 +379,11 @@ pub fn PackageHeaderScene() -> impl IntoView {
                   names a host. Read down the action column: every control answers what \
                   this package needs, so it is the state's own action and nothing else, \
                   while `Create new revision` sits in the overflow menu in all sixteen. \
-                  This scene is ahead of the page: `Open folder` is a group with the \
-                  catalog page and a Copy Quilt URI icon beside it, dropped until the \
-                  package is published, and `Open in catalog` has left the menu. The menu \
-                  is otherwise the page's own, drawn from one fixture payload with the \
-                  handlers dropped; its remote is why `Undo last revision` is greyed — a \
+                  `Open folder` is a group with the catalog page and a Copy Quilt URI \
+                  icon beside it, dropped while no catalog URL can be built, which here \
+                  is only with no bucket. The menu is the page's own, drawn from one \
+                  fixture payload with the handlers dropped; its remote is why `Undo \
+                  last revision` is greyed — a \
                   remoted package cannot be undone. Measured: the widest row is 796px — \
                   `Signed out of demo.quiltdata.com` — against the 992 the page has at \
                   1024. Below 800 the group is icons only, and at 608, the 640 window's \
@@ -438,8 +428,7 @@ pub fn PackageHeaderScene() -> impl IntoView {
 mod tests {
     use super::*;
 
-    /// The scene renders the page's menu, less `Open in catalog`, rather than a
-    /// drawing of it. Pinned,
+    /// The scene renders the page's menu rather than a drawing of it. Pinned,
     /// because the copy this replaced went stale the moment the page's menu
     /// gained gating — and a stale scene is worse than no scene: it is a design
     /// record that lies.

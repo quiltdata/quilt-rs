@@ -10,7 +10,7 @@ use crate::kit::ButtonGroup;
 use crate::kit::GroupButton;
 use crate::kit::icons;
 
-/// How long a copy segment says `Copied`. The page will own this timer.
+/// How long a copy segment says `Copied`, as long as the page's header does.
 const COPIED_FOR: Duration = Duration::from_millis(1500);
 
 /// The package header's group: the local folder, then the remote side when

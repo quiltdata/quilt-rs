@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.23.2-dev]
+
+### Changed
+
+- **New design preview**: the package page's header has *Open in catalog* and a button that copies the package's Quilt URI next to *Open folder*, so *Open in catalog* is no longer in the *⋯* menu. In a narrow window the buttons show only their icons (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+
 ## [v0.23.1] - 2026-10-21
 
 ### Fixed
