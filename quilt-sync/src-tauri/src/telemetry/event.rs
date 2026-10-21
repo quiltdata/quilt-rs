@@ -439,6 +439,9 @@ pub enum MixpanelEvent {
     DefaultApplicationOpened(PackageFileEvent),
     /// A file's `quilt+s3` address put on the clipboard.
     FileUriCopied(PackageFileEvent),
+    /// A package's own `quilt+s3` address put on the clipboard, from the
+    /// package page's header. Apart from `file_uri_copied`, which counts files.
+    PackageUriCopied(PackageFileEvent),
 
     // ── autosync: the engine acting with no user present ──
     /// A publish the loop completed on its own. Deliberately *not*
@@ -506,7 +509,8 @@ impl MixpanelEvent {
             Self::PackageDirOpened(e)
             | Self::FileRevealed(e)
             | Self::DefaultApplicationOpened(e)
-            | Self::FileUriCopied(e) => e.host.as_ref(),
+            | Self::FileUriCopied(e)
+            | Self::PackageUriCopied(e) => e.host.as_ref(),
 
             Self::AutosyncPublished(e) => Some(&e.host),
             Self::AutosyncPaused(e) => Some(&e.host),
