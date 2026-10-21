@@ -455,7 +455,7 @@ fn cause_trailing(
 ) -> AnyView {
     match action {
         CauseAction::SignIn { host } => {
-            let target = sign_in_href(host);
+            let target = sign_in_href(host, "/");
             view! {
                 <Button on_click=move |_| navigate(&target, NavigateOptions::default())>
                     "Sign in"
@@ -1481,7 +1481,7 @@ mod tests {
         // `cause_trailing` builds from `sign_in_href` directly rather than
         // through this match — that one HAS a host.
         assert_eq!(
-            sign_in_href("quilt.test"),
+            sign_in_href("quilt.test", "/"),
             "/login?host=quilt.test&back=%2F"
         );
     }

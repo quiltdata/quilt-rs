@@ -1069,6 +1069,7 @@ fn problem_banner(
         .as_ref()
         .map(|j| (j.first_path.clone(), j.first_pattern.clone()));
     let (namespace, uri) = (d.namespace.to_string(), d.uri.clone());
+    let back = routes::commit_href(&d.namespace);
     problem(
         d.no_access_reason.as_deref(),
         d.no_session,
@@ -1094,7 +1095,7 @@ fn problem_banner(
         };
         match &problem {
             Problem::SignedOut { host: Some(host) } => {
-                let href = routes::sign_in_href(host);
+                let href = routes::sign_in_href(host, &back);
                 view! { <ProblemBanner problem=problem on_ignore_junk=ignore sign_in_href=href /> }
                     .into_any()
             }
@@ -1246,6 +1247,10 @@ mod tests {
     }
 
     async fn page_at(address: &str) -> web_sys::Element {
+        page_reading(address, answered).await
+    }
+
+    async fn page_reading(address: &str, read: CommitRead) -> web_sys::Element {
         unmount_earlier();
         web_sys::window()
             .unwrap()
@@ -1253,11 +1258,11 @@ mod tests {
             .unwrap()
             .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(address))
             .unwrap();
-        let el = mount(|| {
+        let el = mount(move || {
             view! {
                 <Router>
                     <Routes fallback=|| view! { "no route" }>
-                        <Route path=path!("/commit") view=|| view! { <CommitScreen read=answered /> } />
+                        <Route path=path!("/commit") view=move || view! { <CommitScreen read=read /> } />
                     </Routes>
                 </Router>
             }
@@ -1284,6 +1289,32 @@ mod tests {
             .query_selector(&format!("main > .{}", super::super::style::column))
             .unwrap();
         assert!(column.is_some(), "markup was {}", el.inner_html());
+    }
+
+    fn signed_out(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        Box::pin(async {
+            Ok(CommitData {
+                no_session: true,
+                no_session_host: Some("quilt.test".to_string()),
+                ..commit_data()
+            })
+        })
+    }
+
+    /// Login comes back to this commit page, not to the main page.
+    #[wasm_bindgen_test]
+    async fn sign_in_comes_back_to_this_commit_page() {
+        let el = page_reading("/commit?namespace=org%2Fpkg", signed_out).await;
+        let href = el
+            .query_selector("a[href^='/login']")
+            .unwrap()
+            .and_then(|a| a.get_attribute("href"))
+            .unwrap_or_else(|| panic!("no Sign in link; markup was {}", el.inner_html()));
+        let query = routes::Query::parse(href.trim_start_matches("/login"));
+        assert_eq!(
+            query.get("back").as_deref(),
+            Some("/commit?namespace=org%2Fpkg")
+        );
     }
 
     /// On the routed page too, the files section is the two-column layout's

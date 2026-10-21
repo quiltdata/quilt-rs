@@ -230,7 +230,7 @@ fn AccountRow(
     // reactive prop threaded into `HostRow`.
     move || {
         let host = row.get();
-        let target = sign_in_href(&host.host);
+        let target = sign_in_href(&host.host, "/");
         let navigate = navigate.clone();
         let switch_host = host.host.clone();
         // `HostRow` wants the role as a signal because its switcher writes to it.
@@ -539,10 +539,10 @@ mod tests {
     fn the_sign_in_link_carries_the_host_and_the_way_back() {
         // R6. `pages/login.rs` reads `host` and `back` from the query string, so a
         // link missing either lands the user on a login page that cannot come back.
-        // `back` is `/` and percent-encoded, as every other login link in the app
-        // builds it — `routes::Paths` in the backend has to parse it for OAuth.
+        // The main page's `back` is `/`, percent-encoded — `routes::Paths` in the
+        // backend has to parse it for OAuth.
         assert_eq!(
-            sign_in_href("quilt.test"),
+            sign_in_href("quilt.test", "/"),
             "/login?host=quilt.test&back=%2F"
         );
     }

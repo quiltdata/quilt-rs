@@ -124,16 +124,13 @@ pub fn keeping_outcome(href: String, outcome: Option<&DeepLinkOutcome>) -> Strin
 /// Where the [Sign in] button goes. `pages/login.rs` reads both parameters from
 /// the query string; `back` is where login returns the user afterwards.
 ///
-/// `back` is `/`, not `/main`: `/` renders whichever main page is switched on, so
-/// it comes back here for a reader who has this one, and it is a route the
-/// backend can read. OAuth login parses `back` in `routes::Paths` — an address
-/// only the client router knows is not a way back at all.
-///
-/// Shared, not page-local: the roster's Accounts card, the queue's own
-/// `[Sign in]` (§4.3) and the v2 package header all send a reader to the same
-/// place, and a second copy of the format string is a copy that drifts.
-pub fn sign_in_href(host: &str) -> String {
-    let back = urlencoding::encode("/");
+/// A page passes its own address as `back`, so the reader comes back to it.
+/// The main page passes `/`, not `/main`: `/` renders whichever main page is
+/// switched on. OAuth login parses `back` in the backend's `routes::Paths`, so
+/// `back` must be a route that enum knows: an address only the client router
+/// knows is not a way back at all.
+pub fn sign_in_href(host: &str, back: &str) -> String {
+    let back = urlencoding::encode(back);
     format!("/login?host={host}&back={back}")
 }
 
@@ -227,14 +224,28 @@ mod tests {
         Namespace::try_from(text).expect("a namespace")
     }
 
-    /// `back` is `/`, not `/main`: `/` renders whichever main page is switched
-    /// on, and it is a route the backend's own `routes::Paths` can read.
+    /// `back` is the page's address encoded once, as a query value.
     #[test]
     fn the_sign_in_link_comes_back_to_the_page_the_reader_was_on() {
         assert_eq!(
-            sign_in_href("quilt.test"),
+            sign_in_href("quilt.test", "/"),
             "/login?host=quilt.test&back=%2F"
         );
+        let back = package_page_href(&ns("org/pkg"));
+        let href = sign_in_href("quilt.test", &back);
+        assert_eq!(
+            href,
+            "/login?host=quilt.test&back=%2Finstalled-package%3Fnamespace%3Dorg%252Fpkg%26filter%3Dunmodified"
+        );
+    }
+
+    /// What the login page reads back is the page's address as it was.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn the_login_page_reads_back_the_page_address() {
+        let back = package_page_href(&ns("org/pkg"));
+        let href = sign_in_href("quilt.test", &back);
+        let query = Query::parse(href.trim_start_matches("/login"));
+        assert_eq!(query.get("back"), Some(back));
     }
 
     /// The ordinary shape, pinned whole rather than by substring: a substring

@@ -372,7 +372,10 @@ fn primary_action(
     let sign_in_to = match &data.state {
         kit::PackageState::NoSession { host: Some(host) }
         | kit::PackageState::SignInExpired { host: Some(host) } => {
-            Some(crate::routes::sign_in_href(host))
+            Some(crate::routes::sign_in_href(
+                host,
+                &super::carrying(crate::routes::package_page_href(&ns)),
+            ))
         }
         _ => None,
     };
@@ -1187,6 +1190,26 @@ mod tests {
                 .is_none(),
             "no deployment, no button; markup was {}",
             without.inner_html()
+        );
+    }
+
+    /// Login comes back to this package, not to the main page.
+    #[wasm_bindgen_test]
+    async fn sign_in_comes_back_to_this_package() {
+        let el = mount_routed(data(kit::PackageState::NoSession {
+            host: Some("quilt.test".to_string()),
+        }));
+        sleep_ms(50).await;
+
+        button(&el, "Sign in").click();
+        sleep_ms(50).await;
+
+        let location = web_sys::window().unwrap().location();
+        assert_eq!(location.pathname().unwrap(), "/login");
+        let query = crate::routes::Query::parse(&location.search().unwrap());
+        assert_eq!(
+            query.get("back").as_deref(),
+            Some("/installed-package?namespace=team%2Fdataset&filter=unmodified"),
         );
     }
 
