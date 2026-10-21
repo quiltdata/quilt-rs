@@ -67,8 +67,8 @@ Every release in this repo is created with `--draft` and
 `--latest=false`. `make_latest=false` is **sticky** — promoting a
 draft via `gh release edit <tag> --draft=false` does not flip it back.
 Crate releases never become "latest". The only release marked as
-"latest" is the QuiltSync one: the gated `promote` job sets it with
-`gh release edit --latest` when it publishes the draft (see
+"latest" is the QuiltSync one: the gated `promote` job sets
+`make_latest=true` when it publishes the draft (see
 [Manual steps](#manual-steps-the-part-thats-not-in-any-workflow)).
 
 ## Crates.io publishing — `release-crate.yaml`
@@ -136,7 +136,9 @@ End-user install paths produced by these releases:
 
 ## QuiltSync — `release-quilt-sync.yaml`
 
-Single `release` job, parallel matrix:
+A `create-release` job creates the draft once (or reuses the one
+existing draft for the tag) and outputs its numeric id; the `release`
+job then runs a parallel matrix that uploads to that id:
 
 | Platform | Runner | Tauri args |
 | --- | --- | --- |
@@ -154,11 +156,12 @@ Build pipeline:
    (via `beforeBuildCommand`), then bundles the targets listed in
    `tauri.conf.json` (`["app", "deb", "dmg", "msi"]`). With
    `createUpdaterArtifacts: true` it also produces `latest.json`,
-   `*.app.tar.gz`, and `*.msi.zip` updater bundles. Tag pattern:
-   `QuiltSync/v__VERSION__` (Tauri substitutes `__VERSION__` from
-   `quilt-sync/src-tauri/Cargo.toml`) — this is the final tag form,
-   matching the input `upload-to-hubspot.yaml` expects. Release is
-   created as a draft.
+   `*.app.tar.gz`, and `*.msi.zip` updater bundles. Every leg uploads
+   to the draft by its numeric `releaseId`, so all platforms land in
+   one release and one `latest.json`. The tag is
+   `QuiltSync/v<version>`, with the version read from
+   `quilt-sync/src-tauri/Cargo.toml` — the final tag form, matching
+   the input `upload-to-hubspot.yaml` expects.
 4. (Windows only) `azure/login` exchanges the GitHub OIDC token for
    an Azure access token, then `azure/trusted-signing-action` signs
    every `.exe` and `.msi`. See
@@ -246,7 +249,9 @@ For any release:
   approval is the only manual step:
   - **Crate releases** — `publish` promotes the draft and runs
     `cargo publish`.
-  - **QuiltSync** — `promote` flips the draft to public, marks it as
+  - **QuiltSync** — `promote` first fails if the tag has more than
+    one release or the draft's `latest.json` lacks any of the eight
+    platform keys; then it flips the draft to public, marks it as
     "latest", and dispatches `upload-to-hubspot.yaml` (HubFS + HubDB
     mirror) in one step.
 
