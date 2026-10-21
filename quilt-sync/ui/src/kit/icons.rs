@@ -6,10 +6,10 @@
 //! carries the name. All are 16-unit `viewBox`es but [`file`], which is a
 //! blank state's 24.
 //!
-//! Fourteen are Octicons v19 — `gear-16`, `sync-16`, `chevron-left-16`,
+//! Fifteen are Octicons v19 — `gear-16`, `sync-16`, `chevron-left-16`,
 //! `chevron-down-16`, `chevron-right-16`, `kebab-horizontal-16`, `check-16`,
 //! `cloud-16`, `cloud-offline-16`, `link-external-16`, `trash-16`,
-//! `file-directory-16`, `copy-16` and `file-24` — MIT
+//! `download-16`, `file-directory-16`, `copy-16` and `file-24` — MIT
 //! License, Copyright (c) GitHub Inc. —
 //! <https://github.com/primer/octicons>. Filled paths rather than 1.4px strokes
 //! because at 15px a stroked gear's spokes read as a sun.
@@ -195,6 +195,18 @@ pub fn trash() -> AnyView {
     view! {
         <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
             <path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z" />
+        </svg>
+    }
+    .into_any()
+}
+
+/// Files that come down to this machine. A package row's download marker.
+#[must_use]
+pub fn download() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+            <path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14Z" />
+            <path d="M7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.969a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.78a.749.749 0 1 1 1.06-1.06l1.97 1.969Z" />
         </svg>
     }
     .into_any()
