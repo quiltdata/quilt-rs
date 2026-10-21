@@ -371,9 +371,12 @@ fn primary_action(
     // bucket on ambient credentials, which is why the kit offers no action there.
     let sign_in_to = match &data.state {
         kit::PackageState::NoSession { host: Some(host) }
-        | kit::PackageState::SignInExpired { host: Some(host) } => Some(
-            crate::routes::sign_in_href(host, &crate::routes::package_page_href(&ns)),
-        ),
+        | kit::PackageState::SignInExpired { host: Some(host) } => {
+            Some(crate::routes::sign_in_href(
+                host,
+                &super::carrying(crate::routes::package_page_href(&ns)),
+            ))
+        }
         _ => None,
     };
     if matches!(action, Some(PackageAction::Publish)) {

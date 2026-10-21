@@ -271,6 +271,8 @@ fn format_namespace_filter_query(
     namespace: &quilt_uri::Namespace,
     filter: &EntriesFilter,
 ) -> String {
+    let namespace = namespace.to_string();
+    let namespace = urlencoding::encode(&namespace);
     let filter_str = filter.to_string();
     if filter_str.is_empty() {
         format!("namespace={namespace}")
@@ -318,6 +320,8 @@ pub fn from_url(path: Paths, mut url: Url) -> url::Url {
             url
         }
         Paths::Merge(namespace) => {
+            let namespace = namespace.to_string();
+            let namespace = urlencoding::encode(&namespace);
             url.set_path("/merge");
             url.set_query(Some(&format!("namespace={namespace}")));
             url
@@ -400,7 +404,7 @@ mod tests {
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
-        assert_eq!(page_url_str, "http://test:1234/commit?namespace=foo/bar");
+        assert_eq!(page_url_str, "http://test:1234/commit?namespace=foo%2Fbar");
 
         let route: Paths = page_url_str.parse()?;
 
@@ -426,7 +430,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/commit?namespace=foo/bar&filter=unmodified,ignored"
+            "http://test:1234/commit?namespace=foo%2Fbar&filter=unmodified,ignored"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -444,7 +448,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/installed-package?namespace=foo/bar"
+            "http://test:1234/installed-package?namespace=foo%2Fbar"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -468,7 +472,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/installed-package?namespace=foo/bar&filter=unmodified"
+            "http://test:1234/installed-package?namespace=foo%2Fbar&filter=unmodified"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -508,6 +512,22 @@ mod tests {
         assert_eq!(route, Paths::InstalledPackagesList);
         assert_eq!(format!("{route}"), "/installed-packages-list");
 
+        Ok(())
+    }
+
+    /// A namespace holding query characters comes back whole from the page
+    /// address a login lands on.
+    #[test]
+    fn a_namespace_survives_the_page_address() -> Result<()> {
+        let namespace: quilt_uri::Namespace = ("org", "a&b#c+d").into();
+        for path in [
+            Paths::InstalledPackage(namespace.clone(), EntriesFilter::for_installed_package()),
+            Paths::Commit(namespace.clone(), EntriesFilter::default()),
+            Paths::Merge(namespace.clone()),
+        ] {
+            let page_url = from_url(path.clone(), Url::parse("http://test:1234/")?);
+            assert_eq!(page_url.as_str().parse::<Paths>()?, path);
+        }
         Ok(())
     }
 
@@ -580,7 +600,7 @@ mod tests {
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
-        assert_eq!(page_url_str, "http://test:1234/merge?namespace=foo/bar");
+        assert_eq!(page_url_str, "http://test:1234/merge?namespace=foo%2Fbar");
 
         let route: Paths = page_url_str.parse()?;
 

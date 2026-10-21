@@ -450,6 +450,16 @@ mod tests {
                 routes::EntriesFilter::for_installed_package()
             )
         );
+        // A deep link's warning rides along in `back`; the page still parses.
+        assert_eq!(
+            landing_after_login(Some(
+                "/installed-package?namespace=org%2Fpkg&filter=unmodified&mismatch=abc&mrbucket=b"
+            )),
+            routes::Paths::InstalledPackage(
+                ("org", "pkg").into(),
+                routes::EntriesFilter::for_installed_package()
+            )
+        );
         assert_eq!(
             landing_after_login(Some("/commit?namespace=org%2Fpkg")),
             routes::Paths::Commit(("org", "pkg").into(), routes::EntriesFilter::default())
