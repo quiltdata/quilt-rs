@@ -70,6 +70,7 @@ mod gallery {
     pub mod incoming_files;
     pub mod installed_package;
     pub mod json_display;
+    pub mod label;
     pub mod list_toolbar;
     pub mod load_failure;
     pub mod name_tooltip;
@@ -228,6 +229,7 @@ const ENTRIES: &[Entry] = &[
     entry!(Core, "Forms", forms::FormsStories),
     entry!(Core, "HostRow", host_row::HostRowStories),
     entry!(Core, "JsonDisplay", json_display::JsonDisplayStories),
+    entry!(Core, "Label", label::LabelStories),
     entry!(Core, "LoadFailure", load_failure::LoadFailureStories),
     entry!(Core, "NameTooltip", name_tooltip::NameTooltipStories),
     entry!(Core, "PackageRow", packages::PackageRowStories),

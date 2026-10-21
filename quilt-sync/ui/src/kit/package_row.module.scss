@@ -65,6 +65,13 @@
  * a pattern and the three that differ break it, which is what scanning a list
  * actually uses. */
 
+/* The download marker's wrapper, which carries the hover text for the `Label`
+ * inside. */
+.downloads {
+  display: flex;
+  flex: none;
+}
+
 /* The skeleton variant, sharing `.root` for its geometry and switching off the two things
  * that would lie about it: a pointer cursor and a hover tint on something inert. */
 .skeleton {
