@@ -36,7 +36,8 @@ fn ago(ms: f64) -> f64 {
 /// What a row's package can be reached by, which decides its `[⋯]`'s items.
 #[derive(Clone, Copy)]
 enum Reach {
-    /// A bucket and a catalog host, and no unpublished revision.
+    /// A bucket and a catalog host, no unpublished revision, and no changed
+    /// files.
     Published,
     /// A bucket and a catalog host, and a revision not yet published.
     Ahead,
@@ -53,8 +54,6 @@ fn menu(reach: Reach) -> Vec<MenuAction> {
     ];
     if matches!(reach, Reach::Published) {
         commands.push(RowCommand::OpenInCatalog(path.clone()));
-    }
-    if !matches!(reach, Reach::LocalOnly) {
         commands.push(RowCommand::CopyUri(path));
     }
     menu_actions(&commands, Callback::new(|_| ()))

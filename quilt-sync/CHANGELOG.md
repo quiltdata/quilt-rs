@@ -28,6 +28,7 @@
 ### Changed
 
 - **New design preview**: the package page's header has *Open in catalog* and a button that copies the package's Quilt URI next to *Open folder*, so *Open in catalog* is no longer in the *⋯* menu. In a narrow window the buttons show only their icons (<https://github.com/quiltdata/quilt-rs/pull/1171>)
+- **New design preview**: *Copy URI* on a file copies the file at the revision you have, with its full hash, and *Open in catalog* opens that revision. Both show only when that revision has the file as it is on your disk (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
 
 ### quilt-rs
 

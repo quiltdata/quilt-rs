@@ -20,7 +20,8 @@ pub enum RowCommand {
     /// Show the local file in the system's file browser.
     Reveal(String),
     OpenInCatalog(String),
-    /// The file's `quilt+s3` address, as `util::file_uri` builds it.
+    /// The file's `quilt+s3` address at the revision the package holds, as
+    /// `util::file_uri` builds it.
     CopyUri(String),
     /// The file's full path on disk, for a file whose address would not name
     /// its bytes: no revision holds them. Carries its path inside the package;
@@ -188,26 +189,17 @@ pub(crate) fn local_path(
 /// a command that copies nothing, or an address with no remote to build it
 /// from; an error when the path cannot be found.
 ///
-/// The address is built at `Latest`, whatever revision `uri` names, as
-/// `util::package_uri` builds it: a copied address points at the package
-/// rather than at the revision the copier happens to have.
+/// The address names the revision `uri` names, with the whole hash: each list
+/// passes the revision the package holds, never `Latest`.
 pub(crate) async fn clipped(
     command: &RowCommand,
     namespace: &str,
     uri: Option<&quilt_uri::S3PackageUri>,
     local: LocalPath,
 ) -> Result<Option<(String, Option<quilt_uri::S3PackageUri>)>, String> {
-    let file = |path: &str| {
-        uri.map(|u| {
-            let latest = quilt_uri::S3PackageUri {
-                revision: quilt_uri::RevisionPointer::Tag(quilt_uri::Tag::Latest),
-                ..u.clone()
-            };
-            crate::util::file_uri(&latest, path)
-        })
-    };
+    let file = |path: &str| uri.map(|u| crate::util::file_uri(u, path));
     match command {
-        RowCommand::CopyUri(path) => Ok(file(path).map(|f| (f.display(), Some(f)))),
+        RowCommand::CopyUri(path) => Ok(file(path).map(|f| (f.to_copy_string(), Some(f)))),
         RowCommand::CopyPath(path) => {
             let on_disk = local(namespace.to_string(), path.clone()).await?;
             Ok(Some((on_disk, file(path))))
@@ -233,24 +225,33 @@ mod tests {
         Box::pin(async move { Err(format!("{path} is not there")) })
     }
 
-    /// Copy URI puts `util::file_uri`'s address on the clipboard, at `Latest`;
-    /// Copy path puts the file's full path on disk, which needs no remote.
+    /// Copy URI puts the file's address at the held revision on the clipboard,
+    /// with the whole hash and the path escaped; Copy path puts the file's full
+    /// path on disk, which needs no remote.
     #[wasm_bindgen_test]
     async fn copy_uri_copies_the_address_and_copy_path_the_full_path_on_disk() {
-        let package = crate::util::package_uri(
-            "team-bucket",
-            &"user/plate-07".try_into().unwrap(),
-            Some("quilt.test"),
-        );
-        let address =
-            "quilt+s3://team-bucket#package=user/plate-07&path=runs/one.csv&catalog=quilt.test";
-        let copy_uri = RowCommand::CopyUri("runs/one.csv".to_string());
+        let hash = "0123456789abcdef".repeat(4);
+        let package = quilt_uri::S3PackageUri {
+            revision: quilt_uri::RevisionPointer::Hash(hash.clone()),
+            ..crate::util::package_uri(
+                "team-bucket",
+                &"user/plate-07".try_into().unwrap(),
+                Some("quilt.test"),
+            )
+        };
+        let copy_uri = RowCommand::CopyUri("runs/one two.csv".to_string());
         let (text, event) = clipped(&copy_uri, "user/plate-07", Some(&package), at_home)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(text, address);
-        assert_eq!(event.map(|u| u.display()), Some(text));
+        assert_eq!(
+            text,
+            format!(
+                "quilt+s3://team-bucket#package=user/plate-07@{hash}\
+                 &path=runs/one%20two.csv&catalog=quilt.test"
+            )
+        );
+        assert_eq!(event.map(|u| u.to_copy_string()), Some(text));
 
         // A New row: the full path on disk, as opening the file resolves it.
         let copy_path = RowCommand::CopyPath("runs/new.csv".to_string());
@@ -286,18 +287,6 @@ mod tests {
             .await,
             Ok(None),
         );
-
-        // The header's remote names the revision this copy holds; the address
-        // names the package, as the recent-files list's does.
-        let pinned = quilt_uri::S3PackageUri {
-            revision: quilt_uri::RevisionPointer::Hash("abc123".to_string()),
-            ..package.clone()
-        };
-        let (text, _) = clipped(&copy_uri, "user/plate-07", Some(&pinned), at_home)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(text, address);
     }
 
     /// A command with nothing to act on is done without asking the host; one

@@ -56,6 +56,11 @@ pub fn RecentFilesRegion(
     /// rather than from `files`.
     #[prop(optional)]
     addresses: HashMap<Namespace, S3PackageUri>,
+    /// Whether each package's status check counted no changed files, by
+    /// namespace. A package absent here, or not yet checked, counts as changed:
+    /// its rows offer neither Copy URI nor Open in catalog.
+    #[prop(optional)]
+    unchanged: HashMap<Namespace, Signal<bool>>,
 ) -> impl IntoView {
     // One state rather than a flag per row: exactly one copy can be the most
     // recent, and the rows read it through their own `copied` prop.
@@ -149,12 +154,19 @@ pub fn RecentFilesRegion(
                     // is `FnMut`, and the shape changes whenever a search empties
                     // the feed and fills it again.
                     let addresses = addresses.clone();
+                    let unchanged = unchanged.clone();
                     view! {
                         <For
                             each=move || arranged.get()
                             key=|group: &FileGroup| group.title.clone()
                             children=move |group| {
-                                file_group(group.title, arranged, addresses.clone(), state)
+                                file_group(
+                                    group.title,
+                                    arranged,
+                                    addresses.clone(),
+                                    unchanged.clone(),
+                                    state,
+                                )
                             }
                         />
                     }
@@ -287,9 +299,8 @@ fn run_command(
 }
 
 /// The address a row's commands run on: the package's, pinned to the revision
-/// it holds when that revision is published, as the package page pins its
-/// own. The catalog link opens that revision. *Copy URI* still copies the
-/// package's address at `Latest`, since `clipped` builds it there.
+/// it holds when that revision is published. The catalog link opens that
+/// revision and *Copy URI* copies the file at it.
 fn held_address(address: Option<&S3PackageUri>, published: Option<&str>) -> Option<S3PackageUri> {
     address.map(|address| match published {
         Some(hash) => S3PackageUri {
@@ -301,20 +312,24 @@ fn held_address(address: Option<&S3PackageUri>, published: Option<&str>) -> Opti
 }
 
 /// The items a row's `[⋯]` offers: open and reveal; then the catalog and the
-/// copy, which need the package's address. The catalog link also needs a
-/// catalog host and a published revision, or it could name one the catalog
-/// lacks. No *Ignore*: it edits the package's `.quiltignore` under the package
-/// page's lock, which this page does not hold.
-fn row_commands(path: &str, address: Option<&S3PackageUri>, published: bool) -> Vec<RowCommand> {
+/// copy, which name the published revision the package holds. Both need a
+/// catalog host, that revision, and a package with no changed files: this page
+/// cannot tell which file changed, and the revision would not hold a changed
+/// one as it is here. No *Ignore*: it edits the package's `.quiltignore` under
+/// the package page's lock, which this page does not hold.
+fn row_commands(
+    path: &str,
+    address: Option<&S3PackageUri>,
+    published: bool,
+    unchanged: bool,
+) -> Vec<RowCommand> {
     let path = path.to_string();
     let mut commands = vec![
         RowCommand::Open(path.clone()),
         RowCommand::Reveal(path.clone()),
     ];
-    if let Some(address) = address {
-        if published && address.catalog.is_some() {
-            commands.push(RowCommand::OpenInCatalog(path.clone()));
-        }
+    if address.is_some_and(|a| a.catalog.is_some()) && published && unchanged {
+        commands.push(RowCommand::OpenInCatalog(path.clone()));
         commands.push(RowCommand::CopyUri(path));
     }
     commands
@@ -352,6 +367,7 @@ fn file_group(
     title: Option<String>,
     arranged: Memo<Vec<FileGroup>>,
     addresses: HashMap<Namespace, S3PackageUri>,
+    unchanged: HashMap<Namespace, Signal<bool>>,
     state: CopyState,
 ) -> AnyView {
     let key = title.clone();
@@ -386,11 +402,18 @@ fn file_group(
                 children=move |f| {
                     let address = addresses.get(&f.namespace).cloned();
                     let run_with = held_address(address.as_ref(), f.published_hash.as_deref());
+                    let unchanged = unchanged
+                        .get(&f.namespace)
+                        .copied()
+                        .unwrap_or(Signal::stored(false));
                     let namespace = f.namespace.clone();
-                    let on_command = Callback::new(move |command| {
-                        run_command(command, namespace.clone(), run_with.clone(), state);
+                    let on_command = Callback::new({
+                        let run_with = run_with.clone();
+                        move |command| {
+                            run_command(command, namespace.clone(), run_with.clone(), state);
+                        }
                     });
-                    file_row(&f, address.as_ref(), on_command, state.copied)
+                    file_row(&f, run_with.as_ref(), unchanged, on_command, state.copied)
                 }
             />
         </ul>
@@ -404,11 +427,16 @@ fn file_group(
 fn file_row(
     f: &MainPageFileData,
     address: Option<&S3PackageUri>,
+    unchanged: Signal<bool>,
     on_command: Callback<RowCommand>,
     copied: RwSignal<Option<Copied>>,
 ) -> impl IntoView + use<> {
-    let commands = row_commands(&f.path, address, f.published_hash.is_some());
-    let uri = address.map(|package| crate::util::file_uri(package, &f.path).display());
+    let (path, held, published) = (f.path.clone(), address.cloned(), f.published_hash.is_some());
+    let actions = Signal::derive(move || {
+        let commands = row_commands(&path, held.as_ref(), published, unchanged.get());
+        menu_actions(&commands, on_command)
+    });
+    let uri = address.map(|package| crate::util::file_uri(package, &f.path).to_copy_string());
     let is_copied = Signal::derive(move || {
         uri.as_ref()
             .is_some_and(|uri| copied.with(|c| c.as_ref().is_some_and(|c| &c.uri == uri)))
@@ -422,7 +450,7 @@ fn file_row(
             package_href=package_page_href(&f.namespace)
             at=f.changed_at
             on_open=move |_| on_command.run(open.clone())
-            actions=menu_actions(&commands, on_command)
+            actions=actions
             copied=is_copied
         />
         </li>
@@ -460,14 +488,16 @@ mod tests {
 
     /// `mount_feed`, with the axis under test named explicitly.
     fn mount_feed_grouped(files: Vec<MainPageFileData>, axis: &str) -> web_sys::Element {
-        mount_feed_addressed(files, axis, HashMap::new())
+        mount_feed_addressed(files, axis, HashMap::new(), HashMap::new())
     }
 
-    /// `mount_feed_grouped`, with the package addresses the Copy action needs.
+    /// `mount_feed_grouped`, with the package addresses and the change counts
+    /// the catalog and Copy actions need.
     fn mount_feed_addressed(
         files: Vec<MainPageFileData>,
         axis: &str,
         addresses: HashMap<Namespace, S3PackageUri>,
+        unchanged: HashMap<Namespace, Signal<bool>>,
     ) -> web_sys::Element {
         let axis = axis.to_string();
         mount(move || {
@@ -478,17 +508,23 @@ mod tests {
                         query=Signal::stored(String::new())
                         group_by=Signal::stored(axis)
                         addresses=addresses
+                        unchanged=unchanged
                     />
                 </leptos_router::components::Router>
             }
         })
     }
 
-    /// The address of a package that has a bucket.
+    /// The address of a package that has a bucket and a catalog host.
     fn addressed(namespace: &str) -> HashMap<Namespace, S3PackageUri> {
         let namespace = ns(namespace);
-        let uri = crate::util::package_uri("team-bucket", &namespace, None);
+        let uri = crate::util::package_uri("team-bucket", &namespace, Some("quilt.test"));
         HashMap::from([(namespace, uri)])
+    }
+
+    /// A package whose status check counted no changed files, as `clean` says.
+    fn counted(namespace: &str, clean: Signal<bool>) -> HashMap<Namespace, Signal<bool>> {
+        HashMap::from([(ns(namespace), clean)])
     }
 
     const TRIGGER: &str = "button[aria-label='More actions for this file']";
@@ -516,8 +552,13 @@ mod tests {
     }
 
     /// A row's items, each marked `|` where a rule goes above it.
-    fn menu(path: &str, address: Option<&S3PackageUri>, published: bool) -> Vec<String> {
-        let commands = row_commands(path, address, published);
+    fn menu(
+        path: &str,
+        address: Option<&S3PackageUri>,
+        published: bool,
+        unchanged: bool,
+    ) -> Vec<String> {
+        let commands = row_commands(path, address, published, unchanged);
         commands
             .iter()
             .zip(crate::pages::row_menu::group_starts(&commands))
@@ -535,7 +576,7 @@ mod tests {
     #[test]
     fn a_published_package_with_a_catalog_offers_every_item() {
         assert_eq!(
-            menu("one.csv", Some(&with_catalog()), true),
+            menu("one.csv", Some(&with_catalog()), true, true),
             [
                 "Open file",
                 "Reveal in folder",
@@ -546,21 +587,31 @@ mod tests {
     }
 
     /// An unpublished revision may hold files the catalog lacks, so none of the
-    /// package's rows link there.
+    /// package's rows link there or copy an address.
     #[test]
-    fn a_package_ahead_of_its_remote_offers_no_catalog_link() {
+    fn a_package_ahead_of_its_remote_offers_only_the_local_file() {
         assert_eq!(
-            menu("one.csv", Some(&with_catalog()), false),
-            ["Open file", "Reveal in folder", "| Copy URI"]
+            menu("one.csv", Some(&with_catalog()), false, true),
+            ["Open file", "Reveal in folder"]
+        );
+    }
+
+    /// The held revision names a package's files by path, and this page cannot
+    /// tell which file changed: any change hides both items on every row.
+    #[test]
+    fn a_package_with_local_changes_offers_only_the_local_file() {
+        assert_eq!(
+            menu("one.csv", Some(&with_catalog()), true, false),
+            ["Open file", "Reveal in folder"]
         );
     }
 
     #[test]
-    fn a_bucket_with_no_catalog_host_offers_no_catalog_link() {
+    fn a_bucket_with_no_catalog_host_offers_only_the_local_file() {
         let bucket_only = crate::util::package_uri("team-bucket", &ns("user/alpha"), None);
         assert_eq!(
-            menu("one.csv", Some(&bucket_only), true),
-            ["Open file", "Reveal in folder", "| Copy URI"]
+            menu("one.csv", Some(&bucket_only), true, true),
+            ["Open file", "Reveal in folder"]
         );
     }
 
@@ -568,24 +619,25 @@ mod tests {
     #[test]
     fn a_package_with_no_bucket_offers_only_the_local_file() {
         assert_eq!(
-            menu("one.csv", None, false),
+            menu("one.csv", None, false, true),
             ["Open file", "Reveal in folder"]
         );
         assert_eq!(
-            menu("one.csv", None, true),
+            menu("one.csv", None, true, true),
             ["Open file", "Reveal in folder"]
         );
     }
 
-    /// A package behind its remote links to the revision it holds, as the
-    /// package page does, not to the remote's latest. Its copied address still
-    /// names the package at `Latest`.
+    /// A package behind its remote names the revision it holds, as the package
+    /// page does, not the remote's latest: the catalog link, and the copied
+    /// address with its whole hash.
     #[wasm_bindgen_test]
-    async fn the_catalog_link_names_the_held_revision_and_the_copy_does_not() {
-        let held = held_address(Some(&with_catalog()), Some("abc123")).expect("an address");
+    async fn the_catalog_link_and_the_copy_name_the_held_revision() {
+        let hash = "0123456789abcdef".repeat(4);
+        let held = held_address(Some(&with_catalog()), Some(&hash)).expect("an address");
         let link = crate::util::entry_catalog_url(&held, "one.csv").expect("a catalog link");
         let latest = crate::util::entry_catalog_url(&with_catalog(), "one.csv").unwrap();
-        assert!(link.contains("abc123"), "got {link}");
+        assert!(link.contains(&hash), "got {link}");
         assert_ne!(link, latest);
 
         let (copied, _) = crate::pages::row_menu::clipped(
@@ -599,7 +651,9 @@ mod tests {
         .expect("an address");
         assert_eq!(
             copied,
-            crate::util::file_uri(&with_catalog(), "one.csv").display()
+            format!(
+                "quilt+s3://team-bucket#package=user/alpha@{hash}&path=one.csv&catalog=quilt.test"
+            )
         );
         assert_eq!(
             held_address(Some(&with_catalog()), None),
@@ -617,7 +671,7 @@ mod tests {
             let f = file("raw/one.csv", "user/alpha", 1_000.0);
             view! {
                 <leptos_router::components::Router>
-                    {file_row(&f, Some(&with_catalog()), on_command, RwSignal::new(None))}
+                    {file_row(&f, Some(&with_catalog()), Signal::stored(true), on_command, RwSignal::new(None))}
                 </leptos_router::components::Router>
             }
         });
@@ -913,6 +967,44 @@ mod tests {
         );
     }
 
+    /// The items follow the package's count: a row offers them once its
+    /// package is checked and clean, and drops them when a change is counted.
+    #[wasm_bindgen_test]
+    async fn a_counted_change_takes_the_address_items_away() {
+        let clean = RwSignal::new(false);
+        let el = mount_feed_addressed(
+            vec![file("one.csv", "user/alpha", 1_000.0)],
+            GROUP_NONE,
+            addressed("user/alpha"),
+            counted("user/alpha", clean.into()),
+        );
+        let words = |items: Vec<web_sys::HtmlElement>| -> Vec<String> {
+            items
+                .iter()
+                .map(|b| b.text_content().unwrap_or_default())
+                .collect()
+        };
+        assert_eq!(
+            words(open_menu(&el).await),
+            ["Open file", "Reveal in folder"]
+        );
+        clean.set(true);
+        leptos::task::tick().await;
+        let found = el.query_selector_all("[popover] button").unwrap();
+        let open: Vec<web_sys::HtmlElement> = (0..found.length())
+            .map(|i| found.item(i).unwrap().unchecked_into())
+            .collect();
+        assert_eq!(
+            words(open),
+            [
+                "Open file",
+                "Reveal in folder",
+                "Open in catalog",
+                "Copy URI"
+            ]
+        );
+    }
+
     /// The card's live region exists before any copy and is empty — a region
     /// created by the event it is meant to announce never fires.
     #[wasm_bindgen_test]
@@ -921,6 +1013,7 @@ mod tests {
             vec![file("one.csv", "user/alpha", 1_000.0)],
             GROUP_NONE,
             addressed("user/alpha"),
+            counted("user/alpha", Signal::stored(true)),
         );
 
         let region = el
@@ -969,6 +1062,7 @@ mod tests {
             vec![file("one.csv", "user/alpha", 1_000.0)],
             GROUP_NONE,
             addressed("user/alpha"),
+            counted("user/alpha", Signal::stored(true)),
         );
 
         item(&open_menu(&el).await, "Copy URI").click();
