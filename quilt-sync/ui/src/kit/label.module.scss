@@ -1,6 +1,6 @@
 /*
- * An outlined badge for metadata. The box matches `StateLabel`'s (height, radius,
- * font, padding and glyph size) so the two sit in one row; only the colour goes.
+ * A badge for metadata. The box matches `StateLabel`'s (height, radius, font,
+ * padding and glyph size) so the two sit in one row; only the colour differs.
  */
 
 .root {
@@ -9,9 +9,10 @@
   flex: none;
   gap: 5px;
   padding: 0 var(--q-space-2) 0 6px;
-  border: 1px solid var(--q-borderColor-default);
+  border: 1px solid var(--label-edge);
   border-radius: var(--q-radius);
-  color: var(--q-fgColor-muted);
+  background: var(--label-fill);
+  color: var(--label-text);
   font-size: var(--q-text-body);
   line-height: 20px;
   white-space: nowrap;
@@ -21,4 +22,17 @@
   flex: none;
   width: 12px;
   height: 12px;
+}
+
+.outline {
+  --label-fill: transparent;
+  --label-edge: var(--q-borderColor-default);
+  --label-text: var(--q-fgColor-muted);
+}
+
+/* Accent text on the accent fill measures 5.45:1 light and 7.39:1 dark, above AA. */
+.accent {
+  --label-fill: var(--q-bgColor-accent-muted);
+  --label-edge: var(--q-borderColor-accent-muted);
+  --label-text: var(--q-fgColor-accent);
 }

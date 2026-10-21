@@ -306,6 +306,22 @@ pub trait QuiltModel {
         Ok(package.status(host_config).await?)
     }
 
+    /// [`Self::get_installed_package_status`] and how much of the current
+    /// revision this copy holds, from the same manifest read and walk.
+    async fn get_installed_package_status_with_downloads(
+        &self,
+        package: &quilt::InstalledPackage,
+        host_config: Option<HostConfig>,
+    ) -> Result<
+        (
+            quilt::lineage::InstalledPackageStatus,
+            quilt::lineage::DownloadCounts,
+        ),
+        Error,
+    > {
+        Ok(package.status_with_downloads(host_config).await?)
+    }
+
     async fn recompute_local_status(
         &self,
         package: &quilt::InstalledPackage,

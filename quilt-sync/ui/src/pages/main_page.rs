@@ -69,6 +69,7 @@ use crate::kit::PackageRow;
 use crate::kit::PackageRowSkeleton;
 use crate::kit::PackageState;
 use crate::kit::PageLayout;
+use crate::kit::RowDownloads;
 use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
@@ -156,6 +157,8 @@ struct RowSignals {
     state: RwSignal<PackageState>,
     confidence: RwSignal<Confidence>,
     role_switch_host: RwSignal<Option<String>>,
+    /// What the status check counted on disk; `None` until a check answers.
+    downloads: RwSignal<Option<RowDownloads>>,
 }
 
 /// How much the page knows about a row's state.
@@ -192,6 +195,7 @@ impl RowSignals {
                 Confidence::Settled
             }),
             role_switch_host: RwSignal::new(role_switch_host),
+            downloads: RwSignal::new(None),
         }
     }
 
@@ -221,6 +225,8 @@ impl RowSignals {
     fn apply(self, refreshed: MainPagePackageRefreshData) {
         self.state.set(refreshed.state);
         self.role_switch_host.set(refreshed.role_switch_host);
+        self.downloads
+            .set(refreshed.downloads.map(RowDownloads::from));
         self.confidence.set(Confidence::Settled);
     }
 }
@@ -414,6 +420,10 @@ fn PackageListRow(
             state=words
             tone=tone
             provisional=Signal::derive(move || row.provisional())
+            // Counts from an earlier check are not shown while a row is unconfirmed.
+            downloads=Signal::derive(move || {
+                if row.provisional() { None } else { row.downloads.get() }
+            })
         />
     }
 }
@@ -1600,6 +1610,7 @@ mod tests {
             .apply(MainPagePackageRefreshData {
                 state: PackageState::PendingChanges { files: 1 },
                 role_switch_host: None,
+                downloads: None,
             });
 
         let settled = store.settled(&light);
@@ -1658,6 +1669,7 @@ mod tests {
             .apply(MainPagePackageRefreshData {
                 state: PackageState::Behind,
                 role_switch_host: None,
+                downloads: None,
             });
         leptos::task::tick().await;
 
@@ -1670,6 +1682,73 @@ mod tests {
             el.query_selector("[class*=provisional]").unwrap().is_none(),
             "settled rows are drawn solid"
         );
+    }
+
+    fn picked(total: usize, outstanding: usize) -> crate::commands::MainPageDownloadsData {
+        crate::commands::MainPageDownloadsData {
+            scope: crate::commands::KeepingScope::IndividualFiles,
+            total,
+            outstanding,
+        }
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_settled_row_shows_what_its_check_counted() {
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+        assert!(
+            !el.text_content().unwrap().contains("files"),
+            "a provisional row has no counts"
+        );
+
+        store
+            .row(&ns("user/plate-07"))
+            .unwrap()
+            .apply(MainPagePackageRefreshData {
+                state: PackageState::Latest,
+                role_switch_host: None,
+                downloads: Some(picked(340, 328)),
+            });
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("12 of 340 files"), "the marker: {text}");
+        assert!(text.contains("Latest"), "beside the state label: {text}");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_row_whose_check_did_not_answer_shows_no_marker() {
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let row = store.row(&ns("user/plate-07")).unwrap();
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+        let marked = || el.text_content().unwrap().contains("of 340 files");
+
+        row.apply(MainPagePackageRefreshData {
+            state: PackageState::Latest,
+            role_switch_host: None,
+            downloads: Some(picked(340, 0)),
+        });
+        leptos::task::tick().await;
+        assert!(marked(), "a full pick still shows its count");
+
+        row.mark_pending();
+        row.mark_unchecked();
+        leptos::task::tick().await;
+        assert!(!marked(), "a failed re-check hides the earlier counts");
+
+        row.apply(MainPagePackageRefreshData {
+            state: PackageState::NoSession { host: None },
+            role_switch_host: None,
+            downloads: None,
+        });
+        leptos::task::tick().await;
+        assert!(!marked(), "a check that did not run counts nothing");
     }
 
     #[wasm_bindgen_test]
@@ -2906,6 +2985,7 @@ mod tests {
             .apply(MainPagePackageRefreshData {
                 state,
                 role_switch_host: None,
+                downloads: None,
             });
     }
 
@@ -2921,6 +3001,7 @@ mod tests {
                 .apply(MainPagePackageRefreshData {
                     state: package.state.clone(),
                     role_switch_host: package.role_switch_host.clone(),
+                    downloads: None,
                 });
         }
     }
@@ -4045,6 +4126,7 @@ mod tests {
             Ok(MainPagePackageRefreshData {
                 state: PackageState::Behind,
                 role_switch_host: None,
+                downloads: None,
             }),
         );
 
@@ -4068,6 +4150,7 @@ mod tests {
             Ok(MainPagePackageRefreshData {
                 state: PackageState::Behind,
                 role_switch_host: None,
+                downloads: None,
             }),
         );
 
@@ -4112,6 +4195,7 @@ mod tests {
         row.apply(MainPagePackageRefreshData {
             state: PackageState::PendingChanges { files: 3 },
             role_switch_host: None,
+            downloads: None,
         });
 
         assert_eq!(
@@ -4141,6 +4225,7 @@ mod tests {
         row.apply(MainPagePackageRefreshData {
             state: PackageState::Latest,
             role_switch_host: None,
+            downloads: None,
         });
 
         assert_eq!(row.state.get_untracked(), PackageState::Latest);
@@ -4157,6 +4242,7 @@ mod tests {
                 role: Some("ReadOnly".to_string()),
             },
             role_switch_host: Some("quilt.test".to_string()),
+            downloads: None,
         });
 
         assert_eq!(
@@ -4553,6 +4639,7 @@ mod tests {
             .apply(MainPagePackageRefreshData {
                 state: PackageState::Latest,
                 role_switch_host: None,
+                downloads: None,
             });
         record_refresh(
             store.row(&ns("a/failed")).unwrap(),
