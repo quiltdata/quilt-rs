@@ -19,11 +19,19 @@ pub fn PageHeader(
     label: Option<AnyView>,
     /// Primary first.
     actions: AnyView,
+    /// Keeps the row on one line, so a narrow window cuts the name instead.
+    #[prop(optional)]
+    nowrap: bool,
 ) -> impl IntoView {
+    let row = if nowrap {
+        format!("{} {}", style::row, style::nowrap)
+    } else {
+        style::row.to_string()
+    };
     view! {
         <div class=style::root>
             {trail}
-            <div class=style::row>
+            <div class=row>
                 <h2 class=style::name>{title}</h2>
                 {label}
                 <div class=style::actions>{actions}</div>

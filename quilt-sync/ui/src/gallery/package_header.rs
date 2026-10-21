@@ -3,7 +3,7 @@
 //! # Why a scene and not a component
 //!
 //! This settled the header's *shape* — trail, identity, one state label, one
-//! primary action, `Open folder`, `[⋯]` — from the kit pieces that exist, so the
+//! primary action, the location group, `[⋯]` — from the kit pieces that exist, so the
 //! states could be read against each other before the region was written. The
 //! same reasoning the component record applies to `DegradedBand`: the degraded
 //! states are not a component, they are the header with different props, and the
@@ -11,7 +11,17 @@
 //!
 //! **The row is `kit::PageHeader`, the one the page draws.** Its menu is not
 //! drawn either: it is the page's own, from `pages::menu_items` over a fixture
-//! payload, with the handlers dropped. What is still this scene's own is the
+//! payload, with the handlers dropped.
+//!
+//! # Ahead of the page
+//!
+//! The scene shows the target design before the page has it. `Open folder` is
+//! a [`ButtonGroup`](crate::kit::ButtonGroup) with the catalog page and the
+//! Quilt URI beside it, which collapses to icons in a narrow window, and so
+//! `[⋯]` no longer lists `Open in catalog`: the scene filters it out of the
+//! page's menu. The page still draws `Open folder` and the old menu.
+//!
+//! What is still this scene's own is the
 //! choice of primary: the page's header takes a payload where this takes a bare
 //! state, and with it an `action_open` the whole-page scene's resolve cell
 //! needs. Worth collapsing into the page's header in time, because a scene that
@@ -52,6 +62,7 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::commands;
+use crate::gallery::button_group::location;
 use crate::kit::ActionMenu;
 use crate::kit::BackLink;
 use crate::kit::Button;
@@ -65,7 +76,7 @@ use crate::kit::SplitButton;
 use crate::kit::SplitOption;
 use crate::kit::StateLabel;
 use crate::kit::render;
-use crate::pages::{MenuItem, menu_items};
+use crate::pages::{MenuCommand, MenuItem, menu_items};
 
 const NAMESPACE: &str = "user/plate-07";
 
@@ -149,7 +160,7 @@ fn states() -> Vec<(&'static str, PackageState)> {
 
 /// The payload this scene draws its menu from: a remoted package with a
 /// catalog, one commit and a parent behind it — the ordinary case, and the
-/// only one with a catalog to link to, so the menu shows its full width.
+/// only one with a catalog to link to.
 /// Every command is live except `Undo last revision`, which the engine
 /// refuses on any remote; the item stays and states that, which is the
 /// gating this scene exists to show. The states above it vary the ROW; the
@@ -185,8 +196,20 @@ fn scene_payload() -> commands::PackageHeaderData {
 /// The page's menu, with its handlers dropped. The scene has no Tauri
 /// runtime and nothing to run against; what it is for is the arrangement,
 /// which is the part `menu_items` decides.
+///
+/// Less `Open in catalog`, which the location group holds in the target
+/// design. The page's menu still lists it.
 fn scene_menu() -> Vec<MenuItem> {
     menu_items(&scene_payload(), false)
+        .into_iter()
+        .filter(|item| !matches!(item.command, MenuCommand::OpenInCatalog(_)))
+        .collect()
+}
+
+/// Whether the package has a catalog page for the location group's remote
+/// side. Not until it is published.
+fn has_catalog_page(state: &PackageState) -> bool {
+    !matches!(state, PackageState::NoRemote | PackageState::Unpublished)
 }
 
 /// The header at one state.
@@ -218,7 +241,7 @@ fn scene_menu() -> Vec<MenuItem> {
 /// An earlier arrangement split the row into an essential group and an auxiliary
 /// one with a wider space between them. That earned itself while the row held
 /// four controls. It does not now: moving `Create new revision` into the menu
-/// leaves at most the state's action, `Open folder` and `[⋯]`, so the wider gap
+/// leaves at most the state's action, the location group and `[⋯]`, so the wider gap
 /// would separate a group of one from a group of two and invite the reader to
 /// look for a distinction that is not doing any work. One uniform `space-2`.
 /// `action_open`: the state's own action is already on screen somewhere else, so
@@ -239,9 +262,11 @@ fn header(
     let rendered = render(state, Site::PageHeader);
     let action = rendered.action;
     let publishes = !action_open && matches!(action, Some(PackageAction::Publish));
+    let copied = RwSignal::new(false);
 
     view! {
         <PageHeader
+            nowrap=true
             trail=view! { <BackLink href="#packageheader" label="Packages" /> }.into_any()
             title=NAMESPACE
             label=crate::pages::state_with_summary(
@@ -276,7 +301,7 @@ fn header(
                                 </Button>
                             }
                         })}
-                    <Button on_click=|_| ()>"Open folder"</Button>
+                    {location(has_catalog_page(state), copied)}
                     <ActionMenu
                         aria_label="More actions for this package"
                         actions={
@@ -326,6 +351,28 @@ pub fn PackageHeaderRegion(
     header(&state, publish_choice, action_open, summary)
 }
 
+/// The 640px window's header, 608px after the page's padding: the location
+/// group is icons only and the row stays one line. The widest label, the
+/// commonest state, and one with no catalog page.
+fn narrow_states() -> Vec<(&'static str, PackageState)> {
+    vec![
+        (
+            "608px, the window's narrowest — the widest label",
+            PackageState::NoSession {
+                host: Some("demo.quiltdata.com".to_string()),
+            },
+        ),
+        (
+            "608px — a newer revision exists upstream",
+            PackageState::Behind,
+        ),
+        (
+            "608px — has a bucket, never published",
+            PackageState::Unpublished,
+        ),
+    ]
+}
+
 #[component]
 pub fn PackageHeaderScene() -> impl IntoView {
     // One signal across every cell, so picking in any of them moves them all —
@@ -336,27 +383,51 @@ pub fn PackageHeaderScene() -> impl IntoView {
     view! {
         <Scene
             title="The package header, state by state"
-            note="Sixteen cells for thirteen states; `PendingChanges`, `PullConflict` and \
-                  `NoSession` appear twice, the first two because the singular is written by \
-                  hand and the third because only it names a host. Read down the action \
-                  column: every control answers what this package needs, so it is the \
-                  state's own action and nothing else, while `Create new revision` sits in \
-                  the overflow menu in all sixteen. That menu is the page's own, drawn from \
-                  one fixture payload with the handlers dropped: `Open in catalog` is there \
-                  because the fixture has a catalog, and the same remote is why `Undo last \
-                  revision` is greyed — a remoted package cannot be undone. Measured: the widest row is 609px — \
-                  `Signed out of demo.quiltdata.com`, which took the title from `Revision \
-                  not published` at 568 — against the 992 the page has at 1024, and every \
-                  row is 32px tall, so the page does not jump between states. Then read the \
-                  tone column — one Success, two Neutral, four Attention, nine Danger. \
-                  Whether one package's page carries that much red is what this scene is \
-                  for. Missing: unreachable, which the backend still cannot tell from any \
+            note="Sixteen cells for thirteen states, then three at the window's narrowest; \
+                  `PendingChanges`, `PullConflict` and `NoSession` appear twice, the first \
+                  two because the singular is written by hand and the third because only it \
+                  names a host. Read down the action column: every control answers what \
+                  this package needs, so it is the state's own action and nothing else, \
+                  while `Create new revision` sits in the overflow menu in all sixteen. \
+                  This scene is ahead of the page: `Open folder` is a group with the \
+                  catalog page and a Copy Quilt URI icon beside it, dropped until the \
+                  package is published, and `Open in catalog` has left the menu. The menu \
+                  is otherwise the page's own, drawn from one fixture payload with the \
+                  handlers dropped; its remote is why `Undo last revision` is greyed — a \
+                  remoted package cannot be undone. Measured: the widest row is 796px — \
+                  `Signed out of demo.quiltdata.com` — against the 992 the page has at \
+                  1024. Below 800 the group is icons only, and at 608, the 640 window's \
+                  page, the same row is 588 and stays on one line. Every row is 32px \
+                  tall, so the page does not jump between states. Then read the tone \
+                  column — one Success, two Neutral, four Attention, nine Danger. Whether \
+                  one package's page carries that much red is what this scene is for. \
+                  Missing: unreachable, which the backend still cannot tell from any \
                   other failed read."
         >
             {states()
                 .into_iter()
                 .map(|(label, state)| {
-                    view! { <Cell full=true label=label>{header(&state, publish_choice, false, None)}</Cell> }
+                    view! {
+                        <Cell full=true label=label>
+                            // A container, as the page is: the location
+                            // group's labels follow its width.
+                            <div style="container-type:inline-size; width:100%">
+                                {header(&state, publish_choice, false, None)}
+                            </div>
+                        </Cell>
+                    }
+                })
+                .collect_view()}
+            {narrow_states()
+                .into_iter()
+                .map(|(label, state)| {
+                    view! {
+                        <Cell full=true label=label>
+                            <div style="container-type:inline-size; width:608px; max-width:100%">
+                                {header(&state, publish_choice, false, None)}
+                            </div>
+                        </Cell>
+                    }
                 })
                 .collect_view()}
         </Scene>
@@ -367,7 +438,8 @@ pub fn PackageHeaderScene() -> impl IntoView {
 mod tests {
     use super::*;
 
-    /// The scene renders the page's menu rather than a drawing of it. Pinned,
+    /// The scene renders the page's menu, less `Open in catalog`, rather than a
+    /// drawing of it. Pinned,
     /// because the copy this replaced went stale the moment the page's menu
     /// gained gating — and a stale scene is worse than no scene: it is a design
     /// record that lies.
@@ -386,7 +458,6 @@ mod tests {
             labels,
             vec![
                 "Create new revision",
-                "Open in catalog",
                 "Change bucket",
                 "Undo last revision",
                 "Remove",
