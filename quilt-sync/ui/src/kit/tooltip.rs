@@ -430,8 +430,11 @@ pub(super) fn surface(
     };
 
     // Runs again when the anchor moves while open, which is a list's one
-    // surface following the pointer from one name to the next.
+    // surface following the pointer from one name to the next — and when the
+    // words change while open, since a longer surface may no longer fit below.
     Effect::new(move |_| {
+        text.track();
+        lines.track();
         let (Some(anchor), Some(surface)) = (anchor.get(), surface.get()) else {
             return;
         };
