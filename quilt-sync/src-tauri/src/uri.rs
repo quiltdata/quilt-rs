@@ -438,6 +438,24 @@ mod tests {
         );
     }
 
+    /// The addresses the package and commit pages send as `back`.
+    #[test]
+    fn a_login_from_a_package_or_commit_page_lands_there() {
+        assert_eq!(
+            landing_after_login(Some(
+                "/installed-package?namespace=org%2Fpkg&filter=unmodified"
+            )),
+            routes::Paths::InstalledPackage(
+                ("org", "pkg").into(),
+                routes::EntriesFilter::for_installed_package()
+            )
+        );
+        assert_eq!(
+            landing_after_login(Some("/commit?namespace=org%2Fpkg")),
+            routes::Paths::Commit(("org", "pkg").into(), routes::EntriesFilter::default())
+        );
+    }
+
     #[test]
     fn an_unreadable_redirect_lands_home_rather_than_nowhere() {
         // The login succeeded by this point, so there is no failure to report to

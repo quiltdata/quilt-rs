@@ -211,7 +211,7 @@ pub(crate) fn ErrorScreen(read: PageRead<LoginErrorData>) -> impl IntoView {
                 let on_login = (!host.is_empty())
                     .then(|| {
                         Callback::new(move |()| {
-                            navigate(&sign_in_href(&host), NavigateOptions::default());
+                            navigate(&sign_in_href(&host, "/"), NavigateOptions::default());
                         })
                     });
                 match on_login {
