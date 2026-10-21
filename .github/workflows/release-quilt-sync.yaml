@@ -9,8 +9,61 @@ on:
         required: true
 
 jobs:
+  # Creates the draft once, before the matrix, and hands its numeric id to
+  # every leg. With a tag-only lookup, legs that reached tauri-action at the
+  # same moment each created their own draft and split the platforms (and
+  # `latest.json`) between them.
+  create-release:
+    name: Create draft release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      id: ${{ steps.draft.outputs.id }}
+      version: ${{ steps.draft.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Find or create the draft
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # tauri.conf.json has no `version`, so tauri-action takes the
+          # app version from this Cargo.toml.
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("quilt-sync/src-tauri/Cargo.toml", "rb"))["package"]["version"])')
+          tag="QuiltSync/v$version"
+          releases=$(gh api --paginate "repos/$REPO/releases" \
+            --jq "[.[] | select(.tag_name == \"$tag\") | {id, draft}]" | jq -s 'add // []')
+          count=$(jq length <<<"$releases")
+          if [ "$count" -gt 1 ]; then
+            echo "::error::$count releases already use tag $tag; delete the extra ones first"
+            exit 1
+          elif [ "$count" -eq 1 ]; then
+            [ "$(jq '.[0].draft' <<<"$releases")" = true ] \
+              || { echo "::error::$tag is already published"; exit 1; }
+            id=$(jq '.[0].id' <<<"$releases")
+            echo "Reusing draft $id for $tag"
+          else
+            id=$(gh api -X POST "repos/$REPO/releases" \
+              -f tag_name="$tag" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f name="QuiltSync v$version" \
+              -f body="See the assets to download and install this version." \
+              -F draft=true \
+              -F prerelease=false \
+              --jq .id)
+            echo "Created draft $id for $tag"
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   release:
     name: Build Release
+    needs: create-release
     permissions:
       contents: write
       id-token: write  # required for Azure OIDC token request
@@ -28,11 +81,6 @@ jobs:
             args: ""
     runs-on: ${{ matrix.platform }}
     environment: ${{ inputs.environment }}
-    # Every matrix leg writes the same version (read from the same
-    # Cargo.toml) so the aggregate `release.outputs.version` is stable
-    # regardless of which leg finishes last.
-    outputs:
-      version: ${{ steps.tauri.outputs.appVersion }}
     env:
       # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
@@ -86,16 +134,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          # tauri-action replaces \_\_VERSION\_\_ with the app version.
-          # Emit the final tag form so promotion is a no-op review rather
-          # than a manual rename — `upload-to-hubspot.yaml` expects this
-          # exact form for `release_tag`.
-          tagName: QuiltSync/v__VERSION__
-          releaseId: QuiltSync-__VERSION__
-          releaseName: QuiltSync v__VERSION__
+          # A numeric id makes tauri-action upload straight to that release
+          # and ignore tagName, releaseName and releaseDraft.
+          releaseId: ${{ needs.create-release.outputs.id }}
+          # Becomes the `notes` field of latest.json.
           releaseBody: "See the assets to download and install this version."
-          releaseDraft: true
-          prerelease: false
           args: ${{ matrix.args }}
           projectPath: "./quilt-sync"
           # Auto updater configuration - generates latest.json for update checks.
@@ -140,7 +183,7 @@ jobs:
   # clients and re-running just this job recovers from a flake on
   # either side.
   promote:
-    needs: release
+    needs: [create-release, release]
     runs-on: ubuntu-24.04
     # Shared with the crate `publish` gate — same approval policy
     # applies to both irreversible channels.
@@ -149,16 +192,45 @@ jobs:
       contents: write
       actions: write  # required for `gh workflow run`
     steps:
+      - name: Check the draft is the only release and covers every platform
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.create-release.outputs.id }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          [ -n "$RELEASE_ID" ] || { echo "::error::create-release.outputs.id is empty"; exit 1; }
+          tag="QuiltSync/v$VERSION"
+          count=$(gh api --paginate "repos/$REPO/releases" \
+            --jq "[.[] | select(.tag_name == \"$tag\")] | length" | jq -s add)
+          [ "$count" -eq 1 ] \
+            || { echo "::error::$count releases use tag $tag; expected exactly one"; exit 1; }
+          asset=$(gh api "repos/$REPO/releases/$RELEASE_ID/assets" --paginate \
+            --jq '.[] | select(.name == "latest.json") | .id')
+          [ -n "$asset" ] || { echo "::error::draft $RELEASE_ID has no latest.json"; exit 1; }
+          gh api -H "Accept: application/octet-stream" \
+            "repos/$REPO/releases/assets/$asset" > latest.json
+          missing=$(jq -r '
+            ["linux-x86_64", "linux-x86_64-deb",
+             "darwin-aarch64", "darwin-aarch64-app",
+             "darwin-x86_64", "darwin-x86_64-app",
+             "windows-x86_64", "windows-x86_64-msi"]
+            - (.platforms | keys) | join(" ")' latest.json)
+          [ -z "$missing" ] \
+            || { echo "::error::latest.json is missing platforms: $missing"; exit 1; }
+
       - name: Promote draft and trigger HubSpot mirror
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          VERSION: ${{ needs.release.outputs.version }}
+          RELEASE_ID: ${{ needs.create-release.outputs.id }}
+          VERSION: ${{ needs.create-release.outputs.version }}
         run: |
           set -euo pipefail
-          [ -n "$VERSION" ] || { echo "::error::release.outputs.version is empty"; exit 1; }
           tag="QuiltSync/v$VERSION"
-          gh release edit "$tag" --draft=false --latest --repo "$REPO"
+          gh api -X PATCH "repos/$REPO/releases/$RELEASE_ID" \
+            -F draft=false -f make_latest=true --silent
           gh workflow run upload-to-hubspot.yaml \
             --repo "$REPO" \
             -f release_tag="$tag"
