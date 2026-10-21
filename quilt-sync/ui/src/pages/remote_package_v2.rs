@@ -239,6 +239,9 @@ mod tests {
 
     const RELAY: &str = "/remote-package?uri=quilt%2Bs3%3A%2F%2Fbucket%23package%3Dteam%2Fplate";
 
+    /// The entry the relay is pushed onto.
+    const UNDER_RELAY: &str = "/before-the-link";
+
     thread_local! {
         /// What the stubbed run answers.
         static ANSWER: std::cell::RefCell<Result<String, String>> =
@@ -284,6 +287,10 @@ mod tests {
         unmount_earlier();
         RUNS.with(|r| r.set(0));
         ANSWER.with(|a| *a.borrow_mut() = answer);
+        // Our own entry under the relay, not whatever an earlier test left.
+        history()
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(UNDER_RELAY))
+            .unwrap();
         history()
             .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(RELAY))
             .unwrap();
@@ -322,9 +329,11 @@ mod tests {
         go_back().await;
         // Time for the router to answer the landing, had it run the link.
         sleep_ms(50).await;
-        let landed = location().pathname().unwrap();
-        assert_ne!(landed, to, "Back left the page");
-        assert_ne!(landed, "/remote-package", "Back skips the relay");
+        assert_eq!(
+            location().pathname().unwrap(),
+            UNDER_RELAY,
+            "Back skips the relay"
+        );
         assert_eq!(
             RUNS.with(std::cell::Cell::get),
             1,
