@@ -259,6 +259,25 @@ mod tests {
         web_sys::window().unwrap().history().unwrap()
     }
 
+    /// Back, once it has landed. The browser runs it later, so a test that
+    /// only sleeps after it can end first, and the Back then moves the next
+    /// test's page.
+    async fn go_back() {
+        let window = web_sys::window().unwrap();
+        let mut landed = None;
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            window
+                .add_event_listener_with_callback("popstate", &resolve)
+                .unwrap();
+            landed = Some(resolve);
+        });
+        history().back().unwrap();
+        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+        window
+            .remove_event_listener_with_callback("popstate", &landed.unwrap())
+            .unwrap();
+    }
+
     /// The relay at its own address, under a router with somewhere to go, run
     /// over `answer`. Hands back the history length before the relay drew.
     async fn way_out(answer: Result<String, String>) -> u32 {
@@ -300,13 +319,12 @@ mod tests {
             "the entry was replaced"
         );
         assert_eq!(RUNS.with(std::cell::Cell::get), 1);
-        history().back().unwrap();
+        go_back().await;
+        // Time for the router to answer the landing, had it run the link.
         sleep_ms(50).await;
-        assert_ne!(
-            location().pathname().unwrap(),
-            "/remote-package",
-            "Back skips the relay"
-        );
+        let landed = location().pathname().unwrap();
+        assert_ne!(landed, to, "Back left the page");
+        assert_ne!(landed, "/remote-package", "Back skips the relay");
         assert_eq!(
             RUNS.with(std::cell::Cell::get),
             1,
