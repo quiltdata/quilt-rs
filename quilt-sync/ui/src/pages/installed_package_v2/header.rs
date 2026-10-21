@@ -742,7 +742,7 @@ fn copy_uri(
 ) {
     let stamp = copied.bump();
     leptos::task::spawn_local(async move {
-        let answer = commands::copy_to_clipboard(address.to_string(), Some(address)).await;
+        let answer = commands::copy_to_clipboard(address.to_copy_string(), Some(address)).await;
         // A later copy speaks for both surfaces.
         if !copied.is_current(stamp) {
             return;
@@ -2215,7 +2215,7 @@ mod tests {
     fn at_latest_both_name_latest() {
         let target = remote_target(&holding_against(Some("abc123"))).unwrap();
         assert_eq!(
-            target.address.to_string(),
+            target.address.to_copy_string(),
             "quilt+s3://team-bucket#package=team/dataset&catalog=quilt.test"
         );
         assert_eq!(
@@ -2229,7 +2229,7 @@ mod tests {
     fn behind_both_name_the_held_revision() {
         let target = remote_target(&holding_against(Some("def456"))).unwrap();
         assert_eq!(
-            target.address.to_string(),
+            target.address.to_copy_string(),
             "quilt+s3://team-bucket#package=team/dataset@abc123&catalog=quilt.test"
         );
         assert_eq!(
@@ -2258,6 +2258,11 @@ mod tests {
                 .unwrap(),
         );
         let target = remote_target(&data).unwrap();
-        assert!(target.address.to_string().contains(&format!("@{hash}")));
+        assert!(
+            target
+                .address
+                .to_copy_string()
+                .contains(&format!("@{hash}"))
+        );
     }
 }

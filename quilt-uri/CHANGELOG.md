@@ -16,6 +16,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.4.3-dev]
+
+### Added
+
+- `S3PackageUri::to_copy_string` writes the address in full for copying: the whole hash, which `display` shortens, and every fragment value escaped, spaces included, so a pasted address reads back the same and stays one link (<https://github.com/quiltdata/quilt-rs/pull/1171>)
+
 ## [v0.4.2] - 2026-10-02
 
 ### Added

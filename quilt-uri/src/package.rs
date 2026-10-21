@@ -315,14 +315,8 @@ const FRAGMENT_VALUE: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
     .add(b'+')
     .add(b'%');
 
-/// One fragment value, safe to put beside the delimiters.
-///
-/// The parse side reads the fragment with `form_urlencoded`, so anything written
-/// raw comes back changed or truncated: a logical key holding `&` ends the value
-/// early and the rest is read as another parameter.
-fn encode_value(value: &str) -> String {
-    percent_encoding::utf8_percent_encode(value, FRAGMENT_VALUE).to_string()
-}
+/// [`FRAGMENT_VALUE`] and space, which would end a link pasted into a chat.
+const COPY_VALUE: &percent_encoding::AsciiSet = &FRAGMENT_VALUE.add(b' ');
 
 impl S3PackageUri {
     fn format_hash(hash: &str) -> String {
@@ -335,23 +329,42 @@ impl S3PackageUri {
 
     #[must_use]
     pub fn display(&self) -> String {
+        self.render(false, FRAGMENT_VALUE)
+    }
+
+    /// The address in full for copying: the whole hash, and every fragment
+    /// value escaped, spaces too, so a pasted address stays one link.
+    #[must_use]
+    pub fn to_copy_string(&self) -> String {
+        self.render(true, COPY_VALUE)
+    }
+
+    /// Each fragment value is escaped with `set`, safe to put beside the
+    /// delimiters.
+    ///
+    /// The parse side reads the fragment with `form_urlencoded`, so anything written
+    /// raw comes back changed or truncated: a logical key holding `&` ends the value
+    /// early and the rest is read as another parameter.
+    fn render(&self, full_hash: bool, set: &'static percent_encoding::AsciiSet) -> String {
+        let encode = |value: &str| percent_encoding::utf8_percent_encode(value, set).to_string();
         let hash = match &self.revision {
             RevisionPointer::Tag(Tag::Latest) => String::new(),
-            RevisionPointer::Tag(tag) => format!(":{}", encode_value(&tag.to_string())),
-            RevisionPointer::Hash(h) => format!("@{}", encode_value(&Self::format_hash(h))),
+            RevisionPointer::Tag(tag) => format!(":{}", encode(&tag.to_string())),
+            RevisionPointer::Hash(h) if full_hash => format!("@{}", encode(h)),
+            RevisionPointer::Hash(h) => format!("@{}", encode(&Self::format_hash(h))),
         };
         let path_part = match &self.path {
-            Some(p) => format!("&path={}", encode_value(&p.display().to_string())),
+            Some(p) => format!("&path={}", encode(&p.display().to_string())),
             None => String::new(),
         };
         let catalog_part = match &self.catalog {
-            Some(p) => format!("&catalog={}", encode_value(&p.to_string())),
+            Some(p) => format!("&catalog={}", encode(&p.to_string())),
             None => String::new(),
         };
         format!(
             "quilt+s3://{}#package={}{}{}{}",
             self.bucket,
-            encode_value(&self.namespace.to_string()),
+            encode(&self.namespace.to_string()),
             hash,
             path_part,
             catalog_part
@@ -1139,6 +1152,60 @@ mod tests {
 
             assert_eq!(back, uri, "{path:?} came back as {}", uri.display());
         }
+    }
+
+    /// The copied form comes back whole whatever the values hold, pinned or at
+    /// latest: every delimiter and space escaped, and the hash never shortened.
+    #[test]
+    fn the_copy_string_round_trips() {
+        let hash = "0123456789abcdef".repeat(4);
+        for revision in [
+            RevisionPointer::Tag(Tag::Latest),
+            RevisionPointer::Hash(hash.clone()),
+        ] {
+            for value in [
+                "a+b",
+                "a&catalog=evil",
+                "100%",
+                "hash#tag",
+                "a=b",
+                "with space",
+            ] {
+                let uri = S3PackageUri {
+                    catalog: Some("quilt.test".parse().unwrap()),
+                    bucket: "b".to_string(),
+                    namespace: ("user", value).into(),
+                    revision: revision.clone(),
+                    path: Some(PathBuf::from(format!("dir/{value}.csv"))),
+                };
+                let copied = uri.to_copy_string();
+
+                assert!(!copied.contains(' '), "{copied}");
+                let back = S3PackageUri::try_from(copied.as_str())
+                    .unwrap_or_else(|e| panic!("{value:?} -> {copied} : {e}"));
+                assert_eq!(back, uri, "{value:?} came back from {copied}");
+            }
+        }
+    }
+
+    /// Slashes stay literal in the copied form too, and the hash is whole.
+    #[test]
+    fn the_copy_string_keeps_slashes_and_the_whole_hash() {
+        let hash = "0123456789abcdef".repeat(4);
+        let uri = S3PackageUri {
+            catalog: Some("quilt.test".parse().unwrap()),
+            bucket: "team-bucket".to_string(),
+            namespace: ("user", "plate-07").into(),
+            revision: RevisionPointer::Hash(hash.clone()),
+            path: Some(PathBuf::from("runs/a/one.csv")),
+        };
+
+        assert_eq!(
+            uri.to_copy_string(),
+            format!(
+                "quilt+s3://team-bucket#package=user/plate-07@{hash}&path=runs/a/one.csv&catalog=quilt.test"
+            )
+        );
     }
 
     /// The readable part stays readable: a plain address carries its slashes
