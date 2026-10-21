@@ -63,7 +63,7 @@ pub fn PackageRow(
     /// user decides, and a decision offered and withdrawn is not a decision.
     #[prop(optional, into)]
     provisional: MaybeProp<bool>,
-    /// What is on disk, as words after the state label. `None` draws no marker.
+    /// What is on disk, as a neutral badge before the state label. `None` draws no marker.
     #[prop(optional, into)]
     downloads: MaybeProp<RowDownloads>,
 ) -> impl IntoView {
@@ -104,6 +104,20 @@ pub fn PackageRow(
                         |at| view! { <RelativeTime at=at /> }.into_any(),
                     )}
             </span>
+            // Between the time and the state, so the state labels stay aligned at
+            // the right edge.
+            {move || {
+                downloads
+                    .get()
+                    .and_then(RowDownloads::marker)
+                    .map(|(words, hint)| {
+                        view! {
+                            <span class=style::downloads title=hint>
+                                <StateLabel tone=StateTone::Neutral>{words}</StateLabel>
+                            </span>
+                        }
+                    })
+            }}
             // Wrapped in its own closure, not read at the top level, so this patches
             // in place on every settle without `PackageRow` itself needing to be
             // called again.
@@ -121,14 +135,6 @@ pub fn PackageRow(
                 view! {
                     <StateLabel tone=current_tone provisional=provisional>{words}</StateLabel>
                 }
-            }}
-            {move || {
-                downloads
-                    .get()
-                    .and_then(RowDownloads::marker)
-                    .map(|(words, hint)| {
-                        view! { <span class=style::downloads title=hint>{words}</span> }
-                    })
             }}
         </a>
     }
