@@ -19,7 +19,7 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.46.1-dev]
+## [v0.47.0-dev]
 
 ### Added
 
