@@ -562,12 +562,13 @@ pub(crate) fn RemoveDialog(
 /// How long the copy button says *Copied*.
 const COPIED_FOR: Duration = Duration::from_millis(1_500);
 
-/// The copy button's *Copied*: on once the clipboard took the address, off a
-/// moment later. Stamped as the main page's copies are, so an earlier copy's
-/// timer cannot end a later one's.
+/// The copy button's *Copied*: the package whose address the clipboard took,
+/// until a moment later. Keyed, because the page keeps it across packages.
+/// Stamped as the main page's copies are, so an earlier copy's timer or late
+/// answer cannot end or claim a later one.
 #[derive(Clone, Copy)]
 pub struct CopiedMark {
-    on: RwSignal<bool>,
+    copied: RwSignal<Option<String>>,
     issued: StoredValue<u64>,
 }
 
@@ -575,7 +576,7 @@ impl CopiedMark {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            on: RwSignal::new(false),
+            copied: RwSignal::new(None),
             issued: StoredValue::new(0),
         }
     }
@@ -594,17 +595,24 @@ impl CopiedMark {
         self.issued.try_get_value() == Some(stamp)
     }
 
-    /// Show *Copied* for [`COPIED_FOR`], or drop it after a failed copy.
-    fn settle(self, stamp: u64, copied: bool) {
+    /// Whether `namespace`'s address is the one just copied.
+    fn says(self, namespace: String) -> Signal<bool> {
+        Signal::derive(move || self.copied.with(|c| c.as_ref() == Some(&namespace)))
+    }
+
+    /// Mark `namespace` for [`COPIED_FOR`], or clear the mark after a failed
+    /// copy.
+    fn settle(self, stamp: u64, namespace: Option<String>) {
         if !self.is_current(stamp) {
             return;
         }
-        self.on.try_set(copied);
-        if copied {
+        let marks = namespace.is_some();
+        self.copied.try_set(namespace);
+        if marks {
             set_timeout(
                 move || {
                     if self.is_current(stamp) {
-                        self.on.try_set(false);
+                        self.copied.try_set(None);
                     }
                 },
                 COPIED_FOR,
@@ -623,13 +631,8 @@ impl Default for CopiedMark {
 ///
 /// The remote side is dropped, not disabled, when no catalog URL can be built:
 /// with no catalog there is no reason to state and nothing the reader could do.
-fn location(data: &commands::PackageHeaderData, w: Wiring) -> impl IntoView {
-    let Wiring {
-        busy,
-        outcome,
-        copied,
-        ..
-    } = w;
+fn location(data: &commands::PackageHeaderData, w: Wiring, copied: CopiedMark) -> impl IntoView {
+    let Wiring { busy, outcome, .. } = w;
     let namespace = data.namespace.to_string();
     let mut buttons = vec![{
         let (ns, uri) = (namespace.clone(), data.uri.clone());
@@ -679,9 +682,11 @@ fn location(data: &commands::PackageHeaderData, w: Wiring) -> impl IntoView {
             GroupButton::icon(
                 icons::copy,
                 "Copy Quilt URI",
-                Callback::new(move |()| copy_uri(address.clone(), namespace.clone(), w)),
+                Callback::new(move |()| {
+                    copy_uri(address.clone(), namespace.clone(), w.outcome, copied);
+                }),
             )
-            .with_done("Copied", copied.on.into()),
+            .with_done("Copied", copied.says(data.namespace.to_string())),
         );
     }
     view! { <ButtonGroup aria_label="Package location" buttons=buttons /> }
@@ -694,21 +699,25 @@ fn latest_address(uri: &quilt_uri::S3PackageUri) -> quilt_uri::S3PackageUri {
 }
 
 /// Put the package's address on the clipboard, outside the page's lock.
-fn copy_uri(address: quilt_uri::S3PackageUri, namespace: String, w: Wiring) {
-    let Wiring {
-        outcome, copied, ..
-    } = w;
+fn copy_uri(
+    address: quilt_uri::S3PackageUri,
+    namespace: String,
+    outcome: RwSignal<Option<Outcome>>,
+    copied: CopiedMark,
+) {
     let stamp = copied.bump();
     leptos::task::spawn_local(async move {
-        let answer = commands::copy_to_clipboard(address.display(), Some(address)).await;
-        copied.settle(stamp, answer.is_ok());
-        if let Err(detail) = answer {
-            outcome.try_set(Some(Outcome {
-                namespace,
-                variant: BannerVariant::Critical,
-                lead: "Could not copy this package's Quilt URI.".to_string(),
-                detail: Some(detail),
-            }));
+        match commands::copy_to_clipboard(address.display(), Some(address)).await {
+            Ok(_) => copied.settle(stamp, Some(namespace)),
+            Err(detail) => {
+                copied.settle(stamp, None);
+                outcome.try_set(Some(Outcome {
+                    namespace,
+                    variant: BannerVariant::Critical,
+                    lead: "Could not copy this package's Quilt URI.".to_string(),
+                    detail: Some(detail),
+                }));
+            }
         }
     });
 }
@@ -735,6 +744,8 @@ pub fn PageHeader(
     // re-read rebuilds the header, and must not shut a dialog or drop a
     // navigation on the way — see `Wiring`.
     let Wiring { goto, dialogs, .. } = w;
+    // The page's, so a re-read keeps it; a header drawn alone has its own.
+    let copied = use_context::<CopiedMark>().unwrap_or_default();
     let Dialogs {
         bucket: bucket_open,
         // The bucket dialog's own.
@@ -783,7 +794,7 @@ pub fn PageHeader(
     view! {
         <div>
             <kit::PageHeader
-                nowrap=true
+                cut_name=true
                 // The parent route, named rather than called "Back": it is an
                 // up-link and not history. `/` renders whichever main page is
                 // switched on, so it lands a reader back where they came from.
@@ -805,7 +816,7 @@ pub fn PageHeader(
                                 )
                             })
                     }}
-                    {location(&data, w)}
+                    {location(&data, w, copied)}
                     // A derived signal, so the items follow `busy` while the menu
                     // stays open: the trigger is live during a run, see
                     // `the_menu_stays_open_when_a_command_settles`.
@@ -2110,6 +2121,23 @@ mod tests {
         assert_eq!(said.namespace, "team/dataset");
         assert_eq!(said.lead, "Could not copy this package's Quilt URI.");
         assert!(busy.get_untracked(), "the lock is not the copy's");
+    }
+
+    /// *Copied* names the package it was for, since the page keeps the mark
+    /// across packages, and a late answer from an earlier copy claims nothing.
+    #[wasm_bindgen_test]
+    fn copied_is_keyed_to_its_package_and_its_copy() {
+        let mark = CopiedMark::new();
+        let (a, b) = (mark.says("team/a".into()), mark.says("team/b".into()));
+        let first = mark.bump();
+        let second = mark.bump();
+        mark.settle(first, Some("team/a".into()));
+        assert!(!a.get_untracked(), "a stale answer marks nothing");
+        mark.settle(second, Some("team/a".into()));
+        assert!(a.get_untracked());
+        assert!(!b.get_untracked(), "another package's button stays quiet");
+        mark.settle(second, None);
+        assert!(!a.get_untracked(), "a failed copy clears it");
     }
 
     /// The copied address is the package's at latest, with the catalog host,

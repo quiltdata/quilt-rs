@@ -103,8 +103,6 @@ pub struct Wiring {
     /// `outcome` is: [`Wiring::follow`] drops it once its package is off screen.
     pub replace_to: RwSignal<Option<Replace>>,
     pub dialogs: Dialogs,
-    /// The header's *Copied*, here so a re-read in that moment keeps it.
-    pub copied: header::CopiedMark,
     /// The context pane's removal of old revisions: what runs, and what its
     /// confirmation asks.
     pub removal: old_revisions::Removal,
@@ -293,7 +291,6 @@ impl Wiring {
                 remove_prune: RwSignal::new(true),
                 replace: RwSignal::new(false),
             },
-            copied: header::CopiedMark::new(),
             removal: old_revisions::Removal::new(),
         }
     }
@@ -1213,6 +1210,9 @@ fn PackageScreen(
     let page = PageHandle::new();
     let w = Wiring::over(page);
     w.follow(ns.into());
+    // For the header's *Copied*. Not on `Wiring`, which every part of the page
+    // takes by value.
+    provide_context(header::CopiedMark::new());
     let reload = page.reload;
     // One read for the whole page. Re-runs when the namespace changes, and
     // whenever `reload` fires — the watcher reporting news about this package,

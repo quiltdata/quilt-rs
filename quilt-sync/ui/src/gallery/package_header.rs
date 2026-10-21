@@ -259,7 +259,7 @@ fn header(
 
     view! {
         <PageHeader
-            nowrap=true
+            cut_name=true
             trail=view! { <BackLink href="#packageheader" label="Packages" /> }.into_any()
             title=NAMESPACE
             label=crate::pages::state_with_summary(

@@ -19,12 +19,13 @@ pub fn PageHeader(
     label: Option<AnyView>,
     /// Primary first.
     actions: AnyView,
-    /// Keeps the row on one line, so a narrow window cuts the name instead.
+    /// Cuts the name before the row wraps, so a narrow window keeps one line.
+    /// The row wraps only once the name is down to a few characters.
     #[prop(optional)]
-    nowrap: bool,
+    cut_name: bool,
 ) -> impl IntoView {
-    let row = if nowrap {
-        format!("{} {}", style::row, style::nowrap)
+    let row = if cut_name {
+        format!("{} {}", style::row, style::cut_name)
     } else {
         style::row.to_string()
     };
