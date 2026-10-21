@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.23.2-dev]
+
+### Added
+
+- **New design preview**: each package on the main page says how much of it is on disk: *3 to download* when you keep the whole package and some files are not downloaded yet, or *12 of 340 files* when you keep only the files you pick (PRLINK)
+
+### quilt-rs
+
+- Updated [from v0.46.0 to v0.46.1-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.46.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.23.1] - 2026-10-21
 
 ### Fixed

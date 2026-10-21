@@ -116,6 +116,15 @@ pub enum KeepingScope {
     EntirePackage,
 }
 
+impl From<quilt::lineage::SyncScope> for KeepingScope {
+    fn from(scope: quilt::lineage::SyncScope) -> Self {
+        match scope {
+            quilt::lineage::SyncScope::IndividualFiles => Self::IndividualFiles,
+            quilt::lineage::SyncScope::EntirePackage => Self::EntirePackage,
+        }
+    }
+}
+
 /// The Keeping section: the standing rule, and what it has not yet fetched.
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -370,9 +379,11 @@ fn epoch_millis(at: DateTime<Utc>) -> f64 {
 }
 
 /// A listed path is outstanding when this copy neither tracks it nor has a
-/// local change at it — v1's `remote` rows (`package_data.rs:195-206`).
-/// `changes` is `None` when the status could not be read: then only
-/// tracking decides, and the engine still refuses to overwrite a local file.
+/// local change at it ([`quilt::lineage::DownloadCounts::is_outstanding`], which
+/// the main page's rows count by too) — v1's `remote` rows
+/// (`package_data.rs:195-206`). `changes` is `None` when the status could not
+/// be read: then only tracking decides, and the engine still refuses to
+/// overwrite a local file.
 ///
 /// The size follows the same rule, over the same rows: downloaded is every
 /// listed file's bytes less the backlog's. A file deleted here is a local
@@ -382,15 +393,11 @@ fn keeping_data(
     sizes: &BTreeMap<PathBuf, u64>,
     changes: Option<&quilt::lineage::ChangeSet>,
 ) -> (KeepingData, Option<PackageSize>) {
-    let scope = match lineage.sync_scope {
-        quilt::lineage::SyncScope::IndividualFiles => KeepingScope::IndividualFiles,
-        quilt::lineage::SyncScope::EntirePackage => KeepingScope::EntirePackage,
-    };
+    let no_changes = quilt::lineage::ChangeSet::new();
+    let changes = changes.unwrap_or(&no_changes);
     let outstanding: Vec<(&PathBuf, u64)> = sizes
         .iter()
-        .filter(|(key, _)| {
-            !lineage.paths.contains_key(*key) && changes.is_none_or(|c| !c.contains_key(*key))
-        })
+        .filter(|(key, _)| quilt::lineage::DownloadCounts::is_outstanding(lineage, changes, key))
         .map(|(key, size)| (key, *size))
         .collect();
     let total = sizes
@@ -406,13 +413,12 @@ fn keeping_data(
     });
     // Every deletion in the status, as the file pane's `EntryCounts.deleted`
     // counts it, so the two panes give one number.
-    let deleted_here = changes.map_or(0, |c| {
-        c.values()
-            .filter(|change| matches!(change, quilt::lineage::Change::Removed(_)))
-            .count()
-    });
+    let deleted_here = changes
+        .values()
+        .filter(|change| matches!(change, quilt::lineage::Change::Removed(_)))
+        .count();
     let keeping = KeepingData {
-        scope,
+        scope: lineage.sync_scope.into(),
         total: sizes.len(),
         remote_only: outstanding
             .into_iter()

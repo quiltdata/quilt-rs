@@ -1735,3 +1735,24 @@ async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
     );
     Ok(())
 }
+
+/// The counts come from the manifest the status read: a listed file this copy
+/// does not track is still to download.
+#[test(tokio::test)]
+async fn test_status_with_downloads_counts_the_current_revision() -> Res {
+    let (package, _temp_dirs) = behind_package(BASE_MANIFEST).await?;
+
+    let (status, counts) = package.status_with_downloads(None).await?;
+
+    assert_eq!(status.upstream_state, UpstreamState::Behind);
+    assert_eq!(
+        counts,
+        crate::lineage::DownloadCounts {
+            scope: SyncScope::IndividualFiles,
+            listed: 1,
+            outstanding: 1,
+        }
+    );
+
+    Ok(())
+}

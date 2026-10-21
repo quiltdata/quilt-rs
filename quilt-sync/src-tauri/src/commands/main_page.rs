@@ -17,6 +17,7 @@ use tokio::time::timeout_at;
 use quilt_rs::RoleInfo;
 use quilt_uri::Host;
 
+use super::package_page::KeepingScope;
 use crate::autopull::PackageAutosync;
 use crate::autopull::PausedReason;
 use crate::autopull::Watcher;
@@ -830,6 +831,31 @@ pub struct MainPagePackageRefresh {
     /// directions. Only ever *adding* the mark made a false positive permanent
     /// for the life of the page.
     pub role_switch_host: Option<String>,
+    /// What this copy holds of its current revision. `None` when the status
+    /// check did not run or failed: the state already names why.
+    pub downloads: Option<MainPageDownloads>,
+}
+
+/// How much of its current revision a copy holds, counted from the manifest
+/// and the walk the row's status check already read.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageDownloads {
+    pub scope: KeepingScope,
+    /// The files the current revision lists.
+    pub total: usize,
+    /// The listed files still to download, as Keeping counts them.
+    pub outstanding: usize,
+}
+
+impl From<quilt::lineage::DownloadCounts> for MainPageDownloads {
+    fn from(counts: quilt::lineage::DownloadCounts) -> Self {
+        Self {
+            scope: counts.scope.into(),
+            total: counts.listed,
+            outstanding: counts.outstanding,
+        }
+    }
 }
 
 /// The heavy phase: one real status call, resolved through the SAME
@@ -872,6 +898,7 @@ pub(super) async fn refresh_main_page_package_from_model(
         return Ok(MainPagePackageRefresh {
             state: PackageStateDto::Unknown,
             role_switch_host: None,
+            downloads: None,
         });
     }
 
@@ -883,6 +910,7 @@ pub(super) async fn refresh_main_page_package_from_model(
         return Ok(MainPagePackageRefresh {
             state: PackageState::resolve(lineage.into(), has_local_commit, false, None).into(),
             role_switch_host: None,
+            downloads: None,
         });
     }
 
@@ -891,10 +919,10 @@ pub(super) async fn refresh_main_page_package_from_model(
     }
 
     match m
-        .get_installed_package_status(&installed_package, None)
+        .get_installed_package_status_with_downloads(&installed_package, None)
         .await
     {
-        Ok(status) => Ok(MainPagePackageRefresh {
+        Ok((status, counts)) => Ok(MainPagePackageRefresh {
             // The pause checks go here rather than at the top of the function,
             // because the access-denied arm below has higher precedence and must
             // still be able to win.
@@ -909,6 +937,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             }),
             // The refresh did not deny, so any pre-filter mark is cleared.
             role_switch_host: None,
+            downloads: Some(counts.into()),
         }),
         Err(err) if err.is_access_denied() => {
             // Ruling R3: denial is precedence rank 1, so it REPLACES the state
@@ -919,6 +948,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             Ok(MainPagePackageRefresh {
                 state: mark.state(),
                 role_switch_host: mark.role_switch_host,
+                downloads: None,
             })
         }
         Err(err) => {
@@ -931,6 +961,7 @@ pub(super) async fn refresh_main_page_package_from_model(
                 return Ok(MainPagePackageRefresh {
                     state: pause_or(paused, || state),
                     role_switch_host: None,
+                    downloads: None,
                 });
             }
             // A failure to reach the remote is not evidence about the package —
@@ -2447,6 +2478,23 @@ mod tests {
         status: Result<quilt::lineage::InstalledPackageStatus, Error>,
         roles: Option<RoleInfo>,
     ) -> crate::model::MockQuiltModel {
+        mock_one_package_counting(
+            status.map(|status| (status, quilt::lineage::DownloadCounts::default())),
+            roles,
+        )
+    }
+
+    /// [`mock_one_package`], with the counts the status check reads beside it.
+    fn mock_one_package_counting(
+        status: Result<
+            (
+                quilt::lineage::InstalledPackageStatus,
+                quilt::lineage::DownloadCounts,
+            ),
+            Error,
+        >,
+        roles: Option<RoleInfo>,
+    ) -> crate::model::MockQuiltModel {
         let mut model = crate::model::mocks::create();
         model
             .expect_get_installed_package()
@@ -2466,7 +2514,7 @@ mod tests {
         // `TimesRange` is satisfied at zero calls too, so a caller that skipped
         // the status call entirely would pass silently.
         model
-            .expect_get_installed_package_status()
+            .expect_get_installed_package_status_with_downloads()
             .times(1)
             .return_once(move |_, _| status);
         if let Some(roles) = roles {
@@ -2595,6 +2643,44 @@ mod tests {
             }
         );
         assert_eq!(refreshed.role_switch_host.as_deref(), Some("quilt.test"));
+        assert_eq!(refreshed.downloads, None, "a denied check counts nothing");
+    }
+
+    #[tokio::test]
+    async fn a_settled_row_carries_the_counts_its_status_check_read() {
+        let counts = quilt::lineage::DownloadCounts {
+            scope: quilt::lineage::SyncScope::EntirePackage,
+            listed: 5,
+            outstanding: 2,
+        };
+        let m =
+            mock_one_package_counting(Ok((status_with(UpstreamState::UpToDate, 0), counts)), None);
+
+        assert_eq!(
+            refresh(&m, &RoleCache::default()).await.downloads,
+            Some(MainPageDownloads {
+                scope: KeepingScope::EntirePackage,
+                total: 5,
+                outstanding: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn the_refresh_wire_form_carries_the_counts() {
+        let refreshed = MainPagePackageRefresh {
+            state: PackageStateDto::Latest,
+            role_switch_host: None,
+            downloads: Some(MainPageDownloads {
+                scope: KeepingScope::IndividualFiles,
+                total: 340,
+                outstanding: 328,
+            }),
+        };
+        assert_eq!(
+            serde_json::to_string(&refreshed).unwrap(),
+            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328}}"#,
+        );
     }
 
     #[tokio::test]
@@ -2653,6 +2739,7 @@ mod tests {
         )
         .await
         .expect("a missing session is a state this page can word, not a failed check");
+        assert_eq!(refreshed.downloads, None);
 
         assert_eq!(
             refreshed.state,
@@ -2779,7 +2866,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_local_only_package_needs_no_status_call() {
-        // No expectation is set for `get_installed_package_status`; mockall panics if
+        // No expectation is set for `get_installed_package_status_with_downloads`; mockall panics if
         // it is called. `Local` ignores the file count, so making the call would be
         // a local hash walk whose answer nothing reads.
         let mut model = crate::model::mocks::create();
@@ -2790,15 +2877,14 @@ mod tests {
             .expect_get_installed_package_lineage()
             .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
 
-        assert_eq!(
-            refresh(&model, &RoleCache::default()).await.state,
-            PackageStateDto::NoRemote
-        );
+        let refreshed = refresh(&model, &RoleCache::default()).await;
+        assert_eq!(refreshed.state, PackageStateDto::NoRemote);
+        assert_eq!(refreshed.downloads, None);
     }
 
     #[tokio::test]
     async fn a_remote_with_no_catalog_host_never_reaches_the_network() {
-        // No expectation for `get_installed_package_status`: mockall panics if it is
+        // No expectation for `get_installed_package_status_with_downloads`: mockall panics if it is
         // called. There is nowhere to vend credentials from, so the call cannot
         // succeed — and the hash comparison behind it answers a question the app
         // cannot act on.
@@ -2815,10 +2901,9 @@ mod tests {
                 ))
             });
 
-        assert_eq!(
-            refresh(&model, &RoleCache::default()).await.state,
-            PackageStateDto::Unknown
-        );
+        let refreshed = refresh(&model, &RoleCache::default()).await;
+        assert_eq!(refreshed.state, PackageStateDto::Unknown);
+        assert_eq!(refreshed.downloads, None);
     }
 
     #[tokio::test]

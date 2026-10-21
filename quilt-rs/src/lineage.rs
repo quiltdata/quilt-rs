@@ -38,6 +38,9 @@ pub use package::PackageLineage;
 pub use package::PathState;
 pub use package::SyncScope;
 
+mod downloads;
+pub use downloads::DownloadCounts;
+
 mod home;
 pub use home::DEFAULT_HOME_DIR_NAME;
 pub use home::Home;

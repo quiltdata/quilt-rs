@@ -144,7 +144,7 @@ pub fn PackageRow(
 
 /// Which files a package keeps on disk, as far as its row tells.
 ///
-/// A UI-side type: nothing maps the backend onto it yet, so only the gallery draws it.
+/// A UI-side type: the main page maps the status check's counts onto it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowDownloads {
     /// The whole package, with `to_download` files not downloaded yet.

@@ -968,6 +968,34 @@ pub async fn refresh_main_page_package(
 pub struct MainPagePackageRefreshData {
     pub state: crate::kit::PackageState,
     pub role_switch_host: Option<String>,
+    /// `None` when the status check did not run or failed.
+    pub downloads: Option<MainPageDownloadsData>,
+}
+
+/// What a copy holds of its current revision. Mirrors `MainPageDownloads` on
+/// the Tauri side.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MainPageDownloadsData {
+    pub scope: KeepingScope,
+    /// The files the current revision lists.
+    pub total: usize,
+    /// The listed files still to download.
+    pub outstanding: usize,
+}
+
+impl From<MainPageDownloadsData> for crate::kit::RowDownloads {
+    fn from(data: MainPageDownloadsData) -> Self {
+        match data.scope {
+            KeepingScope::EntirePackage => Self::EntirePackage {
+                to_download: data.outstanding,
+            },
+            KeepingScope::IndividualFiles => Self::IndividualFiles {
+                downloaded: data.total.saturating_sub(data.outstanding),
+                total: data.total,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -2151,6 +2179,7 @@ mod tests {
         KeptReason, PackageContextData, PackageItemData, PackageSize, PullOutcome, PullPreview,
         ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
+    use crate::kit::RowDownloads;
 
     /// Anchored identically in the backend's `files_data_wire_form_is_verbatim`.
     #[test]
@@ -2601,6 +2630,59 @@ mod tests {
             crate::kit::PackageState::RoleDenied { role: None }
         );
         assert_eq!(denied.role_switch_host.as_deref(), Some("h"));
+        assert_eq!(denied.downloads, None);
+
+        let counted = serde_json::from_str::<super::MainPagePackageRefreshData>(
+            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            counted.downloads,
+            Some(super::MainPageDownloadsData {
+                scope: KeepingScope::IndividualFiles,
+                total: 340,
+                outstanding: 328,
+            })
+        );
+    }
+
+    fn row_downloads(scope: KeepingScope, total: usize, outstanding: usize) -> RowDownloads {
+        super::MainPageDownloadsData {
+            scope,
+            total,
+            outstanding,
+        }
+        .into()
+    }
+
+    #[test]
+    fn a_whole_package_marks_what_it_has_still_to_download() {
+        assert_eq!(
+            row_downloads(KeepingScope::EntirePackage, 5, 0),
+            RowDownloads::EntirePackage { to_download: 0 }
+        );
+        assert_eq!(
+            row_downloads(KeepingScope::EntirePackage, 5, 2),
+            RowDownloads::EntirePackage { to_download: 2 }
+        );
+    }
+
+    #[test]
+    fn picked_files_mark_what_is_here_out_of_the_revision() {
+        assert_eq!(
+            row_downloads(KeepingScope::IndividualFiles, 340, 328),
+            RowDownloads::IndividualFiles {
+                downloaded: 12,
+                total: 340
+            }
+        );
+        assert_eq!(
+            row_downloads(KeepingScope::IndividualFiles, 340, 0),
+            RowDownloads::IndividualFiles {
+                downloaded: 340,
+                total: 340
+            }
+        );
     }
 
     /// The mirror enum must serialize to the exact tagged JSON the backend
