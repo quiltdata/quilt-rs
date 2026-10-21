@@ -698,6 +698,8 @@ fn latest_address(uri: &quilt_uri::S3PackageUri) -> quilt_uri::S3PackageUri {
     util::package_uri(&uri.bucket, &uri.namespace, util::host_str(uri).as_deref())
 }
 
+const COPY_FAILED: &str = "Could not copy this package's Quilt URI.";
+
 /// Put the package's address on the clipboard, outside the page's lock.
 fn copy_uri(
     address: quilt_uri::S3PackageUri,
@@ -708,13 +710,23 @@ fn copy_uri(
     let stamp = copied.bump();
     leptos::task::spawn_local(async move {
         match commands::copy_to_clipboard(address.display(), Some(address)).await {
-            Ok(_) => copied.settle(stamp, Some(namespace)),
+            Ok(_) => {
+                // A retry that worked takes back only the copy's own failure.
+                let own = |o: &Option<Outcome>| {
+                    o.as_ref()
+                        .is_some_and(|o| o.namespace == namespace && o.lead == COPY_FAILED)
+                };
+                if outcome.try_with_untracked(own) == Some(true) {
+                    outcome.try_set(None);
+                }
+                copied.settle(stamp, Some(namespace));
+            }
             Err(detail) => {
                 copied.settle(stamp, None);
                 outcome.try_set(Some(Outcome {
                     namespace,
                     variant: BannerVariant::Critical,
-                    lead: "Could not copy this package's Quilt URI.".to_string(),
+                    lead: COPY_FAILED.to_string(),
                     detail: Some(detail),
                 }));
             }
@@ -2119,7 +2131,7 @@ mod tests {
             .get_untracked()
             .expect("the failure reached the band");
         assert_eq!(said.namespace, "team/dataset");
-        assert_eq!(said.lead, "Could not copy this package's Quilt URI.");
+        assert_eq!(said.lead, COPY_FAILED);
         assert!(busy.get_untracked(), "the lock is not the copy's");
     }
 
