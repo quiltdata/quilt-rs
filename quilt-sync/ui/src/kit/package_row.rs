@@ -175,7 +175,7 @@ pub fn PackageRow(
 /// How much of the disk a package takes, as far as its row tells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowSize {
-    /// Not asked yet.
+    /// Nothing stored for the package yet.
     NotMeasured,
     Measuring,
     Measured {
