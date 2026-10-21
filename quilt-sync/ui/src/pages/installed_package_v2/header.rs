@@ -627,22 +627,49 @@ impl Default for CopiedMark {
     }
 }
 
-/// The package's catalog page, once there is one: a catalog URL can be built
-/// and the remote holds a revision. A bucket chosen but never published has
-/// no page yet.
+/// Where the location group's remote side points. One value for both
+/// buttons, so the link and the copy always name the same revision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteTarget {
+    pub catalog_url: String,
+    pub address: quilt_uri::S3PackageUri,
+}
+
+/// The package's catalog page and Quilt URI, once there is a catalog page: a
+/// catalog URL can be built and the remote holds a revision. A bucket chosen
+/// but never published has no page yet.
+///
+/// At `latest`, with no hash, when the revision the package holds is the
+/// remote's latest as this read saw it just now (`newer`). Otherwise pinned to
+/// the held revision: behind, or the read could not say, and the page cannot
+/// claim latest.
 ///
 /// `pub` for the gallery's scene, which decides its location group by it.
 #[must_use]
-pub fn catalog_page(data: &commands::PackageHeaderData) -> Option<String> {
-    data.uri
-        .as_ref()
-        .filter(|_| data.remote_locked)
-        .and_then(util::catalog_url)
+pub fn remote_target(data: &commands::PackageHeaderData) -> Option<RemoteTarget> {
+    let held = data.uri.as_ref().filter(|_| data.remote_locked)?;
+    let at_latest = matches!(
+        &held.revision,
+        quilt_uri::RevisionPointer::Hash(hash) if data.newer.as_deref() == Some(hash.as_str())
+    );
+    let address = if at_latest {
+        util::package_uri(
+            &held.bucket,
+            &held.namespace,
+            util::host_str(held).as_deref(),
+        )
+    } else {
+        held.clone()
+    };
+    Some(RemoteTarget {
+        catalog_url: util::catalog_url(&address)?,
+        address,
+    })
 }
 
 /// Where the package is: its folder, then its catalog page and its Quilt URI.
 ///
-/// The remote side is dropped, not disabled, without a [`catalog_page`]: there
+/// The remote side is dropped, not disabled, without a [`remote_target`]: there
 /// is no reason to state and nothing the reader could do.
 fn location(data: &commands::PackageHeaderData, w: Wiring, copied: CopiedMark) -> impl IntoView {
     let Wiring { busy, outcome, .. } = w;
@@ -666,8 +693,11 @@ fn location(data: &commands::PackageHeaderData, w: Wiring, copied: CopiedMark) -
         )
         .with_disabled(busy.into())
     }];
-    let remote = catalog_page(data).zip(data.uri.as_ref());
-    if let Some((url, uri)) = remote {
+    if let Some(RemoteTarget {
+        catalog_url: url,
+        address,
+    }) = remote_target(data)
+    {
         let ns = namespace.clone();
         buttons.push(
             GroupButton::labelled(
@@ -687,7 +717,6 @@ fn location(data: &commands::PackageHeaderData, w: Wiring, copied: CopiedMark) -
             )
             .with_disabled(busy.into()),
         );
-        let address = latest_address(uri);
         buttons.push(
             GroupButton::icon(
                 icons::copy,
@@ -702,12 +731,6 @@ fn location(data: &commands::PackageHeaderData, w: Wiring, copied: CopiedMark) -
     view! { <ButtonGroup aria_label="Package location" buttons=buttons /> }
 }
 
-/// What the copy button copies: the package at latest, with its catalog host,
-/// while the catalog link opens the revision the package holds.
-fn latest_address(uri: &quilt_uri::S3PackageUri) -> quilt_uri::S3PackageUri {
-    util::package_uri(&uri.bucket, &uri.namespace, util::host_str(uri).as_deref())
-}
-
 const COPY_FAILED: &str = "Could not copy this package's Quilt URI.";
 
 /// Put the package's address on the clipboard, outside the page's lock.
@@ -719,7 +742,7 @@ fn copy_uri(
 ) {
     let stamp = copied.bump();
     leptos::task::spawn_local(async move {
-        let answer = commands::copy_to_clipboard(address.display(), Some(address)).await;
+        let answer = commands::copy_to_clipboard(address.to_string(), Some(address)).await;
         // A later copy speaks for both surfaces.
         if !copied.is_current(stamp) {
             return;
@@ -2178,18 +2201,63 @@ mod tests {
         assert!(!a.get_untracked(), "a failed copy clears it");
     }
 
-    /// The copied address is the package's at latest, with the catalog host,
-    /// while the catalog link keeps the revision the package holds.
+    /// A package at the remote's latest, a behind one, and one whose read did
+    /// not reach the remote: the payload with `newer` set to this.
+    fn holding_against(newer: Option<&str>) -> commands::PackageHeaderData {
+        commands::PackageHeaderData {
+            newer: newer.map(ToString::to_string),
+            ..with_catalog(kit::PackageState::Latest)
+        }
+    }
+
+    /// At the remote's latest, both buttons name `latest`: no hash.
     #[test]
-    fn the_copy_names_latest_and_the_link_the_held_revision() {
-        let uri = with_catalog(kit::PackageState::Latest).uri.unwrap();
+    fn at_latest_both_name_latest() {
+        let target = remote_target(&holding_against(Some("abc123"))).unwrap();
         assert_eq!(
-            latest_address(&uri).display(),
+            target.address.to_string(),
             "quilt+s3://team-bucket#package=team/dataset&catalog=quilt.test"
         );
-        assert!(
-            util::catalog_url(&uri).unwrap().contains("abc123"),
-            "the link opens the held revision"
+        assert_eq!(
+            target.catalog_url,
+            "https://quilt.test/b/team-bucket/packages/team/dataset/tree/latest"
         );
+    }
+
+    /// Behind, both buttons name the revision the package holds.
+    #[test]
+    fn behind_both_name_the_held_revision() {
+        let target = remote_target(&holding_against(Some("def456"))).unwrap();
+        assert_eq!(
+            target.address.to_string(),
+            "quilt+s3://team-bucket#package=team/dataset@abc123&catalog=quilt.test"
+        );
+        assert_eq!(
+            target.catalog_url,
+            "https://quilt.test/b/team-bucket/packages/team/dataset/tree/abc123"
+        );
+    }
+
+    /// A read that did not reach the remote cannot claim latest, so both pin.
+    #[test]
+    fn unknown_pins_like_behind() {
+        assert_eq!(
+            remote_target(&holding_against(None)),
+            remote_target(&holding_against(Some("def456")))
+        );
+    }
+
+    /// A long hash is copied whole: the shortened form is for reading only.
+    #[test]
+    fn a_pinned_copy_keeps_the_whole_hash() {
+        let hash = "a".repeat(64);
+        let mut data = holding_against(None);
+        data.uri = Some(
+            format!("quilt+s3://team-bucket#package=team/dataset@{hash}&catalog=quilt.test")
+                .parse()
+                .unwrap(),
+        );
+        let target = remote_target(&data).unwrap();
+        assert!(target.address.to_string().contains(&format!("@{hash}")));
     }
 }

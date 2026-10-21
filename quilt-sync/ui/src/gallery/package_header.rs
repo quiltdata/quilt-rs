@@ -12,7 +12,7 @@
 //! **The row is `kit::PageHeader`, the one the page draws.** Its menu is not
 //! drawn either: it is the page's own, from `pages::menu_items` over a fixture
 //! payload, with the handlers dropped. The location group's remote side is
-//! decided by the page's `catalog_page`.
+//! decided by the page's `remote_target`.
 //!
 //! What is still this scene's own is the choice of primary: the page's header takes a payload where this takes a bare
 //! state, and with it an `action_open` the whole-page scene's resolve cell
@@ -68,7 +68,7 @@ use crate::kit::SplitButton;
 use crate::kit::SplitOption;
 use crate::kit::StateLabel;
 use crate::kit::render;
-use crate::pages::{MenuItem, catalog_page, menu_items};
+use crate::pages::{MenuItem, menu_items, remote_target};
 
 const NAMESPACE: &str = "user/plate-07";
 
@@ -91,7 +91,10 @@ const NAMESPACE: &str = "user/plate-07";
 fn states() -> Vec<(&'static str, PackageState)> {
     vec![
         ("nothing to do", PackageState::Latest),
-        ("a newer revision exists upstream", PackageState::Behind),
+        (
+            "a newer revision exists upstream — the catalog link and copy name the held revision",
+            PackageState::Behind,
+        ),
         (
             "one local file differs",
             PackageState::PendingChanges { files: 1 },
@@ -193,7 +196,7 @@ fn scene_menu() -> Vec<MenuItem> {
 }
 
 /// Whether the location group has its remote side, decided by the page's own
-/// [`catalog_page`] over this state's remote: none without a bucket, and one
+/// [`remote_target`] over this state's remote: none without a bucket, and one
 /// with no revision yet when never published.
 fn has_catalog_page(state: &PackageState) -> bool {
     let payload = commands::PackageHeaderData {
@@ -203,7 +206,7 @@ fn has_catalog_page(state: &PackageState) -> bool {
         remote_locked: !matches!(state, PackageState::Unpublished),
         ..scene_payload()
     };
-    catalog_page(&payload).is_some()
+    remote_target(&payload).is_some()
 }
 
 /// The header at one state.
