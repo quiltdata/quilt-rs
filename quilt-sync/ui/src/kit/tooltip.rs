@@ -5,8 +5,9 @@
 //!
 //! DESIGN.md bans the hand-built popover, and this is not one: it is the
 //! platform's own `popover`, as [`AnchoredOverlay`](super::AnchoredOverlay) is,
-//! with the position borrowed from the same arithmetic. It holds plain text
-//! only, so it never grows into a menu.
+//! with the position borrowed from the same arithmetic. It holds a title and a
+//! few muted lines of plain text, nothing interactive, so it never grows into
+//! a menu.
 //!
 //! # Instead of `title`
 //!
@@ -284,6 +285,17 @@ pub fn Tooltip(
     /// [`AnchoredOverlay`](super::AnchoredOverlay)'s job.
     #[prop(into)]
     text: Signal<String>,
+    /// Lines under `text`, muted, when there is more than one sentence to say:
+    /// `text` is then the title. Plain text too, for the same reason.
+    #[prop(optional, into)]
+    lines: Signal<Vec<String>>,
+    /// The wider surface a list's names get, for a title that is a name.
+    #[prop(optional)]
+    wide: bool,
+    /// The trigger is a whole row: the wrapper fills its container's width, so
+    /// the row keeps its own and the surface lines up with its edge.
+    #[prop(optional)]
+    fill: bool,
     /// Which of the surface's edges lines up with the trigger's — the overlay's
     /// own [`Align`], for the same reason: a trailing trigger hangs its sentence
     /// leftwards rather than against the window.
@@ -303,10 +315,20 @@ pub fn Tooltip(
     let handle = handle.unwrap_or_default();
     let wrapper: NodeRef<leptos::html::Span> = NodeRef::new();
     let anchor = Signal::derive_local(move || wrapper.get().map(JsCast::unchecked_into));
+    let root = if fill {
+        format!("{} {}", style::root, style::fill)
+    } else {
+        style::root.to_string()
+    };
+    let class = if wide {
+        format!("{} {}", style::surface, style::name)
+    } else {
+        style::surface.to_string()
+    };
 
     view! {
         <span
-            class=style::root
+            class=root
             node_ref=wrapper
             on:pointerenter=move |event| handle.pointer_enter(&event)
             on:pointerleave=move |_| handle.leave()
@@ -317,7 +339,7 @@ pub fn Tooltip(
             // Inside the wrapper in the document, though drawn in the top
             // layer: the pointer crossing onto it has not left the wrapper, so
             // the sentence stays while it is read.
-            {surface(handle, text, anchor, align, style::surface.to_string())}
+            {surface(handle, text, lines, anchor, align, class)}
         </span>
     }
 }
@@ -328,6 +350,7 @@ pub fn Tooltip(
 pub(super) fn surface(
     handle: TooltipHandle,
     text: Signal<String>,
+    lines: Signal<Vec<String>>,
     anchor: Signal<Option<web_sys::Element>, LocalStorage>,
     align: Align,
     class: String,
@@ -449,6 +472,15 @@ pub(super) fn surface(
             aria-hidden="true"
         >
             {move || text.get()}
+            // The space keeps a description read from these words from running
+            // the title into the first line; on screen it collapses.
+            {move || {
+                lines
+                    .get()
+                    .into_iter()
+                    .map(|line| view! { " "<span class=style::line>{line}</span> })
+                    .collect_view()
+            }}
         </span>
     }
 }

@@ -18,6 +18,7 @@ use crate::kit::ListToolbar;
 use crate::kit::Naming;
 use crate::kit::PackageRow;
 use crate::kit::RowDownloads;
+use crate::kit::RowSize;
 use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
@@ -38,7 +39,7 @@ type Fixture = (&'static str, &'static str, &'static str, StateTone, f64);
 
 #[component]
 pub fn PackageRowStories() -> impl IntoView {
-    view! { <StatesStory /><DownloadsStory /><EdgesStory /> }
+    view! { <StatesStory /><DownloadsStory /><TooltipStory /><EdgesStory /> }
 }
 
 /// The nine states again, but on a row — which is where they are actually read, and
@@ -146,8 +147,8 @@ fn DownloadsStory() -> impl IntoView {
                   package with every file downloaded shows nothing extra; one with files \
                   outstanding shows how many, filled in the accent because the reader can \
                   act on it; a package kept to picked files shows how many of the \
-                  package's files are on disk, as a grey outline. Hover a marker for its \
-                  sentence. The state labels are unchanged."
+                  package's files are on disk, as a grey outline. The state labels are \
+                  unchanged."
         >
             {cells
                 .into_iter()
@@ -176,6 +177,98 @@ fn DownloadsStory() -> impl IntoView {
                     downloads=RowDownloads::EntirePackage { to_download: 128 }
                 />
             </Cell>
+        </Story>
+    }
+}
+
+/// What the row does not draw, on hover or focus. Nothing here is open: each
+/// cell is a row to rest on or Tab to, as `Tooltip`'s own stories are.
+#[component]
+fn TooltipStory() -> impl IntoView {
+    const HOST: Option<&str> = Some("nightly.quilttest.com");
+    let picked = RowDownloads::IndividualFiles {
+        downloaded: 12,
+        total: 340,
+    };
+    let entire = RowDownloads::EntirePackage { to_download: 0 };
+    let cells: Vec<(&str, &str, Option<&str>, RowDownloads, RowSize)> = vec![
+        (
+            "picked files, with a size",
+            "team/package-a",
+            HOST,
+            picked,
+            RowSize::Measured {
+                bytes: 1_200_000_000,
+            },
+        ),
+        (
+            "entire package, with a size",
+            "team/package-b",
+            HOST,
+            entire,
+            RowSize::Measured {
+                bytes: 86_300_000_000,
+            },
+        ),
+        (
+            "size not known yet",
+            "team/package-c",
+            HOST,
+            entire,
+            RowSize::Measuring,
+        ),
+        (
+            "no size data",
+            "team/package-d",
+            HOST,
+            picked,
+            RowSize::NotMeasured,
+        ),
+        (
+            "no host — its line is left out",
+            "team/package-e",
+            None,
+            entire,
+            RowSize::Measured { bytes: 44_000 },
+        ),
+        (
+            "a very long name — whole in the title, wrapped at the wider measure",
+            "team/rnaseq-batch-2026-07-31-reprocessed-v2-with-a-very-long-suffix-that-no-column-holds",
+            HOST,
+            picked,
+            RowSize::Measured { bytes: 3_400_000 },
+        ),
+    ];
+
+    view! {
+        <Story
+            title="PackageRow — tooltip"
+            note="Rest the pointer anywhere on a row for half a second, or Tab to it: the \
+                  name in full, then in grey the host, what the package keeps and what it \
+                  takes on this computer. A line whose fact is missing is left out. It hangs \
+                  below the row from its left edge, and above when there is no room below. \
+                  Switch the theme to check it in dark: the grey is a solid colour, not the \
+                  title dimmed."
+        >
+            {cells
+                .into_iter()
+                .map(|(label, namespace, host, downloads, size)| {
+                    view! {
+                        <Cell full=true label=label>
+                            <PackageRow
+                                namespace=namespace
+                                href="#packagerow"
+                                changed_at=ago(3.0 * HOUR)
+                                state="Latest"
+                                tone=StateTone::Success
+                                downloads=downloads
+                                host=host.map(str::to_string)
+                                size=size
+                            />
+                        </Cell>
+                    }
+                })
+                .collect_view()}
         </Story>
     }
 }

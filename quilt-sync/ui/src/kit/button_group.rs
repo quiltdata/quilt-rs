@@ -172,7 +172,7 @@ fn segment(button: GroupButton) -> impl IntoView {
                 {icon()}
                 {labelled.then(|| view! { <span class=style::label node_ref=words>{shown}</span> })}
             </button>
-            {tooltip::surface(handle, text, anchor, Align::End, tooltip::style::surface.to_string())}
+            {tooltip::surface(handle, text, Signal::default(), anchor, Align::End, tooltip::style::surface.to_string())}
             {is_done
                 .map(|signal| {
                     view! {

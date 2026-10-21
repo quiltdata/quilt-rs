@@ -65,8 +65,7 @@
  * a pattern and the three that differ break it, which is what scanning a list
  * actually uses. */
 
-/* The download marker's wrapper, which carries the hover text for the `Label`
- * inside. */
+/* The download marker's wrapper, which keeps the `Label` from shrinking. */
 .downloads {
   display: flex;
   flex: none;
