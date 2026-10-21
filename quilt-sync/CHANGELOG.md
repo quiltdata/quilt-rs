@@ -23,7 +23,7 @@
 
 ### Fixed
 
-- On macOS, **Log in with browser** returns to QuiltSync. Safari used to say the address is invalid (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- On macOS, **Log in with browser** returns to QuiltSync. Safari used to say the address is invalid (<https://github.com/quiltdata/quilt-rs/pull/1161>)
 
 ## [v0.23.0] - 2026-10-20
 
