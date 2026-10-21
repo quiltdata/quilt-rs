@@ -125,7 +125,7 @@ pub fn PackageRow(
                                 }
                                     .into_any()
                             },
-                            |at| view! { <RelativeTime at=at /> }.into_any(),
+                            |at| view! { <RelativeTime at=at untitled=true /> }.into_any(),
                         )}
                 </span>
                 // Between the time and the state, so the state labels stay aligned at
@@ -426,6 +426,7 @@ mod tests {
                 <PackageRow
                     namespace="user/alpha"
                     href="/x"
+                    changed_at=js_sys::Date::now()
                     state=Signal::stored("Latest".to_string())
                     tone=Signal::stored(StateTone::Success)
                     downloads=RowDownloads::EntirePackage { to_download: 3 }
