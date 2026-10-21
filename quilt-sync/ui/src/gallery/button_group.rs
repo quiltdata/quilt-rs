@@ -16,18 +16,26 @@ const COPIED_FOR: Duration = Duration::from_millis(1500);
 /// The package header's group: the local folder, then the remote side when
 /// there is a catalog page. `copied` stands in for the page's clipboard state.
 pub fn location(remote: bool, copied: RwSignal<bool>) -> AnyView {
-    let mut buttons = vec![GroupButton::labelled(
-        icons::folder,
-        "Open folder",
-        Callback::new(|()| ()),
-    )];
+    group(remote, copied, false)
+}
+
+/// [`location`], with the page's lock held when `busy`.
+fn group(remote: bool, copied: RwSignal<bool>, busy: bool) -> AnyView {
+    let busy = Signal::stored(busy);
+    let mut buttons = vec![
+        GroupButton::labelled(icons::folder, "Open folder", Callback::new(|()| ()))
+            .with_disabled(busy),
+    ];
     if remote {
         let pending: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
-        buttons.push(GroupButton::labelled(
-            icons::link_external,
-            "Open in catalog",
-            Callback::new(|()| ()),
-        ));
+        buttons.push(
+            GroupButton::labelled(
+                icons::link_external,
+                "Open in catalog",
+                Callback::new(|()| ()),
+            )
+            .with_disabled(busy),
+        );
         buttons.push(
             GroupButton::icon(
                 icons::copy,
@@ -66,7 +74,8 @@ const NOTE: &str = "Joined segments for one subject: here a package's folder on 
                     the words are already drawn. Narrower, every segment is its icon and its \
                     name moves to a tooltip: hover or Tab to one. The copy segment is always \
                     an icon; click it and its tooltip says Copied for a moment. Without a \
-                    catalog page the remote side is dropped.";
+                    catalog page the remote side is dropped. While another command runs \
+                    the two opening segments are disabled and the copy is not.";
 
 #[component]
 pub fn ButtonGroupStories() -> impl IntoView {
@@ -83,6 +92,9 @@ pub fn ButtonGroupStories() -> impl IntoView {
             </Cell>
             <Cell wide=true label="narrow, not published yet">
                 {narrow(location(false, RwSignal::new(false)))}
+            </Cell>
+            <Cell wide=true label="another command running: only the copy is live">
+                {group(true, RwSignal::new(false), true)}
             </Cell>
             <Cell wide=true label="copied: hover the copy icon, it reads Copied">
                 {location(true, RwSignal::new(true))}
