@@ -560,13 +560,21 @@ pub struct UpdateInfo {
 
 #[tauri::command]
 pub async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    match updater.check().await {
+    // The UI ignores a failed check so users are not nagged on every launch,
+    // which leaves the log as the only place the failure shows.
+    let checked = match app.updater() {
+        Ok(updater) => updater.check().await,
+        Err(e) => Err(e),
+    };
+    match checked {
         Ok(Some(update)) => Ok(Some(UpdateInfo {
             version: update.version.clone(),
         })),
         Ok(None) => Ok(None),
-        Err(e) => Err(e.to_string()),
+        Err(e) => {
+            warn!("update check failed: {e}");
+            Err(e.to_string())
+        }
     }
 }
 
