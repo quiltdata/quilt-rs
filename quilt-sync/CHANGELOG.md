@@ -24,6 +24,7 @@
 ### Fixed
 
 - On macOS, **Log in with browser** returns to QuiltSync. Safari used to say the address is invalid (<https://github.com/quiltdata/quilt-rs/pull/1161>)
+- A failed check for a new QuiltSync version is written to the log. It used to leave no trace (<https://github.com/quiltdata/quilt-rs/pull/1163>)
 
 ## [v0.23.0] - 2026-10-20
 
