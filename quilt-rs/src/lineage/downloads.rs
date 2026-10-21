@@ -25,8 +25,8 @@ impl DownloadCounts {
         changes: &ChangeSet,
     ) -> Self {
         let (listed, outstanding) = keys.into_iter().fold((0, 0), |(listed, outstanding), key| {
-            let pending = Self::is_outstanding(lineage, changes, key);
-            (listed + 1, outstanding + usize::from(pending))
+            let missing = Self::is_outstanding(lineage, changes, key);
+            (listed + 1, outstanding + usize::from(missing))
         });
         Self {
             scope: lineage.sync_scope,

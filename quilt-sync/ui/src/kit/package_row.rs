@@ -22,6 +22,7 @@
 use leptos::prelude::*;
 
 use super::Label;
+use super::LabelVariant;
 use super::RelativeTime;
 use super::SkeletonBox;
 use super::StateLabel;
@@ -111,11 +112,15 @@ pub fn PackageRow(
             {move || {
                 downloads
                     .get()
-                    .and_then(RowDownloads::marker)
-                    .map(|(words, hint)| {
+                    .and_then(|downloads| {
+                        downloads.marker().map(|(words, hint)| (words, hint, downloads.variant()))
+                    })
+                    .map(|(words, hint, variant)| {
                         view! {
                             <span class=style::downloads title=hint>
-                                <Label icon=icons::download>{words}</Label>
+                                <Label icon=icons::download variant=variant>
+                                    {words}
+                                </Label>
                             </span>
                         }
                     })
@@ -176,6 +181,18 @@ impl RowDownloads {
     }
 }
 
+impl RowDownloads {
+    /// Files left to download are something the reader can act on, so they are
+    /// drawn louder than a count of picked files.
+    #[must_use]
+    pub fn variant(self) -> LabelVariant {
+        match self {
+            Self::EntirePackage { to_download } if to_download > 0 => LabelVariant::Accent,
+            Self::EntirePackage { .. } | Self::IndividualFiles { .. } => LabelVariant::Outline,
+        }
+    }
+}
+
 fn files(count: usize) -> &'static str {
     if count == 1 { "file" } else { "files" }
 }
@@ -215,6 +232,23 @@ mod marker_tests {
         };
         assert_eq!(hint(1), "1 file is not downloaded yet");
         assert_eq!(hint(3), "3 files are not downloaded yet");
+    }
+
+    #[test]
+    fn only_files_to_download_are_filled() {
+        use super::LabelVariant;
+        assert_eq!(
+            RowDownloads::EntirePackage { to_download: 3 }.variant(),
+            LabelVariant::Accent
+        );
+        assert_eq!(
+            RowDownloads::IndividualFiles {
+                downloaded: 12,
+                total: 340
+            }
+            .variant(),
+            LabelVariant::Outline
+        );
     }
 
     #[test]
