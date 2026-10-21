@@ -136,7 +136,7 @@ fn DownloadsStory() -> impl IntoView {
     view! {
         <Story
             title="PackageRow — downloads"
-            note="What is on disk, as a neutral badge between the time and the state label. A whole \
+            note="What is on disk, as an outlined badge between the time and the state label. A whole \
                   package with every file downloaded shows nothing extra; one with files \
                   outstanding shows how many; a package kept to picked files shows how \
                   many of the package's files are on disk. Hover a marker for its \

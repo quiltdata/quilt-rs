@@ -21,10 +21,12 @@
 
 use leptos::prelude::*;
 
+use super::Label;
 use super::RelativeTime;
 use super::SkeletonBox;
 use super::StateLabel;
 use super::countdown::EpochMillis;
+use super::icons;
 use super::state_label::StateTone;
 
 stylance::import_crate_style!(style, "src/kit/package_row.module.scss");
@@ -63,7 +65,7 @@ pub fn PackageRow(
     /// user decides, and a decision offered and withdrawn is not a decision.
     #[prop(optional, into)]
     provisional: MaybeProp<bool>,
-    /// What is on disk, as a neutral badge before the state label. `None` draws no marker.
+    /// What is on disk, as an outlined badge before the state label. `None` draws no marker.
     #[prop(optional, into)]
     downloads: MaybeProp<RowDownloads>,
 ) -> impl IntoView {
@@ -113,7 +115,7 @@ pub fn PackageRow(
                     .map(|(words, hint)| {
                         view! {
                             <span class=style::downloads title=hint>
-                                <StateLabel tone=StateTone::Neutral>{words}</StateLabel>
+                                <Label icon=icons::download>{words}</Label>
                             </span>
                         }
                     })
