@@ -59,14 +59,15 @@
   color: var(--q-fgColor-muted);
 }
 
-/* The state sits hard right and is deliberately NOT a fixed column. Fixing it
+/* The state sits hard right, or just before a download marker, and is
+ * deliberately NOT a fixed column. Fixing it
  * would need ~150px for "Changed in both places" and waste that on the forty
  * rows that say "Latest"; leaving it ragged means the forty identical boxes form
  * a pattern and the three that differ break it, which is what scanning a list
  * actually uses. */
 
-/* The download marker, plain muted words rather than a second chip: what is on
- * disk is a quieter fact than the state beside it. */
+/* The download marker, after the state: plain muted words rather than a second
+ * chip, because what is on disk is a quieter fact than the state. */
 .downloads {
   flex: none;
   white-space: nowrap;
