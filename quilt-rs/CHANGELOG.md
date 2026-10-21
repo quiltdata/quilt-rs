@@ -19,7 +19,11 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.46.1-dev]
+## [v0.47.0-dev]
+
+### Added
+
+- `InstalledPackage::status_with_downloads` returns the status with a `lineage::DownloadCounts`: how many files the current revision lists and how many are still to download, counted from the manifest and the walk the status already reads (<https://github.com/quiltdata/quilt-rs/pull/1172>)
 
 ### quilt-uri
 

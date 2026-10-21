@@ -537,6 +537,29 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         &self,
         host_config_opt: Option<HostConfig>,
     ) -> Res<(lineage::PackageLineage, InstalledPackageStatus)> {
+        let (lineage, _, status) = self.status_with_manifest(host_config_opt).await?;
+        Ok((lineage, status))
+    }
+
+    /// [`Self::status`] and how much of the current revision this copy holds,
+    /// counted from the manifest and the walk the status itself read.
+    pub async fn status_with_downloads(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<(InstalledPackageStatus, lineage::DownloadCounts)> {
+        let (lineage, manifest, status) = self.status_with_manifest(host_config_opt).await?;
+        let counts = lineage::DownloadCounts::count(
+            &lineage,
+            manifest.rows.iter().map(|row| &row.logical_key),
+            &status.changes,
+        );
+        Ok((status, counts))
+    }
+
+    async fn status_with_manifest(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<(lineage::PackageLineage, Manifest, InstalledPackageStatus)> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let (lineage, latest_refreshed) = self.refresh_latest(lineage).await?;
         let manifest = self.manifest().await?;
@@ -556,6 +579,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             .await?;
         Ok((
             lineage,
+            manifest,
             InstalledPackageStatus {
                 latest_refreshed,
                 ..status

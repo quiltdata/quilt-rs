@@ -142,6 +142,7 @@ pub use icon_button::IconButtonVariant;
 pub use json_display::Expanded;
 pub use json_display::JsonDisplay;
 pub use label::Label;
+pub use label::LabelVariant;
 pub use list_toolbar::ListToolbar;
 pub use load_failure::LoadFailure;
 pub use name_tooltip::NameTooltip;

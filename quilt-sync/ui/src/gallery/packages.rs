@@ -114,6 +114,12 @@ fn DownloadsStory() -> impl IntoView {
             StateTone::Neutral,
         ),
         (
+            "whole package, files outstanding with a newer remote revision",
+            RowDownloads::EntirePackage { to_download: 3 },
+            "Not the latest",
+            StateTone::Attention,
+        ),
+        (
             "picked files",
             RowDownloads::IndividualFiles {
                 downloaded: 12,
@@ -136,10 +142,11 @@ fn DownloadsStory() -> impl IntoView {
     view! {
         <Story
             title="PackageRow — downloads"
-            note="What is on disk, as an outlined badge between the time and the state label. A whole \
+            note="What is on disk, as a badge between the time and the state label. A whole \
                   package with every file downloaded shows nothing extra; one with files \
-                  outstanding shows how many; a package kept to picked files shows how \
-                  many of the package's files are on disk. Hover a marker for its \
+                  outstanding shows how many, filled in the accent because the reader can \
+                  act on it; a package kept to picked files shows how many of the \
+                  package's files are on disk, as a grey outline. Hover a marker for its \
                   sentence. The state labels are unchanged."
         >
             {cells
@@ -416,7 +423,7 @@ fn downloads(namespace: &str) -> RowDownloads {
         "user/qc-plates-2026-08" | "user/annotations" | "org/dataset-c" => {
             RowDownloads::EntirePackage { to_download: 0 }
         }
-        "user/package-b" => picked(4, 4),
+        "user/package-b" => RowDownloads::EntirePackage { to_download: 5 },
         "user/scratch" => picked(17, 17),
         "team/rnaseq-batch-2026-07-31-reprocessed-v2" => picked(96, 2_304),
         "team/imaging-cohort-b" => picked(12, 340),
@@ -585,9 +592,10 @@ pub fn PackagesScene() -> impl IntoView {
                   default, so every package that never chose a scope shows it, and the \
                   marker is how people learn the whole-package scope exists. Some of them \
                   have every file on disk and still read as a count, which is how a \
-                  picked-files package differs from a complete whole one. A few whole packages have files \
-                  outstanding (`user/package-a` beside its local changes); the rest are \
-                  complete and show nothing extra."
+                  picked-files package differs from a complete whole one. A few whole \
+                  packages have files to download, filled in the accent so they stand out \
+                  (`user/package-a` beside its local changes, `user/package-b` beside a \
+                  newer remote revision); the rest are complete and show nothing extra."
         >
             <PackagesRegion view_name="packages-downloads-view" downloads=true />
         </Scene>
