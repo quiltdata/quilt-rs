@@ -14,12 +14,16 @@
   flex-wrap: wrap;
 }
 
-.nowrap {
-  flex-wrap: nowrap;
+// Only the name gives way; a shrunk label would run under the actions. The
+// line breaks on the name's basis, so it is cut first and the row wraps only
+// when even a few characters leave no room. It never grows past its text, so
+// the label stays beside it.
+.cut_name > .name {
+  flex: 1 1 4ch;
+  max-width: max-content;
 }
 
-// Only the name gives way; a shrunk label would run under the actions.
-.nowrap > :not(.name) {
+.cut_name > :not(.name) {
   flex: none;
 }
 
@@ -34,7 +38,7 @@
   white-space: nowrap;
 }
 
-// One uniform gap, not two groups: at most a primary, `Open folder` and a
+// One uniform gap, not two groups: at most a primary, a location group and a
 // `[⋯]`, and a wider gap would separate a group of one from a group of two.
 .actions {
   display: flex;

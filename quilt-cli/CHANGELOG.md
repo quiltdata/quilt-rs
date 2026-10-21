@@ -25,6 +25,10 @@
 
 - Updated [from v0.46.0 to v0.47.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.46.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
+### quilt-uri
+
+- Updated [from v0.4.2 to v0.4.3-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.2...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
 ## [v0.37.1] - 2026-10-21
 
 ### quilt-rs

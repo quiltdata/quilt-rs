@@ -503,9 +503,11 @@ fn copy_to_clipboard_command(app: &tauri::AppHandle, text: &str) -> Result<(), E
 /// Put `text` on the system clipboard.
 ///
 /// The text, not the thing it describes: the caller decides what a copy *means*
-/// — today the `quilt+s3` address of a file — and this command decides nothing
-/// about it. `uri` is for the event alone and never reaches the clipboard, which
-/// is why the two are separate arguments rather than one that gets rendered here.
+/// — the `quilt+s3` address of a file or of a package — and this command decides
+/// nothing about it. `uri` is for the event alone and never reaches the
+/// clipboard, which is why the two are separate arguments rather than one that
+/// gets rendered here: a `uri` with no path is a package's, and counts apart
+/// from files.
 ///
 /// Through the backend rather than `navigator.clipboard`, so it does not depend
 /// on a webview setting that differs per platform: on Linux and Windows the DOM
@@ -524,11 +526,18 @@ pub async fn copy_to_clipboard(
     let msg_err = |err: &Error| format!("Failed to copy to clipboard: {err}");
 
     Notify::new(msg_init)
-        .on_success(
-            &tracing,
-            MixpanelEvent::FileUriCopied(PackageFileEvent::for_uri(uri.as_ref())),
-        )
+        .on_success(&tracing, copied_event(uri.as_ref()))
         .map(copy_to_clipboard_command(&app, &text), msg_ok, msg_err)
+}
+
+/// A package's address when `uri` names no file, a file's otherwise.
+fn copied_event(uri: Option<&S3PackageUri>) -> MixpanelEvent {
+    let event = PackageFileEvent::for_uri(uri);
+    if uri.is_some_and(|u| u.path.is_none()) {
+        MixpanelEvent::PackageUriCopied(event)
+    } else {
+        MixpanelEvent::FileUriCopied(event)
+    }
 }
 
 /// Stores `directory` as the home. quilt-rs creates the folder.
@@ -654,6 +663,31 @@ mod tests {
 
         assert_eq!(home.as_ref(), &picked);
         assert!(picked.is_dir());
+    }
+
+    /// A package's address counts apart from a file's: the header's copy
+    /// names no file, the file rows' copies do.
+    #[test]
+    fn a_package_copy_is_not_a_file_copy() {
+        let package: S3PackageUri = "quilt+s3://b#package=user/p&catalog=quilt.test"
+            .parse()
+            .unwrap();
+        let file = S3PackageUri {
+            path: Some("a.csv".into()),
+            ..package.clone()
+        };
+        assert!(matches!(
+            copied_event(Some(&package)),
+            MixpanelEvent::PackageUriCopied(_)
+        ));
+        assert!(matches!(
+            copied_event(Some(&file)),
+            MixpanelEvent::FileUriCopied(_)
+        ));
+        assert!(matches!(
+            copied_event(None),
+            MixpanelEvent::FileUriCopied(_)
+        ));
     }
 
     /// *Copy path* asks where the file is, and gets the path opening the file

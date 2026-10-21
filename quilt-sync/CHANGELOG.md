@@ -25,9 +25,17 @@
 
 - **New design preview**: each package on the main page says how much of it is on disk: *3 to download* when you keep the whole package and some files are not downloaded yet, or *12 of 340 files* when you keep only the files you pick (<https://github.com/quiltdata/quilt-rs/pull/1172>)
 
+### Changed
+
+- **New design preview**: the package page's header has *Open in catalog* and a button that copies the package's Quilt URI next to *Open folder*, so *Open in catalog* is no longer in the *⋯* menu. In a narrow window the buttons show only their icons (<https://github.com/quiltdata/quilt-rs/pull/1171>)
+
 ### quilt-rs
 
 - Updated [from v0.46.0 to v0.47.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.46.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.4.2 to v0.4.3-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.2...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.23.1] - 2026-10-21
 

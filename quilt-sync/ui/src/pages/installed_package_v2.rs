@@ -56,7 +56,7 @@ use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
 use file_pane::{Reach, RowMenu};
 use header::PageHeader;
-pub use header::{MenuCommand, MenuItem, menu_items};
+pub use header::{MenuCommand, MenuItem, menu_items, remote_target};
 pub(crate) use header::{RemoveDialog, Uninstall, ask_to_remove, remote_item, remove_item};
 use incoming::{HoverCard, IncomingSummary};
 use resolve::{ResolveCommands, ResolvePane};
@@ -1210,6 +1210,9 @@ fn PackageScreen(
     let page = PageHandle::new();
     let w = Wiring::over(page);
     w.follow(ns.into());
+    // For the header's *Copied*. Not on `Wiring`, which every part of the page
+    // takes by value.
+    provide_context(header::CopiedMark::new());
     let reload = page.reload;
     // One read for the whole page. Re-runs when the namespace changes, and
     // whenever `reload` fires — the watcher reporting news about this package,

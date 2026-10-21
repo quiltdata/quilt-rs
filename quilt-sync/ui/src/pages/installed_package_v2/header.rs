@@ -1,5 +1,5 @@
 //! The v2 package page's header: trail, identity, one resolved state, one
-//! action, `Open folder`, and everything else behind `[⋯]`.
+//! action, the location group, and everything else behind `[⋯]`.
 //!
 //! # The row is the kit's, the contents are this page's
 //!
@@ -73,6 +73,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::time::Duration;
 
 use leptos::prelude::*;
 
@@ -83,15 +84,18 @@ use crate::kit::ActionTone;
 use crate::kit::BackLink;
 use crate::kit::BannerVariant;
 use crate::kit::Button;
+use crate::kit::ButtonGroup;
 use crate::kit::ButtonVariant;
 use crate::kit::ConfirmDialog;
 use crate::kit::ConfirmOption;
+use crate::kit::GroupButton;
 use crate::kit::MenuAction;
 use crate::kit::PackageAction;
 use crate::kit::SplitButton;
 use crate::kit::SplitOption;
 use crate::kit::StateLabel;
 use crate::kit::Submit;
+use crate::kit::icons;
 use crate::kit::render;
 use crate::util;
 
@@ -113,9 +117,6 @@ const BUSY: &str = "Something else is running";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuCommand {
     NewRevision,
-    /// Carries the catalog URL, because whether the item exists at all is the
-    /// same question as whether one can be built.
-    OpenInCatalog(String),
     /// Change bucket, or Show remote once the package has been pushed.
     Remote,
     Undo,
@@ -196,46 +197,31 @@ fn undo_blocked(data: &commands::PackageHeaderData) -> Option<&'static str> {
 ///
 /// Fixed across states on purpose: the menu is where everything that is *not*
 /// the one primary action lives, so it does not change shape as the state does.
-/// What varies is what a command can be offered *for* — a catalog link needs a
-/// catalog, and an undo needs something to undo.
+/// What varies is what a command can be offered *for*: an undo needs something
+/// to undo.
 pub fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuItem> {
     let refused = || busy.then(|| BUSY.to_string());
-    let mut items = vec![MenuItem {
-        command: MenuCommand::NewRevision,
-        label: "Create new revision".to_string(),
-        tone: ActionTone::Default,
-        separated: false,
-        disabled: refused(),
-    }];
-
-    // Dropped rather than disabled: a package with no catalog has no catalog
-    // page, so there is no reason to state and nothing the reader could do.
-    if let Some(url) = data.uri.as_ref().and_then(util::catalog_url) {
-        items.push(MenuItem {
-            command: MenuCommand::OpenInCatalog(url),
-            label: "Open in catalog".to_string(),
+    vec![
+        MenuItem {
+            command: MenuCommand::NewRevision,
+            label: "Create new revision".to_string(),
             tone: ActionTone::Default,
             separated: false,
             disabled: refused(),
-        });
-    }
-
-    items.push(remote_item(data.remote_locked, busy));
-
-    items.push(MenuItem {
-        command: MenuCommand::Undo,
-        label: "Undo last revision".to_string(),
-        tone: ActionTone::Danger,
-        separated: true,
-        // A standing fact outranks a transient one: telling a reader something
-        // else is running, when undo would refuse whatever happened, is the
-        // lesser truth.
-        disabled: undo_blocked(data).map(ToString::to_string).or_else(refused),
-    });
-
-    items.push(remove_item(busy));
-
-    items
+        },
+        remote_item(data.remote_locked, busy),
+        MenuItem {
+            command: MenuCommand::Undo,
+            label: "Undo last revision".to_string(),
+            tone: ActionTone::Danger,
+            separated: true,
+            // A standing fact outranks a transient one: telling a reader
+            // something else is running, when undo would refuse whatever
+            // happened, is the lesser truth.
+            disabled: undo_blocked(data).map(ToString::to_string).or_else(refused),
+        },
+        remove_item(busy),
+    ]
 }
 
 /// The overflow menu with a handler on each item.
@@ -247,29 +233,15 @@ fn menu(
     undo_open: RwSignal<bool>,
     remove_open: RwSignal<bool>,
 ) -> Vec<MenuAction> {
-    let Wiring { busy, outcome, .. } = w;
-    let ns = data.namespace.to_string();
     let commit_to = crate::routes::new_revision_href(&data.namespace);
-    menu_items(data, busy.get())
+    menu_items(data, w.busy.get())
         .into_iter()
         .map(|item| {
-            let ns = ns.clone();
             let commit_to = commit_to.clone();
             let on_select = match item.command.clone() {
                 MenuCommand::NewRevision => {
                     Callback::new(move |()| goto.set(Some(commit_to.clone())))
                 }
-                MenuCommand::OpenInCatalog(url) => Callback::new(move |()| {
-                    let url = url.clone();
-                    run(
-                        busy,
-                        outcome,
-                        ns.clone(),
-                        "Could not open this package in the catalog.",
-                        Reread::Never,
-                        async move { commands::open_in_web_browser(url).await },
-                    );
-                }),
                 MenuCommand::Remote => Callback::new(move |()| bucket_open.set(true)),
                 MenuCommand::Undo => Callback::new(move |()| undo_open.set(true)),
                 MenuCommand::Remove => {
@@ -587,6 +559,219 @@ pub(crate) fn RemoveDialog(
     }
 }
 
+/// How long the copy button says *Copied*.
+const COPIED_FOR: Duration = Duration::from_millis(1_500);
+
+/// The copy button's *Copied*: the package whose address the clipboard took,
+/// until a moment later. Keyed, because the page keeps it across packages.
+/// Stamped as the main page's copies are, so an earlier copy's timer or late
+/// answer cannot end or claim a later one.
+#[derive(Clone, Copy)]
+pub struct CopiedMark {
+    copied: RwSignal<Option<String>>,
+    issued: StoredValue<u64>,
+}
+
+impl CopiedMark {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            copied: RwSignal::new(None),
+            issued: StoredValue::new(0),
+        }
+    }
+
+    /// Take the next stamp. Everything in flight is stale from here.
+    fn bump(self) -> u64 {
+        self.issued
+            .try_update_value(|n| {
+                *n += 1;
+                *n
+            })
+            .unwrap_or_default()
+    }
+
+    fn is_current(self, stamp: u64) -> bool {
+        self.issued.try_get_value() == Some(stamp)
+    }
+
+    /// Whether `namespace`'s address is the one just copied.
+    fn says(self, namespace: String) -> Signal<bool> {
+        Signal::derive(move || self.copied.with(|c| c.as_ref() == Some(&namespace)))
+    }
+
+    /// Mark `namespace` for [`COPIED_FOR`], or clear the mark after a failed
+    /// copy.
+    fn settle(self, stamp: u64, namespace: Option<String>) {
+        if !self.is_current(stamp) {
+            return;
+        }
+        let marks = namespace.is_some();
+        self.copied.try_set(namespace);
+        if marks {
+            set_timeout(
+                move || {
+                    if self.is_current(stamp) {
+                        self.copied.try_set(None);
+                    }
+                },
+                COPIED_FOR,
+            );
+        }
+    }
+}
+
+impl Default for CopiedMark {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Where the location group's remote side points. One value for both
+/// buttons, so the link and the copy always name the same revision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteTarget {
+    pub catalog_url: String,
+    pub address: quilt_uri::S3PackageUri,
+}
+
+/// The package's catalog page and Quilt URI, once there is a catalog page: a
+/// catalog URL can be built and the remote holds a revision. A bucket chosen
+/// but never published has no page yet.
+///
+/// At `latest`, with no hash, when the revision the package holds is the
+/// remote's latest as this read saw it just now (`newer`). Otherwise pinned to
+/// the held revision: behind, or the read could not say, and the page cannot
+/// claim latest.
+///
+/// `pub` for the gallery's scene, which decides its location group by it.
+#[must_use]
+pub fn remote_target(data: &commands::PackageHeaderData) -> Option<RemoteTarget> {
+    let held = data.uri.as_ref().filter(|_| data.remote_locked)?;
+    let at_latest = matches!(
+        &held.revision,
+        quilt_uri::RevisionPointer::Hash(hash) if data.newer.as_deref() == Some(hash.as_str())
+    );
+    let address = if at_latest {
+        util::package_uri(
+            &held.bucket,
+            &held.namespace,
+            util::host_str(held).as_deref(),
+        )
+    } else {
+        held.clone()
+    };
+    Some(RemoteTarget {
+        catalog_url: util::catalog_url(&address)?,
+        address,
+    })
+}
+
+/// Where the package is: its folder, then its catalog page and its Quilt URI.
+///
+/// The remote side is dropped, not disabled, without a [`remote_target`]: there
+/// is no reason to state and nothing the reader could do.
+fn location(data: &commands::PackageHeaderData, w: Wiring, copied: CopiedMark) -> impl IntoView {
+    let Wiring { busy, outcome, .. } = w;
+    let namespace = data.namespace.to_string();
+    let mut buttons = vec![{
+        let (ns, uri) = (namespace.clone(), data.uri.clone());
+        GroupButton::labelled(
+            icons::folder,
+            "Open folder",
+            Callback::new(move |()| {
+                let (ns, uri) = (ns.clone(), uri.clone());
+                run(
+                    busy,
+                    outcome,
+                    ns.clone(),
+                    "Could not open this package's folder.",
+                    Reread::Never,
+                    async move { commands::open_in_file_browser(ns, uri).await },
+                );
+            }),
+        )
+        .with_disabled(busy.into())
+    }];
+    if let Some(RemoteTarget {
+        catalog_url: url,
+        address,
+    }) = remote_target(data)
+    {
+        let ns = namespace.clone();
+        buttons.push(
+            GroupButton::labelled(
+                icons::link_external,
+                "Open in catalog",
+                Callback::new(move |()| {
+                    let url = url.clone();
+                    run(
+                        busy,
+                        outcome,
+                        ns.clone(),
+                        "Could not open this package in the catalog.",
+                        Reread::Never,
+                        async move { commands::open_in_web_browser(url).await },
+                    );
+                }),
+            )
+            .with_disabled(busy.into()),
+        );
+        buttons.push(
+            GroupButton::icon(
+                icons::copy,
+                "Copy Quilt URI",
+                Callback::new(move |()| {
+                    copy_uri(address.clone(), namespace.clone(), w.outcome, copied);
+                }),
+            )
+            .with_done("Copied", copied.says(data.namespace.to_string())),
+        );
+    }
+    view! { <ButtonGroup aria_label="Package location" buttons=buttons /> }
+}
+
+const COPY_FAILED: &str = "Could not copy this package's Quilt URI.";
+
+/// Put the package's address on the clipboard, outside the page's lock.
+fn copy_uri(
+    address: quilt_uri::S3PackageUri,
+    namespace: String,
+    outcome: RwSignal<Option<Outcome>>,
+    copied: CopiedMark,
+) {
+    let stamp = copied.bump();
+    leptos::task::spawn_local(async move {
+        let answer = commands::copy_to_clipboard(address.to_copy_string(), Some(address)).await;
+        // A later copy speaks for both surfaces.
+        if !copied.is_current(stamp) {
+            return;
+        }
+        match answer {
+            Ok(_) => {
+                // A retry that worked takes back only the copy's own failure.
+                let own = |o: &Option<Outcome>| {
+                    o.as_ref()
+                        .is_some_and(|o| o.namespace == namespace && o.lead == COPY_FAILED)
+                };
+                if outcome.try_with_untracked(own) == Some(true) {
+                    outcome.try_set(None);
+                }
+                copied.settle(stamp, Some(namespace));
+            }
+            Err(detail) => {
+                copied.settle(stamp, None);
+                outcome.try_set(Some(Outcome {
+                    namespace,
+                    variant: BannerVariant::Critical,
+                    lead: COPY_FAILED.to_string(),
+                    detail: Some(detail),
+                }));
+            }
+        }
+    });
+}
+
 /// The header, for one package.
 ///
 /// `resolving` is the page's one `open`: while the resolve mode is open the
@@ -608,13 +793,9 @@ pub fn PageHeader(
     // The dialogs' flags and `goto` are the page's, not this header's: a
     // re-read rebuilds the header, and must not shut a dialog or drop a
     // navigation on the way — see `Wiring`.
-    let Wiring {
-        busy,
-        outcome,
-        goto,
-        dialogs,
-        ..
-    } = w;
+    let Wiring { goto, dialogs, .. } = w;
+    // The page's, so a re-read keeps it; a header drawn alone has its own.
+    let copied = use_context::<CopiedMark>().unwrap_or_default();
     let Dialogs {
         bucket: bucket_open,
         // The bucket dialog's own.
@@ -659,25 +840,11 @@ pub fn PageHeader(
         view! { <RoleDialog open=role_open switch=switch refused=refused w=w /> }
     });
 
-    let ns_folder = data.namespace.to_string();
-    let uri_folder = data.uri.clone();
-    let on_open_folder = move |_| {
-        let ns = ns_folder.clone();
-        let uri = uri_folder.clone();
-        run(
-            busy,
-            outcome,
-            ns.clone(),
-            "Could not open this package's folder.",
-            Reread::Never,
-            async move { commands::open_in_file_browser(ns, uri).await },
-        );
-    };
-
     let state_label = view! { <StateLabel tone=rendered.tone>{rendered.words}</StateLabel> };
     view! {
         <div>
             <kit::PageHeader
+                cut_name=true
                 // The parent route, named rather than called "Back": it is an
                 // up-link and not history. `/` renders whichever main page is
                 // switched on, so it lands a reader back where they came from.
@@ -699,9 +866,7 @@ pub fn PageHeader(
                                 )
                             })
                     }}
-                    <Button disabled=Signal::derive(move || busy.get()) on_click=on_open_folder>
-                        "Open folder"
-                    </Button>
+                    {location(&data, w, copied)}
                     // A derived signal, so the items follow `busy` while the menu
                     // stays open: the trigger is live during a run, see
                     // `the_menu_stays_open_when_a_command_settles`.
@@ -828,11 +993,14 @@ mod tests {
     /// menu is for, and a menu that will not open cannot be read.
     const TRIGGER: &str = "[aria-label='More actions for this package']";
 
+    /// The copy button, which takes no lock and so is never refused.
+    const COPY: &str = "[aria-label='Copy Quilt URI']";
+
     /// Every command on screen, by what it says and whether it is refused. A
     /// disabled item draws its reason inside the same button, so the label is a
     /// prefix of the text. The split button's own choice list is excluded — those
-    /// set which verb the face shows and explicitly do not run it — and so is the
-    /// overflow trigger.
+    /// set which verb the face shows and explicitly do not run it — and so are the
+    /// overflow trigger and the copy button.
     ///
     /// The menu's items are in the document whether or not it is open —
     /// `AnchoredOverlay` uses the Popover API, so the surface is rendered and
@@ -849,6 +1017,7 @@ mod tests {
             let b: web_sys::Element = all.item(i).unwrap().unchecked_into();
             if b.closest(SPLIT_CHOICES).unwrap().is_some()
                 || b.matches(TRIGGER).unwrap()
+                || b.matches(COPY).unwrap()
                 || b.closest("dialog").unwrap().is_some()
             {
                 continue;
@@ -1112,14 +1281,14 @@ mod tests {
 
     /// While the mode is open the pane holds the two choices, so the header's
     /// primary would be a second way in to where the reader already is. The
-    /// state, `Open folder` and the menu stay.
+    /// state, the location group and the menu stay.
     #[wasm_bindgen_test]
     fn while_the_mode_is_open_the_header_offers_no_primary() {
         let el = mount(move || {
             view! {
                 <Router>
                     <PageHeader
-                        data=data(kit::PackageState::Diverged)
+                        data=with_catalog(kit::PackageState::Diverged)
                         w=Wiring::new()
                         resolving=Signal::stored(true)
                     />
@@ -1133,7 +1302,10 @@ mod tests {
             "no primary in the mode; markup was {}",
             el.inner_html()
         );
-        button(&el, "Open folder");
+        assert_eq!(
+            location_names(&el),
+            ["Open folder", "Open in catalog", "Copy Quilt URI"]
+        );
         assert!(
             el.query_selector("[aria-label='More actions for this package']")
                 .unwrap()
@@ -1221,7 +1393,7 @@ mod tests {
     async fn every_command_disables_with_a_reason_while_one_runs() {
         let busy = RwSignal::new(false);
         let el = mount_with(
-            data(kit::PackageState::Behind),
+            with_catalog(kit::PackageState::Behind),
             Wiring {
                 busy,
                 ..Wiring::new()
@@ -1245,6 +1417,12 @@ mod tests {
             after.iter().all(|(_, off)| *off),
             "every command is refused while one runs: {after:?}"
         );
+        let copy: web_sys::HtmlButtonElement = el
+            .query_selector(COPY)
+            .unwrap()
+            .expect("the copy button")
+            .unchecked_into();
+        assert!(!copy.disabled(), "but the copy, which takes no lock");
         assert!(
             after
                 .iter()
@@ -1902,29 +2080,189 @@ mod tests {
         }
     }
 
-    /// A package with no catalog has no catalog page, so the item is dropped
-    /// rather than disabled: there is no reason to state and nothing the reader
-    /// could do about it.
-    #[test]
-    fn open_in_catalog_is_absent_without_a_catalog_rather_than_disabled() {
-        let plain = data(kit::PackageState::Latest);
-        assert!(
-            !menu_items(&plain, false)
-                .iter()
-                .any(|item| matches!(item.command, MenuCommand::OpenInCatalog(_))),
-            "no catalog host, no item"
+    /// The location group's segments, by name.
+    fn location_names(el: &web_sys::Element) -> Vec<String> {
+        let all = el
+            .query_selector_all("[aria-label='Package location'] button")
+            .unwrap();
+        (0..all.length())
+            .map(|i| {
+                all.item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::Element>()
+                    .get_attribute("aria-label")
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    fn with_catalog(state: kit::PackageState) -> commands::PackageHeaderData {
+        commands::PackageHeaderData {
+            uri: Some(
+                "quilt+s3://team-bucket#package=team/dataset@abc123&catalog=quilt.test"
+                    .parse()
+                    .expect("a uri with a catalog"),
+            ),
+            remote_locked: true,
+            ..data(state)
+        }
+    }
+
+    /// A package with no catalog, or not yet published, has no catalog page,
+    /// so the remote side is dropped rather than disabled: there is no reason to state and nothing
+    /// the reader could do about it.
+    #[wasm_bindgen_test]
+    fn the_remote_side_is_there_only_with_a_catalog() {
+        let plain = mount_header(data(kit::PackageState::Latest));
+        assert_eq!(location_names(&plain), ["Open folder"]);
+
+        let unpublished = mount_header(commands::PackageHeaderData {
+            remote_locked: false,
+            ..with_catalog(kit::PackageState::Unpublished)
+        });
+        assert_eq!(
+            location_names(&unpublished),
+            ["Open folder"],
+            "a bucket never published has no catalog page yet"
         );
 
-        let mut with_catalog = data(kit::PackageState::Latest);
-        with_catalog.uri = Some(
-            "quilt+s3://team-bucket#package=team/dataset&catalog=quilt.test"
-                .parse()
-                .expect("a uri with a catalog"),
+        let remoted = mount_header(with_catalog(kit::PackageState::Latest));
+        assert_eq!(
+            location_names(&remoted),
+            ["Open folder", "Open in catalog", "Copy Quilt URI"]
         );
+    }
+
+    /// The menu no longer offers the catalog: the row does.
+    #[test]
+    fn the_menu_does_not_offer_the_catalog() {
+        let labels: Vec<String> = menu_items(&with_catalog(kit::PackageState::Latest), false)
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Create new revision",
+                "Show remote",
+                "Undo last revision",
+                "Remove"
+            ]
+        );
+    }
+
+    /// The copy touches neither the package nor the lock, so it stays live
+    /// while a command runs, and with no Tauri bridge its failure reaches the
+    /// band, keyed to the package, while `busy` stays the other command's.
+    #[wasm_bindgen_test]
+    async fn the_copy_runs_while_another_command_does_and_reports_its_failure() {
+        let busy = RwSignal::new(true);
+        let outcome: RwSignal<Option<Outcome>> = RwSignal::new(None);
+        let el = mount_with(
+            with_catalog(kit::PackageState::Latest),
+            Wiring {
+                busy,
+                outcome,
+                ..Wiring::new()
+            },
+        );
+        let copy: web_sys::HtmlButtonElement = el
+            .query_selector(COPY)
+            .unwrap()
+            .expect("the copy button")
+            .unchecked_into();
+        assert!(!copy.disabled());
+
+        copy.click();
+        sleep_ms(50).await;
+
+        let said = outcome
+            .get_untracked()
+            .expect("the failure reached the band");
+        assert_eq!(said.namespace, "team/dataset");
+        assert_eq!(said.lead, COPY_FAILED);
+        assert!(busy.get_untracked(), "the lock is not the copy's");
+    }
+
+    /// *Copied* names the package it was for, since the page keeps the mark
+    /// across packages, and a late answer from an earlier copy claims nothing.
+    #[wasm_bindgen_test]
+    fn copied_is_keyed_to_its_package_and_its_copy() {
+        let mark = CopiedMark::new();
+        let (a, b) = (mark.says("team/a".into()), mark.says("team/b".into()));
+        let first = mark.bump();
+        let second = mark.bump();
+        mark.settle(first, Some("team/a".into()));
+        assert!(!a.get_untracked(), "a stale answer marks nothing");
+        mark.settle(second, Some("team/a".into()));
+        assert!(a.get_untracked());
+        assert!(!b.get_untracked(), "another package's button stays quiet");
+        mark.settle(second, None);
+        assert!(!a.get_untracked(), "a failed copy clears it");
+    }
+
+    /// A package at the remote's latest, a behind one, and one whose read did
+    /// not reach the remote: the payload with `newer` set to this.
+    fn holding_against(newer: Option<&str>) -> commands::PackageHeaderData {
+        commands::PackageHeaderData {
+            newer: newer.map(ToString::to_string),
+            ..with_catalog(kit::PackageState::Latest)
+        }
+    }
+
+    /// At the remote's latest, both buttons name `latest`: no hash.
+    #[test]
+    fn at_latest_both_name_latest() {
+        let target = remote_target(&holding_against(Some("abc123"))).unwrap();
+        assert_eq!(
+            target.address.to_copy_string(),
+            "quilt+s3://team-bucket#package=team/dataset&catalog=quilt.test"
+        );
+        assert_eq!(
+            target.catalog_url,
+            "https://quilt.test/b/team-bucket/packages/team/dataset/tree/latest"
+        );
+    }
+
+    /// Behind, both buttons name the revision the package holds.
+    #[test]
+    fn behind_both_name_the_held_revision() {
+        let target = remote_target(&holding_against(Some("def456"))).unwrap();
+        assert_eq!(
+            target.address.to_copy_string(),
+            "quilt+s3://team-bucket#package=team/dataset@abc123&catalog=quilt.test"
+        );
+        assert_eq!(
+            target.catalog_url,
+            "https://quilt.test/b/team-bucket/packages/team/dataset/tree/abc123"
+        );
+    }
+
+    /// A read that did not reach the remote cannot claim latest, so both pin.
+    #[test]
+    fn unknown_pins_like_behind() {
+        assert_eq!(
+            remote_target(&holding_against(None)),
+            remote_target(&holding_against(Some("def456")))
+        );
+    }
+
+    /// A long hash is copied whole: the shortened form is for reading only.
+    #[test]
+    fn a_pinned_copy_keeps_the_whole_hash() {
+        let hash = "a".repeat(64);
+        let mut data = holding_against(None);
+        data.uri = Some(
+            format!("quilt+s3://team-bucket#package=team/dataset@{hash}&catalog=quilt.test")
+                .parse()
+                .unwrap(),
+        );
+        let target = remote_target(&data).unwrap();
         assert!(
-            menu_items(&with_catalog, false)
-                .iter()
-                .any(|item| matches!(item.command, MenuCommand::OpenInCatalog(_))),
+            target
+                .address
+                .to_copy_string()
+                .contains(&format!("@{hash}"))
         );
     }
 }

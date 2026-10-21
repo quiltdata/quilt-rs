@@ -520,6 +520,10 @@ mod tests {
                 MixpanelEvent::FileUriCopied(PackageFileEvent::for_uri(None)),
                 "file_uri_copied",
             ),
+            (
+                MixpanelEvent::PackageUriCopied(PackageFileEvent::for_uri(None)),
+                "package_uri_copied",
+            ),
         ] {
             let (name, props) = event_payload(&event)?;
             assert_eq!(name, expected);
