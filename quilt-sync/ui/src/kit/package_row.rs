@@ -63,6 +63,9 @@ pub fn PackageRow(
     /// user decides, and a decision offered and withdrawn is not a decision.
     #[prop(optional, into)]
     provisional: MaybeProp<bool>,
+    /// What is on disk, as a word beside the state label. `None` draws no marker.
+    #[prop(optional, into)]
+    downloads: MaybeProp<RowDownloads>,
 ) -> impl IntoView {
     // One computed string: Leptos rejects two `class` attributes on an element, and
     // the row dims as a whole rather than the label dimming alone — see the
@@ -101,6 +104,14 @@ pub fn PackageRow(
                         |at| view! { <RelativeTime at=at /> }.into_any(),
                     )}
             </span>
+            {move || {
+                downloads
+                    .get()
+                    .and_then(RowDownloads::marker)
+                    .map(|(words, hint)| {
+                        view! { <span class=style::downloads title=hint>{words}</span> }
+                    })
+            }}
             // Wrapped in its own closure, not read at the top level, so this patches
             // in place on every settle without `PackageRow` itself needing to be
             // called again.
@@ -120,6 +131,86 @@ pub fn PackageRow(
                 }
             }}
         </a>
+    }
+}
+
+/// Which files a package keeps on disk, as far as its row tells.
+///
+/// A UI-side type: nothing maps the backend onto it yet, so only the gallery draws it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowDownloads {
+    /// The whole package, with `to_download` files not downloaded yet.
+    EntirePackage { to_download: usize },
+    /// Only the files someone picked, however many of them are on disk.
+    IndividualFiles,
+}
+
+impl RowDownloads {
+    /// The marker's words and its hover text. A whole package with nothing
+    /// left to download has none: being complete is the quiet case.
+    #[must_use]
+    pub fn marker(self) -> Option<(String, String)> {
+        match self {
+            Self::EntirePackage { to_download: 0 } => None,
+            Self::EntirePackage { to_download: 1 } => Some((
+                "1 to download".to_string(),
+                "1 file is not downloaded yet".to_string(),
+            )),
+            Self::EntirePackage { to_download } => Some((
+                format!("{to_download} to download"),
+                format!("{to_download} files are not downloaded yet"),
+            )),
+            Self::IndividualFiles => Some((
+                "partial".to_string(),
+                "Only picked files are downloaded".to_string(),
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod marker_tests {
+    use super::RowDownloads;
+
+    fn words(downloads: RowDownloads) -> Option<String> {
+        downloads.marker().map(|(words, _)| words)
+    }
+
+    #[test]
+    fn a_complete_whole_package_has_no_marker() {
+        assert_eq!(words(RowDownloads::EntirePackage { to_download: 0 }), None);
+    }
+
+    #[test]
+    fn files_left_to_download_are_counted() {
+        assert_eq!(
+            words(RowDownloads::EntirePackage { to_download: 1 }).as_deref(),
+            Some("1 to download")
+        );
+        assert_eq!(
+            words(RowDownloads::EntirePackage { to_download: 3 }).as_deref(),
+            Some("3 to download")
+        );
+    }
+
+    #[test]
+    fn the_hint_agrees_with_the_count() {
+        let hint = |to_download| {
+            RowDownloads::EntirePackage { to_download }
+                .marker()
+                .unwrap()
+                .1
+        };
+        assert_eq!(hint(1), "1 file is not downloaded yet");
+        assert_eq!(hint(3), "3 files are not downloaded yet");
+    }
+
+    #[test]
+    fn picked_files_read_as_partial() {
+        assert_eq!(
+            words(RowDownloads::IndividualFiles).as_deref(),
+            Some("partial")
+        );
     }
 }
 
@@ -177,6 +268,37 @@ mod tests {
         assert!(
             !root_class(&row(false)).contains("provisional"),
             "a settled row carries nothing"
+        );
+    }
+
+    fn downloads_text(downloads: Option<RowDownloads>) -> Option<String> {
+        let el = mount(move || {
+            view! {
+                <PackageRow
+                    namespace="user/alpha"
+                    href="/x"
+                    state=Signal::stored("Latest".to_string())
+                    tone=Signal::stored(StateTone::Success)
+                    downloads=downloads
+                />
+            }
+        });
+        el.query_selector("[class*=downloads]")
+            .unwrap()
+            .map(|span| span.text_content().unwrap_or_default())
+    }
+
+    #[wasm_bindgen_test]
+    fn the_marker_draws_only_when_it_has_words() {
+        assert_eq!(downloads_text(None), None, "no scope, no marker");
+        assert_eq!(
+            downloads_text(Some(RowDownloads::EntirePackage { to_download: 0 })),
+            None,
+            "a complete whole package stays quiet"
+        );
+        assert_eq!(
+            downloads_text(Some(RowDownloads::IndividualFiles)).as_deref(),
+            Some("partial")
         );
     }
 

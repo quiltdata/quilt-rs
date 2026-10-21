@@ -17,6 +17,7 @@ use crate::kit::GroupHeading;
 use crate::kit::ListToolbar;
 use crate::kit::Naming;
 use crate::kit::PackageRow;
+use crate::kit::RowDownloads;
 use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
@@ -32,9 +33,12 @@ fn ago(ms: f64) -> f64 {
     js_sys::Date::now() - ms
 }
 
+/// Bucket, namespace, state words, tone, time since the last change.
+type Fixture = (&'static str, &'static str, &'static str, StateTone, f64);
+
 #[component]
 pub fn PackageRowStories() -> impl IntoView {
-    view! { <StatesStory /><EdgesStory /> }
+    view! { <StatesStory /><DownloadsStory /><EdgesStory /> }
 }
 
 /// The nine states again, but on a row — which is where they are actually read, and
@@ -83,6 +87,82 @@ fn StatesStory() -> impl IntoView {
                     }
                 })
                 .collect_view()}
+        </Story>
+    }
+}
+
+/// The download markers. A v2 row only: the whole-package scope exists only there.
+#[component]
+fn DownloadsStory() -> impl IntoView {
+    let cells: Vec<(&str, RowDownloads, &str, StateTone)> = vec![
+        (
+            "whole package, every file downloaded: nothing extra",
+            RowDownloads::EntirePackage { to_download: 0 },
+            "Latest",
+            StateTone::Success,
+        ),
+        (
+            "whole package, one file outstanding",
+            RowDownloads::EntirePackage { to_download: 1 },
+            "Latest",
+            StateTone::Success,
+        ),
+        (
+            "whole package, files outstanding beside local changes",
+            RowDownloads::EntirePackage { to_download: 3 },
+            "2 files changed",
+            StateTone::Neutral,
+        ),
+        (
+            "picked files, all of them downloaded",
+            RowDownloads::IndividualFiles,
+            "Latest",
+            StateTone::Success,
+        ),
+        (
+            "picked files, with a newer remote revision",
+            RowDownloads::IndividualFiles,
+            "Not the latest",
+            StateTone::Attention,
+        ),
+    ];
+
+    view! {
+        <Story
+            title="PackageRow — downloads"
+            note="What is on disk, beside the state label and separate from it. A whole \
+                  package with every file downloaded shows nothing extra; one with files \
+                  outstanding shows how many; a package kept to picked files shows \
+                  `partial`, however many of them are downloaded. Hover a marker for its \
+                  sentence. The state labels are unchanged."
+        >
+            {cells
+                .into_iter()
+                .map(|(label, downloads, state, tone)| {
+                    view! {
+                        <Cell full=true label=label>
+                            <PackageRow
+                                namespace="user/package-a"
+                                href="#packagerow"
+                                changed_at=ago(3.0 * HOUR)
+                                state=state
+                                tone=tone
+                                downloads=downloads
+                            />
+                        </Cell>
+                    }
+                })
+                .collect_view()}
+            <Cell wide=true label="narrow — the namespace gives way, the marker does not">
+                <PackageRow
+                    namespace="team/rnaseq-batch-2026-07-31-reprocessed-v2"
+                    href="#packagerow"
+                    changed_at=ago(4.0 * DAY)
+                    state="Changed in both places"
+                    tone=StateTone::Danger
+                    downloads=RowDownloads::EntirePackage { to_download: 128 }
+                />
+            </Cell>
         </Story>
     }
 }
@@ -193,9 +273,9 @@ fn EdgesStory() -> impl IntoView {
 
 /// Forty-three packages, three of which need something — the real ratio, because
 /// the ratio is what the open question is about.
-fn fixtures() -> Vec<(&'static str, &'static str, &'static str, StateTone, f64)> {
+fn fixtures() -> Vec<Fixture> {
     let latest = ("Latest", StateTone::Success);
-    let mut rows: Vec<(&str, &str, &str, StateTone, f64)> = vec![
+    let mut rows: Vec<Fixture> = vec![
         (
             "s3://my-bucket",
             "user/package-a",
@@ -319,11 +399,23 @@ fn prefix(namespace: &'static str) -> String {
     format!("{}/", namespace.prefix())
 }
 
-fn row(
-    entry: (&'static str, &'static str, &'static str, StateTone, f64),
-    provisional: bool,
-) -> AnyView {
+/// Each scene package's download scope. Most are kept to picked files: that is
+/// the stored default, so every package that never chose reads `partial`.
+fn downloads(namespace: &str) -> RowDownloads {
+    match namespace {
+        "user/package-a" => RowDownloads::EntirePackage { to_download: 3 },
+        "user/reference-genomes" => RowDownloads::EntirePackage { to_download: 12 },
+        "user/pilot-2026-07" => RowDownloads::EntirePackage { to_download: 1 },
+        "user/qc-plates-2026-08" | "user/annotations" | "org/dataset-c" => {
+            RowDownloads::EntirePackage { to_download: 0 }
+        }
+        _ => RowDownloads::IndividualFiles,
+    }
+}
+
+fn row(entry: Fixture, provisional: bool, with_downloads: bool) -> AnyView {
     let (_, namespace, state, tone, elapsed) = entry;
+    let marker = with_downloads.then(|| downloads(namespace));
     view! {
         <PackageRow
             namespace=namespace
@@ -332,6 +424,7 @@ fn row(
             state=state
             tone=tone
             provisional=provisional
+            downloads=marker
         />
     }
     .into_any()
@@ -347,6 +440,10 @@ pub fn PackagesRegion(
     /// Every row still waiting on its check, dimmed.
     #[prop(optional)]
     provisional: bool,
+    /// Draw the download markers. Off in the whole-page scenes, which show the
+    /// page as it ships.
+    #[prop(optional)]
+    downloads: bool,
 ) -> impl IntoView {
     let view_mode = RwSignal::new("Packages".to_string());
     let query = RwSignal::new(String::new());
@@ -393,14 +490,14 @@ pub fn PackagesRegion(
                     let rows = fixtures();
                     let axis = group.get();
                     if axis == "None" {
-                        return list(rows, provisional);
+                        return list(rows, provisional, downloads);
                     }
                     let bucket_axis = axis == "Bucket";
                     // One path for both axes, differing only in the key. Grouping by
                     // prefix used to fall through to the flat list, which read as
                     // "sorted by prefix" — the same rows in the same order with no
                     // headers at all.
-                    let key = move |entry: &(&'static str, &'static str, &str, StateTone, f64)| {
+                    let key = move |entry: &Fixture| {
                         if bucket_axis { entry.0.to_string() } else { prefix(entry.1) }
                     };
                     // First-appearance order, not sorted: the fixture order is the
@@ -423,7 +520,7 @@ pub fn PackagesRegion(
                                 .collect();
                             view! {
                                 {header(group_key, group_rows.len(), bucket_axis)}
-                                {list(group_rows, provisional)}
+                                {list(group_rows, provisional, downloads)}
                             }
                                 .into_any()
                         })
@@ -437,15 +534,12 @@ pub fn PackagesRegion(
 
 /// One group's rows as the page lists them: a `ul` with the page's rows class,
 /// which rules between its items.
-fn list(
-    rows: Vec<(&'static str, &'static str, &'static str, StateTone, f64)>,
-    provisional: bool,
-) -> AnyView {
+fn list(rows: Vec<Fixture>, provisional: bool, with_downloads: bool) -> AnyView {
     view! {
         <ul class=rows_class() role="list">
             {rows
                 .into_iter()
-                .map(|entry| view! { <li>{row(entry, provisional)}</li> })
+                .map(|entry| view! { <li>{row(entry, provisional, with_downloads)}</li> })
                 .collect_view()}
         </ul>
     }
@@ -465,6 +559,17 @@ pub fn PackagesScene() -> impl IntoView {
                   Bucket and Prefix and watch `user/shared-archive` move."
         >
             <PackagesRegion view_name="packages-view" />
+        </Scene>
+        <Scene
+            title="Scene · packages, with download markers"
+            note="The same rows with what is on disk beside each state. Most packages \
+                  are kept to picked files and read `partial`: that is the stored default, so \
+                  every package that never chose a scope shows it, and the marker is how \
+                  people learn the whole-package scope exists. A few whole packages have files \
+                  outstanding (`user/package-a` beside its local changes); the rest are \
+                  complete and show nothing extra."
+        >
+            <PackagesRegion view_name="packages-downloads-view" downloads=true />
         </Scene>
         <Scene
             title="Scene · a fresh install"

@@ -65,6 +65,14 @@
  * a pattern and the three that differ break it, which is what scanning a list
  * actually uses. */
 
+/* The download marker, plain muted words rather than a second chip: what is on
+ * disk is a quieter fact than the state beside it. */
+.downloads {
+  flex: none;
+  white-space: nowrap;
+  color: var(--q-fgColor-muted);
+}
+
 /* The skeleton variant, sharing `.root` for its geometry and switching off the two things
  * that would lie about it: a pointer cursor and a hover tint on something inert. */
 .skeleton {
