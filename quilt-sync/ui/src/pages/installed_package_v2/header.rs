@@ -627,10 +627,23 @@ impl Default for CopiedMark {
     }
 }
 
+/// The package's catalog page, once there is one: a catalog URL can be built
+/// and the remote holds a revision. A bucket chosen but never published has
+/// no page yet.
+///
+/// `pub` for the gallery's scene, which decides its location group by it.
+#[must_use]
+pub fn catalog_page(data: &commands::PackageHeaderData) -> Option<String> {
+    data.uri
+        .as_ref()
+        .filter(|_| data.remote_locked)
+        .and_then(util::catalog_url)
+}
+
 /// Where the package is: its folder, then its catalog page and its Quilt URI.
 ///
-/// The remote side is dropped, not disabled, when no catalog URL can be built:
-/// with no catalog there is no reason to state and nothing the reader could do.
+/// The remote side is dropped, not disabled, without a [`catalog_page`]: there
+/// is no reason to state and nothing the reader could do.
 fn location(data: &commands::PackageHeaderData, w: Wiring, copied: CopiedMark) -> impl IntoView {
     let Wiring { busy, outcome, .. } = w;
     let namespace = data.namespace.to_string();
@@ -653,10 +666,7 @@ fn location(data: &commands::PackageHeaderData, w: Wiring, copied: CopiedMark) -
         )
         .with_disabled(busy.into())
     }];
-    let remote = data
-        .uri
-        .as_ref()
-        .and_then(|uri| Some((util::catalog_url(uri)?, uri)));
+    let remote = catalog_page(data).zip(data.uri.as_ref());
     if let Some((url, uri)) = remote {
         let ns = namespace.clone();
         buttons.push(
@@ -2065,17 +2075,28 @@ mod tests {
                     .parse()
                     .expect("a uri with a catalog"),
             ),
+            remote_locked: true,
             ..data(state)
         }
     }
 
-    /// A package with no catalog has no catalog page, so the remote side is
-    /// dropped rather than disabled: there is no reason to state and nothing
+    /// A package with no catalog, or not yet published, has no catalog page,
+    /// so the remote side is dropped rather than disabled: there is no reason to state and nothing
     /// the reader could do about it.
     #[wasm_bindgen_test]
     fn the_remote_side_is_there_only_with_a_catalog() {
         let plain = mount_header(data(kit::PackageState::Latest));
         assert_eq!(location_names(&plain), ["Open folder"]);
+
+        let unpublished = mount_header(commands::PackageHeaderData {
+            remote_locked: false,
+            ..with_catalog(kit::PackageState::Unpublished)
+        });
+        assert_eq!(
+            location_names(&unpublished),
+            ["Open folder"],
+            "a bucket never published has no catalog page yet"
+        );
 
         let remoted = mount_header(with_catalog(kit::PackageState::Latest));
         assert_eq!(
@@ -2095,7 +2116,7 @@ mod tests {
             labels,
             [
                 "Create new revision",
-                "Change bucket",
+                "Show remote",
                 "Undo last revision",
                 "Remove"
             ]

@@ -11,8 +11,8 @@
 //!
 //! **The row is `kit::PageHeader`, the one the page draws.** Its menu is not
 //! drawn either: it is the page's own, from `pages::menu_items` over a fixture
-//! payload, with the handlers dropped. The location group's remote side
-//! follows the payload's catalog URL, as the page's does.
+//! payload, with the handlers dropped. The location group's remote side is
+//! decided by the page's `catalog_page`.
 //!
 //! What is still this scene's own is the choice of primary: the page's header takes a payload where this takes a bare
 //! state, and with it an `action_open` the whole-page scene's resolve cell
@@ -68,7 +68,7 @@ use crate::kit::SplitButton;
 use crate::kit::SplitOption;
 use crate::kit::StateLabel;
 use crate::kit::render;
-use crate::pages::{MenuItem, menu_items};
+use crate::pages::{MenuItem, catalog_page, menu_items};
 
 const NAMESPACE: &str = "user/plate-07";
 
@@ -192,17 +192,18 @@ fn scene_menu() -> Vec<MenuItem> {
     menu_items(&scene_payload(), false)
 }
 
-/// Whether the location group has its remote side, decided as the page
-/// decides it: by whether a catalog URL can be built. Only `NoRemote` comes
-/// without a remote; a bucket chosen but never published has one already.
+/// Whether the location group has its remote side, decided by the page's own
+/// [`catalog_page`] over this state's remote: none without a bucket, and one
+/// with no revision yet when never published.
 fn has_catalog_page(state: &PackageState) -> bool {
-    let uri = match state {
-        PackageState::NoRemote => None,
-        _ => scene_payload().uri,
+    let payload = commands::PackageHeaderData {
+        uri: (!matches!(state, PackageState::NoRemote))
+            .then(|| scene_payload().uri)
+            .flatten(),
+        remote_locked: !matches!(state, PackageState::Unpublished),
+        ..scene_payload()
     };
-    uri.as_ref()
-        .and_then(quilt_sync_ui::util::catalog_url)
-        .is_some()
+    catalog_page(&payload).is_some()
 }
 
 /// The header at one state.
@@ -359,7 +360,10 @@ fn narrow_states() -> Vec<(&'static str, PackageState)> {
             "608px — a newer revision exists upstream",
             PackageState::Behind,
         ),
-        ("608px — no bucket chosen yet", PackageState::NoRemote),
+        (
+            "608px — has a bucket, never published",
+            PackageState::Unpublished,
+        ),
     ]
 }
 
@@ -380,10 +384,9 @@ pub fn PackageHeaderScene() -> impl IntoView {
                   this package needs, so it is the state's own action and nothing else, \
                   while `Create new revision` sits in the overflow menu in all sixteen. \
                   `Open folder` is a group with the catalog page and a Copy Quilt URI \
-                  icon beside it, dropped while no catalog URL can be built, which here \
-                  is only with no bucket. The menu is the page's own, drawn from one \
-                  fixture payload with the handlers dropped; its remote is why `Undo \
-                  last revision` is greyed — a \
+                  icon beside it, dropped until the package is published. The menu is \
+                  the page's own, drawn from one fixture payload with the handlers \
+                  dropped; its remote is why `Undo last revision` is greyed — a \
                   remoted package cannot be undone. Measured: the widest row is 796px — \
                   `Signed out of demo.quiltdata.com` — against the 992 the page has at \
                   1024. Below 800 the group is icons only, and at 608, the 640 window's \
