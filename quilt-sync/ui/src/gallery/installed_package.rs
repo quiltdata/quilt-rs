@@ -98,8 +98,9 @@
 //! # At 640, the window's narrowest
 //!
 //! Measured in Chrome at 640x560: stacked, as at 760. Nothing scrolls sideways,
-//! a long namespace ellipsises on its own line above the state label and the
-//! header's buttons, and the file rows cut their names, not the size column.
+//! the header stays one line with its location group as icons, so a long
+//! namespace ellipsises beside them, and the file rows cut their names, not the
+//! size column.
 //!
 //! | | context pane | list box | page scrolls |
 //! |---|---:|---:|---:|

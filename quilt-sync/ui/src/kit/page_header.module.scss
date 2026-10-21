@@ -14,6 +14,15 @@
   flex-wrap: wrap;
 }
 
+.nowrap {
+  flex-wrap: nowrap;
+}
+
+// Only the name gives way; a shrunk label would run under the actions.
+.nowrap > :not(.name) {
+  flex: none;
+}
+
 // Truncates rather than wrapping: a long namespace must not push the controls
 // onto a second line and change the header's height with the package.
 .name {

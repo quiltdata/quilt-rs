@@ -51,6 +51,7 @@ mod gallery {
     pub mod anchored_overlay;
     pub mod back_link;
     pub mod button;
+    pub mod button_group;
     pub mod card;
     pub mod checkbox;
     pub mod choice_group;
@@ -217,6 +218,7 @@ const ENTRIES: &[Entry] = &[
     ),
     entry!(Core, "BackLink", back_link::BackLinkStories),
     entry!(Core, "Button", button::ButtonStories),
+    entry!(Core, "ButtonGroup", button_group::ButtonGroupStories),
     entry!(Core, "Card", card::CardStories),
     entry!(Core, "Checkbox", checkbox::CheckboxStories),
     entry!(Core, "ChoiceGroup", choice_group::ChoiceGroupStories),

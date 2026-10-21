@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.46.0] - 2026-10-21
+
+### Changed
+
+- **Breaking:** `Error::Yaml` wraps the error of `serde-saphyr` 2.0 instead of 1.x (<https://github.com/quiltdata/quilt-rs/pull/1166>)
+
 ## [v0.45.0] - 2026-10-20
 
 ### Added

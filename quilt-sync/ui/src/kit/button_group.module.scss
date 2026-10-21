@@ -1,0 +1,88 @@
+/*
+ * ButtonGroup. Segments joined into one control: inner corners square and
+ * neighbours share one border. The segment look restates `Button`'s default,
+ * as `SplitButton`'s caret does, because these are not `Button`s.
+ */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.segment {
+  display: inline-flex;
+  position: relative;
+}
+
+.segment + .segment {
+  margin-left: -1px;
+}
+
+.button {
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-tight);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  min-width: var(--q-control-height);
+  min-height: var(--q-control-height);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: 0;
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.segment:first-child .button {
+  border-top-left-radius: var(--q-radius);
+  border-bottom-left-radius: var(--q-radius);
+}
+
+.segment:last-child .button {
+  border-top-right-radius: var(--q-radius);
+  border-bottom-right-radius: var(--q-radius);
+}
+
+.button svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.button:hover {
+  position: relative;
+  z-index: 1;
+  background: var(--q-overlay-hover);
+  border-color: var(--q-borderColor-emphasis);
+}
+
+.button:active {
+  background: var(--q-overlay-active);
+  transform: translate(1px, 1px);
+}
+
+/* Above its neighbours, or the shared edge clips half the ring. */
+.button:focus-visible {
+  position: relative;
+  z-index: 2;
+}
+
+/* An icon-only segment is square. */
+.button:not(:has(.label)) {
+  padding: 0;
+}
+
+@container (max-width: 800px) {
+  .label {
+    display: none;
+  }
+
+  .button {
+    padding: 0;
+  }
+}
