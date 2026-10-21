@@ -22,6 +22,7 @@ pub fn location(remote: bool, copied: RwSignal<bool>) -> AnyView {
         Callback::new(|()| ()),
     )];
     if remote {
+        let pending: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
         buttons.push(GroupButton::labelled(
             icons::link_external,
             "Open in catalog",
@@ -33,12 +34,18 @@ pub fn location(remote: bool, copied: RwSignal<bool>) -> AnyView {
                 "Copy Quilt URI",
                 Callback::new(move |()| {
                     copied.set(true);
-                    set_timeout(
+                    // A repeat click starts the time again.
+                    if let Some(Some(earlier)) = pending.try_update_value(Option::take) {
+                        earlier.clear();
+                    }
+                    let later = set_timeout_with_handle(
                         move || {
                             copied.try_set(false);
                         },
                         COPIED_FOR,
-                    );
+                    )
+                    .ok();
+                    pending.try_set_value(later);
                 }),
             )
             .with_done("Copied", copied.into()),

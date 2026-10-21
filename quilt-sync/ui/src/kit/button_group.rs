@@ -131,12 +131,12 @@ fn segment(button: GroupButton) -> impl IntoView {
     }
 
     // The label is `display: none` in the narrow arrangement, which leaves it
-    // no width.
+    // no box.
     let label_hidden = move || {
         !labelled
             || words
                 .get_untracked()
-                .is_none_or(|el| el.client_width() == 0)
+                .is_none_or(|el| el.offset_width() == 0)
     };
 
     view! {
@@ -160,7 +160,14 @@ fn segment(button: GroupButton) -> impl IntoView {
                 type="button"
                 class=style::button
                 aria-label=label
-                on:click=move |_| on_click.run(())
+                on:click=move |_| {
+                    on_click.run(());
+                    // A repeat click while still done has no rise to open on,
+                    // and its pointerdown just closed the words.
+                    if is_done.is_some_and(|signal| signal.get_untracked()) {
+                        handle.show();
+                    }
+                }
             >
                 {icon()}
                 {labelled.then(|| view! { <span class=style::label node_ref=words>{shown}</span> })}
