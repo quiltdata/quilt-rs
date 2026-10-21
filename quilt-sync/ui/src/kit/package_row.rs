@@ -141,8 +141,8 @@ pub fn PackageRow(
 pub enum RowDownloads {
     /// The whole package, with `to_download` files not downloaded yet.
     EntirePackage { to_download: usize },
-    /// Only the files someone picked, however many of them are on disk.
-    IndividualFiles,
+    /// Only the files someone picked: `downloaded` of the package's `total`.
+    IndividualFiles { downloaded: usize, total: usize },
 }
 
 impl RowDownloads {
@@ -160,12 +160,16 @@ impl RowDownloads {
                 format!("{to_download} to download"),
                 format!("{to_download} files are not downloaded yet"),
             )),
-            Self::IndividualFiles => Some((
-                "partial".to_string(),
+            Self::IndividualFiles { downloaded, total } => Some((
+                format!("{downloaded} of {total} {}", files(total)),
                 "Only picked files are downloaded".to_string(),
             )),
         }
     }
+}
+
+fn files(count: usize) -> &'static str {
+    if count == 1 { "file" } else { "files" }
 }
 
 #[cfg(test)]
@@ -206,11 +210,11 @@ mod marker_tests {
     }
 
     #[test]
-    fn picked_files_read_as_partial() {
-        assert_eq!(
-            words(RowDownloads::IndividualFiles).as_deref(),
-            Some("partial")
-        );
+    fn picked_files_count_against_the_package() {
+        let picked = |downloaded, total| words(RowDownloads::IndividualFiles { downloaded, total });
+        assert_eq!(picked(12, 340).as_deref(), Some("12 of 340 files"));
+        assert_eq!(picked(0, 1).as_deref(), Some("0 of 1 file"));
+        assert_eq!(picked(1, 1).as_deref(), Some("1 of 1 file"));
     }
 }
 
@@ -297,8 +301,12 @@ mod tests {
             "a complete whole package stays quiet"
         );
         assert_eq!(
-            downloads_text(Some(RowDownloads::IndividualFiles)).as_deref(),
-            Some("partial")
+            downloads_text(Some(RowDownloads::IndividualFiles {
+                downloaded: 12,
+                total: 340
+            }))
+            .as_deref(),
+            Some("12 of 340 files")
         );
     }
 

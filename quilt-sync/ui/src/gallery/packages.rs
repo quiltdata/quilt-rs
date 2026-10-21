@@ -114,14 +114,20 @@ fn DownloadsStory() -> impl IntoView {
             StateTone::Neutral,
         ),
         (
-            "picked files, all of them downloaded",
-            RowDownloads::IndividualFiles,
+            "picked files",
+            RowDownloads::IndividualFiles {
+                downloaded: 12,
+                total: 340,
+            },
             "Latest",
             StateTone::Success,
         ),
         (
             "picked files, with a newer remote revision",
-            RowDownloads::IndividualFiles,
+            RowDownloads::IndividualFiles {
+                downloaded: 1,
+                total: 58,
+            },
             "Not the latest",
             StateTone::Attention,
         ),
@@ -132,8 +138,8 @@ fn DownloadsStory() -> impl IntoView {
             title="PackageRow — downloads"
             note="What is on disk, beside the state label and separate from it. A whole \
                   package with every file downloaded shows nothing extra; one with files \
-                  outstanding shows how many; a package kept to picked files shows \
-                  `partial`, however many of them are downloaded. Hover a marker for its \
+                  outstanding shows how many; a package kept to picked files shows how \
+                  many of the package's files are on disk. Hover a marker for its \
                   sentence. The state labels are unchanged."
         >
             {cells
@@ -400,8 +406,9 @@ fn prefix(namespace: &'static str) -> String {
 }
 
 /// Each scene package's download scope. Most are kept to picked files: that is
-/// the stored default, so every package that never chose reads `partial`.
+/// the stored default, so every package that never chose shows `N of M files`.
 fn downloads(namespace: &str) -> RowDownloads {
+    let picked = |downloaded, total| RowDownloads::IndividualFiles { downloaded, total };
     match namespace {
         "user/package-a" => RowDownloads::EntirePackage { to_download: 3 },
         "user/reference-genomes" => RowDownloads::EntirePackage { to_download: 12 },
@@ -409,7 +416,18 @@ fn downloads(namespace: &str) -> RowDownloads {
         "user/qc-plates-2026-08" | "user/annotations" | "org/dataset-c" => {
             RowDownloads::EntirePackage { to_download: 0 }
         }
-        _ => RowDownloads::IndividualFiles,
+        "user/package-b" => picked(4, 4),
+        "user/scratch" => picked(17, 17),
+        "team/rnaseq-batch-2026-07-31-reprocessed-v2" => picked(96, 2_304),
+        "team/imaging-cohort-b" => picked(12, 340),
+        "org/dataset-d" => picked(1, 1),
+        "user/shared-archive" => picked(0, 85),
+        "user/assay-controls" => picked(31, 120),
+        "user/instrument-logs" => picked(2, 1_870),
+        "user/pilot-2026-06" => picked(64, 64),
+        "user/manifests" => picked(9, 210),
+        "user/thumbnails" => picked(150, 4_096),
+        _ => picked(5, 48),
     }
 }
 
@@ -563,9 +581,11 @@ pub fn PackagesScene() -> impl IntoView {
         <Scene
             title="Scene · packages, with download markers"
             note="The same rows with what is on disk beside each state. Most packages \
-                  are kept to picked files and read `partial`: that is the stored default, so \
-                  every package that never chose a scope shows it, and the marker is how \
-                  people learn the whole-package scope exists. A few whole packages have files \
+                  are kept to picked files and read `N of M files`: that is the stored \
+                  default, so every package that never chose a scope shows it, and the \
+                  marker is how people learn the whole-package scope exists. Some of them \
+                  have every file on disk and still read as a count, which is how a \
+                  picked-files package differs from a complete whole one. A few whole packages have files \
                   outstanding (`user/package-a` beside its local changes); the rest are \
                   complete and show nothing extra."
         >
