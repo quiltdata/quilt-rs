@@ -23,7 +23,7 @@
 
 ### Fixed
 
-- **New design preview**: *Sign in* on a package page or its commit page returns you to that page after you log in, not to the main page
+- **New design preview**: *Sign in* on a package page or its commit page returns you to that page after you log in, not to the main page (<https://github.com/quiltdata/quilt-rs/pull/1164>)
 - On macOS, **Log in with browser** returns to QuiltSync. Safari used to say the address is invalid (<https://github.com/quiltdata/quilt-rs/pull/1161>)
 
 ## [v0.23.0] - 2026-10-20
