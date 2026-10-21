@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.37.1] - 2026-10-21
+
+### quilt-rs
+
+- Updated [from v0.45.0 to v0.46.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.45.0...quilt-rs/v0.46.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.37.0] - 2026-10-20
 
 ### Added

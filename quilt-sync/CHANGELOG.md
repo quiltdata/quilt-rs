@@ -19,13 +19,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.23.1-dev]
+## [v0.23.1] - 2026-10-21
 
 ### Fixed
 
-- **New design preview**: *Sign in* on a package page or its commit page returns you to that page after you log in, not to the main page (<https://github.com/quiltdata/quilt-rs/pull/1164>)
 - On macOS, **Log in with browser** returns to QuiltSync. Safari used to say the address is invalid (<https://github.com/quiltdata/quilt-rs/pull/1161>)
-- A failed check for a new QuiltSync version is written to the log. It used to leave no trace (<https://github.com/quiltdata/quilt-rs/pull/1163>)
+- **New design preview**: *Sign in* on a package or commit page returns you to that page after you log in (<https://github.com/quiltdata/quilt-rs/pull/1164>)
+- A failed check for a new version is written to the log (<https://github.com/quiltdata/quilt-rs/pull/1163>)
+
+### quilt-rs
+
+- Updated [from v0.45.0 to v0.46.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.45.0...quilt-rs/v0.46.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.23.0] - 2026-10-20
 
