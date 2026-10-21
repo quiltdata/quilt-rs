@@ -239,6 +239,9 @@ mod tests {
 
     const RELAY: &str = "/remote-package?uri=quilt%2Bs3%3A%2F%2Fbucket%23package%3Dteam%2Fplate";
 
+    /// The entry the relay is pushed onto.
+    const UNDER_RELAY: &str = "/before-the-link";
+
     thread_local! {
         /// What the stubbed run answers.
         static ANSWER: std::cell::RefCell<Result<String, String>> =
@@ -259,12 +262,35 @@ mod tests {
         web_sys::window().unwrap().history().unwrap()
     }
 
+    /// Back, once it has landed. The browser runs it later, so a test that
+    /// only sleeps after it can end first, and the Back then moves the next
+    /// test's page.
+    async fn go_back() {
+        let window = web_sys::window().unwrap();
+        let mut landed = None;
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            window
+                .add_event_listener_with_callback("popstate", &resolve)
+                .unwrap();
+            landed = Some(resolve);
+        });
+        history().back().unwrap();
+        wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+        window
+            .remove_event_listener_with_callback("popstate", &landed.unwrap())
+            .unwrap();
+    }
+
     /// The relay at its own address, under a router with somewhere to go, run
     /// over `answer`. Hands back the history length before the relay drew.
     async fn way_out(answer: Result<String, String>) -> u32 {
         unmount_earlier();
         RUNS.with(|r| r.set(0));
         ANSWER.with(|a| *a.borrow_mut() = answer);
+        // Our own entry under the relay, not whatever an earlier test left.
+        history()
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(UNDER_RELAY))
+            .unwrap();
         history()
             .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(RELAY))
             .unwrap();
@@ -300,11 +326,12 @@ mod tests {
             "the entry was replaced"
         );
         assert_eq!(RUNS.with(std::cell::Cell::get), 1);
-        history().back().unwrap();
+        go_back().await;
+        // Time for the router to answer the landing, had it run the link.
         sleep_ms(50).await;
-        assert_ne!(
+        assert_eq!(
             location().pathname().unwrap(),
-            "/remote-package",
+            UNDER_RELAY,
             "Back skips the relay"
         );
         assert_eq!(
