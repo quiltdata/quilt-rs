@@ -719,7 +719,12 @@ fn copy_uri(
 ) {
     let stamp = copied.bump();
     leptos::task::spawn_local(async move {
-        match commands::copy_to_clipboard(address.display(), Some(address)).await {
+        let answer = commands::copy_to_clipboard(address.display(), Some(address)).await;
+        // A later copy speaks for both surfaces.
+        if !copied.is_current(stamp) {
+            return;
+        }
+        match answer {
             Ok(_) => {
                 // A retry that worked takes back only the copy's own failure.
                 let own = |o: &Option<Outcome>| {
