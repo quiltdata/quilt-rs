@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.23.1-dev]
+
+### Fixed
+
+- On macOS, **Log in with browser** returns to QuiltSync. Safari used to say the address is invalid (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+
 ## [v0.23.0] - 2026-10-20
 
 ### Added
