@@ -834,6 +834,10 @@ pub struct MainPagePackageRefresh {
     /// What this copy holds of its current revision. `None` when the status
     /// check did not run or failed: the state already names why.
     pub downloads: Option<MainPageDownloads>,
+    /// Files changed here since the last commit, as the status check counted
+    /// them; `None` when it did not run or failed. Apart from `state`, which
+    /// shows `Behind` or a pause instead of the count.
+    pub changed_files: Option<usize>,
 }
 
 /// How much of its current revision a copy holds, counted from the manifest
@@ -899,6 +903,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             state: PackageStateDto::Unknown,
             role_switch_host: None,
             downloads: None,
+            changed_files: None,
         });
     }
 
@@ -911,6 +916,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             state: PackageState::resolve(lineage.into(), has_local_commit, false, None).into(),
             role_switch_host: None,
             downloads: None,
+            changed_files: None,
         });
     }
 
@@ -938,6 +944,7 @@ pub(super) async fn refresh_main_page_package_from_model(
             // The refresh did not deny, so any pre-filter mark is cleared.
             role_switch_host: None,
             downloads: Some(counts.into()),
+            changed_files: Some(status.changes.len()),
         }),
         Err(err) if err.is_access_denied() => {
             // Ruling R3: denial is precedence rank 1, so it REPLACES the state
@@ -949,6 +956,7 @@ pub(super) async fn refresh_main_page_package_from_model(
                 state: mark.state(),
                 role_switch_host: mark.role_switch_host,
                 downloads: None,
+                changed_files: None,
             })
         }
         Err(err) => {
@@ -962,6 +970,7 @@ pub(super) async fn refresh_main_page_package_from_model(
                     state: pause_or(paused, || state),
                     role_switch_host: None,
                     downloads: None,
+                    changed_files: None,
                 });
             }
             // A failure to reach the remote is not evidence about the package —
@@ -2573,6 +2582,16 @@ mod tests {
         );
     }
 
+    /// `Behind` outranks the count in the state, so the count travels on its
+    /// own: the recent files feed reads it.
+    #[tokio::test]
+    async fn the_count_travels_when_the_state_hides_it() {
+        let m = mock_one_package(Ok(status_with(UpstreamState::Behind, 2)), None);
+        let refreshed = refresh(&m, &RoleCache::default()).await;
+        assert_eq!(refreshed.state, PackageStateDto::Behind);
+        assert_eq!(refreshed.changed_files, Some(2));
+    }
+
     #[tokio::test]
     async fn a_clean_tree_that_is_up_to_date_is_latest() {
         let m = mock_one_package(Ok(status_with(UpstreamState::UpToDate, 0)), None);
@@ -2676,10 +2695,11 @@ mod tests {
                 total: 340,
                 outstanding: 328,
             }),
+            changed_files: Some(0),
         };
         assert_eq!(
             serde_json::to_string(&refreshed).unwrap(),
-            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328}}"#,
+            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328},"changedFiles":0}"#,
         );
     }
 

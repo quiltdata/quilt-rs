@@ -56,7 +56,7 @@ use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
 use file_pane::{Reach, RowMenu};
 use header::PageHeader;
-pub use header::{MenuCommand, MenuItem, menu_items};
+pub use header::{MenuCommand, MenuItem, menu_items, remote_target};
 pub(crate) use header::{RemoveDialog, Uninstall, ask_to_remove, remote_item, remove_item};
 use incoming::{HoverCard, IncomingSummary};
 use resolve::{ResolveCommands, ResolvePane};
@@ -651,6 +651,7 @@ fn package_body(
 
     let ns = header.namespace.clone();
     let uri = header.uri.clone();
+    let has_local_commit = header.has_local_commit;
     let namespace = ns.to_string();
     let (page_header, row_marks) = incoming_header(
         header,
@@ -663,10 +664,7 @@ fn package_body(
     let open_catalog = catalog_opener(namespace.clone(), w.outcome);
     let open_file = file_opener(namespace.clone(), uri.clone(), w.outcome);
     let menu = RowMenu {
-        reach: Reach {
-            remote: uri.is_some(),
-            catalog: uri.as_ref().is_some_and(|u| u.catalog.is_some()),
-        },
+        reach: Reach::of(uri.as_ref(), has_local_commit),
         busy: w.busy.into(),
         on_command: row_runner(namespace.clone(), uri.clone(), w, files),
     };
@@ -896,11 +894,15 @@ pub(crate) fn run_reading(
 
 /// What the band says after a copy landed. The clipboard shows nothing, so the
 /// band says what was copied, which is its success case: no other surface
-/// says it.
+/// says it. A URI's report names the file, not the address, so no hash shows.
 fn copy_outcome(namespace: String, command: &RowCommand) -> Outcome {
     let lead = match command {
         RowCommand::CopyPath(path) => format!("Copied the path of {path}"),
-        command => format!("Copied the address of {}", command.path()),
+        command => {
+            let path = command.path();
+            let name = path.rsplit('/').next().unwrap_or(path);
+            format!("Copied URI of {name}")
+        }
     };
     Outcome {
         namespace,
@@ -1210,6 +1212,9 @@ fn PackageScreen(
     let page = PageHandle::new();
     let w = Wiring::over(page);
     w.follow(ns.into());
+    // For the header's *Copied*. Not on `Wiring`, which every part of the page
+    // takes by value.
+    provide_context(header::CopiedMark::new());
     let reload = page.reload;
     // One read for the whole page. Re-runs when the namespace changes, and
     // whenever `reload` fires — the watcher reporting news about this package,
@@ -1615,18 +1620,18 @@ mod tests {
         assert!(open.is_none());
     }
 
-    /// The clipboard shows nothing, so a copy says what it copied, in the
-    /// recent-files list's words for an address.
+    /// The clipboard shows nothing, so a copy says what it copied: a URI by its
+    /// file's name, never the address with its hash.
     #[test]
     fn a_copy_says_what_it_copied() {
-        let uri = RowCommand::CopyUri("raw/a.csv".to_string());
+        let uri = RowCommand::CopyUri("raw/one.csv".to_string());
         let path = RowCommand::CopyPath("raw/a.csv".to_string());
         assert_eq!(
             copy_outcome("team/a".to_string(), &uri),
             said(
                 "team/a",
                 BannerVariant::Success,
-                "Copied the address of raw/a.csv",
+                "Copied URI of one.csv",
                 None
             )
         );

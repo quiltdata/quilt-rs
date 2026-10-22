@@ -970,6 +970,9 @@ pub struct MainPagePackageRefreshData {
     pub role_switch_host: Option<String>,
     /// `None` when the status check did not run or failed.
     pub downloads: Option<MainPageDownloadsData>,
+    /// Files changed here since the last commit; `None` when the status check
+    /// did not run or failed. Apart from `state`, which can hide it.
+    pub changed_files: Option<usize>,
 }
 
 /// What a copy holds of its current revision. Mirrors `MainPageDownloads` on
@@ -1213,8 +1216,8 @@ pub struct MainPageFileData {
     /// `pages::main_page::recent_files::RecentFilesRegion`.
     pub changed_at: f64,
     /// The revision the package holds, when its remote has it and the package
-    /// has no unpublished revision; the catalog link names it. `None`
-    /// otherwise. Read from the lineage alone.
+    /// has no unpublished revision; the catalog link and the copied URI name
+    /// it. `None` otherwise. Read from the lineage alone.
     pub published_hash: Option<String>,
 }
 

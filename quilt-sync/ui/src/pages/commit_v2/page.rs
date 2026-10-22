@@ -512,7 +512,7 @@ impl HeaderMenu {
             MenuCommand::Remote => self.bucket.set(true),
             MenuCommand::Remove => ask_to_remove(self.remove, self.prune),
             // Not on this page's menu.
-            MenuCommand::NewRevision | MenuCommand::OpenInCatalog(_) | MenuCommand::Undo => {}
+            MenuCommand::NewRevision | MenuCommand::Undo => {}
         })
     }
 

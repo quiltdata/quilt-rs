@@ -42,6 +42,7 @@ pub struct GroupButton {
     pub on_click: Callback<()>,
     /// What the tooltip says while `done` is true, and the signal itself.
     pub done: Option<(String, Signal<bool>)>,
+    pub disabled: Signal<bool>,
 }
 
 impl GroupButton {
@@ -54,6 +55,7 @@ impl GroupButton {
             labelled: false,
             on_click,
             done: None,
+            disabled: Signal::stored(false),
         }
     }
 
@@ -77,6 +79,12 @@ impl GroupButton {
             done: Some((words.into(), done)),
             ..self
         }
+    }
+
+    /// Refuses clicks while `disabled` is true.
+    #[must_use]
+    pub fn with_disabled(self, disabled: Signal<bool>) -> Self {
+        Self { disabled, ..self }
     }
 }
 
@@ -102,6 +110,7 @@ fn segment(button: GroupButton) -> impl IntoView {
         labelled,
         on_click,
         done,
+        disabled,
     } = button;
     let handle = TooltipHandle::new();
     let wrapper: NodeRef<leptos::html::Span> = NodeRef::new();
@@ -160,6 +169,7 @@ fn segment(button: GroupButton) -> impl IntoView {
                 type="button"
                 class=style::button
                 aria-label=label
+                disabled=move || disabled.get()
                 on:click=move |_| {
                     on_click.run(());
                     // A repeat click while still done has no rise to open on,
@@ -271,5 +281,33 @@ mod tests {
         copied.set(false);
         leptos::task::tick().await;
         assert_eq!(tooltip(), "Copy Quilt URI");
+    }
+
+    /// A disabled segment follows its signal and leaves its neighbours live.
+    #[wasm_bindgen_test]
+    async fn a_segment_disables_on_its_own_signal() {
+        let busy = RwSignal::new(false);
+        let el = mount(move || {
+            view! {
+                <ButtonGroup
+                    aria_label="Package location"
+                    buttons=vec![
+                        GroupButton::labelled(icons::folder, "Open folder", Callback::new(|()| ()))
+                            .with_disabled(busy.into()),
+                        GroupButton::icon(icons::copy, "Copy Quilt URI", Callback::new(|()| ())),
+                    ]
+                />
+            }
+        });
+        let disabled = || {
+            buttons(&el)
+                .iter()
+                .map(|b| b.has_attribute("disabled"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(disabled(), [false, false]);
+        busy.set(true);
+        leptos::task::tick().await;
+        assert_eq!(disabled(), [true, false]);
     }
 }
