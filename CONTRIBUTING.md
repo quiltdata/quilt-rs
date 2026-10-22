@@ -83,9 +83,9 @@ just test no-aws -E 'test(name)'    # one test, against the workspace build
 `-p` reads as the cheaper choice and is not, once you switch back. Cargo
 resolves a shared dependency's features from what a command builds, so
 `-p quilt-rs` and `--workspace` build tokio and serde, and everything that
-depends on them, differently, and `target/` keeps both copies. `--all-targets`,
-which `just test` adds, matters the same way, because test targets bring in
-dev-dependencies.
+depends on them, differently, and `target/` keeps both copies. `cargo build`,
+`check` and `run` do the same: they build no test targets, so they leave out
+the dev-dependencies' features.
 
 ### Tests that need AWS
 

@@ -29,6 +29,5 @@ if cond && std::hint::black_box(false) {
 
 **Iterate with the selection `just test` uses**, `--workspace --all-targets`;
 CONTRIBUTING.md says why `-p` costs another copy. To run one test, filter the
-run, not the build: `just test no-aws -E 'test(name)'`, or for a `live_*`
-test, which the `no-aws` profile filters out,
-`cargo nextest run --workspace --all-targets -E 'test(name)'`.
+run, not the build: `just test no-aws -E 'test(name)'`, adding
+`--ignore-default-filter` for a `live_*` test, which the profile filters out.
