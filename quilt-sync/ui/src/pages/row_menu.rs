@@ -130,11 +130,16 @@ pub(crate) const COPY_FAILED: &str = "Could not copy.";
 /// and the copies. None needs a page's lock. `uri` is the package's remote, if
 /// it has one; the `.quiltignore` items are each page's own and come back
 /// [`Ran::Done`].
+///
+/// A copy asks `fresh` once its text is ready, and writes only while it says
+/// yes: a copy clicked later must not lose the clipboard to a slower earlier
+/// one.
 pub(crate) async fn carry_out(
     command: &RowCommand,
     namespace: &str,
     uri: Option<&quilt_uri::S3PackageUri>,
     local: LocalPath,
+    fresh: impl Fn() -> bool,
 ) -> Ran {
     let failed = |lead| move |detail| Ran::Failed { lead, detail };
     match command {
@@ -163,6 +168,7 @@ pub(crate) async fn carry_out(
         RowCommand::CopyUri(_) | RowCommand::CopyPath(_) => {
             let copied = match clipped(command, namespace, uri, local).await {
                 Ok(None) => return Ran::Done,
+                Ok(Some(_)) if !fresh() => return Ran::Done,
                 Ok(Some((text, event))) => commands::copy_to_clipboard(text.clone(), event)
                     .await
                     .map(|_| text),
@@ -301,17 +307,31 @@ mod tests {
         let no_catalog = crate::util::package_uri("team-bucket", &ns.try_into().unwrap(), None);
         let catalog = RowCommand::OpenInCatalog("a.csv".to_string());
         assert_eq!(
-            carry_out(&catalog, ns, Some(&no_catalog), at_home).await,
+            carry_out(&catalog, ns, Some(&no_catalog), at_home, || true).await,
             Ran::Done,
             "no catalog host, no link to open",
         );
         assert_eq!(
-            carry_out(&RowCommand::CopyUri("a.csv".to_string()), ns, None, at_home).await,
+            carry_out(
+                &RowCommand::CopyUri("a.csv".to_string()),
+                ns,
+                None,
+                at_home,
+                || true
+            )
+            .await,
             Ran::Done,
             "no remote, no address to copy",
         );
         assert_eq!(
-            carry_out(&RowCommand::Ignore("a.csv".to_string()), ns, None, at_home).await,
+            carry_out(
+                &RowCommand::Ignore("a.csv".to_string()),
+                ns,
+                None,
+                at_home,
+                || true
+            )
+            .await,
             Ran::Done,
         );
         let refused = carry_out(
@@ -319,6 +339,7 @@ mod tests {
             ns,
             Some(&no_catalog),
             at_home,
+            || true,
         )
         .await;
         assert!(

@@ -29,7 +29,7 @@ use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 use crate::routes;
 
 use super::copy_mark::CopyMark;
-use super::row_menu::{COPY_FAILED, Ran, RowCommand, carry_out, local_path};
+use super::row_menu::{COPY_FAILED, LocalPath, Ran, RowCommand, carry_out, local_path};
 use super::status_watch::StatusWatch;
 #[cfg(test)]
 use super::v2_page::outcome_band;
@@ -886,12 +886,25 @@ pub(crate) fn run_reading(
     outcome: RwSignal<Option<Outcome>>,
     copies: Option<CopyMark<String>>,
 ) {
+    run_reading_on(command, namespace, uri, outcome, copies, local_path);
+}
+
+/// [`run_reading`], with where a file is on disk as a seam for tests.
+fn run_reading_on(
+    command: RowCommand,
+    namespace: String,
+    uri: Option<quilt_uri::S3PackageUri>,
+    outcome: RwSignal<Option<Outcome>>,
+    copies: Option<CopyMark<String>>,
+    local: LocalPath,
+) {
     let copying = matches!(command, RowCommand::CopyUri(_) | RowCommand::CopyPath(_));
     let stamped = copies.filter(|_| copying).map(|c| (c, c.bump()));
+    let fresh = move || stamped.is_none_or(|(c, stamp)| c.is_current(stamp));
     leptos::task::spawn_local(async move {
-        let ran = carry_out(&command, &namespace, uri.as_ref(), local_path).await;
+        let ran = carry_out(&command, &namespace, uri.as_ref(), local, fresh).await;
         // A later copy speaks for this one.
-        if stamped.is_some_and(|(c, stamp)| !c.is_current(stamp)) {
+        if !fresh() {
             return;
         }
         let said = match ran {
@@ -1698,6 +1711,77 @@ mod tests {
         assert_eq!(said.lead, COPY_FAILED);
         assert_eq!(copies.copied.get_untracked(), None);
         assert_eq!(copies.said.get_untracked(), "");
+    }
+
+    thread_local! {
+        /// Lets [`held`]'s lookup answer, when the test says so.
+        static RELEASE: std::cell::RefCell<Option<js_sys::Function>> =
+            std::cell::RefCell::default();
+    }
+
+    /// Where a file is on disk, answered only once the test releases it.
+    fn held(
+        namespace: String,
+        path: String,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            RELEASE.with(|r| *r.borrow_mut() = Some(resolve));
+        });
+        Box::pin(async move {
+            let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+            Ok(format!("/disk/{namespace}/{path}"))
+        })
+    }
+
+    /// Copy path on one row waits for its path; Copy URI on another lands
+    /// meanwhile. The slower copy, when its path arrives, neither writes nor
+    /// takes the mark from the row that holds the clipboard.
+    #[wasm_bindgen_test]
+    async fn a_slower_copy_leaves_the_newer_one_marked() {
+        // Mounting starts the executor the copy is spawned on.
+        crate::test_support::mount(|| ());
+        // A host that counts every command it is asked to run, so a write
+        // the gate missed would show.
+        let host = js_sys::Function::new_no_args(
+            "window.__asked = []; window.__TAURI__ = { core: { invoke: (cmd) => \
+             { window.__asked.push(cmd); return Promise.resolve(''); } } };",
+        );
+        host.call0(&wasm_bindgen::JsValue::NULL).unwrap();
+        let outcome = RwSignal::new(None);
+        let copies = CopyMark::new();
+        run_reading_on(
+            RowCommand::CopyPath("a.csv".to_string()),
+            "team/a".to_string(),
+            None,
+            outcome,
+            Some(copies),
+            held,
+        );
+        leptos::task::tick().await;
+
+        let newer = copies.bump();
+        copies.settle(
+            newer,
+            Some("b.csv".to_string()),
+            "Copied URI of b.csv".to_string(),
+        );
+        RELEASE
+            .with(|r| r.borrow_mut().take())
+            .expect("the lookup is waiting")
+            .call0(&wasm_bindgen::JsValue::NULL)
+            .unwrap();
+        crate::test_support::sleep_ms(0).await;
+
+        let asked = js_sys::Function::new_no_args(
+            "const asked = window.__asked; delete window.__TAURI__; delete window.__asked; \
+             return asked.length;",
+        )
+        .call0(&wasm_bindgen::JsValue::NULL)
+        .unwrap();
+        assert_eq!(asked.as_f64(), Some(0.0), "the slower copy wrote nothing");
+        assert_eq!(copies.copied.get_untracked().as_deref(), Some("b.csv"));
+        assert_eq!(copies.said.get_untracked(), "Copied URI of b.csv");
+        assert_eq!(outcome.get_untracked(), None);
     }
 
     /// A page whose rows draw no mark says it on the band instead.

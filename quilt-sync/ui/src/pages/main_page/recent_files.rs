@@ -216,6 +216,7 @@ fn run_command(
             &namespace.to_string(),
             address.as_ref(),
             local_path,
+            || !copying || state.is_current(stamp),
         )
         .await;
         match ran {
