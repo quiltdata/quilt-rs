@@ -19,8 +19,8 @@ The usual reason to reach for them is a revert check: breaking a fix on purpose
 to see its test go red. That edit needs no flag. rustc does not warn on
 `cond && false` or `cond || true`; only clippy does
 (`overly_complex_bool_expr`), and the tests do not run clippy. If the broken
-code trips a lint, and rustc's warnings are errors here, silence it in the
-source (`#[allow(...)]` on the item), never with a flag. For this clippy lint,
+code trips a lint (rustc's warnings are errors here), silence it in the source
+with `#[allow(...)]` on the item, never with a flag. For this clippy lint,
 hide the constant from it:
 
 ```rust
