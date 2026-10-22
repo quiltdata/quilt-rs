@@ -2,8 +2,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use tauri::Manager;
-use tokio::sync;
 
 use crate::app;
 use crate::autopull::AutosyncSettings;
@@ -13,17 +11,14 @@ use crate::autopull::SharedAutosyncSettings;
 use crate::autopull::Watcher;
 use crate::changelog;
 use crate::experimental_settings::ExperimentalSettings;
-use crate::experimental_settings::SharedExperimentalSettings;
 use crate::fswatcher::FsWatcherSettings;
-use crate::fswatcher::SharedFsWatcherSettings;
 use crate::log_settings::LogEnv;
 use crate::log_settings::LogLevel;
 use crate::log_settings::LogSettings;
-use crate::model;
 use crate::model::QuiltModel;
 use crate::publish_settings::PublishSettings;
-use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
+use crate::services::Services;
 
 // ── Settings data for Leptos UI ──
 
@@ -330,23 +325,16 @@ pub struct SettingsData {
     pub ignore_rules: IgnoreRulesData,
 }
 
-#[tauri::command]
-pub async fn get_settings_data(
-    m: tauri::State<'_, model::Model>,
-    app: tauri::State<'_, app::App>,
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    publish: tauri::State<'_, SharedPublishSettings>,
-    autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
-    fswatcher_settings: tauri::State<'_, SharedFsWatcherSettings>,
-    experimental: tauri::State<'_, SharedExperimentalSettings>,
-) -> Result<SettingsData, String> {
-    let app: &app::App = &app;
+pub async fn get_settings_data(s: &Services) -> Result<SettingsData, String> {
+    let m = &*s.model;
+    let app = &s.app;
+    let publish = &s.publish_settings;
+    let autosync_settings = &s.autosync_settings;
+    let fswatcher_settings = &s.fswatcher_settings;
+    let experimental = &s.experimental_settings;
+    let app: &app::App = app;
 
-    let app_handle = app_handle.lock().await;
-    let data_dir = app_handle
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| e.to_string())?;
+    let data_dir = s.data_dir.clone();
 
     let home_dir = m
         .get_quilt()
@@ -391,11 +379,8 @@ pub async fn get_settings_data(
 /// Turn off exactly the built-in ignore rules in `off`, for every package.
 /// The file watcher sees the user-wide file change and checks every package
 /// again.
-#[tauri::command]
-pub async fn set_default_ignore_rules(
-    m: tauri::State<'_, model::Model>,
-    off: Vec<String>,
-) -> Result<(), String> {
+pub async fn set_default_ignore_rules(s: &Services, off: Vec<String>) -> Result<(), String> {
+    let m = &*s.model;
     // A clone, so the domain's mutex is not held while the file's lock waits.
     let domain = m.get_quilt().lock().await.clone();
     let off: Vec<&str> = off.iter().map(String::as_str).collect();
@@ -411,8 +396,8 @@ const USER_RULES_HEADER: &str =
 
 /// Open the user-wide rules file in the default application, creating it
 /// first if missing.
-#[tauri::command]
-pub async fn open_user_ignore_rules(m: tauri::State<'_, model::Model>) -> Result<(), String> {
+pub async fn open_user_ignore_rules(s: &Services) -> Result<(), String> {
+    let m = &*s.model;
     let file = m.get_quilt().lock().await.user_quiltignore();
     if !file.exists() {
         quilt::quiltignore::append_lines(&file, &[USER_RULES_HEADER.to_string()])
@@ -454,14 +439,13 @@ fn open_in_text_editor(file: &std::path::Path) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
 pub async fn update_publish_settings(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    publish: tauri::State<'_, SharedPublishSettings>,
+    s: &Services,
     message_template: String,
     default_workflow: String,
     default_metadata: String,
 ) -> Result<(), String> {
+    let publish = &s.publish_settings;
     // Validate metadata is parseable JSON (or empty/whitespace = no metadata).
     // `opt_from_string` below trims whitespace-only input down to `None`, so
     // we mirror that here: a whitespace-only blob is treated as "no metadata"
@@ -477,11 +461,7 @@ pub async fn update_publish_settings(
         default_metadata: opt_from_string(&default_metadata),
     };
 
-    let app_handle = app_handle.lock().await;
-    let data_dir = app_handle
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| e.to_string())?;
+    let data_dir = s.data_dir.clone();
 
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
     *publish.write().await = new;
@@ -493,20 +473,15 @@ fn opt_from_string(s: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-#[tauri::command]
 pub async fn update_autosync_settings(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     settings: AutosyncSettingsData,
 ) -> Result<(), String> {
+    let autosync_settings = &s.autosync_settings;
+    let watcher = &s.watcher;
     validate_autosync_settings_data(&settings)?;
 
-    let app_handle = app_handle.lock().await;
-    let data_dir = app_handle
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| e.to_string())?;
+    let data_dir = s.data_dir.clone();
 
     let clear = {
         let mut current = autosync_settings.write().await;
@@ -536,45 +511,36 @@ pub async fn update_autosync_settings(
 /// fetching a settings payload it has no other use for. The two rules that
 /// matter — merge, and clear on the off->on edge — are shared functions, not
 /// duplicated logic.
-#[tauri::command]
 pub async fn set_autosync_direction(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     pull: Option<bool>,
     push: Option<bool>,
 ) -> Result<(), String> {
+    let autosync_settings = &s.autosync_settings;
+    let watcher = &s.watcher;
     let patch = AutosyncPatch {
         pull_enabled: pull,
         push_enabled: push,
         ..AutosyncPatch::default()
     };
-    write_autosync_patch(&app_handle, &autosync_settings, &watcher, &patch).await
+    write_autosync_patch(s, autosync_settings, watcher, &patch).await
 }
 
 /// Change some of autosync's settings and leave the rest as stored: the v2
 /// settings page saves each control as it changes.
-#[tauri::command]
-pub async fn patch_autosync_settings(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    autosync_settings: tauri::State<'_, SharedAutosyncSettings>,
-    watcher: tauri::State<'_, Watcher>,
-    patch: AutosyncPatch,
-) -> Result<(), String> {
-    write_autosync_patch(&app_handle, &autosync_settings, &watcher, &patch).await
+pub async fn patch_autosync_settings(s: &Services, patch: AutosyncPatch) -> Result<(), String> {
+    let autosync_settings = &s.autosync_settings;
+    let watcher = &s.watcher;
+    write_autosync_patch(s, autosync_settings, watcher, &patch).await
 }
 
 async fn write_autosync_patch(
-    app_handle: &sync::Mutex<tauri::AppHandle>,
+    s: &Services,
     autosync_settings: &SharedAutosyncSettings,
     watcher: &Watcher,
     patch: &AutosyncPatch,
 ) -> Result<(), String> {
-    let app_handle = app_handle.lock().await;
-    let data_dir = app_handle
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| e.to_string())?;
+    let data_dir = s.data_dir.clone();
 
     let clear = {
         let mut current = autosync_settings.write().await;
@@ -602,33 +568,25 @@ async fn write_autosync_patch(
 /// listening for the `autosync-paused` event only catches pauses that
 /// fire while a page is mounted, while the watcher's state persists
 /// across page loads.
-#[tauri::command]
 pub async fn get_autosync_snapshot(
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
 ) -> Result<crate::autopull::reporter::WatcherSnapshot, String> {
+    let watcher = &s.watcher;
     Ok(watcher.snapshot().await)
 }
 
 /// The transfer autopull is running now, for a window that mounts
 /// mid-transfer; it then follows the `autopull-activity` event.
-#[tauri::command]
 pub async fn get_autopull_activity(
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
 ) -> Result<Option<crate::autopull::activity::AutopullActivity>, String> {
+    let watcher = &s.watcher;
     Ok(watcher.activity())
 }
 
-#[tauri::command]
-pub async fn update_fswatcher_settings(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    fswatcher_settings: tauri::State<'_, SharedFsWatcherSettings>,
-    enabled: bool,
-) -> Result<(), String> {
-    let app_handle = app_handle.lock().await;
-    let data_dir = app_handle
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| e.to_string())?;
+pub async fn update_fswatcher_settings(s: &Services, enabled: bool) -> Result<(), String> {
+    let fswatcher_settings = &s.fswatcher_settings;
+    let data_dir = s.data_dir.clone();
 
     // Preserve the on-disk `debounce_ms` (not surfaced in the UI yet).
     let new = {
@@ -646,16 +604,8 @@ pub async fn update_fswatcher_settings(
 
 /// Save the log level. Logging reads it once at startup, so it applies after a
 /// restart.
-#[tauri::command]
-pub async fn update_log_settings(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    level: LogLevel,
-) -> Result<(), String> {
-    let app_handle = app_handle.lock().await;
-    let data_dir = app_handle
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| e.to_string())?;
+pub async fn update_log_settings(s: &Services, level: LogLevel) -> Result<(), String> {
+    let data_dir = s.data_dir.clone();
     LogSettings { level }
         .save(&data_dir)
         .await
@@ -668,18 +618,13 @@ pub async fn update_log_settings(
 /// itself, and disabling it leaves every per-package choice written where it
 /// is, so re-enabling resumes them. Clearing those would destroy a decision the
 /// user made in order to undo a setting that only ever hid a control.
-#[tauri::command]
 pub async fn update_experimental_settings(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    experimental: tauri::State<'_, SharedExperimentalSettings>,
+    s: &Services,
     entire_package_sync: Option<bool>,
     main_page_v2: Option<bool>,
 ) -> Result<(), String> {
-    let app_handle = app_handle.lock().await;
-    let data_dir = app_handle
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| e.to_string())?;
+    let experimental = &s.experimental_settings;
+    let data_dir = s.data_dir.clone();
 
     // Read guard dropped before the write guard is taken.
     let mut new = { experimental.read().await.clone() };

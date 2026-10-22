@@ -5904,6 +5904,7 @@ name = "quilt-sync"
 version = "0.23.3-dev"
 dependencies = [
  "chrono",
+ "dirs",
  "dotenv",
  "dunce",
  "futures-util",

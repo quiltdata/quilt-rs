@@ -19,6 +19,7 @@ tauri-build = { version = "2.7.3", features = [] }
 chrono.workspace = true
 dotenv = "0.15"
 dunce = "1"
+dirs.workspace = true
 futures-util = "0.3.34"
 # Named only to hold quilt-rs's `.quiltignore` matcher in the watched-root map;
 # quilt-rs owns the loading and matching (`quilt::quiltignore`).

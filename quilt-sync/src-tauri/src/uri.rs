@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::Arc;
 
 use rust_i18n::t;
 use tauri::AppHandle;
@@ -8,13 +9,12 @@ use url::Url;
 
 use crate::Error;
 use crate::Result;
-use crate::commands;
 use crate::model;
-use crate::oauth::OAuthState;
 use crate::routes;
+use crate::services::Services;
+use crate::telemetry::MixpanelEvent;
 use crate::telemetry::event::{LoginEvent, LoginFlow};
 use crate::telemetry::prelude::*;
-use crate::telemetry::{MixpanelEvent, Telemetry};
 
 fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
     let uri: quilt_uri::S3PackageUri = uri_str.parse()?;
@@ -118,117 +118,104 @@ fn landing_after_login(redirect: Option<&str>) -> routes::Paths {
         .unwrap_or(routes::Paths::Home)
 }
 
+/// Finish an OAuth login from its callback parameters and name the page to
+/// show next: the stored or requested page on success, the login error page
+/// otherwise. No window involved.
+pub async fn complete_oauth_login(
+    s: &Services,
+    host: &quilt_uri::Host,
+    code: String,
+    state: &str,
+    redirect_path: routes::Paths,
+) -> routes::Paths {
+    let host_str = host.to_string();
+    let result = match s.oauth.take_params(host, code, state).await {
+        Ok((oauth_params, stored_location)) => {
+            info!("OAuth 2.1 callback for host: {}", host_str);
+            let login_result = model::login_oauth(&*s.model, host, oauth_params).await;
+            (login_result, stored_location)
+        }
+        Err(err) => {
+            error!(
+                "OAuth callback rejected for {}, aborting: {}",
+                host_str, err
+            );
+            (Err(err), None)
+        }
+    };
+
+    match result {
+        (Ok(()), stored_location) => {
+            s.telemetry.track(MixpanelEvent::UserLoggedIn(LoginEvent {
+                host: host.clone(),
+                flow: LoginFlow::OAuth,
+            }));
+            stored_location
+                .as_deref()
+                .and_then(|loc| {
+                    loc.parse::<routes::Paths>()
+                        .map_err(|err| {
+                            error!(
+                                "Login succeeded but stored redirect '{}' \
+                                 is not a valid route: {}; \
+                                 falling back to default page",
+                                loc, err
+                            );
+                        })
+                        .ok()
+                })
+                .unwrap_or(redirect_path)
+        }
+        (Err(err), _) => {
+            error!("Failed to login via deep link: {}", err);
+            routes::Paths::LoginError(
+                host.clone(),
+                t!("login_error.title").into(),
+                err.to_string(),
+            )
+        }
+    }
+}
+
+/// Show `path` in the main window, or, with no window, tell a browser front
+/// end to show it.
+pub fn navigate(app_handle: &AppHandle, path: routes::Paths) -> Result {
+    let Some(win) = app_handle.get_webview_window("main") else {
+        app_handle.state::<Arc<Services>>().navigate(path);
+        return Ok(());
+    };
+    debug!("Navigating to: {:?}", path);
+    let win_url = win.url()?;
+    win.navigate(routes::from_url(path, win_url))?;
+    Ok(())
+}
+
 /// Handle `quilt://auth/callback?code=...&host=...&redirect=...` deep link
-#[allow(
-    clippy::too_many_lines,
-    reason = "cohesive deep-link auth-callback handling"
-)]
 fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
     debug!("login_with_code: parsing auth params from {}", url);
     let auth_params = parse_auth_params(url)?;
     let handle = app_handle.clone();
-    let host = auth_params.host.clone();
-    let host_str = host.to_string();
-    let state = auth_params.state;
     let redirect_path = landing_after_login(auth_params.redirect.as_deref());
 
     tauri::async_runtime::spawn(async move {
-        let oauth_state = handle.state::<OAuthState>();
-        let m = handle.state::<model::Model>();
-
-        let result = match oauth_state
-            .take_params(&host, auth_params.code.clone(), &state)
-            .await
-        {
-            Ok((oauth_params, stored_location)) => {
-                info!("OAuth 2.1 callback for host: {}", host_str);
-                let login_result = model::login_oauth(&*m, &host, oauth_params).await;
-                (login_result, stored_location)
-            }
-            Err(err) => {
-                error!(
-                    "OAuth callback rejected for {}, aborting: {}",
-                    host_str, err
-                );
-                (Err(err), None)
-            }
-        };
-
-        match result {
-            (Ok(()), stored_location) => {
-                let final_path = stored_location
-                    .as_deref()
-                    .and_then(|loc| {
-                        loc.parse::<routes::Paths>()
-                            .map_err(|err| {
-                                error!(
-                                    "Login succeeded but stored redirect '{}' \
-                                     is not a valid route: {}; \
-                                     falling back to default page",
-                                    loc, err
-                                );
-                            })
-                            .ok()
-                    })
-                    .unwrap_or(redirect_path);
-                let telemetry = handle.state::<Telemetry>();
-                telemetry.track(MixpanelEvent::UserLoggedIn(LoginEvent {
-                    // Cloned, not moved: the redirect-failure path below
-                    // still needs the host to build its error route.
-                    host: host.clone(),
-                    flow: LoginFlow::OAuth,
-                }));
-                if let Err(err) = commands::navigate_after_login(&handle, final_path) {
-                    error!("Failed to redirect after login: {}", err);
-                    let error_path = routes::Paths::LoginError(
-                        host.clone(),
-                        t!("error.title").into(),
-                        err.to_string(),
-                    );
-                    if let Some(win) = handle.get_webview_window("main") {
-                        match win.url() {
-                            Ok(win_url) => {
-                                let error_url = routes::from_url(error_path, win_url);
-                                if let Err(nav_err) = win.navigate(error_url) {
-                                    error!(
-                                        "Failed to navigate to error page after login: {}",
-                                        nav_err
-                                    );
-                                }
-                            }
-                            Err(url_err) => {
-                                error!(
-                                    "Failed to get window URL when navigating to error page: {}",
-                                    url_err
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            (Err(err), _) => {
-                error!("Failed to login via deep link: {}", err);
-                let error_path = routes::Paths::LoginError(
-                    host,
-                    t!("login_error.title").into(),
-                    err.to_string(),
-                );
-                if let Some(win) = handle.get_webview_window("main") {
-                    match win.url() {
-                        Ok(win_url) => {
-                            let error_url = routes::from_url(error_path, win_url);
-                            if let Err(nav_err) = win.navigate(error_url) {
-                                error!("Failed to navigate to error page: {}", nav_err);
-                            }
-                        }
-                        Err(url_err) => {
-                            error!(
-                                "Failed to get window URL when navigating to error page: {}",
-                                url_err
-                            );
-                        }
-                    }
-                }
+        let services = Arc::clone(&*handle.state::<Arc<Services>>());
+        let path = complete_oauth_login(
+            &services,
+            &auth_params.host,
+            auth_params.code,
+            &auth_params.state,
+            redirect_path,
+        )
+        .await;
+        if let Err(err) = navigate(&handle, path) {
+            error!("Failed to navigate after login: {}", err);
+            let error_path = routes::Paths::LoginError(
+                auth_params.host,
+                t!("error.title").into(),
+                err.to_string(),
+            );
+            if let Err(nav_err) = navigate(&handle, error_path) {
+                error!("Failed to navigate to error page after login: {}", nav_err);
             }
         }
     });

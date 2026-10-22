@@ -4,49 +4,39 @@
 //! reporting what it did with it.
 
 use tauri::AppHandle;
-use tauri::State;
 
-use crate::quit::QuitGate;
+use crate::services::Services;
 
 /// The prompt is on screen. Until this lands the deferred quit is
 /// unanswerable, and the grace period in [`crate::tray`] lets it through.
 ///
 /// Quotes the generation the prompt was raised with, so an ack from a prompt
 /// the user has since dismissed cannot vouch for the one now outstanding.
-#[tauri::command]
 #[allow(
-    clippy::needless_pass_by_value,
-    reason = "Tauri's command macro dictates the signature: state and the app handle are \
-              injected by value. Sync rather than async because there is nothing to await, \
-              and an async command taking state would have to return a Result it could \
-              never populate."
+    clippy::unused_async,
+    reason = "every plain command is async, so the IPC wrappers and the dispatcher treat them alike"
 )]
-pub fn quit_prompt_shown(gate: State<'_, QuitGate>, generation: u64) {
-    gate.note_shown(generation);
+pub async fn quit_prompt_shown(s: &Services, generation: u64) -> Result<(), String> {
+    s.quit_gate.note_shown(generation);
+    Ok(())
 }
 
-/// *Quit anyway* — the user accepts interrupting the apply.
+/// *Quit anyway* — the user accepts interrupting the apply. Desktop only.
 #[tauri::command]
 #[allow(
     clippy::needless_pass_by_value,
-    reason = "Tauri's command macro dictates the signature: state and the app handle are \
-              injected by value. Sync rather than async because there is nothing to await, \
-              and an async command taking state would have to return a Result it could \
-              never populate."
+    reason = "Tauri's command macro dictates the signature: the app handle is injected by value"
 )]
 pub fn quit_confirm(app: AppHandle) {
     app.exit(0);
 }
 
 /// *Stay* — the quit is abandoned, and a later one asks afresh.
-#[tauri::command]
 #[allow(
-    clippy::needless_pass_by_value,
-    reason = "Tauri's command macro dictates the signature: state and the app handle are \
-              injected by value. Sync rather than async because there is nothing to await, \
-              and an async command taking state would have to return a Result it could \
-              never populate."
+    clippy::unused_async,
+    reason = "every plain command is async, so the IPC wrappers and the dispatcher treat them alike"
 )]
-pub fn quit_cancel(gate: State<'_, QuitGate>) {
-    gate.cancel();
+pub async fn quit_cancel(s: &Services) -> Result<(), String> {
+    s.quit_gate.cancel();
+    Ok(())
 }
