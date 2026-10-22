@@ -73,13 +73,11 @@ The gallery's verbs mean what they mean in Vite:
 The site lives under `/quilt-rs/`, so a story must not load an asset by an
 absolute path such as `/assets/...`.
 
-A bare cargo command at the root covers every member of the workspace, the
-same as `--workspace`. To work on one crate, narrow the tests you run rather
-than the packages you build:
+To work on one crate, narrow the tests you run rather than the packages you
+build:
 
 ```bash
 just test no-aws -E 'test(name)'    # one test, against the workspace build
-cargo test -p quilt-rs              # one package, built on its own
 ```
 
 `-p` reads as the cheaper choice and is not, once you switch back. Cargo

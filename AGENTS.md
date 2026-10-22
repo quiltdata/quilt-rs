@@ -27,11 +27,8 @@ hide the constant from it:
 if cond && std::hint::black_box(false) {
 ```
 
-**Iterate with the selection `just test` uses**, `--workspace --all-targets`.
-Cargo resolves a shared dependency's features from the packages, targets and
-features it builds, so any other selection, such as `-p` or a bare
-`cargo build` (which leaves out test targets), can build another copy of it and
-of everything that depends on it. To run one test, filter the run, not the
-build: `just test no-aws -E 'test(name)'`, or for a `live_*` test, which the
-`no-aws` profile filters out,
+**Iterate with the selection `just test` uses**, `--workspace --all-targets`;
+CONTRIBUTING.md says why `-p` costs another copy. To run one test, filter the
+run, not the build: `just test no-aws -E 'test(name)'`, or for a `live_*`
+test, which the `no-aws` profile filters out,
 `cargo nextest run --workspace --all-targets -E 'test(name)'`.

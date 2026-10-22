@@ -1,6 +1,4 @@
-# Every crate that tests on the host, with every target, so the build matches
-# what `lint` and CI resolve and does not leave a second copy of the shared
-# dependencies in `target/`.
+# Every crate that tests on the host, with every target.
 #
 # `quilt-sync-ui` is included. It has tests for two targets, and neither harness
 # runs the other's: its `#[test]` functions run here, and its
@@ -8,10 +6,7 @@
 # tests in its `Test (host target)` step.
 scope := "--workspace --all-targets"
 
-# Arguments go to nextest, so a filter narrows the run without changing the
-# build: `just test no-aws -E 'test(name)'`.
-#
-# Run the tests needing no AWS credentials (what a fork's CI runs)
+# Run the tests needing no AWS credentials (what a fork's CI runs); arguments go to nextest
 [positional-arguments]
 no-aws *args:
     cargo nextest run --profile no-aws {{ scope }} "$@"
