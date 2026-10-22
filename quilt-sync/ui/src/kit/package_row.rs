@@ -196,17 +196,17 @@ fn tooltip_lines(
         .map(|host| TooltipLine::new(format!("Host: {host}")).icon(icons::cloud));
     let scope = downloads.map(|downloads| {
         TooltipLine::new(match downloads {
-            RowDownloads::EntirePackage { .. } => "Every file in the package is kept.",
-            RowDownloads::IndividualFiles { .. } => "Only the files you picked are kept.",
+            RowDownloads::EntirePackage { .. } => "Every file in the package is kept",
+            RowDownloads::IndividualFiles { .. } => "Only the files you picked are kept",
         })
         .icon(icons::download)
     });
     let size = size.map(|size| {
         TooltipLine::new(match size {
-            RowSize::NotMeasured => "Size not measured yet.".to_string(),
+            RowSize::NotMeasured => "Size not measured yet".to_string(),
             RowSize::Measuring => "Measuring size\u{2026}".to_string(),
             RowSize::Measured { bytes } => {
-                format!("Takes {} on this computer.", format_size(bytes))
+                format!("Takes {} on this computer", format_size(bytes))
             }
         })
         .icon(icons::folder)
@@ -469,8 +469,8 @@ mod tests {
             [
                 "a-long-owner-name/a-much-longer-package-name-than-the-column",
                 "Host: nightly.quilttest.com",
-                "Only the files you picked are kept.",
-                "Takes 1.2\u{a0}GB on this computer.",
+                "Only the files you picked are kept",
+                "Takes 1.2\u{a0}GB on this computer",
             ]
         );
     }
@@ -499,7 +499,7 @@ mod tests {
             tooltip_text(&el),
             [
                 "a-long-owner-name/a-much-longer-package-name-than-the-column",
-                "Only the files you picked are kept.",
+                "Only the files you picked are kept",
                 "Measuring size\u{2026}",
             ]
         );
@@ -541,7 +541,7 @@ mod tooltip_tests {
                 Some(RowDownloads::EntirePackage { to_download: 0 }),
                 None
             ),
-            ["Every file in the package is kept."]
+            ["Every file in the package is kept"]
         );
         assert_eq!(
             tooltip_lines(
@@ -552,20 +552,20 @@ mod tooltip_tests {
                 }),
                 None
             ),
-            ["Only the files you picked are kept."]
+            ["Only the files you picked are kept"]
         );
     }
 
     #[test]
     fn the_size_line_has_a_word_for_each_state() {
         let size = |size| tooltip_lines(None, None, Some(size));
-        assert_eq!(size(RowSize::NotMeasured), ["Size not measured yet."]);
+        assert_eq!(size(RowSize::NotMeasured), ["Size not measured yet"]);
         assert_eq!(size(RowSize::Measuring), ["Measuring size\u{2026}"]);
         assert_eq!(
             size(RowSize::Measured {
                 bytes: 1_200_000_000
             }),
-            ["Takes 1.2\u{a0}GB on this computer."]
+            ["Takes 1.2\u{a0}GB on this computer"]
         );
     }
 

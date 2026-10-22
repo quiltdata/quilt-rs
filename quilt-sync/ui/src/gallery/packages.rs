@@ -245,10 +245,10 @@ fn TooltipStory() -> impl IntoView {
             title="PackageRow — tooltip"
             note="Rest the pointer anywhere on a row for half a second, or Tab to it: the \
                   name in full, then in grey, each after its glyph, the host, what the \
-                  package keeps and what it takes on this computer. A line whose fact is missing is left out. It hangs \
-                  below the row from its left edge, and above when there is no room below. \
-                  Switch the theme to check it in dark: the grey is a solid colour, not the \
-                  title dimmed."
+                  package keeps and what it takes on this computer, with no full stops. A \
+                  line whose fact is missing is left out. It hangs below the row from its \
+                  left edge, and above when there is no room below. Switch the theme to \
+                  check it in dark: the grey is a solid colour, not the title dimmed."
         >
             {cells
                 .into_iter()

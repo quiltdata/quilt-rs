@@ -60,7 +60,7 @@ pub fn TooltipStories() -> impl IntoView {
                     text=hint("team/package-a")
                     lines=vec![
                         TooltipLine::new("Host: nightly.quilttest.com").icon(icons::cloud),
-                        TooltipLine::new("Only the files you picked are kept.").icon(icons::download),
+                        TooltipLine::new("Only the files you picked are kept").icon(icons::download),
                     ]
                     wide=true
                     trigger=button_trigger("Package")
