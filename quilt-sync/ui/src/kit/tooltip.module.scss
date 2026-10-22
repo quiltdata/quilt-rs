@@ -1,5 +1,5 @@
 /*
- * Tooltip. One sentence, floating.
+ * Tooltip. One sentence, or a title and a few lines, floating.
  *
  * `position: fixed` for the overlay's reason: the top layer is not in the
  * page's flow, and the coordinates written are the trigger's viewport rect.
@@ -33,12 +33,55 @@
   box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
 }
 
+/* A whole row's surface covers the rows below, so the pointer goes through it
+ * to them. */
+.surface.through {
+  pointer-events: none;
+}
+
+/* A row the tooltip describes as a whole, rather than a mark inside it. */
+.root.fill {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
+
+/* A title with lines under it. */
+.surface.titled {
+  padding: var(--q-space-2) var(--q-space-3);
+}
+
+/* Solid grey, not the title dimmed: an opacity on text over the surface lands
+ * on a different contrast in each theme. The glyph takes the same grey. */
+.line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--q-space-1);
+  color: var(--q-fgColor-muted);
+}
+
+/* The title's text node is no element, so the first line is the first span. */
+.line:first-of-type {
+  margin-top: var(--q-space-2);
+}
+
+.line svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.line > span {
+  min-width: 0;
+}
+
 .surface::backdrop {
   background: transparent;
 }
 
-/* A list's names: a path is wider than a sentence and is read in one piece,
- * so it gets more room before it wraps. */
+/* A list's names, and a title that is a name: a path is wider than a sentence
+ * and is read in one piece, so it gets more room before it wraps. */
 .surface.name {
   max-width: 480px;
 }

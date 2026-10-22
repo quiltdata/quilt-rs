@@ -15,6 +15,8 @@ use crate::kit::Align;
 use crate::kit::Button;
 use crate::kit::MenuAction;
 use crate::kit::Tooltip;
+use crate::kit::TooltipLine;
+use crate::kit::icons;
 
 /// A button that names its tooltip, which is the wiring every trigger owes:
 /// the tooltip cannot reach into what the closure draws.
@@ -31,7 +33,8 @@ fn hint(words: &'static str) -> Signal<String> {
 }
 
 const NOTE: &str = "What shows on hover or focus, in place of a `title`: plain text in the \
-                    platform's own popover, explaining a mark and never being one. Nothing \
+                    platform's own popover, explaining a mark and never being one: one \
+                    sentence, or a title and a few muted lines. Nothing \
                     here is open — rest the pointer on a trigger for half a second, or Tab to \
                     one; a click's focus does not open it. Move onto the words and they stay; \
                     move away and they go a moment later. Escape, a click, a scroll or a \
@@ -50,6 +53,17 @@ pub fn TooltipStories() -> impl IntoView {
                 <Tooltip
                     text=hint("Checks the platform for revisions published since this page loaded.")
                     trigger=button_trigger("Refresh")
+                />
+            </Cell>
+            <Cell label="a title and muted lines, each led by a glyph — a name, then what it does not show">
+                <Tooltip
+                    text=hint("team/package-a")
+                    lines=vec![
+                        TooltipLine::new("Host: nightly.quilttest.com").icon(icons::cloud),
+                        TooltipLine::new("Only the files you picked are kept").icon(icons::download),
+                    ]
+                    wide=true
+                    trigger=button_trigger("Package")
                 />
             </Cell>
             <Cell label="beside an open menu — open the dots, then hover the other button; the menu stays">

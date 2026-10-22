@@ -186,6 +186,7 @@ pub use toggle_row::ToggleRow;
 pub use toggle_row::ToggleRowSkeleton;
 pub use tooltip::Tooltip;
 pub use tooltip::TooltipHandle;
+pub use tooltip::TooltipLine;
 pub use two_columns::TwoColumns;
 pub use zero_line::ZeroLine;
 pub use zero_line::ZeroLineSkeleton;

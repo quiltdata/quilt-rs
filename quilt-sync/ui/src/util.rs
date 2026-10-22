@@ -3,6 +3,7 @@ use std::future::Future;
 use leptos::prelude::*;
 use quilt_uri::S3PackageUri;
 
+use crate::commands::PackageSize;
 use crate::components::layout::Notification;
 
 /// Format the catalog HTTPS URL for a package URI, if its `catalog`
@@ -253,6 +254,68 @@ pub fn thousands(n: usize) -> String {
         out.push(c);
     }
     out
+}
+
+/// What a package holds here: the current revision's files, those not here,
+/// those deleted here, and their bytes when they could be read.
+///
+/// Only the files the revision lists, at the size its manifest records: a new
+/// file is not counted, a modified one counts at its recorded size, and one
+/// deleted here counts as downloaded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Held {
+    pub total: usize,
+    pub outstanding: usize,
+    pub deleted_here: usize,
+    pub size: Option<PackageSize>,
+}
+
+/// The count, with the size joined to it, and the files deleted here named:
+/// Keeping's caption and a package row's tooltip, so the two say it alike.
+/// An empty revision says so: "All files are downloaded" is true of nothing.
+/// A size that cannot be read says nothing, not a dash: the count is still
+/// true.
+pub fn counted(held: Held) -> String {
+    let Held {
+        total,
+        outstanding,
+        deleted_here,
+        size,
+    } = held;
+    if total == 0 {
+        return "This revision has no files".to_string();
+    }
+    // The read guarantees `outstanding <= total`; a wrong count beats a panic.
+    let here = total.saturating_sub(outstanding);
+    let counted = match size {
+        Some(size) if outstanding == 0 => {
+            format!("All files are downloaded · {}", format_size(size.total))
+        }
+        Some(size) if here == 0 => {
+            format!("No files are downloaded · {}", format_size(size.total))
+        }
+        Some(size) => format!(
+            "{} of {} files · {} of {} downloaded",
+            thousands(here),
+            thousands(total),
+            format_size(size.downloaded),
+            format_size(size.total),
+        ),
+        None if outstanding == 0 => "All files are downloaded".to_string(),
+        None if here == 0 => "No files are downloaded".to_string(),
+        None => format!("{} of {} downloaded", thousands(here), thousands(total)),
+    };
+    with_deleted_here(counted, deleted_here)
+}
+
+/// `words · 3 deleted here`, or `words` alone with nothing deleted here. One
+/// suffix for [`counted`] and the file pane's, so the two say it alike.
+pub fn with_deleted_here(words: String, deleted_here: usize) -> String {
+    if deleted_here == 0 {
+        words
+    } else {
+        format!("{words} · {} deleted here", thousands(deleted_here))
+    }
 }
 
 #[cfg(test)]

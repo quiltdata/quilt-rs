@@ -174,6 +174,7 @@ pub fn NameTooltip(
             {surface(
                 handle,
                 text.into(),
+                Signal::default(),
                 Signal::derive_local(move || anchor.get()),
                 Align::Start,
                 format!("{} {}", style::surface, style::name),
@@ -198,6 +199,10 @@ mod tests {
     }
     use rows::style as row;
 
+    #[expect(
+        dead_code,
+        reason = "only the classes a name's surface uses are loaded"
+    )]
     mod tooltips {
         stylance::import_crate_style!(pub style, "src/kit/tooltip.module.scss");
     }

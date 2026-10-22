@@ -669,7 +669,8 @@ rather than rebuild it. Native select, native radios, native checkbox. This is
 why the system ships no listbox, no combobox, and no hand-built popover, and why
 roving focus and arrow-key movement were never hand-written. What floats is the
 platform's own `popover`: a menu or a panel that opens from its control, and a
-`Tooltip`, which holds plain text only.
+`Tooltip`, which holds a title and a few muted lines, nothing interactive, so
+it never grows into a menu.
 
 **The Tooltip Rule.** What shows on hover or focus is a `Tooltip`, not a
 `title`. A `title` never shows on keyboard focus or touch, waits a second, and
@@ -682,7 +683,11 @@ a glance is drawn on the row, and the tooltip says what it means.
 
 A list's cut-off names share one `NameTooltip`, which wraps the list and shows
 a name in full only when the ellipsis cut it. A row marks its name with
-`data-full-name` and mounts no tooltip of its own.
+`data-full-name` and mounts no tooltip of its own. A package row is the
+exception: its tooltip says more than the name — the host, what it keeps and
+its size — so each row holds one `Tooltip`, the whole row its trigger. The
+pointer passes through that tooltip to the rows it covers, so it never blocks
+the list; whoever needs the facts for longer has them on the package page.
 
 ## Do's and Don'ts
 

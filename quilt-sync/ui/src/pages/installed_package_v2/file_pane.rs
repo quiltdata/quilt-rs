@@ -80,9 +80,7 @@ use crate::kit::{
     Segment, SegmentedControl, Select, SelectAll, SkeletonBox, SkeletonText,
 };
 use crate::pages::row_menu::{RowCommand, menu_actions};
-use crate::util::{format_size, thousands};
-
-use super::keeping::with_deleted_here;
+use crate::util::{format_size, thousands, with_deleted_here};
 
 pub(crate) mod selection;
 

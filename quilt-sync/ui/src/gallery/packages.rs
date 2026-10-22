@@ -22,8 +22,10 @@ use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::StateTone;
+use quilt_sync_ui::commands::PackageSize;
 use quilt_sync_ui::pages::list_region_class;
 use quilt_sync_ui::pages::rows_class;
+use quilt_sync_ui::util::Held;
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;
@@ -38,7 +40,7 @@ type Fixture = (&'static str, &'static str, &'static str, StateTone, f64);
 
 #[component]
 pub fn PackageRowStories() -> impl IntoView {
-    view! { <StatesStory /><DownloadsStory /><EdgesStory /> }
+    view! { <StatesStory /><DownloadsStory /><TooltipStory /><EdgesStory /> }
 }
 
 /// The nine states again, but on a row — which is where they are actually read, and
@@ -146,8 +148,8 @@ fn DownloadsStory() -> impl IntoView {
                   package with every file downloaded shows nothing extra; one with files \
                   outstanding shows how many, filled in the accent because the reader can \
                   act on it; a package kept to picked files shows how many of the \
-                  package's files are on disk, as a grey outline. Hover a marker for its \
-                  sentence. The state labels are unchanged."
+                  package's files are on disk, as a grey outline. The state labels are \
+                  unchanged."
         >
             {cells
                 .into_iter()
@@ -176,6 +178,117 @@ fn DownloadsStory() -> impl IntoView {
                     downloads=RowDownloads::EntirePackage { to_download: 128 }
                 />
             </Cell>
+        </Story>
+    }
+}
+
+/// Label, namespace, host, scope, size.
+type TooltipCell = (
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    Option<RowDownloads>,
+    Option<Held>,
+);
+
+/// What the row does not draw, on hover or focus. Nothing here is open: each
+/// cell is a row to rest on or Tab to, as `Tooltip`'s own stories are.
+#[component]
+fn TooltipStory() -> impl IntoView {
+    const HOST: Option<&str> = Some("nightly.quilttest.com");
+    let held = |total, outstanding, bytes, downloaded| {
+        Some(Held {
+            total,
+            outstanding,
+            deleted_here: 0,
+            size: Some(PackageSize {
+                total: bytes,
+                downloaded,
+            }),
+        })
+    };
+    let picked = Some(RowDownloads::IndividualFiles {
+        downloaded: 12,
+        total: 340,
+    });
+    let picked_size = held(340, 328, 3_400_000_000, 1_900_000_000);
+    let entire = Some(RowDownloads::EntirePackage { to_download: 0 });
+    let cells: Vec<TooltipCell> = vec![
+        (
+            "picked files, some downloaded",
+            "team/package-a",
+            HOST,
+            picked,
+            picked_size,
+        ),
+        (
+            "entire package, all downloaded",
+            "team/package-b",
+            HOST,
+            entire,
+            held(58, 0, 86_300_000_000, 86_300_000_000),
+        ),
+        (
+            "entire package, nothing downloaded yet",
+            "team/package-c",
+            HOST,
+            Some(RowDownloads::EntirePackage { to_download: 58 }),
+            held(58, 58, 86_300_000_000, 0),
+        ),
+        (
+            "not checked yet — the scope and size lines wait for the check",
+            "team/package-d",
+            HOST,
+            None,
+            None,
+        ),
+        (
+            "no host — its line is left out",
+            "team/package-e",
+            None,
+            entire,
+            held(3, 0, 44_000, 44_000),
+        ),
+        (
+            "a very long name — whole in the title, wrapped at the wider measure",
+            "team/rnaseq-batch-2026-07-31-reprocessed-v2-with-a-very-long-suffix-that-no-column-holds",
+            HOST,
+            picked,
+            picked_size,
+        ),
+    ];
+
+    view! {
+        <Story
+            title="PackageRow — tooltip"
+            note="Rest the pointer anywhere on a row for half a second, or Tab to it: the \
+                  name in full, then in grey, each after its glyph, the host, what the \
+                  package keeps and how much of it is here, in the Keeping section's \
+                  words, with no full stops. A line whose fact is missing is left out. It \
+                  hangs below the row from its left edge, and above when there is no room \
+                  below; the pointer passes through it to the rows it covers. Switch the \
+                  theme to check it in dark: the grey is a solid colour, not the title \
+                  dimmed."
+        >
+            {cells
+                .into_iter()
+                .map(|(label, namespace, host, downloads, size)| {
+                    view! {
+                        <Cell full=true label=label>
+                            <PackageRow
+                                namespace=namespace
+                                href="#packagerow"
+                                changed_at=ago(3.0 * HOUR)
+                                state="Latest"
+                                tone=StateTone::Success
+                                downloads=downloads
+                                host=host.map(str::to_string)
+                                size=size
+                            />
+                        </Cell>
+                    }
+                })
+                .collect_view()}
         </Story>
     }
 }

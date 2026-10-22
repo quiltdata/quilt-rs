@@ -56,6 +56,10 @@ pub fn RelativeTime(
     /// still has no date/time dependency, and `js_sys::Date` covers both the
     /// arithmetic and the locale formatting.
     at: EpochMillis,
+    /// Leaves the exact value out of `title`, for a time inside an element that
+    /// has its own `Tooltip`: the browser's box would cover it.
+    #[prop(optional)]
+    untitled: bool,
 ) -> impl IntoView {
     let exact = js_sys::Date::new(&JsValue::from_f64(at));
     let title = exact
@@ -68,7 +72,7 @@ pub fn RelativeTime(
     view! {
         // `<time>` with `datetime`, so the machine-readable value travels with the
         // human one rather than only existing in a tooltip.
-        <time class=style::root datetime=machine title=title>
+        <time class=style::root datetime=machine title=(!untitled).then_some(title)>
             {text}
         </time>
     }
