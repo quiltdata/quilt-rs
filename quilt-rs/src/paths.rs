@@ -18,6 +18,9 @@ use quilt_uri::Namespace;
 pub const AUTH_CLIENT: &str = "client.json";
 pub const AUTH_CREDENTIALS: &str = "credentials.json";
 pub const AUTH_DIR: &str = ".auth";
+/// Beside the host directories rather than in them, so a logout that removes
+/// a host's directory never removes a lock someone holds.
+const AUTH_LOCKS_DIR: &str = ".locks";
 pub const AUTH_TOKENS: &str = "tokens.json";
 
 /// Name of the `.quilt` directory that holds Quilt's bookkeeping inside a
@@ -38,6 +41,7 @@ pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
         for entry in entries.flatten() {
             if entry.file_type().is_ok_and(|t| t.is_dir())
                 && let Some(name) = entry.file_name().to_str()
+                && name != AUTH_LOCKS_DIR
             {
                 hosts.push(name.to_string());
             }
@@ -90,10 +94,26 @@ impl DomainPaths {
     }
 
     #[must_use]
+    pub fn auth_dir(&self) -> PathBuf {
+        self.root_dir.join(AUTH_DIR)
+    }
+
+    #[must_use]
     pub fn auth_host(&self, host: &Host) -> PathBuf {
-        self.root_dir
-            .join(AUTH_DIR)
-            .join(PathBuf::from(host.to_string()))
+        self.auth_dir().join(PathBuf::from(host.to_string()))
+    }
+
+    #[must_use]
+    pub fn auth_locks_dir(&self) -> PathBuf {
+        self.auth_dir().join(AUTH_LOCKS_DIR)
+    }
+
+    /// The auth lock, held while the host's tokens are refreshed or its
+    /// directory removed; see `docs/artifacts.md`. Named by the host alone, so
+    /// any host name that fits a directory name fits it too.
+    #[must_use]
+    pub fn auth_lock(&self, host: &Host) -> PathBuf {
+        self.auth_locks_dir().join(host.to_string())
     }
 
     /// Path to the `.quilt` bookkeeping directory under the root.
@@ -367,6 +387,24 @@ mod tests {
             paths.auth_host(&host),
             PathBuf::from("foo/bar/.auth/quilt.test"),
         );
+        // A contract other clients lock by too: docs/artifacts.md.
+        assert_eq!(
+            paths.auth_lock(&host),
+            PathBuf::from("foo/bar/.auth/.locks/quilt.test"),
+        );
+    }
+
+    /// The directory of auth locks beside the hosts is not a host.
+    #[test]
+    fn the_lock_directory_is_not_an_authenticated_host() -> Res {
+        let data_dir = tempfile::tempdir()?;
+        let paths = DomainPaths::new(data_dir.path().to_path_buf());
+        let host = fixtures::host();
+        std::fs::create_dir_all(paths.auth_host(&host))?;
+        std::fs::create_dir_all(paths.auth_locks_dir())?;
+
+        assert_eq!(list_auth_hosts(data_dir.path()), vec![host.to_string()]);
+        Ok(())
     }
 
     #[test]

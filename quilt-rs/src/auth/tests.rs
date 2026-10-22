@@ -656,6 +656,111 @@ async fn test_auth_refresh_lock_is_per_host() -> Res {
     Ok(())
 }
 
+/// Another process sharing the store refreshes the same host. A refresh here
+/// waits for its lock, then uses the tokens it rotated rather than present the
+/// refresh token it retired.
+#[test(tokio::test)]
+async fn a_refresh_waits_for_another_process_and_uses_the_tokens_it_rotated() -> Res {
+    use crate::io::storage::lock::tests::OtherProcess;
+
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths.clone(), storage.clone());
+    let host = fixtures::host();
+
+    let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
+    auth_io
+        .write_tokens(&Tokens {
+            access_token: "expired-access-token".to_string(),
+            refresh_token: REFRESH_TOKEN.to_string(),
+            expires_at: chrono::Utc::now() - chrono::Duration::seconds(300),
+        })
+        .await?;
+    auth_io
+        .write_client(&OAuthClient {
+            client_id: CLIENT_ID.to_string(),
+            redirect_uri: REDIRECT_URI.to_string(),
+        })
+        .await?;
+
+    let other = OtherProcess::holding(&paths.auth_lock(&host)).await?;
+
+    let client = Arc::new(RetryMockClient::new(0, 0));
+    let refresh = tokio::spawn({
+        let (auth, client, host) = (auth.clone(), client.clone(), host.clone());
+        async move { auth.get_credentials_or_refresh(&*client, &host).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !refresh.is_finished(),
+        "the refresh must wait while another process holds the host's lock"
+    );
+
+    // What the other process writes before it lets go.
+    auth_io
+        .write_tokens(&Tokens {
+            access_token: "rotated-access-token".to_string(),
+            refresh_token: "rotated-refresh-token".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        })
+        .await?;
+    other.release()?;
+
+    tokio::time::timeout(std::time::Duration::from_secs(30), refresh)
+        .await
+        .expect("the refresh goes ahead once the other process lets go")
+        .unwrap()?;
+    assert_eq!(
+        client.token_calls.load(Ordering::SeqCst),
+        0,
+        "the rotated tokens are fresh, so nothing is refreshed again"
+    );
+    let tokens = auth_io.read_tokens().await?.expect("tokens");
+    assert_eq!(tokens.refresh_token, "rotated-refresh-token");
+    Ok(())
+}
+
+/// A host with no session is answered without writing to the store.
+#[test(tokio::test)]
+async fn a_host_with_no_session_leaves_the_store_untouched() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths.clone(), storage.clone());
+    let host = fixtures::host();
+
+    auth.expire_credentials(&host).await?;
+    let result = auth
+        .get_credentials_or_refresh(&OAuthTestHttpClient::default(), &host)
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(Error::Login(LoginError::NoSession(_)))
+    ));
+    assert!(!paths.auth_dir().exists(), "nothing was created");
+    Ok(())
+}
+
+/// The lock and the directories it lives in are their owner's alone.
+#[test(tokio::test)]
+#[cfg(unix)]
+async fn the_host_lock_is_owner_only() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let data_dir = tempfile::tempdir()?;
+    let paths = DomainPaths::new(data_dir.path().to_path_buf());
+    let host = fixtures::host();
+
+    let _held = lock_host(&LocalStorage::new(), &paths, &host).await?;
+
+    assert_eq!(mode(&paths.auth_dir()), 0o700, ".auth/");
+    assert_eq!(mode(&paths.auth_locks_dir()), 0o700, ".locks/");
+    assert_eq!(mode(&paths.auth_lock(&host)), 0o600, "the lock file");
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn test_refresh_lock_map_sweeps_dead_entries() -> Res {
     let storage = Arc::new(MockStorage::default());

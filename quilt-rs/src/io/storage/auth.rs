@@ -1,5 +1,6 @@
 use std::fmt;
 use std::io::ErrorKind;
+use std::path::Path;
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -15,6 +16,7 @@ use crate::io::storage::StorageExt;
 use crate::Res;
 use crate::paths::AUTH_CLIENT;
 use crate::paths::AUTH_CREDENTIALS;
+use crate::paths::AUTH_DIR;
 use crate::paths::AUTH_TOKENS;
 
 #[derive(Deserialize, Serialize)]
@@ -79,6 +81,19 @@ impl<S: Storage + Sync> AuthIo<S> {
         self.dir.join(AUTH_CREDENTIALS)
     }
 
+    /// Writes `contents` owner-only, after limiting `.auth/` and this host's
+    /// directory to their owner. A directory outside `.auth/` keeps its parent
+    /// as it is.
+    async fn write(&self, path: &Path, contents: Vec<u8>) -> Res {
+        if let Some(auth_dir) = self.dir.parent().filter(|dir| dir.ends_with(AUTH_DIR)) {
+            self.storage.create_private_dir(auth_dir).await?;
+        }
+        self.storage.create_private_dir(&self.dir).await?;
+        self.storage
+            .write_private_byte_stream(path, contents.into())
+            .await
+    }
+
     pub async fn read_tokens(&self) -> Res<Option<Tokens>> {
         let tokens_path = self.tokens_path();
         debug!("⏳ Reading auth tokens from {:?}", tokens_path);
@@ -100,9 +115,7 @@ impl<S: Storage + Sync> AuthIo<S> {
         debug!("⏳ Writing auth tokens to {:?}", tokens_path);
 
         let contents = serde_json::to_vec(tokens)?;
-        self.storage
-            .write_byte_stream(&tokens_path, contents.into())
-            .await?;
+        self.write(&tokens_path, contents).await?;
 
         debug!("✔️ Successfully wrote tokens: {:?}", tokens);
 
@@ -137,9 +150,7 @@ impl<S: Storage + Sync> AuthIo<S> {
         debug!("⏳ Writing credentials to {:?}", credentials_path);
 
         let contents = serde_json::to_vec(credentials)?;
-        self.storage
-            .write_byte_stream(&credentials_path, contents.into())
-            .await?;
+        self.write(&credentials_path, contents).await?;
 
         debug!("✔️ Successfully wrote credentials: {:?}", credentials);
 
@@ -188,9 +199,7 @@ impl<S: Storage + Sync> AuthIo<S> {
         debug!("⏳ Writing OAuth client to {:?}", path);
 
         let contents = serde_json::to_vec(client)?;
-        self.storage
-            .write_byte_stream(&path, contents.into())
-            .await?;
+        self.write(&path, contents).await?;
 
         debug!("✔️ Successfully wrote OAuth client");
 
@@ -320,6 +329,71 @@ mod tests {
         auth.delete_credentials().await?;
 
         assert!(auth.read_credentials().await?.is_none());
+        Ok(())
+    }
+
+    /// Every auth file is readable by its owner alone, and so are `.auth/` and
+    /// the host's directory, including ones an earlier version left open.
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn auth_files_and_their_directories_are_owner_only() -> Res {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode =
+            |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let data_dir = tempfile::tempdir()?;
+        let auth_dir = data_dir.path().join(".auth");
+        let host_dir = auth_dir.join("quilt.test");
+        std::fs::create_dir_all(&host_dir)?;
+        std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o755))?;
+        std::fs::set_permissions(&host_dir, std::fs::Permissions::from_mode(0o755))?;
+
+        let auth = AuthIo::new(LocalStorage::new(), host_dir.clone());
+        auth.write_tokens(&Tokens {
+            access_token: "access".to_string(),
+            refresh_token: "refresh".to_string(),
+            expires_at: Utc::now(),
+        })
+        .await?;
+        auth.write_credentials(&Credentials {
+            access_key: "key".to_string(),
+            secret_key: "secret".to_string(),
+            token: "token".to_string(),
+            expires_at: Utc::now(),
+        })
+        .await?;
+        auth.write_client(&OAuthClient {
+            client_id: "client".to_string(),
+            redirect_uri: "quilt://auth".to_string(),
+        })
+        .await?;
+
+        assert_eq!(mode(&auth_dir), 0o700);
+        assert_eq!(mode(&host_dir), 0o700);
+        for file in [AUTH_TOKENS, AUTH_CREDENTIALS, AUTH_CLIENT] {
+            assert_eq!(mode(&host_dir.join(file)), 0o600, "{file}");
+        }
+        Ok(())
+    }
+
+    /// Auth files kept outside `.auth/` leave the directory above theirs alone.
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn auth_files_outside_the_store_leave_its_parent_alone() -> Res {
+        use std::os::unix::fs::PermissionsExt;
+
+        let parent = tempfile::tempdir()?;
+        std::fs::set_permissions(parent.path(), std::fs::Permissions::from_mode(0o755))?;
+
+        AuthIo::new(LocalStorage::new(), parent.path().join("quilt.test"))
+            .write_client(&OAuthClient {
+                client_id: "client".to_string(),
+                redirect_uri: "quilt://auth".to_string(),
+            })
+            .await?;
+
+        let mode = std::fs::metadata(parent.path())?.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
         Ok(())
     }
 

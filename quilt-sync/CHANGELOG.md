@@ -32,6 +32,10 @@
 - **New design preview**: the package page's header has *Open in catalog* and a button that copies the package's Quilt URI next to *Open folder* (<https://github.com/quiltdata/quilt-rs/pull/1171>)
 - **New design preview**: *Copy URI* and *Open in catalog* on a file point at the revision you have (<https://github.com/quiltdata/quilt-rs/pull/1175>)
 
+### Fixed
+
+- Logging out waits for a token refresh already under way, here or in the CLI, so the refresh cannot sign you back in (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
 ### quilt-rs
 
 - Updated [from v0.46.0 to v0.47.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.46.0...quilt-rs/v0.47.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
