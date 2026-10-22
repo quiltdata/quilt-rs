@@ -13,6 +13,7 @@ use std::sync::Mutex as StdMutex;
 use std::sync::Weak;
 
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::OwnedMutexGuard;
 
 use crate::Error;
 use crate::Res;
@@ -20,6 +21,7 @@ use crate::error::AuthError;
 use crate::error::LoginError;
 use crate::io::remote::client::HttpClient;
 use crate::io::storage::LocalStorage;
+use crate::io::storage::LockGuard;
 use crate::io::storage::Storage;
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::auth::Credentials;
@@ -81,6 +83,22 @@ mod tests;
 /// on the next lookup. This matters for long-running server contexts
 /// that may authenticate against many distinct hosts.
 type RefreshLocks = Arc<StdMutex<HashMap<Host, Weak<AsyncMutex<()>>>>>;
+
+/// A host's auth lock, held in this process and, through [`lock_host`],
+/// against every other process sharing the store.
+struct HostLock {
+    _file: LockGuard,
+    _process: OwnedMutexGuard<()>,
+}
+
+/// Takes `host`'s auth lock, `.auth/.locks/<host>`, waiting while another
+/// holder in this process or any other has it. Every refresh of the host's
+/// tokens holds it, and so must anything that removes the host's directory.
+pub async fn lock_host(storage: &impl Storage, paths: &DomainPaths, host: &Host) -> Res<LockGuard> {
+    storage.create_private_dir(paths.auth_dir()).await?;
+    storage.create_private_dir(paths.auth_locks_dir()).await?;
+    storage.lock_exclusive(paths.auth_lock(host)).await
+}
 
 /// Endpoint label for the registry GraphQL retry logs. The three role calls
 /// and the revision listing share one registry endpoint, so they share one
@@ -156,6 +174,21 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let arc = Arc::new(AsyncMutex::new(()));
         locks.insert(host.clone(), Arc::downgrade(&arc));
         arc
+    }
+
+    /// Fails with `NoSession`, writing nothing, for a host with no directory.
+    /// Its callers still read the store under the lock, since a login may
+    /// land while they wait.
+    async fn lock(&self, host: &Host) -> Res<HostLock> {
+        let process = self.refresh_lock_for(host).lock_owned().await;
+        if !self.storage.exists(self.paths.auth_host(host)).await {
+            return Err(LoginError::NoSession(Some(host.to_owned())).into());
+        }
+        let file = lock_host(&*self.storage, &self.paths, host).await?;
+        Ok(HostLock {
+            _file: file,
+            _process: process,
+        })
     }
 
     pub async fn login<T: HttpClient>(
@@ -484,8 +517,11 @@ impl<S: Storage + Send + Sync> Auth<S> {
     /// already hold the lock use the private `expire_credentials_locked`
     /// instead — the lock is not reentrant.
     pub async fn expire_credentials(&self, host: &Host) -> Res {
-        let lock = self.refresh_lock_for(host);
-        let _guard = lock.lock().await;
+        let _guard = match self.lock(host).await {
+            // No session, so no credentials to expire.
+            Err(Error::Login(LoginError::NoSession(_))) => return Ok(()),
+            guard => guard?,
+        };
         self.expire_credentials_locked(host).await
     }
 
@@ -657,8 +693,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         http_client: &T,
         host: &Host,
     ) -> Res<RoleInfo> {
-        let lock = self.refresh_lock_for(host);
-        let _guard = lock.lock().await;
+        let _guard = self.lock(host).await?;
 
         let (registry, access_token) = self.role_call_context(http_client, host).await?;
         let me = match query_me(http_client, &registry, host, &access_token).await {
@@ -725,8 +760,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         role_name: &str,
     ) -> Res<RoleInfo> {
         info!("⏳ Switching role on {} to {}", host, role_name);
-        let lock = self.refresh_lock_for(host);
-        let _guard = lock.lock().await;
+        let _guard = self.lock(host).await?;
 
         let (registry, access_token) = self.role_call_context(http_client, host).await?;
         let me = match mutate_switch_role(http_client, &registry, role_name, &access_token).await {
@@ -763,8 +797,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         http_client: &T,
         host: &Host,
     ) -> Res<Vec<String>> {
-        let lock = self.refresh_lock_for(host);
-        let _guard = lock.lock().await;
+        let _guard = self.lock(host).await?;
 
         let (registry, access_token) = self.role_call_context(http_client, host).await?;
         match query_buckets(http_client, &registry, &access_token).await {
@@ -794,8 +827,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         bucket: &str,
         namespace: &Namespace,
     ) -> Res<Vec<String>> {
-        let lock = self.refresh_lock_for(host);
-        let _guard = lock.lock().await;
+        let _guard = self.lock(host).await?;
 
         let (registry, access_token) = self.role_call_context(http_client, host).await?;
         match query_package_revisions(http_client, &registry, bucket, namespace, &access_token)
@@ -851,12 +883,12 @@ impl<S: Storage + Send + Sync> Auth<S> {
             }
         }
 
-        // Serialize refreshes for this host so N concurrent callers
-        // fire one HTTP `/get_credentials` call instead of N. The
-        // loser of the race re-reads the credentials the winner
-        // wrote to disk and returns them without hitting the network.
-        let lock = self.refresh_lock_for(host);
-        let _guard = lock.lock().await;
+        // Serialize refreshes for this host, in this process and across
+        // processes, so N concurrent callers fire one HTTP
+        // `/get_credentials` call instead of N. The loser of the race
+        // re-reads the credentials and tokens the winner wrote to disk,
+        // so it never presents a refresh token the winner retired.
+        let _guard = self.lock(host).await?;
 
         match auth_io.read_credentials().await {
             Ok(Some(creds)) => {

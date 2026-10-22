@@ -1122,6 +1122,16 @@ mod tests {
         ) -> Res {
             self.inner.write_byte_stream(path, body).await
         }
+        async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.create_private_dir(path).await
+        }
+        async fn write_private_byte_stream(
+            &self,
+            path: impl AsRef<Path> + Send + Sync,
+            body: ByteStream,
+        ) -> Res {
+            self.inner.write_private_byte_stream(path, body).await
+        }
         async fn lock_exclusive(
             &self,
             path: impl AsRef<Path> + Send,

@@ -6,6 +6,8 @@ use chrono::DateTime;
 use chrono::Utc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+#[cfg(unix)]
+use tracing::warn;
 use uuid::Uuid;
 
 use crate::Error;
@@ -21,9 +23,23 @@ fn temp_path_in(dir: &Path) -> PathBuf {
     dir.join(format!(".tmp-{}", Uuid::new_v4()))
 }
 
-/// Write `body` to a file at `path` and sync to disk.
-async fn write_stream(path: &Path, mut body: ByteStream) -> std::io::Result<()> {
-    let mut file = fs::File::create(path).await?;
+#[cfg(unix)]
+const PRIVATE_DIR_MODE: u32 = 0o700;
+#[cfg(unix)]
+pub(super) const PRIVATE_FILE_MODE: u32 = 0o600;
+
+/// Write `body` to a new file at `path` and sync to disk. A `private` file is
+/// created owner-only, so it is never readable by others, not even empty.
+async fn write_stream(path: &Path, mut body: ByteStream, private: bool) -> std::io::Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    if private {
+        options.mode(PRIVATE_FILE_MODE);
+    }
+    #[cfg(not(unix))]
+    let _ = private;
+    let mut file = options.open(path).await?;
     while let Some(bytes) = body.try_next().await.map_err(std::io::Error::other)? {
         file.write_all(&bytes).await?;
     }
@@ -33,15 +49,70 @@ async fn write_stream(path: &Path, mut body: ByteStream) -> std::io::Result<()> 
 /// Write `body` to a temp file, then atomically rename to `path`.
 ///
 /// On failure the temp file is cleaned up.
-async fn atomic_write(path: &Path, body: ByteStream) -> std::io::Result<()> {
+async fn atomic_write(path: &Path, body: ByteStream, private: bool) -> std::io::Result<()> {
     let parent = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(parent).await?;
     let tmp = temp_path_in(parent);
     let cleanup = |_: &std::io::Error| {
         let _ = std::fs::remove_file(&tmp);
     };
-    write_stream(&tmp, body).await.inspect_err(cleanup)?;
+    write_stream(&tmp, body, private)
+        .await
+        .inspect_err(cleanup)?;
     fs::rename(&tmp, path).await.inspect_err(cleanup)
+}
+
+pub(super) async fn write(path: &Path, body: ByteStream, private: bool) -> Res {
+    atomic_write(path, body, private).await.map_err(|source| {
+        Error::Fs(FsError::Write {
+            path: path.to_path_buf(),
+            source,
+        })
+    })
+}
+
+/// Limits a directory made before it was private to its owner. Best effort: a
+/// file system that keeps no Unix modes refuses the change.
+#[cfg(unix)]
+async fn tighten_dir(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::Permissions::from_mode(PRIVATE_DIR_MODE);
+    if let Err(err) = fs::set_permissions(path, mode).await {
+        warn!(
+            "❌ Could not limit {} to its owner: {}",
+            path.display(),
+            err
+        );
+    }
+}
+
+pub(super) async fn create_private_dir(path: &Path) -> Res {
+    let created = async {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        #[cfg_attr(not(unix), allow(unused_mut))]
+        let mut builder = fs::DirBuilder::new();
+        #[cfg(unix)]
+        builder.mode(PRIVATE_DIR_MODE);
+        match builder.create(path).await {
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                if !fs::metadata(path).await.is_ok_and(|m| m.is_dir()) {
+                    return Err(err);
+                }
+                #[cfg(unix)]
+                tighten_dir(path).await;
+                Ok(())
+            }
+            created => created,
+        }
+    };
+    created.await.map_err(|source| {
+        Error::Fs(FsError::DirectoryCreate {
+            path: path.to_path_buf(),
+            source,
+        })
+    })
 }
 
 /// Implementation of the `Storage` trait for the local filesystem
@@ -141,13 +212,19 @@ impl Storage for LocalStorage {
         path: impl AsRef<Path> + Send + Sync,
         body: ByteStream,
     ) -> Res {
-        let path = path.as_ref();
-        atomic_write(path, body).await.map_err(|source| {
-            Error::Fs(FsError::Write {
-                path: path.to_path_buf(),
-                source,
-            })
-        })
+        write(path.as_ref(), body, false).await
+    }
+
+    async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+        create_private_dir(path.as_ref()).await
+    }
+
+    async fn write_private_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> Res {
+        write(path.as_ref(), body, true).await
     }
 
     async fn lock_exclusive(&self, path: impl AsRef<Path> + Send) -> Res<super::LockGuard> {
@@ -307,6 +384,123 @@ mod tests {
         perms.set_mode(0o755);
         fs::set_permissions(&readonly_dir, perms).await?;
 
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn mode(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777
+    }
+
+    /// A body of two chunks that, before it yields the second, records the
+    /// mode of the temp file the first went into.
+    #[cfg(unix)]
+    struct TempModeProbe {
+        dir: PathBuf,
+        frames: u8,
+        seen: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
+    }
+
+    #[cfg(unix)]
+    impl http_body::Body for TempModeProbe {
+        type Data = bytes::Bytes;
+        type Error = std::io::Error;
+
+        fn poll_frame(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+            self.frames += 1;
+            if self.frames == 2 {
+                let tmp = std::fs::read_dir(&self.dir)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .find(|path| path.to_string_lossy().contains(".tmp-"))
+                    .expect("the write goes to a temp file first");
+                *self.seen.lock().unwrap() = Some(mode(&tmp));
+            }
+            std::task::Poll::Ready(
+                (self.frames <= 2)
+                    .then(|| Ok(http_body::Frame::data(bytes::Bytes::from_static(b"secret")))),
+            )
+        }
+    }
+
+    /// A private write replaces a world-readable file with one only its owner
+    /// can read, and the temp file it renames into place is never readable by
+    /// anyone else either.
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn a_private_write_is_owner_only_from_its_temp_file_on() -> Res {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir()?;
+        let dest = temp_dir.path().join("tokens.json");
+        std::fs::write(&dest, b"old")?;
+        std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o644))?;
+
+        let seen = std::sync::Arc::default();
+        let body = TempModeProbe {
+            dir: temp_dir.path().to_path_buf(),
+            frames: 0,
+            seen: std::sync::Arc::clone(&seen),
+        };
+        LocalStorage::default()
+            .write_private_byte_stream(
+                &dest,
+                ByteStream::new(aws_smithy_types::body::SdkBody::from_body_1_x(body)),
+            )
+            .await?;
+
+        let temp_mode = seen.lock().unwrap().expect("the probe ran");
+        assert_eq!(temp_mode & 0o077, 0, "temp file mode {temp_mode:o}");
+        assert_eq!(mode(&dest), 0o600);
+        assert_eq!(fs::read(&dest).await?, b"secretsecret");
+        Ok(())
+    }
+
+    /// A file where a private directory belongs is an error, and is left as it
+    /// was.
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn a_private_dir_over_a_file_fails_and_leaves_the_file() -> Res {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir()?;
+        let file = temp_dir.path().join(".auth");
+        std::fs::write(&file, b"")?;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644))?;
+
+        let result = LocalStorage::default().create_private_dir(&file).await;
+
+        assert!(matches!(
+            result,
+            Err(Error::Fs(FsError::DirectoryCreate { .. }))
+        ));
+        assert_eq!(mode(&file), 0o644);
+        Ok(())
+    }
+
+    /// A private directory is owner-only, whether it is new or was made
+    /// world-readable before.
+    #[test(tokio::test)]
+    #[cfg(unix)]
+    async fn a_private_dir_is_owner_only_even_if_it_existed() -> Res {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir()?;
+        let existing = temp_dir.path().join(".auth");
+        std::fs::create_dir(&existing)?;
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o755))?;
+        let new = existing.join("quilt.test");
+
+        let storage = LocalStorage::default();
+        storage.create_private_dir(&existing).await?;
+        storage.create_private_dir(&new).await?;
+
+        assert_eq!(mode(&existing), 0o700);
+        assert_eq!(mode(&new), 0o700);
         Ok(())
     }
 

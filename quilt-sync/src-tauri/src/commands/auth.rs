@@ -20,6 +20,7 @@ use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::oauth::OAuthState;
 use crate::quilt;
+use crate::quilt::io::storage::LocalStorage;
 use crate::quilt::paths::DomainPaths;
 use crate::routes;
 use crate::telemetry::event::{AuthEvent, LoginEvent, LoginFlow};
@@ -94,11 +95,20 @@ impl ErasedAuth {
 /// It is addressed through the builder that created it
 /// ([`DomainPaths::auth_host`]), so the name looked up here is the normalized
 /// host login wrote, not whatever string a caller happened to hold.
-fn erase_auth_dir(data_dir: &Path, host: &str) -> Result<ErasedAuth, Error> {
+///
+/// Holds the host's auth lock across the erase, so a refresh in flight here or
+/// in another process lands first, and one waiting finds no session after it.
+async fn erase_auth_dir(data_dir: &Path, host: &str) -> Result<ErasedAuth, Error> {
     let host = Host::from_str(host)?;
-    let auth_dir = data_dir.join(quilt::paths::AUTH_DIR);
-    let host_dir = DomainPaths::new(data_dir.to_path_buf()).auth_host(&host);
+    let paths = DomainPaths::new(data_dir.to_path_buf());
+    let auth_dir = paths.auth_dir();
+    let host_dir = paths.auth_host(&host);
 
+    if !host_dir.exists() {
+        return Ok(ErasedAuth::NothingStored(host));
+    }
+    let _lock = quilt::auth::lock_host(&LocalStorage::new(), &paths, &host).await?;
+    // Another logout may have erased it while this one waited.
     if !host_dir.exists() {
         return Ok(ErasedAuth::NothingStored(host));
     }
@@ -130,7 +140,7 @@ async fn erase_auth_command(
     tracing: &Telemetry,
     host: &str,
 ) -> Result<(), Error> {
-    let erased = erase_auth_dir(data_dir, host);
+    let erased = erase_auth_dir(data_dir, host).await;
 
     // Every logout leaves exactly one signal, and which one says what happened.
     match &erased {
@@ -166,13 +176,14 @@ pub async fn erase_auth(
     tracing: tauri::State<'_, Telemetry>,
     host: String,
 ) -> Result<String, String> {
-    let app_handle = app_handle.lock().await;
+    // Not held across the erase, which may wait on another process's auth lock.
+    let data_dir = app_handle.lock().await.path().app_local_data_dir();
 
     let msg_init = format!("Erasing auth for {host}");
     let msg_ok = format!("Successfully erased auth for {host}");
     let msg_err = |err: &Error| format!("Failed to erase auth: {err}");
 
-    let result = match app_handle.path().app_local_data_dir() {
+    let result = match data_dir {
         Ok(data_dir) => erase_auth_command(&data_dir, &*m, &roles, &tracing, &host).await,
         Err(err) => Err(Error::from(err)),
     };
@@ -804,6 +815,41 @@ mod tests {
             reported[0].contains("Logout found no stored auth"),
             "and it is the anomaly, not something else: {reported:?}"
         );
+        let host = Host::from_str("another.quilt.test").expect("host");
+        assert!(
+            !DomainPaths::new(data_dir.path().to_path_buf())
+                .auth_lock(&host)
+                .exists(),
+            "and it wrote nothing, not even a lock"
+        );
+    }
+
+    /// A logout waits for a refresh holding the host's lock, so the refresh
+    /// cannot write the session back after the erase.
+    #[tokio::test]
+    async fn logging_out_waits_for_a_refresh_holding_the_host_lock() {
+        let data_dir = TempDir::new().expect("temp data dir");
+        seed_auth_dirs(data_dir.path(), &["quilt.test"]);
+        let paths = DomainPaths::new(data_dir.path().to_path_buf());
+        let host = Host::from_str("quilt.test").expect("host");
+        let storage = LocalStorage::new();
+
+        let mut m = MockQuiltModel::new();
+        m.expect_clear_remote_client_cache().returning(|_| ());
+        let roles = RoleCache::default();
+        let telemetry = Telemetry::default();
+        let logout = || erase_auth_command(data_dir.path(), &m, &roles, &telemetry, "quilt.test");
+
+        let refresh = quilt::auth::lock_host(&storage, &paths, &host)
+            .await
+            .expect("lock");
+        let waited = tokio::time::timeout(std::time::Duration::from_millis(300), logout()).await;
+        assert!(waited.is_err(), "the logout must wait for the lock");
+        assert!(paths.auth_host(&host).exists(), "nothing erased yet");
+
+        drop(refresh);
+        logout().await.expect("logout");
+        assert!(!paths.auth_host(&host).exists());
     }
 
     /// The other side of the same rule: a logout that *does* erase something
