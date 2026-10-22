@@ -47,6 +47,12 @@ pub struct TrayController {
 
 const MENU_ID_OPEN: &str = "tray-open";
 const MENU_ID_QUIT: &str = "tray-quit";
+const MENU_ID_BROWSER: &str = "tray-browser";
+
+/// The browser server's address and token, started on the first click and
+/// kept until the app quits.
+static WEB_UI: tokio::sync::OnceCell<(std::net::SocketAddr, String)> =
+    tokio::sync::OnceCell::const_new();
 
 impl TrayController {
     pub fn install(
@@ -54,8 +60,10 @@ impl TrayController {
         status_rx: watch::Receiver<SyncTrayStatus>,
     ) -> Result<Self, TrayError> {
         let open_item = MenuItem::with_id(app, MENU_ID_OPEN, "Open Quilt", true, None::<&str>)?;
+        let browser_item =
+            MenuItem::with_id(app, MENU_ID_BROWSER, "Open in browser", true, None::<&str>)?;
         let quit_item = MenuItem::with_id(app, MENU_ID_QUIT, "Quit", true, None::<&str>)?;
-        let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
+        let menu = Menu::with_items(app, &[&open_item, &browser_item, &quit_item])?;
 
         let icon = load_tray_icon(app)?;
         let tray = TrayIconBuilder::new()
@@ -64,6 +72,7 @@ impl TrayController {
             .tooltip("Quilt — idle")
             .on_menu_event(|app, event| match event.id().as_ref() {
                 MENU_ID_OPEN => show_main_window(app),
+                MENU_ID_BROWSER => open_in_browser(app),
                 MENU_ID_QUIT => request_quit(app),
                 _ => {}
             })
@@ -85,6 +94,7 @@ impl TrayController {
 
         let listener = spawn_status_listener(tray.clone(), status_rx);
         let _ = open_item;
+        let _ = browser_item;
         let _ = quit_item;
 
         install_close_handler(app);
@@ -116,6 +126,34 @@ fn show_main_window(app: &AppHandle) {
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
         }
     }
+}
+
+/// Start the browser server on a random local port (once) and open it.
+/// The browser shares the window's `Services`, so both hear every event.
+fn open_in_browser(app: &AppHandle) {
+    let Some(services) = app.try_state::<Arc<Services>>() else {
+        return;
+    };
+    let services = Arc::clone(&services);
+    async_runtime::spawn(async move {
+        let started = WEB_UI
+            .get_or_try_init(|| async {
+                let token = crate::server::new_token();
+                let bind = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
+                let addr = crate::server::serve(services, bind, token.clone()).await?;
+                Ok::<_, crate::error::Error>((addr, token))
+            })
+            .await;
+        match started {
+            Ok((addr, token)) => {
+                let url = format!("http://127.0.0.1:{}/?t={token}", addr.port());
+                if let Err(err) = opener::open_browser(&url) {
+                    warn!("failed to open the browser: {err}");
+                }
+            }
+            Err(err) => error!("failed to start the browser server: {err}"),
+        }
+    });
 }
 
 fn spawn_status_listener(
