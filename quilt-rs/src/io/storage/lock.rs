@@ -45,8 +45,8 @@ fn joined<T>(result: Result<std::io::Result<T>, tokio::task::JoinError>) -> Res<
     Ok(result.map_err(std::io::Error::other)??)
 }
 
-/// Opens `path`, creating it and its parent directory if needed, and finds
-/// its mutex in the registry.
+/// Opens `path`, creating it owner-only and its parent directory if needed,
+/// and finds its mutex in the registry.
 async fn open(path: &Path) -> Res<(fs::File, Arc<tokio::sync::Mutex<()>>)> {
     let path = path.to_path_buf();
     let (file, key) = joined(
@@ -54,11 +54,11 @@ async fn open(path: &Path) -> Res<(fs::File, Arc<tokio::sync::Mutex<()>>)> {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            let file = fs::OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .write(true)
-                .open(&path)?;
+            let mut options = fs::OpenOptions::new();
+            options.create(true).truncate(false).write(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, super::local::PRIVATE_FILE_MODE);
+            let file = options.open(&path)?;
             let key = fs::canonicalize(&path)?;
             Ok((file, key))
         })
@@ -78,14 +78,15 @@ async fn open(path: &Path) -> Res<(fs::File, Arc<tokio::sync::Mutex<()>>)> {
 ///
 /// A cancelled caller cannot abort the blocking wait for the OS lock; if it
 /// is cancelled mid-wait, the thread takes the lock later and drops it at once
-/// with its unread result.
+/// with its unread result. The thread keeps the mutex until then, so the next
+/// caller in this process waits on the mutex rather than parking a thread too.
 pub(crate) async fn lock_exclusive(path: &Path) -> Res<LockGuard> {
     let (file, mutex) = open(path).await?;
     let held = mutex.lock_owned().await;
-    let file = joined(
+    let (file, held) = joined(
         tokio::task::spawn_blocking(move || {
             file.lock()?;
-            Ok(file)
+            Ok((file, held))
         })
         .await,
     )?;
@@ -265,5 +266,37 @@ pub(crate) mod tests {
             .await
             .expect("the lock is free once the other process lets go")?;
         Ok(())
+    }
+
+    /// Waiters given up on while another process holds the lock park one
+    /// blocking thread between them, not one each, so file system calls still
+    /// find a thread to run on.
+    #[test]
+    fn given_up_waiters_leave_blocking_threads_free() -> Res {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .max_blocking_threads(2)
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            let dir = tempfile::TempDir::new()?;
+            let lock_path = dir.path().join("demo.lock");
+            let other = OtherProcess::holding(&lock_path).await?;
+
+            for _ in 0..2 {
+                let waiting =
+                    tokio::time::timeout(Duration::from_millis(200), lock_exclusive(&lock_path));
+                assert!(waiting.await.is_err(), "the other process holds the lock");
+            }
+            let stat =
+                tokio::time::timeout(Duration::from_secs(5), tokio::fs::metadata(dir.path()));
+            assert!(stat.await.is_ok(), "a blocking thread is still free");
+
+            other.release()?;
+            tokio::time::timeout(Duration::from_secs(30), lock_exclusive(&lock_path))
+                .await
+                .expect("the lock is free once the other process lets go")?;
+            Ok(())
+        })
     }
 }

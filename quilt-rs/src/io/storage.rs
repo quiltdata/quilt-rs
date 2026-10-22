@@ -95,9 +95,24 @@ pub trait Storage {
         body: ByteStream,
     ) -> impl Future<Output = Res> + Send + Sync;
 
+    /// Creates the directory `path` and any missing parent. On Unix `path` is
+    /// created 0700, and one that already existed is set to 0700 where the
+    /// file system allows. On Windows it is [`Self::create_dir_all`].
+    fn create_private_dir(&self, path: impl AsRef<Path> + Send)
+    -> impl Future<Output = Res> + Send;
+
+    /// [`Self::write_byte_stream`] for a file only its owner may read: on Unix
+    /// the file is 0600 from its creation, before any byte is written or it is
+    /// renamed into place. On Windows it is [`Self::write_byte_stream`].
+    fn write_private_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> impl Future<Output = Res> + Send + Sync;
+
     /// Locks `path` exclusively until the guard drops: against every other
     /// holder in this process, through any handle on the same file, and in any
-    /// other process. Creates the file if it is missing.
+    /// other process. Creates the file if it is missing, 0600 on Unix.
     ///
     /// A holder that awaits the network keeps every other holder waiting for
     /// as long.
@@ -169,6 +184,18 @@ impl<S: Storage + Send + Sync> Storage for Arc<S> {
         body: ByteStream,
     ) -> Res {
         (**self).write_byte_stream(path, body).await
+    }
+
+    async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+        (**self).create_private_dir(path).await
+    }
+
+    async fn write_private_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> Res {
+        (**self).write_private_byte_stream(path, body).await
     }
 
     async fn lock_exclusive(&self, path: impl AsRef<Path> + Send) -> Res<LockGuard> {

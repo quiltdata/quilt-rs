@@ -19,17 +19,28 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.47.0-dev]
+## [v0.47.0] - 2026-10-22
 
 ### Added
 
-- `InstalledPackage::status_with_downloads` returns the status with a `lineage::DownloadCounts`: how many files the current revision lists, how many are still to download and how many are deleted here, and their bytes as a `lineage::DownloadSize`, counted from the manifest and the walk the status already reads
+- `InstalledPackage::status_with_downloads` returns the status and a `lineage::DownloadCounts`: how many of the current revision's files, and how many bytes, are still to download
   - <https://github.com/quiltdata/quilt-rs/pull/1172>
   - <https://github.com/quiltdata/quilt-rs/pull/1178>
+- `auth::lock_host` takes a host's auth lock, `DomainPaths::auth_lock`, which every token refresh holds; anything that removes the host's auth directory should hold it too (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+### Changed
+
+- **Breaking:** a `Storage` implementation must provide `create_private_dir` and `write_private_byte_stream` (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+### Fixed
+
+- On Unix the auth store is readable by its owner alone: `.auth/` and each host's directory are 0700, and `tokens.json`, `credentials.json` and `client.json` 0600 from the moment they are created. A store an earlier version left open is closed at its next write (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- Two processes refreshing one host's tokens, such as the CLI and QuiltSync, take turns on a lock at `.auth/.locks/<host>`, and the second uses the tokens the first rotated rather than lose the login (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- Waiters given up on while another process holds a lock no longer park a blocking thread each, which could starve the process's file I/O (<https://github.com/quiltdata/quilt-rs/pull/1177>)
 
 ### quilt-uri
 
-- Updated [from v0.4.2 to v0.4.3-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.2...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+- Updated [from v0.4.2 to v0.4.3](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.2...quilt-uri/v0.4.3) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.46.0] - 2026-10-21
 

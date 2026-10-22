@@ -145,6 +145,20 @@ impl Storage for MockStorage {
         Ok(())
     }
 
+    async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        super::local::create_private_dir(rel_path.as_ref()).await
+    }
+
+    async fn write_private_byte_stream(
+        &self,
+        path: impl AsRef<Path> + Send + Sync,
+        body: ByteStream,
+    ) -> Res {
+        let rel_path = relative_to_temp_dir(&self.temp_dir, &path);
+        super::local::write(rel_path.as_ref(), body, true).await
+    }
+
     /// The same real lock as [`LocalStorage`](super::LocalStorage)'s, on the
     /// path re-rooted under this mock's temp directory: two mocks never share
     /// a lock, and two handles on one mock always do.
