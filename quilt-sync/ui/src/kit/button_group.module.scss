@@ -54,6 +54,12 @@
   height: 14px;
 }
 
+/* A done segment's check. Only the glyph changes, so the segment keeps its
+ * width. */
+.done svg {
+  color: var(--q-fgColor-success);
+}
+
 .button:hover:not(:disabled) {
   position: relative;
   z-index: 1;

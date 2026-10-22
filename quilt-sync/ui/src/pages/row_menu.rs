@@ -123,6 +123,9 @@ pub(crate) enum Ran {
     Failed { lead: &'static str, detail: String },
 }
 
+/// The page's words for a copy that failed.
+pub(crate) const COPY_FAILED: &str = "Could not copy.";
+
 /// Runs a row's command that writes nothing: opening, revealing, the catalog
 /// and the copies. None needs a page's lock. `uri` is the package's remote, if
 /// it has one; the `.quiltignore` items are each page's own and come back
@@ -165,7 +168,7 @@ pub(crate) async fn carry_out(
                     .map(|_| text),
                 Err(detail) => Err(detail),
             };
-            copied.map_or_else(failed("Could not copy."), Ran::Copied)
+            copied.map_or_else(failed(COPY_FAILED), Ran::Copied)
         }
         RowCommand::Ignore(_) | RowCommand::StopIgnoring { .. } => Ran::Done,
     }

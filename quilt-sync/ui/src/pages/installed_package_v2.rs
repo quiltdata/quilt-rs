@@ -28,7 +28,8 @@ use crate::commands;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 use crate::routes;
 
-use super::row_menu::{Ran, RowCommand, carry_out, local_path};
+use super::copy_mark::CopyMark;
+use super::row_menu::{COPY_FAILED, Ran, RowCommand, carry_out, local_path};
 use super::status_watch::StatusWatch;
 #[cfg(test)]
 use super::v2_page::outcome_band;
@@ -353,6 +354,8 @@ struct Files {
     ignoring: RwSignal<Option<IgnorePopupData>>,
     /// The unignore popup a row's *Stop ignoring* opened, for the same reason.
     unignoring: RwSignal<Option<UnignorePopupData>>,
+    /// The row whose copy just landed, by its path.
+    copies: CopyMark<String>,
 }
 
 /// What the panes read. Built by `package_body`: the resolve pane counts
@@ -667,6 +670,7 @@ fn package_body(
         reach: Reach::of(uri.as_ref(), has_local_commit),
         busy: w.busy.into(),
         on_command: row_runner(namespace.clone(), uri.clone(), w, files),
+        copied: files.copies,
     };
     let context = StoredValue::new(context);
     let pane = move || {
@@ -863,51 +867,90 @@ fn row_runner(
                     uri,
                 }));
             }
-            command => run_reading(command, namespace, uri, w.outcome),
+            command => run_reading(command, namespace, uri, w.outcome, Some(files.copies)),
         }
     })
 }
 
-/// Runs a row's command that writes nothing ([`carry_out`]) and reports on
-/// `outcome`: a failure, and what a copy put on the clipboard. None takes the
-/// page's lock, as [`file_opener`] does not.
+/// Runs a row's command that writes nothing ([`carry_out`]) and reports a
+/// failure on `outcome`. None takes the page's lock, as [`file_opener`] does
+/// not.
+///
+/// The clipboard shows nothing, so a copy that landed says what it copied:
+/// with `copies`, as a mark on its row and words for a screen reader, which
+/// keep the page where it is; without, on `outcome`.
 pub(crate) fn run_reading(
     command: RowCommand,
     namespace: String,
     uri: Option<quilt_uri::S3PackageUri>,
     outcome: RwSignal<Option<Outcome>>,
+    copies: Option<CopyMark<String>>,
 ) {
+    let copying = matches!(command, RowCommand::CopyUri(_) | RowCommand::CopyPath(_));
+    let stamped = copies.filter(|_| copying).map(|c| (c, c.bump()));
     leptos::task::spawn_local(async move {
-        let said = match carry_out(&command, &namespace, uri.as_ref(), local_path).await {
+        let ran = carry_out(&command, &namespace, uri.as_ref(), local_path).await;
+        // A later copy speaks for this one.
+        if stamped.is_some_and(|(c, stamp)| !c.is_current(stamp)) {
+            return;
+        }
+        let said = match ran {
             Ran::Done => return,
-            Ran::Copied(_) => copy_outcome(namespace, &command),
-            Ran::Failed { lead, detail } => Outcome {
-                namespace,
-                variant: BannerVariant::Critical,
-                lead: lead.to_string(),
-                detail: Some(detail),
-            },
+            Ran::Copied(_) => {
+                let Some((copies, stamp)) = stamped else {
+                    outcome.try_set(Some(copy_outcome(namespace, &command)));
+                    return;
+                };
+                // A retry that worked takes back only the copy's own failure.
+                let own = |o: &Option<Outcome>| {
+                    o.as_ref()
+                        .is_some_and(|o| o.namespace == namespace && o.lead == COPY_FAILED)
+                };
+                if outcome.try_with_untracked(own) == Some(true) {
+                    outcome.try_set(None);
+                }
+                copies.settle(
+                    stamp,
+                    Some(command.path().to_string()),
+                    copy_words(&command),
+                );
+                return;
+            }
+            Ran::Failed { lead, detail } => {
+                if let Some((copies, stamp)) = stamped {
+                    copies.settle(stamp, None, String::new());
+                }
+                Outcome {
+                    namespace,
+                    variant: BannerVariant::Critical,
+                    lead: lead.to_string(),
+                    detail: Some(detail),
+                }
+            }
         };
         outcome.try_set(Some(said));
     });
 }
 
-/// What the band says after a copy landed. The clipboard shows nothing, so the
-/// band says what was copied, which is its success case: no other surface
-/// says it. A URI's report names the file, not the address, so no hash shows.
-fn copy_outcome(namespace: String, command: &RowCommand) -> Outcome {
-    let lead = match command {
+/// What a landed copy put on the clipboard, in words. A URI is named by its
+/// file, not the address, so no hash shows.
+fn copy_words(command: &RowCommand) -> String {
+    match command {
         RowCommand::CopyPath(path) => format!("Copied the path of {path}"),
         command => {
             let path = command.path();
             let name = path.rsplit('/').next().unwrap_or(path);
             format!("Copied URI of {name}")
         }
-    };
+    }
+}
+
+/// What the band says after a copy landed, on a page whose rows draw no mark.
+fn copy_outcome(namespace: String, command: &RowCommand) -> Outcome {
     Outcome {
         namespace,
         variant: BannerVariant::Success,
-        lead,
+        lead: copy_words(command),
         detail: None,
     }
 }
@@ -1233,6 +1276,8 @@ fn PackageScreen(
     let ticked = RwSignal::new(BTreeSet::new());
     // A popup names one package's file, so another package closes it.
     let (ignoring, unignoring) = (RwSignal::new(None), RwSignal::new(None));
+    // Keyed by path alone, so another package forgets it.
+    let copies = CopyMark::new();
     Effect::new(move |_| {
         ns.track();
         grouping.set(Grouping::BaseFolder.label().to_string());
@@ -1242,6 +1287,7 @@ fn PackageScreen(
         ticked.set(BTreeSet::new());
         ignoring.set(None);
         unignoring.set(None);
+        copies.forget();
     });
     // The list comes with the page read, so trying again is reading the page.
     let files = Files {
@@ -1254,6 +1300,7 @@ fn PackageScreen(
         downloading: RwSignal::new(false),
         ignoring,
         unignoring,
+        copies,
     };
 
     // The newer revision's dry run, after each read that shows the package
@@ -1626,21 +1673,43 @@ mod tests {
     fn a_copy_says_what_it_copied() {
         let uri = RowCommand::CopyUri("raw/one.csv".to_string());
         let path = RowCommand::CopyPath("raw/a.csv".to_string());
+        assert_eq!(copy_words(&uri), "Copied URI of one.csv");
+        assert_eq!(copy_words(&path), "Copied the path of raw/a.csv");
+    }
+
+    /// A copy that fails still reaches the band, as a failure, and marks no
+    /// row. There is no Tauri bridge in this harness, so every copy fails.
+    #[wasm_bindgen_test]
+    async fn a_failed_copy_goes_to_the_band_and_marks_nothing() {
+        // Mounting starts the executor the copy is spawned on.
+        crate::test_support::mount(|| ());
+        let outcome = RwSignal::new(None);
+        let copies = CopyMark::new();
+        run_reading(
+            RowCommand::CopyPath("raw/a.csv".to_string()),
+            "team/a".to_string(),
+            None,
+            outcome,
+            Some(copies),
+        );
+        crate::test_support::sleep_ms(50).await;
+        let said = outcome.get_untracked().expect("the band has it");
+        assert_eq!(said.variant, BannerVariant::Critical);
+        assert_eq!(said.lead, COPY_FAILED);
+        assert_eq!(copies.copied.get_untracked(), None);
+        assert_eq!(copies.said.get_untracked(), "");
+    }
+
+    /// A page whose rows draw no mark says it on the band instead.
+    #[test]
+    fn without_a_row_mark_the_band_says_it() {
+        let uri = RowCommand::CopyUri("raw/one.csv".to_string());
         assert_eq!(
             copy_outcome("team/a".to_string(), &uri),
             said(
                 "team/a",
                 BannerVariant::Success,
                 "Copied URI of one.csv",
-                None
-            )
-        );
-        assert_eq!(
-            copy_outcome("team/a".to_string(), &path),
-            said(
-                "team/a",
-                BannerVariant::Success,
-                "Copied the path of raw/a.csv",
                 None
             )
         );
@@ -1674,6 +1743,7 @@ mod tests {
             downloading: RwSignal::new(false),
             ignoring: RwSignal::new(None),
             unignoring: RwSignal::new(None),
+            copies: CopyMark::new(),
         }
     }
 

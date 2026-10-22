@@ -1,6 +1,7 @@
 mod commit;
 // Not routed yet: the gallery draws these regions, and the port routes them.
 pub mod commit_v2;
+pub mod copy_mark;
 mod error;
 // Public for the gallery, which draws the slate over fixtures.
 pub mod error_v2;

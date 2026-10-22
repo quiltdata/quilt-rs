@@ -959,7 +959,7 @@ fn column(
                     uri: uri.clone(),
                 }));
             }
-            command => run_reading(command, namespace.clone(), uri.clone(), outcome),
+            command => run_reading(command, namespace.clone(), uri.clone(), outcome, None),
         })
     };
     let included = view! {

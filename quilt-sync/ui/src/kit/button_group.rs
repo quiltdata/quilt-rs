@@ -15,9 +15,10 @@
 //! # Feedback
 //!
 //! A segment can carry a `done` signal, owned by the caller as the clipboard
-//! is. While it is true the tooltip says the done words, and it opens when the
-//! signal turns true, so a click that copied something says so under the
-//! pointer. A status region says it to a screen reader.
+//! is. While it is true the segment's icon is a check, at the same size so the
+//! segment keeps its width, and a status region says the done words to a
+//! screen reader. The tooltip keeps the segment's name and does not open by
+//! itself: the check under the pointer is the answer.
 //!
 //! [`Tooltip`]: super::Tooltip
 
@@ -26,6 +27,7 @@ use wasm_bindgen::JsCast;
 
 use super::Align;
 use super::TooltipHandle;
+use super::icons;
 use super::tooltip;
 
 stylance::import_crate_style!(style, "src/kit/button_group.module.scss");
@@ -40,7 +42,7 @@ pub struct GroupButton {
     /// Draws the label while the group has room.
     pub labelled: bool,
     pub on_click: Callback<()>,
-    /// What the tooltip says while `done` is true, and the signal itself.
+    /// What the status region says while `done` is true, and the signal itself.
     pub done: Option<(String, Signal<bool>)>,
     pub disabled: Signal<bool>,
 }
@@ -72,7 +74,7 @@ impl GroupButton {
         }
     }
 
-    /// Says `words` while `done` is true.
+    /// Draws a check and says `words` while `done` is true.
     #[must_use]
     pub fn with_done(self, words: impl Into<String>, done: Signal<bool>) -> Self {
         Self {
@@ -119,25 +121,8 @@ fn segment(button: GroupButton) -> impl IntoView {
     let shown = label.clone();
 
     let is_done = done.as_ref().map(|(_, signal)| *signal);
-    let text = {
-        let label = label.clone();
-        let done_words = done.as_ref().map(|(words, _)| words.clone());
-        Signal::derive(move || match (&done_words, is_done) {
-            (Some(words), Some(signal)) if signal.get() => words.clone(),
-            _ => label.clone(),
-        })
-    };
-
-    // Opens on the rise only: a cell drawn already done waits for a hover.
-    if let Some(signal) = is_done {
-        Effect::new(move |was: Option<bool>| {
-            let now = signal.get();
-            if now && was == Some(false) {
-                handle.show();
-            }
-            now
-        });
-    }
+    let done_now = move || is_done.is_some_and(|signal| signal.get());
+    let text = Signal::stored(label.clone());
 
     // The label is `display: none` in the narrow arrangement, which leaves it
     // no box.
@@ -168,26 +153,20 @@ fn segment(button: GroupButton) -> impl IntoView {
             <button
                 type="button"
                 class=style::button
+                class=(style::done, done_now)
                 aria-label=label
                 disabled=move || disabled.get()
-                on:click=move |_| {
-                    on_click.run(());
-                    // A repeat click while still done has no rise to open on,
-                    // and its pointerdown just closed the words.
-                    if is_done.is_some_and(|signal| signal.get_untracked()) {
-                        handle.show();
-                    }
-                }
+                on:click=move |_| on_click.run(())
             >
-                {icon()}
+                {move || if done_now() { icons::check() } else { icon() }}
                 {labelled.then(|| view! { <span class=style::label node_ref=words>{shown}</span> })}
             </button>
             {tooltip::surface(handle, text, Signal::default(), anchor, Align::End, tooltip::style::surface.to_string())}
-            {is_done
-                .map(|signal| {
+            {done
+                .map(|(words, signal)| {
                     view! {
                         <span role="status" data-sr-only>
-                            {move || signal.get().then(|| text.get())}
+                            {move || signal.get().then(|| words.clone())}
                         </span>
                     }
                 })}
@@ -235,11 +214,11 @@ mod tests {
         assert_eq!(names, ["Open folder", "Copy Quilt URI"]);
     }
 
-    /// A click runs the segment's own command, and the done words replace the
-    /// name in the tooltip and the status region while the caller's signal is
-    /// true.
+    /// A click runs the segment's own command. While the caller's signal is
+    /// true the icon is a check and the status region says the done words;
+    /// the tooltip keeps the name and stays shut.
     #[wasm_bindgen_test]
-    async fn done_words_follow_the_caller_s_signal() {
+    async fn done_draws_a_check_and_leaves_the_tooltip_shut() {
         let copied = RwSignal::new(false);
         let el = mount(move || {
             view! {
@@ -260,7 +239,7 @@ mod tests {
             el.query_selector("[role='tooltip']")
                 .unwrap()
                 .unwrap()
-                .text_content()
+                .dyn_into::<web_sys::HtmlElement>()
                 .unwrap()
         };
         let status = || {
@@ -270,17 +249,37 @@ mod tests {
                 .text_content()
                 .unwrap()
         };
-        assert_eq!(tooltip(), "Copy Quilt URI");
+        // The first path of each Octicon tells the two apart.
+        let glyph = || {
+            buttons(&el)[0]
+                .query_selector("svg path")
+                .unwrap()
+                .expect("a glyph")
+                .get_attribute("d")
+                .unwrap_or_default()
+        };
+        let (copy_glyph, check_glyph) = ("M0 6.75", "M13.78 4.22");
+        assert!(glyph().starts_with(copy_glyph));
         assert_eq!(status(), "");
 
         buttons(&el)[0].click();
         leptos::task::tick().await;
-        assert_eq!(tooltip(), "Copied");
+        assert!(glyph().starts_with(check_glyph));
         assert_eq!(status(), "Copied");
+        assert_eq!(tooltip().text_content().unwrap(), "Copy Quilt URI");
+        assert!(
+            !tooltip().matches(":popover-open").unwrap_or(false),
+            "the check is the answer; nothing pops"
+        );
+        assert_eq!(
+            buttons(&el)[0].get_attribute("aria-label").as_deref(),
+            Some("Copy Quilt URI")
+        );
 
         copied.set(false);
         leptos::task::tick().await;
-        assert_eq!(tooltip(), "Copy Quilt URI");
+        assert!(glyph().starts_with(copy_glyph));
+        assert_eq!(status(), "");
     }
 
     /// A disabled segment follows its signal and leaves its neighbours live.

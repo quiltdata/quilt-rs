@@ -271,6 +271,11 @@ pub fn EntryRow(
     /// all, so the name starts the row. Ignored on a selectable row.
     #[prop(optional)]
     plain: bool,
+    /// This row's copy just landed. The caller's answer, as on
+    /// [`FileRow`](super::FileRow): the size column says *Copied*, hidden
+    /// from assistive tech, which hears the caller's live region instead.
+    #[prop(optional, into)]
+    copied: MaybeProp<bool>,
 ) -> impl IntoView {
     let full_name = path.unwrap_or_else(|| name.clone());
 
@@ -315,7 +320,7 @@ pub fn EntryRow(
                     state.get().map(|words| view! { <StateLabel tone=tone>{words}</StateLabel> })
                 }}
             </span>
-            <span class=style::size>{size}</span>
+            {size_slot(size, copied)}
         }
     };
 
@@ -399,6 +404,23 @@ pub fn EntryRow(
                     .into_any()
             }}
         </div>
+    }
+}
+
+/// The size, or *Copied* in its place while `copied` holds.
+fn size_slot(size: String, copied: MaybeProp<bool>) -> impl IntoView {
+    move || {
+        if copied.get().unwrap_or(false) {
+            view! {
+                <span class=format!("{} {}", style::size, style::copied) aria-hidden="true">
+                    {icons::copied()}
+                    "Copied"
+                </span>
+            }
+            .into_any()
+        } else {
+            view! { <span class=style::size>{size.clone()}</span> }.into_any()
+        }
     }
 }
 
@@ -612,6 +634,28 @@ mod tests {
         );
         assert!(el.query_selector("label").unwrap().is_none());
         assert!(el.query_selector("button").unwrap().is_none());
+    }
+
+    /// A copied row says so where its size was, out of the accessibility
+    /// tree, and gives the size back when the caller's signal drops.
+    #[wasm_bindgen_test]
+    async fn a_copied_row_says_copied_in_place_of_its_size() {
+        let copied = RwSignal::new(false);
+        let el = mount(move || {
+            view! { <EntryRow name="a.csv" size="1 KB" copied=copied /> }
+        });
+        assert!(el.text_content().unwrap_or_default().contains("1 KB"));
+        copied.set(true);
+        leptos::task::tick().await;
+        let mark = el
+            .query_selector("[aria-hidden=true]")
+            .unwrap()
+            .expect("the mark is hidden from assistive tech");
+        assert_eq!(mark.text_content().unwrap_or_default(), "Copied");
+        assert!(!el.text_content().unwrap_or_default().contains("1 KB"));
+        copied.set(false);
+        leptos::task::tick().await;
+        assert!(el.text_content().unwrap_or_default().contains("1 KB"));
     }
 
     #[wasm_bindgen_test]

@@ -1,7 +1,5 @@
 //! `ButtonGroup` stories, in the package header's location group.
 
-use std::time::Duration;
-
 use leptos::prelude::*;
 
 use crate::Cell;
@@ -9,9 +7,7 @@ use crate::Story;
 use crate::kit::ButtonGroup;
 use crate::kit::GroupButton;
 use crate::kit::icons;
-
-/// How long a copy segment says `Copied`, as long as the page's header does.
-const COPIED_FOR: Duration = Duration::from_millis(1500);
+use crate::pages::copy_mark::CONFIRM_FOR;
 
 /// The package header's group: the local folder, then the remote side when
 /// there is a catalog page. `copied` stands in for the page's clipboard state.
@@ -50,7 +46,7 @@ fn group(remote: bool, copied: RwSignal<bool>, busy: bool) -> AnyView {
                         move || {
                             copied.try_set(false);
                         },
-                        COPIED_FOR,
+                        CONFIRM_FOR,
                     )
                     .ok();
                     pending.try_set_value(later);
@@ -73,7 +69,8 @@ const NOTE: &str = "Joined segments for one subject: here a package's folder on 
                     it while its container is wider than 800px, and opens no tooltip, since \
                     the words are already drawn. Narrower, every segment is its icon and its \
                     name moves to a tooltip: hover or Tab to one. The copy segment is always \
-                    an icon; click it and its tooltip says Copied for a moment. Without a \
+                    an icon; click it and the icon turns to a check for a moment, at the same \
+                    width, and a screen reader hears Copied. No tooltip opens by itself. Without a \
                     catalog page the remote side is dropped. While another command runs \
                     the two opening segments are disabled and the copy is not.";
 
@@ -96,7 +93,7 @@ pub fn ButtonGroupStories() -> impl IntoView {
             <Cell wide=true label="another command running: only the copy is live">
                 {group(true, RwSignal::new(false), true)}
             </Cell>
-            <Cell wide=true label="copied: hover the copy icon, it reads Copied">
+            <Cell wide=true label="copied: the copy icon is a check">
                 {location(true, RwSignal::new(true))}
             </Cell>
         </Story>
