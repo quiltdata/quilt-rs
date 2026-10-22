@@ -916,6 +916,11 @@ pub async fn copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> Resul
         text: String,
         uri: Option<S3PackageUri>,
     }
+    // In a plain browser the backend has no clipboard the reader can paste from.
+    if tauri::is_web_mode() {
+        tauri::copy_in_browser(&text).await?;
+        return Ok("Successfully copied to clipboard".to_string());
+    }
     tauri::invoke("copy_to_clipboard", &Args { text, uri }).await
 }
 

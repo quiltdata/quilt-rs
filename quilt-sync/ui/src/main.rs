@@ -41,6 +41,7 @@ fn App() -> impl IntoView {
         <components::AutopullActivityFeed />
         <components::QuitPrompt />
         <Router>
+            <WebNavigation />
             <Routes fallback=|| view! { <NotFoundPage read=read_settings /> }>
                 <Route path=path!("/") view=|| view! { <Home /> } />
                 <Route path=path!("/commit") view=|| view! { <CommitPage read=read_settings /> } />
@@ -55,6 +56,26 @@ fn App() -> impl IntoView {
                 <Route path=path!("/setup") view=|| view! { <SetupPage read=read_settings /> } />
             </Routes>
         </Router>
+    }
+}
+
+/// In a plain browser, go where the backend would have pointed the Tauri window
+/// (after a login, on a deep link). Inside Tauri it navigates the window itself.
+#[component]
+fn WebNavigation() -> impl IntoView {
+    #[derive(serde::Deserialize)]
+    struct Navigate {
+        url: String,
+    }
+    if quilt_sync_ui::tauri::is_web_mode() {
+        let navigate = leptos_router::hooks::use_navigate();
+        let listener = quilt_sync_ui::tauri::listen::<Navigate>("navigate", move |payload| {
+            navigate(
+                &quilt_sync_ui::tauri::strip_origin(&payload.url),
+                leptos_router::NavigateOptions::default(),
+            );
+        });
+        on_cleanup(move || drop(listener));
     }
 }
 
