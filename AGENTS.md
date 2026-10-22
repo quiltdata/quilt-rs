@@ -4,15 +4,16 @@
 This file adds what costs an agent more than a person, who rebuilds far less
 often in one session.
 
-## Keep one copy of `target/`
+## Don't multiply `target/`
 
 Cargo keeps a separate copy of a dependency in `target/` for each way it is
 built. With the AWS SDK and Tauri in the tree, one agent session on a
 two-crate change has filled 25 GiB.
 
 **Do not change rustflags for a one-off run.** Setting `RUSTFLAGS`, or any
-other source of them such as `--config build.rustflags`, gives every crate a
-new hash, so cargo builds a second full copy beside the first and keeps both.
+other source of them such as `CARGO_TARGET_<triple>_RUSTFLAGS` or
+`--config build.rustflags`, gives every crate a new hash, so cargo builds a
+second full copy beside the first and keeps both.
 
 The usual reason to reach for them is a revert check: breaking a fix on purpose
 to see its test go red. That edit needs no flag. rustc does not warn on
