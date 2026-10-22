@@ -271,6 +271,48 @@ fn millis(duration: Duration) -> f64 {
     f64::from(u32::try_from(duration.as_millis()).unwrap_or(u32::MAX))
 }
 
+/// The space keeps a description read from these words from running the
+/// title into the first line; on screen it collapses.
+fn line_views(lines: Vec<TooltipLine>) -> impl IntoView {
+    lines
+        .into_iter()
+        .map(|line| {
+            view! {
+                " "
+                <span class=style::line>
+                    {line.icon.map(|draw| draw())}
+                    <span>{line.text}</span>
+                </span>
+            }
+        })
+        .collect_view()
+}
+
+/// One muted line under a tooltip's title, optionally led by a glyph from
+/// [`icons`](super::icons). The glyph is drawn in the line's grey and hidden
+/// from assistive tech, as every kit glyph is.
+#[derive(Clone)]
+pub struct TooltipLine {
+    pub text: String,
+    pub icon: Option<fn() -> AnyView>,
+}
+
+impl TooltipLine {
+    #[must_use]
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            icon: None,
+        }
+    }
+
+    #[must_use]
+    pub fn icon(mut self, icon: fn() -> AnyView) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+}
+
 /// The listener held while a tooltip shows: Escape, pointer down, scroll and
 /// resize, all of which close it.
 type Dismisser = Closure<dyn FnMut(web_sys::Event)>;
@@ -288,7 +330,7 @@ pub fn Tooltip(
     /// Lines under `text`, muted, when there is more than one sentence to say:
     /// `text` is then the title. Plain text too, for the same reason.
     #[prop(optional, into)]
-    lines: Signal<Vec<String>>,
+    lines: Signal<Vec<TooltipLine>>,
     /// The wider surface a list's names get, for a title that is a name.
     #[prop(optional)]
     wide: bool,
@@ -350,7 +392,7 @@ pub fn Tooltip(
 pub(super) fn surface(
     handle: TooltipHandle,
     text: Signal<String>,
-    lines: Signal<Vec<String>>,
+    lines: Signal<Vec<TooltipLine>>,
     anchor: Signal<Option<web_sys::Element>, LocalStorage>,
     align: Align,
     class: String,
@@ -464,7 +506,14 @@ pub(super) fn surface(
         <span
             node_ref=surface
             id=handle.id()
-            class=class
+            // A title with lines is roomier than one sentence.
+            class=move || {
+                if lines.with(Vec::is_empty) {
+                    class.clone()
+                } else {
+                    format!("{class} {}", style::titled)
+                }
+            }
             popover="manual"
             role="tooltip"
             // Out of the tree, and still a description: a node named
@@ -475,15 +524,7 @@ pub(super) fn surface(
             aria-hidden="true"
         >
             {move || text.get()}
-            // The space keeps a description read from these words from running
-            // the title into the first line; on screen it collapses.
-            {move || {
-                lines
-                    .get()
-                    .into_iter()
-                    .map(|line| view! { " "<span class=style::line>{line}</span> })
-                    .collect_view()
-            }}
+            {move || line_views(lines.get())}
         </span>
     }
 }

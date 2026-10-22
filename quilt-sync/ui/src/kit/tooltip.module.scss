@@ -40,11 +40,34 @@
   min-width: 0;
 }
 
+/* A title with lines under it. */
+.surface.titled {
+  padding: var(--q-space-2) var(--q-space-3);
+}
+
 /* Solid grey, not the title dimmed: an opacity on text over the surface lands
- * on a different contrast in each theme. */
+ * on a different contrast in each theme. The glyph takes the same grey. */
 .line {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--q-space-1);
   color: var(--q-fgColor-muted);
+}
+
+/* The title's text node is no element, so the first line is the first span. */
+.line:first-of-type {
+  margin-top: var(--q-space-2);
+}
+
+.line svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.line > span {
+  min-width: 0;
 }
 
 .surface::backdrop {

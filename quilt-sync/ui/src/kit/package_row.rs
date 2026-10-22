@@ -37,6 +37,7 @@ use super::RelativeTime;
 use super::SkeletonBox;
 use super::StateLabel;
 use super::Tooltip;
+use super::TooltipLine;
 use super::countdown::EpochMillis;
 use super::icons;
 use super::state_label::StateTone;
@@ -183,23 +184,32 @@ pub enum RowSize {
     },
 }
 
-/// The tooltip's lines under the name, each left out when its fact is.
+/// The tooltip's lines under the name, each left out when its fact is. The
+/// scope line leads with the badge's own glyph.
 fn tooltip_lines(
     host: Option<&str>,
     downloads: Option<RowDownloads>,
     size: Option<RowSize>,
-) -> Vec<String> {
+) -> Vec<TooltipLine> {
     let host = host
         .filter(|host| !host.is_empty())
-        .map(|host| format!("Host: {host}"));
-    let scope = downloads.map(|downloads| match downloads {
-        RowDownloads::EntirePackage { .. } => "Keeps every file in the package.".to_string(),
-        RowDownloads::IndividualFiles { .. } => "Keeps only the files you picked.".to_string(),
+        .map(|host| TooltipLine::new(format!("Host: {host}")).icon(icons::cloud));
+    let scope = downloads.map(|downloads| {
+        TooltipLine::new(match downloads {
+            RowDownloads::EntirePackage { .. } => "Every file in the package is kept.",
+            RowDownloads::IndividualFiles { .. } => "Only the files you picked are kept.",
+        })
+        .icon(icons::download)
     });
-    let size = size.map(|size| match size {
-        RowSize::NotMeasured => "Size not measured yet.".to_string(),
-        RowSize::Measuring => "Measuring size\u{2026}".to_string(),
-        RowSize::Measured { bytes } => format!("Takes {} on this computer.", format_size(bytes)),
+    let size = size.map(|size| {
+        TooltipLine::new(match size {
+            RowSize::NotMeasured => "Size not measured yet.".to_string(),
+            RowSize::Measuring => "Measuring size\u{2026}".to_string(),
+            RowSize::Measured { bytes } => {
+                format!("Takes {} on this computer.", format_size(bytes))
+            }
+        })
+        .icon(icons::folder)
     });
     [host, scope, size].into_iter().flatten().collect()
 }
@@ -412,6 +422,11 @@ mod tests {
         let surface = describing_tooltip(&el.query_selector("a").unwrap().unwrap())
             .expect("the row names its tooltip");
         let lines = surface.query_selector_all("[class*=line]").unwrap();
+        assert_eq!(
+            surface.query_selector_all("svg").unwrap().length(),
+            lines.length(),
+            "a glyph leads each line and the title has none"
+        );
         let first = surface.first_child().unwrap().text_content().unwrap();
         std::iter::once(first)
             .chain((0..lines.length()).map(|i| lines.item(i).unwrap().text_content().unwrap()))
@@ -454,7 +469,7 @@ mod tests {
             [
                 "a-long-owner-name/a-much-longer-package-name-than-the-column",
                 "Host: nightly.quilttest.com",
-                "Keeps only the files you picked.",
+                "Only the files you picked are kept.",
                 "Takes 1.2\u{a0}GB on this computer.",
             ]
         );
@@ -484,7 +499,7 @@ mod tests {
             tooltip_text(&el),
             [
                 "a-long-owner-name/a-much-longer-package-name-than-the-column",
-                "Keeps only the files you picked.",
+                "Only the files you picked are kept.",
                 "Measuring size\u{2026}",
             ]
         );
@@ -495,7 +510,28 @@ mod tests {
 mod tooltip_tests {
     use super::RowDownloads;
     use super::RowSize;
-    use super::tooltip_lines;
+
+    fn tooltip_lines(
+        host: Option<&str>,
+        downloads: Option<RowDownloads>,
+        size: Option<RowSize>,
+    ) -> Vec<String> {
+        super::tooltip_lines(host, downloads, size)
+            .into_iter()
+            .map(|line| line.text)
+            .collect()
+    }
+
+    #[test]
+    fn every_line_leads_with_a_glyph() {
+        let lines = super::tooltip_lines(
+            Some("nightly.quilttest.com"),
+            Some(RowDownloads::EntirePackage { to_download: 0 }),
+            Some(RowSize::Measuring),
+        );
+        assert_eq!(lines.len(), 3);
+        assert!(lines.iter().all(|line| line.icon.is_some()));
+    }
 
     #[test]
     fn the_scope_says_what_the_package_keeps() {
@@ -505,7 +541,7 @@ mod tooltip_tests {
                 Some(RowDownloads::EntirePackage { to_download: 0 }),
                 None
             ),
-            ["Keeps every file in the package."]
+            ["Every file in the package is kept."]
         );
         assert_eq!(
             tooltip_lines(
@@ -516,7 +552,7 @@ mod tooltip_tests {
                 }),
                 None
             ),
-            ["Keeps only the files you picked."]
+            ["Only the files you picked are kept."]
         );
     }
 

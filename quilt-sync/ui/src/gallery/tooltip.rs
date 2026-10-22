@@ -15,6 +15,8 @@ use crate::kit::Align;
 use crate::kit::Button;
 use crate::kit::MenuAction;
 use crate::kit::Tooltip;
+use crate::kit::TooltipLine;
+use crate::kit::icons;
 
 /// A button that names its tooltip, which is the wiring every trigger owes:
 /// the tooltip cannot reach into what the closure draws.
@@ -53,12 +55,12 @@ pub fn TooltipStories() -> impl IntoView {
                     trigger=button_trigger("Refresh")
                 />
             </Cell>
-            <Cell label="a title and muted lines — a name, then what it does not show">
+            <Cell label="a title and muted lines, each led by a glyph — a name, then what it does not show">
                 <Tooltip
                     text=hint("team/package-a")
                     lines=vec![
-                        "Host: nightly.quilttest.com".to_string(),
-                        "Keeps only the files you picked.".to_string(),
+                        TooltipLine::new("Host: nightly.quilttest.com").icon(icons::cloud),
+                        TooltipLine::new("Only the files you picked are kept.").icon(icons::download),
                     ]
                     wide=true
                     trigger=button_trigger("Package")
