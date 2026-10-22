@@ -24,6 +24,7 @@
 ### Added
 
 - **New design preview**: each package on the main page says how much of it is on disk: *3 to download* when you keep the whole package and some files are not downloaded yet, or *12 of 340 files* when you keep only the files you pick (<https://github.com/quiltdata/quilt-rs/pull/1172>)
+- **New design preview**: hovering a package on the main page shows its full name, its host, which files it keeps and how much of it is downloaded (<https://github.com/quiltdata/quilt-rs/pull/1178>)
 
 ### Changed
 

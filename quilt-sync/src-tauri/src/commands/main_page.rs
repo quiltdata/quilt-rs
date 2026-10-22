@@ -18,6 +18,7 @@ use quilt_rs::RoleInfo;
 use quilt_uri::Host;
 
 use super::package_page::KeepingScope;
+use super::package_page::PackageSize;
 use crate::autopull::PackageAutosync;
 use crate::autopull::PausedReason;
 use crate::autopull::Watcher;
@@ -841,7 +842,10 @@ pub struct MainPagePackageRefresh {
 }
 
 /// How much of its current revision a copy holds, counted from the manifest
-/// and the walk the row's status check already read.
+/// and the walk the row's status check already read: the same counts and size
+/// as the package page's Keeping, so only the files the revision lists count,
+/// at the size the manifest records. A new file is not counted, a modified one
+/// counts at its recorded size, and one deleted here counts as downloaded.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPageDownloads {
@@ -850,6 +854,10 @@ pub struct MainPageDownloads {
     pub total: usize,
     /// The listed files still to download, as Keeping counts them.
     pub outstanding: usize,
+    /// Every deletion the status reports.
+    pub deleted_here: usize,
+    /// `None` when the rows' sizes do not add up in a `u64`.
+    pub size: Option<PackageSize>,
 }
 
 impl From<quilt::lineage::DownloadCounts> for MainPageDownloads {
@@ -858,6 +866,8 @@ impl From<quilt::lineage::DownloadCounts> for MainPageDownloads {
             scope: counts.scope.into(),
             total: counts.listed,
             outstanding: counts.outstanding,
+            deleted_here: counts.deleted_here,
+            size: counts.size.map(PackageSize::from),
         }
     }
 }
@@ -2671,6 +2681,11 @@ mod tests {
             scope: quilt::lineage::SyncScope::EntirePackage,
             listed: 5,
             outstanding: 2,
+            deleted_here: 1,
+            size: Some(quilt::lineage::DownloadSize {
+                listed: 3_400_000,
+                outstanding: 1_500_000,
+            }),
         };
         let m =
             mock_one_package_counting(Ok((status_with(UpstreamState::UpToDate, 0), counts)), None);
@@ -2681,6 +2696,11 @@ mod tests {
                 scope: KeepingScope::EntirePackage,
                 total: 5,
                 outstanding: 2,
+                deleted_here: 1,
+                size: Some(PackageSize {
+                    total: 3_400_000,
+                    downloaded: 1_900_000,
+                }),
             })
         );
     }
@@ -2694,12 +2714,17 @@ mod tests {
                 scope: KeepingScope::IndividualFiles,
                 total: 340,
                 outstanding: 328,
+                deleted_here: 1,
+                size: Some(PackageSize {
+                    total: 3_400_000,
+                    downloaded: 1_900_000,
+                }),
             }),
             changed_files: Some(0),
         };
         assert_eq!(
             serde_json::to_string(&refreshed).unwrap(),
-            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328},"changedFiles":0}"#,
+            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000}},"changedFiles":0}"#,
         );
     }
 

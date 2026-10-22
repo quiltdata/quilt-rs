@@ -542,7 +542,8 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     /// [`Self::status`] and how much of the current revision this copy holds,
-    /// counted from the manifest and the walk the status itself read.
+    /// in files and in the bytes the manifest records, counted from the
+    /// manifest and the walk the status itself read.
     pub async fn status_with_downloads(
         &self,
         host_config_opt: Option<HostConfig>,
@@ -550,7 +551,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let (lineage, manifest, status) = self.status_with_manifest(host_config_opt).await?;
         let counts = lineage::DownloadCounts::count(
             &lineage,
-            manifest.rows.iter().map(|row| &row.logical_key),
+            manifest.rows.iter().map(|row| (&row.logical_key, row.size)),
             &status.changes,
         );
         Ok((status, counts))

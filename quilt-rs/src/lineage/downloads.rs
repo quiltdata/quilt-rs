@@ -1,11 +1,12 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+use super::Change;
 use super::ChangeSet;
 use super::PackageLineage;
 use super::SyncScope;
 
-/// How much of its current revision a copy holds, counted in files.
+/// How much of its current revision a copy holds, in files and in bytes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DownloadCounts {
     /// The scope the copy keeps.
@@ -14,24 +15,64 @@ pub struct DownloadCounts {
     pub listed: usize,
     /// The listed files still to download: see [`Self::is_outstanding`].
     pub outstanding: usize,
+    /// Every deletion the status reports.
+    pub deleted_here: usize,
+    /// The bytes the manifest records for the same files; `None` when they do
+    /// not add up in a `u64`.
+    pub size: Option<DownloadSize>,
+}
+
+/// The manifest's recorded bytes of the listed files and of the outstanding
+/// ones. Not disk usage: no file is stat'ed for it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DownloadSize {
+    pub listed: u64,
+    pub outstanding: u64,
+}
+
+impl DownloadSize {
+    /// The listed bytes that are not outstanding. A file deleted here is not
+    /// outstanding, so it counts.
+    #[must_use]
+    pub fn downloaded(&self) -> u64 {
+        self.listed - self.outstanding
+    }
 }
 
 impl DownloadCounts {
-    /// Counts `keys`, the logical keys of the current revision's rows.
+    /// Counts `rows`, the logical keys of the current revision's rows with the
+    /// sizes the rows record.
     #[must_use]
     pub fn count<'a>(
         lineage: &PackageLineage,
-        keys: impl IntoIterator<Item = &'a PathBuf>,
+        rows: impl IntoIterator<Item = (&'a PathBuf, u64)>,
         changes: &ChangeSet,
     ) -> Self {
-        let (listed, outstanding) = keys.into_iter().fold((0, 0), |(listed, outstanding), key| {
+        let mut listed = 0;
+        let mut outstanding = 0;
+        let mut size = Some(DownloadSize::default());
+        for (key, bytes) in rows {
             let missing = Self::is_outstanding(lineage, changes, key);
-            (listed + 1, outstanding + usize::from(missing))
-        });
+            listed += 1;
+            outstanding += usize::from(missing);
+            // `outstanding` sums a subset of `listed`, so it fits whenever
+            // `listed` does.
+            size = size.and_then(|size| {
+                Some(DownloadSize {
+                    listed: size.listed.checked_add(bytes)?,
+                    outstanding: size.outstanding + if missing { bytes } else { 0 },
+                })
+            });
+        }
         Self {
             scope: lineage.sync_scope,
             listed,
             outstanding,
+            deleted_here: changes
+                .values()
+                .filter(|change| matches!(change, Change::Removed(_)))
+                .count(),
+            size,
         }
     }
 
@@ -69,8 +110,21 @@ mod tests {
         }
     }
 
-    fn keys(paths: &[&str]) -> Vec<PathBuf> {
-        paths.iter().map(PathBuf::from).collect()
+    /// The listed paths, each 7 bytes.
+    fn rows(paths: &[&str]) -> Vec<(PathBuf, u64)> {
+        paths.iter().map(|path| (PathBuf::from(path), 7)).collect()
+    }
+
+    fn count(
+        lineage: &PackageLineage,
+        rows: &[(PathBuf, u64)],
+        changes: &ChangeSet,
+    ) -> DownloadCounts {
+        DownloadCounts::count(
+            lineage,
+            rows.iter().map(|(key, size)| (key, *size)),
+            changes,
+        )
     }
 
     fn changed(path: &str, change: fn(ManifestRow) -> Change) -> ChangeSet {
@@ -81,7 +135,7 @@ mod tests {
     fn a_whole_package_with_every_file_here_has_nothing_outstanding() {
         let lineage = tracking(&["a.csv", "b.csv"], SyncScope::EntirePackage);
 
-        let counts = DownloadCounts::count(&lineage, &keys(&["a.csv", "b.csv"]), &ChangeSet::new());
+        let counts = count(&lineage, &rows(&["a.csv", "b.csv"]), &ChangeSet::new());
 
         assert_eq!(
             counts,
@@ -89,6 +143,11 @@ mod tests {
                 scope: SyncScope::EntirePackage,
                 listed: 2,
                 outstanding: 0,
+                deleted_here: 0,
+                size: Some(DownloadSize {
+                    listed: 14,
+                    outstanding: 0,
+                }),
             }
         );
     }
@@ -97,9 +156,9 @@ mod tests {
     fn a_whole_package_counts_the_files_it_does_not_track() {
         let lineage = tracking(&["a.csv"], SyncScope::EntirePackage);
 
-        let counts = DownloadCounts::count(
+        let counts = count(
             &lineage,
-            &keys(&["a.csv", "b.csv", "c.csv"]),
+            &rows(&["a.csv", "b.csv", "c.csv"]),
             &ChangeSet::new(),
         );
 
@@ -111,28 +170,27 @@ mod tests {
     #[test]
     fn picked_files_count_what_is_here_against_the_revision() {
         let lineage = tracking(&["a.csv"], SyncScope::IndividualFiles);
-        let partial = DownloadCounts::count(
+        let partial = count(
             &lineage,
-            &keys(&["a.csv", "b.csv", "c.csv"]),
+            &rows(&["a.csv", "b.csv", "c.csv"]),
             &ChangeSet::new(),
         );
         assert_eq!(partial.scope, SyncScope::IndividualFiles);
         assert_eq!((partial.downloaded(), partial.listed), (1, 3));
 
-        let full = DownloadCounts::count(&lineage, &keys(&["a.csv"]), &ChangeSet::new());
+        let full = count(&lineage, &rows(&["a.csv"]), &ChangeSet::new());
         assert_eq!((full.downloaded(), full.listed), (1, 1));
     }
 
     #[test]
     fn a_locally_changed_file_is_not_outstanding() {
         let lineage = tracking(&[], SyncScope::EntirePackage);
-        let listed = keys(&["a.csv", "b.csv"]);
+        let listed = rows(&["a.csv", "b.csv"]);
 
-        let modified =
-            DownloadCounts::count(&lineage, &listed, &changed("a.csv", Change::Modified));
+        let modified = count(&lineage, &listed, &changed("a.csv", Change::Modified));
         assert_eq!(modified.outstanding, 1);
 
-        let removed = DownloadCounts::count(&lineage, &listed, &changed("b.csv", Change::Removed));
+        let removed = count(&lineage, &listed, &changed("b.csv", Change::Removed));
         assert_eq!(removed.outstanding, 1);
     }
 
@@ -140,7 +198,7 @@ mod tests {
     fn a_tracked_file_the_revision_no_longer_lists_is_not_counted() {
         let lineage = tracking(&["a.csv", "z.csv"], SyncScope::EntirePackage);
 
-        let counts = DownloadCounts::count(&lineage, &keys(&["a.csv"]), &ChangeSet::new());
+        let counts = count(&lineage, &rows(&["a.csv"]), &ChangeSet::new());
 
         assert_eq!((counts.listed, counts.outstanding), (1, 0));
     }
@@ -151,9 +209,83 @@ mod tests {
             serde_json::from_str(r#"{"commit":null,"base_hash":"","latest_hash":"","paths":{}}"#)
                 .expect("a lineage with no scope");
 
-        let counts = DownloadCounts::count(&lineage, &keys(&["a.csv"]), &ChangeSet::new());
+        let counts = count(&lineage, &rows(&["a.csv"]), &ChangeSet::new());
 
         assert_eq!(counts.scope, SyncScope::IndividualFiles);
         assert_eq!((counts.downloaded(), counts.listed), (0, 1));
+    }
+
+    fn sized(rows: &[(&str, u64)]) -> Vec<(PathBuf, u64)> {
+        rows.iter()
+            .map(|(path, size)| (PathBuf::from(path), *size))
+            .collect()
+    }
+
+    /// The outstanding bytes are the backlog's; a file changed or deleted here
+    /// counts as downloaded.
+    #[test]
+    fn the_size_leaves_the_backlog_out_of_downloaded() {
+        let lineage = tracking(&["a.csv"], SyncScope::EntirePackage);
+        let mut changes = changed("b.csv", Change::Modified);
+        changes.extend(changed("c.csv", Change::Removed));
+
+        let counts = count(
+            &lineage,
+            &sized(&[
+                ("a.csv", 1),
+                ("b.csv", 20),
+                ("c.csv", 300),
+                ("d.csv", 4_000),
+            ]),
+            &changes,
+        );
+
+        assert_eq!(
+            counts.size,
+            Some(DownloadSize {
+                listed: 4_321,
+                outstanding: 4_000,
+            })
+        );
+        assert_eq!(counts.size.unwrap().downloaded(), 321);
+    }
+
+    #[test]
+    fn deleted_here_is_every_removal_the_status_reports() {
+        let lineage = tracking(&["a.csv", "b.csv"], SyncScope::EntirePackage);
+        let listed = rows(&["a.csv", "b.csv"]);
+        let mut changes = changed("a.csv", Change::Removed);
+        changes.extend(changed("b.csv", Change::Removed));
+        changes.extend(changed("c.csv", Change::Modified));
+
+        assert_eq!(count(&lineage, &listed, &changes).deleted_here, 2);
+        assert_eq!(count(&lineage, &listed, &ChangeSet::new()).deleted_here, 0);
+    }
+
+    /// Sizes that do not add up in a `u64` are not read, rather than wrapped
+    /// into a figure nobody has: the file counts still are.
+    #[test]
+    fn a_size_past_u64_is_not_read_and_the_counts_still_are() {
+        let lineage = tracking(&[], SyncScope::EntirePackage);
+
+        let counts = count(
+            &lineage,
+            &sized(&[("a.csv", u64::MAX), ("b.csv", 1)]),
+            &ChangeSet::new(),
+        );
+
+        assert_eq!(counts.size, None);
+        assert_eq!((counts.listed, counts.outstanding), (2, 2));
+    }
+
+    #[test]
+    fn an_empty_revision_weighs_nothing() {
+        let counts = count(
+            &tracking(&[], SyncScope::EntirePackage),
+            &[],
+            &ChangeSet::new(),
+        );
+
+        assert_eq!(counts.size, Some(DownloadSize::default()));
     }
 }
