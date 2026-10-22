@@ -202,3 +202,70 @@ impl Services {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::dispatch::dispatch;
+
+    #[test]
+    fn the_data_folder_is_named_by_the_tauri_identifier() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("tauri.conf.json");
+        assert_eq!(conf["identifier"], APP_IDENTIFIER);
+        assert!(default_data_dir().ends_with(APP_IDENTIFIER));
+    }
+
+    /// The services start with no Tauri app, answer commands through
+    /// `dispatch` and announce on the event sink.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn services_run_without_tauri() {
+        let data_dir = tempfile::tempdir().expect("temp data dir");
+        let s = Services::init(data_dir.path().to_path_buf(), Version::new(0, 0, 0))
+            .await
+            .expect("services");
+        let mut events = s.events.subscribe();
+
+        assert_eq!(dispatch(&s, "get_toasts", json!({})).await, Ok(json!([])));
+        assert_eq!(
+            dispatch(&s, "dismiss_toast", json!({"id": 7})).await,
+            Ok(serde_json::Value::Null)
+        );
+        assert_eq!(
+            dispatch(&s, "check_for_update", serde_json::Value::Null).await,
+            Ok(serde_json::Value::Null)
+        );
+        assert_eq!(
+            dispatch(&s, "login_oauth", json!({"host": "a.test"})).await,
+            Err(json!(crate::dispatch::NOT_IN_BROWSER))
+        );
+        assert!(dispatch(&s, "get_settings_data", json!({})).await.is_ok());
+
+        s.toasts
+            .post(crate::toast::ToastDraft {
+                body: "hello".into(),
+                ..Default::default()
+            })
+            .await;
+        s.navigate(routes::Paths::Settings);
+        let mut seen = Vec::new();
+        while seen.len() < 2 {
+            let (name, payload) =
+                tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+                    .await
+                    .expect("an event in time")
+                    .expect("the sink is open");
+            if name == "toast" || name == "navigate" {
+                seen.push((name, payload));
+            }
+        }
+        assert_eq!(seen[0].0, "toast");
+        assert_eq!(seen[0].1["body"], "hello");
+        assert_eq!(
+            seen[1],
+            ("navigate".to_owned(), json!({"url": "/settings"}))
+        );
+    }
+}
