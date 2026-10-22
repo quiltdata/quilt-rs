@@ -150,7 +150,6 @@ pub use number_input::NumberInput;
 pub use package_row::PackageRow;
 pub use package_row::PackageRowSkeleton;
 pub use package_row::RowDownloads;
-pub use package_row::RowSize;
 pub use package_state::PackageAction;
 pub use package_state::PackageState;
 pub use package_state::Rendered;

@@ -90,7 +90,7 @@ pub fn PackageRow(
     /// How much of the package is here, for the tooltip, in Keeping's words.
     /// `None`, when the check did not answer, leaves its line out.
     #[prop(optional, into)]
-    size: MaybeProp<RowSize>,
+    size: MaybeProp<Held>,
 ) -> impl IntoView {
     // One computed string: Leptos rejects two `class` attributes on an element, and
     // the row dims as a whole rather than the label dimming alone — see the
@@ -174,21 +174,12 @@ pub fn PackageRow(
     view! { <Tooltip text=title lines=lines align=Align::Start wide=true fill=true trigger=row /> }
 }
 
-/// How much of a package is here, as far as its row tells.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RowSize {
-    /// The row's check is still out.
-    Measuring,
-    /// What the check counted, which Keeping's caption counts too.
-    Held(Held),
-}
-
 /// The tooltip's lines under the name, each left out when its fact is. The
 /// scope line leads with the badge's own glyph.
 fn tooltip_lines(
     host: Option<&str>,
     downloads: Option<RowDownloads>,
-    size: Option<RowSize>,
+    size: Option<Held>,
 ) -> Vec<TooltipLine> {
     let host = host
         .filter(|host| !host.is_empty())
@@ -200,13 +191,7 @@ fn tooltip_lines(
         })
         .icon(icons::download)
     });
-    let size = size.map(|size| {
-        TooltipLine::new(match size {
-            RowSize::Measuring => "Measuring size\u{2026}".to_string(),
-            RowSize::Held(held) => counted(held),
-        })
-        .icon(icons::folder)
-    });
+    let size = size.map(|held| TooltipLine::new(counted(held)).icon(icons::folder));
     [host, scope, size].into_iter().flatten().collect()
 }
 
@@ -409,7 +394,7 @@ mod tests {
         }),
     };
 
-    fn row_with(host: Option<&'static str>, size: Option<RowSize>) -> web_sys::Element {
+    fn row_with(host: Option<&'static str>, size: Option<Held>) -> web_sys::Element {
         mount(move || {
             view! {
                 <PackageRow
@@ -466,7 +451,7 @@ mod tests {
     /// The whole namespace survives the ellipsis as the tooltip's title.
     #[wasm_bindgen_test]
     fn the_tooltip_names_the_package_then_host_scope_and_size() {
-        let el = row_with(Some("nightly.quilttest.com"), Some(RowSize::Held(PLATE)));
+        let el = row_with(Some("nightly.quilttest.com"), Some(PLATE));
         assert_eq!(
             tooltip_text(&el),
             [
@@ -497,13 +482,27 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn no_host_leaves_its_line_out() {
-        let el = row_with(None, Some(RowSize::Measuring));
+        let el = row_with(None, Some(PLATE));
         assert_eq!(
             tooltip_text(&el),
             [
                 "a-long-owner-name/a-much-longer-package-name-than-the-column",
                 "Only the files you picked are kept",
-                "Measuring size\u{2026}",
+                "12 of 340 files \u{b7} 1.9\u{a0}MB of 3.4\u{a0}MB downloaded",
+            ]
+        );
+    }
+
+    /// Until the check answers there is no size, and no line saying so.
+    #[wasm_bindgen_test]
+    fn no_size_leaves_its_line_out() {
+        let el = row_with(Some("nightly.quilttest.com"), None);
+        assert_eq!(
+            tooltip_text(&el),
+            [
+                "a-long-owner-name/a-much-longer-package-name-than-the-column",
+                "Host: nightly.quilttest.com",
+                "Only the files you picked are kept",
             ]
         );
     }
@@ -512,14 +511,13 @@ mod tests {
 #[cfg(test)]
 mod tooltip_tests {
     use super::RowDownloads;
-    use super::RowSize;
     use crate::commands::PackageSize;
     use crate::util::{Held, counted};
 
     fn tooltip_lines(
         host: Option<&str>,
         downloads: Option<RowDownloads>,
-        size: Option<RowSize>,
+        size: Option<Held>,
     ) -> Vec<String> {
         super::tooltip_lines(host, downloads, size)
             .into_iter()
@@ -532,7 +530,12 @@ mod tooltip_tests {
         let lines = super::tooltip_lines(
             Some("nightly.quilttest.com"),
             Some(RowDownloads::EntirePackage { to_download: 0 }),
-            Some(RowSize::Measuring),
+            Some(Held {
+                total: 1,
+                outstanding: 0,
+                deleted_here: 0,
+                size: None,
+            }),
         );
         assert_eq!(lines.len(), 3);
         assert!(lines.iter().all(|line| line.icon.is_some()));
@@ -565,7 +568,6 @@ mod tooltip_tests {
     #[test]
     fn the_size_line_says_what_keeping_says() {
         let size = |size| tooltip_lines(None, None, Some(size));
-        assert_eq!(size(RowSize::Measuring), ["Measuring size\u{2026}"]);
         let held = Held {
             total: 340,
             outstanding: 0,
@@ -575,9 +577,9 @@ mod tooltip_tests {
                 downloaded: 3_400_000,
             }),
         };
-        assert_eq!(size(RowSize::Held(held)), [counted(held)]);
+        assert_eq!(size(held), [counted(held)]);
         assert_eq!(
-            size(RowSize::Held(held)),
+            size(held),
             ["All files are downloaded \u{b7} 3.4\u{a0}MB \u{b7} 2 deleted here"]
         );
     }

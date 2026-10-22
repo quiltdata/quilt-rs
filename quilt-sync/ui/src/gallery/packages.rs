@@ -18,7 +18,6 @@ use crate::kit::ListToolbar;
 use crate::kit::Naming;
 use crate::kit::PackageRow;
 use crate::kit::RowDownloads;
-use crate::kit::RowSize;
 use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
@@ -183,13 +182,22 @@ fn DownloadsStory() -> impl IntoView {
     }
 }
 
+/// Label, namespace, host, scope, size.
+type TooltipCell = (
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    Option<RowDownloads>,
+    Option<Held>,
+);
+
 /// What the row does not draw, on hover or focus. Nothing here is open: each
 /// cell is a row to rest on or Tab to, as `Tooltip`'s own stories are.
 #[component]
 fn TooltipStory() -> impl IntoView {
     const HOST: Option<&str> = Some("nightly.quilttest.com");
     let held = |total, outstanding, bytes, downloaded| {
-        RowSize::Held(Held {
+        Some(Held {
             total,
             outstanding,
             deleted_here: 0,
@@ -199,13 +207,13 @@ fn TooltipStory() -> impl IntoView {
             }),
         })
     };
-    let picked = RowDownloads::IndividualFiles {
+    let picked = Some(RowDownloads::IndividualFiles {
         downloaded: 12,
         total: 340,
-    };
+    });
     let picked_size = held(340, 328, 3_400_000_000, 1_900_000_000);
-    let entire = RowDownloads::EntirePackage { to_download: 0 };
-    let cells: Vec<(&str, &str, Option<&str>, RowDownloads, RowSize)> = vec![
+    let entire = Some(RowDownloads::EntirePackage { to_download: 0 });
+    let cells: Vec<TooltipCell> = vec![
         (
             "picked files, some downloaded",
             "team/package-a",
@@ -224,15 +232,15 @@ fn TooltipStory() -> impl IntoView {
             "entire package, nothing downloaded yet",
             "team/package-c",
             HOST,
-            RowDownloads::EntirePackage { to_download: 58 },
+            Some(RowDownloads::EntirePackage { to_download: 58 }),
             held(58, 58, 86_300_000_000, 0),
         ),
         (
-            "measuring — the row's check is still out",
+            "not checked yet — the scope and size lines wait for the check",
             "team/package-d",
             HOST,
-            entire,
-            RowSize::Measuring,
+            None,
+            None,
         ),
         (
             "no host — its line is left out",
