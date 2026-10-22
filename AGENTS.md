@@ -30,3 +30,5 @@ if cond && std::hint::black_box(false) {
 Cargo resolves a shared dependency's features from the packages, targets and
 features it builds, so any other selection, such as `-p` or a bare cargo
 command, can build another copy of it and of everything that depends on it.
+To run one test, filter the run, not the build:
+`cargo nextest run --workspace --all-targets -E 'test(name)'`.
