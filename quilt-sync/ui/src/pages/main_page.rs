@@ -37,6 +37,7 @@ use quilt_uri::S3PackageUri;
 use super::status_watch::StatusWatch;
 use crate::commands;
 use crate::commands::MainPageAccountsData;
+use crate::commands::MainPageDownloadsData;
 use crate::commands::MainPagePackageData;
 use crate::commands::MainPagePackageRefreshData;
 use crate::commands::MainPagePackagesData;
@@ -46,6 +47,7 @@ use crate::components::appbar::appbar_actions;
 use crate::error_handler::{current_path, follow_redirect};
 use crate::routes::package_page_href;
 use crate::util;
+use crate::util::Held;
 use grouping::ListRowData;
 use grouping::PackageGroup;
 use toolbar_memory::FILES_GROUP;
@@ -158,7 +160,7 @@ struct RowSignals {
     confidence: RwSignal<Confidence>,
     role_switch_host: RwSignal<Option<String>>,
     /// What the status check counted on disk; `None` until a check answers.
-    downloads: RwSignal<Option<RowDownloads>>,
+    downloads: RwSignal<Option<MainPageDownloadsData>>,
     /// Files the status check counted as changed; `None` until a check answers.
     changed_files: RwSignal<Option<usize>>,
 }
@@ -228,8 +230,7 @@ impl RowSignals {
     fn apply(self, refreshed: MainPagePackageRefreshData) {
         self.state.set(refreshed.state);
         self.role_switch_host.set(refreshed.role_switch_host);
-        self.downloads
-            .set(refreshed.downloads.map(RowDownloads::from));
+        self.downloads.set(refreshed.downloads);
         self.changed_files.set(refreshed.changed_files);
         self.confidence.set(Confidence::Settled);
     }
@@ -411,10 +412,19 @@ fn PackageListRow(
     /// This package's live state, owned by the page's [`PackageStore`].
     row: RowSignals,
     changed_at: Option<f64>,
+    host: Option<String>,
 ) -> impl IntoView {
     let href = package_page_href(&namespace);
     let words = Signal::derive(move || render(&row.state.get(), Site::ListRow).words);
     let tone = Signal::derive(move || render(&row.state.get(), Site::ListRow).tone);
+    // Counts from an earlier check are not shown while a row is unconfirmed.
+    let counted = move || {
+        if row.provisional() {
+            None
+        } else {
+            row.downloads.get()
+        }
+    };
 
     view! {
         <PackageRow
@@ -424,10 +434,9 @@ fn PackageListRow(
             state=words
             tone=tone
             provisional=Signal::derive(move || row.provisional())
-            // Counts from an earlier check are not shown while a row is unconfirmed.
-            downloads=Signal::derive(move || {
-                if row.provisional() { None } else { row.downloads.get() }
-            })
+            downloads=Signal::derive(move || counted().map(RowDownloads::from))
+            host=host
+            size=Signal::derive(move || counted().map(Held::from))
         />
     }
 }
@@ -498,6 +507,7 @@ fn PackageList(packages: Signal<Vec<ListRowData>>, store: PackageStore) -> impl 
                                         namespace=row_data.namespace
                                         row=row
                                         changed_at=row_data.changed_at
+                                        host=row_data.host
                                     />
                                 </li>
                             }
@@ -1166,6 +1176,7 @@ fn MainPageRegions(
                                 namespace: p.namespace.clone(),
                                 changed_at: p.changed_at,
                                 bucket: p.bucket.clone(),
+                                host: p.host.clone(),
                             })
                             .collect();
                         // The feed's Copy action addresses a package, and only
@@ -1548,6 +1559,7 @@ mod tests {
                 namespace: p.namespace.clone(),
                 changed_at: p.changed_at,
                 bucket: p.bucket.clone(),
+                host: p.host.clone(),
             })
             .collect()
     }
@@ -1709,7 +1721,91 @@ mod tests {
             scope: crate::commands::KeepingScope::IndividualFiles,
             total,
             outstanding,
+            deleted_here: 0,
+            size: None,
         }
+    }
+
+    /// The muted lines of the first row's tooltip, under its title.
+    fn tooltip_lines(el: &web_sys::Element) -> Vec<String> {
+        let link = el.query_selector("a").unwrap().expect("a row");
+        let surface = crate::test_support::describing_tooltip(&link).expect("the row's tooltip");
+        let lines = surface.query_selector_all("[class*=line]").unwrap();
+        (0..lines.length())
+            .map(|i| lines.item(i).unwrap().text_content().unwrap())
+            .collect()
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_settled_row_shows_its_host_and_size_on_hover() {
+        let light = vec![MainPagePackageData {
+            host: Some("quilt.test".to_string()),
+            ..pkg("user/plate-07", PackageState::Latest)
+        }];
+        let store = PackageStore::seed(&light);
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+        assert_eq!(
+            tooltip_lines(&el),
+            ["Host: quilt.test"],
+            "the host is the light phase's, before any check answers"
+        );
+
+        store
+            .row(&ns("user/plate-07"))
+            .unwrap()
+            .apply(MainPagePackageRefreshData {
+                state: PackageState::Latest,
+                role_switch_host: None,
+                downloads: Some(crate::commands::MainPageDownloadsData {
+                    deleted_here: 1,
+                    size: Some(crate::commands::PackageSize {
+                        total: 3_400_000,
+                        downloaded: 1_900_000,
+                    }),
+                    ..picked(340, 328)
+                }),
+                changed_files: None,
+            });
+        leptos::task::tick().await;
+
+        assert_eq!(
+            tooltip_lines(&el),
+            [
+                "Host: quilt.test",
+                "Only the files you picked are kept",
+                "12 of 340 files \u{b7} 1.9\u{a0}MB of 3.4\u{a0}MB downloaded \u{b7} 1 deleted here",
+            ]
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_check_leaves_the_scope_and_size_out() {
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let row = store.row(&ns("user/plate-07")).unwrap();
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+
+        row.apply(MainPagePackageRefreshData {
+            state: PackageState::Latest,
+            role_switch_host: None,
+            downloads: Some(picked(340, 0)),
+            changed_files: None,
+        });
+        leptos::task::tick().await;
+        assert_eq!(tooltip_lines(&el).len(), 2, "the scope and the size");
+
+        row.mark_pending();
+        row.mark_unchecked();
+        leptos::task::tick().await;
+        assert_eq!(
+            tooltip_lines(&el),
+            Vec::<String>::new(),
+            "a failed re-check hides the earlier answer"
+        );
     }
 
     #[wasm_bindgen_test]

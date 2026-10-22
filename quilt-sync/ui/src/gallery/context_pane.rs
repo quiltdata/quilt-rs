@@ -38,6 +38,7 @@ use quilt_uri::Namespace;
 use crate::Cell;
 use crate::Scene;
 use crate::commands::CurrentRevisionData;
+use crate::commands::PackageSize;
 use crate::commands::ResolveData;
 use crate::commands::RevisionHistoryData;
 use crate::commands::RevisionHistoryRow;
@@ -54,6 +55,8 @@ use crate::kit::LoadFailure;
 use crate::kit::PaneSection;
 use crate::kit::RevisionRow;
 use crate::kit::SkeletonBox;
+use quilt_sync_ui::util::Held;
+use quilt_sync_ui::util::counted;
 use quilt_sync_ui::util::format_size;
 use quilt_sync_ui::util::thousands;
 
@@ -208,111 +211,52 @@ fn revision_skeleton() -> AnyView {
     .into_any()
 }
 
-/// What the page read knows about the size.
-#[derive(Clone, Copy)]
-enum Size {
-    /// A row's size could not be read.
-    Unread,
-    /// Bytes in the revision, and in the files of it that are here.
-    Known { total: u64, here: u64 },
-}
-
-/// What `Keeping` reports: the revision's files, how many are not here, and
-/// their bytes.
-#[derive(Clone, Copy)]
-struct Held {
-    files: usize,
-    pending: usize,
-    size: Size,
-}
-
 const MB: u64 = 1_000_000;
+
+/// What `Keeping` reports, in the app's own type, so the caption here is the
+/// app's words from [`counted`].
+const fn keeping(files: usize, pending: usize, size: Option<(u64, u64)>) -> Held {
+    Held {
+        total: files,
+        outstanding: pending,
+        deleted_here: 0,
+        size: match size {
+            Some((total, downloaded)) => Some(PackageSize { total, downloaded }),
+            None => None,
+        },
+    }
+}
 
 /// The standalone cells' package, two files short or complete: 56 files,
 /// 3.4 MB, of which 1.9 MB is here when two are not. Not the page's: beside the
 /// file pane the region reads [`on_page`] instead.
 const fn plate(pending: usize) -> Held {
-    Held {
-        files: TOTAL,
-        pending,
-        size: Size::Known {
-            total: 34 * MB / 10,
-            here: if pending == 0 {
-                34 * MB / 10
-            } else {
-                19 * MB / 10
-            },
-        },
-    }
+    let here = if pending == 0 {
+        34 * MB / 10
+    } else {
+        19 * MB / 10
+    };
+    keeping(TOTAL, pending, Some((34 * MB / 10, here)))
 }
 
 /// The file pane's own package, as the region says it on the page: the two
 /// panes are on screen together there, so the sizes come from the same rows.
 fn on_page() -> Held {
     let kept = crate::gallery::file_pane::kept();
-    Held {
-        files: kept.files,
-        pending: kept.pending,
-        size: Size::Known {
-            total: kept.total,
-            here: kept.here,
-        },
-    }
+    keeping(kept.files, kept.pending, Some((kept.total, kept.here)))
 }
 
 /// A revision with no files at all.
-const EMPTY: Held = Held {
-    files: 0,
-    pending: 0,
-    size: Size::Known { total: 0, here: 0 },
-};
+const EMPTY: Held = keeping(0, 0, Some((0, 0)));
 
 /// 140,000 files, 12,400 of them here.
-const HUGE: Held = Held {
-    files: 140_000,
-    pending: 127_600,
-    size: Size::Known {
-        total: 1_200_000 * MB,
-        here: 86_300 * MB,
-    },
-};
+const HUGE: Held = keeping(140_000, 127_600, Some((1_200_000 * MB, 86_300 * MB)));
 
 /// Two files short, and a row's size could not be read.
 const UNREAD: Held = Held {
-    size: Size::Unread,
+    size: None,
     ..plate(2)
 };
-
-/// The count, with the size joined to it: the count already answers *how much
-/// of this package is here*, and the size is the same question in bytes. A
-/// size that cannot be read says nothing, not a dash: the count is still true.
-/// An empty revision says so instead of "All files are downloaded", which is
-/// true of nothing.
-fn counted(held: Held) -> String {
-    let present = held.files.saturating_sub(held.pending);
-    match held.size {
-        Size::Known { .. } if held.files == 0 => "This revision has no files".to_string(),
-        Size::Known { total, .. } if held.pending == 0 => {
-            format!("All files are downloaded · {}", format_size(total))
-        }
-        Size::Known { total, .. } if present == 0 => {
-            format!("No files are downloaded · {}", format_size(total))
-        }
-        Size::Known { total, here } => format!(
-            "{} of {} files · {} of {} downloaded",
-            thousands(present),
-            thousands(held.files),
-            format_size(here),
-            format_size(total),
-        ),
-        Size::Unread if held.pending == 0 => "All files are downloaded".to_string(),
-        Size::Unread => format!(
-            "{} of {} downloaded",
-            thousands(present),
-            thousands(held.files)
-        ),
-    }
-}
 
 /// What the choice means, in the present tense.
 ///
@@ -335,16 +279,17 @@ fn consequence(scope: RwSignal<String>, held: Held) -> Signal<String> {
 /// missing files', total less downloaded, so a size that cannot be read leaves
 /// the count alone. The live cell's section takes them from the page read's size.
 fn download_words(held: Held) -> String {
-    let files = if held.pending == 1 {
+    let files = if held.outstanding == 1 {
         "Download 1 file".to_string()
     } else {
-        format!("Download {} files", thousands(held.pending))
+        format!("Download {} files", thousands(held.outstanding))
     };
     match held.size {
-        Size::Known { total, here } => {
-            format!("{files} · {}", format_size(total.saturating_sub(here)))
-        }
-        Size::Unread => files,
+        Some(size) => format!(
+            "{files} · {}",
+            format_size(size.total.saturating_sub(size.downloaded))
+        ),
+        None => files,
     }
 }
 
@@ -355,7 +300,7 @@ fn download_words(held: Held) -> String {
 fn download(scope: RwSignal<String>, held: Held) -> AnyView {
     view! {
         {move || {
-            (scope.get() == "all" && held.pending > 0)
+            (scope.get() == "all" && held.outstanding > 0)
                 .then(|| view! { <Button on_click=|_| ()>{download_words(held)}</Button> })
         }}
     }

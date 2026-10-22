@@ -21,8 +21,8 @@ use super::SORT_NAME;
 
 /// One list row's own data, as the list arranges it.
 ///
-/// A struct rather than the tuple this replaced: three fields, two of them
-/// sort and group keys, and `row.1` says nothing at a call site.
+/// A struct rather than the tuple this replaced: two of its fields are sort
+/// and group keys, and `row.1` says nothing at a call site.
 ///
 /// Everything that settles — the state, whether it is still the light phase's
 /// guess — lives in `PackageStore` and is read from there. This carries only
@@ -35,6 +35,8 @@ pub struct ListRowData {
     /// axis (§3.1), because local packages are the ones missing a bucket and
     /// burying them hides what most needs setup.
     pub bucket: Option<String>,
+    /// The catalog the package points at, for the row's tooltip.
+    pub host: Option<String>,
 }
 
 /// Case-insensitive substring over the namespace, and nothing else (R5).
@@ -164,6 +166,7 @@ mod tests {
             namespace: Namespace::try_from(namespace).expect("a namespace"),
             changed_at,
             bucket: bucket.map(str::to_string),
+            host: None,
         }
     }
 

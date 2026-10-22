@@ -40,6 +40,7 @@ pub use package::SyncScope;
 
 mod downloads;
 pub use downloads::DownloadCounts;
+pub use downloads::DownloadSize;
 
 mod home;
 pub use home::DEFAULT_HOME_DIR_NAME;

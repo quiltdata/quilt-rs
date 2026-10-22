@@ -107,6 +107,15 @@ pub struct PackageSize {
     pub downloaded: u64,
 }
 
+impl From<quilt::lineage::DownloadSize> for PackageSize {
+    fn from(size: quilt::lineage::DownloadSize) -> Self {
+        Self {
+            total: size.listed,
+            downloaded: size.downloaded(),
+        }
+    }
+}
+
 /// Which files this copy keeps, as the pane says it. Its own wire enum rather
 /// than `SyncScope`, whose serde form is the lineage file's, not this page's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -379,15 +388,13 @@ fn epoch_millis(at: DateTime<Utc>) -> f64 {
 }
 
 /// A listed path is outstanding when this copy neither tracks it nor has a
-/// local change at it ([`quilt::lineage::DownloadCounts::is_outstanding`], which
-/// the main page's rows count by too) — v1's `remote` rows
-/// (`package_data.rs:195-206`). `changes` is `None` when the status could not
-/// be read: then only tracking decides, and the engine still refuses to
-/// overwrite a local file.
+/// local change at it ([`quilt::lineage::DownloadCounts::is_outstanding`]) —
+/// v1's `remote` rows (`package_data.rs:195-206`). `changes` is `None` when
+/// the status could not be read: then only tracking decides, and the engine
+/// still refuses to overwrite a local file.
 ///
-/// The size follows the same rule, over the same rows: downloaded is every
-/// listed file's bytes less the backlog's. A file deleted here is a local
-/// change, so it counts as downloaded, and `deleted_here` says how many.
+/// Counted by [`quilt::lineage::DownloadCounts::count`], as the main page's
+/// rows are, so the two pages give one number and one size.
 fn keeping_data(
     lineage: &quilt::lineage::PackageLineage,
     sizes: &BTreeMap<PathBuf, u64>,
@@ -395,38 +402,22 @@ fn keeping_data(
 ) -> (KeepingData, Option<PackageSize>) {
     let no_changes = quilt::lineage::ChangeSet::new();
     let changes = changes.unwrap_or(&no_changes);
-    let outstanding: Vec<(&PathBuf, u64)> = sizes
-        .iter()
-        .filter(|(key, _)| quilt::lineage::DownloadCounts::is_outstanding(lineage, changes, key))
-        .map(|(key, size)| (key, *size))
-        .collect();
-    let total = sizes
-        .values()
-        .try_fold(0u64, |sum, size| sum.checked_add(*size));
-    let missing = outstanding
-        .iter()
-        .try_fold(0u64, |sum, (_, size)| sum.checked_add(*size));
-    // `missing <= total` whenever `total` fits, since it sums a subset.
-    let size = total.zip(missing).map(|(total, missing)| PackageSize {
-        total,
-        downloaded: total - missing,
-    });
-    // Every deletion in the status, as the file pane's `EntryCounts.deleted`
-    // counts it, so the two panes give one number.
-    let deleted_here = changes
-        .values()
-        .filter(|change| matches!(change, quilt::lineage::Change::Removed(_)))
-        .count();
+    let counts = quilt::lineage::DownloadCounts::count(
+        lineage,
+        sizes.iter().map(|(key, size)| (key, *size)),
+        changes,
+    );
     let keeping = KeepingData {
-        scope: lineage.sync_scope.into(),
-        total: sizes.len(),
-        remote_only: outstanding
-            .into_iter()
-            .map(|(key, _)| key.display().to_string())
+        scope: counts.scope.into(),
+        total: counts.listed,
+        remote_only: sizes
+            .keys()
+            .filter(|key| quilt::lineage::DownloadCounts::is_outstanding(lineage, changes, key))
+            .map(|key| key.display().to_string())
             .collect(),
-        deleted_here,
+        deleted_here: counts.deleted_here,
     };
-    (keeping, size)
+    (keeping, counts.size.map(PackageSize::from))
 }
 
 /// The gate: the header's status decides, not the snapshot, whose `latest_hash` is stale here.
@@ -1585,6 +1576,42 @@ mod tests {
         assert_eq!(keeping.deleted_here, 0);
         let (keeping, _) = keeping_data(&lineage, &listed, None);
         assert_eq!(keeping.deleted_here, 0);
+    }
+
+    /// A main page row counts what Keeping counts, from the same rows and status.
+    #[test]
+    fn the_main_page_row_agrees_with_keeping() {
+        let lineage = lineage_tracking(&["a.csv", "b.csv"]);
+        let listed = sized(&[
+            ("a.csv", 1),
+            ("b.csv", 20),
+            ("c.csv", 300),
+            ("d.csv", 4_000),
+        ]);
+        let mut changes = removed("b.csv");
+        changes.extend(modified("c.csv"));
+
+        let (keeping, size) = keeping_data(&lineage, &listed, Some(&changes));
+        let row = super::super::main_page::MainPageDownloads::from(
+            quilt::lineage::DownloadCounts::count(
+                &lineage,
+                listed.iter().map(|(key, size)| (key, *size)),
+                &changes,
+            ),
+        );
+
+        assert_eq!(row.scope, keeping.scope);
+        assert_eq!(row.total, keeping.total);
+        assert_eq!(row.outstanding, keeping.remote_only.len());
+        assert_eq!(row.deleted_here, keeping.deleted_here);
+        assert_eq!(row.size, size);
+        assert_eq!(
+            size,
+            Some(PackageSize {
+                total: 4_321,
+                downloaded: 321,
+            })
+        );
     }
 
     #[test]

@@ -154,6 +154,19 @@ needs a decision, and says so in one line instead.
 Grouping options differ per view: packages group by Bucket, Prefix or None;
 recent files group by Package or None.
 
+Resting the pointer anywhere on a package row, or reaching it with Tab, opens
+its tooltip; the pointer passes through it to the rows below. It gives:
+
+- the package's full name, which the row may cut short;
+- *Host: open.quiltdata.com*, left out for a package with no catalog;
+- what it keeps: *Every file in the package is kept* or *Only the files you
+  picked are kept*;
+- how much is downloaded, in Keeping's words on the package page, as in *"12 of
+  340 files · 1.9 MB of 3.4 MB downloaded."*
+
+The last two are left out until the row's check answers, and again when a check
+fails.
+
 ### Installed Packages List
 
 Lists all locally installed packages. The main screen unless Settings →

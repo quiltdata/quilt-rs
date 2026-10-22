@@ -985,6 +985,22 @@ pub struct MainPageDownloadsData {
     pub total: usize,
     /// The listed files still to download.
     pub outstanding: usize,
+    /// Every deletion the status reports.
+    pub deleted_here: usize,
+    /// The listed files' bytes; `None` when they cannot be read.
+    pub size: Option<PackageSize>,
+}
+
+/// Keeping's counts, so the row's tooltip says what the package page says.
+impl From<MainPageDownloadsData> for crate::util::Held {
+    fn from(data: MainPageDownloadsData) -> Self {
+        Self {
+            total: data.total,
+            outstanding: data.outstanding,
+            deleted_here: data.deleted_here,
+            size: data.size,
+        }
+    }
 }
 
 impl From<MainPageDownloadsData> for crate::kit::RowDownloads {
@@ -2636,7 +2652,7 @@ mod tests {
         assert_eq!(denied.downloads, None);
 
         let counted = serde_json::from_str::<super::MainPagePackageRefreshData>(
-            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328}}"#,
+            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000}}}"#,
         )
         .unwrap();
         assert_eq!(
@@ -2645,8 +2661,19 @@ mod tests {
                 scope: KeepingScope::IndividualFiles,
                 total: 340,
                 outstanding: 328,
+                deleted_here: 1,
+                size: Some(super::PackageSize {
+                    total: 3_400_000,
+                    downloaded: 1_900_000,
+                }),
             })
         );
+
+        let unread = serde_json::from_str::<super::MainPageDownloadsData>(
+            r#"{"scope":"entirePackage","total":2,"outstanding":0,"deletedHere":0,"size":null}"#,
+        )
+        .unwrap();
+        assert_eq!(unread.size, None);
     }
 
     fn row_downloads(scope: KeepingScope, total: usize, outstanding: usize) -> RowDownloads {
@@ -2654,6 +2681,8 @@ mod tests {
             scope,
             total,
             outstanding,
+            deleted_here: 0,
+            size: None,
         }
         .into()
     }

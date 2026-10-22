@@ -1737,7 +1737,7 @@ async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
 }
 
 /// The counts come from the manifest the status read: a listed file this copy
-/// does not track is still to download.
+/// does not track is still to download, at the size its row records.
 #[test(tokio::test)]
 async fn test_status_with_downloads_counts_the_current_revision() -> Res {
     let (package, _temp_dirs) = behind_package(BASE_MANIFEST).await?;
@@ -1751,6 +1751,11 @@ async fn test_status_with_downloads_counts_the_current_revision() -> Res {
             scope: SyncScope::IndividualFiles,
             listed: 1,
             outstanding: 1,
+            deleted_here: 0,
+            size: Some(crate::lineage::DownloadSize {
+                listed: 0,
+                outstanding: 0,
+            }),
         }
     );
 
