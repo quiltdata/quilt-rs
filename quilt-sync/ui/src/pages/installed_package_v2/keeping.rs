@@ -20,7 +20,7 @@ use leptos::prelude::*;
 use super::{Reread, Wiring, run};
 use crate::commands::{self, KeepingScope, PackageSize};
 use crate::kit::{Button, Choice, ChoiceGroup, PaneSection};
-use crate::util::{format_size, thousands};
+use crate::util::{Held, counted, format_size, thousands};
 
 type Answer<T> = Pin<Box<dyn Future<Output = Result<T, String>>>>;
 
@@ -173,16 +173,6 @@ pub(super) fn KeepingSection(
     }
 }
 
-/// What the caption counts: the revision's files, those not here, those
-/// deleted here, and their bytes when they could be read.
-#[derive(Clone, Copy)]
-pub(super) struct Held {
-    pub total: usize,
-    pub outstanding: usize,
-    pub deleted_here: usize,
-    pub size: Option<PackageSize>,
-}
-
 /// What the choice means now: the present count, and — only under the whole
 /// package — the promise about files that do not exist yet.
 pub(super) fn caption(scope: KeepingScope, held: Held) -> String {
@@ -192,53 +182,6 @@ pub(super) fn caption(scope: KeepingScope, held: Held) -> String {
             format!("{counted} — files added later are downloaded too.")
         }
         KeepingScope::IndividualFiles => format!("{counted}."),
-    }
-}
-
-/// The count, with the size joined to it, and the files deleted here named.
-/// An empty revision says so: "All files are downloaded" is true of nothing.
-/// A size that cannot be read says nothing, not a dash: the count is still
-/// true.
-fn counted(held: Held) -> String {
-    let Held {
-        total,
-        outstanding,
-        deleted_here,
-        size,
-    } = held;
-    if total == 0 {
-        return "This revision has no files".to_string();
-    }
-    // The read guarantees `outstanding <= total`; a wrong count beats a panic.
-    let here = total.saturating_sub(outstanding);
-    let counted = match size {
-        Some(size) if outstanding == 0 => {
-            format!("All files are downloaded · {}", format_size(size.total))
-        }
-        Some(size) if here == 0 => {
-            format!("No files are downloaded · {}", format_size(size.total))
-        }
-        Some(size) => format!(
-            "{} of {} files · {} of {} downloaded",
-            thousands(here),
-            thousands(total),
-            format_size(size.downloaded),
-            format_size(size.total),
-        ),
-        None if outstanding == 0 => "All files are downloaded".to_string(),
-        None if here == 0 => "No files are downloaded".to_string(),
-        None => format!("{} of {} downloaded", thousands(here), thousands(total)),
-    };
-    with_deleted_here(counted, deleted_here)
-}
-
-/// `words · 3 deleted here`, or `words` alone with nothing deleted here. One
-/// suffix for this caption and the file pane's, so the two say it alike.
-pub(crate) fn with_deleted_here(words: String, deleted_here: usize) -> String {
-    if deleted_here == 0 {
-        words
-    } else {
-        format!("{words} · {} deleted here", thousands(deleted_here))
     }
 }
 

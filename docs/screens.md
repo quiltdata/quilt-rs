@@ -253,13 +253,15 @@ the current revision is here, in files and in bytes:
 - Under *The whole package* the caption adds *"— files added later are
   downloaded too."*, and *Download 2 files · 1.5 MB* fetches the backlog.
 
-The sizes are the manifest rows' sizes summed, not disk usage. A file deleted
-here counts as downloaded: it is a local change waiting to commit, and Download
-would not fetch it. So the caption names those files, as in *"54 of 56 files ·
-1.9 MB of 3.4 MB downloaded · 1 deleted here."* When the sizes cannot be read
-the caption gives the count alone, *"54 of 56 downloaded."*, and the button
-*Download 2 files*. The file pane's footer says the ticked files' bytes the same
-way, *Download 3 · 114.1 kB*.
+The sizes are the manifest rows' sizes summed, not disk usage. Only the files
+the current revision lists are counted: a new file is not counted until it is
+committed, and a modified file counts at the size the manifest records, not its
+size on disk. A file deleted here counts as downloaded: it is a local change
+waiting to commit, and Download would not fetch it. So the caption names those
+files, as in *"54 of 56 files · 1.9 MB of 3.4 MB downloaded · 1 deleted here."*
+When the sizes cannot be read the caption gives the count alone, *"54 of 56
+downloaded."*, and the button *Download 2 files*. The file pane's footer says
+the ticked files' bytes the same way, *Download 3 · 114.1 kB*.
 
 ```text
 +--[appbar]----------------------------------------------+

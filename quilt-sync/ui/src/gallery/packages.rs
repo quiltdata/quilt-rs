@@ -23,8 +23,10 @@ use crate::kit::SearchInput;
 use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::StateTone;
+use quilt_sync_ui::commands::PackageSize;
 use quilt_sync_ui::pages::list_region_class;
 use quilt_sync_ui::pages::rows_class;
+use quilt_sync_ui::util::Held;
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;
@@ -186,57 +188,65 @@ fn DownloadsStory() -> impl IntoView {
 #[component]
 fn TooltipStory() -> impl IntoView {
     const HOST: Option<&str> = Some("nightly.quilttest.com");
+    let held = |total, outstanding, bytes, downloaded| {
+        RowSize::Held(Held {
+            total,
+            outstanding,
+            deleted_here: 0,
+            size: Some(PackageSize {
+                total: bytes,
+                downloaded,
+            }),
+        })
+    };
     let picked = RowDownloads::IndividualFiles {
         downloaded: 12,
         total: 340,
     };
+    let picked_size = held(340, 328, 3_400_000_000, 1_900_000_000);
     let entire = RowDownloads::EntirePackage { to_download: 0 };
     let cells: Vec<(&str, &str, Option<&str>, RowDownloads, RowSize)> = vec![
         (
-            "picked files, with a size",
+            "picked files, some downloaded",
             "team/package-a",
             HOST,
             picked,
-            RowSize::Measured {
-                bytes: 1_200_000_000,
-            },
+            picked_size,
         ),
         (
-            "entire package, with a size",
+            "entire package, all downloaded",
             "team/package-b",
             HOST,
             entire,
-            RowSize::Measured {
-                bytes: 86_300_000_000,
-            },
+            held(58, 0, 86_300_000_000, 86_300_000_000),
         ),
         (
-            "size not known yet",
+            "entire package, nothing downloaded yet",
             "team/package-c",
+            HOST,
+            RowDownloads::EntirePackage { to_download: 58 },
+            held(58, 58, 86_300_000_000, 0),
+        ),
+        (
+            "measuring — the row's check is still out",
+            "team/package-d",
             HOST,
             entire,
             RowSize::Measuring,
-        ),
-        (
-            "no size data",
-            "team/package-d",
-            HOST,
-            picked,
-            RowSize::NotMeasured,
         ),
         (
             "no host — its line is left out",
             "team/package-e",
             None,
             entire,
-            RowSize::Measured { bytes: 44_000 },
+            held(3, 0, 44_000, 44_000),
         ),
         (
             "a very long name — whole in the title, wrapped at the wider measure",
             "team/rnaseq-batch-2026-07-31-reprocessed-v2-with-a-very-long-suffix-that-no-column-holds",
             HOST,
             picked,
-            RowSize::Measured { bytes: 3_400_000 },
+            picked_size,
         ),
     ];
 
@@ -245,10 +255,12 @@ fn TooltipStory() -> impl IntoView {
             title="PackageRow — tooltip"
             note="Rest the pointer anywhere on a row for half a second, or Tab to it: the \
                   name in full, then in grey, each after its glyph, the host, what the \
-                  package keeps and what it takes on this computer, with no full stops. A \
-                  line whose fact is missing is left out. It hangs below the row from its \
-                  left edge, and above when there is no room below. Switch the theme to \
-                  check it in dark: the grey is a solid colour, not the title dimmed."
+                  package keeps and how much of it is here, in the Keeping section's \
+                  words, with no full stops. A line whose fact is missing is left out. It \
+                  hangs below the row from its left edge, and above when there is no room \
+                  below; the pointer passes through it to the rows it covers. Switch the \
+                  theme to check it in dark: the grey is a solid colour, not the title \
+                  dimmed."
         >
             {cells
                 .into_iter()

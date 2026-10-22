@@ -41,7 +41,8 @@ use super::TooltipLine;
 use super::countdown::EpochMillis;
 use super::icons;
 use super::state_label::StateTone;
-use crate::util::format_size;
+use crate::util::Held;
+use crate::util::counted;
 
 stylance::import_crate_style!(style, "src/kit/package_row.module.scss");
 
@@ -86,8 +87,8 @@ pub fn PackageRow(
     /// leaves its line out.
     #[prop(optional, into)]
     host: MaybeProp<String>,
-    /// What the package takes on this computer, for the tooltip. `None` leaves
-    /// its line out.
+    /// How much of the package is here, for the tooltip, in Keeping's words.
+    /// `None`, when the check did not answer, leaves its line out.
     #[prop(optional, into)]
     size: MaybeProp<RowSize>,
 ) -> impl IntoView {
@@ -173,15 +174,13 @@ pub fn PackageRow(
     view! { <Tooltip text=title lines=lines align=Align::Start wide=true fill=true trigger=row /> }
 }
 
-/// How much of the disk a package takes, as far as its row tells.
+/// How much of a package is here, as far as its row tells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowSize {
-    /// Nothing stored for the package yet.
-    NotMeasured,
+    /// The row's check is still out.
     Measuring,
-    Measured {
-        bytes: u64,
-    },
+    /// What the check counted, which Keeping's caption counts too.
+    Held(Held),
 }
 
 /// The tooltip's lines under the name, each left out when its fact is. The
@@ -203,11 +202,8 @@ fn tooltip_lines(
     });
     let size = size.map(|size| {
         TooltipLine::new(match size {
-            RowSize::NotMeasured => "Size not measured yet".to_string(),
             RowSize::Measuring => "Measuring size\u{2026}".to_string(),
-            RowSize::Measured { bytes } => {
-                format!("Takes {} on this computer", format_size(bytes))
-            }
+            RowSize::Held(held) => counted(held),
         })
         .icon(icons::folder)
     });
@@ -319,6 +315,7 @@ mod marker_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::PackageSize;
     use crate::test_support::{
         blur, describing_tooltip, focus_report, keyboard_focus, mount, unmount_earlier,
     };
@@ -401,6 +398,17 @@ mod tests {
         );
     }
 
+    /// 12 of 340 files here, 1.9 MB of 3.4 MB.
+    const PLATE: Held = Held {
+        total: 340,
+        outstanding: 328,
+        deleted_here: 0,
+        size: Some(PackageSize {
+            total: 3_400_000,
+            downloaded: 1_900_000,
+        }),
+    };
+
     fn row_with(host: Option<&'static str>, size: Option<RowSize>) -> web_sys::Element {
         mount(move || {
             view! {
@@ -458,19 +466,14 @@ mod tests {
     /// The whole namespace survives the ellipsis as the tooltip's title.
     #[wasm_bindgen_test]
     fn the_tooltip_names_the_package_then_host_scope_and_size() {
-        let el = row_with(
-            Some("nightly.quilttest.com"),
-            Some(RowSize::Measured {
-                bytes: 1_200_000_000,
-            }),
-        );
+        let el = row_with(Some("nightly.quilttest.com"), Some(RowSize::Held(PLATE)));
         assert_eq!(
             tooltip_text(&el),
             [
                 "a-long-owner-name/a-much-longer-package-name-than-the-column",
                 "Host: nightly.quilttest.com",
                 "Only the files you picked are kept",
-                "Takes 1.2\u{a0}GB on this computer",
+                "12 of 340 files \u{b7} 1.9\u{a0}MB of 3.4\u{a0}MB downloaded",
             ]
         );
     }
@@ -510,6 +513,8 @@ mod tests {
 mod tooltip_tests {
     use super::RowDownloads;
     use super::RowSize;
+    use crate::commands::PackageSize;
+    use crate::util::{Held, counted};
 
     fn tooltip_lines(
         host: Option<&str>,
@@ -556,16 +561,24 @@ mod tooltip_tests {
         );
     }
 
+    /// Keeping's own words, so the row and the package page agree.
     #[test]
-    fn the_size_line_has_a_word_for_each_state() {
+    fn the_size_line_says_what_keeping_says() {
         let size = |size| tooltip_lines(None, None, Some(size));
-        assert_eq!(size(RowSize::NotMeasured), ["Size not measured yet"]);
         assert_eq!(size(RowSize::Measuring), ["Measuring size\u{2026}"]);
-        assert_eq!(
-            size(RowSize::Measured {
-                bytes: 1_200_000_000
+        let held = Held {
+            total: 340,
+            outstanding: 0,
+            deleted_here: 2,
+            size: Some(PackageSize {
+                total: 3_400_000,
+                downloaded: 3_400_000,
             }),
-            ["Takes 1.2\u{a0}GB on this computer"]
+        };
+        assert_eq!(size(RowSize::Held(held)), [counted(held)]);
+        assert_eq!(
+            size(RowSize::Held(held)),
+            ["All files are downloaded \u{b7} 3.4\u{a0}MB \u{b7} 2 deleted here"]
         );
     }
 

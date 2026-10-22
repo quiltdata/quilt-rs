@@ -840,8 +840,13 @@ mod tests {
                 .unchecked_into::<web_sys::Element>()
         };
 
-        fire(&wrapper_at(0), "pointerenter");
-        sleep_ms(600).await;
+        // Opened by focus, which needs no delay; the hover that follows is warm.
+        let first_row = wrappers
+            .item(0)
+            .unwrap()
+            .unchecked_into::<web_sys::Element>();
+        keyboard_focus(&first_row);
+        leptos::task::tick().await;
         let first = surface_at(0);
         assert!(first.matches(":popover-open").unwrap());
 
@@ -868,7 +873,6 @@ mod tests {
             .find(|&i| wrapper_at(i).contains(Some(&row)))
             .expect("the row under it is another row");
 
-        fire(&wrapper_at(0), "pointerleave");
         fire(&wrapper_at(next), "pointerenter");
         leptos::task::tick().await;
         assert!(
@@ -877,8 +881,10 @@ mod tests {
         );
         assert!(!first.matches(":popover-open").unwrap());
 
-        fire(&wrapper_at(next), "pointerleave");
-        sleep_ms(400).await;
+        // Dismissed rather than let go, so the next test starts cold.
+        sleep_ms(50).await;
+        escape();
+        blur(&first_row);
     }
 
     /// A finger resting on a mark opens nothing: on touch the fact is already
