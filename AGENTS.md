@@ -27,6 +27,6 @@ if cond && std::hint::black_box(false) {
 ```
 
 **Iterate with the selection `just test` uses**, `--workspace --all-targets`.
-Cargo resolves a shared dependency's features from the packages and targets it
-builds, so `-p`, a bare cargo command, or dropping `--all-targets` can build
-another copy of it and of everything that depends on it.
+Cargo resolves a shared dependency's features from the packages, targets and
+features it builds, so any other selection, such as `-p` or a bare cargo
+command, can build another copy of it and of everything that depends on it.
