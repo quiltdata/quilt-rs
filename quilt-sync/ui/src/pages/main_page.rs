@@ -159,6 +159,8 @@ struct RowSignals {
     role_switch_host: RwSignal<Option<String>>,
     /// What the status check counted on disk; `None` until a check answers.
     downloads: RwSignal<Option<RowDownloads>>,
+    /// Files the status check counted as changed; `None` until a check answers.
+    changed_files: RwSignal<Option<usize>>,
 }
 
 /// How much the page knows about a row's state.
@@ -196,6 +198,7 @@ impl RowSignals {
             }),
             role_switch_host: RwSignal::new(role_switch_host),
             downloads: RwSignal::new(None),
+            changed_files: RwSignal::new(None),
         }
     }
 
@@ -227,6 +230,7 @@ impl RowSignals {
         self.role_switch_host.set(refreshed.role_switch_host);
         self.downloads
             .set(refreshed.downloads.map(RowDownloads::from));
+        self.changed_files.set(refreshed.changed_files);
         self.confidence.set(Confidence::Settled);
     }
 }
@@ -827,6 +831,9 @@ fn files_view(
     // payload of its own and stands whatever the other one did, but with no
     // packages there are no addresses and so no Copy buttons.
     addresses: HashMap<Namespace, S3PackageUri>,
+    // Whether each package's status check counted no changed files — see the
+    // region's own prop. Empty, like `addresses`, when the packages read failed.
+    unchanged: HashMap<Namespace, Signal<bool>>,
     first_load: FirstLoad,
 ) -> AnyView {
     view! {
@@ -847,6 +854,7 @@ fn files_view(
                 // Cloned per run, not moved: the closure a `Transition` takes is
                 // `FnMut`, and a resolve happens again on every refetch.
                 let addresses = addresses.clone();
+                let unchanged = unchanged.clone();
                 Suspend::new(async move {
                 match recent_files.await {
                     Ok(data) => {
@@ -857,6 +865,7 @@ fn files_view(
                                 query=query.into()
                                 group_by=group_files_by.into()
                                 addresses=addresses.clone()
+                                unchanged=unchanged.clone()
                             />
                         }
                             .into_any()
@@ -1173,6 +1182,15 @@ fn MainPageRegions(
                                 Some((p.namespace.clone(), uri))
                             })
                             .collect();
+                        let unchanged: HashMap<Namespace, Signal<bool>> = light
+                            .iter()
+                            .filter_map(|p| {
+                                let row = store.row(&p.namespace)?;
+                                let clean =
+                                    Signal::derive(move || row.changed_files.get() == Some(0));
+                                Some((p.namespace.clone(), clean))
+                            })
+                            .collect();
                         // How many packages the page holds, confirmed or not. The
                         // zero line speaks for all of them, and `settled` drops
                         // the ones no answer confirmed (R2) — including the ones
@@ -1351,7 +1369,7 @@ fn MainPageRegions(
                                     }
                                 }
                             >
-                                {files_view(recent_files, query, group_files_by, files_retry, addresses.clone(), first_load)}
+                                {files_view(recent_files, query, group_files_by, files_retry, addresses.clone(), unchanged.clone(), first_load)}
                             </Show>
                             </div>
                         }
@@ -1382,7 +1400,7 @@ fn MainPageRegions(
                                         view! { <Card>{render_fetch_error(packages_retry)}</Card> }
                                     }
                                 >
-                                    {files_view(recent_files, query, group_files_by, files_retry, HashMap::new(), first_load)}
+                                    {files_view(recent_files, query, group_files_by, files_retry, HashMap::new(), HashMap::new(), first_load)}
                                 </Show>
                             </div>
                         }
@@ -1611,6 +1629,7 @@ mod tests {
                 state: PackageState::PendingChanges { files: 1 },
                 role_switch_host: None,
                 downloads: None,
+                changed_files: None,
             });
 
         let settled = store.settled(&light);
@@ -1670,6 +1689,7 @@ mod tests {
                 state: PackageState::Behind,
                 role_switch_host: None,
                 downloads: None,
+                changed_files: None,
             });
         leptos::task::tick().await;
 
@@ -1711,6 +1731,7 @@ mod tests {
                 state: PackageState::Latest,
                 role_switch_host: None,
                 downloads: Some(picked(340, 328)),
+                changed_files: None,
             });
         leptos::task::tick().await;
 
@@ -1733,6 +1754,7 @@ mod tests {
             state: PackageState::Latest,
             role_switch_host: None,
             downloads: Some(picked(340, 0)),
+            changed_files: None,
         });
         leptos::task::tick().await;
         assert!(marked(), "a full pick still shows its count");
@@ -1746,6 +1768,7 @@ mod tests {
             state: PackageState::NoSession { host: None },
             role_switch_host: None,
             downloads: None,
+            changed_files: None,
         });
         leptos::task::tick().await;
         assert!(!marked(), "a check that did not run counts nothing");
@@ -2986,6 +3009,7 @@ mod tests {
                 state,
                 role_switch_host: None,
                 downloads: None,
+                changed_files: None,
             });
     }
 
@@ -3002,6 +3026,7 @@ mod tests {
                     state: package.state.clone(),
                     role_switch_host: package.role_switch_host.clone(),
                     downloads: None,
+                    changed_files: None,
                 });
         }
     }
@@ -4127,6 +4152,7 @@ mod tests {
                 state: PackageState::Behind,
                 role_switch_host: None,
                 downloads: None,
+                changed_files: None,
             }),
         );
 
@@ -4151,6 +4177,7 @@ mod tests {
                 state: PackageState::Behind,
                 role_switch_host: None,
                 downloads: None,
+                changed_files: None,
             }),
         );
 
@@ -4196,6 +4223,7 @@ mod tests {
             state: PackageState::PendingChanges { files: 3 },
             role_switch_host: None,
             downloads: None,
+            changed_files: None,
         });
 
         assert_eq!(
@@ -4226,6 +4254,7 @@ mod tests {
             state: PackageState::Latest,
             role_switch_host: None,
             downloads: None,
+            changed_files: None,
         });
 
         assert_eq!(row.state.get_untracked(), PackageState::Latest);
@@ -4243,6 +4272,7 @@ mod tests {
             },
             role_switch_host: Some("quilt.test".to_string()),
             downloads: None,
+            changed_files: None,
         });
 
         assert_eq!(
@@ -4640,6 +4670,7 @@ mod tests {
                 state: PackageState::Latest,
                 role_switch_host: None,
                 downloads: None,
+                changed_files: None,
             });
         record_refresh(
             store.row(&ns("a/failed")).unwrap(),
@@ -4800,6 +4831,7 @@ mod tests {
                 RwSignal::new(String::new()),
                 RwSignal::new(GROUP_NONE.to_string()),
                 Trigger::new(),
+                HashMap::new(),
                 HashMap::new(),
                 FirstLoad::new(),
             )

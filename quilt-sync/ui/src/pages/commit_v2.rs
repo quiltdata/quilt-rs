@@ -823,9 +823,10 @@ fn ignored_words(files: usize, folders: usize) -> Option<String> {
     Some(format!("{words} not included"))
 }
 
-/// The items a row's `[⋯]` offers. Every file here differs from the published
-/// one, so its address would name other bytes: there is no catalog item and no
-/// *Copy URI*, and *Copy path* copies where the file is on disk. A deleted file
+/// The items a row's `[⋯]` offers. Every file here is changed, new or
+/// deleted, so no published revision holds it as it is here: there is no
+/// catalog item and no *Copy URI*, and *Copy path* copies where the file is on
+/// disk. A deleted file
 /// has nothing on disk to open, reveal or copy.
 fn row_commands(file: &IncludedFile) -> Vec<RowCommand> {
     let path = file.path.clone();
