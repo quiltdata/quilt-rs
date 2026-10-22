@@ -22,11 +22,10 @@ code must also get past a lint, silence it in the source, never with a flag.
 For this clippy lint, hide the constant from it:
 
 ```rust
-if !host_dir.exists() && std::hint::black_box(false) {
+if cond && std::hint::black_box(false) {
 ```
 
-**Keep to one selection while you iterate.** Cargo resolves a shared
-dependency's features from the packages and targets it builds, so switching
-between `-p`, a bare cargo command, `--workspace`, `--all-targets` or
-`--all-features` can build another copy of it and of everything that depends
-on it.
+**Iterate with the selection `just test` uses**, `--workspace --all-targets`.
+Cargo resolves a shared dependency's features from the packages and targets it
+builds, so `-p`, a bare cargo command, or dropping `--all-targets` can build
+another copy of it and of everything that depends on it.
