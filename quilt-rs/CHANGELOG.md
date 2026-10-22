@@ -19,17 +19,17 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.47.0-dev]
+## [v0.47.0] - 2026-10-22
 
 ### Added
 
-- `InstalledPackage::status_with_downloads` returns the status with a `lineage::DownloadCounts`: how many files the current revision lists, how many are still to download and how many are deleted here, and their bytes as a `lineage::DownloadSize`, counted from the manifest and the walk the status already reads
+- `InstalledPackage::status_with_downloads` returns the status and a `lineage::DownloadCounts`: how many of the current revision's files, and how many bytes, are still to download
   - <https://github.com/quiltdata/quilt-rs/pull/1172>
   - <https://github.com/quiltdata/quilt-rs/pull/1178>
 
 ### quilt-uri
 
-- Updated [from v0.4.2 to v0.4.3-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.2...main) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+- Updated [from v0.4.2 to v0.4.3](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.2...quilt-uri/v0.4.3) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
 
 ## [v0.46.0] - 2026-10-21
 
