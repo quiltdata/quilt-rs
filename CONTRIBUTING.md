@@ -73,20 +73,21 @@ The gallery's verbs mean what they mean in Vite:
 The site lives under `/quilt-rs/`, so a story must not load an asset by an
 absolute path such as `/assets/...`.
 
-A bare cargo command covers the workspace's default members (`quilt-rs`,
-`quilt-cli`, `quilt-sync`), not `quilt-uri` or `quilt-sync-ui`. Add
-`--workspace` for every member, as `just test` does, or `-p` for one:
+A bare cargo command at the root covers every member of the workspace, the
+same as `--workspace`. To work on one crate, narrow the tests you run rather
+than the packages you build:
 
 ```bash
-# Testing
-cargo test --workspace              # All workspace packages
-cargo test -p quilt-rs              # Specific package only
-
-# Building, formatting, linting follow the same pattern
-cargo build [--workspace | -p package-name]
-cargo fmt --all [--check]           # or -p package-name
-cargo clippy [--workspace | -p package-name]
+just test no-aws -E 'test(name)'    # one test, against the workspace build
+cargo test -p quilt-rs              # one package, built on its own
 ```
+
+`-p` reads as the cheaper choice and is not, once you switch back. Cargo
+resolves a shared dependency's features from what a command builds, so
+`-p quilt-rs` and `--workspace` build tokio and serde, and everything that
+depends on them, differently, and `target/` keeps both copies. `--all-targets`,
+which `just test` adds, matters the same way, because test targets bring in
+dev-dependencies.
 
 ### Tests that need AWS
 
@@ -98,7 +99,7 @@ Without credentials, deselect them by name:
 
 ```bash
 just test                   # the recipe; wraps the line below
-cargo nextest run --profile no-aws
+cargo nextest run --profile no-aws --workspace --all-targets
 cargo test -- --skip live_  # same effect without nextest
 ```
 
