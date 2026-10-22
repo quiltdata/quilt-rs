@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.23.3-dev]
+
+### Changed
+
+- **New design preview**: copying a file's URI or path on the package page marks that file's row for a moment, so the page no longer moves down. The header's copy button shows a check instead of a tooltip, and the close button of a message bar sits at its right edge (<https://github.com/quiltdata/quilt-rs/pull/1182>)
+
 ## [v0.23.2] - 2026-10-22
 
 ### Added

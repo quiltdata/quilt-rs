@@ -20,21 +20,9 @@ use super::MenuAction;
 use super::RelativeTime;
 use super::SkeletonBox;
 use super::countdown::EpochMillis;
+use super::icons;
 
 stylance::import_crate_style!(style, "src/kit/file_row.module.scss");
-
-/// The check the time column shows once the row's address is on the
-/// clipboard. Drawn in strokes, to sit with the row's other text rather than
-/// read as a filled badge.
-fn copied_icon() -> AnyView {
-    view! {
-        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
-            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
-        </svg>
-    }
-    .into_any()
-}
 
 #[component]
 pub fn FileRow(
@@ -69,7 +57,7 @@ pub fn FileRow(
         if copied.get().unwrap_or(false) {
             view! {
                 <span class=style::copied aria-hidden="true">
-                    {copied_icon()}
+                    {icons::copied()}
                     "Copied"
                 </span>
             }

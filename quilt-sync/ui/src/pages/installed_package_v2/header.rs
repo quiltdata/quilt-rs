@@ -73,7 +73,6 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::time::Duration;
 
 use leptos::prelude::*;
 
@@ -559,73 +558,9 @@ pub(crate) fn RemoveDialog(
     }
 }
 
-/// How long the copy button says *Copied*.
-const COPIED_FOR: Duration = Duration::from_millis(1_500);
-
-/// The copy button's *Copied*: the package whose address the clipboard took,
-/// until a moment later. Keyed, because the page keeps it across packages.
-/// Stamped as the main page's copies are, so an earlier copy's timer or late
-/// answer cannot end or claim a later one.
-#[derive(Clone, Copy)]
-pub struct CopiedMark {
-    copied: RwSignal<Option<String>>,
-    issued: StoredValue<u64>,
-}
-
-impl CopiedMark {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            copied: RwSignal::new(None),
-            issued: StoredValue::new(0),
-        }
-    }
-
-    /// Take the next stamp. Everything in flight is stale from here.
-    fn bump(self) -> u64 {
-        self.issued
-            .try_update_value(|n| {
-                *n += 1;
-                *n
-            })
-            .unwrap_or_default()
-    }
-
-    fn is_current(self, stamp: u64) -> bool {
-        self.issued.try_get_value() == Some(stamp)
-    }
-
-    /// Whether `namespace`'s address is the one just copied.
-    fn says(self, namespace: String) -> Signal<bool> {
-        Signal::derive(move || self.copied.with(|c| c.as_ref() == Some(&namespace)))
-    }
-
-    /// Mark `namespace` for [`COPIED_FOR`], or clear the mark after a failed
-    /// copy.
-    fn settle(self, stamp: u64, namespace: Option<String>) {
-        if !self.is_current(stamp) {
-            return;
-        }
-        let marks = namespace.is_some();
-        self.copied.try_set(namespace);
-        if marks {
-            set_timeout(
-                move || {
-                    if self.is_current(stamp) {
-                        self.copied.try_set(None);
-                    }
-                },
-                COPIED_FOR,
-            );
-        }
-    }
-}
-
-impl Default for CopiedMark {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// The copy button's *Copied*: the package whose address the clipboard took.
+/// Keyed, because the page keeps it across packages.
+pub type CopiedMark = crate::pages::copy_mark::CopyMark<String>;
 
 /// Where the location group's remote side points. One value for both
 /// buttons, so the link and the copy always name the same revision.
@@ -757,10 +692,10 @@ fn copy_uri(
                 if outcome.try_with_untracked(own) == Some(true) {
                     outcome.try_set(None);
                 }
-                copied.settle(stamp, Some(namespace));
+                copied.settle(stamp, Some(namespace), String::new());
             }
             Err(detail) => {
-                copied.settle(stamp, None);
+                copied.settle(stamp, None, String::new());
                 outcome.try_set(Some(Outcome {
                     namespace,
                     variant: BannerVariant::Critical,
@@ -2192,12 +2127,12 @@ mod tests {
         let (a, b) = (mark.says("team/a".into()), mark.says("team/b".into()));
         let first = mark.bump();
         let second = mark.bump();
-        mark.settle(first, Some("team/a".into()));
+        mark.settle(first, Some("team/a".into()), String::new());
         assert!(!a.get_untracked(), "a stale answer marks nothing");
-        mark.settle(second, Some("team/a".into()));
+        mark.settle(second, Some("team/a".into()), String::new());
         assert!(a.get_untracked());
         assert!(!b.get_untracked(), "another package's button stays quiet");
-        mark.settle(second, None);
+        mark.settle(second, None, String::new());
         assert!(!a.get_untracked(), "a failed copy clears it");
     }
 

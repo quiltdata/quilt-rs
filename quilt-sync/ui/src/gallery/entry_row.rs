@@ -76,6 +76,16 @@ fn states(ticked: RwSignal<bool>, fresh: RwSignal<bool>, opened: RwSignal<String
                     have_mark=true
                 />
             </Cell>
+            <Cell full=true label="copied — the size column says Copied for a moment after its Copy URI or Copy path lands">
+                <EntryRow
+                    name="notes/kickoff-thread.md"
+                    size="12 KB"
+                    action=open("notes/kickoff-thread.md", opened)
+                    actions=menu()
+                    have_mark=true
+                    copied=true
+                />
+            </Cell>
             <Cell full=true label="new — added by the revision and not here yet, so it ticks">
                 <EntryRow
                     name="raw/plate-08.csv"

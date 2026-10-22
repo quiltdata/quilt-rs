@@ -79,6 +79,7 @@ use crate::kit::{
     GroupSelection, ListToolbar, LoadFailure, MenuAction, NameTooltip, Naming, SearchInput,
     Segment, SegmentedControl, Select, SelectAll, SkeletonBox, SkeletonText,
 };
+use crate::pages::copy_mark::CopyMark;
 use crate::pages::row_menu::{RowCommand, menu_actions};
 use crate::util::{format_size, thousands, with_deleted_here};
 
@@ -461,13 +462,16 @@ impl Reach {
 }
 
 /// The page's half of the rows' `[⋯]`: what the package can be reached by,
-/// the page's one-command lock, and where a chosen item goes.
+/// the page's one-command lock, where a chosen item goes, and the row whose
+/// copy just landed.
 #[derive(Clone, Copy)]
 pub struct RowMenu {
     pub reach: Reach,
     /// The page's lock. The `.quiltignore` items wait for it.
     pub busy: Signal<bool>,
     pub on_command: Callback<RowCommand>,
+    /// By path. The page's, so a re-read keeps it.
+    pub copied: CopyMark<String>,
 }
 
 /// The header's words for a command held back by the lock.
@@ -479,6 +483,7 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
         reach,
         busy,
         on_command,
+        ..
     }) = menu
     else {
         return Signal::stored(Vec::new());
@@ -559,6 +564,7 @@ fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
         menu,
     } = drawing;
     let actions = row_actions(r, menu);
+    let copied = menu.map_or(Signal::stored(false), |m| m.copied.says(r.path.clone()));
     let (name, path) = if r.folder {
         (format!("{name}/"), format!("{}/", r.path))
     } else {
@@ -609,6 +615,7 @@ fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
                 actions=actions
                 differs=differs
                 have_mark=have_mark
+                copied=copied
             />
         }
         .into_any(),
@@ -622,6 +629,7 @@ fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
                 note=note.clone()
                 actions=actions
                 differs=differs
+                copied=copied
             />
         }
         .into_any(),
@@ -1290,6 +1298,11 @@ fn ready(
                     {footer(picking, rows)}
                 </Card>
             </div>
+            // A copy's words, for a reader who cannot see the row's mark.
+            // Outside the list, which a search or a facet re-arranges.
+            {menu.map(|m| view! {
+                <span data-sr-only role="status">{move || m.copied.said.get()}</span>
+            })}
         </section>
     }
     .into_any()
@@ -1833,6 +1846,7 @@ mod menu_pane_tests {
             reach: Reach { published: true },
             busy,
             on_command: Callback::new(move |c| chosen.set(Some(c))),
+            copied: CopyMark::new(),
         }
     }
 
@@ -1857,6 +1871,47 @@ mod menu_pane_tests {
             .iter()
             .find(|b| b.text_content().unwrap_or_default().starts_with(words))
             .unwrap_or_else(|| panic!("no item {words}"))
+    }
+
+    /// A copy that landed marks its own row in place and says what it copied
+    /// in the pane's live region, which sits outside the rows; both go when
+    /// the mark does.
+    #[wasm_bindgen_test]
+    async fn a_landed_copy_marks_its_row_and_says_so() {
+        let menu = menu(Signal::stored(false), RwSignal::new(None));
+        let el = one_row("pristine", Some(menu));
+        let region = el
+            .query_selector("section > [role=status]")
+            .unwrap()
+            .expect("a live region outside the rows");
+        assert!(region.has_attribute("data-sr-only"));
+        assert_eq!(region.text_content().unwrap_or_default(), "");
+        assert!(!el.text_content().unwrap_or_default().contains("Copied"));
+
+        let stamp = menu.copied.bump();
+        menu.copied.settle(
+            stamp,
+            Some("here.txt".to_string()),
+            "Copied URI of here.txt".to_string(),
+        );
+        leptos::task::tick().await;
+        let mark = el
+            .query_selector("[aria-hidden=true][class*=copied]")
+            .unwrap()
+            .expect("the row's mark");
+        assert_eq!(mark.text_content().unwrap_or_default(), "Copied");
+        assert_eq!(
+            region.text_content().unwrap_or_default(),
+            "Copied URI of here.txt"
+        );
+
+        menu.copied.forget();
+        leptos::task::tick().await;
+        assert!(!el.text_content().unwrap_or_default().contains("Copied"));
+        assert!(
+            el.text_content().unwrap_or_default().contains("4.1"),
+            "and the size is back"
+        );
     }
 
     /// The row's `[⋯]` lists what the row allows, and an item hands the page

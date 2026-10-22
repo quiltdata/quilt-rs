@@ -79,6 +79,11 @@
   align-items: center;
   /* A control's height whatever it holds, so a plain link lines up as a button does. */
   min-height: var(--q-control-height);
+}
+
+/* The message keeps its measure, so whatever follows it, the action or the dismiss, is
+ * pushed to the bar's right edge rather than sitting after the text. */
+.message + * {
   margin-left: auto;
 }
 

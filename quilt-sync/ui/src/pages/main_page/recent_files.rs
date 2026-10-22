@@ -11,7 +11,6 @@
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::time::Duration;
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -30,6 +29,7 @@ use crate::kit::NameTooltip;
 use super::GROUP_NONE;
 use super::GROUP_PACKAGE;
 use super::package_page_href;
+use crate::pages::copy_mark::CopyMark;
 use crate::pages::row_menu::{Ran, RowCommand, carry_out, local_path, menu_actions};
 
 /// The card, on one payload — no title, because the list toolbar's toggle above
@@ -195,70 +195,7 @@ struct Copied {
     path: String,
 }
 
-/// How long a copied row keeps its check, and its words their place in the live
-/// region.
-///
-/// Long enough to be seen after the click that caused it, short enough that a
-/// reader returning to the card later is not told something stale about a
-/// clipboard anything else may own by then.
-const CONFIRM_FOR: Duration = Duration::from_millis(1_500);
-
-/// What the card says about the last copy: the row's mark and the live region's
-/// words, plus the stamp that decides which request may set them.
-///
-/// The stamp is `components/toasts.rs`'s pattern. Every click takes a fresh one,
-/// and a write settles only while its own stamp is the newest — two clicks
-/// inside one round trip would otherwise let the slower answer mark a row the
-/// reader has already moved past.
-#[derive(Clone, Copy)]
-struct CopyState {
-    copied: RwSignal<Option<Copied>>,
-    said: RwSignal<String>,
-    issued: StoredValue<u64>,
-}
-
-impl CopyState {
-    fn new() -> Self {
-        Self {
-            copied: RwSignal::new(None),
-            said: RwSignal::new(String::new()),
-            issued: StoredValue::new(0),
-        }
-    }
-
-    /// Take the next stamp. Everything in flight is stale from here.
-    fn bump(self) -> u64 {
-        self.issued
-            .try_update_value(|n| {
-                *n += 1;
-                *n
-            })
-            .unwrap_or_default()
-    }
-
-    fn is_current(self, stamp: u64) -> bool {
-        self.issued.try_get_value().unwrap_or_default() == stamp
-    }
-
-    /// Report one outcome on both surfaces, and take it back after
-    /// [`CONFIRM_FOR`].
-    fn settle(self, stamp: u64, mark: Option<Copied>, words: String) {
-        if !self.is_current(stamp) {
-            return;
-        }
-        self.copied.set(mark);
-        self.said.set(words);
-        set_timeout(
-            move || {
-                if self.is_current(stamp) {
-                    self.copied.set(None);
-                    self.said.set(String::new());
-                }
-            },
-            CONFIRM_FOR,
-        );
-    }
-}
+type CopyState = CopyMark<Copied>;
 
 /// Runs what a row's `[⋯]` or a click on the row chose. A failure is logged,
 /// never rendered: the words a reader sees come only from the kit. A copy
@@ -279,6 +216,7 @@ fn run_command(
             &namespace.to_string(),
             address.as_ref(),
             local_path,
+            || !copying || state.is_current(stamp),
         )
         .await;
         match ran {
@@ -1025,31 +963,6 @@ mod tests {
         assert!(
             el.query_selector("li [role=status]").unwrap().is_none(),
             "and it is outside the rows, which are rebuilt by every re-arrangement"
-        );
-    }
-
-    fn mark(path: &str) -> Copied {
-        Copied {
-            uri: format!("quilt+s3://b#package=user/p&path={path}"),
-            path: path.to_string(),
-        }
-    }
-
-    /// Two clicks inside one round trip: the older write must not land on top of
-    /// the newer one, on either surface.
-    #[wasm_bindgen_test]
-    fn a_slower_copy_cannot_overwrite_a_newer_one() {
-        let state = CopyState::new();
-        let first = state.bump();
-        let second = state.bump();
-
-        state.settle(second, Some(mark("two.csv")), "two".to_string());
-        state.settle(first, Some(mark("one.csv")), "one".to_string());
-
-        assert_eq!(state.said.get_untracked(), "two");
-        assert_eq!(
-            state.copied.get_untracked().expect("a mark").path,
-            "two.csv"
         );
     }
 

@@ -14,7 +14,8 @@
 //! <https://github.com/primer/octicons>. Filled paths rather than 1.4px strokes
 //! because at 15px a stroked gear's spokes read as a sun.
 //!
-//! [`x`] is ours, and stroked to match the controls that draw it.
+//! [`x`] is ours, and stroked to match the controls that draw it. So is
+//! [`copied`], stroked to sit with a row's text.
 //!
 //! The kit owns them so that no file draws its own copy.
 
@@ -230,6 +231,20 @@ pub fn copy() -> AnyView {
         <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
             <path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 0 1 0 1.5h-1.5a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 9.25 16h-7.5A1.75 1.75 0 0 1 0 14.25Z" />
             <path d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0 1 14.25 11h-7.5A1.75 1.75 0 0 1 5 9.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z" />
+        </svg>
+    }
+    .into_any()
+}
+
+/// A copy landed: the check a file row draws while its address is on the
+/// clipboard. Drawn in strokes, to sit with the row's other text rather than
+/// read as a filled badge.
+#[must_use]
+pub fn copied() -> AnyView {
+    view! {
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3.5 8.5 6.5 11.5 12.5 4.5" />
         </svg>
     }
     .into_any()
