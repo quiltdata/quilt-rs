@@ -33,6 +33,7 @@ mod publish_settings;
 mod quilt;
 mod quit;
 mod routes;
+mod server;
 mod services;
 mod telemetry;
 mod toast;
@@ -45,8 +46,77 @@ type Result<T = ()> = std::result::Result<T, Error>;
 
 rust_i18n::i18n!("locales");
 
+/// Command-line options for a run without a window.
+struct Headless {
+    bind: std::net::IpAddr,
+    port: u16,
+}
+
+/// `--headless [--bind <ip>] [--port <n>]`, or `None` for the desktop app.
+fn parse_headless() -> Option<Headless> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.iter().any(|a| a == "--headless") {
+        return None;
+    }
+    let value = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+    };
+    let bind = value("--bind").map_or(std::net::IpAddr::from([127, 0, 0, 1]), |v| {
+        v.parse().expect("--bind takes an IP address")
+    });
+    let port = value("--port").map_or(7878, |v| v.parse().expect("--port takes a number"));
+    Some(Headless { bind, port })
+}
+
+/// Serve the UI to a browser with no window and no Tauri, until Ctrl-C.
+fn run_headless(opts: &Headless) {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build the tokio runtime");
+    runtime.block_on(async {
+        let version = semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("crate version");
+        let services = services::Services::init(services::default_data_dir(), version)
+            .await
+            .expect("failed to start the services");
+        let token = server::new_token();
+        let addr = server::serve(
+            Arc::clone(&services),
+            std::net::SocketAddr::new(opts.bind, opts.port),
+            token.clone(),
+        )
+        .await
+        .expect("failed to start the server");
+        let host = if addr.ip().is_loopback() || addr.ip().is_unspecified() {
+            format!("localhost:{}", addr.port())
+        } else {
+            addr.to_string()
+        };
+        println!("QuiltSync headless: http://{host}/?t={token}");
+        if addr.ip().is_unspecified() {
+            println!(
+                "Warning: listening on all interfaces over plain HTTP; the token and your data \
+                 travel unencrypted. Prefer the default bind and an SSH tunnel, \
+                 e.g. `ssh -L {port}:localhost:{port} <host>`.",
+                port = addr.port()
+            );
+        }
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            error!("failed to wait for Ctrl-C: {err}");
+        }
+        services.app.logging.shutdown();
+    });
+}
+
 fn main() {
     env::init();
+
+    if let Some(opts) = parse_headless() {
+        run_headless(&opts);
+        return;
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {

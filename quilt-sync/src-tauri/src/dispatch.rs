@@ -76,7 +76,7 @@ macro_rules! commands {
         }
 
         /// Commands that work without a window.
-        #[allow(dead_code, reason = "named for the browser server and the tests")]
+        #[allow(dead_code, reason = "the tests use it")]
         pub const SHARED: &[&str] = &[$( stringify!($sname), )* $( stringify!($name) ),*];
         /// Commands that need the desktop window or the desktop app.
         pub const DESKTOP_ONLY: &[&str] = &[$( stringify!($dname), )* $( stringify!($native) ),*];
@@ -250,7 +250,6 @@ fn desktop_answer(cmd: &str) -> Option<Result<Value, Value>> {
 ///
 /// The command's error, serialized as Tauri rejects with it, or a message
 /// for an unknown command, unreadable arguments or a desktop-only command.
-#[allow(dead_code, reason = "the browser server calls it")]
 pub async fn dispatch(s: &Arc<Services>, cmd: &str, args: Value) -> Result<Value, Value> {
     if let Some(answer) = desktop_answer(cmd) {
         return answer;

@@ -41,7 +41,6 @@ use crate::toast::SinkToastEmitter;
 use crate::toast::ToastCenter;
 
 /// The identifier in `tauri.conf.json`, which names the data folder.
-#[allow(dead_code, reason = "the headless run uses it")]
 pub const APP_IDENTIFIER: &str = "com.quiltdata.quilt-sync";
 
 /// The folder Tauri's `app_local_data_dir()` resolves to: the platform's
@@ -49,7 +48,6 @@ pub const APP_IDENTIFIER: &str = "com.quiltdata.quilt-sync";
 /// `~/Library/Application Support/<id>`, on Linux `$XDG_DATA_HOME/<id>` or
 /// `~/.local/share/<id>`, on Windows `%LOCALAPPDATA%\<id>`.
 #[must_use]
-#[allow(dead_code, reason = "the headless run uses it")]
 pub fn default_data_dir() -> PathBuf {
     dirs::data_local_dir()
         .expect("no local data folder on this platform")
