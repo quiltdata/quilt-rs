@@ -1,6 +1,7 @@
-//! Tauri IPC commands, grouped by domain. Everything is re-exported at
-//! `commands::*` so `main.rs`'s `generate_handler!` list and other callers
-//! keep the flat `commands::<name>` paths.
+//! The commands, grouped by domain, as plain functions over
+//! [`Services`](crate::services::Services). Everything is re-exported at
+//! `commands::*`; [`crate::dispatch`] lists them once and builds both the Tauri
+//! IPC wrappers and the window-less dispatcher from that list.
 //!
 //! # The `uri` argument some commands take but never use
 //!

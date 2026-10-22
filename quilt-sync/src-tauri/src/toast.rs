@@ -19,7 +19,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use serde::Serialize;
-use tauri::Emitter;
 use tokio::sync::RwLock;
 
 use crate::telemetry::prelude::*;
@@ -95,23 +94,21 @@ pub trait ToastEmitter: Send + Sync + 'static {
     fn emit(&self, toast: &Toast);
 }
 
-/// Production sink: emits on the Tauri event bus.
-pub struct TauriToastEmitter {
-    handle: tauri::AppHandle,
+/// Production sink: emits on the backend's event bus.
+pub struct SinkToastEmitter {
+    events: crate::events::EventSink,
 }
 
-impl TauriToastEmitter {
+impl SinkToastEmitter {
     #[must_use]
-    pub fn new(handle: tauri::AppHandle) -> Self {
-        Self { handle }
+    pub fn new(events: crate::events::EventSink) -> Self {
+        Self { events }
     }
 }
 
-impl ToastEmitter for TauriToastEmitter {
+impl ToastEmitter for SinkToastEmitter {
     fn emit(&self, toast: &Toast) {
-        if let Err(err) = self.handle.emit(TOAST_EVENT, toast) {
-            warn!("toast: failed to emit {TOAST_EVENT}: {err}");
-        }
+        self.events.emit(TOAST_EVENT, toast);
     }
 }
 
