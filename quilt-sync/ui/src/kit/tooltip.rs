@@ -37,6 +37,11 @@
 //!   reaches for the words to read them loses them. Moving from one trigger to
 //!   the next inside the window opens the next at once — the reader has already
 //!   said they want these.
+//! - **A whole row's tooltip is the exception**: the pointer passes through
+//!   it. It hangs over the rows below, which are what a reader scans next, so
+//!   moving down lands on the next row and the hand-over shows that row's
+//!   words. A reader who needs them for longer finds the same facts on the
+//!   package's own page.
 //! - **Keyboard focus** opens it at once, and only `:focus-visible` focus: a
 //!   click focuses a button too, and a sentence that pops up under every click
 //!   is noise. Blur closes it.
@@ -335,7 +340,8 @@ pub fn Tooltip(
     #[prop(optional)]
     wide: bool,
     /// The trigger is a whole row: the wrapper fills its container's width, so
-    /// the row keeps its own and the surface lines up with its edge.
+    /// the row keeps its own and the surface lines up with its edge. The
+    /// pointer passes through the surface, onto the rows it covers.
     #[prop(optional)]
     fill: bool,
     /// Which of the surface's edges lines up with the trigger's — the overlay's
@@ -362,11 +368,13 @@ pub fn Tooltip(
     } else {
         style::root.to_string()
     };
-    let class = if wide {
-        format!("{} {}", style::surface, style::name)
-    } else {
-        style::surface.to_string()
-    };
+    let mut class = style::surface.to_string();
+    for (on, extra) in [(wide, style::name), (fill, style::through)] {
+        if on {
+            class.push(' ');
+            class.push_str(extra);
+        }
+    }
 
     view! {
         <span
@@ -534,8 +542,8 @@ mod tests {
     use super::*;
     use crate::kit::AnchoredOverlay;
     use crate::test_support::{
-        blur, button_saying, describing_tooltip, focus_report, keyboard_focus, mount, sleep_ms,
-        unmount_earlier,
+        blur, button_saying, describing_tooltip, focus_report, keyboard_focus, load_module_style,
+        mount, sleep_ms, unmount_earlier,
     };
     use wasm_bindgen_test::*;
 
@@ -734,6 +742,143 @@ mod tests {
         assert!(!is_open(&el), "still open after the grace");
         // Out of the warm window, so the next hover waits its delay again.
         sleep_ms(200).await;
+    }
+
+    /// The tooltip's own stylesheet, so the surface is placed and drawn as in
+    /// the app.
+    fn tooltip_style() {
+        load_module_style(
+            include_str!("tooltip.module.scss"),
+            &[
+                ("root", style::root),
+                ("fill", style::fill),
+                ("surface", style::surface),
+                ("name", style::name),
+                ("through", style::through),
+                ("titled", style::titled),
+                ("line", style::line),
+            ],
+        );
+    }
+
+    fn pointer_events(surface: &web_sys::Element) -> String {
+        web_sys::window()
+            .unwrap()
+            .get_computed_style(surface)
+            .unwrap()
+            .unwrap()
+            .get_property_value("pointer-events")
+            .unwrap()
+    }
+
+    /// Rows in a column, each one whole-row tooltip.
+    fn rows(count: usize) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <div style="width:400px">
+                    {(0..count)
+                        .map(|n| {
+                            view! {
+                                <Tooltip
+                                    text=format!("row {n}")
+                                    lines=vec![TooltipLine::new("A line"), TooltipLine::new("Another")]
+                                    fill=true
+                                    trigger=move |id| {
+                                        view! {
+                                            <a
+                                                href="#"
+                                                aria-describedby=id
+                                                style="display:block; width:100%; height:24px"
+                                            >
+                                                {format!("Row {n}")}
+                                            </a>
+                                        }
+                                            .into_any()
+                                    }
+                                />
+                            }
+                        })
+                        .collect_view()}
+                </div>
+            }
+        })
+    }
+
+    /// A whole row's surface lets the pointer through to the rows it covers; a
+    /// mark's surface still takes it, so its words can be reached.
+    #[wasm_bindgen_test]
+    fn only_a_row_s_surface_lets_the_pointer_through() {
+        unmount_earlier();
+        tooltip_style();
+        let row = rows(1);
+        let mark = one_mark();
+        assert_eq!(pointer_events(&surface(&row)), "none");
+        assert_eq!(pointer_events(&surface(&mark)), "auto");
+    }
+
+    /// Open over the rows below it, a row's tooltip is not what the pointer
+    /// lands on: the row under it is, and that row's words show at once.
+    #[wasm_bindgen_test]
+    async fn the_row_under_an_open_row_tooltip_takes_over() {
+        unmount_earlier();
+        tooltip_style();
+        let el = rows(6);
+        let wrappers = el.query_selector_all("[aria-describedby]").unwrap();
+        let wrapper_at = |i| {
+            wrappers
+                .item(i)
+                .unwrap()
+                .unchecked_into::<web_sys::Element>()
+                .parent_element()
+                .unwrap()
+        };
+        let surfaces = el.query_selector_all("[role='tooltip']").unwrap();
+        let surface_at = |i| {
+            surfaces
+                .item(i)
+                .unwrap()
+                .unchecked_into::<web_sys::Element>()
+        };
+
+        fire(&wrapper_at(0), "pointerenter");
+        sleep_ms(600).await;
+        let first = surface_at(0);
+        assert!(first.matches(":popover-open").unwrap());
+
+        let rect = first.get_bounding_client_rect();
+        #[allow(clippy::cast_possible_truncation, reason = "a point on screen")]
+        let under = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .element_from_point(
+                (rect.left() + rect.width() / 2.0) as f32,
+                (rect.top() + rect.height() / 2.0) as f32,
+            )
+            .expect("something is under the tooltip");
+        assert!(
+            !first.contains(Some(&under)),
+            "the pointer lands on the tooltip, not the row under it"
+        );
+        let row = under
+            .closest("a")
+            .unwrap()
+            .expect("a row is under the tooltip");
+        let next = (1..wrappers.length())
+            .find(|&i| wrapper_at(i).contains(Some(&row)))
+            .expect("the row under it is another row");
+
+        fire(&wrapper_at(0), "pointerleave");
+        fire(&wrapper_at(next), "pointerenter");
+        leptos::task::tick().await;
+        assert!(
+            surface_at(next).matches(":popover-open").unwrap(),
+            "no hand-over"
+        );
+        assert!(!first.matches(":popover-open").unwrap());
+
+        fire(&wrapper_at(next), "pointerleave");
+        sleep_ms(400).await;
     }
 
     /// A finger resting on a mark opens nothing: on touch the fact is already

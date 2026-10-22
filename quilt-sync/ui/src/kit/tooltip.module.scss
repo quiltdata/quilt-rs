@@ -33,6 +33,12 @@
   box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
 }
 
+/* A whole row's surface covers the rows below, so the pointer goes through it
+ * to them. */
+.surface.through {
+  pointer-events: none;
+}
+
 /* A row the tooltip describes as a whole, rather than a mark inside it. */
 .root.fill {
   display: flex;

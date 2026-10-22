@@ -685,7 +685,9 @@ A list's cut-off names share one `NameTooltip`, which wraps the list and shows
 a name in full only when the ellipsis cut it. A row marks its name with
 `data-full-name` and mounts no tooltip of its own. A package row is the
 exception: its tooltip says more than the name — the host, what it keeps and
-its size — so each row holds one `Tooltip`, the whole row its trigger.
+its size — so each row holds one `Tooltip`, the whole row its trigger. The
+pointer passes through that tooltip to the rows it covers, so it never blocks
+the list; whoever needs the facts for longer has them on the package page.
 
 ## Do's and Don'ts
 
