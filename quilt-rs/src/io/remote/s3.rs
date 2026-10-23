@@ -549,13 +549,11 @@ impl RemoteS3 {
     /// After the AWS credentials on this computer were missing or refused,
     /// drop the clients that use them. A client reads `~/.aws` once and keeps
     /// the keys it was given, so only a new one sees a fixed file.
-    fn forget_ambient_clients_on<T>(&self, result: Res<T>) -> Res<T> {
-        if let Err(err) = &result
-            && err.is_ambient_session_absent()
-        {
+    fn forget_ambient_clients_on(&self, err: Error) -> Error {
+        if err.is_ambient_session_absent() {
             self.retain_clients(|creds_ref| creds_ref.host.is_some());
         }
-        result
+        err
     }
 
     fn retain_clients(&self, keep: impl Fn(&CredsRef) -> bool) {
@@ -596,40 +594,39 @@ impl RemoteS3 {
 
 impl Remote for RemoteS3 {
     async fn exists(&self, host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
-        self.forget_ambient_clients_on(
-            async {
-                debug!(
-                    "⏳ Checking if object exists - host: {:?}, uri: {}",
-                    host, s3_uri
-                );
-                let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-                let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
-                let result = match &s3_uri.version {
-                    Some(version) => result.version_id(version),
-                    None => result,
-                };
-                match result.send().await {
-                    Ok(_) => {
-                        info!("✔️ Object exists at {}", s3_uri);
-                        Ok(true)
-                    }
-                    Err(SdkError::ServiceError(err)) if err.err().is_not_found() => {
-                        info!("ℹ️ Object does not exist at {}", s3_uri);
-                        Ok(false)
-                    }
-                    // A denial is typed distinctly — this is the push gate's first S3
-                    // call (`.quilt/workflows/config.yml`), so collapsing it into a
-                    // generic existence failure is what makes a no-read role's Push
-                    // read as an unexplained S3 error instead of a role problem.
-                    // Anything else stays a plain existence failure.
-                    Err(err) => {
-                        warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
-                        Err(s3_error_or_session_loss(err, host, S3ErrorKind::Exists))
-                    }
-                }
+        debug!(
+            "⏳ Checking if object exists - host: {:?}, uri: {}",
+            host, s3_uri
+        );
+        let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
+        let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
+        let result = match &s3_uri.version {
+            Some(version) => result.version_id(version),
+            None => result,
+        };
+        match result.send().await {
+            Ok(_) => {
+                info!("✔️ Object exists at {}", s3_uri);
+                Ok(true)
             }
-            .await,
-        )
+            Err(SdkError::ServiceError(err)) if err.err().is_not_found() => {
+                info!("ℹ️ Object does not exist at {}", s3_uri);
+                Ok(false)
+            }
+            // A denial is typed distinctly — this is the push gate's first S3
+            // call (`.quilt/workflows/config.yml`), so collapsing it into a
+            // generic existence failure is what makes a no-read role's Push
+            // read as an unexplained S3 error instead of a role problem.
+            // Anything else stays a plain existence failure.
+            Err(err) => {
+                warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
+                Err(self.forget_ambient_clients_on(s3_error_or_session_loss(
+                    err,
+                    host,
+                    S3ErrorKind::Exists,
+                )))
+            }
+        }
     }
 
     async fn get_object_stream(
@@ -637,48 +634,46 @@ impl Remote for RemoteS3 {
         host: Option<&Host>,
         s3_uri: &S3Uri,
     ) -> Res<RemoteObjectStream> {
-        self.forget_ambient_clients_on(
-            async {
-                debug!(
-                    "⏳ Getting object stream - host: {:?}, uri: {}",
-                    host, s3_uri
-                );
-                let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-                match get_object_stream(&client, s3_uri, host).await {
-                    Ok(stream) => {
-                        debug!("✔️ Created stream for object {}", s3_uri);
-                        Ok(stream)
-                    }
-                    Err(e) if e.is_not_found() => {
-                        info!("ℹ️ Object not found: {}", s3_uri);
-                        Err(e)
-                    }
-                    // Pass the typed denial straight through: re-wrapping it as a
-                    // generic stream failure would erase the one bit callers branch
-                    // on — that the active role, not the session, is the problem.
-                    Err(e) if e.is_access_denied() => {
-                        warn!("❌ Access denied reading {}: {}", s3_uri, e);
-                        Err(e)
-                    }
-                    // A rejected credential says the session is dead, not that this
-                    // read failed: autosync raises the login affordance on it rather
-                    // than backing off. Re-wrapped, it is indistinguishable from a
-                    // network fault.
-                    Err(e) if e.is_session_absent() => {
-                        warn!("❌ Credentials rejected reading {}: {}", s3_uri, e);
-                        Err(e)
-                    }
-                    Err(e) => {
-                        warn!("❌ Failed to create stream for {}: {}", s3_uri, e);
-                        Err(Error::S3(S3Error {
-                            host: host.cloned(),
-                            kind: S3ErrorKind::GetObjectStream(e.to_string()),
-                        }))
-                    }
-                }
+        debug!(
+            "⏳ Getting object stream - host: {:?}, uri: {}",
+            host, s3_uri
+        );
+        let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
+        match get_object_stream(&client, s3_uri, host)
+            .await
+            .map_err(|e| self.forget_ambient_clients_on(e))
+        {
+            Ok(stream) => {
+                debug!("✔️ Created stream for object {}", s3_uri);
+                Ok(stream)
             }
-            .await,
-        )
+            Err(e) if e.is_not_found() => {
+                info!("ℹ️ Object not found: {}", s3_uri);
+                Err(e)
+            }
+            // Pass the typed denial straight through: re-wrapping it as a
+            // generic stream failure would erase the one bit callers branch
+            // on — that the active role, not the session, is the problem.
+            Err(e) if e.is_access_denied() => {
+                warn!("❌ Access denied reading {}: {}", s3_uri, e);
+                Err(e)
+            }
+            // A rejected credential says the session is dead, not that this
+            // read failed: autosync raises the login affordance on it rather
+            // than backing off. Re-wrapped, it is indistinguishable from a
+            // network fault.
+            Err(e) if e.is_session_absent() => {
+                warn!("❌ Credentials rejected reading {}: {}", s3_uri, e);
+                Err(e)
+            }
+            Err(e) => {
+                warn!("❌ Failed to create stream for {}: {}", s3_uri, e);
+                Err(Error::S3(S3Error {
+                    host: host.cloned(),
+                    kind: S3ErrorKind::GetObjectStream(e.to_string()),
+                }))
+            }
+        }
     }
 
     async fn put_object(
@@ -687,47 +682,47 @@ impl Remote for RemoteS3 {
         s3_uri: &S3Uri,
         contents: impl Into<ByteStream>,
     ) -> Res {
-        self.forget_ambient_clients_on(
-            async {
-                self.get_client_for_bucket(host, &s3_uri.bucket)
-                    .await?
-                    .put_object()
-                    .bucket(&s3_uri.bucket)
-                    .key(&s3_uri.key)
-                    .body(contents.into())
-                    .send()
-                    .await
-                    // A denial is typed distinctly so the push path can say "this role
-                    // cannot write here"; anything else stays a plain put failure.
-                    .map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::PutObject))?;
+        self.get_client_for_bucket(host, &s3_uri.bucket)
+            .await?
+            .put_object()
+            .bucket(&s3_uri.bucket)
+            .key(&s3_uri.key)
+            .body(contents.into())
+            .send()
+            .await
+            // A denial is typed distinctly so the push path can say "this role
+            // cannot write here"; anything else stays a plain put failure.
+            .map_err(|err| {
+                self.forget_ambient_clients_on(s3_error_or_session_loss(
+                    err,
+                    host,
+                    S3ErrorKind::PutObject,
+                ))
+            })?;
 
-                Ok(())
-            }
-            .await,
-        )
+        Ok(())
     }
 
     async fn resolve_url(&self, host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
-        self.forget_ambient_clients_on(
-            async {
-                let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-                let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
-                let result = match &s3_uri.version {
-                    Some(version) => result.version_id(version),
-                    None => result,
-                };
-                match result.send().await {
-                    Ok(head) => Ok(S3Uri {
-                        version: head.version_id,
-                        ..s3_uri.clone()
-                    }),
-                    // Same reasoning as [`Remote::exists`]: only a genuine denial
-                    // changes the kind, everything else stays a resolve failure.
-                    Err(err) => Err(s3_error_or_session_loss(err, host, S3ErrorKind::ResolveUrl)),
-                }
-            }
-            .await,
-        )
+        let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
+        let result = client.head_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
+        let result = match &s3_uri.version {
+            Some(version) => result.version_id(version),
+            None => result,
+        };
+        match result.send().await {
+            Ok(head) => Ok(S3Uri {
+                version: head.version_id,
+                ..s3_uri.clone()
+            }),
+            // Same reasoning as [`Remote::exists`]: only a genuine denial
+            // changes the kind, everything else stays a resolve failure.
+            Err(err) => Err(self.forget_ambient_clients_on(s3_error_or_session_loss(
+                err,
+                host,
+                S3ErrorKind::ResolveUrl,
+            ))),
+        }
     }
 
     // NOTE: For 0-byte Chunked uploads, the checksum is sha256(''), NOT sha256(sha256(''))
@@ -739,27 +734,23 @@ impl Remote for RemoteS3 {
         dest_uri: &S3Uri,
         size: u64,
     ) -> Res<(S3Uri, ObjectHash)> {
-        self.forget_ambient_clients_on(
-            async {
-                let client = self
-                    .get_client_for_bucket(host_config.host.as_ref(), &dest_uri.bucket)
-                    .await?;
+        let client = self
+            .get_client_for_bucket(host_config.host.as_ref(), &dest_uri.bucket)
+            .await?;
 
-                if host_config.checksums == HostChecksums::Sha256Chunked && size != 0 {
-                    multipart_upload_and_sha256_chunksum(
-                        client,
-                        source_path,
-                        dest_uri,
-                        size,
-                        host_config.host.as_ref(),
-                    )
-                    .await
-                } else {
-                    put_and_request_checksum(client, source_path, dest_uri, host_config).await
-                }
-            }
-            .await,
-        )
+        if host_config.checksums == HostChecksums::Sha256Chunked && size != 0 {
+            multipart_upload_and_sha256_chunksum(
+                client,
+                source_path,
+                dest_uri,
+                size,
+                host_config.host.as_ref(),
+            )
+            .await
+        } else {
+            put_and_request_checksum(client, source_path, dest_uri, host_config).await
+        }
+        .map_err(|e| self.forget_ambient_clients_on(e))
     }
 
     async fn host_config(&self, host: Option<&Host>) -> Res<HostConfig> {
@@ -1514,25 +1505,23 @@ mod tests {
         };
 
         fill();
-        let failed: Res<()> = Err(Error::S3(S3Error::new(S3ErrorKind::GetObject(
-            "boom".to_string(),
-        ))));
-        assert!(remote.forget_ambient_clients_on(failed).is_err());
+        let failed = Error::S3(S3Error::new(S3ErrorKind::GetObject("boom".to_string())));
+        remote.forget_ambient_clients_on(failed);
         assert_eq!(
             hosts(),
             vec![None, Some(host.clone())],
             "an outage keeps them"
         );
 
-        let refused: Res<()> = Err(Error::S3(S3Error::new(S3ErrorKind::InvalidCredentials(
+        let refused = Error::S3(S3Error::new(S3ErrorKind::InvalidCredentials(
             "refused".to_string(),
-        ))));
-        assert!(remote.forget_ambient_clients_on(refused).is_err());
+        )));
+        remote.forget_ambient_clients_on(refused);
         assert_eq!(hosts(), vec![Some(host.clone())]);
 
         fill();
-        let missing: Res<()> = Err(Error::Login(LoginError::NoSession(None)));
-        assert!(remote.forget_ambient_clients_on(missing).is_err());
+        let missing = Error::Login(LoginError::NoSession(None));
+        remote.forget_ambient_clients_on(missing);
         assert_eq!(hosts(), vec![Some(host.clone())]);
     }
 
