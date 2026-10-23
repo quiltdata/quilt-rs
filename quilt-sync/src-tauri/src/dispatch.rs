@@ -236,8 +236,7 @@ fn finish<T: serde::Serialize>(out: Result<T, String>) -> Result<Value, Value> {
 /// What a desktop-only command answers here, `None` for any other.
 fn desktop_answer(cmd: &str) -> Option<Result<Value, Value>> {
     if cmd == "check_for_update" {
-        // No update: the answer the UI takes quietly.
-        return Some(Ok(Value::Null));
+        return None;
     }
     DESKTOP_ONLY
         .contains(&cmd)
@@ -253,6 +252,9 @@ fn desktop_answer(cmd: &str) -> Option<Result<Value, Value>> {
 pub async fn dispatch(s: &Arc<Services>, cmd: &str, args: Value) -> Result<Value, Value> {
     if let Some(answer) = desktop_answer(cmd) {
         return answer;
+    }
+    if cmd == "check_for_update" {
+        return finish(crate::update_feed::check(&s.app.version).await);
     }
     // Tauri's `invoke` without arguments sends an empty object.
     let args = if args.is_null() {
@@ -281,7 +283,10 @@ mod tests {
             assert!(err.starts_with("invalid args"), "{name}: {err}");
         }
         for name in DESKTOP_ONLY {
-            assert!(desktop_answer(name).is_some(), "{name}");
+            // The update check reads the feed itself; see `dispatch`.
+            if *name != "check_for_update" {
+                assert!(desktop_answer(name).is_some(), "{name}");
+            }
         }
         assert!(desktop_answer("nope").is_none());
         let Err(Value::String(err)) = parse("nope", Value::Null) else {

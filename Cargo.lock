@@ -6003,6 +6003,7 @@ dependencies = [
  "opener",
  "quilt-rs",
  "quilt-uri",
+ "reqwest 0.13.5",
  "rfd",
  "rust-i18n",
  "semver",

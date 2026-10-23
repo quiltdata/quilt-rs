@@ -39,6 +39,7 @@ mod services;
 mod telemetry;
 mod toast;
 mod tray;
+mod update_feed;
 mod uri;
 
 use error::Error;
@@ -158,14 +159,13 @@ fn take_engine_lock_or_open_browser(data_dir: &std::path::Path) {
     match engine_lock::acquire_or_wait_for_info(data_dir) {
         Ok(engine_lock::Acquired::Held(lock)) => engine_lock::hold(lock),
         Ok(engine_lock::Acquired::Running(info)) => {
-            match info {
-                Some(info) => {
-                    info!("another engine runs on {}; opening it", data_dir.display());
-                    if let Err(err) = opener::open_browser(info.url_with_token()) {
-                        error!("failed to open the browser: {err}");
-                    }
+            if let Some(info) = info {
+                info!("another engine runs on {}; opening it", data_dir.display());
+                if let Err(err) = opener::open_browser(info.url_with_token()) {
+                    error!("failed to open the browser: {err}");
                 }
-                None => error!("another engine runs on {}", data_dir.display()),
+            } else {
+                error!("another engine runs on {}", data_dir.display());
             }
             std::process::exit(0);
         }

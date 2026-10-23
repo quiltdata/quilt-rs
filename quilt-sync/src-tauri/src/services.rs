@@ -232,10 +232,6 @@ mod tests {
             Ok(serde_json::Value::Null)
         );
         assert_eq!(
-            dispatch(&s, "check_for_update", serde_json::Value::Null).await,
-            Ok(serde_json::Value::Null)
-        );
-        assert_eq!(
             dispatch(&s, "login_oauth", json!({"host": "a.test"})).await,
             Err(json!(crate::dispatch::NOT_IN_BROWSER))
         );

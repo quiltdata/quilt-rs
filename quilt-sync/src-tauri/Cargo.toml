@@ -27,6 +27,7 @@ mockall = "0.15.0"
 opener = { version = "0.9.0", features = ["reveal"] }
 quilt-rs = { path = "../../quilt-rs" }
 quilt-uri = { path = "../../quilt-uri" }
+reqwest.workspace = true
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 rust-i18n = "4.2.4"
 semver = "1.0.28"
