@@ -152,13 +152,19 @@ where
 }
 
 /// The SDK's default chain (`~/.aws`, env vars, SSO, instance metadata)
-/// failed to produce credentials. The SDK wraps it as a dispatch failure, so,
-/// like [`recover_absent_session`], this walks `source()`.
+/// found no credentials, or a profile it cannot use. Not a provider that timed
+/// out or failed, such as SSO or assume-role offline: that may work next time.
+/// The SDK wraps it as a dispatch failure, so, like [`recover_absent_session`],
+/// this walks `source()`.
 fn ambient_credentials_failed(err: &(dyn std::error::Error + 'static)) -> bool {
     let mut current = Some(err);
     while let Some(e) = current {
-        if e.downcast_ref::<CredentialsError>().is_some() {
-            return true;
+        if let Some(credentials) = e.downcast_ref::<CredentialsError>() {
+            return matches!(
+                credentials,
+                CredentialsError::CredentialsNotLoaded(_)
+                    | CredentialsError::InvalidConfiguration(_)
+            );
         }
         current = e.source();
     }
@@ -1844,33 +1850,33 @@ mod tests {
     #[test(tokio::test)]
     async fn an_empty_ambient_chain_is_a_host_less_absent_session() -> Res<()> {
         #[derive(Debug)]
-        struct NoCredentials;
-        impl ProvideCredentials for NoCredentials {
+        struct Failing(fn() -> CredentialsError);
+        impl ProvideCredentials for Failing {
             fn provide_credentials<'a>(&'a self) -> future::ProvideCredentials<'a>
             where
                 Self: 'a,
             {
-                future::ProvideCredentials::ready(Err(CredentialsError::not_loaded(
-                    "no credentials found in chain",
-                )))
+                future::ProvideCredentials::ready(Err((self.0)()))
             }
         }
-
-        let config = aws_config::defaults(BehaviorVersion::latest())
-            .region(Region::new("us-east-1"))
-            .credentials_provider(NoCredentials)
-            .load()
-            .await;
-        let client = aws_sdk_s3::Client::new(&config);
-        let call = async || {
-            client
+        async fn failed_call(
+            error: fn() -> CredentialsError,
+        ) -> SdkError<aws_sdk_s3::operation::head_object::HeadObjectError> {
+            let config = aws_config::defaults(BehaviorVersion::latest())
+                .region(Region::new("us-east-1"))
+                .credentials_provider(Failing(error))
+                .load()
+                .await;
+            aws_sdk_s3::Client::new(&config)
                 .head_object()
                 .bucket("bucket")
                 .key("key")
                 .send()
                 .await
                 .expect_err("no credentials, so no request")
-        };
+        }
+        let not_loaded = || CredentialsError::not_loaded("no credentials found in chain");
+        let call = async || failed_call(not_loaded).await;
 
         assert!(
             matches!(
@@ -1892,6 +1898,34 @@ mod tests {
             ),
             "a deployment's credentials error was retyped as host-less"
         );
+        // A broken profile is as unusable as a missing one.
+        assert!(matches!(
+            s3_error_or_session_loss(
+                failed_call(|| CredentialsError::invalid_configuration("bad profile")).await,
+                None,
+                S3ErrorKind::Exists
+            ),
+            Error::Login(LoginError::NoSession(None))
+        ));
+        // A provider that timed out or failed (SSO or assume-role, offline)
+        // may work next time: an outage, so the read falls back to the tip.
+        for transient in [
+            (|| CredentialsError::provider_timed_out(std::time::Duration::from_secs(5)))
+                as fn() -> CredentialsError,
+            || CredentialsError::provider_error("sso portal unreachable"),
+        ] {
+            assert!(
+                matches!(
+                    s3_error_or_session_loss(
+                        failed_call(transient).await,
+                        None,
+                        S3ErrorKind::Exists
+                    ),
+                    Error::S3(_)
+                ),
+                "a transient provider failure was read as unusable credentials"
+            );
+        }
         Ok(())
     }
 
