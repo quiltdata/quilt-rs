@@ -128,7 +128,7 @@ pub fn LoginCardSkeleton() -> impl IntoView {
     }
 }
 
-/// What `/login` renders when *New design preview* is on.
+/// What `/login` renders in the v2 design.
 #[component]
 pub fn LoginV2() -> impl IntoView {
     view! { <LoginScreen read=read_login /> }

@@ -37,7 +37,7 @@ pub enum BreadcrumbItem {
 /// Provides: app bar, toolbar with breadcrumbs and optional actions,
 /// notification area, content slot (children), and popup overlay.
 ///
-/// With the design preview on, the app bar is the kit [`Appbar`]; the toolbar
+/// In the v2 design, the app bar is the kit [`Appbar`]; the toolbar
 /// stays v1's either way.
 #[component]
 pub fn Layout(

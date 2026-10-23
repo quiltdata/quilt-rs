@@ -54,8 +54,8 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands::{
-    self, AccountHostData, AutosyncPatch, ChangelogEntry, FreedSpace, LogEnv, PublishSettingsData,
-    SettingsData,
+    self, AccountHostData, AutosyncPatch, ChangelogEntry, Design, FreedSpace, LogEnv,
+    PublishSettingsData, SettingsData,
 };
 use crate::kit::{
     Button, ButtonVariant, Card, Dialog, HostRowSkeleton, LoadFailure, PageLayout,
@@ -117,7 +117,8 @@ fn write_setting(write: Write) -> Answer<()> {
             Write::Autosync(patch) => commands::patch_autosync_settings(patch).await,
             Write::Watch(on) => commands::update_fswatcher_settings(on).await,
             Write::DesignPreview(on) => {
-                commands::update_experimental_settings(None, Some(on)).await
+                let design = if on { Design::V2 } else { Design::V1 };
+                commands::update_design_settings(design).await
             }
             Write::LogLevel(level) => commands::update_log_settings(level).await,
             Write::Publishing(p) => {
@@ -168,7 +169,7 @@ const TAURI: SettingsIo = SettingsIo {
     edit_rules,
 };
 
-/// What `/settings` renders when *New design preview* is on.
+/// What `/settings` renders in the v2 design.
 #[component]
 pub fn SettingsV2() -> impl IntoView {
     view! { <SettingsScreen io=TAURI /> }
@@ -402,7 +403,7 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
     seed(
         fields.design_preview,
         written.design_preview,
-        d.experimental.main_page_v2,
+        d.design == Design::V2,
     );
     seed(
         fields.log_level,
@@ -605,7 +606,7 @@ impl Saves {
 
     /// One of this visit's saves has run.
     ///
-    /// `preview` is the *New design preview* value it wrote, if it wrote one:
+    /// `preview` is the *New design* value it wrote, if it wrote one:
     /// the last one saved decides whether the page leaves for `/`. A save
     /// with a `reply` gets its answer there, failure included.
     fn ran(
@@ -1480,8 +1481,8 @@ mod tests {
             fswatcher: FsWatcherSettingsData { enabled: true },
             experimental: ExperimentalSettingsData {
                 entire_package_sync: false,
-                main_page_v2: true,
             },
+            design: Design::V2,
             ignore_rules: IgnoreRulesData {
                 file: "/data/.quiltignore".to_string(),
                 rules: Some(vec![
@@ -1675,7 +1676,7 @@ mod tests {
 
     const PULL: &str = "Get new revisions";
     const WATCH: &str = "Watch folders for changes";
-    const PREVIEW: &str = "New design preview";
+    const PREVIEW: &str = "New design";
     const TRAY: &str = "Keep running in the tray";
 
     fn minutes(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
@@ -2162,12 +2163,14 @@ mod tests {
         assert_eq!(alert(&el), None, "markup was {}", el.inner_html());
     }
 
-    /// Turning the preview off leaves for `/` once it is saved.
+    /// Turning *New design* off saves the classic design and leaves for `/`.
     #[wasm_bindgen_test]
-    async fn turning_the_preview_off_goes_home() {
+    async fn turning_the_new_design_off_goes_home() {
         let el = page(vec![settings()]).await;
+        assert!(toggle(&el, PREVIEW).checked(), "this page is v2");
         toggle(&el, PREVIEW).click();
         sleep_ms(50).await;
+        assert_eq!(writes(), vec![Write::DesignPreview(false)]);
         assert_eq!(path(), "/");
     }
 
