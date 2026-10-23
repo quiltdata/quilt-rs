@@ -118,18 +118,32 @@ Tauri's `invoke` takes them; replies are `{"id", "ok"}` or `{"id", "err"}`.
 Every backend event is pushed as `{"event", "payload"}`. Every other path
 serves a file from the UI folder, or `index.html` when there is none.
 
+## Choosing a folder
+
+Every page that asks for a folder (Setup, Create package, v1 and v2) calls
+`pages::pick_folder`. It tries the native picker first; when that answers
+`not available in the browser` (a headless engine), it opens an in-page folder
+browser (`pages/folder_browser.rs`, mounted once in `App`) fed by the shared
+command `list_folders(path)`: `{path, parent, folders, home}`, the home folder
+when `path` is empty, visible subfolders only. The path field takes a typed
+path on Enter; Up, Home and a click on a folder move around. The desktop app
+keeps its native picker, over IPC or the socket.
+
 ## Known limits
 
 - Plain HTTP only, one token per run, no expiry, no rate limit.
 - Desktop-only commands (OAuth login, the folder picker, the clipboard,
   installing an update, confirming a quit) answer
-  `not available in the browser`. The update check reads the updater feed
+  `not available in the browser`; the UI uses its own folder browser for
+  the picker. The update check reads the updater feed
   (`https://www.quilt.bio/hubfs/latest.json`, copied from `tauri.conf.json`)
   and the notice shows a newer version, but its install button fails.
 - Headless, the desktop-only commands (OAuth login, the folder picker, the
   clipboard, installing an update, confirming a quit) answer
-  `not available in the browser`, and the UI copies with the browser's
-  clipboard instead; the update check answers "no update".
+  `not available in the browser`; the UI copies with the browser's
+  clipboard and picks folders with its own folder browser instead; the update check answers "no update".
+- The folder browser lists the engine's machine, not the browser's, and
+  anyone with the token can list any folder the engine can read.
 - Commands that open things (a folder, a file, the catalog) run on the
   machine QuiltSync runs on, not in the browser.
 - On Windows release builds the console is hidden, so the headless URL is not

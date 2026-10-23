@@ -40,6 +40,7 @@ fn App() -> impl IntoView {
         <components::ToastStack />
         <components::AutopullActivityFeed />
         <components::QuitPrompt />
+        <pages::FolderBrowser />
         <Router>
             <WebNavigation />
             <Bench />

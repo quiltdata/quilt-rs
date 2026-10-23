@@ -2143,6 +2143,25 @@ pub async fn open_directory_picker() -> Result<String, String> {
     tauri::invoke_unit("open_directory_picker").await
 }
 
+/// One folder's subfolders, for the in-browser folder browser.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderListing {
+    pub path: String,
+    pub parent: Option<String>,
+    pub folders: Vec<String>,
+    pub home: String,
+}
+
+/// The folders in `path`, or in the home folder for `None`.
+pub async fn list_folders(path: Option<String>) -> Result<FolderListing, String> {
+    #[derive(Serialize)]
+    struct Args {
+        path: Option<String>,
+    }
+    tauri::invoke("list_folders", &Args { path }).await
+}
+
 // ── Debug/diagnostics ───────────────────────────────────────
 
 pub async fn debug_dot_quilt() -> Result<String, String> {

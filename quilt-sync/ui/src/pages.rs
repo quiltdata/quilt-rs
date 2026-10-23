@@ -3,6 +3,8 @@ mod commit;
 pub mod commit_v2;
 pub mod copy_mark;
 mod error;
+// The in-page folder browser, mounted once at the root.
+pub mod folder_browser;
 // Public for the gallery, which draws the slate over fixtures.
 pub mod error_v2;
 mod installed_package;
@@ -28,6 +30,7 @@ mod v2_page;
 pub use commit::Commit;
 pub use commit_v2::{CommitV2, CommitV2Skeleton};
 pub use error::Error;
+pub use folder_browser::{FolderBrowser, pick_folder};
 pub use error_v2::{ErrorV2, ErrorV2Skeleton, NotFoundV2};
 pub use installed_package::InstalledPackage;
 pub use installed_package_v2::InstalledPackageV2;

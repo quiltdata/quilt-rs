@@ -884,7 +884,7 @@ fn CreatePackagePopup(
 
     let on_browse = move |_| {
         leptos::task::spawn_local(async move {
-            if let Ok(path) = commands::open_directory_picker().await {
+            if let Ok(path) = crate::pages::pick_folder().await {
                 source.set(Some(path));
             }
         });
