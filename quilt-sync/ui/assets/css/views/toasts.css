@@ -173,16 +173,15 @@
   background: var(--q-ui-palette-action-hover);
 }
 
-/* ── The v2 palette, for a reader who has opted into it ──────────────────────
+/* ── The v2 palette, for a reader in the v2 design ───────────────────────────
    The stack is mounted outside the router, so it draws over both v1 and v2
    pages. v1's stylesheets read only `--q-ui-*`, which no theme switches, so v1
    pages are always light. A toast that always followed the OS theme would be
-   dark over a white page for every v1 reader with a dark desktop, and v1 is the
-   default.
+   dark over a white page for every v1 reader with a dark desktop.
 
-   `.qui-v2` is set on the root from the reader's preview preference
+   `.qui-v2` is set on the root from the reader's design setting
    (`theme::set_v2`, fed by `main.rs`'s `design_preview`), so these rules apply
-   whenever *New design preview* is on.
+   whenever the v2 design is on.
 
    Known limitation: with the flag on, /settings, /commit, /merge and the
    package pages are still v1-styled and light, so a toast shown on one of them

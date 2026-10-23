@@ -1,5 +1,4 @@
-//! The v2 package page. Behind `ExperimentalSettings.main_page_v2`, the
-//! *New design preview* switch, as the v2 main page is.
+//! The v2 package page, drawn in the v2 design, as the v2 main page is.
 //!
 //! The header and the context pane are drawn from one authoritative read. The
 //! pane has two modes: the ordinary one, and Resolve, which `resolve=1` asks
@@ -57,8 +56,10 @@ use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
 use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
 use file_pane::{Reach, RowMenu};
 use header::PageHeader;
+pub(crate) use header::{
+    CopiedMark, RemoveDialog, Uninstall, ask_to_remove, location, remote_item, remove_item,
+};
 pub use header::{MenuCommand, MenuItem, menu_items, remote_target};
-pub(crate) use header::{RemoveDialog, Uninstall, ask_to_remove, remote_item, remove_item};
 use incoming::{HoverCard, IncomingSummary};
 use resolve::{ResolveCommands, ResolvePane};
 
@@ -1205,7 +1206,7 @@ fn package_failure(namespace: String, reload: Trigger) -> AnyView {
     .into_any()
 }
 
-/// What `/installed-package` renders when *New design preview* is on.
+/// What `/installed-package` renders in the v2 design.
 ///
 /// `main.rs`'s `PackagePage` decides, from the same answer `/` renders the main
 /// page by, so a reader who has the new main page gets this one with it and

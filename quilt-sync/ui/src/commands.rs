@@ -143,6 +143,9 @@ pub struct CommitData {
     /// The package has been pushed, so its remote is pinned to its push
     /// history and can only be shown.
     pub remote_locked: bool,
+    /// The remote's `latest` hash, when the read reached the remote; picks
+    /// the header's catalog target as [`PackageHeaderData::newer`] does.
+    pub newer: Option<String>,
     pub status: String,
     pub message: String,
     /// The current revision's metadata: what an emptied editor keeps.
@@ -368,8 +371,16 @@ impl Default for FsWatcherSettingsData {
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentalSettingsData {
     pub entire_package_sync: bool,
-    #[serde(default)]
-    pub main_page_v2: bool,
+}
+
+/// Which design generation the app draws: v2 unless the reader chose the
+/// classic design.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Design {
+    V1,
+    #[default]
+    V2,
 }
 
 /// One built-in ignore rule, its place in the popup, and whether it is on.
@@ -420,6 +431,8 @@ pub struct SettingsData {
     pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
     pub experimental: ExperimentalSettingsData,
+    #[serde(default)]
+    pub design: Design,
     #[serde(default)]
     pub ignore_rules: IgnoreRulesData,
 }
@@ -1566,24 +1579,28 @@ pub async fn update_log_settings(level: String) -> Result<(), String> {
 
 /// Turn an experiment on or off. `None` leaves a flag as it is — a caller that
 /// knows about one experiment must not reset another.
-pub async fn update_experimental_settings(
-    entire_package_sync: Option<bool>,
-    main_page_v2: Option<bool>,
-) -> Result<(), String> {
+pub async fn update_experimental_settings(entire_package_sync: Option<bool>) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         entire_package_sync: Option<bool>,
-        main_page_v2: Option<bool>,
     }
     tauri::invoke(
         "update_experimental_settings",
         &Args {
             entire_package_sync,
-            main_page_v2,
         },
     )
     .await
+}
+
+/// Choose the design generation. The next page that asks draws it.
+pub async fn update_design_settings(design: Design) -> Result<(), String> {
+    #[derive(Serialize)]
+    struct Args {
+        design: Design,
+    }
+    tauri::invoke("update_design_settings", &Args { design }).await
 }
 
 /// Record whether a package keeps its whole contents. Storage only — catching

@@ -1,5 +1,4 @@
-# Every crate that tests on the host. `quilt-uri` is not a default member, so a
-# bare `cargo test` does not cover the whole workspace.
+# Every crate that tests on the host, with every target.
 #
 # `quilt-sync-ui` is included. It has tests for two targets, and neither harness
 # runs the other's: its `#[test]` functions run here, and its
@@ -7,9 +6,10 @@
 # tests in its `Test (host target)` step.
 scope := "--workspace --all-targets"
 
-# Run the tests needing no AWS credentials (what a fork's CI runs)
-no-aws:
-    cargo nextest run --profile no-aws {{ scope }}
+# Run the tests needing no AWS credentials (what a fork's CI runs); arguments go to nextest
+[positional-arguments]
+no-aws *args:
+    cargo nextest run --profile no-aws {{ scope }} "$@"
 
 # Run only the live_* fixture tests, which need AWS credentials
 live:

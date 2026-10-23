@@ -421,8 +421,8 @@ const NOTE: &str = "The settings page v2. From a 1024px window, two cards to a r
     Accounts, Storage and App, Publishing and Troubleshooting, Experimental and About, then Ignore \
     rules alone. Narrower, \
     the same order in one column. Toggles, selects and minute fields save as they change and say \
-    Saved; Publishing is read-only, edited in a popup with Save. Routed at /settings under New \
-    design preview.";
+    Saved; Publishing is read-only, edited in a popup with Save. Routed at /settings in the v2 \
+    design.";
 
 #[component]
 #[allow(clippy::too_many_lines, reason = "one cell per state, read as a list")]

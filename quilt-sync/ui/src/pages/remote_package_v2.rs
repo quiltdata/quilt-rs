@@ -26,7 +26,7 @@ fn running() -> AnyView {
     view! { <Spinner variant=SpinnerVariant::Region aria_label=HEADING /> }.into_any()
 }
 
-/// What `/remote-package` renders when *New design preview* is on.
+/// What `/remote-package` renders in the v2 design.
 #[component]
 pub fn RemotePackageV2() -> impl IntoView {
     view! { <RelayScreen read=run_link /> }

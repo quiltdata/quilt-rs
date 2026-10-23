@@ -660,9 +660,7 @@ async fn get_package_page_data_from_model(
 
     // A blocked read counts from tracking alone.
     let status = status_read.as_ref().ok();
-    let newer = status
-        .filter(|s| s.latest_refreshed && !s.latest_hash.is_empty())
-        .map(|s| s.latest_hash.clone());
+    let newer = status.and_then(newer_revision);
     let keeping = keeping_data(
         &lineage,
         &m.get_installed_package_sizes(&installed, &lineage).await?,
@@ -701,6 +699,12 @@ async fn get_package_page_data_from_model(
             newer,
         },
     })
+}
+
+/// The remote's `latest` hash a status was computed against, when it read
+/// the remote just now and found one.
+pub(super) fn newer_revision(status: &quilt::lineage::InstalledPackageStatus) -> Option<String> {
+    (status.latest_refreshed && !status.latest_hash.is_empty()).then(|| status.latest_hash.clone())
 }
 
 /// What removing a set of revisions frees, in bytes.

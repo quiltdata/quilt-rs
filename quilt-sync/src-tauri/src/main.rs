@@ -18,6 +18,7 @@ mod autopull;
 mod changelog;
 mod commands;
 mod commit_message;
+mod design_settings;
 mod env;
 mod error;
 mod experimental_settings;
@@ -248,6 +249,7 @@ fn main() {
             commands::open_user_ignore_rules,
             commands::update_log_settings,
             commands::update_experimental_settings,
+            commands::update_design_settings,
             commands::get_main_page_packages,
             commands::get_main_page_recent_files,
             commands::get_main_page_accounts,

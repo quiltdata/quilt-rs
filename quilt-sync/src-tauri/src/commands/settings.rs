@@ -12,6 +12,8 @@ use crate::autopull::PushSettings;
 use crate::autopull::SharedAutosyncSettings;
 use crate::autopull::Watcher;
 use crate::changelog;
+use crate::design_settings::Design;
+use crate::design_settings::DesignSettings;
 use crate::experimental_settings::ExperimentalSettings;
 use crate::experimental_settings::SharedExperimentalSettings;
 use crate::fswatcher::FsWatcherSettings;
@@ -178,14 +180,12 @@ impl From<FsWatcherSettings> for FsWatcherSettingsData {
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentalSettingsData {
     pub entire_package_sync: bool,
-    pub main_page_v2: bool,
 }
 
 impl From<ExperimentalSettings> for ExperimentalSettingsData {
     fn from(s: ExperimentalSettings) -> Self {
         Self {
             entire_package_sync: s.entire_package_sync,
-            main_page_v2: s.main_page_v2,
         }
     }
 }
@@ -327,6 +327,7 @@ pub struct SettingsData {
     pub autosync: AutosyncSettingsData,
     pub fswatcher: FsWatcherSettingsData,
     pub experimental: ExperimentalSettingsData,
+    pub design: Design,
     pub ignore_rules: IgnoreRulesData,
 }
 
@@ -367,6 +368,11 @@ pub async fn get_settings_data(
     let autosync_data = AutosyncSettingsData::from(autosync_settings.read().await.clone());
     let fswatcher_data = FsWatcherSettingsData::from(fswatcher_settings.read().await.clone());
     let experimental_data = ExperimentalSettingsData::from(experimental.read().await.clone());
+    // A broken file shows v2, the default, as a failed read in the UI does.
+    let design = DesignSettings::load(&data_dir)
+        .await
+        .map(|s| s.design)
+        .unwrap_or_default();
     let user_rules = m.get_quilt().lock().await.user_quiltignore();
 
     Ok(SettingsData {
@@ -384,6 +390,7 @@ pub async fn get_settings_data(
         autosync: autosync_data,
         fswatcher: fswatcher_data,
         experimental: experimental_data,
+        design,
         ignore_rules: IgnoreRulesData::read(&user_rules),
     })
 }
@@ -673,7 +680,6 @@ pub async fn update_experimental_settings(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     experimental: tauri::State<'_, SharedExperimentalSettings>,
     entire_package_sync: Option<bool>,
-    main_page_v2: Option<bool>,
 ) -> Result<(), String> {
     let app_handle = app_handle.lock().await;
     let data_dir = app_handle
@@ -683,10 +689,27 @@ pub async fn update_experimental_settings(
 
     // Read guard dropped before the write guard is taken.
     let mut new = { experimental.read().await.clone() };
-    new.patch(entire_package_sync, main_page_v2);
+    new.patch(entire_package_sync);
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
     *experimental.write().await = new;
     Ok(())
+}
+
+/// Choose the design generation. The next page that asks draws it.
+#[tauri::command]
+pub async fn update_design_settings(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    design: Design,
+) -> Result<(), String> {
+    let app_handle = app_handle.lock().await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+    DesignSettings { design }
+        .save(&data_dir)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

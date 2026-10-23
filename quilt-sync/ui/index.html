@@ -9,10 +9,9 @@
     a document with no theme and no marker paints white whatever the OS says.
 
     The stored generation is last session's answer, not this one's: `/` resolves
-    the real one — the reader's *New design preview* answer — and `set_v2`
-    corrects the marker. A first-ever launch has nothing stored and opens light,
-    as does the first launch after the key was renamed from
-    `quiltsync.main-page-v2`.
+    the real one — v2 unless the reader chose the classic design — and `set_v2`
+    corrects the marker. Only a stored v1 answer ("0") predicts v1, so a
+    first-ever launch, with nothing stored, opens in v2, the default.
 
     `data-booting` keeps this to the empty frame — `_base.scss` hangs the dark
     canvas off it, and `main` clears it before the mount.
@@ -28,7 +27,7 @@
         }
       } catch (e) {}
       try {
-        if (window.localStorage.getItem("quiltsync.design-preview") === "1") {
+        if (window.localStorage.getItem("quiltsync.design-preview") !== "0") {
           root.classList.add("qui-v2");
           root.setAttribute("data-booting", "");
         }

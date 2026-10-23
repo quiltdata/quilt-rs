@@ -3,29 +3,30 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use super::event_target_checked;
-use crate::commands;
+use crate::commands::{self, Design};
 use crate::components::Notification;
 
 // ── Experimental section ──
 
-/// Which opt-in a row owns.
+/// Which setting a row owns.
 ///
-/// The command takes one `Option` per flag and applies only what it is sent, so
-/// a row has to name its own slot and leave the rest `None`: a save must never
-/// reset a flag the row does not own.
+/// *New design* sits here, where readers know it from the preview, but it
+/// writes the design setting rather than an experiment.
 #[derive(Clone, Copy)]
 enum Flag {
     EntirePackageSync,
-    MainPageV2,
+    NewDesign,
 }
 
 impl Flag {
-    /// The slots a row can own, in the command's order.
-    fn only(self, value: bool) -> (Option<bool>, Option<bool>) {
-        let value = Some(value);
+    /// Save `value` to the setting this row owns, and only that one.
+    async fn save(self, value: bool) -> Result<(), String> {
         match self {
-            Self::EntirePackageSync => (value, None),
-            Self::MainPageV2 => (None, value),
+            Self::EntirePackageSync => commands::update_experimental_settings(Some(value)).await,
+            Self::NewDesign => {
+                let design = if value { Design::V2 } else { Design::V1 };
+                commands::update_design_settings(design).await
+            }
         }
     }
 }
@@ -39,12 +40,12 @@ impl Flag {
 ///
 /// Every row here is a reader's to find, so work with nothing to show them yet
 /// gets no row at all. A page of the redesign gets none of its own either: it
-/// arrives under *New design preview*, the switch a reader has already turned
-/// on, rather than as one more row to find.
+/// arrives under *New design*, which is on unless the reader turned it off,
+/// rather than as one more row to find.
 #[component]
 pub(super) fn ExperimentalSection(
     entire_package_sync: bool,
-    main_page_v2: bool,
+    new_design: bool,
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
 ) -> impl IntoView {
@@ -65,10 +66,10 @@ pub(super) fn ExperimentalSection(
                 // generation is on, and saving the flag alone changed nothing on
                 // screen — which looked like it needed an app restart.
                 <ExperimentalToggle
-                    label="New design preview"
-                    description="The redesigned QuiltSync, wherever it is ready."
-                    enabled=main_page_v2
-                    flag=Flag::MainPageV2
+                    label="New design"
+                    description="The redesigned QuiltSync."
+                    enabled=new_design
+                    flag=Flag::NewDesign
                     notification=notification
                     refetch=refetch
                     navigate_to="/"
@@ -110,8 +111,7 @@ fn ExperimentalToggle(
         enabled.set(new_enabled);
         let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
-            let (entire_package_sync, main_page_v2) = flag.only(new_enabled);
-            match commands::update_experimental_settings(entire_package_sync, main_page_v2).await {
+            match flag.save(new_enabled).await {
                 Ok(()) => {
                     notification.set(Some(Notification::Success(
                         "Experimental settings saved".into(),
@@ -165,7 +165,7 @@ mod tests {
                 <leptos_router::components::Router>
                     <ExperimentalSection
                         entire_package_sync=false
-                        main_page_v2=preview
+                        new_design=preview
                         notification=RwSignal::new(None)
                         refetch=Trigger::new()
                     />
@@ -179,7 +179,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn the_reader_row_is_named_for_the_design_not_the_page() {
         let root = mount_section(false);
-        element_saying(&root, "New design preview");
+        element_saying(&root, "New design");
         let words = root.text_content().unwrap_or_default();
         assert!(
             !words.contains("New main page"),

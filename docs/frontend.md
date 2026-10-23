@@ -232,20 +232,21 @@ and the package page carries it through every address it builds for the same
 package — entering and leaving Resolve, and a replaced address — so switching
 mode does not end the band that reports it.
 
-`/` is not a redirect. `Home` reads the reader's **New design preview** opt-in
-(Settings → Experimental) and renders `MainPage` or `InstalledPackagesList` in
-place; a settings read that fails falls back to the latter. One route, so every
+`/` is not a redirect. `Home` reads the reader's design setting, v2 unless they
+turned off **New design** (Settings → Experimental), and renders `MainPage`
+or `InstalledPackagesList` in place; a settings read that fails falls back to
+the former. One route, so every
 way home — the logo, a breadcrumb, a Cancel — lands on the page the reader chose
 rather than on whichever page the link was written against. `/main` and
 `/installed-packages-list` stay addressable for looking at one specific page
 while both exist.
 
-`/installed-package` works the same way: `PackagePage` reads the same opt-in and
+`/installed-package` works the same way: `PackagePage` reads the same setting and
 renders `InstalledPackageV2` or `InstalledPackage` in place, with the same
-fallback to the latter, so every link to a package lands on the page of the
+fallback to the former, so every link to a package lands on the page of the
 generation the reader chose. It has no second address for either page. The main
 page's queue links a diverged package to the v2 page's resolve mode; opened at
-`/main` with the preview off, that lands on v1's package page, whose status
+`/main` in the classic design, that lands on v1's package page, whose status
 banner offers **Merge**.
 
 A `back` handed to `/login` has to be a route `routes::Paths` can parse, not just

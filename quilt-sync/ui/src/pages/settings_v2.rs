@@ -1006,7 +1006,7 @@ pub fn StorageCard(
 
 // ── Experimental ──
 
-pub const DESIGN_PREVIEW_SUBLABEL: &str = "The redesigned QuiltSync, wherever it is ready.";
+pub const DESIGN_PREVIEW_SUBLABEL: &str = "The redesigned QuiltSync.";
 
 /// Opt-ins for what is still being designed. Entire-package sync is not one
 /// of them here: the v2 pages offer it whatever v1's flag says, so a row for
@@ -1020,7 +1020,7 @@ pub fn ExperimentalCard(
     view! {
         <Card title="Experimental">
             <ToggleRow
-                label="New design preview"
+                label="New design"
                 sublabel=DESIGN_PREVIEW_SUBLABEL
                 checked=design_preview
                 disabled=saving(pending, Saved::DesignPreview)
