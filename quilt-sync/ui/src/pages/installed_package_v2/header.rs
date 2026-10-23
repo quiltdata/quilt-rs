@@ -581,11 +581,15 @@ pub struct RemoteTarget {
 ///
 /// `pub` for the gallery's scene, which decides its location group by it.
 #[must_use]
-pub fn remote_target(data: &commands::PackageHeaderData) -> Option<RemoteTarget> {
-    let held = data.uri.as_ref().filter(|_| data.remote_locked)?;
+pub fn remote_target(
+    uri: Option<&quilt_uri::S3PackageUri>,
+    remote_locked: bool,
+    newer: Option<&str>,
+) -> Option<RemoteTarget> {
+    let held = uri.filter(|_| remote_locked)?;
     let at_latest = matches!(
         &held.revision,
-        quilt_uri::RevisionPointer::Hash(hash) if data.newer.as_deref() == Some(hash.as_str())
+        quilt_uri::RevisionPointer::Hash(hash) if newer == Some(hash.as_str())
     );
     let address = if at_latest {
         util::package_uri(
@@ -603,14 +607,20 @@ pub fn remote_target(data: &commands::PackageHeaderData) -> Option<RemoteTarget>
 }
 
 /// Where the package is: its folder, then its catalog page and its Quilt URI.
+/// The commit page's header draws it too.
 ///
 /// The remote side is dropped, not disabled, without a [`remote_target`]: there
 /// is no reason to state and nothing the reader could do.
-fn location(data: &commands::PackageHeaderData, w: Wiring, copied: CopiedMark) -> impl IntoView {
-    let Wiring { busy, outcome, .. } = w;
-    let namespace = data.namespace.to_string();
+pub(crate) fn location(
+    namespace: String,
+    uri: Option<quilt_uri::S3PackageUri>,
+    target: Option<RemoteTarget>,
+    busy: RwSignal<bool>,
+    outcome: RwSignal<Option<Outcome>>,
+    copied: CopiedMark,
+) -> AnyView {
     let mut buttons = vec![{
-        let (ns, uri) = (namespace.clone(), data.uri.clone());
+        let (ns, uri) = (namespace.clone(), uri);
         GroupButton::labelled(
             icons::folder,
             "Open folder",
@@ -631,7 +641,7 @@ fn location(data: &commands::PackageHeaderData, w: Wiring, copied: CopiedMark) -
     if let Some(RemoteTarget {
         catalog_url: url,
         address,
-    }) = remote_target(data)
+    }) = target
     {
         let ns = namespace.clone();
         buttons.push(
@@ -656,14 +666,15 @@ fn location(data: &commands::PackageHeaderData, w: Wiring, copied: CopiedMark) -
             GroupButton::icon(
                 icons::copy,
                 "Copy Quilt URI",
-                Callback::new(move |()| {
-                    copy_uri(address.clone(), namespace.clone(), w.outcome, copied);
+                Callback::new({
+                    let namespace = namespace.clone();
+                    move |()| copy_uri(address.clone(), namespace.clone(), outcome, copied)
                 }),
             )
-            .with_done("Copied", copied.says(data.namespace.to_string())),
+            .with_done("Copied", copied.says(namespace)),
         );
     }
-    view! { <ButtonGroup aria_label="Package location" buttons=buttons /> }
+    view! { <ButtonGroup aria_label="Package location" buttons=buttons /> }.into_any()
 }
 
 const COPY_FAILED: &str = "Could not copy this package's Quilt URI.";
@@ -801,7 +812,14 @@ pub fn PageHeader(
                                 )
                             })
                     }}
-                    {location(&data, w, copied)}
+                    {location(
+                        data.namespace.to_string(),
+                        data.uri.clone(),
+                        remote_target(data.uri.as_ref(), data.remote_locked, data.newer.as_deref()),
+                        w.busy,
+                        w.outcome,
+                        copied,
+                    )}
                     // A derived signal, so the items follow `busy` while the menu
                     // stays open: the trigger is live during a run, see
                     // `the_menu_stays_open_when_a_command_settles`.
@@ -2145,10 +2163,14 @@ mod tests {
         }
     }
 
+    fn remote_target_of(d: &commands::PackageHeaderData) -> Option<RemoteTarget> {
+        remote_target(d.uri.as_ref(), d.remote_locked, d.newer.as_deref())
+    }
+
     /// At the remote's latest, both buttons name `latest`: no hash.
     #[test]
     fn at_latest_both_name_latest() {
-        let target = remote_target(&holding_against(Some("abc123"))).unwrap();
+        let target = remote_target_of(&holding_against(Some("abc123"))).unwrap();
         assert_eq!(
             target.address.to_copy_string(),
             "quilt+s3://team-bucket#package=team/dataset&catalog=quilt.test"
@@ -2162,7 +2184,7 @@ mod tests {
     /// Behind, both buttons name the revision the package holds.
     #[test]
     fn behind_both_name_the_held_revision() {
-        let target = remote_target(&holding_against(Some("def456"))).unwrap();
+        let target = remote_target_of(&holding_against(Some("def456"))).unwrap();
         assert_eq!(
             target.address.to_copy_string(),
             "quilt+s3://team-bucket#package=team/dataset@abc123&catalog=quilt.test"
@@ -2177,8 +2199,8 @@ mod tests {
     #[test]
     fn unknown_pins_like_behind() {
         assert_eq!(
-            remote_target(&holding_against(None)),
-            remote_target(&holding_against(Some("def456")))
+            remote_target_of(&holding_against(None)),
+            remote_target_of(&holding_against(Some("def456")))
         );
     }
 
@@ -2192,7 +2214,7 @@ mod tests {
                 .parse()
                 .unwrap(),
         );
-        let target = remote_target(&data).unwrap();
+        let target = remote_target_of(&data).unwrap();
         assert!(
             target
                 .address

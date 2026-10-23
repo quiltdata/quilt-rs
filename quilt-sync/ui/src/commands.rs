@@ -143,6 +143,9 @@ pub struct CommitData {
     /// The package has been pushed, so its remote is pinned to its push
     /// history and can only be shown.
     pub remote_locked: bool,
+    /// The remote's `latest` hash, when the read reached the remote; picks
+    /// the header's catalog target as [`PackageHeaderData::newer`] does.
+    pub newer: Option<String>,
     pub status: String,
     pub message: String,
     /// The current revision's metadata: what an emptied editor keeps.

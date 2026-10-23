@@ -141,7 +141,9 @@ pub fn CommitHeader(
     #[prop(into)] package_href: String,
     primary: Primary,
     w: PrimaryWiring,
-    on_open_folder: Callback<()>,
+    /// The package header's location group, which the page wires and the
+    /// gallery draws inert.
+    location: AnyView,
     /// The package has been pushed, so `[⋯]` offers *Show remote* in place
     /// of *Change bucket*.
     remote_locked: bool,
@@ -202,9 +204,7 @@ pub fn CommitHeader(
             title="New revision"
             actions=view! {
                 {face}
-                <Button disabled=w.running on_click=move |_| on_open_folder.run(())>
-                    "Open folder"
-                </Button>
+                {location}
                 <ActionMenu aria_label="More actions for this package" actions=menu />
             }
                 .into_any()

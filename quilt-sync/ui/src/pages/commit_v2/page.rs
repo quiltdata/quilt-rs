@@ -33,7 +33,8 @@ use crate::components::{IgnorePopup, IgnorePopupData, Notification, PreviousWork
 use crate::kit::{LoadFailure, PageLayout};
 
 use super::super::installed_package_v2::{
-    BucketDialog, BucketDraft, MenuCommand, RemoveDialog, Uninstall, ask_to_remove, run_reading,
+    BucketDialog, BucketDraft, CopiedMark, MenuCommand, RemoveDialog, Uninstall, ask_to_remove,
+    location, remote_target, run_reading,
 };
 use super::super::row_menu::RowCommand;
 use super::super::v2_page::{Outcome, PageHandle, V2Page, critical};
@@ -767,23 +768,8 @@ fn CommitScreen(
             }
         });
     });
-    let open_folder = Callback::new(move |()| {
-        let Some(Ok(d)) = answer.get_untracked() else {
-            return;
-        };
-        // This command is now the last one, so an earlier failure is not news.
-        outcome.set(None);
-        leptos::task::spawn_local(async move {
-            let ns = d.namespace.to_string();
-            if let Err(detail) = commands::open_in_file_browser(ns.clone(), d.uri).await {
-                outcome.try_set(Some(critical(
-                    ns,
-                    "Could not open the folder.",
-                    Some(detail),
-                )));
-            }
-        });
-    });
+    // The page's, so a re-read keeps the copy button's check.
+    let copied = CopiedMark::new();
 
     // The ignore popup reports through a `Notification`; its failure is this
     // page's news, and its success re-reads the page, which is the report —
@@ -821,6 +807,14 @@ fn CommitScreen(
         // Focus is asked for on arrival only: a re-read after Ignore or
         // a failed publish must not pull the cursor from where it is.
         let fresh = untrack(|| draft.seed(&d, &fixed));
+        let location = location(
+            d.namespace.to_string(),
+            d.uri.clone(),
+            remote_target(d.uri.as_ref(), d.remote_locked, d.newer.as_deref()),
+            running,
+            outcome,
+            copied,
+        );
         column(
             &d,
             fixed,
@@ -829,7 +823,7 @@ fn CommitScreen(
             running,
             choice,
             run,
-            open_folder,
+            location,
             ignoring,
             outcome,
             &menu,
@@ -888,7 +882,7 @@ fn column(
     running: RwSignal<bool>,
     choice: RwSignal<usize>,
     run: Callback<bool>,
-    open_folder: Callback<()>,
+    location: AnyView,
     ignoring: RwSignal<Option<IgnorePopupData>>,
     outcome: RwSignal<Option<Outcome>>,
     menu: &HeaderMenu,
@@ -979,7 +973,7 @@ fn column(
             package_href=routes::package_page_href(&d.namespace)
             primary=primary(has_bucket, d.counts.changed)
             w=w
-            on_open_folder=open_folder
+            location=location
             remote_locked=d.remote_locked
             on_menu=menu.on_menu()
         />
@@ -1214,6 +1208,7 @@ mod tests {
                 .unwrap(),
             ),
             remote_locked: false,
+            newer: None,
             status: "up_to_date".to_string(),
             message: "Updated 1203 files".to_string(),
             user_meta: "{\"plate\": 7}".to_string(),
@@ -1289,6 +1284,54 @@ mod tests {
             .query_selector(&format!("main > .{}", super::super::style::column))
             .unwrap();
         assert!(column.is_some(), "markup was {}", el.inner_html());
+    }
+
+    /// The header's location group's segments, by name.
+    fn location_names(el: &web_sys::Element) -> Vec<String> {
+        let all = el
+            .query_selector_all("[aria-label='Package location'] button")
+            .unwrap();
+        (0..all.length())
+            .map(|i| {
+                all.item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::Element>()
+                    .get_attribute("aria-label")
+                    .unwrap_or_default()
+            })
+            .collect()
+    }
+
+    fn published(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        Box::pin(async {
+            Ok(CommitData {
+                uri: Some(
+                    quilt_uri::S3PackageUri::try_from(
+                        "quilt+s3://team-bucket#package=org/pkg@abc123&catalog=quilt.test",
+                    )
+                    .unwrap(),
+                ),
+                remote_locked: true,
+                newer: Some("abc123".to_string()),
+                ..commit_data()
+            })
+        })
+    }
+
+    /// The package header's group: the remote side only once the package has
+    /// a catalog page, which a bucket never published to does not.
+    #[wasm_bindgen_test]
+    async fn the_header_shows_the_package_location() {
+        let unpublished = page_at("/commit?namespace=org%2Fpkg").await;
+        assert_eq!(location_names(&unpublished), ["Open folder"]);
+
+        let el = page_reading("/commit?namespace=org%2Fpkg", published).await;
+        assert_eq!(
+            location_names(&el),
+            ["Open folder", "Open in catalog", "Copy Quilt URI"],
+            "markup was {}",
+            el.inner_html()
+        );
     }
 
     fn signed_out(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {

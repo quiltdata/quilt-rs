@@ -24,6 +24,7 @@
 ### Changed
 
 - QuiltSync opens in the new design; Settings can switch back to the classic one (<https://github.com/quiltdata/quilt-rs/pull/1189>)
+- **New design preview**: the new revision page's header has the package page's *Open folder*, *Open in catalog* and *Copy Quilt URI* buttons (<https://github.com/quiltdata/quilt-rs/pull/1187>)
 - **New design preview**: copying a file's URI or path on the package page marks that file's row for a moment, so the page no longer moves down. The header's copy button shows a check instead of a tooltip, and the close button of a message bar sits at its right edge (<https://github.com/quiltdata/quilt-rs/pull/1182>)
 
 ## [v0.23.2] - 2026-10-22
