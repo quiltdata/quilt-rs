@@ -110,6 +110,38 @@ fn run_headless(opts: &Headless) {
     });
 }
 
+/// In a timing run, report the page's errors and the socket's big messages
+/// and closes to `bench_report` on a socket of its own.
+const BENCH_PROBE: &str = r"(function () {
+  var t = new URLSearchParams(location.search).get('t');
+  if (!t) { try { t = sessionStorage.getItem('quiltsync-token'); } catch (e) {} }
+  if (!t || location.protocol !== 'http:') return;
+  var OW = window.WebSocket, q = [], n = 1e9;
+  var log = new OW('ws://' + location.host + '/ws?t=' + t);
+  function send(m) {
+    var s = JSON.stringify({ id: n++, cmd: 'bench_report', args: { text: 'page: ' + m } });
+    if (log.readyState === 1) log.send(s); else q.push(s);
+  }
+  log.onopen = function () { q.forEach(function (s) { log.send(s); }); q = []; };
+  ['error', 'warn'].forEach(function (k) {
+    var f = console[k];
+    console[k] = function () { send(k + ' ' + [].map.call(arguments, String).join(' ')); f.apply(console, arguments); };
+  });
+  document.addEventListener('visibilitychange', function () { send('visibility hidden=' + document.hidden); });
+  window.addEventListener('error', function (ev) { send('onerror ' + ev.message); });
+  window.addEventListener('unhandledrejection', function (ev) { send('rejection ' + ev.reason); });
+  window.WebSocket = function (u, p) {
+    var w = p === undefined ? new OW(u) : new OW(u, p);
+    w.addEventListener('message', function (ev) {
+      var d = ev.data;
+      if (typeof d !== 'string' || d.length > 10000) send('message ' + (d.length || d.size) + ' hidden=' + document.hidden);
+    });
+    w.addEventListener('close', function (ev) { send('close ' + ev.code + ' ' + ev.reason); });
+    return w;
+  };
+  window.WebSocket.prototype = OW.prototype;
+})();";
+
 /// The main window: the UI server's page at `url`, or the bundled page over
 /// Tauri IPC with `ipc`, kept for comparing the two.
 fn main_window(app: &tauri::App, url: &str, ipc: bool) -> Result {
@@ -128,10 +160,14 @@ fn main_window(app: &tauri::App, url: &str, ipc: bool) -> Result {
     // A timing run (see WEB-MVP.md): the page reads the namespace to measure.
     if let Ok(namespace) = std::env::var("QUILTSYNC_BENCH") {
         let script = format!(
-            "window.__QS_BENCH__ = {};",
+            "window.__QS_BENCH__ = {};\n{BENCH_PROBE}",
             serde_json::Value::String(namespace)
         );
-        window = window.initialization_script(&script);
+        // A hidden window (a locked screen, another space) would otherwise
+        // suspend the page mid-run.
+        window = window
+            .initialization_script(&script)
+            .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
     }
     window.build()?;
     Ok(())

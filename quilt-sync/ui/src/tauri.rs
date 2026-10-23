@@ -133,15 +133,38 @@ pub async fn invoke_unit<R: DeserializeOwned>(cmd: &str) -> Result<R, String> {
     serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
 }
 
-/// The size in bytes of the JSON a command answers with, as it travels. For
-/// a timing run.
-pub async fn invoke_wire_len<A: Serialize>(cmd: &str, args: &A) -> Result<usize, String> {
+/// For a timing run: the size in bytes of the JSON a command answers with,
+/// and how long this side takes to decode it into `R`, timed with `now`.
+///
+/// Over the socket that is what [`ws`] does with a reply: parse the message,
+/// take `ok` back to text, parse that into `R`. Over IPC it is `JSON.parse` of
+/// the body (which Tauri's own script does) and `serde_wasm_bindgen`.
+pub async fn probe_decode<A: Serialize, R: DeserializeOwned>(
+    cmd: &str,
+    args: &A,
+    now: fn() -> f64,
+) -> Result<(usize, f64), String> {
+    let js_err = |e: JsValue| e.as_string().unwrap_or_else(|| format!("{e:?}"));
     if is_web_mode() {
         let args = serde_json::to_value(args).map_err(|e| e.to_string())?;
-        return Ok(ws::request(cmd, args).await?.len());
+        let text = ws::request(cmd, args).await?;
+        let message = format!("{{\"id\":1,\"ok\":{text}}}");
+        let started = now();
+        let mut value: serde_json::Value =
+            serde_json::from_str(&message).map_err(|e| e.to_string())?;
+        let ok = value.get_mut("ok").map(serde_json::Value::take);
+        let ok = ok.unwrap_or_default().to_string();
+        let _: R = serde_json::from_str(&ok).map_err(|e| e.to_string())?;
+        return Ok((text.len(), now() - started));
     }
-    let value: serde_json::Value = invoke(cmd, args).await?;
-    Ok(value.to_string().len())
+    let args_js = serde_wasm_bindgen::to_value(args).map_err(|e| e.to_string())?;
+    let promise = tauri_invoke_catching(cmd, args_js).map_err(js_err)?;
+    let result = JsFuture::from(promise).await.map_err(js_err)?;
+    let text: String = js_sys::JSON::stringify(&result).map_err(js_err)?.into();
+    let started = now();
+    let parsed = js_sys::JSON::parse(&text).map_err(js_err)?;
+    let _: R = serde_wasm_bindgen::from_value(parsed).map_err(|e| e.to_string())?;
+    Ok((text.len(), now() - started))
 }
 
 async fn invoke_ws<R: DeserializeOwned>(cmd: &str, args: serde_json::Value) -> Result<R, String> {

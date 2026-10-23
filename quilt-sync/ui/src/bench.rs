@@ -8,12 +8,13 @@
 use std::fmt::Write;
 
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use wasm_bindgen::JsCast;
 
 use crate::commands;
 use crate::tauri;
 
-const RUNS: usize = 10;
+const RUNS: usize = 5;
 const RENDERS: usize = 5;
 
 /// The namespace to measure, when this is a timing run.
@@ -44,7 +45,16 @@ async fn sleep_ms(ms: i32) {
     let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
+/// The next frame, or the next task when the page is hidden and draws no
+/// frames.
 async fn next_frame() {
+    let hidden = web_sys::window()
+        .and_then(|w| w.document())
+        .is_some_and(|d| d.hidden());
+    if hidden {
+        sleep_ms(0).await;
+        return;
+    }
     let promise = js_sys::Promise::new(&mut |resolve, _| {
         if let Some(w) = web_sys::window() {
             let _ = w.request_animation_frame(&resolve);
@@ -68,17 +78,43 @@ fn summary(times: &mut [f64]) -> String {
     format!("median {median:.1} ms, min {min:.1}, max {max:.1}")
 }
 
-async fn time_read<A: Serialize, F, Fut, T>(out: &mut String, cmd: &str, args: &A, call: F)
-where
+/// Hand a line to the backend's `bench_report` right away, so a run that
+/// stalls still shows how far it got.
+async fn report(text: String) {
+    #[derive(Serialize)]
+    struct Text {
+        text: String,
+    }
+    let _ = tauri::invoke::<_, ()>("bench_report", &Text { text }).await;
+}
+
+async fn time_read<A: Serialize, R: DeserializeOwned, F, Fut>(
+    out: &mut String,
+    cmd: &str,
+    args: &A,
+    call: F,
+) where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<T, String>>,
+    Fut: std::future::Future<Output = Result<R, String>>,
 {
-    let wire = match tauri::invoke_wire_len(cmd, args).await {
-        Ok(len) => len.to_string(),
-        Err(err) => format!("error: {err}"),
-    };
+    report(format!("progress: {cmd} probe")).await;
+    let mut decodes = Vec::with_capacity(RUNS);
+    let mut wire = 0;
+    for _ in 0..3 {
+        match tauri::probe_decode::<A, R>(cmd, args, now).await {
+            Ok((len, ms)) => {
+                wire = len;
+                decodes.push(ms);
+            }
+            Err(err) => {
+                let _ = writeln!(out, "  {cmd}: probe error {err}");
+                return;
+            }
+        }
+    }
     let mut times = Vec::with_capacity(RUNS);
-    for _ in 0..RUNS {
+    for i in 0..RUNS {
+        report(format!("progress: {cmd} run {i}")).await;
         let started = now();
         if let Err(err) = call().await {
             let _ = writeln!(out, "  {cmd}: error {err}");
@@ -86,7 +122,13 @@ where
         }
         times.push(now() - started);
     }
-    let _ = writeln!(out, "  {cmd}: {wire} bytes, {}", summary(&mut times));
+    let line = format!(
+        "  {cmd}: {wire} bytes, call→typed {}; decode alone {}",
+        summary(&mut times),
+        summary(&mut decodes)
+    );
+    report(format!("progress:{line}")).await;
+    let _ = writeln!(out, "{line}");
 }
 
 /// Run the timings, then report them. `navigate` is the router's.
@@ -100,14 +142,11 @@ pub async fn run(namespace: String, navigate: impl Fn(&str)) {
         namespace: String,
         filter: Option<String>,
     }
-    #[derive(Serialize)]
-    struct Text {
-        text: String,
-    }
     // Let the first page settle and its own reads finish.
     sleep_ms(3000).await;
     let mode = if tauri::is_web_mode() { "ws" } else { "ipc" };
     let mut out = format!("bench {mode} {namespace}\n");
+    report(format!("progress: start {mode}")).await;
 
     let ns = Ns {
         namespace: namespace.clone(),
@@ -156,5 +195,5 @@ pub async fn run(namespace: String, navigate: impl Fn(&str)) {
     }
     let _ = writeln!(out, "  package page render: {}", summary(&mut renders));
 
-    let _ = tauri::invoke::<_, ()>("bench_report", &Text { text: out }).await;
+    report(out).await;
 }
