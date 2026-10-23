@@ -151,6 +151,13 @@ where
     })
 }
 
+/// What `aws-config` says when an SSO profile has no cached token, or one
+/// that expired and cannot be refreshed: `aws sso login` is the remedy.
+const SSO_TOKEN_UNUSABLE: [&str; 2] = [
+    "failed to load the cached SSO token",
+    "the SSO token has expired",
+];
+
 /// The SDK's default chain (`~/.aws`, env vars, SSO, instance metadata)
 /// found no credentials, or a profile it cannot use. Not a provider that timed
 /// out or failed, such as SSO or assume-role offline: that may work next time.
@@ -168,6 +175,12 @@ fn ambient_credentials_failed(err: &(dyn std::error::Error + 'static)) -> bool {
                     | CredentialsError::InvalidConfiguration(_)
             )
         ) {
+            return true;
+        }
+        // An SSO profile with no usable sign-in. The SDK's error types for it
+        // are private, so its words are matched; a test pins them.
+        let words = e.to_string();
+        if SSO_TOKEN_UNUSABLE.iter().any(|w| words.contains(w)) {
             return true;
         }
         current = e.source();
@@ -1942,6 +1955,60 @@ mod tests {
                     Error::S3(_)
                 ),
                 "a transient provider failure was read as unusable credentials"
+            );
+        }
+        Ok(())
+    }
+
+    /// An SSO profile with no cached token, or an expired one, is unusable
+    /// until `aws sso login`. Through the real default chain, on a fake home,
+    /// so an SDK that rewords these errors fails here.
+    #[test(tokio::test)]
+    async fn an_sso_profile_without_a_usable_token_is_a_host_less_absent_session() -> Res<()> {
+        use aws_types::os_shim_internal::Env;
+        use aws_types::os_shim_internal::Fs;
+
+        const CONFIG: &str = "[profile default]
+sso_session = dev
+sso_account_id = 123456789012
+sso_role_name = Reader
+
+[sso-session dev]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+";
+        // `sha1("dev")`: the cache file the SDK reads for this session.
+        const CACHE: &str = "/home/me/.aws/sso/cache/34c6fceca75e456f25e7e99531e2425c6c1de443.json";
+        const EXPIRED: &str = r#"{"accessToken": "token", "expiresAt": "2020-01-01T00:00:00Z", "region": "us-east-1", "startUrl": "https://example.awsapps.com/start"}"#;
+
+        for files in [
+            vec![("/home/me/.aws/config", CONFIG)],
+            vec![("/home/me/.aws/config", CONFIG), (CACHE, EXPIRED)],
+        ] {
+            let config = aws_config::defaults(BehaviorVersion::latest())
+                .region(Region::new("us-east-1"))
+                .env(Env::from_slice(&[
+                    ("HOME", "/home/me"),
+                    ("AWS_EC2_METADATA_DISABLED", "true"),
+                ]))
+                .fs(Fs::from_slice(&files))
+                .load()
+                .await;
+            let err = aws_sdk_s3::Client::new(&config)
+                .head_object()
+                .bucket("bucket")
+                .key("key")
+                .send()
+                .await
+                .expect_err("no usable SSO token, so no request");
+            let described = aws_smithy_types::error::display::DisplayErrorContext(&err).to_string();
+            assert!(
+                matches!(
+                    s3_error_or_session_loss(err, None, S3ErrorKind::Exists),
+                    Error::Login(LoginError::NoSession(None))
+                ),
+                "{} file(s): {described}",
+                files.len()
             );
         }
         Ok(())
