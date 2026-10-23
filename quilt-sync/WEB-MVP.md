@@ -129,6 +129,24 @@ when `path` is empty, visible subfolders only. The path field takes a typed
 path on Enter; Up, Home and a click on a folder move around. The desktop app
 keeps its native picker, over IPC or the socket.
 
+## End-to-end tests
+
+`quilt-sync/e2e` drives the real app in Chromium with Playwright:
+
+```sh
+just test e2e            # builds, then runs every test
+just test e2e --headed   # extra arguments go to `playwright test`
+```
+
+The recipe builds the debug binary and the UI, installs the pinned
+`@playwright/test` and its Chromium, and runs the suite. Each test starts its
+own `quilt-sync --headless --port 0` on a fresh temp folder (data folder, home
+folder and `HOME`), sets the home with the `setup` command over the WebSocket
+(quicker than the folder browser), and stops it with Ctrl-C at
+the end. A debug build sends no telemetry. To run the suite without the
+recipe, build first, then `npx playwright test` in `quilt-sync/e2e`;
+`QUILTSYNC_BIN` points it at another binary. It is not part of `just ci`.
+
 ## Known limits
 
 - Plain HTTP only, one token per run, no expiry, no rate limit.
@@ -151,3 +169,8 @@ keeps its native picker, over IPC or the socket.
   printed.
 - The UI folder path is baked in at compile time unless `QUILTSYNC_UI_DIR` is
   set.
+- The file watcher takes up a new package on its next reconcile, every 5
+  seconds, and does not walk it then, so a file written into a package just
+  after it was created does not show until the next change. The end-to-end
+  tests write again until the file shows; the first write is missed every
+  time.
