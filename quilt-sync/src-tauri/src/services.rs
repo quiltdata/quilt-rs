@@ -7,6 +7,8 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::atomic::AtomicUsize;
 
 use semver::Version;
 use tokio::sync::RwLock;
@@ -49,9 +51,21 @@ pub const APP_IDENTIFIER: &str = "com.quiltdata.quilt-sync";
 /// `~/.local/share/<id>`, on Windows `%LOCALAPPDATA%\<id>`.
 #[must_use]
 pub fn default_data_dir() -> PathBuf {
+    if let Some(dir) = data_dir_override() {
+        return dir;
+    }
     dirs::data_local_dir()
         .expect("no local data folder on this platform")
         .join(APP_IDENTIFIER)
+}
+
+/// `QUILTSYNC_DATA_DIR`, a stand-in for a `--data-dir` flag: run against a
+/// throwaway folder instead of the real one.
+#[must_use]
+pub fn data_dir_override() -> Option<PathBuf> {
+    std::env::var_os("QUILTSYNC_DATA_DIR")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 pub struct Services {
@@ -72,6 +86,12 @@ pub struct Services {
     pub events: EventSink,
     /// The tray icon's state; a desktop tray clones it.
     pub tray_status: watch::Receiver<SyncTrayStatus>,
+    /// The desktop app, set once its setup ran. Desktop-only commands work
+    /// through [`crate::dispatch::dispatch`] when it is there; a headless run
+    /// never sets it.
+    pub desktop: OnceLock<tauri::AppHandle>,
+    /// How many WebSocket front ends are connected right now.
+    pub web_clients: AtomicUsize,
 }
 
 impl Services {
@@ -182,6 +202,8 @@ impl Services {
             quit_gate: QuitGate::default(),
             events,
             tray_status,
+            desktop: OnceLock::new(),
+            web_clients: AtomicUsize::new(0),
         }))
     }
 

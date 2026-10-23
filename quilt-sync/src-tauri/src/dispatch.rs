@@ -213,6 +213,7 @@ commands! {
         report_ui_panic(message: String) -> ();
         quit_prompt_shown(generation: u64) -> ();
         quit_cancel() -> ();
+        bench_report(text: String) -> ();
     }
     desktop_plain {
         login_oauth(host: String, back: Option<String>) -> String;
@@ -233,7 +234,8 @@ fn finish<T: serde::Serialize>(out: Result<T, String>) -> Result<Value, Value> {
     }
 }
 
-/// What a desktop-only command answers here, `None` for any other.
+/// What a desktop-only command answers without the desktop app, `None` for
+/// any other.
 fn desktop_answer(cmd: &str) -> Option<Result<Value, Value>> {
     if cmd == "check_for_update" {
         // No update: the answer the UI takes quietly.
@@ -244,22 +246,83 @@ fn desktop_answer(cmd: &str) -> Option<Result<Value, Value>> {
         .then(|| Err(Value::String(NOT_IN_BROWSER.to_owned())))
 }
 
+fn read_args<T: serde::de::DeserializeOwned>(cmd: &str, args: Value) -> Result<T, Value> {
+    serde_json::from_value(args)
+        .map_err(|err| Value::String(format!("invalid args for command `{cmd}`: {err}")))
+}
+
+/// Run a desktop-only command with the desktop app's handle, as its Tauri
+/// command would. `None` for any other command.
+async fn run_desktop(
+    app: &tauri::AppHandle,
+    s: &Services,
+    cmd: &str,
+    args: Value,
+) -> Option<Result<Value, Value>> {
+    use crate::commands as system;
+    Some(match cmd {
+        "login_oauth" => {
+            #[derive(Deserialize)]
+            struct Args {
+                host: String,
+                back: Option<String>,
+            }
+            match read_args::<Args>(cmd, args) {
+                Ok(a) => finish(crate::commands::login_oauth(s, a.host, a.back).await),
+                Err(err) => Err(err),
+            }
+        }
+        "copy_to_clipboard" => {
+            #[derive(Deserialize)]
+            struct Args {
+                text: String,
+                uri: Option<S3PackageUri>,
+            }
+            match read_args::<Args>(cmd, args) {
+                Ok(a) => finish(system::copy_to_clipboard_with(
+                    app,
+                    s,
+                    &a.text,
+                    a.uri.as_ref(),
+                )),
+                Err(err) => Err(err),
+            }
+        }
+        "open_directory_picker" => finish(system::open_directory_picker_with(app, s)),
+        "check_for_update" => finish(system::check_for_update(app.clone()).await),
+        "download_and_install_update" => {
+            finish(system::download_and_install_update(app.clone()).await)
+        }
+        "quit_confirm" => {
+            app.exit(0);
+            Ok(Value::Null)
+        }
+        _ => return None,
+    })
+}
+
 /// Run `cmd` with `args` (the object Tauri's `invoke` would receive).
 ///
 /// # Errors
 ///
 /// The command's error, serialized as Tauri rejects with it, or a message
-/// for an unknown command, unreadable arguments or a desktop-only command.
+/// for an unknown command, unreadable arguments or a desktop-only command
+/// without the desktop app.
 pub async fn dispatch(s: &Arc<Services>, cmd: &str, args: Value) -> Result<Value, Value> {
-    if let Some(answer) = desktop_answer(cmd) {
-        return answer;
-    }
     // Tauri's `invoke` without arguments sends an empty object.
     let args = if args.is_null() {
         Value::Object(serde_json::Map::new())
     } else {
         args
     };
+    if DESKTOP_ONLY.contains(&cmd) {
+        if let Some(app) = s.desktop.get()
+            && let Some(answer) = Box::pin(run_desktop(app, s, cmd, args)).await
+        {
+            return answer;
+        }
+        return desktop_answer(cmd).expect("a desktop-only command");
+    }
     let call = parse(cmd, args)?;
     run(s, call).await
 }
@@ -273,7 +336,7 @@ mod tests {
     /// a window.
     #[test]
     fn every_command_has_an_arm() {
-        assert_eq!(SHARED.len() + DESKTOP_ONLY.len(), 82);
+        assert_eq!(SHARED.len() + DESKTOP_ONLY.len(), 83);
         for name in SHARED {
             let Err(Value::String(err)) = parse(name, Value::String("not args".into())) else {
                 panic!("{name}: arguments of the wrong shape were accepted");

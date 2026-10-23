@@ -110,6 +110,33 @@ fn run_headless(opts: &Headless) {
     });
 }
 
+/// The main window: the UI server's page at `url`, or the bundled page over
+/// Tauri IPC with `ipc`, kept for comparing the two.
+fn main_window(app: &tauri::App, url: &str, ipc: bool) -> Result {
+    let target = if ipc {
+        tauri::WebviewUrl::App("index.html".into())
+    } else {
+        tauri::WebviewUrl::External(url.parse().map_err(Error::ParseUrl)?)
+    };
+    let mut window = tauri::WebviewWindowBuilder::new(app, "main", target)
+        .title("QuiltSync")
+        .inner_size(1280.0, 900.0)
+        .min_inner_size(640.0, 560.0)
+        .resizable(true)
+        .fullscreen(false)
+        .use_https_scheme(true);
+    // A timing run (see WEB-MVP.md): the page reads the namespace to measure.
+    if let Ok(namespace) = std::env::var("QUILTSYNC_BENCH") {
+        let script = format!(
+            "window.__QS_BENCH__ = {};",
+            serde_json::Value::String(namespace)
+        );
+        window = window.initialization_script(&script);
+    }
+    window.build()?;
+    Ok(())
+}
+
 fn main() {
     env::init();
 
@@ -118,8 +145,11 @@ fn main() {
         return;
     }
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+    let mut builder = tauri::Builder::default();
+    // A run on a throwaway data folder is a second copy next to the installed
+    // app; it must not hand itself over to that one.
+    if services::data_dir_override().is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Err(err) = match argv.get(1) {
                 Some(uri_str) => {
                     info!("Single-instance deep link: {:?}", uri_str);
@@ -129,17 +159,20 @@ fn main() {
             } {
                 error!("{}", err);
             }
-        }))
+        }));
+    }
+    builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let version = app.package_info().version.clone();
-            let data_dir = app
-                .path()
-                .app_local_data_dir()
-                .expect("Failed to resolve data dir");
+            let data_dir = services::data_dir_override().unwrap_or_else(|| {
+                app.path()
+                    .app_local_data_dir()
+                    .expect("Failed to resolve data dir")
+            });
 
             // This is for runtime registering
             #[cfg(desktop)]
@@ -152,12 +185,29 @@ fn main() {
             let services =
                 tauri::async_runtime::block_on(services::Services::init(data_dir, version))?;
             app.manage(Arc::clone(&services));
+            let _ = services.desktop.set(app.handle().clone());
 
-            // The window hears every backend event, exactly as when the
-            // engine emitted on the Tauri bus itself.
+            // The window is a page of the UI server, talking to the backend
+            // over the same WebSocket a browser uses.
+            let token = server::new_token();
+            let addr = tauri::async_runtime::block_on(server::serve(
+                Arc::clone(&services),
+                std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+                token.clone(),
+            ))?;
+            let url = format!("http://127.0.0.1:{}/?t={token}", addr.port());
+            app.manage(tray::WebUiUrl(url.clone()));
+            let ipc_window = std::env::var_os("QUILTSYNC_IPC_WINDOW").is_some();
+            main_window(app, &url, ipc_window)?;
+
+            // Only the bundled page (`QUILTSYNC_IPC_WINDOW`) listens on the
+            // Tauri bus.
             let mut events = services.events.subscribe();
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                if !ipc_window {
+                    return;
+                }
                 loop {
                     match events.recv().await {
                         Ok((name, payload)) => {

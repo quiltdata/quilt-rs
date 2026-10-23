@@ -11,20 +11,20 @@ mod ws;
 
 /// Whether this page talks to the backend over the WebSocket rather than Tauri.
 ///
-/// Tauri wins whenever its bridge exists. Without it, the WebSocket is used only
-/// when the page carries a session token (`?t=` on the first URL, saved in
-/// `sessionStorage`), which only the `QuiltSync` server hands out. Anything else —
-/// a test harness, the gallery, a page opened from disk — keeps the old
-/// no-bridge behaviour: every call fails quietly.
+/// The WebSocket is used whenever the page carries a session token (`?t=` on
+/// the first URL, saved in `sessionStorage`), which only the `QuiltSync` server
+/// hands out: in a browser and in the desktop window alike, which loads the
+/// server's page and may still have a `window.__TAURI__` injected. The bundled
+/// page (`tauri://`) has no token and keeps IPC. Anything else — a test
+/// harness, the gallery, a page opened from disk — keeps the old no-bridge
+/// behaviour: every call fails quietly.
 pub fn is_web_mode() -> bool {
-    !has_tauri_bridge() && ws::token().is_some()
+    ws::token().is_some()
 }
 
-fn has_tauri_bridge() -> bool {
-    web_sys::window()
-        .and_then(|w| js_sys::Reflect::has(&w, &"__TAURI__".into()).ok())
-        .unwrap_or(false)
-}
+/// What the backend answers a desktop-only command when it is not the
+/// desktop app.
+pub const NOT_IN_BROWSER: &str = "not available in the browser";
 
 /// Copy `text` with the browser's clipboard API. For web mode, where there is no
 /// native clipboard to call.
@@ -131,6 +131,17 @@ pub async fn invoke_unit<R: DeserializeOwned>(cmd: &str) -> Result<R, String> {
         .await
         .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
     serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
+}
+
+/// The size in bytes of the JSON a command answers with, as it travels. For
+/// a timing run.
+pub async fn invoke_wire_len<A: Serialize>(cmd: &str, args: &A) -> Result<usize, String> {
+    if is_web_mode() {
+        let args = serde_json::to_value(args).map_err(|e| e.to_string())?;
+        return Ok(ws::request(cmd, args).await?.len());
+    }
+    let value: serde_json::Value = invoke(cmd, args).await?;
+    Ok(value.to_string().len())
 }
 
 async fn invoke_ws<R: DeserializeOwned>(cmd: &str, args: serde_json::Value) -> Result<R, String> {

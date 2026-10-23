@@ -16,33 +16,10 @@ use crate::telemetry::MixpanelEvent;
 use crate::telemetry::event::{LoginEvent, LoginFlow};
 use crate::telemetry::prelude::*;
 
-fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
-    let uri: quilt_uri::S3PackageUri = uri_str.parse()?;
-    Ok(routes::from_url(
-        routes::Paths::RemotePackage(uri.clone()),
-        current_url.to_owned(),
-    ))
-}
-
-fn navigate_to_url(app_handle: &AppHandle, url: Url) -> Result {
-    match app_handle.get_webview_window("main") {
-        Some(win) => {
-            win.navigate(url)?;
-            win.set_focus()?;
-            Ok(())
-        }
-        None => Err(Error::TauriUi(crate::error::TauriUiError::Window)),
-    }
-}
-
-/// Navigate to a Quilt package URI by parsing it and redirecting to the package page
+/// Show the package a `quilt+s3://` URI names.
 fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
-    let win = app_handle
-        .get_webview_window("main")
-        .ok_or(crate::error::TauriUiError::Window)?;
-    let current_url = win.url()?;
-    let redirect_url = get_remote_package_url(&current_url, uri_str)?;
-    navigate_to_url(app_handle, redirect_url)
+    let uri: quilt_uri::S3PackageUri = uri_str.parse()?;
+    navigate(app_handle, routes::Paths::RemotePackage(uri))
 }
 
 /// Auth callback parameters parsed from a `quilt://` URL.
@@ -177,16 +154,14 @@ pub async fn complete_oauth_login(
     }
 }
 
-/// Show `path` in the main window, or, with no window, tell a browser front
-/// end to show it.
+/// Show `path` in the main window (and any browser): a `navigate` event the
+/// pages follow over their socket.
 pub fn navigate(app_handle: &AppHandle, path: routes::Paths) -> Result {
-    let Some(win) = app_handle.get_webview_window("main") else {
-        app_handle.state::<Arc<Services>>().navigate(path);
-        return Ok(());
-    };
     debug!("Navigating to: {:?}", path);
-    let win_url = win.url()?;
-    win.navigate(routes::from_url(path, win_url))?;
+    app_handle.state::<Arc<Services>>().navigate(path);
+    if let Some(win) = app_handle.get_webview_window("main") {
+        win.set_focus()?;
+    }
     Ok(())
 }
 
@@ -240,8 +215,10 @@ pub fn handle_deep_link_url(app_handle: &AppHandle, url_str: &str) -> Result {
     }
 }
 
+/// Wait until the window shows and a page is connected to hear the
+/// `navigate` event: an event sent before that is lost.
 async fn wait_for_main_window(app_handle: &AppHandle) -> Result<()> {
-    const MAX_ATTEMPTS: u32 = 10;
+    const MAX_ATTEMPTS: u32 = 50;
     const RETRY_DELAY_MS: u64 = 200;
 
     let mut attempts = 0;
@@ -252,8 +229,14 @@ async fn wait_for_main_window(app_handle: &AppHandle) -> Result<()> {
             if let Ok(true) = window.is_visible()
                 && let Ok(url) = window.url()
             {
-                // Ensure the app has loaded (not about:blank)
-                if url.host().is_some() {
+                // Ensure the app has loaded (not about:blank) and its page
+                // listens.
+                let listening = app_handle
+                    .state::<Arc<Services>>()
+                    .web_clients
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                    > 0;
+                if url.host().is_some() && (listening || url.scheme() != "http") {
                     return Ok(());
                 }
             }
@@ -319,24 +302,6 @@ pub fn setup_deep_link_handler(app_handle: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_get_remote_package_url() {
-        let current_url = Url::parse("http://localhost:3000/").unwrap();
-        let uri_str = "quilt+s3://bucket#package=foo/bar@hash";
-
-        let result = get_remote_package_url(&current_url, uri_str);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_get_remote_package_url_invalid_uri() {
-        let current_url = Url::parse("http://localhost:3000/").unwrap();
-        let uri_str = "invalid-uri";
-
-        let result = get_remote_package_url(&current_url, uri_str);
-        assert!(result.is_err());
-    }
 
     #[test]
     fn test_parse_auth_params() {

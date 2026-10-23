@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::AppHandle;
-use tauri::Emitter;
 use tauri::Manager;
 use tauri::WindowEvent;
 use tauri::async_runtime;
@@ -49,10 +48,9 @@ const MENU_ID_OPEN: &str = "tray-open";
 const MENU_ID_QUIT: &str = "tray-quit";
 const MENU_ID_BROWSER: &str = "tray-browser";
 
-/// The browser server's address and token, started on the first click and
-/// kept until the app quits.
-static WEB_UI: tokio::sync::OnceCell<(std::net::SocketAddr, String)> =
-    tokio::sync::OnceCell::const_new();
+/// The address of the running UI server, token included; the window loads
+/// it too.
+pub struct WebUiUrl(pub String);
 
 impl TrayController {
     pub fn install(
@@ -128,32 +126,15 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
-/// Start the browser server on a random local port (once) and open it.
-/// The browser shares the window's `Services`, so both hear every event.
+/// Open the running UI server in the default browser. The browser shares the
+/// window's `Services`, so both hear every event.
 fn open_in_browser(app: &AppHandle) {
-    let Some(services) = app.try_state::<Arc<Services>>() else {
+    let Some(url) = app.try_state::<WebUiUrl>() else {
         return;
     };
-    let services = Arc::clone(&services);
-    async_runtime::spawn(async move {
-        let started = WEB_UI
-            .get_or_try_init(|| async {
-                let token = crate::server::new_token();
-                let bind = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
-                let addr = crate::server::serve(services, bind, token.clone()).await?;
-                Ok::<_, crate::error::Error>((addr, token))
-            })
-            .await;
-        match started {
-            Ok((addr, token)) => {
-                let url = format!("http://127.0.0.1:{}/?t={token}", addr.port());
-                if let Err(err) = opener::open_browser(&url) {
-                    warn!("failed to open the browser: {err}");
-                }
-            }
-            Err(err) => error!("failed to start the browser server: {err}"),
-        }
-    });
+    if let Err(err) = opener::open_browser(&url.0) {
+        warn!("failed to open the browser: {err}");
+    }
 }
 
 fn spawn_status_listener(
@@ -227,11 +208,14 @@ fn request_quit(app: &AppHandle) {
 /// survive, whereas an app that will not close has no remedy at all.
 fn prompt_before_quit(app: &AppHandle, generation: u64) {
     show_main_window(app);
-    if let Err(err) = app.emit(QUIT_PROMPT_EVENT, generation) {
-        warn!("quit prompt could not be raised, quitting: {err}");
+    // On the event sink, so the window hears it over its socket (and a
+    // browser does too).
+    let Some(services) = app.try_state::<Arc<Services>>() else {
+        warn!("quit prompt could not be raised, quitting");
         app.exit(0);
         return;
-    }
+    };
+    services.events.emit(QUIT_PROMPT_EVENT, generation);
     let handle = app.clone();
     async_runtime::spawn(async move {
         tokio::time::sleep(PROMPT_GRACE).await;

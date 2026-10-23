@@ -96,6 +96,14 @@ pub async fn open_directory_picker(
     app_handle: tauri::AppHandle,
     s: tauri::State<'_, Arc<Services>>,
 ) -> Result<PathBuf, String> {
+    open_directory_picker_with(&app_handle, &s)
+}
+
+/// [`open_directory_picker`] without Tauri's injection, for the socket.
+pub fn open_directory_picker_with(
+    app_handle: &tauri::AppHandle,
+    s: &Services,
+) -> Result<PathBuf, String> {
     let tracing = &*s.telemetry;
     // Deliberately reported before the outcome, and the only site that is. The
     // criterion is whether the event's name stays true when the call returns
@@ -105,7 +113,7 @@ pub async fn open_directory_picker(
     // answers the first. If the second is ever wanted, it is a second event.
     tracing.track(MixpanelEvent::DirectoryPickerOpened);
 
-    match open_directory_picker_command(&app_handle) {
+    match open_directory_picker_command(app_handle) {
         Ok(path) => Ok(path),
         Err(err) => {
             error!("Failed to open directory picker: {}", err);
@@ -499,13 +507,23 @@ pub async fn copy_to_clipboard(
     text: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    copy_to_clipboard_with(&app, &s, &text, uri.as_ref())
+}
+
+/// [`copy_to_clipboard`] without Tauri's injection, for the socket.
+pub fn copy_to_clipboard_with(
+    app: &tauri::AppHandle,
+    s: &Services,
+    text: &str,
+    uri: Option<&S3PackageUri>,
+) -> Result<String, String> {
     let msg_init = format!("Copying to clipboard: {text}");
     let msg_ok = "Successfully copied to clipboard".to_string();
     let msg_err = |err: &Error| format!("Failed to copy to clipboard: {err}");
 
     Notify::new(msg_init)
-        .on_success(&s.telemetry, copied_event(uri.as_ref()))
-        .map(copy_to_clipboard_command(&app, &text), msg_ok, msg_err)
+        .on_success(&s.telemetry, copied_event(uri))
+        .map(copy_to_clipboard_command(app, text), msg_ok, msg_err)
 }
 
 /// A package's address when `uri` names no file, a file's otherwise.
@@ -614,6 +632,22 @@ pub async fn report_ui_panic(s: &Services, message: String) -> Result<(), String
     warn!("UI panic: {message}");
     s.telemetry.report_ui_panic(&message);
     Ok(())
+}
+
+/// A timing run's results from the page (see `WEB-MVP.md`): appended to
+/// `bench-report.txt` in the data folder.
+pub async fn bench_report(s: &Services, text: String) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    println!("{text}");
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(s.data_dir.join("bench-report.txt"))
+        .await
+        .map_err(|e| e.to_string())?;
+    file.write_all(format!("{text}\n").as_bytes())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
