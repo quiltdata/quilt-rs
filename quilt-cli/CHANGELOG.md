@@ -23,7 +23,7 @@
 
 ### Changed
 
-- `quilt list --fetch` shows the status of a package whose remote has no catalog, read on the AWS credentials on this computer. When those are missing or refused, the row says so, and `--json` adds `"credentials_unusable": true` (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- `quilt list --fetch` shows the status of a package whose remote has no catalog, read on the AWS credentials on this computer. When those are missing or refused, the row says so, and `--json` adds `"credentials_unusable": true` (<https://github.com/quiltdata/quilt-rs/pull/1193>)
 
 ### quilt-rs
 

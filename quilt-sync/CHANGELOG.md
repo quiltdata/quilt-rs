@@ -29,7 +29,7 @@
 
 ### Fixed
 
-- A package whose remote has no catalog shows its status on both pages, read on the AWS credentials on this computer. When those are missing or refused, it says so instead of offering *Sign in* (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- A package whose remote has no catalog shows its status on both pages, read on the AWS credentials on this computer. When those are missing or refused, it says so instead of offering *Sign in* (<https://github.com/quiltdata/quilt-rs/pull/1193>)
 
 ### quilt-rs
 

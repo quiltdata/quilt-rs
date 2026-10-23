@@ -23,12 +23,12 @@
 
 ### Added
 
-- `Error::is_ambient_session_absent` says the AWS credentials on this computer, used for a bucket with no catalog, were missing or refused (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- `Error::is_ambient_session_absent` says the AWS credentials on this computer, used for a bucket with no catalog, were missing or refused (<https://github.com/quiltdata/quilt-rs/pull/1193>)
 
 ### Changed
 
-- **Breaking:** `InstalledPackage::state` reads a remote with no catalog on the AWS credentials on this computer, like any other remote, instead of answering `Unknown`. `PackageLineage::misconfigured_remote` is removed (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
-- With no catalog, AWS credentials that cannot be found are `LoginError::NoSession(None)`, so a status read reports them instead of answering from the last-known tip (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- **Breaking:** `InstalledPackage::state` reads a remote with no catalog on the AWS credentials on this computer, like any other remote, instead of answering `Unknown`. `PackageLineage::misconfigured_remote` is removed (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+- With no catalog, AWS credentials that cannot be found are `LoginError::NoSession(None)`, so a status read reports them instead of answering from the last-known tip (<https://github.com/quiltdata/quilt-rs/pull/1193>)
 
 ## [v0.47.0] - 2026-10-22
 
