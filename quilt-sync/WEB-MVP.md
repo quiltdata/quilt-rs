@@ -154,3 +154,8 @@ recipe, build first, then `npx playwright test` in `quilt-sync/e2e`;
   printed.
 - The UI folder path is baked in at compile time unless `QUILTSYNC_UI_DIR` is
   set.
+- The file watcher takes up a new package on its next reconcile, every 5
+  seconds, and does not walk it then, so a file written into a package just
+  after it was created does not show until the next change. The end-to-end
+  tests write again until the file shows; the first write is missed every
+  time.
