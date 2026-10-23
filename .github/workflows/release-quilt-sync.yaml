@@ -97,6 +97,8 @@ jobs:
         uses: ./.github/actions/setup-rust-minimal
         with:
           cache-target: release
+          # Both macOS legs run on one runner type; only `args` tells them apart.
+          cache-key: ${{ matrix.args }}
           targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown' || 'wasm32-unknown-unknown' }}
 
       - name: Setup Node.js
