@@ -90,7 +90,8 @@ fn hint_lines(
             "Unable to check remote status — sign in again".to_string()
         } else {
             // A bucket with no catalog, read on this computer's AWS credentials.
-            "AWS credentials on this computer aren't usable — update ~/.aws".to_string()
+            // `error` covers any failure, so this suggests rather than diagnoses.
+            "Unable to check remote status — check the AWS credentials in ~/.aws".to_string()
         }];
     }
     Vec::new()
@@ -1166,10 +1167,10 @@ mod tests {
     }
 
     #[test]
-    fn error_without_a_host_names_the_credentials_file() {
+    fn error_without_a_host_points_at_the_credentials_file() {
         assert_eq!(
             hint_lines("error", false, None, None, None),
-            vec!["AWS credentials on this computer aren't usable — update ~/.aws".to_string()]
+            vec!["Unable to check remote status — check the AWS credentials in ~/.aws".to_string()]
         );
     }
 

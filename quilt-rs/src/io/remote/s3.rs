@@ -159,12 +159,16 @@ where
 fn ambient_credentials_failed(err: &(dyn std::error::Error + 'static)) -> bool {
     let mut current = Some(err);
     while let Some(e) = current {
-        if let Some(credentials) = e.downcast_ref::<CredentialsError>() {
-            return matches!(
-                credentials,
+        // Not the first `CredentialsError` alone: a role profile whose source
+        // has no credentials wraps "not loaded" in a provider error.
+        if matches!(
+            e.downcast_ref::<CredentialsError>(),
+            Some(
                 CredentialsError::CredentialsNotLoaded(_)
                     | CredentialsError::InvalidConfiguration(_)
-            );
+            )
+        ) {
+            return true;
         }
         current = e.source();
     }
@@ -1902,6 +1906,20 @@ mod tests {
         assert!(matches!(
             s3_error_or_session_loss(
                 failed_call(|| CredentialsError::invalid_configuration("bad profile")).await,
+                None,
+                S3ErrorKind::Exists
+            ),
+            Error::Login(LoginError::NoSession(None))
+        ));
+        // A role profile whose source has none wraps "not loaded".
+        assert!(matches!(
+            s3_error_or_session_loss(
+                failed_call(
+                    || CredentialsError::provider_error(CredentialsError::not_loaded(
+                        "no source credentials"
+                    ))
+                )
+                .await,
                 None,
                 S3ErrorKind::Exists
             ),

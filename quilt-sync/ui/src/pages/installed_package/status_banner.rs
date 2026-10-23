@@ -245,8 +245,9 @@ fn remote_state_banner(
         ("Unable to check remote status".to_string(), true)
     } else {
         // A bucket with no catalog, read on this computer's AWS credentials.
+        // `error` covers any failure, so this suggests rather than diagnoses.
         (
-            "AWS credentials on this computer aren't usable — update ~/.aws".to_string(),
+            "Unable to check remote status — check the AWS credentials in ~/.aws".to_string(),
             false,
         )
     })
@@ -411,11 +412,11 @@ mod tests {
     }
 
     #[test]
-    fn an_error_without_a_host_names_the_credentials_file() {
+    fn an_error_without_a_host_points_at_the_credentials_file() {
         assert_eq!(
             remote_state_banner("error", false, None),
             Some((
-                "AWS credentials on this computer aren't usable — update ~/.aws".to_string(),
+                "Unable to check remote status — check the AWS credentials in ~/.aws".to_string(),
                 false
             ))
         );
