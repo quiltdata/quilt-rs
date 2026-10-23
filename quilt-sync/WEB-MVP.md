@@ -141,7 +141,8 @@ keeps its native picker, over IPC or the socket.
 - Headless, the desktop-only commands (OAuth login, the folder picker, the
   clipboard, installing an update, confirming a quit) answer
   `not available in the browser`; the UI copies with the browser's
-  clipboard and picks folders with its own folder browser instead; the update check answers "no update".
+  clipboard and picks folders with its own folder browser instead; the
+  update check answers "no update".
 - The folder browser lists the engine's machine, not the browser's, and
   anyone with the token can list any folder the engine can read.
 - Commands that open things (a folder, a file, the catalog) run on the

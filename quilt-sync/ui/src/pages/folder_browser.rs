@@ -153,39 +153,46 @@ pub fn FolderBrowser() -> impl IntoView {
                     "Home"
                 </Button>
             </div>
-            <ul class=style::list aria-label="Folders">
-                {move || {
-                    let Some(l) = listing.get() else {
-                        return view! { <li class=style::empty>"Loading…"</li> }.into_any();
-                    };
-                    if l.folders.is_empty() {
-                        return view! { <li class=style::empty>"No folders here"</li> }
-                            .into_any();
-                    }
-                    let base = l.path;
-                    l.folders
-                        .into_iter()
-                        .map(|name| {
-                            let target = std::path::Path::new(&base)
-                                .join(&name)
-                                .display()
-                                .to_string();
-                            view! {
-                                <li>
-                                    <button
-                                        type="button"
-                                        class=style::folder
-                                        on:click=move |_| go(Some(target.clone()))
-                                    >
-                                        {name}
-                                    </button>
-                                </li>
-                            }
-                        })
-                        .collect_view()
-                        .into_any()
-                }}
-            </ul>
+            <FolderList listing=listing go=go />
         </Dialog>
+    }
+}
+
+/// The current folder's subfolders; a click goes into one.
+#[component]
+fn FolderList(
+    listing: RwSignal<Option<FolderListing>>,
+    go: impl Fn(Option<String>) + Copy + Send + Sync + 'static,
+) -> impl IntoView {
+    view! {
+        <ul class=style::list aria-label="Folders">
+            {move || {
+                let Some(l) = listing.get() else {
+                    return view! { <li class=style::empty>"Loading…"</li> }.into_any();
+                };
+                if l.folders.is_empty() {
+                    return view! { <li class=style::empty>"No folders here"</li> }.into_any();
+                }
+                let base = l.path;
+                l.folders
+                    .into_iter()
+                    .map(|name| {
+                        let target = std::path::Path::new(&base).join(&name).display().to_string();
+                        view! {
+                            <li>
+                                <button
+                                    type="button"
+                                    class=style::folder
+                                    on:click=move |_| go(Some(target.clone()))
+                                >
+                                    {name}
+                                </button>
+                            </li>
+                        }
+                    })
+                    .collect_view()
+                    .into_any()
+            }}
+        </ul>
     }
 }
