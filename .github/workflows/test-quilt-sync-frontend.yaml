@@ -102,10 +102,3 @@ jobs:
       - name: Build
         run: trunk build --release
         working-directory: ./quilt-sync/ui
-
-      - name: Disk headroom (temporary probe)
-        if: always()
-        shell: bash
-        run: |
-          df -h . || true
-          du -sh target ~/.cargo/registry 2>/dev/null || true
