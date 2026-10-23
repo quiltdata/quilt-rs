@@ -93,6 +93,9 @@ pub struct CommitData {
     /// The package has been pushed, so its remote is pinned to its push
     /// history and can only be shown.
     pub remote_locked: bool,
+    /// The remote's `latest` hash, as the package page's header names it:
+    /// `None` when this read did not reach the remote.
+    pub newer: Option<String>,
     pub status: String,
     /// The message the form starts with: what one-click Publish would send,
     /// the settings' template rendered over the summary of the changes.
@@ -400,6 +403,7 @@ async fn get_commit_data_from_model(
         Err(err) => return Err(err),
     };
 
+    let newer = super::package_page::newer_revision(&status);
     let pkg_status_str = match status.upstream_state {
         quilt::lineage::UpstreamState::UpToDate => "up_to_date",
         quilt::lineage::UpstreamState::Ahead => "ahead",
@@ -549,6 +553,7 @@ async fn get_commit_data_from_model(
         namespace: namespace.clone(),
         uri: typed_uri,
         remote_locked,
+        newer,
         status: pkg_status_str.to_string(),
         message,
         user_meta,
@@ -1139,6 +1144,38 @@ mod tests {
             .returning(|_| Ok(std::collections::BTreeMap::new()));
         model.expect_get_workflows_config().returning(|_| Ok(None));
         model
+    }
+
+    /// The header's catalog target needs the remote's `latest`, and only a
+    /// status read against the remote just now names it.
+    #[tokio::test]
+    async fn commit_data_names_latest_only_when_it_reached_the_remote() -> Result<(), String> {
+        for (refreshed, expected) in [(true, Some("bbbb")), (false, None)] {
+            let mut model = denial_contrast_model(fixtures::host());
+            model
+                .expect_get_installed_package_status()
+                .returning(move |_, _| {
+                    Ok(quilt::lineage::InstalledPackageStatus {
+                        latest_hash: "bbbb".to_string(),
+                        latest_refreshed: refreshed,
+                        ..quilt::lineage::InstalledPackageStatus::new(
+                            quilt::lineage::UpstreamState::Behind,
+                            quilt::lineage::ChangeSet::new(),
+                        )
+                    })
+                });
+            let data = get_commit_data_from_model(
+                &model,
+                &RoleCache::default(),
+                &crate::telemetry::Telemetry::default(),
+                &PublishSettings::default(),
+                &("foo", "bar").into(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            assert_eq!(data.newer.as_deref(), expected, "refreshed: {refreshed}");
+        }
+        Ok(())
     }
 
     /// The page opens on a dead session, by either route; the commit action is

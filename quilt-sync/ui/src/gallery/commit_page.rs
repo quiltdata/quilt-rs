@@ -40,6 +40,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
+use crate::gallery::button_group::location;
 use crate::kit::Button;
 use crate::kit::PageLayout;
 use crate::kit::icons;
@@ -154,7 +155,8 @@ impl Fixture {
 }
 
 /// The header, with every link on the cell itself so a click does not move
-/// the page.
+/// the page. A published package has a catalog page, so its location group
+/// has the remote side.
 fn header(id: &str, primary: Primary, w: PrimaryWiring, remote_locked: bool) -> AnyView {
     view! {
         <CommitHeader
@@ -163,7 +165,7 @@ fn header(id: &str, primary: Primary, w: PrimaryWiring, remote_locked: bool) -> 
             home_href=format!("#{id}")
             primary=primary
             w=w
-            on_open_folder=Callback::new(|()| ())
+            location=location(remote_locked, RwSignal::new(false))
             remote_locked=remote_locked
             on_menu=Callback::new(|_| ())
         />
