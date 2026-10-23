@@ -97,6 +97,13 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
+      - name: Disk headroom (temporary probe)
+        if: always()
+        shell: bash
+        run: |
+          df -h . || true
+          du -sh target ~/.cargo/registry 2>/dev/null || true
+
   file-stamps:
     name: File stamps (${{ matrix.platform }})
     # The file-stamp code is different on each OS, and the full cross-platform
@@ -121,6 +128,13 @@ jobs:
         env:
           RUST_BACKTRACE: 1
           AWS_EC2_METADATA_DISABLED: true
+
+      - name: Disk headroom (temporary probe)
+        if: always()
+        shell: bash
+        run: |
+          df -h . || true
+          du -sh target ~/.cargo/registry 2>/dev/null || true
 
   cargo-deny:
     name: cargo-deny
