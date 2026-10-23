@@ -233,7 +233,7 @@ package — entering and leaving Resolve, and a replaced address — so switchin
 mode does not end the band that reports it.
 
 `/` is not a redirect. `Home` reads the reader's design setting, v2 unless they
-turned on **Use the classic design** (Settings → Design), and renders `MainPage`
+turned off **New design** (Settings → Experimental), and renders `MainPage`
 or `InstalledPackagesList` in place; a settings read that fails falls back to
 the former. One route, so every
 way home — the logo, a breadcrumb, a Cancel — lands on the page the reader chose

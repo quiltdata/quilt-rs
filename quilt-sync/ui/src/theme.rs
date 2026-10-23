@@ -107,8 +107,8 @@ pub fn is_v2() -> bool {
 /// Where the generation is kept for the *next* launch, read by `index.html`'s
 /// inline script before the first paint.
 ///
-/// Named for the switch it once copied, *New design preview*. The name is kept
-/// so a reader's stored answer carries over: `1` is v2 and `0` the classic
+/// Named for the switch it copies when that was *New design preview*. The name
+/// is kept so a reader's stored answer carries over: `1` is v2 and `0` the classic
 /// design, and `index.html` predicts v2 for anything but `0`.
 const DESIGN_KEY: &str = "quiltsync.design-preview";
 

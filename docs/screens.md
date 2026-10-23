@@ -100,7 +100,7 @@ appbar; opening the browser sign-in says to continue there.
 
 ### Main Page
 
-The main screen, unless Settings → Design → **Use the classic design** is on.
+The main screen, unless Settings → Experimental → **New design** is off.
 `/` renders this or the Installed Packages List below according to
 the effective design generation, and both stay reachable at `/main` and
 `/installed-packages-list`.
@@ -170,7 +170,7 @@ fails.
 ### Installed Packages List
 
 Lists all locally installed packages. The main screen only when Settings →
-Design → **Use the classic design** is on; otherwise the Main Page takes `/`
+Experimental → **New design** is off; otherwise the Main Page takes `/`
 and this one stays at `/installed-packages-list`.
 
 ```text
@@ -252,8 +252,8 @@ without a page reload. Status changes propagate via
 Shows contents of a single installed package: file entries
 with checkboxes, status indicator, and a toolbar.
 
-This is the page when Settings → Design → **Use the classic design** is on.
-Off, `/installed-package` renders the redesigned package page instead, with a
+This is the page when Settings → Experimental → **New design** is off.
+On, `/installed-package` renders the redesigned package page instead, with a
 header, a context pane and a file pane; it has no address of its own.
 
 On the redesigned page, the context pane's **Keeping** caption says how much of
@@ -734,7 +734,7 @@ nothing is being written, which is the common case.
 ### Settings
 
 Application settings and diagnostics. This is the page when Settings →
-Design → **Use the classic design** is on.
+Experimental → **New design** is off.
 
 ```text
 +--[appbar]----------------------------------------------+
@@ -769,17 +769,14 @@ Design → **Use the classic design** is on.
 |  Enable filesystem watcher     [x]                      |
 |  hint: refreshes local status when files change         |
 |                                                         |
-|  Design                                                 |
-|  ------                                                 |
-|  Use the classic design        [x]                      |
-|  hint: QuiltSync as it looked before the redesign.      |
-|        Turn off for the new design.                     |
-|                                                         |
 |  Experimental                                           |
 |  ------------                                           |
 |  Enable entire-package sync    [ ]                      |
 |  hint: adds a per-package option to sync everything in  |
 |        a package, instead of picking files.             |
+|                                                         |
+|  New design                    [ ]                      |
+|  hint: the redesigned QuiltSync.                        |
 |                                                         |
 |  Account                                                |
 |  -------                                                |
@@ -828,8 +825,8 @@ column of cards, most used first. No Refresh or Settings in the appbar.
 | Storage                                                 |
 |  Where packages live  /home/user/QuiltSync      [Open]  |
 |  App storage          [Check size]     [Free up space]  |
-| Design                                                  |
-|  [ ] Use the classic design                             |
+| Experimental                                            |
+|  [x] New design                                         |
 | Help                                                    |
 |  Report a problem              [Report a problem...]    |
 |  Log level  [Default v]                                 |
@@ -863,7 +860,7 @@ column of cards, most used first. No Refresh or Settings in the appbar.
   list of what is sent, **Send to Quilt** (collects the logs, sends them
   with your text) and **Email instead** (collects the logs, opens your mail
   app with the text and the zip's path).
-- Turning *Use the classic design* on saves, then goes to `/`.
+- Turning *New design* off saves, then goes to `/`.
 
 ---
 

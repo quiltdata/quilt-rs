@@ -64,7 +64,7 @@ use crate::kit::{
 
 use super::super::v2_page::{PageHandle, PageRead, V2Page, critical, hold};
 use super::{
-    AboutCard, AccountHost, AccountsCard, AppCard, BuiltInRule, DesignCard, IgnoreRulesCard,
+    AboutCard, AccountHost, AccountsCard, AppCard, BuiltInRule, ExperimentalCard, IgnoreRulesCard,
     IgnoreRulesDialog, PublishingCard, PublishingDialog, ReportDialog, ReportState, Saved,
     SettingsHeader, SettingsLayout, SignOutDialog, StorageCard, StorageSize, SyncingCard,
     TroubleshootingCard, log_level_label, minutes_secs, minutes_shown,
@@ -80,7 +80,7 @@ pub(crate) type Answer<T> = Pin<Box<dyn Future<Output = Result<T, String>>>>;
 pub(crate) enum Write {
     Autosync(AutosyncPatch),
     Watch(bool),
-    Design(Design),
+    DesignPreview(bool),
     /// Lowercase, as the backend names it.
     LogLevel(String),
     Publishing(PublishSettingsData),
@@ -116,7 +116,10 @@ fn write_setting(write: Write) -> Answer<()> {
         match write {
             Write::Autosync(patch) => commands::patch_autosync_settings(patch).await,
             Write::Watch(on) => commands::update_fswatcher_settings(on).await,
-            Write::Design(design) => commands::update_design_settings(design).await,
+            Write::DesignPreview(on) => {
+                let design = if on { Design::V2 } else { Design::V1 };
+                commands::update_design_settings(design).await
+            }
             Write::LogLevel(level) => commands::update_log_settings(level).await,
             Write::Publishing(p) => {
                 commands::update_publish_settings(
@@ -201,7 +204,7 @@ fn skeleton() -> AnyView {
             accounts=().into_any()
             app=().into_any()
             storage=().into_any()
-            design=().into_any()
+            experimental=().into_any()
             troubleshooting=().into_any()
             about=().into_any()
         />
@@ -294,8 +297,7 @@ struct Fields {
     publish_minutes: RwSignal<String>,
     watch: RwSignal<bool>,
     tray: RwSignal<bool>,
-    /// On means v1.
-    classic: RwSignal<bool>,
+    design_preview: RwSignal<bool>,
     /// One of `LOG_LEVELS`.
     log_level: RwSignal<String>,
     /// The built-in rules popup's draft: the rules turned off, filled from
@@ -316,7 +318,7 @@ impl Fields {
             publish_minutes: RwSignal::new(String::new()),
             watch: RwSignal::new(false),
             tray: RwSignal::new(false),
-            classic: RwSignal::new(false),
+            design_preview: RwSignal::new(false),
             log_level: RwSignal::new(String::new()),
             rules_off: RwSignal::new(BTreeSet::new()),
             template: RwSignal::new(String::new()),
@@ -345,7 +347,7 @@ struct Written {
     publish_secs: StoredValue<u64>,
     watch: StoredValue<bool>,
     tray: StoredValue<bool>,
-    classic: StoredValue<bool>,
+    design_preview: StoredValue<bool>,
     log_level: StoredValue<String>,
     rules_off: StoredValue<BTreeSet<String>>,
     /// The built-in rules as the popup lists them, from the last read.
@@ -365,7 +367,7 @@ impl Written {
             publish_secs: StoredValue::new(0),
             watch: StoredValue::new(false),
             tray: StoredValue::new(false),
-            classic: StoredValue::new(false),
+            design_preview: StoredValue::new(false),
             log_level: StoredValue::new(String::new()),
             rules_off: StoredValue::new(BTreeSet::new()),
             rules: RwSignal::new(Vec::new()),
@@ -398,7 +400,11 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
     seed(fields.publish, written.publish, autosync.push_enabled);
     seed(fields.watch, written.watch, d.fswatcher.enabled);
     seed(fields.tray, written.tray, autosync.close_to_tray);
-    seed(fields.classic, written.classic, d.design == Design::V1);
+    seed(
+        fields.design_preview,
+        written.design_preview,
+        d.design == Design::V2,
+    );
     seed(
         fields.log_level,
         written.log_level,
@@ -526,7 +532,7 @@ thread_local! {
 #[derive(Clone, Copy)]
 struct Saves {
     visit: u64,
-    /// The classic design was saved: time to leave for `/`.
+    /// The preview's off was saved: time to leave for `/`.
     leave: RwSignal<bool>,
     /// A save of this visit's is out, or waiting.
     writing: RwSignal<bool>,
@@ -600,14 +606,14 @@ impl Saves {
 
     /// One of this visit's saves has run.
     ///
-    /// `classic` is the *Use the classic design* value it wrote, if it wrote
-    /// one: the last one saved decides whether the page leaves for `/`. A save
+    /// `preview` is the *New design* value it wrote, if it wrote one:
+    /// the last one saved decides whether the page leaves for `/`. A save
     /// with a `reply` gets its answer there, failure included.
     fn ran(
         self,
         page: PageHandle,
         row: Option<Saved>,
-        classic: Option<bool>,
+        preview: Option<bool>,
         reply: Option<Reply>,
         result: Result<(), String>,
     ) {
@@ -627,8 +633,8 @@ impl Saves {
                 if let Some(row) = row {
                     self.say_saved(row);
                 }
-                if let Some(on) = classic {
-                    self.leave.try_set(on);
+                if let Some(on) = preview {
+                    self.leave.try_set(!on);
                 }
             }
             Err(detail) => {
@@ -679,12 +685,12 @@ async fn drain() {
             write,
             reply,
         } = next;
-        let classic = match write {
-            Write::Design(design) => Some(design == Design::V1),
+        let preview = match write {
+            Write::DesignPreview(on) => Some(on),
             _ => None,
         };
         let result = (io.write)(write).await;
-        from.ran(page, row, classic, reply, result);
+        from.ran(page, row, preview, reply, result);
         if !QUEUE.with(|q| q.borrow().iter().any(|q| q.from.visit == from.visit)) {
             from.done(page);
         }
@@ -781,9 +787,12 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 ..AutosyncPatch::default()
             })
         }),
-        (fields.classic, written.classic, Saved::Classic, |on| {
-            Write::Design(if on { Design::V1 } else { Design::V2 })
-        }),
+        (
+            fields.design_preview,
+            written.design_preview,
+            Saved::DesignPreview,
+            Write::DesignPreview,
+        ),
     ];
     for (field, was, row, write) in toggles {
         Effect::new(move |_| {
@@ -803,7 +812,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
         written.log_level.set_value(label.clone());
         save(Saved::LogLevel, Write::LogLevel(label.to_lowercase()));
     });
-    // Off this page once the classic design is saved and the queue has run:
+    // Off this page once the preview's off is saved and the queue has run:
     // `/` asks again which design is on, and this page would stay the one it
     // is until the reader moved. A failed save stays here, in the band.
     Effect::new(move |_| {
@@ -1278,9 +1287,9 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 accounts=view! { <div class=style::slot data-accounts>{accounts_card}</div> }.into_any()
                 app=view! { <AppCard tray=fields.tray saved=just_saved pending=pending /> }.into_any()
                 storage=view! { <div class=style::slot data-storage>{storage_card}</div> }.into_any()
-                design=view! {
-                    <DesignCard
-                        classic=fields.classic
+                experimental=view! {
+                    <ExperimentalCard
+                        design_preview=fields.design_preview
                         saved=just_saved
                         pending=pending
                     />
@@ -1667,7 +1676,7 @@ mod tests {
 
     const PULL: &str = "Get new revisions";
     const WATCH: &str = "Watch folders for changes";
-    const CLASSIC: &str = "Use the classic design";
+    const PREVIEW: &str = "New design";
     const TRAY: &str = "Keep running in the tray";
 
     fn minutes(el: &web_sys::Element, n: u32) -> web_sys::HtmlInputElement {
@@ -2154,14 +2163,14 @@ mod tests {
         assert_eq!(alert(&el), None, "markup was {}", el.inner_html());
     }
 
-    /// Turning the classic design on saves v1 and leaves for `/`.
+    /// Turning *New design* off saves the classic design and leaves for `/`.
     #[wasm_bindgen_test]
-    async fn turning_the_classic_design_on_goes_home() {
+    async fn turning_the_new_design_off_goes_home() {
         let el = page(vec![settings()]).await;
-        assert!(!toggle(&el, CLASSIC).checked(), "this page is v2");
-        toggle(&el, CLASSIC).click();
+        assert!(toggle(&el, PREVIEW).checked(), "this page is v2");
+        toggle(&el, PREVIEW).click();
         sleep_ms(50).await;
-        assert_eq!(writes(), vec![Write::Design(Design::V1)]);
+        assert_eq!(writes(), vec![Write::DesignPreview(false)]);
         assert_eq!(path(), "/");
     }
 

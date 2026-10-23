@@ -1,6 +1,5 @@
 mod account;
 mod autosync;
-mod design;
 mod diagnostics;
 mod experimental;
 mod fswatcher;
@@ -11,7 +10,6 @@ use leptos::prelude::*;
 
 use account::AccountSection;
 use autosync::AutosyncSection;
-use design::DesignSection;
 use diagnostics::DiagnosticsSection;
 use experimental::ExperimentalSection;
 use fswatcher::FsWatcherSection;
@@ -88,9 +86,9 @@ fn SettingsContent(
             <PublishSection publish=data.publish notification=notification refetch=refetch />
             <FsWatcherSection fswatcher=data.fswatcher notification=notification refetch=refetch />
             <AccountSection auth_hosts=data.auth_hosts notification=notification refetch=refetch />
-            <DesignSection design=data.design notification=notification refetch=refetch />
             <ExperimentalSection
                 entire_package_sync=data.experimental.entire_package_sync
+                new_design=data.design == commands::Design::V2
                 notification=notification
                 refetch=refetch
             />

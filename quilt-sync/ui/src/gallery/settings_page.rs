@@ -44,7 +44,7 @@ use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::PageLayout;
 use crate::pages::settings_v2::{
-    AboutCard, AccountHost, AccountsCard, AppCard, BuiltInRule, DesignCard, IgnoreRulesCard,
+    AboutCard, AccountHost, AccountsCard, AppCard, BuiltInRule, ExperimentalCard, IgnoreRulesCard,
     IgnoreRulesForm, PublishingCard, PublishingDialog, PublishingForm, ReportBody, ReportDialog,
     ReportFooter, ReportState, Saved, SettingsHeader, SettingsLayout, SignOutDialog, StorageCard,
     StorageSize, SyncingCard, TroubleshootingCard, metadata_error, minutes_shown,
@@ -401,7 +401,11 @@ fn whole_page(width: u32, height: u32) -> AnyView {
                     accounts=accounts(several_hosts())
                     app=view! { <AppCard tray=RwSignal::new(false) /> }.into_any()
                     storage=storage(StorageSize::NotMeasured, false, None)
-                    design=view! { <DesignCard classic=RwSignal::new(false) /> }
+                    experimental=view! {
+                        <ExperimentalCard
+                            design_preview=RwSignal::new(true)
+                        />
+                    }
                         .into_any()
                     troubleshooting=troubleshooting(LogEnv::Unset, "Default", false)
                     about=view! { <AboutCard version=VERSION on_release_notes=noop() /> }.into_any()
@@ -414,7 +418,7 @@ fn whole_page(width: u32, height: u32) -> AnyView {
 }
 
 const NOTE: &str = "The settings page v2. From a 1024px window, two cards to a row: Syncing and \
-    Accounts, Storage and App, Publishing and Troubleshooting, Design and About, then Ignore \
+    Accounts, Storage and App, Publishing and Troubleshooting, Experimental and About, then Ignore \
     rules alone. Narrower, \
     the same order in one column. Toggles, selects and minute fields save as they change and say \
     Saved; Publishing is read-only, edited in a popup with Save. Routed at /settings in the v2 \
@@ -547,8 +551,13 @@ pub fn SettingsPageScene() -> impl IntoView {
             <Cell full=true label="Storage — the measure failed">
                 {column(storage(StorageSize::Failed, false, None))}
             </Cell>
-            <Cell full=true label="Design">
-                {column(view! { <DesignCard classic=RwSignal::new(false) /> }.into_any())}
+            <Cell full=true label="Experimental">
+                {column(view! {
+                    <ExperimentalCard
+                        design_preview=RwSignal::new(true)
+                    />
+                }
+                    .into_any())}
             </Cell>
             <Cell full=true label="Troubleshooting — at rest">
                 {column(troubleshooting(LogEnv::Unset, "Default", false))}
