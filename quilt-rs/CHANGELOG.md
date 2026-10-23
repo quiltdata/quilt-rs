@@ -19,7 +19,7 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.48.0-dev]
+## [v0.49.0-dev]
 
 ### Added
 
@@ -28,7 +28,27 @@
 ### Changed
 
 - **Breaking:** `InstalledPackage::state` reads a remote with no catalog on the AWS credentials on this computer, like any other remote, instead of answering `Unknown`. `PackageLineage::misconfigured_remote` is removed (<https://github.com/quiltdata/quilt-rs/pull/1193>)
-- With no catalog, AWS credentials that cannot be found are `LoginError::NoSession(None)`, so a status read reports them instead of answering from the last-known tip (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+- With no catalog, AWS credentials that cannot be found or used, including an SSO profile with no or an expired sign-in, are `LoginError::NoSession(None)`, so a status read reports them instead of answering from the last-known tip. A wrong secret key (`SignatureDoesNotMatch`) is a credential failure, not a denial (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+
+### Fixed
+
+- After the AWS credentials on this computer were missing or refused, the next call reads `~/.aws` again instead of keeping the first credentials it loaded (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+
+## [v0.48.0] - 2026-10-23
+
+### Added
+
+- `auth::lock_host` takes a host's auth lock (`DomainPaths::auth_lock`), which every token refresh holds. Hold it too when removing the host's auth directory (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+### Changed
+
+- **Breaking:** a `Storage` implementation must provide `create_private_dir` and `write_private_byte_stream` (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+### Fixed
+
+- On Unix the auth store is readable by its owner alone: directories are 0700 and token files 0600. A store an earlier version left open is closed at its next write (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- Two processes refreshing one host's tokens, such as the CLI and QuiltSync, take turns on a lock, so neither loses the login (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- Callers that stop waiting for a lock held by another process no longer use up blocking threads (<https://github.com/quiltdata/quilt-rs/pull/1177>)
 
 ## [v0.47.0] - 2026-10-22
 
@@ -37,17 +57,6 @@
 - `InstalledPackage::status_with_downloads` returns the status and a `lineage::DownloadCounts`: how many of the current revision's files, and how many bytes, are still to download
   - <https://github.com/quiltdata/quilt-rs/pull/1172>
   - <https://github.com/quiltdata/quilt-rs/pull/1178>
-- `auth::lock_host` takes a host's auth lock, `DomainPaths::auth_lock`, which every token refresh holds; anything that removes the host's auth directory should hold it too (<https://github.com/quiltdata/quilt-rs/pull/1177>)
-
-### Changed
-
-- **Breaking:** a `Storage` implementation must provide `create_private_dir` and `write_private_byte_stream` (<https://github.com/quiltdata/quilt-rs/pull/1177>)
-
-### Fixed
-
-- On Unix the auth store is readable by its owner alone: `.auth/` and each host's directory are 0700, and `tokens.json`, `credentials.json` and `client.json` 0600 from the moment they are created. A store an earlier version left open is closed at its next write (<https://github.com/quiltdata/quilt-rs/pull/1177>)
-- Two processes refreshing one host's tokens, such as the CLI and QuiltSync, take turns on a lock at `.auth/.locks/<host>`, and the second uses the tokens the first rotated rather than lose the login (<https://github.com/quiltdata/quilt-rs/pull/1177>)
-- Waiters given up on while another process holds a lock no longer park a blocking thread each, which could starve the process's file I/O (<https://github.com/quiltdata/quilt-rs/pull/1177>)
 
 ### quilt-uri
 

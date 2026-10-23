@@ -27,7 +27,18 @@
 
 ### quilt-rs
 
-- Updated [from v0.47.0 to v0.48.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.47.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.48.0 to v0.49.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.48.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.37.3] - 2026-10-23
+
+### Fixed
+
+- On Unix, saved logins are readable by your user alone (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- The CLI and QuiltSync no longer lose a login when both refresh it at once (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+### quilt-rs
+
+- Updated [from v0.47.0 to v0.48.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.47.0...quilt-rs/v0.48.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.37.2] - 2026-10-22
 
