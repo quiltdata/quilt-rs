@@ -118,6 +118,24 @@ Tauri's `invoke` takes them; replies are `{"id", "ok"}` or `{"id", "err"}`.
 Every backend event is pushed as `{"event", "payload"}`. Every other path
 serves a file from the UI folder, or `index.html` when there is none.
 
+## End-to-end tests
+
+`quilt-sync/e2e` drives the real app in Chromium with Playwright:
+
+```sh
+just test e2e            # builds, then runs every test
+just test e2e --headed   # extra arguments go to `playwright test`
+```
+
+The recipe builds the debug binary and the UI, installs the pinned
+`@playwright/test` and its Chromium, and runs the suite. Each test starts its
+own `quilt-sync --headless --port 0` on a fresh temp folder (data folder, home
+folder and `HOME`), sets the home with the `setup` command over the WebSocket
+(the Setup page needs the native folder picker), and stops it with Ctrl-C at
+the end. A debug build sends no telemetry. To run the suite without the
+recipe, build first, then `npx playwright test` in `quilt-sync/e2e`;
+`QUILTSYNC_BIN` points it at another binary. It is not part of `just ci`.
+
 ## Known limits
 
 - Plain HTTP only, one token per run, no expiry, no rate limit.
