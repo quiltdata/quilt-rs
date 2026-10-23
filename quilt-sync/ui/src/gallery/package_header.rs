@@ -206,7 +206,12 @@ fn has_catalog_page(state: &PackageState) -> bool {
         remote_locked: !matches!(state, PackageState::Unpublished),
         ..scene_payload()
     };
-    remote_target(&payload).is_some()
+    remote_target(
+        payload.uri.as_ref(),
+        payload.remote_locked,
+        payload.newer.as_deref(),
+    )
+    .is_some()
 }
 
 /// The header at one state.
