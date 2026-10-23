@@ -152,7 +152,7 @@ pub(crate) fn SetupScreen(read: PageRead<SetupData>) -> impl IntoView {
         choosing.set(true);
         outcome.set(None);
         leptos::task::spawn_local(async move {
-            match commands::open_directory_picker().await {
+            match crate::pages::pick_folder().await {
                 Ok(path) => {
                     chosen.try_set_value(true);
                     directory.try_set(path);

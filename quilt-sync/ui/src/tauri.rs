@@ -7,6 +7,47 @@ use serde::de::DeserializeOwned;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
+mod ws;
+
+/// Whether this page talks to the backend over the WebSocket rather than Tauri.
+///
+/// The WebSocket is used whenever the page carries a session token (`?t=` on
+/// the first URL, saved in `sessionStorage`), which only the `QuiltSync` server
+/// hands out: in a browser and in the desktop window alike, which loads the
+/// server's page and may still have a `window.__TAURI__` injected. The bundled
+/// page (`tauri://`) has no token and keeps IPC. Anything else — a test
+/// harness, the gallery, a page opened from disk — keeps the old no-bridge
+/// behaviour: every call fails quietly.
+pub fn is_web_mode() -> bool {
+    ws::token().is_some()
+}
+
+/// What the backend answers a desktop-only command when it is not the
+/// desktop app.
+pub const NOT_IN_BROWSER: &str = "not available in the browser";
+
+/// Copy `text` with the browser's clipboard API. For web mode, where there is no
+/// native clipboard to call.
+pub async fn copy_in_browser(text: &str) -> Result<(), String> {
+    ws::write_clipboard(text).await
+}
+
+/// The path, query and fragment of `url`, whatever its scheme and host.
+///
+/// The backend builds navigation targets from the Tauri window's URL, which is
+/// `tauri://localhost/…` or `http://tauri.localhost/…`; the browser needs them
+/// relative to its own origin.
+pub fn strip_origin(url: &str) -> String {
+    let Some((_, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    match rest.find(['/', '?', '#']) {
+        Some(i) if rest[i..].starts_with('/') => rest[i..].to_string(),
+        Some(i) => format!("/{}", &rest[i..]),
+        None => "/".to_string(),
+    }
+}
+
 #[wasm_bindgen]
 extern "C" {
     /// `listen`, bound so a throw comes back as a value. Same hazard as
@@ -44,6 +85,12 @@ extern "C" {
 /// dying, and the panic it is reporting is more informative than anything that could
 /// go wrong here.
 pub fn invoke_and_forget<A: Serialize>(cmd: &str, args: &A) {
+    if is_web_mode() {
+        if let Ok(args) = serde_json::to_value(args) {
+            ws::send_and_forget(cmd, &args);
+        }
+        return;
+    }
     if let Ok(args_js) = serde_wasm_bindgen::to_value(args) {
         let _ = tauri_invoke_catching(cmd, args_js);
     }
@@ -59,6 +106,10 @@ pub fn invoke_and_forget<A: Serialize>(cmd: &str, args: &A) {
 /// test harness, or a page loaded outside Tauri) must come back as an `Err`
 /// here, not an uncaught JS exception — see that binding's doc comment.
 pub async fn invoke<A: Serialize, R: DeserializeOwned>(cmd: &str, args: &A) -> Result<R, String> {
+    if is_web_mode() {
+        let args = serde_json::to_value(args).map_err(|e| e.to_string())?;
+        return invoke_ws(cmd, args).await;
+    }
     let args_js = serde_wasm_bindgen::to_value(args).map_err(|e| e.to_string())?;
     let promise = tauri_invoke_catching(cmd, args_js)
         .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
@@ -70,6 +121,9 @@ pub async fn invoke<A: Serialize, R: DeserializeOwned>(cmd: &str, args: &A) -> R
 
 /// Call a Tauri command with no arguments. See [`invoke`] for why this catches.
 pub async fn invoke_unit<R: DeserializeOwned>(cmd: &str) -> Result<R, String> {
+    if is_web_mode() {
+        return invoke_ws(cmd, serde_json::json!({})).await;
+    }
     let args = js_sys::Object::new();
     let promise = tauri_invoke_catching(cmd, args.into())
         .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
@@ -77,6 +131,45 @@ pub async fn invoke_unit<R: DeserializeOwned>(cmd: &str) -> Result<R, String> {
         .await
         .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
     serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
+}
+
+/// For a timing run: the size in bytes of the JSON a command answers with,
+/// and how long this side takes to decode it into `R`, timed with `now`.
+///
+/// Over the socket that is what [`ws`] does with a reply: parse the message,
+/// take `ok` back to text, parse that into `R`. Over IPC it is `JSON.parse` of
+/// the body (which Tauri's own script does) and `serde_wasm_bindgen`.
+pub async fn probe_decode<A: Serialize, R: DeserializeOwned>(
+    cmd: &str,
+    args: &A,
+    now: fn() -> f64,
+) -> Result<(usize, f64), String> {
+    let js_err = |e: JsValue| e.as_string().unwrap_or_else(|| format!("{e:?}"));
+    if is_web_mode() {
+        let args = serde_json::to_value(args).map_err(|e| e.to_string())?;
+        let text = ws::request(cmd, args).await?;
+        let message = format!("{{\"id\":1,\"ok\":{text}}}");
+        let started = now();
+        let mut value: serde_json::Value =
+            serde_json::from_str(&message).map_err(|e| e.to_string())?;
+        let ok = value.get_mut("ok").map(serde_json::Value::take);
+        let ok = ok.unwrap_or_default().to_string();
+        let _: R = serde_json::from_str(&ok).map_err(|e| e.to_string())?;
+        return Ok((text.len(), now() - started));
+    }
+    let args_js = serde_wasm_bindgen::to_value(args).map_err(|e| e.to_string())?;
+    let promise = tauri_invoke_catching(cmd, args_js).map_err(js_err)?;
+    let result = JsFuture::from(promise).await.map_err(js_err)?;
+    let text: String = js_sys::JSON::stringify(&result).map_err(js_err)?.into();
+    let started = now();
+    let parsed = js_sys::JSON::parse(&text).map_err(js_err)?;
+    let _: R = serde_wasm_bindgen::from_value(parsed).map_err(|e| e.to_string())?;
+    Ok((text.len(), now() - started))
+}
+
+async fn invoke_ws<R: DeserializeOwned>(cmd: &str, args: serde_json::Value) -> Result<R, String> {
+    let text = ws::request(cmd, args).await?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
 /// `__TAURI__.event` delivers payloads as `{ event, payload, id, ... }`.
@@ -98,6 +191,8 @@ enum ListenerState {
     Cancelled,
     /// Terminal: `unlisten` has been (or will be) called.
     Done,
+    /// Registered with the WebSocket transport under this handle.
+    Ws(u64),
 }
 
 /// Subscribe to a Tauri event. The returned `EventListener` calls the
@@ -120,13 +215,42 @@ pub fn listen<T: DeserializeOwned + 'static>(
 /// [`listen`], then `on_registered` once the listener is live — not if it was
 /// dropped first, nor without a bridge.
 ///
+/// Over the WebSocket, `on_registered` also runs again after each reconnect,
+/// since events sent while the socket was down were lost.
+///
 /// For a caller that hydrates a state: a read taken before the listener is live
 /// can miss a change made between the read and the registration.
 pub fn listen_then<T: DeserializeOwned + 'static>(
     event: &str,
     mut callback: impl FnMut(T) + 'static,
-    on_registered: impl FnOnce() + 'static,
+    on_registered: impl Fn() + 'static,
 ) -> EventListener {
+    if is_web_mode() {
+        let event_name = event.to_string();
+        let callback: ws::Callback =
+            Rc::new(RefCell::new(
+                move |payload: &serde_json::Value| match serde_json::from_value::<T>(
+                    payload.clone(),
+                ) {
+                    Ok(payload) => callback(payload),
+                    Err(err) => web_sys::console::error_1(
+                        &format!("listen: failed to deserialize {event_name}: {err}").into(),
+                    ),
+                },
+            ));
+        let state = match ws::listen(event, callback, Some(Rc::new(on_registered))) {
+            Ok(id) => ListenerState::Ws(id),
+            Err(err) => {
+                web_sys::console::error_1(
+                    &format!("listen: no connection for {event}: {err}").into(),
+                );
+                ListenerState::Done
+            }
+        };
+        return EventListener {
+            state: SendWrapper::new(Rc::new(RefCell::new(state))),
+        };
+    }
     let event_name = event.to_string();
     let event_name_for_closure = event_name.clone();
     let closure: Closure<dyn FnMut(JsValue)> = Closure::new(move |raw: JsValue| {
@@ -179,7 +303,7 @@ pub fn listen_then<T: DeserializeOwned + 'static>(
                         drop(s);
                         on_registered();
                     }
-                    ListenerState::Resolved(_) | ListenerState::Done => {}
+                    ListenerState::Resolved(_) | ListenerState::Done | ListenerState::Ws(_) => {}
                 }
             }
             Err(err) => web_sys::console::error_1(
@@ -210,6 +334,7 @@ impl Drop for EventListener {
                 // when it does.
                 *s = ListenerState::Cancelled;
             }
+            ListenerState::Ws(id) => ws::unlisten(id),
             ListenerState::Cancelled | ListenerState::Done => {}
         }
     }
@@ -218,6 +343,25 @@ impl Drop for EventListener {
 #[cfg(test)]
 mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[test]
+    fn strip_origin_keeps_path_query_and_fragment() {
+        use super::strip_origin;
+        assert_eq!(
+            strip_origin("tauri://localhost/installed-package?namespace=a/b#x"),
+            "/installed-package?namespace=a/b#x"
+        );
+        assert_eq!(
+            strip_origin("http://tauri.localhost/login?host=h&back=%2F"),
+            "/login?host=h&back=%2F"
+        );
+        assert_eq!(strip_origin("http://tauri.localhost"), "/");
+        assert_eq!(strip_origin("http://tauri.localhost?x=1"), "/?x=1");
+        assert_eq!(
+            strip_origin("/commit?namespace=a/b"),
+            "/commit?namespace=a/b"
+        );
+    }
 
     /// Firing a command where no Tauri bridge exists must be silent.
     ///

@@ -202,7 +202,8 @@ fn init_tracing(
                 sentry::integrations::tracing::layer()
                     .with_filter(filter(saved, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
             )
-            .init();
+            .try_init()
+            .ok();
         Some(guard)
     } else {
         tracing_subscriber::registry()
@@ -210,7 +211,8 @@ fn init_tracing(
                 sentry::integrations::tracing::layer()
                     .with_filter(filter(saved, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
             )
-            .init();
+            .try_init()
+            .ok();
         None
     };
 

@@ -19,6 +19,7 @@ tauri-build = { version = "2.7.3", features = [] }
 chrono.workspace = true
 dotenv = "0.15"
 dunce = "1"
+dirs.workspace = true
 futures-util = "0.3.34"
 # Named only to hold quilt-rs's `.quiltignore` matcher in the watched-root map;
 # quilt-rs owns the loading and matching (`quilt::quiltignore`).
@@ -26,6 +27,7 @@ mockall = "0.15.0"
 opener = { version = "0.9.0", features = ["reveal"] }
 quilt-rs = { path = "../../quilt-rs" }
 quilt-uri = { path = "../../quilt-uri" }
+reqwest.workspace = true
 rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 rust-i18n = "4.2.4"
 semver = "1.0.28"
@@ -54,6 +56,8 @@ unicode-general-category = "1.1.0"
 url.workspace = true
 urlencoding = "2.1.3"
 zip = { version = "9", default-features = false, features = ["deflate"] }
+axum = { version = "0.8.9", features = ["ws"] }
+tower-http = { version = "0.6.11", features = ["fs"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem
