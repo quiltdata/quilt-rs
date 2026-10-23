@@ -24,7 +24,7 @@ on:
       - "**/*.md"
       - "quilt-sync/**"
 
-# Read-only: the token is passed to third-party setup actions.
+# Read-only: third-party actions run with this token.
 permissions:
   contents: read
 
@@ -50,7 +50,6 @@ jobs:
       - name: Setup Rust for development
         uses: ./.github/actions/setup-rust-dev
         with:
-          github-token: ${{ github.token }}
           targets: wasm32-unknown-unknown
 
       - name: Install cargo-nextest
@@ -113,8 +112,6 @@ jobs:
 
       - name: Setup Rust for testing
         uses: ./.github/actions/setup-rust-minimal
-        with:
-          github-token: ${{ github.token }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest

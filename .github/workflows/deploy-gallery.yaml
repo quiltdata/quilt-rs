@@ -35,7 +35,6 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust-dev
         with:
-          github-token: ${{ github.token }}
           targets: wasm32-unknown-unknown
 
       - name: Setup Node.js
