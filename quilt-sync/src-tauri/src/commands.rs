@@ -17,6 +17,7 @@
 
 mod auth;
 mod commit_data;
+mod folders;
 mod main_page;
 mod package_data;
 mod package_entries;
@@ -30,6 +31,7 @@ mod toast;
 
 pub use auth::*;
 pub use commit_data::*;
+pub use folders::*;
 pub use main_page::*;
 pub use package_data::*;
 pub use package_list::*;

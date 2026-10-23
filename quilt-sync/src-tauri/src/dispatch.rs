@@ -14,11 +14,11 @@ use serde_json::Value;
 
 use crate::commands::{
     AccountHost, AutosyncPatch, AutosyncSettingsData, CommitData, CommitViolation, CommitWorkflows,
-    FreedSpace, InstalledPackageData, InstalledPackagesListData, LoginData, LoginErrorData,
-    MainPageAccounts, MainPagePackageRefresh, MainPagePackages, MainPageRecentFiles,
-    MainPageWatcher, MergeData, PackagePageData, RefreshedPackageStatus, RemotePackageResult,
-    RevisionHistoryData, RolesData, SetRemoteResponse, SettingsData, SetupData,
-    StopIgnoringPreview, StopIgnoringScope, StorageSize,
+    FolderListing, FreedSpace, InstalledPackageData, InstalledPackagesListData, LoginData,
+    LoginErrorData, MainPageAccounts, MainPagePackageRefresh, MainPagePackages,
+    MainPageRecentFiles, MainPageWatcher, MergeData, PackagePageData, RefreshedPackageStatus,
+    RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse, SettingsData,
+    SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
 };
 use crate::log_settings::LogLevel;
 use crate::quilt;
@@ -139,6 +139,7 @@ commands! {
         test_quiltignore_pattern(pattern: String, path: String) -> bool;
         get_login_error_data(host: String, title: Option<String>, error: String) -> LoginErrorData;
         get_login_data(host: String, back: String) -> LoginData;
+        list_folders(path: Option<String>) -> FolderListing;
     }
     shared {
         erase_auth(host: String) -> String;
@@ -338,7 +339,7 @@ mod tests {
     /// a window.
     #[test]
     fn every_command_has_an_arm() {
-        assert_eq!(SHARED.len() + DESKTOP_ONLY.len(), 83);
+        assert_eq!(SHARED.len() + DESKTOP_ONLY.len(), 84);
         for name in SHARED {
             let Err(Value::String(err)) = parse(name, Value::String("not args".into())) else {
                 panic!("{name}: arguments of the wrong shape were accepted");
