@@ -89,7 +89,8 @@ fn hint_lines(
         return vec![if has_host {
             "Unable to check remote status — sign in again".to_string()
         } else {
-            "No remote configured".to_string()
+            // A bucket with no catalog, read on this computer's AWS credentials.
+            "AWS credentials on this computer aren't usable — update ~/.aws".to_string()
         }];
     }
     Vec::new()
@@ -1165,6 +1166,14 @@ mod tests {
     }
 
     #[test]
+    fn error_without_a_host_names_the_credentials_file() {
+        assert_eq!(
+            hint_lines("error", false, None, None, None),
+            vec!["AWS credentials on this computer aren't usable — update ~/.aws".to_string()]
+        );
+    }
+
+    #[test]
     fn error_with_host_prompts_sign_in() {
         assert_eq!(
             hint_lines("error", true, None, None, None),
@@ -1266,14 +1275,6 @@ mod tests {
                  Switch role to resume autosync."
                     .to_string()
             ]
-        );
-    }
-
-    #[test]
-    fn error_without_host_reports_no_remote() {
-        assert_eq!(
-            hint_lines("error", false, None, None, None),
-            vec!["No remote configured".to_string()]
         );
     }
 

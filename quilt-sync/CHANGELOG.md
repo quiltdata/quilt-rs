@@ -25,6 +25,14 @@
 
 - **New design preview**: copying a file's URI or path on the package page marks that file's row for a moment, so the page no longer moves down. The header's copy button shows a check instead of a tooltip, and the close button of a message bar sits at its right edge (<https://github.com/quiltdata/quilt-rs/pull/1182>)
 
+### Fixed
+
+- A package whose remote has no catalog shows its status on both pages, read on the AWS credentials on this computer. When those are missing or refused, it says so instead of offering *Sign in* (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+
+### quilt-rs
+
+- Updated [from v0.47.0 to v0.48.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.47.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.23.2] - 2026-10-22
 
 ### Added

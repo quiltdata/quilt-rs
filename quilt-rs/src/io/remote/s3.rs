@@ -138,10 +138,31 @@ where
         );
         return login;
     }
+    if host.is_none() && ambient_credentials_failed(&err) {
+        warn!(
+            "❌ The AWS credentials on this computer are not usable: {}",
+            describe_sdk_error(err)
+        );
+        return Error::Login(LoginError::NoSession(None));
+    }
     Error::S3(S3Error {
         host: host.cloned(),
         kind: classify_sdk_error(err, fallback),
     })
+}
+
+/// The SDK's default chain (`~/.aws`, env vars, SSO, instance metadata)
+/// failed to produce credentials. The SDK wraps it as a dispatch failure, so,
+/// like [`recover_absent_session`], this walks `source()`.
+fn ambient_credentials_failed(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(err);
+    while let Some(e) = current {
+        if e.downcast_ref::<CredentialsError>().is_some() {
+            return true;
+        }
+        current = e.source();
+    }
+    false
 }
 
 /// Classify an `SdkError` straight off an AWS call.
@@ -1723,6 +1744,63 @@ mod tests {
                 Error::Login(LoginError::NoSession(Some(h))) if h == host
             ),
             "the call-site helper classified a signed-out session as an S3 error"
+        );
+        Ok(())
+    }
+
+    /// The machine's own credential chain finding nothing is a host-less
+    /// absent session, not an outage: without this, a status read on a bare
+    /// bucket swallows it and answers "unreachable" from the last-known tip.
+    #[test(tokio::test)]
+    async fn an_empty_ambient_chain_is_a_host_less_absent_session() -> Res<()> {
+        #[derive(Debug)]
+        struct NoCredentials;
+        impl ProvideCredentials for NoCredentials {
+            fn provide_credentials<'a>(&'a self) -> future::ProvideCredentials<'a>
+            where
+                Self: 'a,
+            {
+                future::ProvideCredentials::ready(Err(CredentialsError::not_loaded(
+                    "no credentials found in chain",
+                )))
+            }
+        }
+
+        let config = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(NoCredentials)
+            .load()
+            .await;
+        let client = aws_sdk_s3::Client::new(&config);
+        let call = async || {
+            client
+                .head_object()
+                .bucket("bucket")
+                .key("key")
+                .send()
+                .await
+                .expect_err("no credentials, so no request")
+        };
+
+        assert!(
+            matches!(
+                s3_error_or_session_loss(call().await, None, S3ErrorKind::Exists),
+                Error::Login(LoginError::NoSession(None))
+            ),
+            "an empty ambient chain was classified as storage trouble"
+        );
+        // A deployment's provider reports its own `NoSession`; a bare
+        // credentials error there stays what it was.
+        assert!(
+            matches!(
+                s3_error_or_session_loss(
+                    call().await,
+                    Some(&fixtures::host()),
+                    S3ErrorKind::Exists
+                ),
+                Error::S3(_)
+            ),
+            "a deployment's credentials error was retyped as host-less"
         );
         Ok(())
     }

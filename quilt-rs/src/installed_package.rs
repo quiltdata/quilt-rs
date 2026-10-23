@@ -657,11 +657,12 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// This package's [`PackageState`](lineage::PackageState), as every front
     /// end shows it.
     ///
-    /// Asks the remote only when there is something to ask: a remote with no
-    /// catalog host is `Unknown` and a package with no remote is resolved from
-    /// its lineage, both without the network or a working-tree walk. Otherwise
-    /// this is [`Self::status`] — the remote's `latest` tip plus the working
-    /// tree — resolved by [`PackageState::resolve`](lineage::PackageState::resolve).
+    /// Asks the remote only when there is one: a package with no remote is
+    /// resolved from its lineage, without the network or a working-tree walk.
+    /// Otherwise this is [`Self::status`] — the remote's `latest` tip plus the
+    /// working tree — resolved by
+    /// [`PackageState::resolve`](lineage::PackageState::resolve). A remote with
+    /// no catalog host is read on the machine's own AWS credentials.
     /// The fetched tip is not written back to lineage.
     ///
     /// Errors are `status`'s, returned as they are: a denial

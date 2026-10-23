@@ -427,9 +427,9 @@ async fn resolve_for_page(
     m: &impl model::QuiltModel,
     installed: &quilt::InstalledPackage,
     lineage: &quilt::lineage::PackageLineage,
-    status_read: Option<&Result<quilt::lineage::InstalledPackageStatus, String>>,
+    status_read: &Result<quilt::lineage::InstalledPackageStatus, String>,
 ) -> Option<ResolveData> {
-    match status_read? {
+    match status_read {
         Ok(status) if status.upstream_state == UpstreamState::Diverged => Some(
             match m
                 .get_installed_package_resolve_comparison(installed, lineage)
@@ -453,23 +453,22 @@ async fn resolve_for_page(
 /// The file pane's list from the page's own status: no second walk.
 ///
 /// Which files are here and whether they changed does not depend on the
-/// remote, so a blocked or skipped remote status does not hide them. A blocked
-/// status stopped before its walk — the refusal came from refreshing the
-/// latest hash — and a misconfigured remote never asked, so either way the
-/// tree is walked once, here, against the cached manifest (v1 does the same
-/// after a denial). Only what needs the remote degrades, and the header says
-/// so. The manifest's rows are read only once there is a status.
+/// remote, so a blocked remote status does not hide them. A blocked status
+/// stopped before its walk — the refusal came from refreshing the latest hash —
+/// so the tree is walked once, here, against the cached manifest (v1 does the
+/// same after a denial). Only what needs the remote degrades, and the header
+/// says so. The manifest's rows are read only once there is a status.
 async fn files_data(
     m: &impl model::QuiltModel,
     installed: &quilt::InstalledPackage,
     namespace: &quilt_uri::Namespace,
     lineage: &quilt::lineage::PackageLineage,
-    status_read: Option<&Result<quilt::lineage::InstalledPackageStatus, String>>,
+    status_read: &Result<quilt::lineage::InstalledPackageStatus, String>,
 ) -> FilesData {
     let local;
     let status = match status_read {
-        Some(Ok(status)) => status,
-        Some(Err(_)) | None => match m.recompute_local_status(installed, None).await {
+        Ok(status) => status,
+        Err(_) => match m.recompute_local_status(installed, None).await {
             Ok(status) => {
                 local = status;
                 &local
@@ -613,65 +612,54 @@ async fn get_package_page_data_from_model(
         .map(quilt_uri::S3PackageUri::from);
 
     let mut role_switch = None;
-    // The status, or why a blocked read refused; `None` when it was not asked.
-    let mut status_read: Option<Result<quilt::lineage::InstalledPackageStatus, String>> = None;
-    let state = if lineage.misconfigured_remote() {
-        // The same predicate both main-page phases apply before resolving, for
-        // the same reason: without a catalog there is nowhere to vend
-        // credentials from, so the status call cannot succeed. A third surface
-        // answering this shape differently is the disagreement that predicate
-        // exists to prevent.
-        PackageStateDto::Unknown
-    } else {
-        // A blocked read is a state, not an error: the page still draws, and the
-        // header says what is wrong and what to do about it.
-        match m.get_installed_package_status(&installed, None).await {
-            // One pause arm, not the main page's two. A conflict names a
-            // condition of the package's FILES and carries the action that
-            // clears it, so it belongs in the header's precedence — and the
-            // watcher's map is its only source, so without this arm the header
-            // could never show it. The residue names a condition of the
-            // WORKER, and displacing the package's real state with it would
-            // hide what the package needs; it travels as `sync_paused` and the
-            // page states it beside the header instead.
-            //
-            // Below the denial the `Err` side catches: a denial is rank 1.
-            Ok(status) => {
-                let state = if let Some(files) = conflict_files(paused) {
-                    PackageStateDto::PullConflict { files }
-                } else {
-                    quilt::lineage::PackageState::resolve(
-                        status.upstream_state,
-                        has_local_commit,
-                        has_remote,
-                        // The count is measured, not guessed. This page reads one
-                        // package, so it has no light phase to be provisional for.
-                        Some(status.changes.len()),
-                    )
-                    .into()
-                };
-                status_read = Some(Ok(status));
-                state
-            }
-            Err(err) => {
-                status_read = Some(Err(err.to_frontend_string()));
-                match blocked_state(&err) {
-                    // The one state whose remedy is worth a round trip, and the
-                    // only place this function goes back to the network.
-                    Some(PackageStateDto::RoleDenied { .. }) => {
-                        let (role, switch) = role_remedy(m, roles, &err).await;
-                        role_switch = switch;
-                        PackageStateDto::RoleDenied { role }
-                    }
-                    Some(state) => state,
-                    None => return Err(err),
+    // A blocked read is a state, not an error: the page still draws, and the
+    // header says what is wrong and what to do about it. `status_read` is the
+    // status, or why a blocked read refused.
+    let (state, status_read) = match m.get_installed_package_status(&installed, None).await {
+        // One pause arm, not the main page's two. A conflict names a
+        // condition of the package's FILES and carries the action that
+        // clears it, so it belongs in the header's precedence — and the
+        // watcher's map is its only source, so without this arm the header
+        // could never show it. The residue names a condition of the
+        // WORKER, and displacing the package's real state with it would
+        // hide what the package needs; it travels as `sync_paused` and the
+        // page states it beside the header instead.
+        //
+        // Below the denial the `Err` side catches: a denial is rank 1.
+        Ok(status) => {
+            let state = if let Some(files) = conflict_files(paused) {
+                PackageStateDto::PullConflict { files }
+            } else {
+                quilt::lineage::PackageState::resolve(
+                    status.upstream_state,
+                    has_local_commit,
+                    has_remote,
+                    // The count is measured, not guessed. This page reads one
+                    // package, so it has no light phase to be provisional for.
+                    Some(status.changes.len()),
+                )
+                .into()
+            };
+            (state, Ok(status))
+        }
+        Err(err) => {
+            let state = match blocked_state(&err) {
+                // The one state whose remedy is worth a round trip, and the
+                // only place this function goes back to the network.
+                Some(PackageStateDto::RoleDenied { .. }) => {
+                    let (role, switch) = role_remedy(m, roles, &err).await;
+                    role_switch = switch;
+                    PackageStateDto::RoleDenied { role }
                 }
-            }
+                Some(state) => state,
+                None => return Err(err),
+            };
+            (state, Err(err.to_frontend_string()))
         }
     };
 
     // A blocked read counts from tracking alone.
-    let status = status_read.as_ref().and_then(|r| r.as_ref().ok());
+    let status = status_read.as_ref().ok();
     let newer = status
         .filter(|s| s.latest_refreshed && !s.latest_hash.is_empty())
         .map(|s| s.latest_hash.clone());
@@ -680,8 +668,8 @@ async fn get_package_page_data_from_model(
         &m.get_installed_package_sizes(&installed, &lineage).await?,
         status.map(|s| &s.changes),
     );
-    let resolve = resolve_for_page(m, &installed, &lineage, status_read.as_ref()).await;
-    let files = files_data(m, &installed, namespace, &lineage, status_read.as_ref()).await;
+    let resolve = resolve_for_page(m, &installed, &lineage, &status_read).await;
+    let files = files_data(m, &installed, namespace, &lineage, &status_read).await;
     let context = package_context_data(
         namespace,
         &lineage,
@@ -1987,19 +1975,40 @@ mod tests {
         assert_eq!(rows_of(&list), vec![("a.csv", "modified")]);
     }
 
-    /// A misconfigured remote never asks for the remote status; the local
-    /// walk still lists the files.
+    /// A remote with no catalog host is read on the machine's own AWS
+    /// credentials, so the header offers what the state offers.
     #[tokio::test]
-    async fn a_misconfigured_remote_still_lists_its_local_files() {
+    async fn a_remote_with_no_catalog_host_reads_its_real_state() {
         let m = mock_rows(
             make_manifest_uri_no_origin(NS),
-            None,
             Some(Ok(changed_here("a.csv"))),
+            None,
             Some(Ok(records(&["a.csv"]))),
         );
         let page = read(&m).await.expect("a page");
 
-        assert_eq!(page.header.state, PackageStateDto::Unknown);
+        assert_eq!(
+            page.header.state,
+            PackageStateDto::PendingChanges { files: 1 }
+        );
+        let list = listed(page.files);
+        assert_eq!(rows_of(&list), vec![("a.csv", "modified")]);
+    }
+
+    /// Unusable credentials on this computer have no deployment to sign in
+    /// to: the host-less session state, and the files still listed.
+    #[tokio::test]
+    async fn a_remote_with_no_catalog_host_and_unusable_credentials() {
+        let no_session = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(None)));
+        let m = mock_rows(
+            make_manifest_uri_no_origin(NS),
+            Some(Err(no_session)),
+            Some(Ok(changed_here("a.csv"))),
+            Some(Ok(records(&["a.csv"]))),
+        );
+        let page = read(&m).await.expect("a blocked read is a state");
+
+        assert_eq!(page.header.state, PackageStateDto::NoSession { host: None });
         let list = listed(page.files);
         assert_eq!(rows_of(&list), vec![("a.csv", "modified")]);
     }

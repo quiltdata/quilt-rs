@@ -244,7 +244,11 @@ fn remote_state_banner(
     Some(if has_host {
         ("Unable to check remote status".to_string(), true)
     } else {
-        ("No remote configured".to_string(), false)
+        // A bucket with no catalog, read on this computer's AWS credentials.
+        (
+            "AWS credentials on this computer aren't usable — update ~/.aws".to_string(),
+            false,
+        )
     })
 }
 
@@ -407,10 +411,13 @@ mod tests {
     }
 
     #[test]
-    fn an_error_without_a_host_has_no_remote_to_sign_in_to() {
+    fn an_error_without_a_host_names_the_credentials_file() {
         assert_eq!(
             remote_state_banner("error", false, None),
-            Some(("No remote configured".to_string(), false))
+            Some((
+                "AWS credentials on this computer aren't usable — update ~/.aws".to_string(),
+                false
+            ))
         );
     }
 
