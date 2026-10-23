@@ -89,7 +89,7 @@ jobs:
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
           WASM_BINDGEN_TEST_TIMEOUT: "180"
-          BUDGET_SECS: "1"
+          BUDGET_SECS: "75"
 
       # This crate has tests for two targets, and neither harness runs the
       # other's: `wasm-bindgen-test-runner` runs only `#[wasm_bindgen_test]`, and
