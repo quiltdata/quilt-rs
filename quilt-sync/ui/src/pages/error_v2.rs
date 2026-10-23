@@ -82,7 +82,7 @@ pub fn ErrorSlateSkeleton() -> impl IntoView {
     }
 }
 
-/// What `/error` renders when *New design preview* is on.
+/// What `/error` renders in the v2 design.
 #[component]
 pub fn ErrorV2() -> impl IntoView {
     view! { <ErrorScreen read=read_error /> }
@@ -99,7 +99,7 @@ pub fn ErrorV2Skeleton(actions: AnyView) -> impl IntoView {
     }
 }
 
-/// What an unknown address renders when *New design preview* is on. It reads
+/// What an unknown address renders in the v2 design. It reads
 /// nothing, so it is also its own first paint.
 #[component]
 pub fn NotFoundV2() -> impl IntoView {

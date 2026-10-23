@@ -69,7 +69,7 @@ pub const V2_CLASS: &str = "qui-v2";
 /// Record which design generation the reader is in, for the chrome that sits
 /// outside every page and therefore cannot ask.
 ///
-/// The reader's preview preference and nothing else — `main.rs`'s
+/// The reader's design setting and nothing else — `main.rs`'s
 /// `design_preview` is the one question the design is switched by, and `/` and
 /// `/installed-package` ask it on every visit, so this is set before any other
 /// route can be reached. The exception is a launch by deep link, whose relay
@@ -97,7 +97,7 @@ pub fn set_v2(on: bool) {
 /// Whether the root carries [`V2_CLASS`].
 ///
 /// Never stale when a route reads it: `index.html` restores it before first
-/// paint, and saving the preview in Settings navigates to `/`, which sets it.
+/// paint, and saving the design in Settings navigates to `/`, which sets it.
 pub fn is_v2() -> bool {
     document()
         .document_element()
@@ -107,12 +107,9 @@ pub fn is_v2() -> bool {
 /// Where the generation is kept for the *next* launch, read by `index.html`'s
 /// inline script before the first paint.
 ///
-/// Named for the switch it copies, *New design preview*, rather than for the page
-/// that switch used to be named after. The old name, `quiltsync.main-page-v2`, is
-/// not migrated: a reader who had it set opens once in the other palette
-/// and is written the new one, which is the same one-launch cost the marker
-/// already carries below — not worth a migration for the colour of an empty
-/// window.
+/// Named for the switch it once copied, *New design preview*. The name is kept
+/// so a reader's stored answer carries over: `1` is v2 and `0` the classic
+/// design, and `index.html` predicts v2 for anything but `0`.
 const DESIGN_KEY: &str = "quiltsync.design-preview";
 
 /// Record the generation for the next launch.
@@ -123,7 +120,7 @@ const DESIGN_KEY: &str = "quiltsync.design-preview";
 /// a reader who has just switched exactly one boot in the old palette.
 ///
 /// Every failure is ignored. A webview with no storage, a quota, a private mode
-/// — each leaves the next launch opening light, which is the fallback anyway.
+/// — each costs at most the next launch's palette.
 fn remember_v2(on: bool) {
     let Some(Ok(Some(storage))) = web_sys::window().map(|w| w.local_storage()) else {
         return;
@@ -192,10 +189,10 @@ mod tests {
         );
 
         set_v2(false);
-        assert_ne!(
+        assert_eq!(
             storage.get_item(DESIGN_KEY).unwrap().as_deref(),
-            Some("1"),
-            "and one who switched back must not — the script opens dark on `1` alone"
+            Some("0"),
+            "and one who chose the classic design must not — the script opens dark unless `0`"
         );
     }
 

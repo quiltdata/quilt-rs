@@ -56,7 +56,7 @@ pub enum Saved {
     Publish,
     Watch,
     Tray,
-    DesignPreview,
+    Classic,
     LogLevel,
 }
 
@@ -195,7 +195,7 @@ pub fn SettingsHeader(
 
 /// The page's cards, in rows of two on a wide window: Syncing and Accounts,
 /// the two the main page's strip shows, then Storage and App, Publishing and
-/// Troubleshooting, Experimental and About, and Ignore rules. Narrow, the same
+/// Troubleshooting, Design and About, and Ignore rules. Narrow, the same
 /// order in one column.
 #[component]
 pub fn SettingsLayout(
@@ -206,7 +206,7 @@ pub fn SettingsLayout(
     accounts: AnyView,
     app: AnyView,
     storage: AnyView,
-    experimental: AnyView,
+    design: AnyView,
     troubleshooting: AnyView,
     about: AnyView,
 ) -> impl IntoView {
@@ -221,7 +221,7 @@ pub fn SettingsLayout(
                 {app}
                 {publishing}
                 {troubleshooting}
-                {experimental}
+                {design}
                 {about}
                 // Last, so its long list stretches no other card's row.
                 {ignore_rules}
@@ -1004,27 +1004,30 @@ pub fn StorageCard(
     }
 }
 
-// ── Experimental ──
+// ── Design ──
 
-pub const DESIGN_PREVIEW_SUBLABEL: &str = "The redesigned QuiltSync, wherever it is ready.";
+pub const CLASSIC_SUBLABEL: &str = "QuiltSync as it looked before the redesign.";
 
-/// Opt-ins for what is still being designed. Entire-package sync is not one
-/// of them here: the v2 pages offer it whatever v1's flag says, so a row for
-/// it would change nothing a reader of this page can see.
+/// The one design switch, off here: this page is the new design. Turning it
+/// on saves, then goes to `/`, which draws the classic design.
+///
+/// Entire-package sync has no row on this page: the v2 pages offer it
+/// whatever v1's flag says, so a row for it would change nothing a reader of
+/// this page can see.
 #[component]
-pub fn ExperimentalCard(
-    design_preview: RwSignal<bool>,
+pub fn DesignCard(
+    classic: RwSignal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
     #[prop(optional, into)] pending: Signal<Vec<Saved>>,
 ) -> impl IntoView {
     view! {
-        <Card title="Experimental">
+        <Card title="Design">
             <ToggleRow
-                label="New design preview"
-                sublabel=DESIGN_PREVIEW_SUBLABEL
-                checked=design_preview
-                disabled=saving(pending, Saved::DesignPreview)
-                trailing=saved_note(saved, Saved::DesignPreview)
+                label="Use the classic design"
+                sublabel=CLASSIC_SUBLABEL
+                checked=classic
+                disabled=saving(pending, Saved::Classic)
+                trailing=saved_note(saved, Saved::Classic)
             />
         </Card>
     }
@@ -1764,7 +1767,7 @@ mod tests {
             PUBLISHING_USE,
             GLOBAL_SCOPE_WARNING,
             TRAY_SUBLABEL,
-            DESIGN_PREVIEW_SUBLABEL,
+            CLASSIC_SUBLABEL,
             TEMPORARY_LOGS,
             EMAIL_INSTEAD,
             REPORT_SENT,

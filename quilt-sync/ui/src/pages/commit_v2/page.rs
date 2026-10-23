@@ -55,7 +55,7 @@ fn read_commit(namespace: String) -> Pin<Box<dyn Future<Output = Result<CommitDa
     Box::pin(commands::get_commit_data(namespace))
 }
 
-/// What `/commit` renders when *New design preview* is on.
+/// What `/commit` renders in the v2 design.
 #[component]
 pub fn CommitV2() -> impl IntoView {
     view! { <CommitScreen read=read_commit /> }

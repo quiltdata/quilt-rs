@@ -27,7 +27,7 @@ body {
 /* The frame `/` and `/installed-package` show while they resolve the design
  * generation, and only a reader carrying `theme::set_v2`'s root marker wants a
  * ground under it. That marker records the generation the reader has opted into —
- * their *New design preview* answer, and nothing else — and `body` itself must
+ * their design setting, and nothing else — and `body` itself must
  * stay bare regardless, since a v2 reader visits v1's pages too. For that reader
  * the frame holds the v2 page's skeleton, which paints its own ground; this one
  * is the floor under it. An attribute, like `[data-sr-only]`: it marks a role, on

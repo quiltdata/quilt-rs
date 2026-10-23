@@ -29,7 +29,7 @@ After submit -> **Installed Packages List**
 
 ### Setup (v2)
 
-With *New design preview* on, `/setup` renders this page instead: one card
+In the v2 design, `/setup` renders this page instead: one card
 with the same explanation, the directory field (chosen with **Browse**, not
 typed) and **Save**. A failed pick or save says so in the band under the
 appbar.
@@ -75,7 +75,7 @@ After login -> redirect to `back` URL (the page user came from)
 
 ### Login (v2)
 
-With *New design preview* on, `/login` renders this page instead: one card
+In the v2 design, `/login` renders this page instead: one card
 titled with the host. **Log in with browser** first; then the catalog's
 address with **Open browser**, the **Code** field and **Submit code and Log
 in**, which waits for a code. A failure says so in the band under the
@@ -100,8 +100,8 @@ appbar; opening the browser sign-in says to continue there.
 
 ### Main Page
 
-The main screen when Settings → Experimental → **New design preview** is on. Off
-by default; `/` renders this or the Installed Packages List below according to
+The main screen, unless Settings → Design → **Use the classic design** is on.
+`/` renders this or the Installed Packages List below according to
 the effective design generation, and both stay reachable at `/main` and
 `/installed-packages-list`.
 
@@ -169,8 +169,8 @@ fails.
 
 ### Installed Packages List
 
-Lists all locally installed packages. The main screen unless Settings →
-Experimental → **New design preview** is on, in which case that page takes `/`
+Lists all locally installed packages. The main screen only when Settings →
+Design → **Use the classic design** is on; otherwise the Main Page takes `/`
 and this one stays at `/installed-packages-list`.
 
 ```text
@@ -252,8 +252,8 @@ without a page reload. Status changes propagate via
 Shows contents of a single installed package: file entries
 with checkboxes, status indicator, and a toolbar.
 
-This is the page when Settings → Experimental → **New design preview** is off.
-On, `/installed-package` renders the redesigned package page instead, with a
+This is the page when Settings → Design → **Use the classic design** is on.
+Off, `/installed-package` renders the redesigned package page instead, with a
 header, a context pane and a file pane; it has no address of its own.
 
 On the redesigned page, the context pane's **Keeping** caption says how much of
@@ -431,7 +431,7 @@ After either action -> **Installed Package**
 
 ### Commit (v2)
 
-With *New design preview* on, `/commit` renders this page instead, from the
+In the v2 design, `/commit` renders this page instead, from the
 same read and through the same commands. The header and any banner span the
 page. From about a 1024px window, the form is on the left and the changed
 files on the right; narrower, it is one column with the files last.
@@ -734,7 +734,7 @@ nothing is being written, which is the common case.
 ### Settings
 
 Application settings and diagnostics. This is the page when Settings →
-Experimental → **New design preview** is off.
+Design → **Use the classic design** is on.
 
 ```text
 +--[appbar]----------------------------------------------+
@@ -769,14 +769,17 @@ Experimental → **New design preview** is off.
 |  Enable filesystem watcher     [x]                      |
 |  hint: refreshes local status when files change         |
 |                                                         |
+|  Design                                                 |
+|  ------                                                 |
+|  Use the classic design        [x]                      |
+|  hint: QuiltSync as it looked before the redesign.      |
+|        Turn off for the new design.                     |
+|                                                         |
 |  Experimental                                           |
 |  ------------                                           |
 |  Enable entire-package sync    [ ]                      |
 |  hint: adds a per-package option to sync everything in  |
 |        a package, instead of picking files.             |
-|                                                         |
-|  New design preview            [ ]                      |
-|  hint: the redesigned QuiltSync, wherever it is ready.  |
 |                                                         |
 |  Account                                                |
 |  -------                                                |
@@ -796,7 +799,7 @@ Experimental → **New design preview** is off.
 
 ### Settings (v2)
 
-With *New design preview* on, `/settings` renders this page instead. One
+In the v2 design, `/settings` renders this page instead. One
 column of cards, most used first. No Refresh or Settings in the appbar.
 
 ```text
@@ -825,8 +828,8 @@ column of cards, most used first. No Refresh or Settings in the appbar.
 | Storage                                                 |
 |  Where packages live  /home/user/QuiltSync      [Open]  |
 |  App storage          [Check size]     [Free up space]  |
-| Experimental                                            |
-|  [x] New design preview                                 |
+| Design                                                  |
+|  [ ] Use the classic design                             |
 | Help                                                    |
 |  Report a problem              [Report a problem...]    |
 |  Log level  [Default v]                                 |
@@ -860,7 +863,7 @@ column of cards, most used first. No Refresh or Settings in the appbar.
   list of what is sent, **Send to Quilt** (collects the logs, sends them
   with your text) and **Email instead** (collects the logs, opens your mail
   app with the text and the zip's path).
-- Turning *New design preview* off saves, then goes to `/`.
+- Turning *Use the classic design* on saves, then goes to `/`.
 
 ---
 
@@ -887,14 +890,14 @@ auth-related).
 
 ### Error (v2)
 
-With *New design preview* on, `/error` renders the same title, message and
+In the v2 design, `/error` renders the same title, message and
 buttons centred in the v2 frame; **Login** shows only when there is a host.
 *Open .quilt directory* reports in the band under the appbar. An unknown
 address draws the same shape with *Page not found* and **Go home**.
 
 ### Opening a Quilt link (v2)
 
-`/remote-package` runs the link as it opens. With *New design preview* on it
+`/remote-package` runs the link as it opens. In the v2 design it
 shows a spinner in the v2 frame, with **Refresh** disabled, then replaces
 itself with the package page. A failure draws the error buttons (Reload page,
 Open .quilt directory, Go home) in the same frame; Reload page runs the link

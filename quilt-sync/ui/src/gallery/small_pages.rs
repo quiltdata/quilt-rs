@@ -84,7 +84,7 @@ fn critical(words: &'static str) -> AnyView {
 
 const NOTE: &str = "The pages a reader passes through: Log in, Set up on the first run, Error, \
     an address no route matches, and the deep link relay. Routed at /login, /setup, /error, any \
-    unknown address and /remote-package under New design preview. A failed command says so in \
+    unknown address and /remote-package in the v2 design. A failed command says so in \
     the band under the appbar.";
 
 #[component]

@@ -58,7 +58,7 @@ fn App() -> impl IntoView {
     }
 }
 
-/// `/` is the main page, and the design preview decides which one it is.
+/// `/` is the main page, and the design setting decides which one it is.
 ///
 /// Rendered here rather than redirected to: one route means every way home —
 /// the logo, a breadcrumb, a Cancel — arrives at the page the reader has switched
@@ -78,7 +78,7 @@ fn Home() -> impl IntoView {
     }
 }
 
-/// `/installed-package` is one package's screen, and the design preview decides
+/// `/installed-package` is one package's screen, and the design setting decides
 /// which one — the same answer, read the same way, as [`Home`].
 ///
 /// One route, the answer read in place, for the reason [`Home`] has it: every
@@ -101,7 +101,7 @@ fn PackagePage(read: SettingsRead) -> impl IntoView {
     }
 }
 
-/// `/commit` is the new revision's screen, and the design preview decides
+/// `/commit` is the new revision's screen, and the design setting decides
 /// which one, as for [`PackagePage`]: every way here is a link from a package
 /// page, so the commit page is the one beside the package page the reader has.
 #[component]
@@ -257,7 +257,7 @@ fn ByDesign(
 /// last time — `index.html` restores it before the first paint, and every
 /// `ByDesign` sets it from its own answer — so it is wrong only when the
 /// preference changed somewhere this app did not see, or when this read fails
-/// and the route falls back to v1 under a v2 marker. For a v2 reader that makes
+/// and the route falls back to v2 under a v1 marker. For a v2 reader that makes
 /// the frame `skeleton`, the v2 page's own first paint: the appbar, then the page
 /// in the shape it will take. The page then draws the same skeleton and fills it,
 /// so the frame is the first step of the page's own loading and nothing moves at
@@ -277,7 +277,7 @@ fn ByDesign(
 ///
 /// The ground is these routes' alone. `data-home-frame` is styled off
 /// `theme::set_v2`'s root marker (`_base.scss`), which records the reader's
-/// design preview — see [`design_preview`] — and a frame may paint from that
+/// design setting — see [`design_preview`] — and a frame may paint from that
 /// marker only where it predicts what is coming. That is here and nowhere else:
 /// `/` and `/installed-package` render v2 on exactly the value the marker is set
 /// from, so the ground the frame paints is the ground the page then keeps.
@@ -310,13 +310,12 @@ fn loading_actions() -> AnyView {
     components::appbar::appbar_actions(|| (), Signal::stored(true))
 }
 
-/// Whether the reader has opted into the redesigned application generation,
-/// given the settings fetch's outcome.
+/// Whether the app draws v2, given the settings fetch's outcome: yes unless the
+/// reader chose the classic design.
 ///
-/// `Err` — the fetch failed — falls back to v1, same as the preference being off:
-/// v1 is the generation that has always worked.
+/// `Err` — the fetch failed — is v2, the default.
 fn design_preview(settings: Result<&commands::SettingsData, &str>) -> bool {
-    settings.is_ok_and(|data| data.experimental.main_page_v2)
+    settings.map_or(true, |data| data.design == commands::Design::V2)
 }
 
 #[cfg(test)]
@@ -329,7 +328,7 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    fn settings_stub(main_page_v2: bool) -> SettingsData {
+    fn settings_stub(v2: bool) -> SettingsData {
         SettingsData {
             version: String::new(),
             home_dir: None,
@@ -346,7 +345,11 @@ mod tests {
             fswatcher: FsWatcherSettingsData::default(),
             experimental: ExperimentalSettingsData {
                 entire_package_sync: false,
-                main_page_v2,
+            },
+            design: if v2 {
+                commands::Design::V2
+            } else {
+                commands::Design::V1
             },
             ignore_rules: commands::IgnoreRulesData::default(),
         }
@@ -573,12 +576,12 @@ mod tests {
         assert!(!draws_v2(&el), "markup was {}", el.inner_html());
     }
 
-    /// A failed read is v1 here too, as it is on `/`.
+    /// A failed read is v2 here too, as it is on `/`.
     #[wasm_bindgen_test]
-    async fn the_package_route_is_v1_when_settings_cannot_be_read() {
+    async fn the_package_route_is_v2_when_settings_cannot_be_read() {
         let el = package_route(settings_fail).await;
-        assert!(draws_v1(&el), "markup was {}", el.inner_html());
-        assert!(!draws_v2(&el), "markup was {}", el.inner_html());
+        assert!(draws_v2(&el), "markup was {}", el.inner_html());
+        assert!(!draws_v1(&el), "markup was {}", el.inner_html());
     }
 
     /// `/commit` as the router draws it, over a stubbed settings read.
@@ -609,9 +612,9 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    async fn the_commit_route_is_v1_when_settings_cannot_be_read() {
+    async fn the_commit_route_is_v2_when_settings_cannot_be_read() {
         let el = commit_route(settings_fail).await;
-        assert!(draws_v1(&el), "markup was {}", el.inner_html());
+        assert!(draws_v2(&el), "markup was {}", el.inner_html());
     }
 
     /// `/settings` as the router draws it, over a stubbed settings read.
@@ -741,9 +744,9 @@ mod tests {
         assert!(!design_preview(Ok(&settings)));
     }
 
-    /// A failed read is v1: the generation that has always worked.
+    /// A failed read is v2, the default.
     #[test]
-    fn a_failed_settings_read_is_v1() {
-        assert!(!design_preview(Err("nope")));
+    fn a_failed_settings_read_is_v2() {
+        assert!(design_preview(Err("nope")));
     }
 }

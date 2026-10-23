@@ -1,6 +1,4 @@
 use leptos::prelude::*;
-use leptos_router::NavigateOptions;
-use leptos_router::hooks::use_navigate;
 
 use super::event_target_checked;
 use crate::commands;
@@ -8,43 +6,18 @@ use crate::components::Notification;
 
 // ── Experimental section ──
 
-/// Which opt-in a row owns.
-///
-/// The command takes one `Option` per flag and applies only what it is sent, so
-/// a row has to name its own slot and leave the rest `None`: a save must never
-/// reset a flag the row does not own.
-#[derive(Clone, Copy)]
-enum Flag {
-    EntirePackageSync,
-    MainPageV2,
-}
-
-impl Flag {
-    /// The slots a row can own, in the command's order.
-    fn only(self, value: bool) -> (Option<bool>, Option<bool>) {
-        let value = Some(value);
-        match self {
-            Self::EntirePackageSync => (value, None),
-            Self::MainPageV2 => (None, value),
-        }
-    }
-}
-
 /// Opt-ins for behaviour still being designed.
 ///
-/// Each row gates a *control* or a *page*, never behaviour already running:
-/// ticking one reveals something, and unticking it leaves whatever was written
-/// behind it written, so nothing a reader chose is destroyed by undoing a
-/// setting.
+/// Each row gates a *control*, never behaviour already running: ticking one
+/// reveals something, and unticking it leaves whatever was written behind it
+/// written, so nothing a reader chose is destroyed by undoing a setting.
 ///
 /// Every row here is a reader's to find, so work with nothing to show them yet
-/// gets no row at all. A page of the redesign gets none of its own either: it
-/// arrives under *New design preview*, the switch a reader has already turned
-/// on, rather than as one more row to find.
+/// gets no row at all. The design is not one of them: it has a section of its
+/// own.
 #[component]
 pub(super) fn ExperimentalSection(
     entire_package_sync: bool,
-    main_page_v2: bool,
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
 ) -> impl IntoView {
@@ -57,21 +30,8 @@ pub(super) fn ExperimentalSection(
                     description="Adds a per-package option to sync everything in a package, \
                                  instead of picking files."
                     enabled=entire_package_sync
-                    flag=Flag::EntirePackageSync
                     notification=notification
                     refetch=refetch
-                />
-                // `navigate_to="/"`: `/` is the route that asks which design
-                // generation is on, and saving the flag alone changed nothing on
-                // screen — which looked like it needed an app restart.
-                <ExperimentalToggle
-                    label="New design preview"
-                    description="The redesigned QuiltSync, wherever it is ready."
-                    enabled=main_page_v2
-                    flag=Flag::MainPageV2
-                    notification=notification
-                    refetch=refetch
-                    navigate_to="/"
                 />
             </dl>
         </section>
@@ -82,24 +42,17 @@ pub(super) fn ExperimentalSection(
 ///
 /// A bare pair, with nothing around it: the section's list is a two-column grid,
 /// and a wrapper would take the row out of it.
-///
-/// `navigate_to` is for a flag whose effect is not on this screen, so saving it
-/// otherwise looks like nothing happened. A row without one saves in place.
 #[component]
 fn ExperimentalToggle(
     label: &'static str,
     description: &'static str,
-    /// What is stored. The row owns the live signal over it: no row reads
-    /// another's state, so there is nothing for the section to hold.
+    /// What is stored. The row owns the live signal over it.
     enabled: bool,
-    flag: Flag,
     notification: RwSignal<Option<Notification>>,
     refetch: Trigger,
-    #[prop(optional)] navigate_to: Option<&'static str>,
 ) -> impl IntoView {
     let enabled = RwSignal::new(enabled);
     let saving = RwSignal::new(false);
-    let navigate = use_navigate();
 
     let on_toggle = move |ev: leptos::ev::Event| {
         let new_enabled = event_target_checked(&ev);
@@ -108,18 +61,13 @@ fn ExperimentalToggle(
         }
         saving.set(true);
         enabled.set(new_enabled);
-        let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
-            let (entire_package_sync, main_page_v2) = flag.only(new_enabled);
-            match commands::update_experimental_settings(entire_package_sync, main_page_v2).await {
+            match commands::update_experimental_settings(Some(new_enabled)).await {
                 Ok(()) => {
                     notification.set(Some(Notification::Success(
                         "Experimental settings saved".into(),
                     )));
                     refetch.notify();
-                    if let Some(route) = navigate_to {
-                        navigate(route, NavigateOptions::default());
-                    }
                 }
                 Err(e) => {
                     // Revert the optimistic toggle so the UI doesn't drift
@@ -151,43 +99,23 @@ fn ExperimentalToggle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{element_saying, mount};
+    use crate::test_support::mount;
     use wasm_bindgen_test::*;
 
-    /// The section over its stored answers.
-    ///
-    /// Inside a `Router` because every row asks for `use_navigate`. The
-    /// notification signal and the trigger are the section's own required
-    /// wiring; no assertion here reads either.
-    fn mount_section(preview: bool) -> web_sys::Element {
-        mount(move || {
-            view! {
-                <leptos_router::components::Router>
-                    <ExperimentalSection
-                        entire_package_sync=false
-                        main_page_v2=preview
-                        notification=RwSignal::new(None)
-                        refetch=Trigger::new()
-                    />
-                </leptos_router::components::Router>
-            }
-        })
-    }
-
-    /// The reader sees one design switch, named for what it selects rather than
-    /// for the page that introduced it.
+    /// The design row has left: it is a section of its own.
     #[wasm_bindgen_test]
-    fn the_reader_row_is_named_for_the_design_not_the_page() {
-        let root = mount_section(false);
-        element_saying(&root, "New design preview");
+    fn only_entire_package_sync_is_experimental() {
+        let root = mount(|| {
+            view! {
+                <ExperimentalSection
+                    entire_package_sync=false
+                    notification=RwSignal::new(None)
+                    refetch=Trigger::new()
+                />
+            }
+        });
         let words = root.text_content().unwrap_or_default();
-        assert!(
-            !words.contains("New main page"),
-            "the old page-named label is gone"
-        );
-        assert!(
-            !words.contains("Unfinished package page"),
-            "and the rebuilt package screen is not offered at all"
-        );
+        assert!(words.contains("Enable entire-package sync"));
+        assert!(!words.contains("design"), "{words}");
     }
 }
