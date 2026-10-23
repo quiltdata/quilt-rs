@@ -107,6 +107,7 @@ jobs:
       - uses: ./.github/actions/setup-rust-minimal
         with:
           cache-target: release
+          cache-key: ${{ matrix.target }}
           targets: ${{ matrix.target }}
 
       - name: Build quilt-cli

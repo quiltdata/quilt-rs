@@ -5,6 +5,10 @@ inputs:
     description: "Build profile the job compiles (debug or release); each gets its own cache"
     required: false
     default: "debug"
+  cache-key:
+    description: "Extra cache key part, for matrix legs that differ only in the target they build"
+    required: false
+    default: ""
   targets:
     description: "Additional targets to install"
     required: false
@@ -24,6 +28,6 @@ runs:
       uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       with:
         # The job id is in the key already, but `quality` is a job in two workflows.
-        key: ${{ github.workflow }}-${{ inputs.cache-target }}
+        key: ${{ github.workflow }}-${{ inputs.cache-target }}${{ inputs.cache-key && format('-{0}', inputs.cache-key) || '' }}
         # Pull requests restore main's caches and never write their own.
         save-if: ${{ github.ref == 'refs/heads/main' }}
