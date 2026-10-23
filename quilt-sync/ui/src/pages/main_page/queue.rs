@@ -149,7 +149,10 @@ pub fn derive_queue(
         // readable and unreadable buckets. A denial with no bucket to name
         // becomes its own row instead (ruling 3): a cause keyed on a bucket
         // cannot name one that is absent.
+        // With no host the identity is this computer's AWS one, which a role
+        // switch in Accounts cannot change: such a denial stays a row too.
         if matches!(package.state, PackageState::RoleDenied { .. })
+            && package.host.is_some()
             && let Some(bucket) = package.bucket.as_deref()
         {
             role_denied_groups.entry(bucket).or_default().push(package);
@@ -299,7 +302,7 @@ fn role_denied_text(state: &PackageState, host: Option<&str>, bucket: &str) -> S
 /// `Unknown` is a state that could not be read.
 /// `RoleDenied` sorts last only to keep this match total: R2 groups every
 /// denial by bucket, so a `RoleDenied` package never reaches `rows` unless
-/// its bucket is absent, and a denial is not unimportant.
+/// its bucket or host is absent, and a denial is not unimportant.
 fn precedence(state: &PackageState) -> u8 {
     match state {
         PackageState::PullConflict { .. } => 0,
@@ -926,6 +929,26 @@ mod tests {
             1,
             "it is still a row — we could not tell, and that is worth saying"
         );
+    }
+
+    #[test]
+    fn a_denial_with_no_host_is_its_own_row_with_no_role_to_switch() {
+        // A bucket with no catalog is read on the AWS identity of this
+        // computer. Accounts cannot change that identity, so the denial is not
+        // grouped under a cause that points there.
+        let state = PackageState::RoleDenied { role: None };
+        let mut package = pkg("a/one", state.clone(), None);
+        package.bucket = Some("bare-bucket".to_string());
+        let items = derive_queue(&[package], &[]);
+
+        assert_eq!(
+            items,
+            vec![QueueItem::Package {
+                namespace: ns("a/one"),
+                state: state.clone(),
+            }]
+        );
+        assert_eq!(render(&state, Site::QueueRow).action, None);
     }
 
     #[test]

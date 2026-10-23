@@ -102,9 +102,13 @@ pub(super) fn classify_s3_error(
     fallback: fn(String) -> S3ErrorKind,
 ) -> S3ErrorKind {
     match code {
-        Some("InvalidAccessKeyId" | "ExpiredToken" | "InvalidToken" | "InvalidClientTokenId") => {
-            S3ErrorKind::InvalidCredentials(described.to_string())
-        }
+        Some(
+            "InvalidAccessKeyId"
+            | "ExpiredToken"
+            | "InvalidToken"
+            | "InvalidClientTokenId"
+            | "SignatureDoesNotMatch",
+        ) => S3ErrorKind::InvalidCredentials(described.to_string()),
         // Only codes meaning a missing *object* belong here. `push` reads
         // `is_not_found` on a package's `latest` tag as "no revisions yet, so
         // this is a first push" (flow/push.rs), so a code that means a missing
@@ -999,6 +1003,8 @@ mod tests {
             "InvalidAccessKeyId",
             "InvalidToken",
             "InvalidClientTokenId",
+            // A wrong secret key: the request was not signed by the key it names.
+            "SignatureDoesNotMatch",
         ] {
             let err = classify_s3_error(
                 Some(code),
