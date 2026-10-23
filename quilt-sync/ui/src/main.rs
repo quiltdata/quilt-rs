@@ -42,6 +42,7 @@ fn App() -> impl IntoView {
         <components::QuitPrompt />
         <Router>
             <WebNavigation />
+            <Bench />
             <Routes fallback=|| view! { <NotFoundPage read=read_settings /> }>
                 <Route path=path!("/") view=|| view! { <Home /> } />
                 <Route path=path!("/commit") view=|| view! { <CommitPage read=read_settings /> } />
@@ -59,23 +60,32 @@ fn App() -> impl IntoView {
     }
 }
 
-/// In a plain browser, go where the backend would have pointed the Tauri window
-/// (after a login, on a deep link). Inside Tauri it navigates the window itself.
+/// Go where the backend points (after a login, on a deep link), in the window
+/// and in a browser alike.
 #[component]
 fn WebNavigation() -> impl IntoView {
     #[derive(serde::Deserialize)]
     struct Navigate {
         url: String,
     }
-    if quilt_sync_ui::tauri::is_web_mode() {
+    let navigate = leptos_router::hooks::use_navigate();
+    let listener = quilt_sync_ui::tauri::listen::<Navigate>("navigate", move |payload| {
+        navigate(
+            &quilt_sync_ui::tauri::strip_origin(&payload.url),
+            leptos_router::NavigateOptions::default(),
+        );
+    });
+    on_cleanup(move || drop(listener));
+}
+
+/// A timing run, when the desktop app asked for one (see `WEB-MVP.md`).
+#[component]
+fn Bench() -> impl IntoView {
+    if let Some(namespace) = quilt_sync_ui::bench::namespace() {
         let navigate = leptos_router::hooks::use_navigate();
-        let listener = quilt_sync_ui::tauri::listen::<Navigate>("navigate", move |payload| {
-            navigate(
-                &quilt_sync_ui::tauri::strip_origin(&payload.url),
-                leptos_router::NavigateOptions::default(),
-            );
-        });
-        on_cleanup(move || drop(listener));
+        leptos::task::spawn_local(quilt_sync_ui::bench::run(namespace, move |to| {
+            navigate(to, leptos_router::NavigateOptions::default());
+        }));
     }
 }
 

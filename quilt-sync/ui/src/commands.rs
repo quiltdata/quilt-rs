@@ -916,10 +916,21 @@ pub async fn copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> Resul
         text: String,
         uri: Option<S3PackageUri>,
     }
-    // In a plain browser the backend has no clipboard the reader can paste from.
+    // Over the socket the backend copies when it is the desktop app (the
+    // window, or a browser on the same machine); a headless one has no
+    // clipboard the reader can paste from, so the browser copies.
     if tauri::is_web_mode() {
-        tauri::copy_in_browser(&text).await?;
-        return Ok("Successfully copied to clipboard".to_string());
+        let args = Args {
+            text: text.clone(),
+            uri,
+        };
+        return match tauri::invoke("copy_to_clipboard", &args).await {
+            Err(err) if err == tauri::NOT_IN_BROWSER => {
+                tauri::copy_in_browser(&text).await?;
+                Ok("Successfully copied to clipboard".to_string())
+            }
+            other => other,
+        };
     }
     tauri::invoke("copy_to_clipboard", &Args { text, uri }).await
 }

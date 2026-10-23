@@ -11,20 +11,20 @@ mod ws;
 
 /// Whether this page talks to the backend over the WebSocket rather than Tauri.
 ///
-/// Tauri wins whenever its bridge exists. Without it, the WebSocket is used only
-/// when the page carries a session token (`?t=` on the first URL, saved in
-/// `sessionStorage`), which only the `QuiltSync` server hands out. Anything else —
-/// a test harness, the gallery, a page opened from disk — keeps the old
-/// no-bridge behaviour: every call fails quietly.
+/// The WebSocket is used whenever the page carries a session token (`?t=` on
+/// the first URL, saved in `sessionStorage`), which only the `QuiltSync` server
+/// hands out: in a browser and in the desktop window alike, which loads the
+/// server's page and may still have a `window.__TAURI__` injected. The bundled
+/// page (`tauri://`) has no token and keeps IPC. Anything else — a test
+/// harness, the gallery, a page opened from disk — keeps the old no-bridge
+/// behaviour: every call fails quietly.
 pub fn is_web_mode() -> bool {
-    !has_tauri_bridge() && ws::token().is_some()
+    ws::token().is_some()
 }
 
-fn has_tauri_bridge() -> bool {
-    web_sys::window()
-        .and_then(|w| js_sys::Reflect::has(&w, &"__TAURI__".into()).ok())
-        .unwrap_or(false)
-}
+/// What the backend answers a desktop-only command when it is not the
+/// desktop app.
+pub const NOT_IN_BROWSER: &str = "not available in the browser";
 
 /// Copy `text` with the browser's clipboard API. For web mode, where there is no
 /// native clipboard to call.
@@ -131,6 +131,40 @@ pub async fn invoke_unit<R: DeserializeOwned>(cmd: &str) -> Result<R, String> {
         .await
         .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
     serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
+}
+
+/// For a timing run: the size in bytes of the JSON a command answers with,
+/// and how long this side takes to decode it into `R`, timed with `now`.
+///
+/// Over the socket that is what [`ws`] does with a reply: parse the message,
+/// take `ok` back to text, parse that into `R`. Over IPC it is `JSON.parse` of
+/// the body (which Tauri's own script does) and `serde_wasm_bindgen`.
+pub async fn probe_decode<A: Serialize, R: DeserializeOwned>(
+    cmd: &str,
+    args: &A,
+    now: fn() -> f64,
+) -> Result<(usize, f64), String> {
+    let js_err = |e: JsValue| e.as_string().unwrap_or_else(|| format!("{e:?}"));
+    if is_web_mode() {
+        let args = serde_json::to_value(args).map_err(|e| e.to_string())?;
+        let text = ws::request(cmd, args).await?;
+        let message = format!("{{\"id\":1,\"ok\":{text}}}");
+        let started = now();
+        let mut value: serde_json::Value =
+            serde_json::from_str(&message).map_err(|e| e.to_string())?;
+        let ok = value.get_mut("ok").map(serde_json::Value::take);
+        let ok = ok.unwrap_or_default().to_string();
+        let _: R = serde_json::from_str(&ok).map_err(|e| e.to_string())?;
+        return Ok((text.len(), now() - started));
+    }
+    let args_js = serde_wasm_bindgen::to_value(args).map_err(|e| e.to_string())?;
+    let promise = tauri_invoke_catching(cmd, args_js).map_err(js_err)?;
+    let result = JsFuture::from(promise).await.map_err(js_err)?;
+    let text: String = js_sys::JSON::stringify(&result).map_err(js_err)?.into();
+    let started = now();
+    let parsed = js_sys::JSON::parse(&text).map_err(js_err)?;
+    let _: R = serde_wasm_bindgen::from_value(parsed).map_err(|e| e.to_string())?;
+    Ok((text.len(), now() - started))
 }
 
 async fn invoke_ws<R: DeserializeOwned>(cmd: &str, args: serde_json::Value) -> Result<R, String> {

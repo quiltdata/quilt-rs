@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use axum::Router;
 use axum::extract::Query;
@@ -167,6 +168,7 @@ struct Request {
 async fn session(socket: WebSocket, services: Arc<Services>) {
     // Subscribe before anything else so no event is missed after the upgrade.
     let mut events = services.events.subscribe();
+    services.web_clients.fetch_add(1, Ordering::SeqCst);
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
@@ -220,16 +222,29 @@ async fn session(socket: WebSocket, services: Arc<Services>) {
         let services = Arc::clone(&services);
         let tx = tx.clone();
         tokio::spawn(async move {
+            let started = std::time::Instant::now();
             let reply = match dispatch(&services, &request.cmd, request.args).await {
                 Ok(ok) => json!({ "id": request.id, "ok": ok }),
                 Err(err) => json!({ "id": request.id, "err": err }),
             };
-            let _ = tx.send(reply.to_string());
+            let ran = started.elapsed();
+            let text = reply.to_string();
+            if std::env::var_os("QUILTSYNC_BENCH").is_some() {
+                info!(
+                    "ws {}: ran {:?}, serialized {:?}, {} bytes",
+                    request.cmd,
+                    ran,
+                    started.elapsed().saturating_sub(ran),
+                    text.len()
+                );
+            }
+            let _ = tx.send(text);
         });
     }
 
     forwarder.abort();
     drop(tx);
+    services.web_clients.fetch_sub(1, Ordering::SeqCst);
     // In-flight commands hold senders; the writer ends when they finish.
     let _ = writer.await;
 }
