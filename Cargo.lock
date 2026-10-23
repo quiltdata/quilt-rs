@@ -5832,7 +5832,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-cli"
-version = "0.37.2"
+version = "0.37.3"
 dependencies = [
  "clap",
  "dirs",
@@ -5853,7 +5853,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-rs"
-version = "0.47.0"
+version = "0.48.0"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -5901,7 +5901,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-sync"
-version = "0.24.0-dev"
+version = "0.24.0"
 dependencies = [
  "chrono",
  "dotenv",
