@@ -77,13 +77,31 @@ pub async fn serve(services: Arc<Services>, bind: SocketAddr, token: String) -> 
         services,
         token: token.into(),
     };
+    let listener = tokio::net::TcpListener::bind(bind).await?;
+    let addr = listener.local_addr()?;
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .fallback_service(statics)
         .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind(bind).await?;
-    let addr = listener.local_addr()?;
+    let app = if addr.ip().is_loopback() {
+        let port = addr.port();
+        app.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| async move {
+                let host = request
+                    .headers()
+                    .get(header::HOST)
+                    .and_then(|h| h.to_str().ok());
+                if host_allowed(host, port) {
+                    next.run(request).await
+                } else {
+                    StatusCode::FORBIDDEN.into_response()
+                }
+            },
+        ))
+    } else {
+        warn!("web UI: bound to {addr}, so the Host header check is off");
+        app
+    };
     tokio::spawn(async move {
         if let Err(err) = axum::serve(listener, app).await {
             error!("web UI server stopped: {err}");
@@ -91,6 +109,18 @@ pub async fn serve(services: Arc<Services>, bind: SocketAddr, token: String) -> 
     });
     info!("web UI listening on {addr}");
     Ok(addr)
+}
+
+/// Whether `host` (the `Host` header) names this loopback server, which
+/// defeats DNS rebinding: a page on another name that resolves to 127.0.0.1
+/// still sends its own name.
+fn host_allowed(host: Option<&str>, port: u16) -> bool {
+    let Some(host) = host else {
+        return false;
+    };
+    ["127.0.0.1", "localhost", "[::1]"]
+        .iter()
+        .any(|name| host.eq_ignore_ascii_case(&format!("{name}:{port}")))
 }
 
 /// An `Origin`, when sent, must name the same host and port the request was
@@ -215,6 +245,30 @@ mod tests {
             h.insert(header::ORIGIN, origin.parse().unwrap());
         }
         h
+    }
+
+    #[test]
+    fn host_must_be_loopback_on_our_port() {
+        for ok in [
+            "127.0.0.1:7878",
+            "localhost:7878",
+            "LocalHost:7878",
+            "[::1]:7878",
+        ] {
+            assert!(host_allowed(Some(ok), 7878), "{ok}");
+        }
+        for bad in [
+            "evil.example:7878",
+            "localhost",
+            "127.0.0.1",
+            "localhost:9999",
+            "127.0.0.2:7878",
+            "localhost.evil.example:7878",
+            "",
+        ] {
+            assert!(!host_allowed(Some(bad), 7878), "{bad}");
+        }
+        assert!(!host_allowed(None, 7878));
     }
 
     #[test]
