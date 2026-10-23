@@ -19,7 +19,8 @@ machine that doesn't have the source tree.
 ## Headless
 
 ```sh
-cargo run -p quilt-sync -- --headless [--bind 127.0.0.1] [--port 7878] [--data-dir <path>]
+cargo run -p quilt-sync -- --headless \
+  [--bind 127.0.0.1] [--port 7878] [--data-dir <path>]
 ```
 
 It prints `QuiltSync headless: http://localhost:7878/?t=<token>`. Open that
@@ -30,7 +31,6 @@ URL; the UI keeps the token for the session. Ctrl-C stops it.
   plain HTTP. For a remote machine, prefer the default bind and an SSH tunnel:
   `ssh -L 7878:localhost:7878 <host>`, then open the printed URL locally.
 - `--port <n>`: `7878` by default; `0` picks a free port.
-
 - `--data-dir <path>`: the data folder. By default it is the desktop app's
   (`~/Library/Application Support/com.quiltdata.quilt-sync` on macOS). The
   environment variable `QUILTSYNC_DATA_DIR` sets it too, in both modes
@@ -126,7 +126,6 @@ serves a file from the UI folder, or `index.html` when there is none.
   `not available in the browser`. The update check reads the updater feed
   (`https://www.quilt.bio/hubfs/latest.json`, copied from `tauri.conf.json`)
   and the notice shows a newer version, but its install button fails.
-
 - Headless, the desktop-only commands (OAuth login, the folder picker, the
   clipboard, installing an update, confirming a quit) answer
   `not available in the browser`, and the UI copies with the browser's
