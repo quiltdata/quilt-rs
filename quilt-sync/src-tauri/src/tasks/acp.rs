@@ -215,21 +215,17 @@ fn answer(
         .flatten()
         .map(|location| location.path.as_path())
         .collect();
-    // `Cancelled` would end the turn, so a direction offered only as "always"
-    // is still answered.
-    let kinds = if permits(trust_all, root, &locations) {
-        [
-            PermissionOptionKind::AllowOnce,
-            PermissionOptionKind::AllowAlways,
-        ]
-    } else {
-        [
-            PermissionOptionKind::RejectOnce,
-            PermissionOptionKind::RejectAlways,
-        ]
-    };
-    let chosen = kinds
+    // Never "allow always": it would pass the agent's later requests unchecked.
+    // Nor `Cancelled`, which ends the turn: a request with no once-option to
+    // allow is refused instead.
+    let refuse = [
+        PermissionOptionKind::RejectOnce,
+        PermissionOptionKind::RejectAlways,
+    ];
+    let allow = permits(trust_all, root, &locations).then_some(PermissionOptionKind::AllowOnce);
+    let chosen = allow
         .iter()
+        .chain(&refuse)
         .find_map(|kind| request.options.iter().find(|option| option.kind == *kind));
     let outcome = match chosen {
         Some(option) => RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
@@ -343,7 +339,7 @@ mod tests {
     }
 
     #[test]
-    fn a_direction_offered_only_as_always_is_still_answered() {
+    fn with_only_always_options_a_request_is_refused_never_allowed_for_good() {
         let mut request = permission_request(&["out.md"]);
         request.options.retain(|option| {
             !matches!(
@@ -351,14 +347,8 @@ mod tests {
                 PermissionOptionKind::AllowOnce | PermissionOptionKind::RejectOnce
             )
         });
-        let root = Path::new(ROOT);
         assert_eq!(
-            chosen(&answer(&request, false, root)).as_deref(),
-            Some("always-accept")
-        );
-        request.tool_call.fields.locations = Some(vec![ToolCallLocation::new("/etc/hosts")]);
-        assert_eq!(
-            chosen(&answer(&request, false, root)).as_deref(),
+            chosen(&answer(&request, true, Path::new(ROOT))).as_deref(),
             Some("always-reject")
         );
     }
