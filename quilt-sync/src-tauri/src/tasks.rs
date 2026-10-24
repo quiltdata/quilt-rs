@@ -252,7 +252,9 @@ async fn clean_at_head<M: QuiltModel>(
 /// Put `document` in the package's folder: a sparse copy lists it without
 /// having it on disk. A file already there, tracked or not, is left alone; one
 /// that differs from the revision fails the clean-tree walk. Anything else at
-/// that path is not a file the walk compares, so the download refuses it.
+/// that path is not a file the walk compares, so the download refuses it. The
+/// walk skips symlinks, and a download through a linked folder would land
+/// outside the package, so a link anywhere on the path stops the claim.
 async fn download<M: QuiltModel>(
     model: &M,
     pkg: &quilt::InstalledPackage,
@@ -261,12 +263,25 @@ async fn download<M: QuiltModel>(
     document: &str,
 ) -> Result<(), Error> {
     let path = PathBuf::from(document);
-    let on_disk = model.package_home(&pkg.namespace).await?.join(&path);
-    let is_file = tokio::fs::metadata(&on_disk)
-        .await
-        .is_ok_and(|meta| meta.is_file());
-    if lineage.paths.contains_key(&path) || is_file {
+    if lineage.paths.contains_key(&path) {
         return Ok(());
+    }
+    let home = model.package_home(&pkg.namespace).await?;
+    let target = home.join(&path);
+    let mut on_disk = home;
+    for part in path.components() {
+        on_disk.push(part);
+        let Ok(meta) = tokio::fs::symlink_metadata(&on_disk).await else {
+            break;
+        };
+        if meta.is_symlink() {
+            return Err(Error::General(format!(
+                "{document} is reached through a symlink"
+            )));
+        }
+        if on_disk == target && meta.is_file() {
+            return Ok(());
+        }
     }
     let report = model.locked_package_install_paths(locked, &[path]).await?;
     if report.skipped.is_empty() {

@@ -138,10 +138,13 @@ impl Fixture {
                         user_meta: Some(meta.clone()),
                         ..quilt::manifest::ManifestHeader::default()
                     },
-                    rows: vec![quilt::manifest::ManifestRow {
-                        logical_key: PathBuf::from("TASK.md"),
-                        ..quilt::manifest::ManifestRow::default()
-                    }],
+                    rows: ["TASK.md", "sub/TASK.md"]
+                        .into_iter()
+                        .map(|key| quilt::manifest::ManifestRow {
+                            logical_key: PathBuf::from(key),
+                            ..quilt::manifest::ManifestRow::default()
+                        })
+                        .collect(),
                 })
             });
         model
@@ -153,6 +156,7 @@ impl Fixture {
             Ok(status.clone())
         });
         let events = Arc::clone(&self.events);
+        let home = self.home();
         model
             .expect_locked_package_install_paths()
             .returning(move |_, paths| {
@@ -161,6 +165,10 @@ impl Fixture {
                         .lock()
                         .unwrap()
                         .push(format!("download {}", path.display()));
+                    // As the engine does, refuse to write over anything there.
+                    if std::fs::symlink_metadata(home.join(path)).is_ok() {
+                        return Err(Error::General(format!("{} exists", path.display())));
+                    }
                 }
                 Ok(quilt::flow::InstallPathsReport::default())
             });
@@ -269,10 +277,50 @@ async fn a_folder_named_like_the_document_is_no_document() -> Result<(), Error> 
         .await;
 
     assert_eq!(
-        fixture.events.lock().unwrap().first().map(String::as_str),
-        Some("download TASK.md"),
+        *fixture.events.lock().unwrap(),
+        ["download TASK.md"],
         "the revision's document is asked for, and the download refuses the folder"
     );
+    assert!(fixture.runs.lock().unwrap().is_empty(), "nothing runs");
+    Ok(())
+}
+
+/// The walk skips symlinks, so a linked document would pass it unread.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_document_reached_through_a_symlink_is_no_document() -> Result<(), Error> {
+    // The document itself a link, and the document under a linked folder.
+    for (document, link) in [("TASK.md", "TASK.md"), ("sub/TASK.md", "sub")] {
+        let fixture = Fixture::new();
+        let elsewhere = fixture.dir.path().join("elsewhere");
+        tokio::fs::create_dir_all(&elsewhere).await?;
+        tokio::fs::write(elsewhere.join("TASK.md"), "other orders").await?;
+        tokio::fs::create_dir_all(fixture.home()).await?;
+        let target = if link == "sub" {
+            elsewhere.clone()
+        } else {
+            elsewhere.join("TASK.md")
+        };
+        tokio::fs::symlink(target, fixture.home().join(link)).await?;
+        let mut head = unclaimed();
+        head["agent_exec"]["document"] = json!(document);
+
+        fixture.check(head, fresh(BTreeMap::new()), true).await;
+
+        assert_eq!(
+            fixture.metas(),
+            [] as [Value; 0],
+            "{document}: nothing is claimed"
+        );
+        assert!(
+            !fixture
+                .events
+                .lock()
+                .unwrap()
+                .contains(&"download sub/TASK.md".to_string()),
+            "nothing is downloaded through the linked folder"
+        );
+    }
     Ok(())
 }
 
