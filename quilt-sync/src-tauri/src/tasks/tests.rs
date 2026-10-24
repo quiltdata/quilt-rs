@@ -260,6 +260,23 @@ async fn a_document_already_in_the_folder_is_not_downloaded_again() -> Result<()
 }
 
 #[tokio::test]
+async fn a_folder_named_like_the_document_is_no_document() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    tokio::fs::create_dir_all(fixture.home().join("TASK.md")).await?;
+
+    fixture
+        .check(unclaimed(), fresh(BTreeMap::new()), true)
+        .await;
+
+    assert_eq!(
+        fixture.events.lock().unwrap().first().map(String::as_str),
+        Some("download TASK.md"),
+        "the revision's document is asked for, and the download refuses the folder"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_claim_that_did_not_become_latest_starts_no_run() {
     let fixture = Fixture::new();
 
@@ -386,4 +403,113 @@ async fn the_claim_is_still_latest_only_by_a_fresh_read() {
         claim_is_latest(&stale, &namespace(), "h0").await.is_err(),
         "an unread latest is no answer"
     );
+}
+
+fn claimed_run(tasks: &Tasks) -> Run {
+    let claim = Claim {
+        invocation_id: "inv".to_string(),
+        claimed_at: "t".to_string(),
+    };
+    Run {
+        namespace: namespace(),
+        home: PathBuf::new(),
+        document: "TASK.md".to_string(),
+        agent: settings().agents["kiro"].clone(),
+        claimed_meta: agent_exec::with_claim(&unclaimed(), claim.claimed()),
+        claim,
+        claim_hash: "h1".to_string(),
+        workflow: WorkflowIntent::Named("gate".to_string()),
+        _hold: tasks.hold(&namespace()),
+    }
+}
+
+/// A package whose tree holds the agent's `out.md`, recording each publish's
+/// metadata and changed paths in `published`.
+fn finishing_model(published: &Published) -> MockQuiltModel {
+    let written = BTreeMap::from([(
+        PathBuf::from("out.md"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    )]);
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_package().returning(|ns| {
+        Ok(Some(
+            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns.clone()),
+        ))
+    });
+    model
+        .expect_lock_package()
+        .returning(|p| Ok(p.namespace.clone()));
+    model
+        .expect_locked_package_status()
+        .returning(move |_, _| Ok(fresh(written.clone())));
+    model
+        .expect_resolve_workflow()
+        .withf(|_, intent| *intent == WorkflowIntent::Named("gate".to_string()))
+        .returning(|_, _| Ok(None));
+    let published = Arc::clone(published);
+    model
+        .expect_locked_package_publish()
+        .returning(move |_, _, meta, _, _, status| {
+            let UserMeta::Set(meta) = meta else {
+                panic!("a task revision sets its metadata");
+            };
+            let paths = status
+                .map(|s| s.changes.keys().map(|p| p.display().to_string()).collect())
+                .unwrap_or_default();
+            published.lock().unwrap().push((meta, paths));
+            Ok(quilt::PublishOutcome::CommittedAndPushed(
+                quilt::PushOutcome {
+                    manifest_uri: quilt_uri::ManifestUri {
+                        bucket: "quilt-dev".to_string(),
+                        namespace: namespace(),
+                        hash: "h2".to_string(),
+                        origin: None,
+                    },
+                    certified_latest: true,
+                },
+            ))
+        });
+    model
+}
+
+#[tokio::test]
+async fn the_last_revision_publishes_the_agents_work_under_the_same_claim() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    let model = finishing_model(&fixture.published);
+    let done = acp::RunOutcome::Done {
+        session_id: "s1".to_string(),
+        stop_reason: "end_turn".to_string(),
+    };
+
+    finish(&model, &claimed_run(&fixture.tasks), &done).await?;
+
+    let published = fixture.published.lock().unwrap();
+    assert_eq!(published.len(), 1);
+    let (meta, paths) = &published[0];
+    assert_eq!(
+        *meta,
+        agent_exec::with_claim(
+            &unclaimed(),
+            json!({ "status": "done", "invocation_id": "inv", "claimed_at": "t",
+                    "session_id": "s1", "stop_reason": "end_turn" })
+        )
+    );
+    assert_eq!(*paths, BTreeSet::from(["out.md".to_string()]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_superseded_run_publishes_nothing() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    let model = finishing_model(&fixture.published);
+
+    finish(
+        &model,
+        &claimed_run(&fixture.tasks),
+        &acp::RunOutcome::Superseded,
+    )
+    .await?;
+
+    assert_eq!(fixture.metas(), [] as [Value; 0]);
+    Ok(())
 }

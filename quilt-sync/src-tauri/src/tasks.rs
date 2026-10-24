@@ -250,8 +250,9 @@ async fn clean_at_head<M: QuiltModel>(
 }
 
 /// Put `document` in the package's folder: a sparse copy lists it without
-/// having it on disk. A copy already there, tracked or not, is left alone; one
-/// that differs from the revision fails the clean-tree walk.
+/// having it on disk. A file already there, tracked or not, is left alone; one
+/// that differs from the revision fails the clean-tree walk. Anything else at
+/// that path is not a file the walk compares, so the download refuses it.
 async fn download<M: QuiltModel>(
     model: &M,
     pkg: &quilt::InstalledPackage,
@@ -260,9 +261,11 @@ async fn download<M: QuiltModel>(
     document: &str,
 ) -> Result<(), Error> {
     let path = PathBuf::from(document);
-    if lineage.paths.contains_key(&path)
-        || tokio::fs::try_exists(model.package_home(&pkg.namespace).await?.join(&path)).await?
-    {
+    let on_disk = model.package_home(&pkg.namespace).await?.join(&path);
+    let is_file = tokio::fs::metadata(&on_disk)
+        .await
+        .is_ok_and(|meta| meta.is_file());
+    if lineage.paths.contains_key(&path) || is_file {
         return Ok(());
     }
     let report = model.locked_package_install_paths(locked, &[path]).await?;
