@@ -805,9 +805,15 @@ pub(crate) async fn run_once(
         pull_enabled,
         push_enabled,
     };
+    let tasks = inner.tasks.settings().await;
     let now = Instant::now();
     for pkg in packages {
-        sync_package(model, roles, inner, &pkg, &run, now).await;
+        let pass = sync_package(model, roles, inner, &pkg, &run, now).await;
+        if let Some(tasks) = tasks.as_ref()
+            && pass == Pass::Done
+        {
+            crate::tasks::check(model, &inner.tasks, tasks, &pkg).await;
+        }
     }
     inner.reschedule_publish();
 
@@ -826,7 +832,7 @@ pub(crate) struct PassSettings {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Pass {
     /// It can't be synced now: no remote, no catalog origin, paused, in
-    /// backoff, or its lineage could not be read.
+    /// backoff, held by a task run, or its lineage could not be read.
     Skipped,
     /// Another writer holds it.
     Busy,
@@ -846,6 +852,11 @@ pub(crate) async fn sync_package(
     now: Instant,
 ) -> Pass {
     let namespace = pkg.namespace.clone();
+
+    // A run's last revision must follow its claim with nothing between.
+    if inner.tasks.holds(&namespace) {
+        return Pass::Skipped;
+    }
 
     // Skip Local / misconfigured packages without a network round-trip.
     let lineage = match model.get_installed_package_lineage(pkg).await {

@@ -31,6 +31,7 @@ mod publish_settings;
 mod quilt;
 mod quit;
 mod routes;
+mod tasks;
 mod telemetry;
 mod toast;
 mod tray;

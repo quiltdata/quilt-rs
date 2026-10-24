@@ -62,6 +62,7 @@ fn make_inner(settings: AutosyncSettings) -> WatcherInner {
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
     }
 }
@@ -482,6 +483,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -584,6 +586,7 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -670,6 +673,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         // not have set it.
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -778,6 +782,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -890,6 +895,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -988,6 +994,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -1143,6 +1150,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -1217,6 +1225,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -1378,6 +1387,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: crate::autopull::last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
@@ -2253,4 +2263,45 @@ async fn a_tick_with_nothing_to_transfer_never_sets_the_activity() -> Result<(),
          not even for an instant"
     );
     Ok(())
+}
+
+/// Between a task's claim and its last revision, neither the check nor the
+/// publish timer may pull or publish the package.
+#[tokio::test]
+async fn a_package_held_by_a_task_run_is_not_synced() {
+    let ns: Namespace = ("acme", "demo").into();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: Some(fixtures::host()),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
+    let mut model = MockQuiltModel::new();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|ns| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone()),
+        ))
+    });
+    // Another writer holds the lock, so an unheld package comes back `Busy`.
+    model.expect_try_lock_package().returning(|_| Ok(None));
+    let inner = make_inner(enabled());
+    let pkg =
+        quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone());
+    let run = PassSettings {
+        publish: PublishSettings::default(),
+        wait: Duration::ZERO,
+        pull_enabled: true,
+        push_enabled: true,
+    };
+    let roles = RoleCache::default();
+    let pass = || sync_package(&model, &roles, &inner, &pkg, &run, Instant::now());
+
+    let hold = inner.tasks.hold(&ns);
+    assert_eq!(pass().await, Pass::Skipped);
+    drop(hold);
+    assert_eq!(pass().await, Pass::Busy, "the hold was all that skipped it");
 }

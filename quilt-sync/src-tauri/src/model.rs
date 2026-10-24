@@ -272,6 +272,15 @@ pub trait QuiltModel {
             .collect())
     }
 
+    /// The manifest `lineage` selects, header and rows.
+    async fn get_installed_package_manifest(
+        &self,
+        package: &quilt::InstalledPackage,
+        lineage: &quilt::lineage::PackageLineage,
+    ) -> Result<quilt::manifest::Manifest, Error> {
+        Ok(package.manifest_from_lineage(lineage).await?)
+    }
+
     /// This copy's revision against the published `latest`, read fresh.
     async fn get_installed_package_resolve_comparison(
         &self,

@@ -115,6 +115,7 @@ async fn make_inner_for_run_once(reporter: Arc<RecordingReporter>) -> WatcherInn
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: quiet_clock().await,
     }
 }
@@ -144,6 +145,7 @@ async fn make_inner_with_flags(
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: quiet_clock().await,
     }
 }
@@ -961,6 +963,7 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: LastChange::changed_for_test(&ns, Duration::from_secs(30)).await,
     };
 
@@ -1226,6 +1229,7 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
         aggregator,
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: quiet_clock().await,
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1284,6 +1288,7 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         aggregator,
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: quiet_clock().await,
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
