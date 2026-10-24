@@ -163,6 +163,10 @@ async fn try_check<M: QuiltModel>(
     let Some(locked) = model.try_lock_package(pkg).await? else {
         return Ok(());
     };
+    // Before the walk, so the claim publishes a status that includes it.
+    if let Verdict::Claim { document, .. } = &verdict {
+        download(model, &locked, &lineage, document).await?;
+    }
     let Some(status) = clean_at_head(model, pkg, &locked, &lineage).await? else {
         return Ok(());
     };
@@ -180,7 +184,6 @@ async fn try_check<M: QuiltModel>(
         ),
         Verdict::Claim { document, agent } => {
             let home = model.package_home(&pkg.namespace).await?;
-            download(model, &locked, &lineage, &document).await?;
             let hold = tasks.hold(&pkg.namespace);
             let claim = Claim {
                 invocation_id: uuid::Uuid::new_v4().to_string(),

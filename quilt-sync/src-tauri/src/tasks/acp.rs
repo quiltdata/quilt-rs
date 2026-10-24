@@ -215,12 +215,23 @@ fn answer(
         .flatten()
         .map(|location| location.path.as_path())
         .collect();
-    let kind = if permits(trust_all, root, &locations) {
-        PermissionOptionKind::AllowOnce
+    // `Cancelled` would end the turn, so a direction offered only as "always"
+    // is still answered.
+    let kinds = if permits(trust_all, root, &locations) {
+        [
+            PermissionOptionKind::AllowOnce,
+            PermissionOptionKind::AllowAlways,
+        ]
     } else {
-        PermissionOptionKind::RejectOnce
+        [
+            PermissionOptionKind::RejectOnce,
+            PermissionOptionKind::RejectAlways,
+        ]
     };
-    let outcome = match request.options.iter().find(|option| option.kind == kind) {
+    let chosen = kinds
+        .iter()
+        .find_map(|kind| request.options.iter().find(|option| option.kind == *kind));
+    let outcome = match chosen {
         Some(option) => RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(
             option.option_id.clone(),
         )),
@@ -329,6 +340,27 @@ mod tests {
         assert_eq!(chosen(&inside).as_deref(), Some("accept"));
         let outside = answer(&permission_request(&["/etc/hosts"]), false, root);
         assert_eq!(chosen(&outside).as_deref(), Some("reject"));
+    }
+
+    #[test]
+    fn a_direction_offered_only_as_always_is_still_answered() {
+        let mut request = permission_request(&["out.md"]);
+        request.options.retain(|option| {
+            !matches!(
+                option.kind,
+                PermissionOptionKind::AllowOnce | PermissionOptionKind::RejectOnce
+            )
+        });
+        let root = Path::new(ROOT);
+        assert_eq!(
+            chosen(&answer(&request, false, root)).as_deref(),
+            Some("always-accept")
+        );
+        request.tool_call.fields.locations = Some(vec![ToolCallLocation::new("/etc/hosts")]);
+        assert_eq!(
+            chosen(&answer(&request, false, root)).as_deref(),
+            Some("always-reject")
+        );
     }
 
     fn auth_required() -> agent_client_protocol::Error {

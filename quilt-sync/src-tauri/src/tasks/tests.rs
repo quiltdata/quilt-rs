@@ -61,8 +61,8 @@ fn fresh(
 }
 
 /// Tasks in a temporary data folder that keep every run they are asked to
-/// start, every revision they publish, and every path they download, the last
-/// two in the order they happened.
+/// start, every revision they publish, and, in order, every download, walk
+/// and publish.
 struct Fixture {
     dir: TempDir,
     published: Published,
@@ -142,9 +142,11 @@ impl Fixture {
         model
             .expect_try_lock_package()
             .returning(|p| Ok(Some(p.namespace.clone())));
-        model
-            .expect_locked_package_status()
-            .returning(move |_, _| Ok(status.clone()));
+        let events = Arc::clone(&self.events);
+        model.expect_locked_package_status().returning(move |_, _| {
+            events.lock().unwrap().push("walk".to_string());
+            Ok(status.clone())
+        });
         let events = Arc::clone(&self.events);
         model
             .expect_locked_package_install_paths()
@@ -207,8 +209,8 @@ async fn a_claim_changes_only_the_claim_and_starts_the_run() {
 
     assert_eq!(
         *fixture.events.lock().unwrap(),
-        ["download TASK.md", "publish"],
-        "the agent finds its document on disk"
+        ["download TASK.md", "walk", "publish"],
+        "the agent finds its document on disk, and the claim publishes a tree that has it"
     );
     let published = fixture.published.lock().unwrap();
     assert_eq!(published.len(), 1, "one claim revision");
