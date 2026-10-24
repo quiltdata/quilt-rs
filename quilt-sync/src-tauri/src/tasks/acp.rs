@@ -109,12 +109,16 @@ async fn converse(
         })
         .await;
     connected.unwrap_or_else(|err| {
-        if prompted.load(std::sync::atomic::Ordering::SeqCst) {
-            failed(None, &err)
-        } else {
-            not_started(&err)
-        }
+        connection_failed(prompted.load(std::sync::atomic::Ordering::SeqCst), &err)
     })
+}
+
+fn connection_failed(prompted: bool, err: &agent_client_protocol::Error) -> RunOutcome {
+    if prompted && !signed_out(err) {
+        failed(None, err)
+    } else {
+        not_started(err)
+    }
 }
 
 async fn session(
@@ -400,6 +404,11 @@ mod tests {
             turn_ended("s1".to_string(), Err(auth_required())),
             signed_out
         );
+        assert_eq!(connection_failed(true, &auth_required()), signed_out);
+        assert!(matches!(
+            connection_failed(true, &agent_client_protocol::Error::internal_error()),
+            RunOutcome::Failed { .. }
+        ));
     }
 
     #[tokio::test]
