@@ -165,7 +165,7 @@ async fn try_check<M: QuiltModel>(
     };
     // Before the walk, so the claim publishes a status that includes it.
     if let Verdict::Claim { document, .. } = &verdict {
-        download(model, &locked, &lineage, document).await?;
+        download(model, pkg, &locked, &lineage, document).await?;
     }
     let Some(status) = clean_at_head(model, pkg, &locked, &lineage).await? else {
         return Ok(());
@@ -250,15 +250,19 @@ async fn clean_at_head<M: QuiltModel>(
 }
 
 /// Put `document` in the package's folder: a sparse copy lists it without
-/// having it on disk.
+/// having it on disk. A copy already there, tracked or not, is left alone; one
+/// that differs from the revision fails the clean-tree walk.
 async fn download<M: QuiltModel>(
     model: &M,
+    pkg: &quilt::InstalledPackage,
     locked: &M::Locked,
     lineage: &quilt::lineage::PackageLineage,
     document: &str,
 ) -> Result<(), Error> {
     let path = PathBuf::from(document);
-    if lineage.paths.contains_key(&path) {
+    if lineage.paths.contains_key(&path)
+        || tokio::fs::try_exists(model.package_home(&pkg.namespace).await?.join(&path)).await?
+    {
         return Ok(());
     }
     let report = model.locked_package_install_paths(locked, &[path]).await?;

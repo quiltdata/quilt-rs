@@ -89,6 +89,11 @@ impl Fixture {
         }
     }
 
+    /// The package's folder, empty unless a test puts files in it.
+    fn home(&self) -> PathBuf {
+        self.dir.path().join("home")
+    }
+
     fn metas(&self) -> Vec<Value> {
         let published = self.published.lock().unwrap();
         published.iter().map(|(meta, _)| meta.clone()).collect()
@@ -159,9 +164,10 @@ impl Fixture {
                 }
                 Ok(quilt::flow::InstallPathsReport::default())
             });
+        let home = self.home();
         model
             .expect_package_home()
-            .returning(|_| Ok(PathBuf::from("/home/u/QuiltSync/acme/demo")));
+            .returning(move |_| Ok(home.clone()));
         model.expect_resolve_workflow().returning(|_, _| Ok(None));
         let published = Arc::clone(&self.published);
         let events = Arc::clone(&self.events);
@@ -235,6 +241,22 @@ async fn a_claim_changes_only_the_claim_and_starts_the_run() {
         fixture.tasks.holds(&namespace()),
         "autosync is held while it runs"
     );
+}
+
+/// The download refuses to write over a file that is already there.
+#[tokio::test]
+async fn a_document_already_in_the_folder_is_not_downloaded_again() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    tokio::fs::create_dir_all(fixture.home()).await?;
+    tokio::fs::write(fixture.home().join("TASK.md"), "the task").await?;
+
+    fixture
+        .check(unclaimed(), fresh(BTreeMap::new()), true)
+        .await;
+
+    assert_eq!(*fixture.events.lock().unwrap(), ["walk", "publish"]);
+    assert_eq!(fixture.runs.lock().unwrap().len(), 1, "the run starts");
+    Ok(())
 }
 
 #[tokio::test]
