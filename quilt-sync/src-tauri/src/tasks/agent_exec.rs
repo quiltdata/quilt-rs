@@ -71,6 +71,14 @@ pub fn classify(
             reason: "agent_exec.document is missing".to_string(),
         };
     };
+    let inside = Path::new(document)
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)));
+    if !inside {
+        return Verdict::Unrunnable {
+            reason: format!("{document} is not a path inside the package"),
+        };
+    }
     if !is_file(Path::new(document)) {
         return Verdict::Unrunnable {
             reason: format!("{document} is not a file in the package"),
@@ -237,6 +245,23 @@ mod tests {
                 reason: "MISSING.md is not a file in the package".to_string()
             }
         );
+    }
+
+    /// Even when the manifest lists it: the document is downloaded before the
+    /// claim, outside any permission check.
+    #[test]
+    fn a_document_outside_the_package_is_unrunnable() {
+        for document in ["../outside.md", "/etc/hosts", "./TASK.md"] {
+            let meta = task("kiro", document, &json!({ "status": "unclaimed" }));
+            let verdict = classify(&meta, |_| true, &agents(), &BTreeSet::new());
+            assert_eq!(
+                verdict,
+                Verdict::Unrunnable {
+                    reason: format!("{document} is not a path inside the package")
+                },
+                "{document}"
+            );
+        }
     }
 
     #[test]
