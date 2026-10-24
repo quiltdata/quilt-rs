@@ -180,6 +180,7 @@ async fn try_check<M: QuiltModel>(
         ),
         Verdict::Claim { document, agent } => {
             let home = model.package_home(&pkg.namespace).await?;
+            download(model, &locked, &lineage, &document).await?;
             let hold = tasks.hold(&pkg.namespace);
             let claim = Claim {
                 invocation_id: uuid::Uuid::new_v4().to_string(),
@@ -227,8 +228,8 @@ async fn try_check<M: QuiltModel>(
 
 /// The tree's status, walked under `locked`, when a revision can change only
 /// the metadata: a clean tree, no pending commit, and `head` still the
-/// package's revision and at `latest`. With a pending commit, publishing
-/// pushes that commit and drops the new metadata.
+/// package's revision and at a `latest` read just now. With a pending commit,
+/// publishing pushes that commit and drops the new metadata.
 async fn clean_at_head<M: QuiltModel>(
     model: &M,
     pkg: &quilt::InstalledPackage,
@@ -237,11 +238,34 @@ async fn clean_at_head<M: QuiltModel>(
 ) -> Result<Option<quilt::lineage::InstalledPackageStatus>, Error> {
     let status = model.locked_package_status(locked, None).await?;
     let lineage = model.get_installed_package_lineage(pkg).await?;
-    let clean = status.upstream_state == UpstreamState::UpToDate
+    let clean = status.latest_refreshed
+        && status.upstream_state == UpstreamState::UpToDate
         && status.changes.is_empty()
         && lineage.commit.is_none()
         && lineage.current_hash() == head.current_hash();
     Ok(clean.then_some(status))
+}
+
+/// Put `document` in the package's folder: a sparse copy lists it without
+/// having it on disk.
+async fn download<M: QuiltModel>(
+    model: &M,
+    locked: &M::Locked,
+    lineage: &quilt::lineage::PackageLineage,
+    document: &str,
+) -> Result<(), Error> {
+    let path = PathBuf::from(document);
+    if lineage.paths.contains_key(&path) {
+        return Ok(());
+    }
+    let report = model.locked_package_install_paths(locked, &[path]).await?;
+    if report.skipped.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::General(format!(
+            "{document} could not be downloaded"
+        )))
+    }
 }
 
 /// The workflow the head was published under, so a governed bucket accepts the
@@ -301,9 +325,12 @@ async fn claim_is_latest<M: QuiltModel>(
 ) -> Result<bool, Error> {
     let installed = installed(model, namespace).await?;
     let status = model.get_installed_package_status(&installed, None).await?;
-    let lineage = model.get_installed_package_lineage(&installed).await?;
-    Ok(status.upstream_state == UpstreamState::UpToDate
-        && lineage.current_hash() == Some(claim_hash))
+    if !status.latest_refreshed {
+        return Err(Error::General(
+            "the remote's latest could not be read".into(),
+        ));
+    }
+    Ok(status.latest_hash == claim_hash)
 }
 
 async fn installed<M: QuiltModel>(
