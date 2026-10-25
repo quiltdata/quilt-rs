@@ -524,17 +524,16 @@ async fn get_commit_data_from_model(
                     },
                     None => (String::new(), None),
                 };
-                let workflow = origin_host.and_then(|host| {
+                let workflow =
                     remote_manifest
                         .header
                         .workflow
                         .as_ref()
                         .map(|w| CommitWorkflowData {
                             id: w.id.as_ref().map(|id| id.id.clone()),
-                            url: catalog_object_url(&w.config, Some(host)),
+                            url: catalog_object_url(&w.config, origin_host),
                             config_url: None,
-                        })
-                });
+                        });
                 (meta_value, meta_error, workflow)
             }
             None => (String::new(), None, None),
@@ -1353,13 +1352,38 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_commit_data_with_workflow() -> Result<(), String> {
+        let workflow = commit_data_stamped(Some(fixtures::host()))
+            .await?
+            .workflow
+            .expect("the stamp");
+        assert_eq!(workflow.id, Some("gamma".to_string()));
+        assert!(workflow.url.is_some());
+        Ok(())
+    }
+
+    /// A bucket with no catalog keeps the previous revision's workflow, so
+    /// the form starts on it; there is only no catalog page to link.
+    #[tokio::test]
+    async fn a_bucket_without_a_catalog_keeps_the_previous_workflow() -> Result<(), String> {
+        let workflow = commit_data_stamped(None)
+            .await?
+            .workflow
+            .expect("the stamp");
+        assert_eq!(workflow.id, Some("gamma".to_string()));
+        assert_eq!(workflow.url, None);
+        Ok(())
+    }
+
+    /// The commit data of a package whose remote revision was published with
+    /// the workflow `gamma`.
+    async fn commit_data_stamped(origin: Option<quilt_uri::Host>) -> Result<CommitData, String> {
         let mut model = mocks::create();
 
         let remote_manifest = quilt_uri::ManifestUri {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),
-            origin: Some(fixtures::host()),
+            origin,
         };
         model
             .expect_get_installed_package()
@@ -1407,7 +1431,7 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(
+        get_commit_data_from_model(
             &model,
             &RoleCache::default(),
             &tracing,
@@ -1415,13 +1439,7 @@ mod tests {
             &namespace,
         )
         .await
-        .map_err(|e| e.to_string())?;
-
-        assert!(data.workflow.is_some());
-        let workflow = data.workflow.unwrap();
-        assert_eq!(workflow.id, Some("gamma".to_string()));
-        assert!(workflow.url.is_some());
-        Ok(())
+        .map_err(|e| e.to_string())
     }
 
     // (Adapted from pages/commit.rs: test_workflow_null_checked)

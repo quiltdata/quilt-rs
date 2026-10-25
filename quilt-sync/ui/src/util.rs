@@ -73,6 +73,12 @@ pub fn bucket_str(uri: &S3PackageUri) -> Option<String> {
     Some(uri.bucket.clone()).filter(|b| !b.is_empty())
 }
 
+/// Whether the package has a bucket to publish to. A catalog is not needed:
+/// without one, the bucket is reached on this computer's AWS credentials.
+pub fn has_bucket(uri: Option<&S3PackageUri>) -> bool {
+    uri.is_some_and(|u| !u.bucket.is_empty())
+}
+
 /// Create a busy-guarded async action handler.
 ///
 /// Returns `(busy_signal, click_handler)`. The handler guards against

@@ -320,10 +320,9 @@ fn CommitContent(
 
     let show_filter = ignored_count > 0 || unmodified_count > 0;
 
-    // Whether this package has a remote we can publish to. When there is no
-    // resolvable origin, the `[Commit and Push]` primary is hidden and only
-    // `[Commit]` is shown.
-    let has_remote = data.uri.as_ref().is_some_and(|u| u.catalog.is_some());
+    // Whether this package has a bucket to push to. Without one, the
+    // `[Commit and Push]` primary is hidden and only `[Commit]` is shown.
+    let has_remote = util::has_bucket(data.uri.as_ref());
 
     // A role denial on this package's bucket. Both action-bar buttons are
     // disabled by it (not hidden: the user navigated here on purpose, and a
@@ -1148,5 +1147,78 @@ mod tests {
             field_violations(&[], ViolationField::Message),
             [] as [String; 0]
         );
+    }
+
+    fn commit_data(uri: Option<&str>) -> crate::commands::CommitData {
+        crate::commands::CommitData {
+            namespace: "org/pkg".try_into().unwrap(),
+            uri: uri.map(|u| quilt_uri::S3PackageUri::try_from(u).unwrap()),
+            remote_locked: false,
+            newer: None,
+            status: "up_to_date".to_string(),
+            message: "Updated 1 file".to_string(),
+            user_meta: String::new(),
+            user_meta_error: None,
+            settings_user_meta: None,
+            settings_workflow: None,
+            has_message_template: false,
+            workflow: None,
+            workflows: crate::commands::CommitWorkflows::NotConfigured,
+            no_access_reason: None,
+            no_session: false,
+            no_session_host: None,
+            entries: Vec::new(),
+            ignored_count: 0,
+            unmodified_count: 0,
+            counts: crate::commands::EntryCounts::default(),
+            changed_bytes: 0,
+            junk: None,
+        }
+    }
+
+    async fn action_bar(uri: Option<&'static str>) -> Vec<String> {
+        use leptos::prelude::*;
+        use leptos_router::components::Router;
+        use wasm_bindgen::JsCast;
+
+        crate::test_support::unmount_earlier();
+        let el = crate::test_support::mount(move || {
+            view! {
+                <Router>
+                    <super::CommitContent
+                        data=commit_data(uri)
+                        notification=RwSignal::new(None)
+                        ui_locked=RwSignal::new(false)
+                        refetch=Trigger::new()
+                    />
+                </Router>
+            }
+        });
+        crate::test_support::sleep_ms(80).await;
+        let all = el.query_selector_all(".qui-actionbar button").unwrap();
+        (0..all.length())
+            .map(|i| {
+                all.item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::Element>()
+                    .text_content()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// Commit and Push follows the bucket, not the catalog: a package with a
+    /// bucket and no catalog pushes on the computer's AWS credentials, and
+    /// one with no bucket only commits.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn a_bucket_without_a_catalog_offers_commit_and_push() {
+        let pushes = action_bar(Some("quilt+s3://team-bucket#package=org/pkg")).await;
+        assert!(pushes.iter().any(|b| b == "Commit and Push"), "{pushes:?}");
+
+        let local = action_bar(None).await;
+        assert!(!local.iter().any(|b| b == "Commit and Push"), "{local:?}");
+        assert!(!local.is_empty(), "the commit button stays");
     }
 }
