@@ -156,6 +156,14 @@ pub trait QuiltModel {
         package.reset_to_latest().await
     }
 
+    /// [`Self::package_push`] on the held lock.
+    async fn locked_package_push(
+        &self,
+        package: &Self::Locked,
+    ) -> Result<quilt::PushOutcome, Error> {
+        package.push().await
+    }
+
     /// [`Self::package_publish`] on the held lock. `status` is one walked on
     /// the same lock, so the publish reuses it instead of walking again.
     async fn locked_package_publish(
@@ -270,6 +278,15 @@ pub trait QuiltModel {
             .into_iter()
             .map(|row| (row.logical_key, row.size))
             .collect())
+    }
+
+    /// The manifest `lineage` selects, header and rows.
+    async fn get_installed_package_manifest(
+        &self,
+        package: &quilt::InstalledPackage,
+        lineage: &quilt::lineage::PackageLineage,
+    ) -> Result<quilt::manifest::Manifest, Error> {
+        Ok(package.manifest_from_lineage(lineage).await?)
     }
 
     /// This copy's revision against the published `latest`, read fresh.
@@ -732,6 +749,8 @@ pub trait LockedOps: Send + Sync + Sized {
 
     async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error>;
 
+    async fn push(&self) -> Result<quilt::PushOutcome, Error>;
+
     async fn publish(
         &self,
         message: String,
@@ -791,6 +810,10 @@ impl LockedOps for quilt::LockedPackage {
 
     async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error> {
         Ok(quilt::LockedPackage::reset_to_latest(self).await?)
+    }
+
+    async fn push(&self) -> Result<quilt::PushOutcome, Error> {
+        Ok(quilt::LockedPackage::push(self, None).await?)
     }
 
     async fn publish(
@@ -862,6 +885,10 @@ impl LockedOps for quilt_uri::Namespace {
 
     async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error> {
         unreachable!("a mocked model sets its own reset")
+    }
+
+    async fn push(&self) -> Result<quilt::PushOutcome, Error> {
+        unreachable!("a mocked model sets its own push")
     }
 
     async fn publish(

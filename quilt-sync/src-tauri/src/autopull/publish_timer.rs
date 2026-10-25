@@ -70,6 +70,7 @@ pub(crate) async fn publish_due(
         wait: Duration::from_secs(settings.push.idle_timeout_secs),
         pull_enabled: settings.pull.enabled,
         push_enabled: true,
+        tasks: inner.tasks.settings().await,
     };
     let now = Instant::now();
     let wall = SystemTime::now();
@@ -121,7 +122,7 @@ async fn run_passes(
             Pass::Busy => {
                 held.insert(namespace, Instant::now() + BUSY_RETRY);
             }
-            Pass::Skipped => {
+            Pass::Skipped | Pass::LeftToTasks => {
                 inner
                     .clocks
                     .publish_waiting

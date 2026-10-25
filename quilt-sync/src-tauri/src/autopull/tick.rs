@@ -804,10 +804,16 @@ pub(crate) async fn run_once(
         wait,
         pull_enabled,
         push_enabled,
+        tasks: inner.tasks.settings().await,
     };
     let now = Instant::now();
     for pkg in packages {
-        sync_package(model, roles, inner, &pkg, &run, now).await;
+        let pass = sync_package(model, roles, inner, &pkg, &run, now).await;
+        if let Some(tasks) = run.tasks.as_ref()
+            && matches!(pass, Pass::Done | Pass::LeftToTasks)
+        {
+            crate::tasks::check(model, &inner.tasks, tasks, &pkg).await;
+        }
     }
     inner.reschedule_publish();
 
@@ -820,16 +826,21 @@ pub(crate) struct PassSettings {
     pub wait: Duration,
     pub pull_enabled: bool,
     pub push_enabled: bool,
+    /// `None` while tasks are off.
+    pub tasks: Option<crate::tasks::settings::TaskSettings>,
 }
 
 /// What [`sync_package`] did with a package.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Pass {
     /// It can't be synced now: no remote, no catalog origin, paused, in
-    /// backoff, or its lineage could not be read.
+    /// backoff, held by a task run, or its lineage could not be read.
     Skipped,
     /// Another writer holds it.
     Busy,
+    /// Its head is this desktop's own task claim with no run alive, which only
+    /// the task check may publish.
+    LeftToTasks,
     /// It was observed, and pulled, published, deferred or paused.
     Done,
 }
@@ -846,6 +857,11 @@ pub(crate) async fn sync_package(
     now: Instant,
 ) -> Pass {
     let namespace = pkg.namespace.clone();
+
+    // A run's last revision must follow its claim with nothing between.
+    if inner.tasks.holds(&namespace) {
+        return Pass::Skipped;
+    }
 
     // Skip Local / misconfigured packages without a network round-trip.
     let lineage = match model.get_installed_package_lineage(pkg).await {
@@ -873,6 +889,11 @@ pub(crate) async fn sync_package(
     }
     if !is_backoff_due(&*inner.backoff.read().await, &namespace, now) {
         return Pass::Skipped;
+    }
+    if let Some(tasks) = run.tasks.as_ref()
+        && inner.tasks.awaits_sweep(model, tasks, pkg).await
+    {
+        return Pass::LeftToTasks;
     }
 
     let result = refresh_then_maybe_sync(

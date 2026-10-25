@@ -21,6 +21,10 @@
 
 ## [v0.24.1-dev]
 
+### Changed
+
+- Under the hood, QuiltSync can run the task a package revision asks for: given a hand-written `task_settings.json`, it claims the task, runs a local agent over ACP in the package's folder, and publishes the result as the next revision (<https://github.com/quiltdata/quilt-rs/pull/1195>)
+
 ### Fixed
 
 - A package whose remote has no catalog shows its status on both pages, read on the AWS credentials on this computer. When those are missing or refused, it says so instead of offering *Sign in* (<https://github.com/quiltdata/quilt-rs/pull/1193>)

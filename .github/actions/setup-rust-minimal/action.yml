@@ -2,17 +2,15 @@ name: "Setup Rust (Minimal)"
 description: "Setup Rust toolchain without extra components for building/testing"
 inputs:
   cache-target:
-    description: "Cache target profile (debug or release)"
+    description: "Build profile the job compiles (debug or release); each gets its own cache"
     required: false
     default: "debug"
-  targets:
-    description: "Additional targets to install"
+  cache-key:
+    description: "Extra cache key part, for matrix legs that differ only in the target they build"
     required: false
     default: ""
-  github-token:
-    description: >-
-      Token for cargo-binstall's GitHub API lookups. Pass a read-only token;
-      without one, shared runner IPs can hit the rate limit and hang the step.
+  targets:
+    description: "Additional targets to install"
     required: false
     default: ""
 
@@ -21,11 +19,15 @@ runs:
   steps:
     - name: Setup Rust
       uses: moonrepo/setup-rust@v1
-      # cargo-binstall (used to install cargo-cache) reads GITHUB_TOKEN.
-      # Opt-in, so release jobs never hand their write token to this action.
-      env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
       with:
-        cache-base: main
-        cache-target: ${{ inputs.cache-target }}
+        # Its cache is one per OS, shared by every job. rust-cache below keeps one per job.
+        cache: false
         targets: ${{ inputs.targets }}
+
+    - name: Cache Rust build
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        # The job id is in the key already, but `quality` is a job in two workflows.
+        key: ${{ github.workflow }}-${{ inputs.cache-target }}${{ inputs.cache-key && format('-{0}', inputs.cache-key) || '' }}
+        # Pull requests restore main's caches and never write their own.
+        save-if: ${{ github.ref == 'refs/heads/main' }}

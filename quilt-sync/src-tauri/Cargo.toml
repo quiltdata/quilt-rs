@@ -16,6 +16,7 @@ publish = false
 tauri-build = { version = "2.7.3", features = [] }
 
 [dependencies]
+agent-client-protocol = "3.5.0"
 chrono.workspace = true
 dotenv = "0.15"
 dunce = "1"
@@ -46,6 +47,8 @@ tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
+# Adapts the agent's tokio stdio pipes to the `futures` I/O traits the ACP SDK reads.
+tokio-util = { version = "0.7.20", features = ["compat"] }
 tracing.workspace = true
 uuid.workspace = true
 tracing-appender = "0.2.5"
