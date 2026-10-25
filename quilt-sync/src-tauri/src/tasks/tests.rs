@@ -117,21 +117,25 @@ fn expect_push_and_reset(
 
 /// The remote's `latest` carries `meta` and lists `paths`.
 fn expect_latest(model: &mut MockQuiltModel, meta: Value, paths: &'static [&'static str]) {
-    model.expect_browse_remote_manifest().returning(move |_| {
-        Ok(quilt::manifest::Manifest {
-            header: quilt::manifest::ManifestHeader {
-                user_meta: Some(meta.clone()),
-                ..quilt::manifest::ManifestHeader::default()
-            },
-            rows: paths
-                .iter()
-                .map(|key| quilt::manifest::ManifestRow {
-                    logical_key: PathBuf::from(key),
-                    ..quilt::manifest::ManifestRow::default()
-                })
-                .collect(),
-        })
-    });
+    model
+        .expect_browse_remote_manifest()
+        .returning(move |_| Ok(manifest(&meta, paths)));
+}
+
+fn manifest(meta: &Value, paths: &[&str]) -> quilt::manifest::Manifest {
+    quilt::manifest::Manifest {
+        header: quilt::manifest::ManifestHeader {
+            user_meta: Some(meta.clone()),
+            ..quilt::manifest::ManifestHeader::default()
+        },
+        rows: paths
+            .iter()
+            .map(|key| quilt::manifest::ManifestRow {
+                logical_key: PathBuf::from(key),
+                ..quilt::manifest::ManifestRow::default()
+            })
+            .collect(),
+    }
 }
 
 /// Tasks in a temporary data folder that keep every run they are asked to
@@ -147,6 +151,8 @@ struct Fixture {
     pending_commit: bool,
     /// The pending commit sits on another one.
     stacked_commits: bool,
+    /// What a revision later still, `h3`, carries when the re-read's pull lands it.
+    pulled_meta: Option<Value>,
     /// What the remote's `latest` carries; the head's metadata unless set.
     latest_meta: Option<Value>,
 }
@@ -168,6 +174,7 @@ impl Fixture {
             tasks,
             pending_commit: false,
             stacked_commits: false,
+            pulled_meta: None,
             latest_meta: None,
         }
     }
@@ -764,7 +771,15 @@ fn rereading_model(
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
-    expect_latest(&mut model, latest_meta, &["TASK.md", "NEXT.md"]);
+    let pulled_meta = fixture.pulled_meta.clone();
+    let landed = if pulled_meta.is_some() { "h3" } else { "h2" };
+    model.expect_browse_remote_manifest().returning(move |uri| {
+        let meta = match &pulled_meta {
+            Some(pulled) if uri.hash == "h3" => pulled,
+            _ => &latest_meta,
+        };
+        Ok(manifest(meta, &["TASK.md", "NEXT.md"]))
+    });
     model
         .expect_lock_package()
         .returning(|p| Ok(p.namespace.clone()));
@@ -777,7 +792,7 @@ fn rereading_model(
                 manifest_uri: quilt_uri::ManifestUri {
                     bucket: "quilt-dev".to_string(),
                     namespace: namespace(),
-                    hash: "h2".to_string(),
+                    hash: landed.to_string(),
                     origin: None,
                 },
                 added: Vec::new(),
@@ -851,6 +866,23 @@ async fn a_task_changed_to_another_agent_is_not_started_here() {
         Err(acp::RunOutcome::NotStarted {
             reason: "task changed to an agent not running here".to_string()
         })
+    );
+    assert_eq!(*fixture.events.lock().unwrap(), ["pull"]);
+}
+
+#[tokio::test]
+async fn a_pull_that_lands_a_revision_without_the_claim_stops_the_run() {
+    let mut theirs = claimed_by_this_run();
+    theirs["agent_exec"]["claim"]["invocation_id"] = json!("theirs");
+    let fixture = Fixture {
+        pulled_meta: Some(theirs),
+        ..Fixture::new()
+    };
+    let model = rereading_model(&fixture, "h2", true, claimed_by_this_run());
+
+    assert_eq!(
+        recheck_with(&fixture, &model).await,
+        Err(acp::RunOutcome::Superseded)
     );
     assert_eq!(*fixture.events.lock().unwrap(), ["pull"]);
 }
@@ -954,6 +986,18 @@ fn finishing_model(
             Ok(quilt::manifest::Manifest {
                 header: quilt::manifest::ManifestHeader {
                     user_meta: Some(edited_head()),
+                    // Not the claim's `gate`: the outcome follows the head.
+                    workflow: Some(quilt::manifest::Workflow {
+                        config: quilt_uri::S3Uri {
+                            bucket: "quilt-dev".to_string(),
+                            key: ".quilt/workflows/config.yaml".to_string(),
+                            version: None,
+                        },
+                        id: Some(quilt::manifest::WorkflowId {
+                            id: "edited".to_string(),
+                            schemas: BTreeMap::new(),
+                        }),
+                    }),
                     ..quilt::manifest::ManifestHeader::default()
                 },
                 rows: Vec::new(),
@@ -961,7 +1005,7 @@ fn finishing_model(
         });
     model
         .expect_resolve_workflow()
-        .withf(|_, intent| *intent == WorkflowIntent::Named("gate".to_string()))
+        .withf(|_, intent| *intent == WorkflowIntent::Named("edited".to_string()))
         .returning(|_, _| Ok(None));
     expect_push_and_reset(&mut model, &fixture.events, certified_latest);
     let published = Arc::clone(&fixture.published);

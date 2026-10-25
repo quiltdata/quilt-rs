@@ -219,14 +219,21 @@ fn answer(
         .flatten()
         .map(|location| location.path.as_path())
         .collect();
-    // Never "allow always": it would pass the agent's later requests unchecked.
-    // Nor `Cancelled`, which ends the turn: a request with no once-option to
-    // allow is refused instead.
+    // "Allow always" only under `trust_all`: otherwise it would pass the agent's
+    // later requests unchecked. Never `Cancelled`, which ends the turn: a
+    // request with no option to allow is refused instead.
     let refuse = [
         PermissionOptionKind::RejectOnce,
         PermissionOptionKind::RejectAlways,
     ];
-    let allow = permits(trust_all, root, &locations).then_some(PermissionOptionKind::AllowOnce);
+    let allow: &[_] = match (permits(trust_all, root, &locations), trust_all) {
+        (false, _) => &[],
+        (true, false) => &[PermissionOptionKind::AllowOnce],
+        (true, true) => &[
+            PermissionOptionKind::AllowOnce,
+            PermissionOptionKind::AllowAlways,
+        ],
+    };
     let chosen = allow
         .iter()
         .chain(&refuse)
@@ -343,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn with_only_always_options_a_request_is_refused_never_allowed_for_good() {
+    fn with_only_always_options_a_request_is_allowed_for_good_only_under_trust_all() {
         let mut request = permission_request(&["out.md"]);
         request.options.retain(|option| {
             !matches!(
@@ -352,8 +359,12 @@ mod tests {
             )
         });
         assert_eq!(
-            chosen(&answer(&request, true, Path::new(ROOT))).as_deref(),
+            chosen(&answer(&request, false, Path::new(ROOT))).as_deref(),
             Some("always-reject")
+        );
+        assert_eq!(
+            chosen(&answer(&request, true, Path::new(ROOT))).as_deref(),
+            Some("always-accept")
         );
     }
 

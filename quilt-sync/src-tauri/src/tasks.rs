@@ -537,19 +537,32 @@ async fn recheck_claim<M: QuiltModel>(
         return Ok(Ok(run.document.clone()));
     }
     let lineage = model.get_installed_package_lineage(&installed).await?;
-    let latest = read_latest(model, &lineage, status.latest_hash).await?;
-    let Some(meta) = latest
-        .header
-        .user_meta
-        .as_ref()
-        .filter(|meta| run.claim.is_held_in(meta))
-    else {
+    let held = |latest: &quilt::manifest::Manifest| {
+        latest
+            .header
+            .user_meta
+            .as_ref()
+            .is_some_and(|meta| run.claim.is_held_in(meta))
+    };
+    let latest = read_latest(model, &lineage, status.latest_hash.clone()).await?;
+    if !held(&latest) {
+        return Ok(Err(acp::RunOutcome::Superseded));
+    }
+    let locked = model.lock_package(&installed).await?;
+    let pulled = model
+        .locked_package_pull(&locked, None, lineage.sync_scope)
+        .await?
+        .manifest_uri
+        .hash;
+    // The pull resolves `latest` again, and may land a revision later still.
+    let latest = if pulled == status.latest_hash {
+        latest
+    } else {
+        read_latest(model, &lineage, pulled).await?
+    };
+    let Some(meta) = latest.header.user_meta.as_ref().filter(|_| held(&latest)) else {
         return Ok(Err(acp::RunOutcome::Superseded));
     };
-    let locked = model.lock_package(&installed).await?;
-    model
-        .locked_package_pull(&locked, None, lineage.sync_scope)
-        .await?;
     let rechecked = agent_exec::recheck(meta, |path| lists(&latest, path), &run.agent_id);
     if let Ok(document) = &rechecked {
         let pulled = model.get_installed_package_lineage(&installed).await?;
@@ -612,22 +625,14 @@ async fn finish<M: QuiltModel>(
     let head = model
         .get_installed_package_manifest(&installed, &lineage)
         .await?;
-    let base = head
-        .header
-        .user_meta
-        .filter(|meta| run.claim.is_held_in(meta))
-        .unwrap_or_else(|| run.claimed_meta.clone());
+    let (base, workflow) = match head.header.user_meta {
+        Some(meta) if run.claim.is_held_in(&meta) => {
+            (meta, carried_workflow(head.header.workflow.as_ref()))
+        }
+        _ => (run.claimed_meta.clone(), run.workflow.clone()),
+    };
     let meta = agent_exec::with_claim(&base, claim);
-    let published = publish(
-        model,
-        &locked,
-        &installed,
-        run.workflow.clone(),
-        meta,
-        message,
-        status,
-    )
-    .await?;
+    let published = publish(model, &locked, &installed, workflow, meta, message, status).await?;
     if metadata_only {
         if !published.push().certified_latest {
             reset_if_clean(model, &installed, &locked).await?;
