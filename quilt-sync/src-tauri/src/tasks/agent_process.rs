@@ -25,13 +25,13 @@ impl Spawned {
         started(self.pid) == Some(self.started)
     }
 
-    /// SIGTERM, then SIGKILL if it outlives `grace`, returning once it has
-    /// exited or a second `grace` has passed. A process that has exited, or
+    /// SIGTERM, then SIGKILL if it outlives `grace`, waiting up to a second
+    /// `grace` for it to go; whether it has. A process that has exited, or
     /// whose PID now names another, is left alone.
-    pub async fn stop(self, grace: Duration) {
+    pub async fn stop(self, grace: Duration) -> bool {
         for signalled in [Signal::Terminate, Signal::Kill] {
             if !self.running() {
-                return;
+                return true;
             }
             signal(self.pid, signalled);
             let deadline = tokio::time::Instant::now() + grace;
@@ -39,6 +39,7 @@ impl Spawned {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
+        !self.running()
     }
 }
 
@@ -82,10 +83,14 @@ fn started(pid: u32) -> Option<u64> {
 /// a zombie included.
 #[cfg(target_os = "linux")]
 fn started(pid: u32) -> Option<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    // The fields after the command name, which may itself hold spaces and
-    // parentheses: the state is field 3, the start time field 22.
-    let mut fields = stat.rsplit_once(')')?.1.split_whitespace();
+    let stat = std::fs::read(format!("/proc/{pid}/stat")).ok()?;
+    // The fields after the command name, which may itself hold spaces,
+    // parentheses and bytes that aren't UTF-8: the state is field 3, the
+    // start time field 22.
+    let after_name = stat.iter().rposition(|byte| *byte == b')')? + 1;
+    let mut fields = std::str::from_utf8(&stat[after_name..])
+        .ok()?
+        .split_whitespace();
     if matches!(fields.next()?, "Z" | "X") {
         return None;
     }
@@ -131,8 +136,7 @@ mod tests {
         let mut child = spawn("exec sleep 60");
         let agent = Spawned::of(child.id()).expect("its start time");
 
-        agent.stop(Duration::from_secs(5)).await;
-
+        assert!(agent.stop(Duration::from_secs(5)).await, "reported gone");
         assert_eq!(exit_signal(&mut child).await, Some(libc::SIGTERM));
     }
 
@@ -151,8 +155,10 @@ mod tests {
         .expect("the trap is set");
         let agent = Spawned::of(child.id()).expect("its start time");
 
-        agent.stop(Duration::from_millis(200)).await;
-
+        assert!(
+            agent.stop(Duration::from_millis(200)).await,
+            "reported gone"
+        );
         assert_eq!(exit_signal(&mut child).await, Some(libc::SIGKILL));
     }
 

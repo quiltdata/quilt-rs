@@ -237,10 +237,12 @@ async fn try_check<M: QuiltModel>(
     let Some(locked) = model.try_lock_package(pkg).await? else {
         return Ok(());
     };
-    if verdict == Verdict::Interrupted {
-        // Before the walk, so the sweep publishes what the agent left when it
-        // stopped.
-        stop_leftover_agent(data_dir, user_meta, &pkg.namespace).await;
+    // Before the walk, so the sweep publishes what the agent left when it
+    // stopped.
+    if verdict == Verdict::Interrupted
+        && !stop_leftover_agent(data_dir, user_meta, &pkg.namespace).await
+    {
+        return Ok(());
     }
     // Before the walk, so the claim publishes a status that includes it.
     if let Verdict::Claim { document, .. } = &verdict {
@@ -319,8 +321,13 @@ async fn try_check<M: QuiltModel>(
 const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Stop an agent that an interrupted claim's run spawned, if it outlived the
-/// run, as it does when the app is killed.
-async fn stop_leftover_agent(data_dir: &std::path::Path, user_meta: &Value, namespace: &Namespace) {
+/// run, as it does when the app is killed; whether none is left running. An
+/// unreadable record counts as none, or it would hold the package for good.
+async fn stop_leftover_agent(
+    data_dir: &std::path::Path,
+    user_meta: &Value,
+    namespace: &Namespace,
+) -> bool {
     let invocation_id = user_meta["agent_exec"]["claim"]["invocation_id"]
         .as_str()
         .unwrap_or_default();
@@ -330,13 +337,20 @@ async fn stop_leftover_agent(data_dir: &std::path::Path, user_meta: &Value, name
                 "tasks: {namespace}: stopping the agent left running, pid {}",
                 agent.pid
             );
-            agent.stop(STOP_GRACE).await;
+            if !agent.stop(STOP_GRACE).await {
+                warn!("tasks: {namespace}: the agent is still running; the sweep waits");
+                return false;
+            }
             if let Err(err) = settings::record_agent(data_dir, invocation_id, None).await {
                 warn!("tasks: {namespace}: cannot clear the agent's record: {err}");
             }
+            true
         }
-        Ok(None) => {}
-        Err(err) => warn!("tasks: {namespace}: cannot read the agent's record: {err}"),
+        Ok(None) => true,
+        Err(err) => {
+            warn!("tasks: {namespace}: cannot read the agent's record: {err}");
+            true
+        }
     }
 }
 
@@ -611,8 +625,6 @@ pub async fn execute<M: QuiltModel>(model: &M, run: Run) {
         },
     )
     .await;
-    // The agent was killed with the run, so nothing is left to stop.
-    record(None).await;
     info!("tasks: {}: {outcome:?}", run.namespace);
     if let Err(err) = finish(model, &run, &outcome).await {
         warn!(
@@ -620,6 +632,9 @@ pub async fn execute<M: QuiltModel>(model: &M, run: Run) {
             run.namespace
         );
     }
+    // The agent was killed with the run, so nothing is left to stop. After
+    // `finish`, which saves the outcome first.
+    record(None).await;
 }
 
 /// Re-read `latest` before the prompt: the document to prompt, or how the run

@@ -446,6 +446,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[tokio::test]
     async fn a_started_agent_reports_its_pid() {
         let agent = AgentSettings {
