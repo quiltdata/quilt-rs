@@ -23,7 +23,7 @@
 
 ### Fixed
 
-- `reset_to_latest` discards a pending commit whose base is already `latest`, instead of keeping it as already up to date
+- `reset_to_latest` discards a pending commit whose base is already `latest`, instead of keeping it as already up to date (<https://github.com/quiltdata/quilt-rs/pull/1197>)
 
 ## [v0.48.0] - 2026-10-23
 
