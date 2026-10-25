@@ -155,6 +155,8 @@ struct Fixture {
     pulled_meta: Option<Value>,
     /// What the remote's `latest` carries; the head's metadata unless set.
     latest_meta: Option<Value>,
+    /// What the head a run ends on carries; [`edited_head`] unless set.
+    finished_meta: Option<Value>,
 }
 
 impl Fixture {
@@ -176,6 +178,7 @@ impl Fixture {
             stacked_commits: false,
             pulled_meta: None,
             latest_meta: None,
+            finished_meta: None,
         }
     }
 
@@ -940,16 +943,14 @@ fn claimed_run(tasks: &Tasks) -> Run {
         document: "TASK.md".to_string(),
         agent_id: "kiro".to_string(),
         agent: settings().agents["kiro"].clone(),
-        claimed_meta: agent_exec::with_claim(&unclaimed(), claim.claimed()),
         claim,
         claim_hash: "h1".to_string(),
-        workflow: WorkflowIntent::Named("gate".to_string()),
         _hold: tasks.hold(&namespace()),
     }
 }
 
-/// A package the run ended on: its head carries the run's claim with an
-/// edited title, its tree walks with `changes`, and its publishes are taken as
+/// A package the run ended on: its head carries the fixture's `finished_meta`
+/// under the workflow `edited`, its tree walks with `changes`, and its publishes are taken as
 /// `latest` or not by `certified_latest`. Publishes go to the fixture's
 /// `published`; publishes and resets to its `events`.
 fn finishing_model(
@@ -991,13 +992,13 @@ fn finishing_model(
             }
             Ok(lineage)
         });
+    let head_meta = fixture.finished_meta.clone().unwrap_or_else(edited_head);
     model
         .expect_get_installed_package_manifest()
-        .returning(|_, _| {
+        .returning(move |_, _| {
             Ok(quilt::manifest::Manifest {
                 header: quilt::manifest::ManifestHeader {
-                    user_meta: Some(edited_head()),
-                    // Not the claim's `gate`: the outcome follows the head.
+                    user_meta: Some(head_meta.clone()),
                     workflow: Some(quilt::manifest::Workflow {
                         config: quilt_uri::S3Uri {
                             bucket: "quilt-dev".to_string(),
@@ -1087,6 +1088,33 @@ async fn the_last_revision_publishes_the_agents_work_under_the_same_claim() -> R
         "the head's own metadata, with only the claim moved on"
     );
     assert_eq!(*paths, BTreeSet::from(["out.md".to_string()]));
+    Ok(())
+}
+
+/// The user pulled a revision where the author cancelled the task.
+#[tokio::test]
+async fn a_head_that_no_longer_holds_the_claim_gets_no_outcome() -> Result<(), Error> {
+    let mut cancelled = edited_head();
+    cancelled["agent_exec"]["claim"] = json!({ "status": "cancelled" });
+    let done = acp::RunOutcome::Done {
+        session_id: "s1".to_string(),
+        stop_reason: "end_turn".to_string(),
+    };
+    // A clean `not_started` would otherwise publish and reset.
+    for (outcome, changes) in [(done, written()), (not_started(), BTreeMap::new())] {
+        let fixture = Fixture {
+            finished_meta: Some(cancelled.clone()),
+            ..Fixture::new()
+        };
+        let model = finishing_model(&fixture, changes, false);
+
+        finish(&model, &claimed_run(&fixture.tasks), &outcome).await?;
+
+        assert!(
+            fixture.events.lock().unwrap().is_empty(),
+            "{outcome:?}: nothing published or reset, the files stay for autosync"
+        );
+    }
     Ok(())
 }
 

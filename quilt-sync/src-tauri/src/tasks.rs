@@ -104,10 +104,7 @@ pub struct Run {
     pub agent_id: String,
     pub agent: AgentSettings,
     pub claim: Claim,
-    /// The claim revision's metadata, which the last revision starts from.
-    pub claimed_meta: Value,
     pub claim_hash: String,
-    pub workflow: WorkflowIntent,
     /// Released when the run ends, by being dropped with it.
     _hold: Hold,
 }
@@ -275,16 +272,8 @@ async fn try_check<M: QuiltModel>(
             settings::remember_invocation(data_dir, &claim.invocation_id).await?;
             let claimed_meta = agent_exec::with_claim(user_meta, claim.claimed());
             let message = format!("Task {document} claimed");
-            let outcome = publish(
-                model,
-                &locked,
-                pkg,
-                workflow.clone(),
-                claimed_meta.clone(),
-                message,
-                status,
-            )
-            .await?;
+            let outcome =
+                publish(model, &locked, pkg, workflow, claimed_meta, message, status).await?;
             let push = outcome.push();
             if !push.certified_latest {
                 info!(
@@ -301,9 +290,7 @@ async fn try_check<M: QuiltModel>(
                 agent: settings.agents[&agent].clone(),
                 agent_id: agent,
                 claim,
-                claimed_meta,
                 claim_hash: push.manifest_uri.hash.clone(),
-                workflow,
                 _hold: hold,
             });
             return Ok(());
@@ -622,16 +609,23 @@ async fn finish<M: QuiltModel>(
         acp::RunOutcome::NotStarted { .. } | acp::RunOutcome::Unrunnable { .. }
     ) && status.changes.is_empty()
         && commit.is_none();
-    // The head the run ended on: the claim, or a later revision carrying it.
     let head = model
         .get_installed_package_manifest(&installed, &lineage)
         .await?;
-    let (base, workflow) = match head.header.user_meta {
-        Some(meta) if run.claim.is_held_in(&meta) => {
-            (meta, carried_workflow(head.header.workflow.as_ref()))
-        }
-        _ => (run.claimed_meta.clone(), run.workflow.clone()),
+    // A head that no longer holds the claim, pulled or committed by hand,
+    // wins: the agent's files stay for autosync.
+    let Some(base) = head
+        .header
+        .user_meta
+        .filter(|meta| run.claim.is_held_in(meta))
+    else {
+        info!(
+            "tasks: {}: the head no longer holds the claim; no outcome",
+            run.namespace
+        );
+        return Ok(());
     };
+    let workflow = carried_workflow(head.header.workflow.as_ref());
     let meta = agent_exec::with_claim(&base, claim);
     let published = publish(model, &locked, &installed, workflow, meta, message, status).await?;
     if metadata_only {
