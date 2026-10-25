@@ -80,7 +80,7 @@ fn started(pid: u32) -> Option<u64> {
 }
 
 /// When `pid` started, in clock ticks since boot; `None` once it has exited,
-/// a zombie included.
+/// a zombie with no thread left included.
 #[cfg(target_os = "linux")]
 fn started(pid: u32) -> Option<u64> {
     let stat = std::fs::read(format!("/proc/{pid}/stat")).ok()?;
@@ -91,8 +91,12 @@ fn started(pid: u32) -> Option<u64> {
     let mut fields = std::str::from_utf8(&stat[after_name..])
         .ok()?
         .split_whitespace();
-    if matches!(fields.next()?, "Z" | "X") {
-        return None;
+    // A zombie leader may still have threads at work.
+    let threads = || std::fs::read_dir(format!("/proc/{pid}/task")).map_or(0, Iterator::count);
+    match fields.next()? {
+        "X" => return None,
+        "Z" if threads() <= 1 => return None,
+        _ => {}
     }
     fields.nth(18)?.parse().ok()
 }
