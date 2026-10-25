@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.48.1-dev]
+
+### Fixed
+
+- `reset_to_latest` discards a pending commit whose base is already `latest`, instead of keeping it as already up to date
+
 ## [v0.48.0] - 2026-10-23
 
 ### Added
