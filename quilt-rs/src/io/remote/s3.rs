@@ -155,8 +155,9 @@ where
     })
 }
 
-/// What `aws-config` says when an SSO profile has no cached token, or one
-/// that expired and cannot be refreshed: `aws sso login` is the remedy.
+/// What `aws-config` says when an SSO profile with an `sso-session` has no
+/// cached token, or one that expired and cannot be refreshed: `aws sso login`
+/// is the remedy.
 const SSO_TOKEN_UNUSABLE: [&str; 2] = [
     "failed to load the cached SSO token",
     "the SSO token has expired",
@@ -169,6 +170,7 @@ const SSO_TOKEN_UNUSABLE: [&str; 2] = [
 /// this walks `source()`.
 fn ambient_credentials_failed(err: &(dyn std::error::Error + 'static)) -> bool {
     let mut current = Some(err);
+    let mut loading_credentials = false;
     while let Some(e) = current {
         // Not the first `CredentialsError` alone: a role profile whose source
         // has no credentials wraps "not loaded" in a provider error.
@@ -185,6 +187,17 @@ fn ambient_credentials_failed(err: &(dyn std::error::Error + 'static)) -> bool {
         // are private, so its words are matched; a test pins them.
         let words = e.to_string();
         if SSO_TOKEN_UNUSABLE.iter().any(|w| words.contains(w)) {
+            return true;
+        }
+        loading_credentials |= e.is::<CredentialsError>();
+        // While loading credentials: a file that is not there (a legacy SSO
+        // profile's cached token), or the SSO portal refusing the sign-in.
+        if loading_credentials
+            && (e
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+                || words.contains("UnauthorizedException"))
+        {
             return true;
         }
         current = e.source();
@@ -1933,6 +1946,19 @@ mod tests {
             ),
             Error::Login(LoginError::NoSession(None))
         ));
+        // The SSO portal refusing the sign-in: the answer to a legacy
+        // profile's expired token, which the SDK does not check itself.
+        assert!(matches!(
+            s3_error_or_session_loss(
+                failed_call(|| CredentialsError::provider_error(std::io::Error::other(
+                    "UnauthorizedException: Session token not found or invalid"
+                )))
+                .await,
+                None,
+                S3ErrorKind::Exists
+            ),
+            Error::Login(LoginError::NoSession(None))
+        ));
         // A provider that timed out or failed (SSO or assume-role, offline)
         // may work next time: an outage, so the read falls back to the tip.
         for transient in [
@@ -1976,9 +2002,17 @@ sso_region = us-east-1
         const CACHE: &str = "/home/me/.aws/sso/cache/34c6fceca75e456f25e7e99531e2425c6c1de443.json";
         const EXPIRED: &str = r#"{"accessToken": "token", "expiresAt": "2020-01-01T00:00:00Z", "region": "us-east-1", "startUrl": "https://example.awsapps.com/start"}"#;
 
+        // A legacy profile names the start URL itself, with no `sso-session`.
+        const LEGACY: &str = "[profile default]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+sso_account_id = 123456789012
+sso_role_name = Reader
+";
         for files in [
             vec![("/home/me/.aws/config", CONFIG)],
             vec![("/home/me/.aws/config", CONFIG), (CACHE, EXPIRED)],
+            vec![("/home/me/.aws/config", LEGACY)],
         ] {
             let config = aws_config::defaults(BehaviorVersion::latest())
                 .region(Region::new("us-east-1"))
