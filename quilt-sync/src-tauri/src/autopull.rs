@@ -129,6 +129,7 @@ pub(crate) struct WatcherInner {
     /// The folder watcher's walks, which the tick reuses for the packages it
     /// vouches for.
     pub walks: watched::WatchedWalks,
+    pub tasks: crate::tasks::Tasks,
 }
 
 impl WatcherInner {
@@ -225,6 +226,25 @@ impl Watcher {
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
+        let tasks = match app_handle.path().app_local_data_dir() {
+            Ok(data_dir) => {
+                let run_handle = app_handle.clone();
+                crate::tasks::Tasks::new(
+                    data_dir,
+                    Arc::new(move |run| {
+                        let run_handle = run_handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            Box::pin(crate::tasks::execute(&*run_handle.state::<Model>(), run))
+                                .await;
+                        });
+                    }),
+                )
+            }
+            Err(err) => {
+                warn!("tasks: no data folder, tasks are off: {err}");
+                crate::tasks::Tasks::default()
+            }
+        };
         let inner = Arc::new(WatcherInner {
             settings,
             publish_settings,
@@ -236,6 +256,7 @@ impl Watcher {
             clocks: Clocks::default(),
             walks: crate::autopull::watched::WatchedWalks::default(),
             last_change,
+            tasks,
         });
         // Its own task: a package whose catalog is slow to answer its host
         // config must not hold back the loop.
@@ -531,6 +552,7 @@ impl Watcher {
                 last_change: last_change::LastChange::new(
                     crate::quilt::state_store::PackageStateStore::in_memory(),
                 ),
+                tasks: crate::tasks::Tasks::default(),
             }),
         }
     }
@@ -739,6 +761,7 @@ pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
         last_change: last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        tasks: crate::tasks::Tasks::default(),
     }
 }
 

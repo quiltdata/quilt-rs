@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.24.1-dev]
+
+### Changed
+
+- Under the hood, QuiltSync can run the task a package revision asks for: given a hand-written `task_settings.json`, it claims the task, runs a local agent over ACP in the package's folder, and publishes the result as the next revision (<https://github.com/quiltdata/quilt-rs/pull/1195>)
+
 ## [v0.24.0] - 2026-10-23
 
 ### Changed
