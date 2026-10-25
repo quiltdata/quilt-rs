@@ -98,6 +98,12 @@ pub struct Claim {
 }
 
 impl Claim {
+    /// Whether `user_meta` still says `claimed` under this claim.
+    pub fn is_held_in(&self, user_meta: &Value) -> bool {
+        let held = &user_meta["agent_exec"]["claim"];
+        held["status"] == "claimed" && held["invocation_id"] == self.invocation_id.as_str()
+    }
+
     pub fn claimed(&self) -> Value {
         json!({
             "status": "claimed",

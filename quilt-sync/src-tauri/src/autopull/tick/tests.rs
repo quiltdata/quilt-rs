@@ -2296,6 +2296,7 @@ async fn a_package_held_by_a_task_run_is_not_synced() {
         wait: Duration::ZERO,
         pull_enabled: true,
         push_enabled: true,
+        tasks: None,
     };
     let roles = RoleCache::default();
     let pass = || sync_package(&model, &roles, &inner, &pkg, &run, Instant::now());
@@ -2304,4 +2305,134 @@ async fn a_package_held_by_a_task_run_is_not_synced() {
     assert_eq!(pass().await, Pass::Skipped);
     drop(hold);
     assert_eq!(pass().await, Pass::Busy, "the hold was all that skipped it");
+}
+
+fn demo_package() -> quilt::InstalledPackage {
+    quilt::LocalDomain::new(std::path::PathBuf::new())
+        .create_installed_package(("acme", "demo").into())
+}
+
+/// The one package, at `latest` in `bucket`, whose head is claimed under the
+/// invocation `ours` and whose tree holds the agent's `out.md`. Each publish's
+/// metadata lands in `published`.
+fn stale_claim_model(
+    published: &Arc<std::sync::Mutex<Vec<quilt::flow::UserMeta>>>,
+) -> MockQuiltModel {
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("acme", "demo").into(),
+        hash: "h0".to_string(),
+        origin: Some(fixtures::host()),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
+    let mut model = MockQuiltModel::new();
+    model
+        .expect_get_installed_packages_list()
+        .returning(|| Ok(vec![demo_package()]));
+    model
+        .expect_get_installed_package()
+        .returning(|_| Ok(Some(demo_package())));
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_get_installed_package_manifest()
+        .returning(|_, _| {
+            Ok(quilt::manifest::Manifest {
+                header: quilt::manifest::ManifestHeader {
+                    user_meta: Some(serde_json::json!({ "agent_exec": {
+                        "document": "TASK.md", "agent": { "id": "kiro" },
+                        "claim": { "status": "claimed", "invocation_id": "ours" },
+                    }})),
+                    ..quilt::manifest::ManifestHeader::default()
+                },
+                rows: Vec::new(),
+            })
+        });
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_locked_package_status().returning(|_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: true,
+            latest_hash: "h0".to_string(),
+            ..quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::UpToDate,
+                BTreeMap::from([(
+                    std::path::PathBuf::from("out.md"),
+                    quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+                )]),
+            )
+        })
+    });
+    model.expect_resolve_workflow().returning(|_, _| Ok(None));
+    let recording = Arc::clone(published);
+    model
+        .expect_locked_package_publish()
+        .returning(move |_, _, meta, _, _, _| {
+            recording.lock().unwrap().push(meta);
+            Ok(quilt::PublishOutcome::CommittedAndPushed(
+                quilt::PushOutcome {
+                    manifest_uri: quilt_uri::ManifestUri {
+                        bucket: "bucket".to_string(),
+                        namespace: ("acme", "demo").into(),
+                        hash: "h1".to_string(),
+                        origin: None,
+                    },
+                    certified_latest: true,
+                },
+            ))
+        });
+    model
+}
+
+/// After a restart, the agent's leftover files go out on the claim's `failed`
+/// revision. Autosync, which would publish them at once with its own metadata,
+/// leaves the package to the task check, here and in the publish timer.
+#[tokio::test]
+async fn our_own_interrupted_claim_is_published_by_the_sweep_not_autosync() -> Result<(), Error> {
+    let dir = tempfile::TempDir::new()?;
+    tokio::fs::write(
+        dir.path().join("task_settings.json"),
+        r#"{"blessed_buckets":["s3://bucket"],"agents":{}}"#,
+    )
+    .await?;
+    crate::tasks::settings::remember_invocation(dir.path(), "ours").await?;
+    let published = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let model = stale_claim_model(&published);
+    // No wait: autosync publishes a change the moment it sees one.
+    let mut settings = enabled();
+    settings.push.idle_timeout_secs = 0;
+    let inner = WatcherInner {
+        tasks: crate::tasks::Tasks::new(dir.path().to_path_buf(), Arc::new(|_| {})),
+        ..make_inner(settings)
+    };
+
+    let run = PassSettings {
+        publish: PublishSettings::default(),
+        wait: Duration::ZERO,
+        pull_enabled: true,
+        push_enabled: true,
+        tasks: inner.tasks.settings().await,
+    };
+    let roles = RoleCache::default();
+    let pkg = demo_package();
+    assert_eq!(
+        sync_package(&model, &roles, &inner, &pkg, &run, Instant::now()).await,
+        Pass::LeftToTasks,
+        "the publish timer's pass leaves it too"
+    );
+    run_once(&model, &roles, &inner).await?;
+
+    let published = published.lock().unwrap();
+    assert_eq!(
+        published.len(),
+        1,
+        "one revision, the sweep's: {published:?}"
+    );
+    let quilt::flow::UserMeta::Set(meta) = &published[0] else {
+        panic!("the sweep sets the metadata, got {:?}", published[0]);
+    };
+    assert_eq!(meta["agent_exec"]["claim"]["status"], "failed");
+    Ok(())
 }

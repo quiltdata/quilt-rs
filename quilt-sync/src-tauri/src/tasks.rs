@@ -122,6 +122,82 @@ pub async fn check<M: QuiltModel>(
     }
 }
 
+struct Head {
+    lineage: quilt::lineage::PackageLineage,
+    user_meta: Value,
+    workflow: Option<quilt::manifest::Workflow>,
+    verdict: Verdict,
+}
+
+/// `None` for a package outside the blessed buckets or with no `agent_exec`.
+async fn read_head<M: QuiltModel>(
+    model: &M,
+    data_dir: &std::path::Path,
+    settings: &TaskSettings,
+    pkg: &quilt::InstalledPackage,
+) -> Result<Option<Head>, Error> {
+    let lineage = model.get_installed_package_lineage(pkg).await?;
+    let Some(remote) = lineage.remote_uri.as_ref() else {
+        return Ok(None);
+    };
+    if !settings.blesses(&remote.bucket) {
+        return Ok(None);
+    }
+    let manifest = model.get_installed_package_manifest(pkg, &lineage).await?;
+    let Some(user_meta) = manifest.header.user_meta.as_ref() else {
+        return Ok(None);
+    };
+    if user_meta.get("agent_exec").is_none() {
+        return Ok(None);
+    }
+    let own = settings::own_invocations(data_dir).await?;
+    let verdict = agent_exec::classify(
+        user_meta,
+        |path| manifest.rows.iter().any(|row| row.logical_key == path),
+        &settings.agents,
+        &own,
+    );
+    Ok(Some(Head {
+        user_meta: user_meta.clone(),
+        workflow: manifest.header.workflow,
+        lineage,
+        verdict,
+    }))
+}
+
+/// Whether the sweep can publish over a head in `state`: its base is `latest`.
+fn sweepable(state: UpstreamState) -> bool {
+    matches!(state, UpstreamState::UpToDate | UpstreamState::Ahead)
+}
+
+impl Tasks {
+    /// Whether only the sweep may publish `pkg`: its head is this desktop's own
+    /// claim with no run alive, on a base last known to be `latest`. Autosync's
+    /// publish could get there first, or replace `agent_exec`.
+    pub async fn awaits_sweep<M: QuiltModel>(
+        &self,
+        model: &M,
+        settings: &TaskSettings,
+        pkg: &quilt::InstalledPackage,
+    ) -> bool {
+        let Some(data_dir) = self.data_dir.as_deref() else {
+            return false;
+        };
+        if self.holds(&pkg.namespace) {
+            return false;
+        }
+        let Ok(Some(Head {
+            lineage,
+            verdict: Verdict::Interrupted,
+            ..
+        })) = read_head(model, data_dir, settings, pkg).await
+        else {
+            return false;
+        };
+        sweepable(UpstreamState::from(lineage))
+    }
+}
+
 async fn try_check<M: QuiltModel>(
     model: &M,
     tasks: &Tasks,
@@ -135,27 +211,16 @@ async fn try_check<M: QuiltModel>(
     if tasks.holds(&pkg.namespace) {
         return Ok(());
     }
-    let lineage = model.get_installed_package_lineage(pkg).await?;
-    let Some(remote) = lineage.remote_uri.as_ref() else {
-        return Ok(());
-    };
-    if !settings.blesses(&remote.bucket) {
-        return Ok(());
-    }
-    let manifest = model.get_installed_package_manifest(pkg, &lineage).await?;
-    let Some(user_meta) = manifest.header.user_meta.as_ref() else {
-        return Ok(());
-    };
-    if user_meta.get("agent_exec").is_none() {
-        return Ok(());
-    }
-    let own = settings::own_invocations(data_dir).await?;
-    let verdict = agent_exec::classify(
+    let Some(Head {
+        lineage,
         user_meta,
-        |path| manifest.rows.iter().any(|row| row.logical_key == path),
-        &settings.agents,
-        &own,
-    );
+        workflow,
+        verdict,
+    }) = read_head(model, data_dir, settings, pkg).await?
+    else {
+        return Ok(());
+    };
+    let user_meta = &user_meta;
     if verdict == Verdict::LeaveAlone {
         return Ok(());
     }
@@ -167,20 +232,31 @@ async fn try_check<M: QuiltModel>(
     if let Verdict::Claim { document, .. } = &verdict {
         download(model, pkg, &locked, &lineage, document).await?;
     }
-    let Some(status) = clean_at_head(model, pkg, &locked, &lineage).await? else {
+    let Some(tree) = fresh_at_head(model, pkg, &locked, &lineage).await? else {
         return Ok(());
     };
-    let workflow = carried_workflow(manifest.header.workflow.as_ref());
+    let workflow = carried_workflow(workflow.as_ref());
+    if verdict == Verdict::Interrupted {
+        return sweep(model, &locked, pkg, workflow, user_meta, tree).await;
+    }
+    // A claim or `unrunnable` changes only the metadata. With a pending commit,
+    // publishing pushes that commit and drops the new metadata.
+    let Tree {
+        status,
+        pending_commit,
+    } = tree;
+    if status.upstream_state != UpstreamState::UpToDate
+        || !status.changes.is_empty()
+        || pending_commit
+    {
+        return Ok(());
+    }
 
     let (meta, message) = match verdict {
-        Verdict::LeaveAlone => return Ok(()),
+        Verdict::LeaveAlone | Verdict::Interrupted => return Ok(()),
         Verdict::Unrunnable { reason } => (
             agent_exec::unrunnable(user_meta, &reason),
             format!("Task cannot run: {reason}"),
-        ),
-        Verdict::Interrupted => (
-            agent_exec::interrupted(user_meta),
-            "Task failed: interrupted by restart".to_string(),
         ),
         Verdict::Claim { document, agent } => {
             let home = model.package_home(&pkg.namespace).await?;
@@ -209,6 +285,7 @@ async fn try_check<M: QuiltModel>(
                     "tasks: {}: another revision became latest first, not running",
                     pkg.namespace
                 );
+                reset_if_clean(model, pkg, &locked).await?;
                 return Ok(());
             }
             (tasks.spawn_run)(Run {
@@ -225,28 +302,101 @@ async fn try_check<M: QuiltModel>(
             return Ok(());
         }
     };
-    publish(model, &locked, pkg, workflow, meta, message, status).await?;
+    let outcome = publish(model, &locked, pkg, workflow, meta, message, status).await?;
+    if !outcome.push().certified_latest {
+        reset_if_clean(model, pkg, &locked).await?;
+    }
     Ok(())
 }
 
-/// The tree's status, walked under `locked`, when a revision can change only
-/// the metadata: a clean tree, no pending commit, and `head` still the
-/// package's revision and at a `latest` read just now. With a pending commit,
-/// publishing pushes that commit and drops the new metadata.
-async fn clean_at_head<M: QuiltModel>(
+/// After a metadata-only publish that didn't become `latest`: back to `latest`
+/// while nothing would be lost (a clean tree, no later commit), else Diverged.
+async fn reset_if_clean<M: QuiltModel>(
+    model: &M,
+    pkg: &quilt::InstalledPackage,
+    locked: &M::Locked,
+) -> Result<(), Error> {
+    let (tree, _) = walk(model, pkg, locked).await?;
+    if tree.status.changes.is_empty() && !tree.pending_commit {
+        model.locked_package_reset_local(locked).await?;
+    } else {
+        warn!(
+            "tasks: {}: left Diverged, the tree changed after the publish",
+            pkg.namespace
+        );
+    }
+    Ok(())
+}
+
+/// A publish other than a metadata-only one is never reset when it doesn't
+/// become `latest`: the package stays Diverged for the user.
+fn note_not_latest(pkg: &Namespace, push: &quilt::PushOutcome) {
+    if !push.certified_latest {
+        warn!("tasks: {pkg}: what it pushed is not latest; the package is left Diverged");
+    }
+}
+
+/// The tree walked under the package's lock.
+struct Tree {
+    status: quilt::lineage::InstalledPackageStatus,
+    pending_commit: bool,
+}
+
+async fn walk<M: QuiltModel>(
+    model: &M,
+    pkg: &quilt::InstalledPackage,
+    locked: &M::Locked,
+) -> Result<(Tree, quilt::lineage::PackageLineage), Error> {
+    let status = model.locked_package_status(locked, None).await?;
+    let lineage = model.get_installed_package_lineage(pkg).await?;
+    let tree = Tree {
+        status,
+        pending_commit: lineage.commit.is_some(),
+    };
+    Ok((tree, lineage))
+}
+
+/// `None` unless `head` is still the package's revision and `latest` was read
+/// just now.
+async fn fresh_at_head<M: QuiltModel>(
     model: &M,
     pkg: &quilt::InstalledPackage,
     locked: &M::Locked,
     head: &quilt::lineage::PackageLineage,
-) -> Result<Option<quilt::lineage::InstalledPackageStatus>, Error> {
-    let status = model.locked_package_status(locked, None).await?;
-    let lineage = model.get_installed_package_lineage(pkg).await?;
-    let clean = status.latest_refreshed
-        && status.upstream_state == UpstreamState::UpToDate
-        && status.changes.is_empty()
-        && lineage.commit.is_none()
-        && lineage.current_hash() == head.current_hash();
-    Ok(clean.then_some(status))
+) -> Result<Option<Tree>, Error> {
+    let (tree, lineage) = walk(model, pkg, locked).await?;
+    let fresh = tree.status.latest_refreshed && lineage.current_hash() == head.current_hash();
+    Ok(fresh.then_some(tree))
+}
+
+/// Publish this desktop's interrupted claim as `failed`, with whatever the
+/// agent left in the tree, once its base is `latest`.
+async fn sweep<M: QuiltModel>(
+    model: &M,
+    locked: &M::Locked,
+    pkg: &quilt::InstalledPackage,
+    workflow: WorkflowIntent,
+    user_meta: &Value,
+    Tree {
+        status,
+        pending_commit,
+    }: Tree,
+) -> Result<(), Error> {
+    if !sweepable(status.upstream_state) {
+        return Ok(());
+    }
+    if pending_commit && status.changes.is_empty() {
+        // Publishing would drop the new metadata: push the commit as it is,
+        // and fail its claim next tick.
+        let push = model.locked_package_push(locked).await?;
+        note_not_latest(&pkg.namespace, &push);
+        return Ok(());
+    }
+    let meta = agent_exec::interrupted(user_meta);
+    let message = "Task failed: interrupted by restart".to_string();
+    let outcome = publish(model, locked, pkg, workflow, meta, message, status).await?;
+    note_not_latest(&pkg.namespace, outcome.push());
+    Ok(())
 }
 
 /// Put `document` in the package's folder, which a sparse copy may lack. A
@@ -327,7 +477,7 @@ async fn publish<M: QuiltModel>(
 
 pub async fn execute<M: QuiltModel>(model: &M, run: Run) {
     let outcome = acp::run(&run.agent, &run.home, &run.document, async || {
-        claim_is_latest(model, &run.namespace, &run.claim_hash)
+        claim_holds(model, &run)
             .await
             .map_err(|err| format!("could not re-read the package: {err}"))
     })
@@ -341,19 +491,39 @@ pub async fn execute<M: QuiltModel>(model: &M, run: Run) {
     }
 }
 
-async fn claim_is_latest<M: QuiltModel>(
-    model: &M,
-    namespace: &Namespace,
-    claim_hash: &str,
-) -> Result<bool, Error> {
-    let installed = installed(model, namespace).await?;
+/// Whether `latest`, read just now, still holds `run`'s claim. A later
+/// revision that carries the claim forward is pulled, while the tree is still
+/// clean, so the agent works on it.
+async fn claim_holds<M: QuiltModel>(model: &M, run: &Run) -> Result<bool, Error> {
+    let installed = installed(model, &run.namespace).await?;
     let status = model.get_installed_package_status(&installed, None).await?;
     if !status.latest_refreshed {
         return Err(Error::General(
             "the remote's latest could not be read".into(),
         ));
     }
-    Ok(status.latest_hash == claim_hash)
+    if status.latest_hash == run.claim_hash {
+        return Ok(true);
+    }
+    let lineage = model.get_installed_package_lineage(&installed).await?;
+    let latest_uri = quilt_uri::ManifestUri {
+        hash: status.latest_hash,
+        ..lineage.remote()?.clone()
+    };
+    let latest = model.browse_remote_manifest(&latest_uri).await?;
+    if !latest
+        .header
+        .user_meta
+        .as_ref()
+        .is_some_and(|meta| run.claim.is_held_in(meta))
+    {
+        return Ok(false);
+    }
+    let locked = model.lock_package(&installed).await?;
+    model
+        .locked_package_pull(&locked, None, lineage.sync_scope)
+        .await?;
+    Ok(true)
 }
 
 async fn installed<M: QuiltModel>(
@@ -371,19 +541,30 @@ async fn finish<M: QuiltModel>(
     run: &Run,
     outcome: &acp::RunOutcome,
 ) -> Result<(), Error> {
+    let installed = installed(model, &run.namespace).await?;
+    let locked = model.lock_package(&installed).await?;
     let Some(claim) = run.claim.outcome(outcome) else {
-        return Ok(());
+        // The claim lost `latest` before the prompt: nothing to publish.
+        return reset_if_clean(model, &installed, &locked).await;
     };
     let message = format!(
         "Task {} {}",
         run.document,
         claim["status"].as_str().unwrap_or_default()
     );
-    let installed = installed(model, &run.namespace).await?;
-    let locked = model.lock_package(&installed).await?;
     let status = model.locked_package_status(&locked, None).await?;
-    let meta = agent_exec::with_claim(&run.claimed_meta, claim);
-    publish(
+    // The head the run ended on: the claim, or a later revision carrying it.
+    let lineage = model.get_installed_package_lineage(&installed).await?;
+    let head = model
+        .get_installed_package_manifest(&installed, &lineage)
+        .await?;
+    let base = head
+        .header
+        .user_meta
+        .filter(|meta| run.claim.is_held_in(meta))
+        .unwrap_or_else(|| run.claimed_meta.clone());
+    let meta = agent_exec::with_claim(&base, claim);
+    let published = publish(
         model,
         &locked,
         &installed,
@@ -393,6 +574,14 @@ async fn finish<M: QuiltModel>(
         status,
     )
     .await?;
+    // An agent that never started left the tree as it was: metadata only.
+    if matches!(outcome, acp::RunOutcome::NotStarted { .. }) {
+        if !published.push().certified_latest {
+            reset_if_clean(model, &installed, &locked).await?;
+        }
+    } else {
+        note_not_latest(&run.namespace, published.push());
+    }
     Ok(())
 }
 

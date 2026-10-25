@@ -46,8 +46,8 @@ pub enum RunOutcome {
     },
 }
 
-/// `still_claimed` re-reads the remote head after the session opens; an `Err`
-/// is a head that could not be read.
+/// `still_claimed` re-reads the remote head after the session opens, and may
+/// bring a later revision down; an `Err` is a head that could not be read.
 pub async fn run(
     agent: &AgentSettings,
     cwd: &Path,
