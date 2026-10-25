@@ -21,6 +21,12 @@ ignore = [
     # drops rustls-pemfile 1.x.
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 1.x via aws-smithy-http-client; awaiting AWS SDK update" },
 
+    # --- crypto-bigint 0.5.x pulled in by aws-sigv4 v1.6.x ---
+    # The fix shipped only in crypto-bigint 0.7.6 (the 0.7 copy is bumped).
+    # aws-sigv4 1.6.3 still requires ^0.5, which has no patched release; drop
+    # this once aws-sigv4 moves to crypto-bigint 0.7.
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.x via aws-sigv4; no patched 0.5 release, awaiting AWS SDK update" },
+
     # --- Tauri Linux backend (GTK3 / webkit2gtk) ---
     # Tauri 2.x has not migrated off GTK3. These advisories will clear when
     # Tauri ships a GTK4 backend or we drop the Linux target.
