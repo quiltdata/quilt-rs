@@ -1561,8 +1561,9 @@ mod tests {
             host: Some(host.clone()),
             kind: S3ErrorKind::AccessDenied("HTTP 403".to_string()),
         });
+        fill();
         assert!(remote.forget_ambient_clients_on(denied).is_access_denied());
-        assert_eq!(hosts(), vec![Some(host.clone())]);
+        assert_eq!(hosts(), vec![None, Some(host.clone())]);
 
         fill();
         let missing = Error::Login(LoginError::NoSession(None));
