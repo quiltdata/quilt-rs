@@ -145,8 +145,6 @@ struct Fixture {
     tasks: Tasks,
     /// The package has a commit not yet pushed.
     pending_commit: bool,
-    /// The package's last-known `latest` is past its base.
-    behind: bool,
     /// The pending commit sits on another one.
     stacked_commits: bool,
     /// What the remote's `latest` carries; the head's metadata unless set.
@@ -169,7 +167,6 @@ impl Fixture {
             runs,
             tasks,
             pending_commit: false,
-            behind: false,
             stacked_commits: false,
             latest_meta: None,
         }
@@ -183,8 +180,7 @@ impl Fixture {
             hash: "h0".to_string(),
             origin: Some(fixtures::host()),
         };
-        let latest = if self.behind { "h9" } else { "h0" };
-        let mut lineage = quilt::lineage::PackageLineage::from_remote(remote, latest.to_string());
+        let mut lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
         if self.pending_commit {
             let prev_hashes = if self.stacked_commits {
                 vec!["c0".to_string()]
@@ -607,14 +603,30 @@ async fn autosync_leaves_our_own_interrupted_claim_to_the_sweep() -> Result<(), 
     assert!(awaits(&ours).await);
     let theirs = fixture.model(unclaimed(), fresh(written()), true);
     assert!(!awaits(&theirs).await);
-    let behind = Fixture {
-        behind: true,
-        ..Fixture::new()
-    };
-    let ours_behind = behind.model(ours_claimed(), fresh(written()), true);
+    // The stored lineage still says up to date; only a fresh read finds it behind.
+    let ours_behind = fixture.model(
+        ours_claimed(),
+        quilt::lineage::InstalledPackageStatus {
+            upstream_state: UpstreamState::Behind,
+            ..fresh(written())
+        },
+        true,
+    );
     assert!(
         !awaits(&ours_behind).await,
         "behind latest, the sweep can't publish it, so autosync pulls as usual"
+    );
+    let unread = fixture.model(
+        ours_claimed(),
+        quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: false,
+            ..fresh(written())
+        },
+        true,
+    );
+    assert!(
+        awaits(&unread).await,
+        "while latest can't be read, the sweep waits and autosync with it"
     );
     let _running = fixture.tasks.hold(&namespace());
     assert!(
