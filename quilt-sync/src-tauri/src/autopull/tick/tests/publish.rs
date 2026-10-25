@@ -222,6 +222,11 @@ async fn autosync_default_metadata_keeps_the_heads_agent_exec() -> Result<(), Er
         ),
         (
             serde_json::json!({ "agent_exec": task }),
+            serde_json::json!({ "agent_exec": { "document": "OTHER.md" } }),
+            serde_json::json!({ "agent_exec": task }),
+        ),
+        (
+            serde_json::json!({ "agent_exec": task }),
             serde_json::json!("desktop"),
             serde_json::json!({ "agent_exec": task }),
         ),
