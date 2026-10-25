@@ -35,6 +35,10 @@ pub enum RunOutcome {
     NotStarted {
         reason: String,
     },
+    /// The task changed under the claim into one that can't run as written.
+    Unrunnable {
+        reason: String,
+    },
     Done {
         session_id: String,
         stop_reason: String,
@@ -46,13 +50,12 @@ pub enum RunOutcome {
     },
 }
 
-/// `still_claimed` re-reads the remote head after the session opens, and may
-/// bring a later revision down; an `Err` is a head that could not be read.
+/// `recheck` re-reads the task after the session opens, and may bring a later
+/// revision down: the document to prompt, or how the run ends unprompted.
 pub async fn run(
     agent: &AgentSettings,
     cwd: &Path,
-    document: &str,
-    still_claimed: impl AsyncFnOnce() -> Result<bool, String>,
+    recheck: impl AsyncFnOnce() -> Result<String, RunOutcome>,
 ) -> RunOutcome {
     let Some((program, args)) = agent.command.split_first() else {
         return RunOutcome::NotStarted {
@@ -81,7 +84,7 @@ pub async fn run(
         };
     };
     let transport = ByteStreams::new(stdin.compat_write(), stdout.compat());
-    let outcome = converse(transport, cwd, document, agent.trust_all, still_claimed).await;
+    let outcome = converse(transport, cwd, agent.trust_all, recheck).await;
     let _ = child.kill().await;
     outcome
 }
@@ -89,9 +92,8 @@ pub async fn run(
 async fn converse(
     transport: impl ConnectTo<Client> + 'static,
     cwd: &Path,
-    document: &str,
     trust_all: bool,
-    still_claimed: impl AsyncFnOnce() -> Result<bool, String>,
+    recheck: impl AsyncFnOnce() -> Result<String, RunOutcome>,
 ) -> RunOutcome {
     let root = cwd.to_path_buf();
     let prompted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -105,7 +107,7 @@ async fn converse(
             agent_client_protocol::on_receive_request!(),
         )
         .connect_with(transport, async |cx: ConnectionTo<Agent>| {
-            Ok(session(&cx, cwd, document, still_claimed, &prompting).await)
+            Ok(session(&cx, cwd, recheck, &prompting).await)
         })
         .await;
     connected.unwrap_or_else(|err| {
@@ -124,8 +126,7 @@ fn connection_failed(prompted: bool, err: &agent_client_protocol::Error) -> RunO
 async fn session(
     cx: &ConnectionTo<Agent>,
     cwd: &Path,
-    document: &str,
-    still_claimed: impl AsyncFnOnce() -> Result<bool, String>,
+    recheck: impl AsyncFnOnce() -> Result<String, RunOutcome>,
     prompted: &std::sync::atomic::AtomicBool,
 ) -> RunOutcome {
     // The default capabilities advertise no file system and no terminal.
@@ -141,11 +142,10 @@ async fn session(
         Ok(session) => session.session_id,
         Err(err) => return not_started(&err),
     };
-    match still_claimed().await {
-        Ok(true) => {}
-        Ok(false) => return RunOutcome::Superseded,
-        Err(reason) => return RunOutcome::NotStarted { reason },
-    }
+    let document = match recheck().await {
+        Ok(document) => document,
+        Err(outcome) => return outcome,
+    };
     prompted.store(true, std::sync::atomic::Ordering::SeqCst);
     let prompt = PromptRequest::new(
         session_id.clone(),
@@ -417,7 +417,7 @@ mod tests {
             command: vec!["/nonexistent/quiltsync-test-agent".to_string()],
             trust_all: false,
         };
-        let outcome = run(&agent, Path::new("/"), "TASK.md", async || Ok(true)).await;
+        let outcome = run(&agent, Path::new("/"), async || Ok("TASK.md".to_string())).await;
         assert!(
             matches!(outcome, RunOutcome::NotStarted { .. }),
             "{outcome:?}"
@@ -476,7 +476,7 @@ mod tests {
     async fn a_session_prompts_the_document_and_ends_done() {
         let cwd = Path::new(ROOT);
         let (transport, mut heard) = fake_agent(cwd);
-        let outcome = converse(transport, cwd, "TASK.md", false, async || Ok(true)).await;
+        let outcome = converse(transport, cwd, false, async || Ok("TASK.md".to_string())).await;
         assert_eq!(
             outcome,
             RunOutcome::Done {
@@ -497,7 +497,7 @@ mod tests {
     async fn a_claim_that_lost_latest_is_never_prompted() {
         let cwd = Path::new(ROOT);
         let (transport, mut heard) = fake_agent(cwd);
-        let outcome = converse(transport, cwd, "TASK.md", false, async || Ok(false)).await;
+        let outcome = converse(transport, cwd, false, async || Err(RunOutcome::Superseded)).await;
         assert_eq!(outcome, RunOutcome::Superseded);
         assert_eq!(heard.try_recv().ok(), None, "no prompt was sent");
     }

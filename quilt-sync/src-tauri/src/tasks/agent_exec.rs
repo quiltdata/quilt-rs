@@ -54,40 +54,63 @@ pub fn classify(
         _ => return Verdict::LeaveAlone,
     }
 
-    let Some(agent) = agent_exec
-        .get("agent")
-        .and_then(|a| a.get("id"))
-        .and_then(Value::as_str)
-    else {
-        return Verdict::Unrunnable {
-            reason: "agent_exec.agent.id is missing".to_string(),
-        };
+    let agent = match agent_id(agent_exec) {
+        Ok(agent) => agent,
+        Err(reason) => return Verdict::Unrunnable { reason },
     };
     if !agents.contains_key(agent) {
         return Verdict::LeaveAlone;
     }
+    match document(agent_exec, is_file) {
+        Ok(document) => Verdict::Claim {
+            document: document.to_string(),
+            agent: agent.to_string(),
+        },
+        Err(reason) => Verdict::Unrunnable { reason },
+    }
+}
+
+/// The task's document, or why it can't be run.
+fn document(agent_exec: &Value, is_file: impl Fn(&Path) -> bool) -> Result<&str, String> {
     let Some(document) = agent_exec.get("document").and_then(Value::as_str) else {
-        return Verdict::Unrunnable {
-            reason: "agent_exec.document is missing".to_string(),
-        };
+        return Err("agent_exec.document is missing".to_string());
     };
     let inside = Path::new(document)
         .components()
         .all(|part| matches!(part, std::path::Component::Normal(_)));
     if !inside {
-        return Verdict::Unrunnable {
-            reason: format!("{document} is not a path inside the package"),
-        };
+        return Err(format!("{document} is not a path inside the package"));
     }
     if !is_file(Path::new(document)) {
-        return Verdict::Unrunnable {
-            reason: format!("{document} is not a file in the package"),
-        };
+        return Err(format!("{document} is not a file in the package"));
     }
-    Verdict::Claim {
-        document: document.to_string(),
-        agent: agent.to_string(),
+    Ok(document)
+}
+
+fn agent_id(agent_exec: &Value) -> Result<&str, String> {
+    agent_exec["agent"]["id"]
+        .as_str()
+        .ok_or_else(|| "agent_exec.agent.id is missing".to_string())
+}
+
+/// A later revision that still holds a run's claim, checked again in
+/// `classify`'s order: the document to prompt, or how the run ends. `agent` is
+/// the one launched.
+pub fn recheck(
+    user_meta: &Value,
+    is_file: impl Fn(&Path) -> bool,
+    agent: &str,
+) -> Result<String, RunOutcome> {
+    let agent_exec = &user_meta["agent_exec"];
+    let unrunnable = |reason| RunOutcome::Unrunnable { reason };
+    if agent_id(agent_exec).map_err(unrunnable)? != agent {
+        return Err(RunOutcome::NotStarted {
+            reason: "task changed to an agent not running here".to_string(),
+        });
     }
+    document(agent_exec, is_file)
+        .map(str::to_string)
+        .map_err(unrunnable)
 }
 
 /// The claim one run writes in every revision it publishes.
@@ -100,8 +123,7 @@ pub struct Claim {
 impl Claim {
     /// Whether `user_meta` still says `claimed` under this claim.
     pub fn is_held_in(&self, user_meta: &Value) -> bool {
-        let held = &user_meta["agent_exec"]["claim"];
-        held["status"] == "claimed" && held["invocation_id"] == self.invocation_id.as_str()
+        claimed_under(user_meta, &self.invocation_id)
     }
 
     pub fn claimed(&self) -> Value {
@@ -127,6 +149,10 @@ impl Claim {
                 set("reason", Some(reason));
                 "not_started"
             }
+            RunOutcome::Unrunnable { reason } => {
+                set("reason", Some(reason));
+                "unrunnable"
+            }
             RunOutcome::Done {
                 session_id,
                 stop_reason,
@@ -149,6 +175,18 @@ impl Claim {
         claim["status"] = json!(status);
         Some(claim)
     }
+}
+
+/// Whether `latest` still says `claimed` under the invocation `head` claims.
+pub fn holds_same_claim(head: &Value, latest: &Value) -> bool {
+    head["agent_exec"]["claim"]["invocation_id"]
+        .as_str()
+        .is_some_and(|id| claimed_under(latest, id))
+}
+
+fn claimed_under(user_meta: &Value, invocation_id: &str) -> bool {
+    let claim = &user_meta["agent_exec"]["claim"];
+    claim["status"] == "claimed" && claim["invocation_id"] == invocation_id
 }
 
 /// `user_meta` with `agent_exec.claim` replaced by `claim` and nothing else

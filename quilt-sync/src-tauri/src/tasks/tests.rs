@@ -115,6 +115,25 @@ fn expect_push_and_reset(
         });
 }
 
+/// The remote's `latest` carries `meta` and lists `paths`.
+fn expect_latest(model: &mut MockQuiltModel, meta: Value, paths: &'static [&'static str]) {
+    model.expect_browse_remote_manifest().returning(move |_| {
+        Ok(quilt::manifest::Manifest {
+            header: quilt::manifest::ManifestHeader {
+                user_meta: Some(meta.clone()),
+                ..quilt::manifest::ManifestHeader::default()
+            },
+            rows: paths
+                .iter()
+                .map(|key| quilt::manifest::ManifestRow {
+                    logical_key: PathBuf::from(key),
+                    ..quilt::manifest::ManifestRow::default()
+                })
+                .collect(),
+        })
+    });
+}
+
 /// Tasks in a temporary data folder that keep every run they are asked to
 /// start, every revision they publish, and, in order, every download, walk,
 /// publish, push and reset.
@@ -128,6 +147,10 @@ struct Fixture {
     pending_commit: bool,
     /// The package's last-known `latest` is past its base.
     behind: bool,
+    /// The pending commit sits on another one.
+    stacked_commits: bool,
+    /// What the remote's `latest` carries; the head's metadata unless set.
+    latest_meta: Option<Value>,
 }
 
 impl Fixture {
@@ -147,6 +170,8 @@ impl Fixture {
             tasks,
             pending_commit: false,
             behind: false,
+            stacked_commits: false,
+            latest_meta: None,
         }
     }
 
@@ -161,10 +186,15 @@ impl Fixture {
         let latest = if self.behind { "h9" } else { "h0" };
         let mut lineage = quilt::lineage::PackageLineage::from_remote(remote, latest.to_string());
         if self.pending_commit {
+            let prev_hashes = if self.stacked_commits {
+                vec!["c0".to_string()]
+            } else {
+                Vec::new()
+            };
             lineage.commit = Some(quilt::lineage::CommitState {
                 timestamp: chrono::Utc::now(),
                 hash: "c1".to_string(),
-                prev_hashes: Vec::new(),
+                prev_hashes,
             });
         }
         lineage
@@ -209,6 +239,8 @@ impl Fixture {
             .expect_get_installed_package_lineage()
             .returning(move |_| Ok(lineage.clone()));
         expect_push_and_reset(&mut model, &self.events, certified_latest);
+        let latest = self.latest_meta.clone().unwrap_or(meta.clone());
+        expect_latest(&mut model, latest, &[]);
         model
             .expect_get_installed_package_manifest()
             .returning(move |_, _| {
@@ -511,6 +543,43 @@ async fn an_interrupted_claim_on_a_pending_commit_alone_is_pushed_as_it_is() -> 
     Ok(())
 }
 
+/// The claim's own commit never left here, and `latest` doesn't hold it.
+async fn sweep_lost_claim(
+    stacked_commits: bool,
+    changes: BTreeMap<PathBuf, quilt::lineage::Change>,
+) -> Vec<String> {
+    let fixture = Fixture {
+        pending_commit: true,
+        stacked_commits,
+        latest_meta: Some(unclaimed()),
+        ..Fixture::new()
+    };
+    settings::remember_invocation(fixture.dir.path(), "ours")
+        .await
+        .expect("remembered");
+    let ahead = quilt::lineage::InstalledPackageStatus {
+        upstream_state: UpstreamState::Ahead,
+        ..fresh(changes)
+    };
+    fixture.check(ours_claimed(), ahead, true).await;
+    assert_eq!(fixture.metas(), [] as [Value; 0], "no failed revision");
+    fixture.events.lock().unwrap().clone()
+}
+
+#[tokio::test]
+async fn a_lost_claim_resets_when_its_own_commit_is_all_there_is() {
+    assert_eq!(
+        sweep_lost_claim(false, BTreeMap::new()).await,
+        ["walk", "reset"]
+    );
+}
+
+#[tokio::test]
+async fn a_lost_claim_stays_diverged_over_a_later_commit_or_changes() {
+    assert_eq!(sweep_lost_claim(true, BTreeMap::new()).await, ["walk"]);
+    assert_eq!(sweep_lost_claim(false, written()).await, ["walk"]);
+}
+
 #[tokio::test]
 async fn an_interrupted_claim_waits_while_latest_cannot_be_read() -> Result<(), Error> {
     let fixture = Fixture::new();
@@ -634,14 +703,32 @@ async fn a_task_waits_while_latest_cannot_be_read() {
 }
 
 /// A package whose remote `latest` reads as `latest_hash` (fresh unless
-/// `refreshed` is false) and carries `latest_meta`, recording pulls in `events`.
+/// `refreshed` is false), carries `latest_meta` and lists `TASK.md` and
+/// `NEXT.md`, neither on disk. Pulls and downloads go to the fixture's events.
 fn rereading_model(
+    fixture: &Fixture,
     latest_hash: &str,
     refreshed: bool,
     latest_meta: Value,
-    events: &Arc<Mutex<Vec<String>>>,
 ) -> MockQuiltModel {
+    let events = &fixture.events;
     let mut model = MockQuiltModel::new();
+    let home = fixture.home();
+    model
+        .expect_package_home()
+        .returning(move |_| Ok(home.clone()));
+    let downloaded = Arc::clone(events);
+    model
+        .expect_locked_package_install_paths()
+        .returning(move |_, paths| {
+            for path in paths {
+                downloaded
+                    .lock()
+                    .unwrap()
+                    .push(format!("download {}", path.display()));
+            }
+            Ok(quilt::flow::InstallPathsReport::default())
+        });
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
             quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns.clone()),
@@ -665,15 +752,7 @@ fn rereading_model(
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
-    model.expect_browse_remote_manifest().returning(move |_| {
-        Ok(quilt::manifest::Manifest {
-            header: quilt::manifest::ManifestHeader {
-                user_meta: Some(latest_meta.clone()),
-                ..quilt::manifest::ManifestHeader::default()
-            },
-            rows: Vec::new(),
-        })
-    });
+    expect_latest(&mut model, latest_meta, &["TASK.md", "NEXT.md"]);
     model
         .expect_lock_package()
         .returning(|p| Ok(p.namespace.clone()));
@@ -707,48 +786,100 @@ fn claimed_by_this_run() -> Value {
     )
 }
 
-#[tokio::test]
-async fn the_claim_still_at_latest_runs_as_it_is() -> Result<(), Error> {
-    let fixture = Fixture::new();
-    let model = rereading_model("h1", true, claimed_by_this_run(), &fixture.events);
+async fn recheck_with(
+    fixture: &Fixture,
+    model: &MockQuiltModel,
+) -> Result<String, acp::RunOutcome> {
+    recheck_claim(model, &claimed_run(&fixture.tasks))
+        .await
+        .expect("latest was read")
+}
 
-    assert!(claim_holds(&model, &claimed_run(&fixture.tasks)).await?);
+#[tokio::test]
+async fn the_claim_still_at_latest_runs_as_it_is() {
+    let fixture = Fixture::new();
+    let model = rereading_model(&fixture, "h1", true, claimed_by_this_run());
+
+    assert_eq!(
+        recheck_with(&fixture, &model).await,
+        Ok("TASK.md".to_string())
+    );
     assert!(fixture.events.lock().unwrap().is_empty(), "nothing to pull");
-    Ok(())
 }
 
+/// The later revision moved the task on to another document.
 #[tokio::test]
-async fn a_later_revision_that_still_holds_the_claim_is_pulled_and_run() -> Result<(), Error> {
+async fn a_later_revision_that_still_holds_the_claim_is_pulled_and_its_task_run() {
     let fixture = Fixture::new();
-    let model = rereading_model("h2", true, claimed_by_this_run(), &fixture.events);
+    let mut later = claimed_by_this_run();
+    later["agent_exec"]["document"] = json!("NEXT.md");
+    let model = rereading_model(&fixture, "h2", true, later);
 
-    assert!(claim_holds(&model, &claimed_run(&fixture.tasks)).await?);
-    assert_eq!(*fixture.events.lock().unwrap(), ["pull"]);
-    Ok(())
+    assert_eq!(
+        recheck_with(&fixture, &model).await,
+        Ok("NEXT.md".to_string())
+    );
+    assert_eq!(
+        *fixture.events.lock().unwrap(),
+        ["pull", "download NEXT.md"]
+    );
 }
 
 #[tokio::test]
-async fn a_latest_that_no_longer_holds_the_claim_stops_the_run() -> Result<(), Error> {
+async fn a_task_changed_to_another_agent_is_not_started_here() {
+    let fixture = Fixture::new();
+    let mut later = claimed_by_this_run();
+    later["agent_exec"]["agent"]["id"] = json!("claude");
+    // The agent is checked before the document, as Detect checks them.
+    later["agent_exec"]["document"] = json!("MISSING.md");
+    let model = rereading_model(&fixture, "h2", true, later);
+
+    assert_eq!(
+        recheck_with(&fixture, &model).await,
+        Err(acp::RunOutcome::NotStarted {
+            reason: "task changed to an agent not running here".to_string()
+        })
+    );
+    assert_eq!(*fixture.events.lock().unwrap(), ["pull"]);
+}
+
+#[tokio::test]
+async fn a_task_changed_to_a_document_not_in_the_package_is_unrunnable() {
+    let fixture = Fixture::new();
+    let mut later = claimed_by_this_run();
+    later["agent_exec"]["document"] = json!("MISSING.md");
+    let model = rereading_model(&fixture, "h2", true, later);
+
+    assert!(matches!(
+        recheck_with(&fixture, &model).await,
+        Err(acp::RunOutcome::Unrunnable { .. })
+    ));
+}
+
+#[tokio::test]
+async fn a_latest_that_no_longer_holds_the_claim_stops_the_run() {
     let fixture = Fixture::new();
     let mut theirs = claimed_by_this_run();
     theirs["agent_exec"]["claim"]["invocation_id"] = json!("theirs");
-    let model = rereading_model("h2", true, theirs, &fixture.events);
+    let model = rereading_model(&fixture, "h2", true, theirs);
 
-    assert!(!claim_holds(&model, &claimed_run(&fixture.tasks)).await?);
+    assert_eq!(
+        recheck_with(&fixture, &model).await,
+        Err(acp::RunOutcome::Superseded)
+    );
     assert!(
         fixture.events.lock().unwrap().is_empty(),
         "nothing is pulled"
     );
-    Ok(())
 }
 
 #[tokio::test]
 async fn an_unread_latest_is_no_answer() {
     let fixture = Fixture::new();
-    let model = rereading_model("h1", false, claimed_by_this_run(), &fixture.events);
+    let model = rereading_model(&fixture, "h1", false, claimed_by_this_run());
 
     assert!(
-        claim_holds(&model, &claimed_run(&fixture.tasks))
+        recheck_claim(&model, &claimed_run(&fixture.tasks))
             .await
             .is_err()
     );
@@ -763,6 +894,7 @@ fn claimed_run(tasks: &Tasks) -> Run {
         namespace: namespace(),
         home: PathBuf::new(),
         document: "TASK.md".to_string(),
+        agent_id: "kiro".to_string(),
         agent: settings().agents["kiro"].clone(),
         claimed_meta: agent_exec::with_claim(&unclaimed(), claim.claimed()),
         claim,
@@ -790,9 +922,16 @@ fn finishing_model(
     model
         .expect_lock_package()
         .returning(|p| Ok(p.namespace.clone()));
-    model
-        .expect_locked_package_status()
-        .returning(move |_, _| Ok(fresh(changes.clone())));
+    // The publish commits the tree's changes, so later walks find it clean.
+    let committed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let walked = Arc::clone(&committed);
+    model.expect_locked_package_status().returning(move |_, _| {
+        if walked.load(std::sync::atomic::Ordering::SeqCst) {
+            Ok(fresh(BTreeMap::new()))
+        } else {
+            Ok(fresh(changes.clone()))
+        }
+    });
     let lineage = quilt::lineage::PackageLineage::default();
     model
         .expect_get_installed_package_lineage()
@@ -822,6 +961,7 @@ fn finishing_model(
                 panic!("a task revision sets its metadata");
             };
             events.lock().unwrap().push("publish".to_string());
+            committed.store(true, std::sync::atomic::Ordering::SeqCst);
             published.lock().unwrap().push(Revision {
                 meta,
                 own_at_push: BTreeSet::new(),
@@ -920,6 +1060,26 @@ async fn a_not_started_that_is_not_latest_stays_diverged_over_a_changed_tree() -
     finish(&model, &claimed_run(&fixture.tasks), &not_started()).await?;
 
     assert_eq!(*fixture.events.lock().unwrap(), ["publish"], "no reset");
+    Ok(())
+}
+
+/// The re-read found the task changed into one that can't run.
+#[tokio::test]
+async fn an_unrunnable_found_at_the_reread_is_published_and_resets_if_not_latest()
+-> Result<(), Error> {
+    let fixture = Fixture::new();
+    let model = finishing_model(&fixture, BTreeMap::new(), false);
+    let unrunnable = acp::RunOutcome::Unrunnable {
+        reason: "MISSING.md is not a file in the package".to_string(),
+    };
+
+    finish(&model, &claimed_run(&fixture.tasks), &unrunnable).await?;
+
+    assert_eq!(
+        fixture.metas()[0]["agent_exec"]["claim"]["status"],
+        "unrunnable"
+    );
+    assert_eq!(*fixture.events.lock().unwrap(), ["publish", "reset"]);
     Ok(())
 }
 
