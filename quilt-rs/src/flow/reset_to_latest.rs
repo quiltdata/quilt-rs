@@ -35,8 +35,8 @@ pub async fn reset_to_latest(
     let latest = resolve_tag(remote, origin.as_ref(), remote_uri, Tag::Latest).await?;
     debug!("✔️ Latest hash resolved: {}", latest.hash);
 
-    // A pending commit on a base at `latest` was never pushed, so discarding
-    // it loses nothing remote.
+    // A pending commit on a base at `latest` never became `latest`, so
+    // discarding it loses nothing remote.
     if latest.hash == lineage.remote()?.hash && lineage.commit.is_none() {
         info!("✔️ Package is already at latest version");
         return Ok(lineage);
