@@ -526,6 +526,34 @@ async fn the_sweep_publishes_the_outcome_the_run_saved() -> Result<(), Error> {
     Ok(())
 }
 
+/// The app was killed while the agent ran, and the agent kept running.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn the_sweep_stops_an_agent_left_running_before_it_publishes() -> Result<(), Error> {
+    use std::os::unix::process::ExitStatusExt;
+
+    let fixture = Fixture::new();
+    settings::remember_invocation(fixture.dir.path(), "ours").await?;
+    let mut agent = std::process::Command::new("sleep").arg("60").spawn()?;
+    let spawned = agent_process::Spawned::of(agent.id()).expect("its start time");
+    settings::record_agent(fixture.dir.path(), "ours", Some(spawned)).await?;
+
+    fixture.check(ours_claimed(), fresh(written()), true).await;
+
+    let stopped = agent.try_wait()?.and_then(|status| status.signal());
+    assert_eq!(stopped, Some(libc::SIGTERM), "the agent is stopped");
+    assert_eq!(
+        settings::recorded_agent(fixture.dir.path(), "ours").await?,
+        None,
+        "and its record dropped"
+    );
+    assert_eq!(
+        fixture.metas()[0]["agent_exec"]["claim"]["status"],
+        "failed"
+    );
+    Ok(())
+}
+
 /// A folder in place of the file makes it unreadable.
 #[tokio::test]
 async fn the_sweep_publishes_failed_when_the_saved_outcomes_cannot_be_read() -> Result<(), Error> {

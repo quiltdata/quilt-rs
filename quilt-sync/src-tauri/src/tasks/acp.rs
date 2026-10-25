@@ -50,11 +50,13 @@ pub enum RunOutcome {
     },
 }
 
-/// `recheck` re-reads the task after the session opens, and may bring a later
-/// revision down: the document to prompt, or how the run ends unprompted.
+/// `started` gets the agent's PID once it starts. `recheck` re-reads the task
+/// after the session opens, and may bring a later revision down: the document
+/// to prompt, or how the run ends unprompted.
 pub async fn run(
     agent: &AgentSettings,
     cwd: &Path,
+    started: impl AsyncFnOnce(u32),
     recheck: impl AsyncFnOnce() -> Result<String, RunOutcome>,
 ) -> RunOutcome {
     let Some((program, args)) = agent.command.split_first() else {
@@ -78,6 +80,9 @@ pub async fn run(
             };
         }
     };
+    if let Some(pid) = child.id() {
+        started(pid).await;
+    }
     let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
         return RunOutcome::NotStarted {
             reason: "the agent's stdio could not be opened".to_string(),
@@ -428,11 +433,36 @@ mod tests {
             command: vec!["/nonexistent/quiltsync-test-agent".to_string()],
             trust_all: false,
         };
-        let outcome = run(&agent, Path::new("/"), async || Ok("TASK.md".to_string())).await;
+        let outcome = run(
+            &agent,
+            Path::new("/"),
+            async |_| {},
+            async || Ok("TASK.md".to_string()),
+        )
+        .await;
         assert!(
             matches!(outcome, RunOutcome::NotStarted { .. }),
             "{outcome:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_started_agent_reports_its_pid() {
+        let agent = AgentSettings {
+            command: vec!["true".to_string()],
+            trust_all: false,
+        };
+        let mut reported = None;
+
+        run(
+            &agent,
+            Path::new("/"),
+            async |pid| reported = Some(pid),
+            async || Ok("TASK.md".to_string()),
+        )
+        .await;
+
+        assert!(reported.is_some_and(|pid| pid > 0), "{reported:?}");
     }
 
     /// An in-process agent: it opens session `s1` and, prompted, asks to write

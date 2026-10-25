@@ -5962,6 +5962,7 @@ dependencies = [
  "dotenv",
  "dunce",
  "futures-util",
+ "libc",
  "mixpanel-rs",
  "mockall",
  "notify",

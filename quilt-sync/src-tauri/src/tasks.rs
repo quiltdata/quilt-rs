@@ -20,6 +20,7 @@ use crate::telemetry::prelude::*;
 
 pub mod acp;
 pub mod agent_exec;
+pub mod agent_process;
 pub mod settings;
 
 use agent_exec::Claim;
@@ -236,6 +237,11 @@ async fn try_check<M: QuiltModel>(
     let Some(locked) = model.try_lock_package(pkg).await? else {
         return Ok(());
     };
+    if verdict == Verdict::Interrupted {
+        // Before the walk, so the sweep publishes what the agent left when it
+        // stopped.
+        stop_leftover_agent(data_dir, user_meta, &pkg.namespace).await;
+    }
     // Before the walk, so the claim publishes a status that includes it.
     if let Verdict::Claim { document, .. } = &verdict {
         download(model, pkg, &locked, &lineage, document).await?;
@@ -307,6 +313,31 @@ async fn try_check<M: QuiltModel>(
         reset_if_clean(model, pkg, &locked).await?;
     }
     Ok(())
+}
+
+/// How long an agent gets to exit after SIGTERM before SIGKILL.
+const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Stop an agent that an interrupted claim's run spawned, if it outlived the
+/// run, as it does when the app is killed.
+async fn stop_leftover_agent(data_dir: &std::path::Path, user_meta: &Value, namespace: &Namespace) {
+    let invocation_id = user_meta["agent_exec"]["claim"]["invocation_id"]
+        .as_str()
+        .unwrap_or_default();
+    match settings::recorded_agent(data_dir, invocation_id).await {
+        Ok(Some(agent)) => {
+            info!(
+                "tasks: {namespace}: stopping the agent left running, pid {}",
+                agent.pid
+            );
+            agent.stop(STOP_GRACE).await;
+            if let Err(err) = settings::record_agent(data_dir, invocation_id, None).await {
+                warn!("tasks: {namespace}: cannot clear the agent's record: {err}");
+            }
+        }
+        Ok(None) => {}
+        Err(err) => warn!("tasks: {namespace}: cannot read the agent's record: {err}"),
+    }
 }
 
 /// After a metadata-only publish that didn't become `latest`: back to `latest`
@@ -560,14 +591,28 @@ async fn publish<M: QuiltModel>(
 }
 
 pub async fn execute<M: QuiltModel>(model: &M, run: Run) {
-    let outcome = acp::run(&run.agent, &run.home, async || {
-        recheck_claim(model, &run).await.unwrap_or_else(|err| {
-            Err(acp::RunOutcome::NotStarted {
-                reason: format!("could not re-read the package: {err}"),
+    let record = async |agent| {
+        if let Err(err) =
+            settings::record_agent(&run.data_dir, &run.claim.invocation_id, agent).await
+        {
+            warn!("tasks: {}: cannot record the agent: {err}", run.namespace);
+        }
+    };
+    let outcome = acp::run(
+        &run.agent,
+        &run.home,
+        async |pid| record(agent_process::Spawned::of(pid)).await,
+        async || {
+            recheck_claim(model, &run).await.unwrap_or_else(|err| {
+                Err(acp::RunOutcome::NotStarted {
+                    reason: format!("could not re-read the package: {err}"),
+                })
             })
-        })
-    })
+        },
+    )
     .await;
+    // The agent was killed with the run, so nothing is left to stop.
+    record(None).await;
     info!("tasks: {}: {outcome:?}", run.namespace);
     if let Err(err) = finish(model, &run, &outcome).await {
         warn!(
