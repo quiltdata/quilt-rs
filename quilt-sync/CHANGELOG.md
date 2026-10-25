@@ -27,6 +27,7 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1195>
   - <https://github.com/quiltdata/quilt-rs/pull/1199>
   - <https://github.com/quiltdata/quilt-rs/pull/1201>
+  - <https://github.com/quiltdata/quilt-rs/pull/1204>
 
 ## [v0.24.0] - 2026-10-23
 
