@@ -614,14 +614,15 @@ async fn finish<M: QuiltModel>(
         run.document,
         claim["status"].as_str().unwrap_or_default()
     );
-    let status = model.locked_package_status(&locked, None).await?;
-    // A sign-in lost mid-turn is `not_started` too, after the agent wrote files.
+    let (Tree { status, commit }, lineage) = walk(model, &installed, &locked).await?;
+    // A sign-in lost mid-turn is `not_started` too, after the agent wrote files;
+    // and a commit made by hand during the run would be pushed in its place.
     let metadata_only = matches!(
         outcome,
         acp::RunOutcome::NotStarted { .. } | acp::RunOutcome::Unrunnable { .. }
-    ) && status.changes.is_empty();
+    ) && status.changes.is_empty()
+        && commit.is_none();
     // The head the run ended on: the claim, or a later revision carrying it.
-    let lineage = model.get_installed_package_lineage(&installed).await?;
     let head = model
         .get_installed_package_manifest(&installed, &lineage)
         .await?;

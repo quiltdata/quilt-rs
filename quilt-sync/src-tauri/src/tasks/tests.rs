@@ -976,10 +976,21 @@ fn finishing_model(
             Ok(fresh(changes.clone()))
         }
     });
-    let lineage = quilt::lineage::PackageLineage::default();
+    // A pending commit, as `Fixture::lineage` writes it, until the publish pushes it.
+    let pending = fixture
+        .pending_commit
+        .then(|| fixture.lineage().commit)
+        .flatten();
+    let walked = Arc::clone(&committed);
     model
         .expect_get_installed_package_lineage()
-        .returning(move |_| Ok(lineage.clone()));
+        .returning(move |_| {
+            let mut lineage = quilt::lineage::PackageLineage::default();
+            if !walked.load(std::sync::atomic::Ordering::SeqCst) {
+                lineage.commit.clone_from(&pending);
+            }
+            Ok(lineage)
+        });
     model
         .expect_get_installed_package_manifest()
         .returning(|_, _| {
@@ -1103,6 +1114,21 @@ async fn a_not_started_that_is_not_latest_resets_while_the_tree_is_clean() -> Re
     finish(&model, &claimed_run(&fixture.tasks), &not_started()).await?;
 
     assert_eq!(*fixture.events.lock().unwrap(), ["publish", "reset"]);
+    Ok(())
+}
+
+/// The user committed by hand during the run; the publish pushes that commit.
+#[tokio::test]
+async fn a_not_started_over_a_commit_made_during_the_run_is_never_reset() -> Result<(), Error> {
+    let fixture = Fixture {
+        pending_commit: true,
+        ..Fixture::new()
+    };
+    let model = finishing_model(&fixture, BTreeMap::new(), false);
+
+    finish(&model, &claimed_run(&fixture.tasks), &not_started()).await?;
+
+    assert_eq!(*fixture.events.lock().unwrap(), ["publish"], "no reset");
     Ok(())
 }
 
