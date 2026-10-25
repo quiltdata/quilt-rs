@@ -111,36 +111,32 @@ async fn get_installed_package_data_from_model(
     }
 
     let mut no_access_reason = None;
-    let pkg_status = if lineage.remote_uri.is_none() || origin_host.is_some() {
-        match m
-            .get_installed_package_status(&installed_package, None)
-            .await
-        {
-            Ok(s) => s,
-            // A denial is not a broken session: the credentials vended, and
-            // the active role simply cannot read this bucket. Collapsing it
-            // into the synthetic error status makes the page say "sign in
-            // again", and the re-vend hands back the same denied role — the
-            // unrecoverable loop this page must not reproduce. State the
-            // fact instead, and keep the entries: they come from the cached
-            // manifest and the working tree, neither of which was refused.
-            Err(err) if err.is_access_denied() => {
-                no_access_reason = denied_mark(m, roles, origin_host).await.reason;
-                match m.recompute_local_status(&installed_package, None).await {
-                    Ok(status) => status,
-                    Err(err) => {
-                        tracing::warn!("Failed to recompute local status: {err}");
-                        quilt::lineage::InstalledPackageStatus::error()
-                    }
+    let pkg_status = match m
+        .get_installed_package_status(&installed_package, None)
+        .await
+    {
+        Ok(s) => s,
+        // A denial is not a broken session: the credentials vended, and
+        // the active role simply cannot read this bucket. Collapsing it
+        // into the synthetic error status makes the page say "sign in
+        // again", and the re-vend hands back the same denied role — the
+        // unrecoverable loop this page must not reproduce. State the
+        // fact instead, and keep the entries: they come from the cached
+        // manifest and the working tree, neither of which was refused.
+        Err(err) if err.is_access_denied() => {
+            no_access_reason = denied_mark(m, roles, origin_host).await.reason;
+            match m.recompute_local_status(&installed_package, None).await {
+                Ok(status) => status,
+                Err(err) => {
+                    tracing::warn!("Failed to recompute local status: {err}");
+                    quilt::lineage::InstalledPackageStatus::error()
                 }
             }
-            Err(err) => {
-                tracing::warn!("Failed to get package status: {err}");
-                quilt::lineage::InstalledPackageStatus::error()
-            }
         }
-    } else {
-        quilt::lineage::InstalledPackageStatus::error()
+        Err(err) => {
+            tracing::warn!("Failed to get package status: {err}");
+            quilt::lineage::InstalledPackageStatus::error()
+        }
     };
 
     let modified_entries = &pkg_status.changes;
@@ -316,6 +312,16 @@ mod tests {
                     "abcdef".to_string(),
                 ))
             });
+        // Read on the machine's own AWS credentials, like any other remote.
+        model
+            .expect_get_installed_package_status()
+            .times(1)
+            .returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::Behind,
+                    quilt::lineage::ChangeSet::new(),
+                ))
+            });
         model
             .expect_get_installed_package_records()
             .returning(|_| Ok(std::collections::BTreeMap::new()));
@@ -334,7 +340,7 @@ mod tests {
         .await
         .map_err(|e| e.to_string())?;
 
-        assert_eq!(data.status, "error");
+        assert_eq!(data.status, "behind");
         // URI is exposed (so the Set Remote popup can pre-fill bucket)
         // but its catalog is unset.
         let uri = data.uri.as_ref().expect("URI present");
