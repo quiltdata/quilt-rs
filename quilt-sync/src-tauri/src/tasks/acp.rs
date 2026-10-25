@@ -220,8 +220,8 @@ fn answer(
         .map(|location| location.path.as_path())
         .collect();
     // "Allow always" only under `trust_all`: otherwise it would pass the agent's
-    // later requests unchecked. Never `Cancelled`, which ends the turn: a
-    // request with no option to allow is refused instead.
+    // later requests unchecked. A request with no option to allow is refused,
+    // and `Cancelled`, which ends the turn, only when no option refuses it.
     let refuse = [
         PermissionOptionKind::RejectOnce,
         PermissionOptionKind::RejectAlways,
