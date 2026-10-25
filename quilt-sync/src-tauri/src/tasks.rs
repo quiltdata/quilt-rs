@@ -249,12 +249,10 @@ async fn clean_at_head<M: QuiltModel>(
     Ok(clean.then_some(status))
 }
 
-/// Put `document` in the package's folder: a sparse copy lists it without
-/// having it on disk. A file already there, tracked or not, is left alone; one
-/// that differs from the revision fails the clean-tree walk. Anything else at
-/// that path is not a file the walk compares, so the download refuses it. The
-/// walk skips symlinks, and a download through a linked folder would land
-/// outside the package, so a link anywhere on the path stops the claim.
+/// Put `document` in the package's folder, which a sparse copy may lack. A
+/// regular file already there stays: the walk compares it with the revision.
+/// A symlink on the path stops the claim: the walk skips links, and a linked
+/// folder leads outside the package.
 async fn download<M: QuiltModel>(
     model: &M,
     pkg: &quilt::InstalledPackage,
