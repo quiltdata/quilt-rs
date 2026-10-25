@@ -105,6 +105,8 @@ pub struct Run {
     pub agent: AgentSettings,
     pub claim: Claim,
     pub claim_hash: String,
+    /// Where the run's outcome is saved before it is published.
+    pub data_dir: PathBuf,
     /// Released when the run ends, by being dropped with it.
     _hold: Hold,
 }
@@ -243,7 +245,10 @@ async fn try_check<M: QuiltModel>(
     };
     let workflow = carried_workflow(workflow.as_ref());
     if verdict == Verdict::Interrupted {
-        return sweep(model, &locked, pkg, workflow, &lineage, user_meta, tree).await;
+        return sweep(
+            model, data_dir, &locked, pkg, workflow, &lineage, user_meta, tree,
+        )
+        .await;
     }
     // A claim or `unrunnable` changes only the metadata. With a pending commit,
     // publishing pushes that commit and drops the new metadata.
@@ -291,6 +296,7 @@ async fn try_check<M: QuiltModel>(
                 agent_id: agent,
                 claim,
                 claim_hash: push.manifest_uri.hash.clone(),
+                data_dir: data_dir.to_path_buf(),
                 _hold: hold,
             });
             return Ok(());
@@ -363,11 +369,13 @@ async fn fresh_at_head<M: QuiltModel>(
     Ok(fresh.then_some(tree))
 }
 
-/// This desktop's interrupted claim, on a base at `latest`: published `failed`
-/// with whatever the agent left in the tree if `latest` holds that claim too,
-/// else reset as a lost claim.
+/// This desktop's interrupted claim, on a base at `latest`. If `latest` holds
+/// that claim too, the tree is published with the outcome the run saved, or
+/// `failed` if it saved none. Otherwise the claim was lost, and resets.
+#[allow(clippy::too_many_arguments, reason = "one sweep's inputs")]
 async fn sweep<M: QuiltModel>(
     model: &M,
+    data_dir: &std::path::Path,
     locked: &M::Locked,
     pkg: &quilt::InstalledPackage,
     workflow: WorkflowIntent,
@@ -405,10 +413,73 @@ async fn sweep<M: QuiltModel>(
         note_not_latest(&pkg.namespace, &push);
         return Ok(());
     }
-    let meta = agent_exec::interrupted(user_meta);
-    let message = "Task failed: interrupted by restart".to_string();
-    let outcome = publish(model, locked, pkg, workflow, meta, message, status).await?;
-    note_not_latest(&pkg.namespace, outcome.push());
+    let invocation_id = user_meta["agent_exec"]["claim"]["invocation_id"]
+        .as_str()
+        .unwrap_or_default();
+    // An unreadable file must not hold the package from autosync for good.
+    let saved = settings::remembered_outcome(data_dir, invocation_id)
+        .await
+        .unwrap_or_else(|err| {
+            warn!(
+                "tasks: {}: cannot read the saved outcome: {err}",
+                pkg.namespace
+            );
+            None
+        });
+    let (claim, message) = match saved {
+        Some(claim) => {
+            let document = user_meta["agent_exec"]["document"]
+                .as_str()
+                .unwrap_or_default();
+            let message = outcome_message(document, &claim);
+            (claim, message)
+        }
+        None => (
+            agent_exec::interrupted(user_meta),
+            "Task failed: interrupted by restart".to_string(),
+        ),
+    };
+    let tree = Tree { status, commit };
+    publish_outcome(
+        model, locked, pkg, workflow, user_meta, claim, message, tree,
+    )
+    .await
+}
+
+fn outcome_message(document: &str, claim: &Value) -> String {
+    format!(
+        "Task {document} {}",
+        claim["status"].as_str().unwrap_or_default()
+    )
+}
+
+/// Publish the tree as a run's last revision. One that changes only the
+/// metadata resets if it isn't `latest`; any other is left Diverged.
+#[allow(clippy::too_many_arguments, reason = "one publish's inputs")]
+async fn publish_outcome<M: QuiltModel>(
+    model: &M,
+    locked: &M::Locked,
+    pkg: &quilt::InstalledPackage,
+    workflow: WorkflowIntent,
+    user_meta: &Value,
+    claim: Value,
+    message: String,
+    Tree { status, commit }: Tree,
+) -> Result<(), Error> {
+    // A sign-in lost mid-turn is `not_started` too, after the agent wrote files;
+    // and a commit made by hand during the run would be pushed in its place.
+    let metadata_only = matches!(claim["status"].as_str(), Some("not_started" | "unrunnable"))
+        && status.changes.is_empty()
+        && commit.is_none();
+    let meta = agent_exec::with_claim(user_meta, claim);
+    let published = publish(model, locked, pkg, workflow, meta, message, status).await?;
+    if metadata_only {
+        if !published.push().certified_latest {
+            reset_if_clean(model, pkg, locked).await?;
+        }
+    } else {
+        note_not_latest(&pkg.namespace, published.push());
+    }
     Ok(())
 }
 
@@ -596,19 +667,7 @@ async fn finish<M: QuiltModel>(
         // The claim lost `latest` before the prompt: nothing to publish.
         return reset_if_clean(model, &installed, &locked).await;
     };
-    let message = format!(
-        "Task {} {}",
-        run.document,
-        claim["status"].as_str().unwrap_or_default()
-    );
-    let (Tree { status, commit }, lineage) = walk(model, &installed, &locked).await?;
-    // A sign-in lost mid-turn is `not_started` too, after the agent wrote files;
-    // and a commit made by hand during the run would be pushed in its place.
-    let metadata_only = matches!(
-        outcome,
-        acp::RunOutcome::NotStarted { .. } | acp::RunOutcome::Unrunnable { .. }
-    ) && status.changes.is_empty()
-        && commit.is_none();
+    let (tree, lineage) = walk(model, &installed, &locked).await?;
     let head = model
         .get_installed_package_manifest(&installed, &lineage)
         .await?;
@@ -626,16 +685,16 @@ async fn finish<M: QuiltModel>(
         return Ok(());
     };
     let workflow = carried_workflow(head.header.workflow.as_ref());
-    let meta = agent_exec::with_claim(&base, claim);
-    let published = publish(model, &locked, &installed, workflow, meta, message, status).await?;
-    if metadata_only {
-        if !published.push().certified_latest {
-            reset_if_clean(model, &installed, &locked).await?;
-        }
-    } else {
-        note_not_latest(&run.namespace, published.push());
+    if let Err(err) =
+        settings::remember_outcome(&run.data_dir, &run.claim.invocation_id, &claim).await
+    {
+        warn!("tasks: {}: cannot save the outcome: {err}", run.namespace);
     }
-    Ok(())
+    let message = outcome_message(&run.document, &claim);
+    publish_outcome(
+        model, &locked, &installed, workflow, &base, claim, message, tree,
+    )
+    .await
 }
 
 #[cfg(test)]
