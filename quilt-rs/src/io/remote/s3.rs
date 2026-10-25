@@ -67,6 +67,16 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
     Ok(region.to_str()?.into())
 }
 
+/// Error codes for keys AWS refused: unknown, expired or not matching their
+/// secret. Read off S3's answer, and off STS's inside a credential provider.
+const CREDENTIAL_REJECTED: [&str; 5] = [
+    "InvalidAccessKeyId",
+    "ExpiredToken",
+    "InvalidToken",
+    "InvalidClientTokenId",
+    "SignatureDoesNotMatch",
+];
+
 /// Map an AWS error onto a typed kind.
 ///
 /// The codes that must NOT read as a role denial are named first, because the
@@ -102,13 +112,9 @@ pub(super) fn classify_s3_error(
     fallback: fn(String) -> S3ErrorKind,
 ) -> S3ErrorKind {
     match code {
-        Some(
-            "InvalidAccessKeyId"
-            | "ExpiredToken"
-            | "InvalidToken"
-            | "InvalidClientTokenId"
-            | "SignatureDoesNotMatch",
-        ) => S3ErrorKind::InvalidCredentials(described.to_string()),
+        Some(code) if CREDENTIAL_REJECTED.contains(&code) => {
+            S3ErrorKind::InvalidCredentials(described.to_string())
+        }
         // Only codes meaning a missing *object* belong here. `push` reads
         // `is_not_found` on a package's `latest` tag as "no revisions yet, so
         // this is a first push" (flow/push.rs), so a code that means a missing
@@ -191,12 +197,14 @@ fn ambient_credentials_failed(err: &(dyn std::error::Error + 'static)) -> bool {
         }
         loading_credentials |= e.is::<CredentialsError>();
         // While loading credentials: a file that is not there (a legacy SSO
-        // profile's cached token), or the SSO portal refusing the sign-in.
+        // profile's cached token), the SSO portal refusing the sign-in, or STS
+        // refusing an assume-role profile's source keys.
         if loading_credentials
             && (e
                 .downcast_ref::<std::io::Error>()
                 .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
-                || words.contains("UnauthorizedException"))
+                || words.contains("UnauthorizedException")
+                || CREDENTIAL_REJECTED.iter().any(|code| words.contains(code)))
         {
             return true;
         }
@@ -1869,116 +1877,119 @@ mod tests {
         Ok(())
     }
 
+    #[derive(Debug)]
+    struct Failing(fn() -> CredentialsError);
+    impl ProvideCredentials for Failing {
+        fn provide_credentials<'a>(&'a self) -> future::ProvideCredentials<'a>
+        where
+            Self: 'a,
+        {
+            future::ProvideCredentials::ready(Err((self.0)()))
+        }
+    }
+
+    /// A call whose credential provider fails with `error`, as classified for
+    /// `host`.
+    async fn classified(error: fn() -> CredentialsError, host: Option<&Host>) -> Error {
+        let config = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Failing(error))
+            .load()
+            .await;
+        let err = aws_sdk_s3::Client::new(&config)
+            .head_object()
+            .bucket("bucket")
+            .key("key")
+            .send()
+            .await
+            .expect_err("no credentials, so no request");
+        s3_error_or_session_loss(err, host, S3ErrorKind::Exists)
+    }
+
+    fn host_less_absent(err: &Error) -> bool {
+        matches!(err, Error::Login(LoginError::NoSession(None)))
+    }
+
     /// The machine's own credential chain finding nothing is a host-less
     /// absent session, not an outage: without this, a status read on a bare
     /// bucket swallows it and answers "unreachable" from the last-known tip.
     #[test(tokio::test)]
-    async fn an_empty_ambient_chain_is_a_host_less_absent_session() -> Res<()> {
-        #[derive(Debug)]
-        struct Failing(fn() -> CredentialsError);
-        impl ProvideCredentials for Failing {
-            fn provide_credentials<'a>(&'a self) -> future::ProvideCredentials<'a>
-            where
-                Self: 'a,
-            {
-                future::ProvideCredentials::ready(Err((self.0)()))
-            }
-        }
-        async fn failed_call(
-            error: fn() -> CredentialsError,
-        ) -> SdkError<aws_sdk_s3::operation::head_object::HeadObjectError> {
-            let config = aws_config::defaults(BehaviorVersion::latest())
-                .region(Region::new("us-east-1"))
-                .credentials_provider(Failing(error))
-                .load()
-                .await;
-            aws_sdk_s3::Client::new(&config)
-                .head_object()
-                .bucket("bucket")
-                .key("key")
-                .send()
-                .await
-                .expect_err("no credentials, so no request")
-        }
+    async fn an_empty_ambient_chain_is_a_host_less_absent_session() {
         let not_loaded = || CredentialsError::not_loaded("no credentials found in chain");
-        let call = async || failed_call(not_loaded).await;
-
         assert!(
-            matches!(
-                s3_error_or_session_loss(call().await, None, S3ErrorKind::Exists),
-                Error::Login(LoginError::NoSession(None))
-            ),
+            host_less_absent(&classified(not_loaded, None).await),
             "an empty ambient chain was classified as storage trouble"
         );
         // A deployment's provider reports its own `NoSession`; a bare
         // credentials error there stays what it was.
         assert!(
             matches!(
-                s3_error_or_session_loss(
-                    call().await,
-                    Some(&fixtures::host()),
-                    S3ErrorKind::Exists
-                ),
+                classified(not_loaded, Some(&fixtures::host())).await,
                 Error::S3(_)
             ),
             "a deployment's credentials error was retyped as host-less"
         );
         // A broken profile is as unusable as a missing one.
-        assert!(matches!(
-            s3_error_or_session_loss(
-                failed_call(|| CredentialsError::invalid_configuration("bad profile")).await,
-                None,
-                S3ErrorKind::Exists
-            ),
-            Error::Login(LoginError::NoSession(None))
+        assert!(host_less_absent(
+            &classified(
+                || CredentialsError::invalid_configuration("bad profile"),
+                None
+            )
+            .await
         ));
         // A role profile whose source has none wraps "not loaded".
-        assert!(matches!(
-            s3_error_or_session_loss(
-                failed_call(
-                    || CredentialsError::provider_error(CredentialsError::not_loaded(
-                        "no source credentials"
+        assert!(host_less_absent(
+            &classified(
+                || {
+                    CredentialsError::provider_error(CredentialsError::not_loaded(
+                        "no source credentials",
                     ))
-                )
-                .await,
-                None,
-                S3ErrorKind::Exists
-            ),
-            Error::Login(LoginError::NoSession(None))
+                },
+                None
+            )
+            .await
         ));
-        // The SSO portal refusing the sign-in: the answer to a legacy
-        // profile's expired token, which the SDK does not check itself.
-        assert!(matches!(
-            s3_error_or_session_loss(
-                failed_call(|| CredentialsError::provider_error(std::io::Error::other(
-                    "UnauthorizedException: Session token not found or invalid"
-                )))
-                .await,
-                None,
-                S3ErrorKind::Exists
-            ),
-            Error::Login(LoginError::NoSession(None))
-        ));
-        // A provider that timed out or failed (SSO or assume-role, offline)
-        // may work next time: an outage, so the read falls back to the tip.
-        for transient in [
-            (|| CredentialsError::provider_timed_out(std::time::Duration::from_secs(5)))
-                as fn() -> CredentialsError,
+    }
+
+    /// A provider's own call refused: the SSO portal refusing the sign-in (a
+    /// legacy profile's expired token, which the SDK does not check itself),
+    /// or STS refusing an assume-role profile's source keys. A provider that
+    /// timed out or failed (SSO or assume-role, offline) may work next time:
+    /// an outage, so the read falls back to the tip.
+    #[test(tokio::test)]
+    async fn a_refused_provider_call_is_unusable_and_a_failed_one_an_outage() {
+        let refused: [fn() -> CredentialsError; 3] = [
+            || {
+                CredentialsError::provider_error(std::io::Error::other(
+                    "UnauthorizedException: Session token not found or invalid",
+                ))
+            },
+            || {
+                CredentialsError::provider_error(std::io::Error::other(
+                    "InvalidClientTokenId: The security token included in the request is invalid",
+                ))
+            },
+            || {
+                CredentialsError::provider_error(std::io::Error::other(
+                    "ExpiredToken: The security token included in the request is expired",
+                ))
+            },
+        ];
+        for error in refused {
+            let err = classified(error, None).await;
+            assert!(host_less_absent(&err), "{err}");
+        }
+
+        let transient: [fn() -> CredentialsError; 2] = [
+            || CredentialsError::provider_timed_out(std::time::Duration::from_secs(5)),
             || CredentialsError::provider_error("sso portal unreachable"),
-        ] {
+        ];
+        for error in transient {
             assert!(
-                matches!(
-                    s3_error_or_session_loss(
-                        failed_call(transient).await,
-                        None,
-                        S3ErrorKind::Exists
-                    ),
-                    Error::S3(_)
-                ),
+                matches!(classified(error, None).await, Error::S3(_)),
                 "a transient provider failure was read as unusable credentials"
             );
         }
-        Ok(())
     }
 
     /// An SSO profile with no cached token, or an expired one, is unusable
