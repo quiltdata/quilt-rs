@@ -157,8 +157,8 @@ struct Fixture {
     latest_meta: Option<Value>,
     /// What the head a run ends on carries; [`edited_head`] unless set.
     finished_meta: Option<Value>,
-    /// The run's last publish fails before it commits.
-    publish_fails: bool,
+    /// Walking the tree the run ended on fails, as it does while signed out.
+    walk_fails: bool,
 }
 
 impl Fixture {
@@ -181,7 +181,7 @@ impl Fixture {
             pulled_meta: None,
             latest_meta: None,
             finished_meta: None,
-            publish_fails: false,
+            walk_fails: false,
         }
     }
 
@@ -1038,8 +1038,11 @@ fn finishing_model(
     // The publish commits the tree's changes, so later walks find it clean.
     let committed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let walked = Arc::clone(&committed);
+    let walk_fails = fixture.walk_fails;
     model.expect_locked_package_status().returning(move |_, _| {
-        if walked.load(std::sync::atomic::Ordering::SeqCst) {
+        if walk_fails {
+            Err(Error::General("signed out".to_string()))
+        } else if walked.load(std::sync::atomic::Ordering::SeqCst) {
             Ok(fresh(BTreeMap::new()))
         } else {
             Ok(fresh(changes.clone()))
@@ -1090,16 +1093,12 @@ fn finishing_model(
     expect_push_and_reset(&mut model, &fixture.events, certified_latest);
     let published = Arc::clone(&fixture.published);
     let events = Arc::clone(&fixture.events);
-    let fails = fixture.publish_fails;
     model
         .expect_locked_package_publish()
         .returning(move |_, _, meta, _, _, status| {
             let UserMeta::Set(meta) = meta else {
                 panic!("a task revision sets its metadata");
             };
-            if fails {
-                return Err(Error::General("the network is down".to_string()));
-            }
             events.lock().unwrap().push("publish".to_string());
             committed.store(true, std::sync::atomic::Ordering::SeqCst);
             published.lock().unwrap().push(Revision {
@@ -1163,10 +1162,11 @@ async fn the_last_revision_publishes_the_agents_work_under_the_same_claim() -> R
     Ok(())
 }
 
+/// The walk fails, so the outcome is never published.
 #[tokio::test]
-async fn a_publish_that_fails_leaves_the_outcome_saved_for_the_sweep() -> Result<(), Error> {
+async fn a_run_that_cannot_publish_leaves_its_outcome_saved_for_the_sweep() -> Result<(), Error> {
     let fixture = Fixture {
-        publish_fails: true,
+        walk_fails: true,
         ..Fixture::new()
     };
     let model = finishing_model(&fixture, written(), true);

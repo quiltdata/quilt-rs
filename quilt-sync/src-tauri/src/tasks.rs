@@ -661,9 +661,17 @@ async fn finish<M: QuiltModel>(
     run: &Run,
     outcome: &acp::RunOutcome,
 ) -> Result<(), Error> {
+    let claim = run.claim.outcome(outcome);
+    // First, so the sweep has the outcome if anything below fails.
+    if let Some(claim) = &claim
+        && let Err(err) =
+            settings::remember_outcome(&run.data_dir, &run.claim.invocation_id, claim).await
+    {
+        warn!("tasks: {}: cannot save the outcome: {err}", run.namespace);
+    }
     let installed = installed(model, &run.namespace).await?;
     let locked = model.lock_package(&installed).await?;
-    let Some(claim) = run.claim.outcome(outcome) else {
+    let Some(claim) = claim else {
         // The claim lost `latest` before the prompt: nothing to publish.
         return reset_if_clean(model, &installed, &locked).await;
     };
@@ -685,11 +693,6 @@ async fn finish<M: QuiltModel>(
         return Ok(());
     };
     let workflow = carried_workflow(head.header.workflow.as_ref());
-    if let Err(err) =
-        settings::remember_outcome(&run.data_dir, &run.claim.invocation_id, &claim).await
-    {
-        warn!("tasks: {}: cannot save the outcome: {err}", run.namespace);
-    }
     let message = outcome_message(&run.document, &claim);
     publish_outcome(
         model, &locked, &installed, workflow, &base, claim, message, tree,
