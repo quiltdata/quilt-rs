@@ -621,12 +621,20 @@ pub(crate) async fn refresh_then_maybe_sync(
         // `publish_locked_with_settings` is the manual one-click Publish
         // command's path too, so a change to publish settings (new
         // placeholder, new field) applies identically regardless of who
-        // triggered the publish. It publishes on the held lock and reuses
-        // `status`, walked under it.
+        // triggered the publish; only autosync keeps the head's task. It
+        // publishes on the held lock and reuses `status`, walked under it.
         let published = {
             // The activity line spans the transfer and nothing else: the check never shows.
             let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);
-            model::publish_locked_with_settings(model, &locked, &installed, publish, status).await
+            model::publish_locked_with_settings(
+                model,
+                &locked,
+                &installed,
+                publish,
+                status,
+                model::HeadTask::Keep,
+            )
+            .await
         };
         return match published {
             Ok((outcome, message)) => {

@@ -207,6 +207,77 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
 }
 
 #[tokio::test]
+async fn autosync_default_metadata_keeps_the_heads_agent_exec() -> Result<(), Error> {
+    let task = serde_json::json!({ "document": "TASK.md", "claim": { "status": "unclaimed" } });
+    for (head, default, expected) in [
+        (
+            serde_json::json!({ "title": "t", "agent_exec": task }),
+            serde_json::json!({ "source": "desktop" }),
+            serde_json::json!({ "source": "desktop", "agent_exec": task }),
+        ),
+        (
+            serde_json::json!({ "title": "t" }),
+            serde_json::json!({ "source": "desktop", "agent_exec": task }),
+            serde_json::json!({ "source": "desktop" }),
+        ),
+        (
+            serde_json::json!({ "agent_exec": task }),
+            serde_json::json!("desktop"),
+            serde_json::json!({ "agent_exec": task }),
+        ),
+    ] {
+        let ns: Namespace = ("acme", "demo").into();
+        let changes = BTreeMap::from([(
+            std::path::PathBuf::from("file.txt"),
+            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+        )]);
+        let lineage =
+            quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+        let (mut model, _) = fixture_with_lineage_and_status(
+            lineage,
+            quiet_status(UpstreamState::UpToDate, changes),
+        );
+        model
+            .expect_get_installed_package_manifest()
+            .returning(move |_, _| {
+                Ok(quilt::manifest::Manifest {
+                    header: quilt::manifest::ManifestHeader {
+                        user_meta: Some(head.clone()),
+                        ..quilt::manifest::ManifestHeader::default()
+                    },
+                    rows: Vec::new(),
+                })
+            });
+        let published = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recording = Arc::clone(&published);
+        model
+            .expect_locked_package_publish()
+            .returning(move |_, _, meta, _, _, _| {
+                recording.lock().unwrap().push(meta);
+                Ok(quilt::PublishOutcome::CommittedAndPushed(
+                    fake_push_outcome(&ns),
+                ))
+            });
+        let inner = WatcherInner {
+            publish_settings: Arc::new(RwLock::new(PublishSettings {
+                default_metadata: Some(default.to_string()),
+                ..PublishSettings::default()
+            })),
+            ..make_inner_for_run_once(Arc::new(RecordingReporter::default())).await
+        };
+
+        run_once(&model, &RoleCache::default(), &inner).await?;
+
+        let published = published.lock().unwrap();
+        assert!(
+            matches!(published.as_slice(), [quilt::flow::UserMeta::Set(meta)] if *meta == expected),
+            "expected {expected}, got {published:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn run_once_publishes_on_pending_commit_only() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
     let lineage = quilt::lineage::PackageLineage {

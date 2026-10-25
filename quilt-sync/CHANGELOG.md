@@ -24,6 +24,7 @@
 ### Changed
 
 - Under the hood, QuiltSync can run the task a package revision asks for: given a hand-written `task_settings.json`, it claims the task, runs a local agent over ACP in the package's folder, and publishes the result as the next revision (<https://github.com/quiltdata/quilt-rs/pull/1195>)
+- When autosync publishes with your default metadata, a package's `agent_exec` task stays as its current revision has it: autosync neither drops a task nor adds one
 
 ## [v0.24.0] - 2026-10-23
 

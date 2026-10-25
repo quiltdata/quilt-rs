@@ -309,7 +309,12 @@ async fn package_publish_command(
     // Box the publish future — the commit+push state machine exceeds the
     // `large_futures` budget (see `clippy.toml`).
     let (outcome, _message) = Box::pin(model::publish_locked_with_settings(
-        m, &locked, &installed, &settings, status,
+        m,
+        &locked,
+        &installed,
+        &settings,
+        status,
+        model::HeadTask::Replace,
     ))
     .await?;
     Ok((namespace, outcome))
