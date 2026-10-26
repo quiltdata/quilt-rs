@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -27,13 +28,27 @@ pub struct TaskSettings {
     pub agents: BTreeMap<String, AgentSettings>,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentSettings {
     /// The program and its arguments, run with the package's folder as cwd.
     pub command: Vec<String>,
     /// Approve every permission request the agent makes.
     #[serde(default)]
     pub trust_all: bool,
+    /// From spawning the agent until `session/new` answers.
+    pub startup_timeout_secs: Option<u64>,
+    /// The prompt turn.
+    pub turn_timeout_secs: Option<u64>,
+}
+
+impl AgentSettings {
+    pub fn startup_timeout(&self) -> Duration {
+        Duration::from_secs(self.startup_timeout_secs.unwrap_or(120))
+    }
+
+    pub fn turn_timeout(&self) -> Duration {
+        Duration::from_secs(self.turn_timeout_secs.unwrap_or(1800))
+    }
 }
 
 impl TaskSettings {
@@ -208,6 +223,24 @@ mod tests {
             !settings.agents["other"].trust_all,
             "trust_all is off unless set"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_agents_time_limits_are_its_own_or_the_defaults() -> Result<(), Error> {
+        let settings = load(
+            r#"{"blessed_buckets":["quilt-dev"],
+                "agents":{"slow":{"command":["slow"],"startup_timeout_secs":300,"turn_timeout_secs":7200},
+                          "plain":{"command":["plain"]}}}"#,
+        )
+        .await?
+        .expect("on");
+        let slow = &settings.agents["slow"];
+        assert_eq!(slow.startup_timeout(), Duration::from_mins(5));
+        assert_eq!(slow.turn_timeout(), Duration::from_hours(2));
+        let plain = &settings.agents["plain"];
+        assert_eq!(plain.startup_timeout(), Duration::from_mins(2));
+        assert_eq!(plain.turn_timeout(), Duration::from_mins(30));
         Ok(())
     }
 

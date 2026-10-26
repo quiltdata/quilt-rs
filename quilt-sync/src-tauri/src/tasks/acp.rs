@@ -2,6 +2,7 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::time::Duration;
 
 use agent_client_protocol::Agent;
 use agent_client_protocol::ByteStreams;
@@ -10,6 +11,7 @@ use agent_client_protocol::ConnectTo;
 use agent_client_protocol::ConnectionTo;
 use agent_client_protocol::ErrorCode;
 use agent_client_protocol::schema::ProtocolVersion;
+use agent_client_protocol::schema::v1::CancelNotification;
 use agent_client_protocol::schema::v1::ContentBlock;
 use agent_client_protocol::schema::v1::InitializeRequest;
 use agent_client_protocol::schema::v1::NewSessionRequest;
@@ -24,6 +26,7 @@ use agent_client_protocol::schema::v1::TextContent;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 
+use crate::tasks::agent_process;
 use crate::tasks::settings::AgentSettings;
 
 const SIGNED_OUT: &str = "agent not signed in";
@@ -50,6 +53,16 @@ pub enum RunOutcome {
     },
 }
 
+/// How long the agent gets to start, and then to finish its turn.
+#[derive(Clone, Copy)]
+struct Limits {
+    startup: Duration,
+    turn: Duration,
+}
+
+/// How long a timed-out turn gets to answer `session/cancel`.
+const CANCEL_GRACE: Duration = Duration::from_secs(5);
+
 /// `started` gets the agent's PID once it starts. `recheck` re-reads the task
 /// after the session opens, and may bring a later revision down: the document
 /// to prompt, or how the run ends unprompted.
@@ -64,15 +77,18 @@ pub async fn run(
             reason: "the agent's command is empty".to_string(),
         };
     };
-    let spawned = tokio::process::Command::new(program)
+    let mut command = tokio::process::Command::new(program);
+    command
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .kill_on_drop(true)
-        .spawn();
-    let mut child = match spawned {
+        .kill_on_drop(true);
+    // So that the tools it starts can be killed with it.
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(err) => {
             return RunOutcome::NotStarted {
@@ -80,6 +96,9 @@ pub async fn run(
             };
         }
     };
+    // Declared after `child`, so dropped first: the leader is still unreaped,
+    // and its PID still names the group.
+    let _group = child.id().map(Group);
     if let Some(pid) = child.id() {
         started(pid).await;
     }
@@ -89,15 +108,27 @@ pub async fn run(
         };
     };
     let transport = ByteStreams::new(stdin.compat_write(), stdout.compat());
-    let outcome = converse(transport, cwd, agent.trust_all, recheck).await;
-    let _ = child.kill().await;
-    outcome
+    let limits = Limits {
+        startup: agent.startup_timeout(),
+        turn: agent.turn_timeout(),
+    };
+    converse(transport, cwd, agent.trust_all, limits, recheck).await
+}
+
+/// The agent's process group, killed however the run ends.
+struct Group(u32);
+
+impl Drop for Group {
+    fn drop(&mut self) {
+        agent_process::kill_group(self.0);
+    }
 }
 
 async fn converse(
     transport: impl ConnectTo<Client> + 'static,
     cwd: &Path,
     trust_all: bool,
+    limits: Limits,
     recheck: impl AsyncFnOnce() -> Result<String, RunOutcome>,
 ) -> RunOutcome {
     let root = cwd.to_path_buf();
@@ -112,7 +143,7 @@ async fn converse(
             agent_client_protocol::on_receive_request!(),
         )
         .connect_with(transport, async |cx: ConnectionTo<Agent>| {
-            Ok(session(&cx, cwd, recheck, &prompting).await)
+            Ok(session(&cx, cwd, limits, recheck, &prompting).await)
         })
         .await;
     connected.unwrap_or_else(|err| {
@@ -131,21 +162,29 @@ fn connection_failed(prompted: bool, err: &agent_client_protocol::Error) -> RunO
 async fn session(
     cx: &ConnectionTo<Agent>,
     cwd: &Path,
+    limits: Limits,
     recheck: impl AsyncFnOnce() -> Result<String, RunOutcome>,
     prompted: &std::sync::atomic::AtomicBool,
 ) -> RunOutcome {
-    // The default capabilities advertise no file system and no terminal.
-    let initialize = InitializeRequest::new(ProtocolVersion::V1);
-    if let Err(err) = cx.send_request(initialize).block_task().await {
-        return not_started(&err);
-    }
-    let session_id = match cx
-        .send_request(NewSessionRequest::new(cwd))
-        .block_task()
-        .await
-    {
-        Ok(session) => session.session_id,
-        Err(err) => return not_started(&err),
+    let startup = async {
+        // The default capabilities advertise no file system and no terminal.
+        let initialize = InitializeRequest::new(ProtocolVersion::V1);
+        cx.send_request(initialize).block_task().await?;
+        cx.send_request(NewSessionRequest::new(cwd))
+            .block_task()
+            .await
+    };
+    let session_id = match tokio::time::timeout(limits.startup, startup).await {
+        Ok(Ok(session)) => session.session_id,
+        Ok(Err(err)) => return not_started(&err),
+        Err(_) => {
+            return RunOutcome::NotStarted {
+                reason: format!(
+                    "the agent did not start within startup_timeout_secs ({:?})",
+                    limits.startup
+                ),
+            };
+        }
     };
     let document = match recheck().await {
         Ok(document) => document,
@@ -158,8 +197,25 @@ async fn session(
             "Do the task described in {document}, in this folder."
         )))],
     );
-    let ended = cx.send_request(prompt).block_task().await;
-    turn_ended(session_id.to_string(), ended.map(|r| r.stop_reason))
+    let mut turn = std::pin::pin!(cx.send_request(prompt).block_task());
+    if let Ok(ended) = tokio::time::timeout(limits.turn, &mut turn).await {
+        return turn_ended(session_id.to_string(), ended.map(|r| r.stop_reason));
+    }
+    // Whatever the turn ends with now, the time limit ended it.
+    if cx
+        .send_notification(CancelNotification::new(session_id.clone()))
+        .is_ok()
+    {
+        let _ = tokio::time::timeout(CANCEL_GRACE, turn).await;
+    }
+    RunOutcome::Failed {
+        session_id: Some(session_id.to_string()),
+        stop_reason: None,
+        reason: Some(format!(
+            "the turn did not end within turn_timeout_secs ({:?})",
+            limits.turn
+        )),
+    }
 }
 
 fn signed_out(err: &agent_client_protocol::Error) -> bool {
@@ -431,7 +487,7 @@ mod tests {
     async fn an_agent_that_cannot_be_spawned_is_not_started() {
         let agent = AgentSettings {
             command: vec!["/nonexistent/quiltsync-test-agent".to_string()],
-            trust_all: false,
+            ..AgentSettings::default()
         };
         let outcome = run(
             &agent,
@@ -451,7 +507,7 @@ mod tests {
     async fn a_started_agent_reports_its_pid() {
         let agent = AgentSettings {
             command: vec!["true".to_string()],
-            trust_all: false,
+            ..AgentSettings::default()
         };
         let mut reported = None;
 
@@ -464,6 +520,145 @@ mod tests {
         .await;
 
         assert!(reported.is_some_and(|pid| pid > 0), "{reported:?}");
+    }
+
+    /// The agent starts a tool, then exits, which ends the run.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[tokio::test]
+    async fn a_run_that_ends_kills_the_tools_its_agent_started() -> std::io::Result<()> {
+        let cwd = tempfile::TempDir::new()?;
+        let agent = AgentSettings {
+            command: [
+                "sh",
+                "-c",
+                "sleep 60 </dev/null >/dev/null 2>&1 & echo $! > tool",
+            ]
+            .map(str::to_string)
+            .to_vec(),
+            ..AgentSettings::default()
+        };
+
+        run(
+            &agent,
+            cwd.path(),
+            async |_| {},
+            async || Ok("TASK.md".to_string()),
+        )
+        .await;
+
+        let tool: u32 = std::fs::read_to_string(cwd.path().join("tool"))?
+            .trim()
+            .parse()
+            .expect("the tool's PID");
+        let mut gone = false;
+        for _ in 0..40 {
+            gone = agent_process::Spawned::of(tool).is_none();
+            if gone {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(gone, "the tool is killed with the agent");
+        Ok(())
+    }
+
+    /// Longer than any test waits.
+    fn limits() -> Limits {
+        Limits {
+            startup: Duration::from_secs(60),
+            turn: Duration::from_secs(60),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_agent_that_does_not_open_a_session_in_time_is_not_started() {
+        // Nothing answers at the agent's end.
+        let (transport, _agent_end) = Channel::duplex();
+        let limits = Limits {
+            startup: Duration::from_millis(100),
+            ..limits()
+        };
+        let conversing = converse(transport, Path::new(ROOT), false, limits, async || {
+            Ok("TASK.md".to_string())
+        });
+        let outcome = tokio::time::timeout(Duration::from_secs(5), conversing)
+            .await
+            .expect("the startup limit ended it");
+        assert_eq!(
+            outcome,
+            RunOutcome::NotStarted {
+                reason: "the agent did not start within startup_timeout_secs (100ms)".to_string()
+            }
+        );
+    }
+
+    /// An in-process agent that opens session `s1` and, prompted, works until
+    /// the client cancels; it reports the cancel.
+    fn endless_agent() -> (Channel, tokio::sync::mpsc::UnboundedReceiver<String>) {
+        let (client_end, agent_end) = Channel::duplex();
+        let (cancelled, heard) = tokio::sync::mpsc::unbounded_channel();
+        let cancel = std::sync::Arc::new(tokio::sync::Notify::new());
+        let cancelling = cancel.clone();
+        tokio::spawn(
+            Agent
+                .builder()
+                .on_receive_request(
+                    async move |request: InitializeRequest, responder, _cx| {
+                        responder.respond(InitializeResponse::new(request.protocol_version))
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .on_receive_request(
+                    async move |_: NewSessionRequest, responder, _cx| {
+                        responder.respond(NewSessionResponse::new("s1"))
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .on_receive_request(
+                    async move |_: PromptRequest, responder, cx: ConnectionTo<Client>| {
+                        let cancel = cancel.clone();
+                        cx.spawn(async move {
+                            cancel.notified().await;
+                            responder.respond(PromptResponse::new(StopReason::Cancelled))
+                        })
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .on_receive_notification(
+                    async move |notification: CancelNotification, _cx| {
+                        let _ = cancelled.send(notification.session_id.to_string());
+                        cancelling.notify_one();
+                        Ok(())
+                    },
+                    agent_client_protocol::on_receive_notification!(),
+                )
+                .connect_to(agent_end),
+        );
+        (client_end, heard)
+    }
+
+    #[tokio::test]
+    async fn a_turn_past_its_limit_is_cancelled_and_failed() {
+        let (transport, mut heard) = endless_agent();
+        let limits = Limits {
+            turn: Duration::from_millis(100),
+            ..limits()
+        };
+        let conversing = converse(transport, Path::new(ROOT), false, limits, async || {
+            Ok("TASK.md".to_string())
+        });
+        let outcome = tokio::time::timeout(Duration::from_secs(5), conversing)
+            .await
+            .expect("the turn limit ended it");
+        assert_eq!(
+            outcome,
+            RunOutcome::Failed {
+                session_id: Some("s1".to_string()),
+                stop_reason: None,
+                reason: Some("the turn did not end within turn_timeout_secs (100ms)".to_string()),
+            }
+        );
+        assert_eq!(heard.try_recv().ok().as_deref(), Some("s1"), "cancelled");
     }
 
     /// An in-process agent: it opens session `s1` and, prompted, asks to write
@@ -518,7 +713,10 @@ mod tests {
     async fn a_session_prompts_the_document_and_ends_done() {
         let cwd = Path::new(ROOT);
         let (transport, mut heard) = fake_agent(cwd);
-        let outcome = converse(transport, cwd, false, async || Ok("TASK.md".to_string())).await;
+        let outcome = converse(transport, cwd, false, limits(), async || {
+            Ok("TASK.md".to_string())
+        })
+        .await;
         assert_eq!(
             outcome,
             RunOutcome::Done {
@@ -539,7 +737,10 @@ mod tests {
     async fn a_claim_that_lost_latest_is_never_prompted() {
         let cwd = Path::new(ROOT);
         let (transport, mut heard) = fake_agent(cwd);
-        let outcome = converse(transport, cwd, false, async || Err(RunOutcome::Superseded)).await;
+        let outcome = converse(transport, cwd, false, limits(), async || {
+            Err(RunOutcome::Superseded)
+        })
+        .await;
         assert_eq!(outcome, RunOutcome::Superseded);
         assert_eq!(heard.try_recv().ok(), None, "no prompt was sent");
     }

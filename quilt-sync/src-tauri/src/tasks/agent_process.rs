@@ -25,22 +25,31 @@ impl Spawned {
         started(self.pid) == Some(self.started)
     }
 
-    /// SIGTERM, then SIGKILL if it outlives `grace`, waiting up to a second
-    /// `grace` for it to go; whether it has. A process that has exited, or
-    /// whose PID now names another, is left alone.
+    /// SIGTERM to the process group it leads, then SIGKILL if any of the group
+    /// outlives `grace`, waiting up to a second `grace` for them to go; whether
+    /// they have. Left alone unless it still runs: once it has exited, its PID
+    /// may name another process.
     pub async fn stop(self, grace: Duration) -> bool {
+        if !self.running() {
+            return true;
+        }
         for signalled in [Signal::Terminate, Signal::Kill] {
-            if !self.running() {
+            if !group_running(self.pid) {
                 return true;
             }
-            signal(self.pid, signalled);
+            signal_group(self.pid, signalled);
             let deadline = tokio::time::Instant::now() + grace;
-            while self.running() && tokio::time::Instant::now() < deadline {
+            while group_running(self.pid) && tokio::time::Instant::now() < deadline {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
-        !self.running()
+        !group_running(self.pid)
     }
+}
+
+/// SIGKILL to the process group `leader` leads.
+pub fn kill_group(leader: u32) {
+    signal_group(leader, Signal::Kill);
 }
 
 #[derive(Clone, Copy)]
@@ -50,19 +59,66 @@ enum Signal {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn signal(pid: u32, signal: Signal) {
+fn signal_group(leader: u32, signal: Signal) {
     let signal = match signal {
         Signal::Terminate => libc::SIGTERM,
         Signal::Kill => libc::SIGKILL,
     };
-    if let Ok(pid) = libc::pid_t::try_from(pid) {
-        // SAFETY: `kill` takes plain integers and touches no memory of ours.
-        unsafe { libc::kill(pid, signal) };
+    if let Ok(group) = libc::pid_t::try_from(leader) {
+        // SAFETY: `killpg` takes plain integers and touches no memory of ours.
+        unsafe { libc::killpg(group, signal) };
     }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn signal(_: u32, _: Signal) {}
+fn signal_group(_: u32, _: Signal) {}
+
+/// Whether any of the group `leader` leads has yet to exit.
+fn group_running(leader: u32) -> bool {
+    members(leader)
+        .into_iter()
+        .any(|pid| started(pid).is_some())
+}
+
+/// The processes in the group `leader` leads, zombies included.
+#[cfg(target_os = "macos")]
+fn members(leader: u32) -> Vec<u32> {
+    let Ok(group) = libc::pid_t::try_from(leader) else {
+        return Vec::new();
+    };
+    // SAFETY: a null buffer asks only for the count.
+    let count = unsafe { libc::proc_listpgrppids(group, std::ptr::null_mut(), 0) };
+    // Room for processes that join between the two calls.
+    let mut pids: Vec<libc::pid_t> = vec![0; usize::try_from(count).unwrap_or(0) + 16];
+    let Ok(size) = libc::c_int::try_from(std::mem::size_of_val(pids.as_slice())) else {
+        return Vec::new();
+    };
+    // SAFETY: `pids` is a valid out buffer of `size` bytes.
+    let count = unsafe { libc::proc_listpgrppids(group, pids.as_mut_ptr().cast(), size) };
+    pids.truncate(usize::try_from(count).unwrap_or(0));
+    pids.into_iter()
+        .filter_map(|pid| u32::try_from(pid).ok())
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn members(leader: u32) -> Vec<u32> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse().ok())
+        .filter(|pid| {
+            // The group is field 5.
+            stat_fields(*pid).and_then(|fields| fields.get(2)?.parse().ok()) == Some(leader)
+        })
+        .collect()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn members(_: u32) -> Vec<u32> {
+    Vec::new()
+}
 
 /// When `pid` started, in microseconds since the epoch; `None` once it has
 /// exited, a zombie included.
@@ -83,22 +139,26 @@ fn started(pid: u32) -> Option<u64> {
 /// a zombie with no thread left included.
 #[cfg(target_os = "linux")]
 fn started(pid: u32) -> Option<u64> {
-    let stat = std::fs::read(format!("/proc/{pid}/stat")).ok()?;
-    // The fields after the command name, which may itself hold spaces,
-    // parentheses and bytes that aren't UTF-8: the state is field 3, the
-    // start time field 22.
-    let after_name = stat.iter().rposition(|byte| *byte == b')')? + 1;
-    let mut fields = std::str::from_utf8(&stat[after_name..])
-        .ok()?
-        .split_whitespace();
+    let fields = stat_fields(pid)?;
     // A zombie leader may still have threads at work.
     let threads = || std::fs::read_dir(format!("/proc/{pid}/task")).map_or(0, Iterator::count);
-    match fields.next()? {
+    // The state is field 3, the start time field 22.
+    match fields.first()?.as_str() {
         "X" => return None,
         "Z" if threads() <= 1 => return None,
         _ => {}
     }
-    fields.nth(18)?.parse().ok()
+    fields.get(19)?.parse().ok()
+}
+
+/// `/proc/<pid>/stat` from field 3 on, after the command name, which may
+/// itself hold spaces, parentheses and bytes that aren't UTF-8.
+#[cfg(target_os = "linux")]
+fn stat_fields(pid: u32) -> Option<Vec<String>> {
+    let stat = std::fs::read(format!("/proc/{pid}/stat")).ok()?;
+    let after_name = stat.iter().rposition(|byte| *byte == b')')? + 1;
+    let fields = std::str::from_utf8(&stat[after_name..]).ok()?;
+    Some(fields.split_whitespace().map(str::to_string).collect())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -110,15 +170,27 @@ fn started(_: u32) -> Option<u64> {
 mod tests {
     use super::*;
 
+    use std::os::unix::process::CommandExt;
     use std::os::unix::process::ExitStatusExt;
     use std::process::Child;
     use std::process::Command;
 
-    fn spawn(script: &str) -> Child {
-        Command::new("sh")
+    /// `script` leading a process group of its own, as a run spawns its agent,
+    /// and the first line it prints.
+    fn spawn(script: &str) -> (Child, String) {
+        let mut child = Command::new("sh")
             .args(["-c", script])
+            .process_group(0)
+            .stdout(std::process::Stdio::piped())
             .spawn()
-            .expect("sh starts")
+            .expect("sh starts");
+        let mut line = String::new();
+        std::io::BufRead::read_line(
+            &mut std::io::BufReader::new(child.stdout.take().expect("stdout")),
+            &mut line,
+        )
+        .expect("it printed");
+        (child, line.trim().to_string())
     }
 
     /// The signal `child` exited on, waiting up to two seconds for it; `None`
@@ -137,7 +209,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_running_agent_is_stopped_with_sigterm() {
-        let mut child = spawn("exec sleep 60");
+        let (mut child, _) = spawn("echo ready; exec sleep 60");
         let agent = Spawned::of(child.id()).expect("its start time");
 
         assert!(agent.stop(Duration::from_secs(5)).await, "reported gone");
@@ -146,17 +218,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_agent_that_ignores_sigterm_is_killed_after_the_grace() {
-        let mut child = Command::new("sh")
-            .args(["-c", "trap '' TERM; echo ready; exec sleep 60"])
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .expect("sh starts");
-        let mut ready = String::new();
-        std::io::BufRead::read_line(
-            &mut std::io::BufReader::new(child.stdout.take().expect("stdout")),
-            &mut ready,
-        )
-        .expect("the trap is set");
+        let (mut child, _) = spawn("trap '' TERM; echo ready; exec sleep 60");
         let agent = Spawned::of(child.id()).expect("its start time");
 
         assert!(
@@ -166,10 +228,25 @@ mod tests {
         assert_eq!(exit_signal(&mut child).await, Some(libc::SIGKILL));
     }
 
+    /// The agent goes on SIGTERM; a tool it started ignores it.
+    #[tokio::test]
+    async fn the_tools_an_agent_started_are_stopped_with_it() {
+        let (mut child, tool) = spawn("sh -c 'trap \"\" TERM; echo $$; exec sleep 60' & wait");
+        let tool: u32 = tool.parse().expect("the tool's PID");
+        let agent = Spawned::of(child.id()).expect("its start time");
+
+        assert!(
+            agent.stop(Duration::from_millis(200)).await,
+            "reported gone"
+        );
+        assert_eq!(exit_signal(&mut child).await, Some(libc::SIGTERM));
+        assert_eq!(started(tool), None, "the tool is gone too");
+    }
+
     /// The PID was given to another process after the agent's exited.
     #[tokio::test]
     async fn a_process_that_started_at_another_time_is_left_alone() {
-        let mut child = spawn("exec sleep 60");
+        let (mut child, _) = spawn("echo ready; exec sleep 60");
         let agent = Spawned::of(child.id()).expect("its start time");
         let other = Spawned {
             started: agent.started + 1,
@@ -178,8 +255,6 @@ mod tests {
 
         other.stop(Duration::from_millis(200)).await;
 
-        assert!(child.try_wait().expect("waited").is_none(), "still running");
-        child.kill().expect("killed");
-        child.wait().expect("waited");
+        assert_eq!(exit_signal(&mut child).await, None, "still running");
     }
 }

@@ -222,7 +222,7 @@ mod tests {
             "kiro".to_string(),
             AgentSettings {
                 command: vec!["kiro-cli-chat".to_string()],
-                trust_all: false,
+                ..AgentSettings::default()
             },
         )])
     }
