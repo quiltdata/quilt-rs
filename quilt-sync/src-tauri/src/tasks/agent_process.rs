@@ -25,25 +25,32 @@ impl Spawned {
         started(self.pid) == Some(self.started)
     }
 
-    /// SIGTERM to the process group it leads, then SIGKILL if any of the group
-    /// outlives `grace`, waiting up to a second `grace` for them to go; whether
-    /// they have. Left alone unless it still runs: once it has exited, its PID
-    /// may name another process.
+    /// SIGTERM to it and the process group it leads, then SIGKILL if any of
+    /// them outlives `grace`, waiting up to a second `grace` for them to go;
+    /// whether they have. Left alone unless it still runs: once it has exited,
+    /// its PID may name another process.
     pub async fn stop(self, grace: Duration) -> bool {
         if !self.running() {
             return true;
         }
         for signalled in [Signal::Terminate, Signal::Kill] {
-            if !group_running(self.pid) {
+            if !self.alive() {
                 return true;
             }
+            signal(self.pid, signalled);
             signal_group(self.pid, signalled);
             let deadline = tokio::time::Instant::now() + grace;
-            while group_running(self.pid) && tokio::time::Instant::now() < deadline {
+            while self.alive() && tokio::time::Instant::now() < deadline {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
-        !group_running(self.pid)
+        !self.alive()
+    }
+
+    /// It or any of its group: an agent recorded by an earlier build leads no
+    /// group of its own.
+    fn alive(self) -> bool {
+        self.running() || group_running(self.pid)
     }
 }
 
@@ -63,16 +70,31 @@ enum Signal {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn signal_group(leader: u32, signal: Signal) {
-    let signal = match signal {
+fn signal_number(signal: Signal) -> libc::c_int {
+    match signal {
         Signal::Terminate => libc::SIGTERM,
         Signal::Kill => libc::SIGKILL,
-    };
-    if let Ok(group) = libc::pid_t::try_from(leader) {
-        // SAFETY: `killpg` takes plain integers and touches no memory of ours.
-        unsafe { libc::killpg(group, signal) };
     }
 }
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn signal(pid: u32, signal: Signal) {
+    if let Ok(pid) = libc::pid_t::try_from(pid) {
+        // SAFETY: `kill` takes plain integers and touches no memory of ours.
+        unsafe { libc::kill(pid, signal_number(signal)) };
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn signal_group(leader: u32, signal: Signal) {
+    if let Ok(group) = libc::pid_t::try_from(leader) {
+        // SAFETY: `killpg` takes plain integers and touches no memory of ours.
+        unsafe { libc::killpg(group, signal_number(signal)) };
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn signal(_: u32, _: Signal) {}
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn signal_group(_: u32, _: Signal) {}

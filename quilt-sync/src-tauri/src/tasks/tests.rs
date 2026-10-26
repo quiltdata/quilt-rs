@@ -601,15 +601,11 @@ async fn the_sweep_publishes_the_outcome_the_run_saved() -> Result<(), Error> {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[tokio::test]
 async fn the_sweep_stops_an_agent_left_running_before_it_publishes() -> Result<(), Error> {
-    use std::os::unix::process::CommandExt;
     use std::os::unix::process::ExitStatusExt;
 
     let fixture = Fixture::new();
     settings::remember_invocation(fixture.dir.path(), "ours").await?;
-    let mut agent = std::process::Command::new("sleep")
-        .arg("60")
-        .process_group(0)
-        .spawn()?;
+    let mut agent = std::process::Command::new("sleep").arg("60").spawn()?;
     let spawned = agent_process::Spawned::of(agent.id()).expect("its start time");
     settings::record_agent(fixture.dir.path(), "ours", Some(spawned)).await?;
 

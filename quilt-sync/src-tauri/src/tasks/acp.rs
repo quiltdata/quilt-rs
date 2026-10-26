@@ -115,7 +115,7 @@ pub async fn run(
     };
     let outcome = converse(transport, cwd, agent.trust_all, limits, recheck).await;
     drop(group);
-    // So that nothing the agent writes lands after the outcome's walk.
+    // So that the agent has exited before the outcome's walk.
     let _ = child.kill().await;
     outcome
 }
