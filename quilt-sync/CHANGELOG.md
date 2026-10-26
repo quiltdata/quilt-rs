@@ -38,6 +38,7 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1203>
   - <https://github.com/quiltdata/quilt-rs/pull/1207>
   - <https://github.com/quiltdata/quilt-rs/pull/1208>
+- The *Host* field of *Set remote*, *Choose S3 bucket* and *Change bucket* is optional: a local-only package can be published to a bucket with no catalog, on the AWS credentials on this computer (<https://github.com/quiltdata/quilt-rs/pull/1209>)
 
 ### quilt-rs
 

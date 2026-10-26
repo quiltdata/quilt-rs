@@ -778,15 +778,24 @@ pub struct SetRemoteResponse {
     pub resolution_warning: Option<String>,
 }
 
+/// The catalog field is optional: left blank, the remote has no host.
+fn remote_origin(origin: &str) -> Result<Option<Host>, Error> {
+    let origin = origin.trim();
+    if origin.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(Host::from_str(origin)?))
+}
+
 async fn set_remote_command(
-    m: &model::Model,
+    m: &impl model::QuiltModel,
     namespace: &str,
     origin: &str,
     bucket: &str,
     workflow: WorkflowIntent,
 ) -> Result<(quilt_uri::Namespace, Option<String>), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    let origin = quilt_uri::Host::from_str(origin)?;
+    let origin = remote_origin(origin)?;
     let warning = model::set_remote(m, &namespace, origin, bucket.to_string(), workflow).await?;
     Ok((namespace, warning))
 }
@@ -810,11 +819,11 @@ pub async fn set_remote(
     workflow: WorkflowIntent,
 ) -> Result<SetRemoteResponse, String> {
     // The origin is this command's own argument: the remote being set.
-    let origin_host = Host::from_str(&origin).ok();
+    let origin_host = remote_origin(&origin).ok().flatten();
     // `Notify::new` logs the init line; on success/failure we log explicitly so
     // the success payload can be the typed struct rather than a bare string.
     Notify::new(format!("Setting remote for {namespace}"));
-    match set_remote_command(&m, &namespace, &origin, &bucket, workflow).await {
+    match set_remote_command(&*m, &namespace, &origin, &bucket, workflow).await {
         Ok((ns, resolution_warning)) => {
             // Reported here rather than through `Notify::on_success`, because this
             // command returns a typed payload and so does not route its outcome
@@ -1998,6 +2007,32 @@ mod tests {
             ))
         });
         model
+    }
+
+    /// The catalog is optional: an empty catalog field sets a remote with no
+    /// host, and the package is pushed on this computer's AWS credentials.
+    #[tokio::test]
+    async fn an_empty_catalog_sets_a_remote_without_a_host() -> Result<(), Error> {
+        use mockall::predicate::always;
+        use mockall::predicate::eq;
+
+        for origin in ["", "  "] {
+            let mut model = installed_model();
+            model
+                .expect_set_remote()
+                .times(1)
+                .with(always(), eq(None), eq("my-bucket".to_string()), always())
+                .returning(|_, _, _, _| Ok(None));
+            super::set_remote_command(
+                &model,
+                "acme/demo",
+                origin,
+                "my-bucket",
+                super::WorkflowIntent::BucketDefault,
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     /// A refusal drawn in a dialog stands above the fields the reader is about to

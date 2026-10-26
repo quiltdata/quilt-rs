@@ -1365,9 +1365,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         // yet: on success the recommit itself writes the lineage (carrying the
         // remote set above) and the new manifest; on failure the kind of error
         // decides what, if anything, is saved.
-        if let Some(origin) = origin
-            && lineage.commit.is_some()
-        {
+        if lineage.commit.is_some() {
             return match self
                 .recommit_for_remote(lineage.clone(), origin, bucket, workflow)
                 .await
@@ -1413,7 +1411,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             };
         }
 
-        // No origin or no local commit — nothing to recommit or validate.
+        // No local commit — nothing to recommit or validate.
         self.lineage.write(&self.storage, lineage).await?;
 
         Ok(SetRemoteOutcome::default())
@@ -1422,11 +1420,11 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     async fn recommit_for_remote(
         &self,
         lineage: lineage::PackageLineage,
-        origin: Host,
+        host: Option<Host>,
         bucket: String,
         workflow: WorkflowIntent,
     ) -> Res {
-        let host = Some(origin);
+        // With no host this is SHA-256 chunked.
         let host_config = self.remote.host_config(host.as_ref()).await?;
         let workflows_config_uri = S3Uri {
             key: WORKFLOWS_CONFIG_KEY.to_string(),

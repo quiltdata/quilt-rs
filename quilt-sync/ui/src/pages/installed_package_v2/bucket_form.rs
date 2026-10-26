@@ -40,12 +40,12 @@ const BUCKET_MISSING: &str = "Enter an S3 bucket name";
 const LOADING: &str = "Loading workflows…";
 
 /// Whether the typed pair can be submitted, and what is wrong when it cannot.
-/// Pure, so the rule is testable without a dialog.
+/// The host is optional. Pure, so the rule is testable without a dialog.
 pub(super) fn field_errors(
     host: &str,
     bucket: &str,
 ) -> (Option<&'static str>, Option<&'static str>) {
-    let host_error = (host.is_empty() || !util::is_valid_hostname(host)).then_some(HOST_INVALID);
+    let host_error = (!host.is_empty() && !util::is_valid_hostname(host)).then_some(HOST_INVALID);
     let bucket_error = bucket.is_empty().then_some(BUCKET_MISSING);
     (host_error, bucket_error)
 }
@@ -406,7 +406,8 @@ pub(crate) fn BucketDialog(
                 caption=if locked {
                     "Where this package is published."
                 } else {
-                    "Where this package is published. From your accounts."
+                    "Optional: the bucket's catalog, from your accounts. Without one, this \
+                     computer's AWS credentials are used."
                 }
                 error=Signal::derive(move || host_invalid.get().map(str::to_string))
                 control=move |id| {
@@ -598,17 +599,15 @@ mod tests {
         input.dispatch_event(&event).unwrap();
     }
 
-    /// v1's rule, carried over: a host must be a hostname and a bucket must be
-    /// something. Both messages name the field's own problem, because the dialog
-    /// banner is for the backend refusing the whole submission.
+    /// v1's rule, carried over: a host, when given, must be a hostname and a
+    /// bucket must be something. Both messages name the field's own problem,
+    /// because the dialog banner is for the backend refusing the whole
+    /// submission.
     #[test]
     fn the_form_states_what_is_wrong_per_field() {
         assert_eq!(
             field_errors("", ""),
-            (
-                Some("Enter a valid hostname"),
-                Some("Enter an S3 bucket name")
-            )
+            (None, Some("Enter an S3 bucket name"))
         );
         assert_eq!(
             field_errors("not a host", "b"),
@@ -619,6 +618,13 @@ mod tests {
             (None, Some("Enter an S3 bucket name"))
         );
         assert_eq!(field_errors("quilt.test", "my-bucket"), (None, None));
+    }
+
+    /// The host is optional: a bucket with no catalog is reached on this
+    /// computer's AWS credentials.
+    #[test]
+    fn an_empty_host_is_accepted() {
+        assert_eq!(field_errors("", "my-bucket"), (None, None));
     }
 
     /// The read-only shape is what `remote_locked` selects, and it is not a
@@ -660,6 +666,18 @@ mod tests {
     async fn a_failed_workflow_fetch_degrades_to_the_bucket_default() {
         let el = mount_dialog(data());
         type_into(&el, "Host", "quilt.test");
+        type_into(&el, "Bucket", "my-bucket");
+        sleep_ms(600).await;
+
+        element_saying(&el, "Bucket default");
+    }
+
+    /// The host is optional: with it left empty, the bucket's workflows are
+    /// still read, so the form can be saved.
+    #[wasm_bindgen_test]
+    async fn an_empty_host_still_reads_the_workflows() {
+        let el = mount_dialog(data());
+        type_into(&el, "Host", "");
         type_into(&el, "Bucket", "my-bucket");
         sleep_ms(600).await;
 

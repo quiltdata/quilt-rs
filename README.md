@@ -100,6 +100,10 @@ quilt login --host quilt.example.com
 quilt push -n lab/assays --bucket lab-data --host quilt.example.com
 ```
 
+A bucket with no stack works too: leave out `--host`, skip `quilt login`, and
+the push uses the AWS credentials on this computer (`~/.aws`, environment
+variables or SSO).
+
 Collaborators log in to the same stack, then install. Their working copies use
 `~/QuiltSync` unless they choose a different directory first with
 `quilt home <dir>`.
