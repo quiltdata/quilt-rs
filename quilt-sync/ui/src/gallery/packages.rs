@@ -520,7 +520,7 @@ fn header(title: String, count: usize, bucket_axis: bool) -> AnyView {
 
 /// The catalog host each scene bucket's packages point at, as the Catalog axis
 /// heads them. `s3://org-archive` has none, so its packages group under
-/// `No catalog`, first.
+/// `No catalog`, before every host.
 fn catalog(bucket: &str) -> &'static str {
     match bucket {
         "s3://my-bucket" => "catalog.example.com",
@@ -663,7 +663,7 @@ pub fn PackagesRegion(
                             order.push(k);
                         }
                     }
-                    // As on the page, the packages without a catalog lead.
+                    // As on the page, the packages without a catalog come before every host.
                     if catalog_axis
                         && let Some(at) = order.iter().position(|k| k == "No catalog")
                     {

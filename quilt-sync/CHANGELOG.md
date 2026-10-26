@@ -35,7 +35,9 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1211>
   - <https://github.com/quiltdata/quilt-rs/pull/1213>
   - <https://github.com/quiltdata/quilt-rs/pull/1215>
-- The main page can group packages by catalog (<https://github.com/quiltdata/quilt-rs/pull/1214>)
+- The main page can group packages by catalog
+  - <https://github.com/quiltdata/quilt-rs/pull/1214>
+  - <https://github.com/quiltdata/quilt-rs/pull/1217>
 
 ### Changed
 
@@ -46,6 +48,10 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1201>
   - <https://github.com/quiltdata/quilt-rs/pull/1204>
   - <https://github.com/quiltdata/quilt-rs/pull/1206>
+
+### Removed
+
+- QuiltSync no longer claims `quilt+file://` links, which it never handled (<https://github.com/quiltdata/quilt-rs/pull/1216>)
 
 ### quilt-rs
 
