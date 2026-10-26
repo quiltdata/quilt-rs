@@ -75,20 +75,16 @@ fn document(agent_exec: &Value, is_file: impl Fn(&Path) -> bool) -> Result<&str,
     let Some(document) = agent_exec.get("document").and_then(Value::as_str) else {
         return Err("agent_exec.document is missing".to_string());
     };
-    if !inside_package(Path::new(document)) {
+    let inside = Path::new(document)
+        .components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)));
+    if !inside {
         return Err(format!("{document} is not a path inside the package"));
     }
     if !is_file(Path::new(document)) {
         return Err(format!("{document} is not a file in the package"));
     }
     Ok(document)
-}
-
-/// Whether `path` is plain segments, which joined to the package's folder
-/// stay inside it.
-pub fn inside_package(path: &Path) -> bool {
-    path.components()
-        .all(|part| matches!(part, std::path::Component::Normal(_)))
 }
 
 fn agent_id(agent_exec: &Value) -> Result<&str, String> {
