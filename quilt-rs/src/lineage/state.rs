@@ -27,8 +27,7 @@ pub enum PackageState {
     Unpublished,
     /// No remote is set.
     NoRemote,
-    /// The state could not be read: [`UpstreamState::Error`], or a remote with
-    /// no catalog host ([`PackageLineage::misconfigured_remote`]).
+    /// The state could not be read: [`UpstreamState::Error`].
     Unknown,
 }
 
@@ -87,12 +86,11 @@ impl PackageState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackageStateReport {
     pub state: PackageState,
-    /// The [`UpstreamState`] `state` was resolved from: the status call's, the
-    /// lineage's when the package has no remote, and `Error` for a
-    /// misconfigured remote.
+    /// The [`UpstreamState`] `state` was resolved from: the status call's, or
+    /// the lineage's when the package has no remote.
     pub upstream_state: UpstreamState,
     /// Files changed since the last commit. `None` when the working tree was
-    /// not scanned: no remote, or a misconfigured one.
+    /// not scanned: the package has no remote.
     pub changed_files: Option<usize>,
     /// The remote's `latest` tip was read in this call
     /// ([`InstalledPackageStatus::latest_refreshed`](crate::lineage::InstalledPackageStatus::latest_refreshed)).
@@ -102,19 +100,10 @@ pub struct PackageStateReport {
 }
 
 impl PackageStateReport {
-    /// The state of a package whose remote is not asked: resolved from its
-    /// lineage alone, or `Unknown` for a misconfigured remote. `None` when the
-    /// remote has to be asked.
+    /// The state of a package with no remote, resolved from its lineage alone.
+    /// `None` when the remote has to be asked.
     #[must_use]
     pub(crate) fn without_remote(lineage: &PackageLineage) -> Option<Self> {
-        if lineage.misconfigured_remote() {
-            return Some(Self {
-                state: PackageState::Unknown,
-                upstream_state: UpstreamState::Error,
-                changed_files: None,
-                latest_refreshed: false,
-            });
-        }
         // No remote at all: `resolve` ignores the file count for `Local`, so a
         // status call would be a working-tree walk whose answer nothing reads. A
         // remote that exists but was never pushed to is still asked — it is
@@ -129,22 +118,6 @@ impl PackageStateReport {
             });
         }
         None
-    }
-}
-
-impl PackageLineage {
-    /// A remote with a bucket but no catalog host.
-    ///
-    /// `UpstreamState::from` deliberately ignores `origin` and answers from the
-    /// hashes, which for this shape is a state nobody can act on: without a
-    /// catalog there is nowhere to vend credentials from, so a status call
-    /// cannot succeed. Check this BEFORE resolving, so the shape has one answer
-    /// — [`PackageState::Unknown`] — on every surface.
-    #[must_use]
-    pub fn misconfigured_remote(&self) -> bool {
-        self.remote_uri
-            .as_ref()
-            .is_some_and(|uri| uri.origin.is_none())
     }
 }
 
@@ -317,39 +290,7 @@ mod tests {
     }
 
     #[test]
-    fn a_remote_with_no_catalog_host_is_not_read_through_the_hashes() {
-        // The classifier ignores `origin` on purpose and would answer from the
-        // hash comparison — a state nobody can act on, because without a catalog
-        // there is nowhere to vend credentials from.
-        let mut lineage = PackageLineage::from_remote(manifest_uri(None), "abcdef".to_string());
-        lineage.latest_hash = "abcdef".to_string();
-        assert!(lineage.misconfigured_remote());
-
-        // A remote WITH a catalog host, and a package with no remote at all, are
-        // both fine.
-        assert!(
-            !PackageLineage::from_remote(
-                manifest_uri(Some(fixtures::host())),
-                "abcdef".to_string()
-            )
-            .misconfigured_remote()
-        );
-        assert!(!PackageLineage::default().misconfigured_remote());
-    }
-
-    #[test]
     fn without_remote_answers_only_when_the_remote_is_not_asked() {
-        let misconfigured = PackageLineage::from_remote(manifest_uri(None), "abcdef".to_string());
-        assert_eq!(
-            PackageStateReport::without_remote(&misconfigured),
-            Some(PackageStateReport {
-                state: PackageState::Unknown,
-                upstream_state: UpstreamState::Error,
-                changed_files: None,
-                latest_refreshed: false,
-            })
-        );
-
         assert_eq!(
             PackageStateReport::without_remote(&PackageLineage::default()),
             Some(PackageStateReport {
@@ -360,8 +301,11 @@ mod tests {
             })
         );
 
+        // A remote with or without a catalog host is asked.
         let configured =
             PackageLineage::from_remote(manifest_uri(Some(fixtures::host())), "abcdef".to_string());
         assert_eq!(PackageStateReport::without_remote(&configured), None);
+        let catalog_less = PackageLineage::from_remote(manifest_uri(None), "abcdef".to_string());
+        assert_eq!(PackageStateReport::without_remote(&catalog_less), None);
     }
 }

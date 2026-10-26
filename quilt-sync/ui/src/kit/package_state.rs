@@ -181,6 +181,11 @@ pub fn render(state: &PackageState, site: Site) -> Rendered {
     }
 }
 
+/// A session state with no host: the AWS credentials on this computer were
+/// missing or refused.
+const AMBIENT_CREDENTIALS_UNUSABLE: &str =
+    "AWS credentials on this computer aren't usable — update ~/.aws";
+
 /// The words, which are the only part that depends on the site.
 ///
 /// The list names a state: a short noun phrase in a chip beside the package, and a
@@ -277,8 +282,15 @@ fn words(state: &PackageState, site: Site) -> String {
         // rather than about this package, so there is no list-versus-header
         // reading of it to diverge. Written with a `_` site rather than left to
         // the delegation below because the words are chosen here, not borrowed.
+        //
+        // With no host the credentials are the machine's own AWS ones (a bucket
+        // with no catalog), so missing and rejected say the same thing: there is
+        // no sign-in to name, and the remedy is the file.
+        (
+            PackageState::NoSession { host: None } | PackageState::SignInExpired { host: None },
+            _,
+        ) => AMBIENT_CREDENTIALS_UNUSABLE.to_string(),
         (PackageState::NoSession { host: Some(host) }, _) => format!("Signed out of {host}"),
-        (PackageState::NoSession { host: None }, _) => "Signed out".to_string(),
         (PackageState::SignInExpired { .. }, _) => "Sign-in expired".to_string(),
 
         // Every remaining cause and header. Delegated rather than written out,
@@ -427,11 +439,22 @@ mod tests {
     }
 
     /// A bare bucket on ambient AWS credentials has no deployment to sign in to,
-    /// so the words cannot name one — and the remedy is the credentials file.
+    /// so the words cannot name one — and the remedy is the credentials file,
+    /// whether the credentials were missing or refused.
     #[test]
-    fn a_missing_session_without_a_host_says_so_without_naming_one() {
-        let s = PackageState::NoSession { host: None };
-        assert_eq!(render(&s, Site::PageHeader).words, "Signed out");
+    fn a_session_state_without_a_host_names_the_credentials_file() {
+        for s in [
+            PackageState::NoSession { host: None },
+            PackageState::SignInExpired { host: None },
+        ] {
+            for site in [Site::ListRow, Site::QueueRow, Site::Cause, Site::PageHeader] {
+                assert_eq!(
+                    render(&s, site).words,
+                    "AWS credentials on this computer aren't usable — update ~/.aws",
+                    "{s:?} at {site:?}"
+                );
+            }
+        }
     }
 
     /// A sign-in is scoped to a deployment. Without a host there is none, so the

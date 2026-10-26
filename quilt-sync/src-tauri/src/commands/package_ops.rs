@@ -473,11 +473,9 @@ async fn package_pull_command(
 /// offering the same pull until the next tick. Only a conflict: it is the one
 /// refusal with a state of its own that the working tree cannot report.
 ///
-/// A package with no known deployment is not paused, and a pause is always
-/// attributed to the package's own host. A remote with no catalog host is
-/// [`misconfigured_remote`](quilt::lineage::PackageLineage::misconfigured_remote):
-/// with no catalog there are no credentials, so no pull on it can reach a
-/// conflict, and every page resolves it to Unknown anyway.
+/// A pause is always attributed to the package's own host, so a package with
+/// no known deployment (a bucket with no catalog) is not paused: its header
+/// offers the pull again until the watcher can pause such a package.
 async fn pause_on_conflict(
     watcher: &Watcher,
     namespace: &quilt_uri::Namespace,
@@ -488,8 +486,7 @@ async fn pause_on_conflict(
     else {
         return;
     };
-    // No origin is a misconfigured remote (see above): unreachable after a
-    // conflict, and nothing to attribute the pause to.
+    // No origin: nothing to attribute the pause to (see above).
     let Some(origin) = lineage
         .remote_uri
         .as_ref()
