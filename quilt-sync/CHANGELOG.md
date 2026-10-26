@@ -33,11 +33,12 @@
 
 ### Fixed
 
-- A package whose remote has no catalog shows its status on both pages, publishes from the commit page and syncs with autosync, on the AWS credentials on this computer. When those are missing or refused, it says so instead of offering *Sign in*. Once published, it offers *Copy URI*, with no catalog in the copied address
+- A package whose remote has no catalog shows its status on both pages, publishes from the commit page and syncs with autosync, on the AWS credentials on this computer. When those are missing or refused, it says so and suggests updating `~/.aws` or running `aws sso login`, instead of offering *Sign in*. Once published, it offers *Copy URI*, with no catalog in the copied address
   - <https://github.com/quiltdata/quilt-rs/pull/1193>
   - <https://github.com/quiltdata/quilt-rs/pull/1203>
   - <https://github.com/quiltdata/quilt-rs/pull/1207>
   - <https://github.com/quiltdata/quilt-rs/pull/1208>
+  - <https://github.com/quiltdata/quilt-rs/pull/1210>
 
 ### quilt-rs
 
