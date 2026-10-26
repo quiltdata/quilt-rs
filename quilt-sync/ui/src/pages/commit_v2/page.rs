@@ -307,7 +307,7 @@ struct Form {
 
 impl Form {
     fn of(d: &CommitData) -> Self {
-        let has_bucket = d.uri.as_ref().is_some_and(|u| u.catalog.is_some());
+        let has_bucket = crate::util::has_bucket(d.uri.as_ref());
         let previous = PreviousWorkflow::from_stamp(d.workflow.as_ref());
         let view: WorkflowView = build_workflow_view(
             &d.workflows,
@@ -888,7 +888,7 @@ fn column(
     menu: &HeaderMenu,
     focus: bool,
 ) -> AnyView {
-    let has_bucket = d.uri.as_ref().is_some_and(|u| u.catalog.is_some());
+    let has_bucket = crate::util::has_bucket(d.uri.as_ref());
     let namespace = d.namespace.to_string();
     let uri = d.uri.clone();
 
@@ -1660,6 +1660,50 @@ mod tests {
         );
     }
 
+    fn catalog_less(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        Box::pin(async {
+            Ok(CommitData {
+                uri: Some(
+                    quilt_uri::S3PackageUri::try_from("quilt+s3://team-bucket#package=org/pkg")
+                        .unwrap(),
+                ),
+                ..commit_data()
+            })
+        })
+    }
+
+    fn local_only(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        Box::pin(async {
+            Ok(CommitData {
+                uri: None,
+                ..commit_data()
+            })
+        })
+    }
+
+    fn primary_face(el: &web_sys::Element) -> String {
+        el.query_selector("[data-primary-action] button")
+            .unwrap()
+            .expect("the primary")
+            .text_content()
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    /// Publish follows the bucket, not the catalog: a package with a bucket
+    /// and no catalog publishes on the computer's AWS credentials, and one
+    /// with no bucket only saves.
+    #[wasm_bindgen_test]
+    async fn a_bucket_without_a_catalog_publishes() {
+        let el = page_reading("/commit?namespace=org%2Fpkg", catalog_less).await;
+        assert_eq!(primary_face(&el), "Publish 1203 files");
+        assert_eq!(location_names(&el), ["Open folder"]);
+
+        let el = page_reading("/commit?namespace=org%2Fpkg", local_only).await;
+        assert_eq!(primary_face(&el), "Save revision");
+    }
+
     /// Metadata that is not JSON blocks the primary on any package, governed
     /// or not: every save would be refused by the parser.
     #[wasm_bindgen_test]
@@ -2414,6 +2458,14 @@ mod tests {
             Form::of(&d).missing_settings_workflow.as_deref(),
             Some("wrong-workflow"),
             "with a bucket that has no workflows config, it warns"
+        );
+        d.uri = Some(
+            quilt_uri::S3PackageUri::try_from("quilt+s3://team-bucket#package=org/pkg").unwrap(),
+        );
+        assert_eq!(
+            Form::of(&d).missing_settings_workflow.as_deref(),
+            Some("wrong-workflow"),
+            "a bucket with no catalog warns alike"
         );
         d.uri = None;
         assert_eq!(Form::of(&d).missing_settings_workflow, None);

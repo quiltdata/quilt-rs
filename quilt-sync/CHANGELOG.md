@@ -33,7 +33,9 @@
 
 ### Fixed
 
-- A package whose remote has no catalog shows its status on both pages, read on the AWS credentials on this computer. When those are missing or refused, it says so instead of offering *Sign in* (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+- A package whose remote has no catalog shows its status on both pages and publishes from the commit page, on the AWS credentials on this computer. When those are missing or refused, it says so instead of offering *Sign in*
+  - <https://github.com/quiltdata/quilt-rs/pull/1193>
+  - <https://github.com/quiltdata/quilt-rs/pull/1203>
 
 ### quilt-rs
 
