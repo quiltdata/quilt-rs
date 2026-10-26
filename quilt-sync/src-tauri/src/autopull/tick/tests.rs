@@ -2590,17 +2590,17 @@ fn catalog_changed_mid_pass(
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
-    let changed = current.clone();
-    let mut changes = BTreeMap::new();
-    changes.insert(
+    let mut tree = BTreeMap::new();
+    tree.insert(
         std::path::PathBuf::from("conflict.txt"),
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
+    let moved = current.clone();
     model.expect_locked_package_status().returning(move |_, _| {
-        *changed.lock().unwrap() = behind_lineage_on(after.clone());
+        *moved.lock().unwrap() = behind_lineage_on(after.clone());
         Ok(quilt::lineage::InstalledPackageStatus::new(
             UpstreamState::Behind,
-            changes.clone(),
+            tree.clone(),
         ))
     });
     (model, current)
@@ -2656,9 +2656,9 @@ async fn a_sign_in_the_old_catalog_asked_for_is_not_recorded() -> Result<(), Err
                 .create_installed_package(("acme", "demo").into()),
         ))
     });
-    let changed = current.clone();
+    let moved = current.clone();
     model.expect_locked_package_status().returning(move |_, _| {
-        *changed.lock().unwrap() = behind_lineage_on(None);
+        *moved.lock().unwrap() = behind_lineage_on(None);
         Err(Error::from(quilt::Error::Login(
             quilt::LoginError::NoSession(Some(fixtures::host())),
         )))
