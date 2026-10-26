@@ -153,7 +153,8 @@ pub(crate) fn blocked_reason(
     if no_session {
         return Some(match no_session_host.filter(|h| !h.is_empty()) {
             Some(host) => format!("Sign in to {host} to publish."),
-            None => "No usable AWS credentials. Update ~/.aws/credentials to publish.".to_string(),
+            None => "No usable AWS credentials. Update ~/.aws or run aws sso login to publish."
+                .to_string(),
         });
     }
     check.map(str::to_string)

@@ -1020,7 +1020,7 @@ mod tests {
         // to, and must still block rather than falling through to enabled.
         assert_eq!(
             crate::util::commit_no_session_hint(true, None).as_deref(),
-            Some("No usable AWS credentials. Update ~/.aws/credentials to commit.")
+            Some("No usable AWS credentials. Update ~/.aws or run aws sso login to commit.")
         );
         assert_eq!(crate::util::commit_no_session_hint(false, None), None);
     }

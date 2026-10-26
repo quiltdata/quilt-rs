@@ -91,7 +91,7 @@ fn hint_lines(
         } else {
             // A bucket with no catalog, read on this computer's AWS credentials.
             // `error` covers any failure, so this suggests rather than diagnoses.
-            "Unable to check remote status — check the AWS credentials in ~/.aws".to_string()
+            "Unable to check remote status — check the AWS credentials in ~/.aws or run aws sso login".to_string()
         }];
     }
     Vec::new()
@@ -1170,7 +1170,7 @@ mod tests {
     fn error_without_a_host_points_at_the_credentials_file() {
         assert_eq!(
             hint_lines("error", false, None, None, None),
-            vec!["Unable to check remote status — check the AWS credentials in ~/.aws".to_string()]
+            vec!["Unable to check remote status — check the AWS credentials in ~/.aws or run aws sso login".to_string()]
         );
     }
 

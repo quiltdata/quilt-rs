@@ -135,7 +135,7 @@ pub struct CommitData {
     /// `no_access_reason`.
     pub no_session: bool,
     /// The deployment to sign in to, when there is one. `None` for a bare
-    /// bucket on ambient AWS credentials, whose remedy is the file — so it
+    /// bucket on ambient AWS credentials, fixed in `~/.aws` or by `aws sso login` — so it
     /// cannot carry the blocked state on its own.
     pub no_session_host: Option<String>,
     pub entries: Vec<InstalledPackageEntryData>,

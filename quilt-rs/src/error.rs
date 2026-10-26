@@ -497,7 +497,7 @@ impl Error {
 
     /// No usable session and no deployment to sign in to: the AWS credentials
     /// on this computer, used for a bucket with no catalog, were missing or
-    /// refused. The remedy is `~/.aws`, not a sign-in.
+    /// refused. The remedy is `~/.aws` or `aws sso login`, not a sign-in.
     #[must_use]
     pub fn is_ambient_session_absent(&self) -> bool {
         match self {
