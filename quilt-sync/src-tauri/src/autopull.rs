@@ -323,7 +323,7 @@ impl Watcher {
     /// ([`Self::clear_paused`] after a manual push / pull / commit / publish /
     /// reset, [`Self::clear_all_paused`] when autosync is switched on) clears
     /// this one too.
-    pub async fn pause(&self, namespace: &Namespace, origin: &Host, reason: PausedReason) {
+    pub async fn pause(&self, namespace: &Namespace, origin: Option<&Host>, reason: PausedReason) {
         tick::pause(&self.inner, namespace, origin, reason).await;
     }
 

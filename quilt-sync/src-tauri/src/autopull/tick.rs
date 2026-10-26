@@ -117,6 +117,11 @@ fn login_episode(
     }
 }
 
+/// Why a package with no catalog cannot sync: there is no deployment to sign in
+/// to, only the AWS files to fix.
+const AMBIENT_CREDENTIALS_UNUSABLE: &str =
+    "AWS credentials on this computer aren't usable — update ~/.aws";
+
 #[derive(Debug)]
 pub(crate) enum WatchError {
     Conflict(PausedReason),
@@ -841,8 +846,8 @@ pub(crate) struct PassSettings {
 /// What [`sync_package`] did with a package.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Pass {
-    /// It can't be synced now: no remote, no catalog origin, paused, in
-    /// backoff, held by a task run, or its lineage could not be read.
+    /// It can't be synced now: no remote, no bucket, paused, in backoff, held
+    /// by a task run, or its lineage could not be read.
     Skipped,
     /// Another writer holds it.
     Busy,
@@ -871,7 +876,7 @@ pub(crate) async fn sync_package(
         return Pass::Skipped;
     }
 
-    // Skip Local / misconfigured packages without a network round-trip.
+    // Skip Local packages without a network round-trip.
     let lineage = match model.get_installed_package_lineage(pkg).await {
         Ok(l) => l,
         Err(err) => {
@@ -882,15 +887,12 @@ pub(crate) async fn sync_package(
     let Some(remote) = lineage.remote_uri.as_ref() else {
         return Pass::Skipped;
     };
-    // The origin is what makes every outcome below attributable: the loop
-    // declines to work on a package without one, so `report_*` can require a
-    // host rather than accept an absent one.
-    let Some(origin) = remote.origin.as_ref() else {
-        return Pass::Skipped;
-    };
     if remote.bucket.is_empty() {
         return Pass::Skipped;
     }
+    // `None` for a package with no catalog, which syncs on this computer's AWS
+    // credentials.
+    let origin = remote.origin.as_ref();
 
     if inner.paused.read().await.contains_key(&namespace) {
         return Pass::Skipped;
@@ -973,9 +975,10 @@ pub(crate) async fn sync_package(
                 .note_status(&namespace, outcome.has_changes);
         }
         Err(WatchError::LoginRequired(host)) => {
-            // Backoff until the user re-auths; the Ok arm clears it.
+            // Backoff until the user re-auths; the Ok arm clears it. With no
+            // host the failing call ran on this computer's AWS credentials.
             let error = host.as_ref().map_or_else(
-                || "Sign-in required".to_string(),
+                || AMBIENT_CREDENTIALS_UNUSABLE.to_string(),
                 |host| format!("Sign in to {host}"),
             );
             bump_backoff(&mut *inner.backoff.write().await, &namespace, now, error);
@@ -998,7 +1001,7 @@ pub(crate) async fn sync_package(
             // the lookup is cached per host and the namespace is about
             // to be paused, so a denied host costs at most one `/me`
             // per role switch — not one per tick.
-            let reason = name_denied_role(model, roles, Some(origin), reason).await;
+            let reason = name_denied_role(model, roles, origin, reason).await;
             pause(inner, &namespace, origin, reason).await;
         }
         Err(WatchError::Transient(err)) => {
@@ -1024,14 +1027,11 @@ pub(crate) async fn sync_package(
 ///
 /// The one place a pause is recorded, whether the tick hit the refusal or a
 /// hand-pressed pull did (see [`Watcher::pause`](crate::autopull::Watcher::pause)).
-/// `origin` is required for the same reason [`StatusReporter::report_paused`]
-/// requires it: a pause is always attributed to the package's own deployment.
-///
-/// [`StatusReporter::report_paused`]: crate::autopull::reporter::StatusReporter::report_paused
+/// `origin` is the package's catalog, `None` for a package with no catalog.
 pub(crate) async fn pause(
     inner: &WatcherInner,
     namespace: &Namespace,
-    origin: &Host,
+    origin: Option<&Host>,
     reason: PausedReason,
 ) {
     inner

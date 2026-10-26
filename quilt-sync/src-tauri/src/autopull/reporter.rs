@@ -306,10 +306,9 @@ pub struct SubscriberErrorEvent {
 /// tests and a hypothetical headless daemon wire a logger.
 pub trait StatusReporter: Send + Sync + 'static {
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent);
-    /// `host` is required rather than optional: the loop skips any package whose
-    /// lineage has no origin before doing work, so an outcome it reports always
-    /// concerns a known deployment.
-    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason);
+    /// `host` is the package's catalog, `None` for a package with a bucket and
+    /// no catalog.
+    fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason);
     /// `block` distinguishes the deployment's session *becoming* unusable from
     /// the loop retrying while it stays that way. Only the transition is worth
     /// counting; the retries are a log line.
@@ -322,7 +321,8 @@ pub trait StatusReporter: Send + Sync + 'static {
     }
     /// Surface a successful autosync publish. Default implementation
     /// logs only; `TauriEventReporter` also emits `PUBLISHED_EVENT`.
-    fn report_published(&self, namespace: &Namespace, host: &Host, message: &str) {
+    fn report_published(&self, namespace: &Namespace, host: Option<&Host>, message: &str) {
+        let host = log_host(host);
         info!("autosync: published namespace={namespace} host={host} message={message}");
     }
 
@@ -370,7 +370,8 @@ impl StatusReporter for LogReporter {
         );
     }
 
-    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
+    fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason) {
+        let host = log_host(host);
         info!("autosync: paused namespace={namespace} host={host} reason={reason:?}");
     }
 
@@ -431,9 +432,9 @@ impl StatusReporter for TelemetryReporter {
         self.inner.report_status(namespace, event);
     }
 
-    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
+    fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason) {
         self.emit(MixpanelEvent::AutosyncPaused(AutosyncPausedEvent {
-            host: host.clone(),
+            host: host.cloned(),
             reason: PausedKind::from(&reason),
         }));
         self.inner.report_paused(namespace, host, reason);
@@ -465,9 +466,9 @@ impl StatusReporter for TelemetryReporter {
         self.inner.report_subscriber_error(event);
     }
 
-    fn report_published(&self, namespace: &Namespace, host: &Host, message: &str) {
+    fn report_published(&self, namespace: &Namespace, host: Option<&Host>, message: &str) {
         self.emit(MixpanelEvent::AutosyncPublished(AutosyncEvent {
-            host: host.clone(),
+            host: host.cloned(),
         }));
         self.inner.report_published(namespace, host, message);
     }
@@ -547,7 +548,8 @@ impl StatusReporter for TauriEventReporter {
         }
     }
 
-    fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
+    fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason) {
+        let host = log_host(host);
         info!("autosync: paused namespace={namespace} host={host} reason={reason:?}");
         let payload = PausedEvent::from_reason(namespace, &reason);
         if let Err(err) = self.handle.emit(PAUSED_EVENT, &payload) {
@@ -604,7 +606,8 @@ impl StatusReporter for TauriEventReporter {
         });
     }
 
-    fn report_published(&self, namespace: &Namespace, host: &Host, message: &str) {
+    fn report_published(&self, namespace: &Namespace, host: Option<&Host>, message: &str) {
+        let host = log_host(host);
         info!("autosync: published namespace={namespace} host={host} message={message}");
         let payload = PublishedEvent {
             namespace: namespace.clone(),
@@ -620,6 +623,11 @@ impl StatusReporter for TauriEventReporter {
             warn!("autosync: failed to emit {AUTOSYNC_CHANGED_EVENT}: {err}");
         }
     }
+}
+
+/// A host for a log line: a package with no catalog has none.
+fn log_host(host: Option<&Host>) -> String {
+    host.map_or_else(|| "none".to_string(), ToString::to_string)
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -1079,10 +1087,9 @@ pub(crate) mod test_support {
         pub login_blocks: Mutex<Vec<LoginBlock>>,
         pub subscriber_errors: Mutex<Vec<SubscriberErrorEvent>>,
         pub published: Mutex<Vec<(Namespace, String)>>,
-        /// Hosts seen on the outcomes that carry one, so a test can assert the
-        /// engine attributed a report to the package's own deployment rather than
-        /// merely compiling against a `&Host`.
-        pub hosts: Mutex<Vec<Host>>,
+        /// Hosts seen on paused and published reports, so a test can assert the
+        /// engine attributed a report to the package's own catalog, or to none.
+        pub hosts: Mutex<Vec<Option<Host>>>,
         /// What each pull was reported as bringing, so a test can assert the
         /// wording rather than merely that something was posted.
         pub pulled: Mutex<Vec<(Namespace, ReportToast)>>,
@@ -1107,8 +1114,8 @@ pub(crate) mod test_support {
                 .push((namespace.clone(), event));
         }
 
-        fn report_paused(&self, namespace: &Namespace, host: &Host, reason: PausedReason) {
-            self.hosts.lock().unwrap().push(host.clone());
+        fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason) {
+            self.hosts.lock().unwrap().push(host.cloned());
             self.paused
                 .lock()
                 .unwrap()
@@ -1124,8 +1131,8 @@ pub(crate) mod test_support {
             self.subscriber_errors.lock().unwrap().push(event);
         }
 
-        fn report_published(&self, namespace: &Namespace, host: &Host, message: &str) {
-            self.hosts.lock().unwrap().push(host.clone());
+        fn report_published(&self, namespace: &Namespace, host: Option<&Host>, message: &str) {
+            self.hosts.lock().unwrap().push(host.cloned());
             self.published
                 .lock()
                 .unwrap()

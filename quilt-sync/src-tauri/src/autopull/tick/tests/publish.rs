@@ -189,7 +189,10 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
         // anything.
         let hosts = reporter.hosts.lock().unwrap();
         assert_eq!(hosts.len(), 1);
-        assert_eq!(hosts[0].to_string(), "quilt.test");
+        assert_eq!(
+            hosts[0].as_ref().map(ToString::to_string).as_deref(),
+            Some("quilt.test")
+        );
     }
     {
         let statuses = reporter.statuses.lock().unwrap();

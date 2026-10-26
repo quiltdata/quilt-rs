@@ -36,21 +36,33 @@ fn status(files: usize) -> quilt::lineage::InstalledPackageStatus {
 /// A published package whose walk finds `files` changed files, and which
 /// expects `publishes` publishes. `busy` means another writer holds its lock.
 fn model(files: usize, publishes: usize, busy: bool) -> MockQuiltModel {
+    model_on(Some(fixtures::host()), files, publishes, busy)
+}
+
+/// [`model`] for a package whose remote has `origin`.
+fn model_on(
+    origin: Option<quilt_uri::Host>,
+    files: usize,
+    publishes: usize,
+    busy: bool,
+) -> MockQuiltModel {
     let mut model = MockQuiltModel::new();
     model
         .expect_get_installed_package()
         .returning(|_| Ok(Some(package())));
-    model.expect_get_installed_package_lineage().returning(|_| {
-        Ok(quilt::lineage::PackageLineage::from_remote(
-            quilt_uri::ManifestUri {
-                bucket: "bucket".to_string(),
-                namespace: ns(),
-                hash: "h0".to_string(),
-                origin: Some(fixtures::host()),
-            },
-            "h0".to_string(),
-        ))
-    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| {
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ns(),
+                    hash: "h0".to_string(),
+                    origin: origin.clone(),
+                },
+                "h0".to_string(),
+            ))
+        });
     model
         .expect_try_lock_package()
         .returning(move |p| Ok((!busy).then(|| p.namespace.clone())));
@@ -336,4 +348,19 @@ async fn publishing_turned_off_during_a_check_stops_the_waiting_timer() {
 
     assert_eq!(timer.await, None);
     assert_eq!(published(&reporter), 0);
+}
+
+/// A package with a bucket and no catalog publishes on this computer's AWS
+/// credentials when its wait ends, rather than leaving the countdown with the
+/// file still changed.
+#[tokio::test]
+async fn a_package_without_a_catalog_publishes_when_its_wait_ends() {
+    let (inner, reporter) = inner(Duration::from_mins(1), true, true);
+    let model = model_on(None, 1, 1, false);
+    let mut held = BTreeMap::new();
+
+    let inner = changed(inner, Duration::from_mins(2)).await;
+    publish_due(&model, &RoleCache::default(), &inner, &mut held).await;
+    assert_eq!(published(&reporter), 1);
+    assert_eq!(*reporter.hosts.lock().unwrap(), vec![None]);
 }

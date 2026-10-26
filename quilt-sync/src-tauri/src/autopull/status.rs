@@ -280,7 +280,8 @@ impl SyncTrayAggregator {
     pub fn note_login_required(&self, ns: &Namespace, host: Option<Host>) {
         let message = match host {
             Some(h) => format!("Login required for {h}"),
-            None => "Login required".to_string(),
+            // No host: the call ran on this computer's AWS credentials.
+            None => "AWS credentials on this computer aren't usable".to_string(),
         };
         self.upsert_error(ns, ErrorKind::Hard, message);
     }
