@@ -26,6 +26,7 @@ use leptos_router::hooks::use_navigate;
 use crate::commands;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 use crate::routes;
+use crate::util;
 
 use super::copy_mark::CopyMark;
 use super::row_menu::{COPY_FAILED, LocalPath, Ran, RowCommand, carry_out, local_path};
@@ -196,8 +197,9 @@ pub struct Replace {
 /// Which of the header's dialogs is open.
 #[derive(Clone, Copy)]
 pub struct Dialogs {
-    /// The row's `Choose S3 bucket` and the menu's `Change bucket` open this
-    /// one dialog: the state calls for it, or the reader chooses it.
+    /// The row's `Choose S3 bucket`, the menu's `Change bucket` and the
+    /// context pane's Bucket and catalog section open this one dialog: the state calls
+    /// for it, or the reader chooses it.
     pub bucket: RwSignal<bool>,
     /// What the reader has typed into that dialog. Here beside its flag, for
     /// the flag's reason: a re-read rebuilds the dialog, and the rebuilt one
@@ -656,6 +658,7 @@ fn package_body(
     let ns = header.namespace.clone();
     let uri = header.uri.clone();
     let has_local_commit = header.has_local_commit;
+    let catalog = uri.as_ref().and_then(util::host_str);
     let namespace = ns.to_string();
     let (page_header, row_marks) = incoming_header(
         header,
@@ -699,6 +702,7 @@ fn package_body(
                     w=w
                     commands=keeping::KeepingCommands::app()
                     remove=old_revisions::remove_revisions
+                    catalog=catalog.clone()
                 />
             }
             .into_any(),

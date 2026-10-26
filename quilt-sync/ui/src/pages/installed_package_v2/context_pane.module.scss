@@ -11,9 +11,39 @@
   min-height: 0;
 }
 
-.bucket {
+.muted {
   color: var(--q-fgColor-muted);
   font-size: var(--q-text-body);
+}
+
+/* Two named facts: the label column fits its words, the value takes the rest. */
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: var(--q-space-3);
+  row-gap: var(--q-space-1);
+  margin: 0;
+
+  dd {
+    margin: 0;
+    min-width: 0;
+  }
+}
+
+.address {
+  font-size: var(--q-text-body);
+  overflow-wrap: anywhere;
+}
+
+/* The host or its absence, then the action at the row's end. */
+.catalog {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-2);
+  font-size: var(--q-text-body);
+  overflow-wrap: anywhere;
 }
 
 @container (max-width: 800px) {

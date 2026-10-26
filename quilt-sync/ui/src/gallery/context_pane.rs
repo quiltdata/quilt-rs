@@ -321,11 +321,22 @@ fn pane(
     on_page: bool,
 ) -> AnyView {
     let sections = view! {
+        <PaneSection label="Bucket and catalog">
+            <dl style="display:grid; grid-template-columns:auto 1fr; align-items:center; \
+                       column-gap:var(--q-space-3); row-gap:var(--q-space-1); margin:0; \
+                       font-size:var(--q-text-body)">
+                <dt style="color:var(--q-fgColor-muted)">"Bucket"</dt>
+                <dd style="margin:0">{BUCKET}</dd>
+                <dt style="color:var(--q-fgColor-muted)">"Catalog"</dt>
+                <dd style="margin:0; display:flex; align-items:center; \
+                           justify-content:space-between; gap:var(--q-space-2)">
+                    <span>"open.quiltdata.com"</span>
+                    <Button on_click=|_| ()>"Change"</Button>
+                </dd>
+            </dl>
+        </PaneSection>
         <PaneSection label="Revision">
             <RevisionRow message="Add intake folder-upload note" at=ago(2.0 * HOUR) />
-            <span style="color:var(--q-fgColor-muted); font-size:var(--q-text-body)">
-                {BUCKET}
-            </span>
             <AnchoredOverlay
                 trigger=trigger(open)
                 open=open
@@ -440,8 +451,12 @@ fn refused() -> ResolveData {
 }
 
 /// What the cells are for, and what looking at them settled.
-const NOTE: &str = "280px holding two blocks: what the page says about the package rather \
+const NOTE: &str = "280px holding three blocks: what the page says about the package rather \
     than about its files. \
+    \
+    Bucket and catalog comes first, each named: the package's s3:// address, its catalog \
+    host or a plain No catalog, and one action into the Bucket and catalog dialog — Add catalog without \
+    one, Change with one. A package with no bucket has no Bucket and catalog section. \
     \
     Keeping's count carries the package's size: the sum of the current revision's \
     manifest rows, and of those whose files are here. It is the logical size, not disk \
@@ -491,6 +506,44 @@ pub fn ContextPaneRegion(
     }
 }
 
+/// The page's own pane over a package in `bucket`, with `catalog` or none.
+fn live(bucket: Option<&str>, catalog: Option<&str>) -> AnyView {
+    view! {
+        <crate::pages::CurrentRevisionPane
+            data=crate::commands::PackageContextData {
+                revision: crate::commands::CurrentRevisionData {
+                    hash: "b5e013".to_string(),
+                    message: Some("Add intake folder-upload note".to_string()),
+                    obtained_at: ago(2.0 * HOUR),
+                },
+                bucket: bucket.map(ToString::to_string),
+                revision_count: 4,
+                keeping: crate::commands::KeepingData {
+                    scope: crate::commands::KeepingScope::EntirePackage,
+                    total: TOTAL,
+                    remote_only: vec!["plate/b.csv".to_string(), "plate/c.csv".to_string()],
+                    deleted_here: 1,
+                },
+                size: Some(crate::commands::PackageSize {
+                    total: 34 * MB / 10,
+                    downloaded: 19 * MB / 10,
+                }),
+                resolve: None,
+            }
+            namespace=NAMESPACE
+            fetch=history
+            open_catalog=Callback::new(|_: String| ())
+            w=crate::pages::Wiring::new()
+            commands=crate::pages::KeepingCommands {
+                store: |_, _| Box::pin(async { Ok(()) }),
+                download: |_, _| Box::pin(async { Ok(Vec::new()) }),
+            }
+            catalog=catalog.map(ToString::to_string)
+        />
+    }
+    .into_any()
+}
+
 #[component]
 #[allow(clippy::too_many_lines, reason = "one cell per state, read as a list")]
 pub fn ContextPaneScene() -> impl IntoView {
@@ -524,39 +577,17 @@ pub fn ContextPaneScene() -> impl IntoView {
         >
             <Cell
                 wide=true
-                label="live — current revision, bucket, history and keeping; the page's own \
-                       section, with the size PackageContextData carries and a file deleted here"
+                label="live — bucket, current revision, history and keeping; the page's own \
+                       section, with the size PackageContextData carries and a file deleted here. \
+                       The bucket has no catalog, so its action adds one"
             >
-                <crate::pages::CurrentRevisionPane
-                    data=crate::commands::PackageContextData {
-                        revision: crate::commands::CurrentRevisionData {
-                            hash: "b5e013".to_string(),
-                            message: Some("Add intake folder-upload note".to_string()),
-                            obtained_at: ago(2.0 * HOUR),
-                        },
-                        bucket: Some("quilt-lab-plates".to_string()),
-                        revision_count: 4,
-                        keeping: crate::commands::KeepingData {
-                            scope: crate::commands::KeepingScope::EntirePackage,
-                            total: TOTAL,
-                            remote_only: vec!["plate/b.csv".to_string(), "plate/c.csv".to_string()],
-                            deleted_here: 1,
-                        },
-                        size: Some(crate::commands::PackageSize {
-                            total: 34 * MB / 10,
-                            downloaded: 19 * MB / 10,
-                        }),
-                        resolve: None,
-                    }
-                    namespace=NAMESPACE
-                    fetch=history
-                    open_catalog=Callback::new(|_: String| ())
-                    w=crate::pages::Wiring::new()
-                    commands=crate::pages::KeepingCommands {
-                        store: |_, _| Box::pin(async { Ok(()) }),
-                        download: |_, _| Box::pin(async { Ok(Vec::new()) }),
-                    }
-                />
+                {live(Some("quilt-lab-plates"), None)}
+            </Cell>
+            <Cell wide=true label="live — a bucket with a catalog: the host, and Change">
+                {live(Some("quilt-lab-plates"), Some("open.quiltdata.com"))}
+            </Cell>
+            <Cell wide=true label="live — local only: no Bucket and catalog section, and Revision says so">
+                {live(None, None)}
             </Cell>
             <Cell wide=true label="at rest — files I pick, two outstanding">
                 {pane(resting, revision_list(), pick, plate(2), false)}

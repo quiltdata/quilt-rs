@@ -26,9 +26,10 @@
 - The main page can group packages by catalog: *Group: Catalog* lists the local-only packages first, then the ones with no catalog, then each catalog
   - <https://github.com/quiltdata/quilt-rs/pull/1214>
   - <https://github.com/quiltdata/quilt-rs/pull/1217>
-- A published package's catalog can be added, changed or removed, keeping its revisions, on the package page and on the classic one
+- A published package's catalog can be added, changed or removed, keeping its revisions: on the package page from its new *Bucket and catalog* section, which names the package's bucket and its catalog, or says *No catalog*, and from the popup on the classic one. The package page's dialog is titled *Bucket and catalog* and says what a save changed; its *More actions* menu no longer offers *Show remote*
   - <https://github.com/quiltdata/quilt-rs/pull/1211>
   - <https://github.com/quiltdata/quilt-rs/pull/1213>
+  - <https://github.com/quiltdata/quilt-rs/pull/1215>
 
 ### Changed
 
