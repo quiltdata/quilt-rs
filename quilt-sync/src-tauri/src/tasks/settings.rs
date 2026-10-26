@@ -35,7 +35,7 @@ pub struct AgentSettings {
     /// Approve every permission request the agent makes.
     #[serde(default)]
     pub trust_all: bool,
-    /// From spawning the agent until `session/new` answers.
+    /// From `initialize` until `session/new` answers.
     pub startup_timeout_secs: Option<u64>,
     /// The prompt turn.
     pub turn_timeout_secs: Option<u64>,

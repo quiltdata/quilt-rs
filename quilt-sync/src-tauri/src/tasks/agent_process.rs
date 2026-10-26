@@ -27,8 +27,9 @@ impl Spawned {
 
     /// SIGTERM to it and the process group it leads, then SIGKILL if any of
     /// them outlives `grace`, waiting up to a second `grace` for them to go;
-    /// whether they have. Left alone unless it still runs: once it has exited,
-    /// its PID may name another process.
+    /// whether it has. A member that can't be killed doesn't hold the sweep.
+    /// Left alone unless it still runs: once it has exited, its PID may name
+    /// another process.
     pub async fn stop(self, grace: Duration) -> bool {
         if !self.running() {
             return true;
@@ -46,7 +47,7 @@ impl Spawned {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
-        !self.alive()
+        !self.running()
     }
 
     /// It or any of its group: an agent recorded by an earlier build leads no
