@@ -974,6 +974,12 @@ pub(crate) async fn sync_package(
                 .aggregator
                 .note_status(&namespace, outcome.has_changes);
         }
+        Err(WatchError::LoginRequired(_) | WatchError::Conflict(_))
+            if catalog_changed(model, pkg, origin).await =>
+        {
+            // The refusal was the old catalog's, and changing the catalog
+            // cleared what it had recorded. The next pass asks the new one.
+        }
         Err(WatchError::LoginRequired(host)) => {
             // Backoff until the user re-auths; the Ok arm clears it. With no
             // host the failing call ran on this computer's AWS credentials.
@@ -1002,7 +1008,10 @@ pub(crate) async fn sync_package(
             // to be paused, so a denied host costs at most one `/me`
             // per role switch — not one per tick.
             let reason = name_denied_role(model, roles, origin, reason).await;
-            pause(inner, &namespace, origin, reason).await;
+            // Asked again: the catalog can change while the role is named.
+            if !catalog_changed(model, pkg, origin).await {
+                pause(inner, &namespace, origin, reason).await;
+            }
         }
         Err(WatchError::Transient(err)) => {
             bump_backoff(
@@ -1019,6 +1028,21 @@ pub(crate) async fn sync_package(
     }
     inner.reporter.report_autosync_changed();
     Pass::Done
+}
+
+/// Whether the package's catalog is no longer `origin`, the one this pass
+/// read at its start. A lineage that cannot be read now changed nothing.
+async fn catalog_changed(
+    model: &impl QuiltModel,
+    pkg: &quilt::InstalledPackage,
+    origin: Option<&Host>,
+) -> bool {
+    model
+        .get_installed_package_lineage(pkg)
+        .await
+        .ok()
+        .and_then(|lineage| lineage.remote_uri)
+        .is_some_and(|remote| remote.origin.as_ref() != origin)
 }
 
 /// Pause `namespace` for `reason` and announce it: the paused map the tick
