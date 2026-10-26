@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.25.1-dev]
+
+### Changed
+
+- Group headings on the main page stand out from the package and file rows below them (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+
 ## [v0.25.0] - 2026-10-26
 
 ### Added
