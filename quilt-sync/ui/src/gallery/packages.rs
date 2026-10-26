@@ -717,7 +717,7 @@ pub fn PackagesScene() -> impl IntoView {
                   for? Switch the theme; light and dark disagree about this more than about \
                   anything else in the kit. Every Group option is live: switch between Bucket \
                   and Prefix and watch `user/shared-archive` move, or to Catalog to see \
-                  the packages without a catalog grouped last."
+                  the packages without a catalog grouped first."
         >
             <PackagesRegion view_name="packages-view" />
         </Scene>
