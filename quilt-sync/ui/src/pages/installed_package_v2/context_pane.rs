@@ -1,6 +1,6 @@
 //! The first complete slice of the package context pane.
 //!
-//! One current revision, the bucket it belongs to, the revisions this copy
+//! The bucket and its catalog, one current revision, the revisions this copy
 //! holds, loaded when their popover opens, and what this copy keeps. This is
 //! the pane's ordinary mode; the page swaps it whole for `resolve.rs`'s
 //! `ResolvePane` while the resolve mode is open.
@@ -40,7 +40,8 @@ pub(super) fn fetch_revision_history(
 /// surface does not resize under the cursor when the rows land.
 const BAR_WIDTHS: [&str; 4] = ["200px", "228px", "164px", "188px"];
 
-/// The current revision and package bucket, and the revisions this copy holds.
+/// The package's bucket and catalog, the current revision, and the revisions
+/// this copy holds.
 #[component]
 pub fn CurrentRevisionPane(
     data: commands::PackageContextData,
@@ -57,12 +58,18 @@ pub fn CurrentRevisionPane(
     /// Removes old revisions from the popover. `None` offers no removal.
     #[prop(optional)]
     remove: Option<RemoveRevisionsFn>,
+    /// The bucket's catalog host. `None` is a bucket reached on this
+    /// computer's AWS credentials.
+    #[prop(default = None)]
+    catalog: Option<String>,
 ) -> impl IntoView {
     let (keeping, size) = (data.keeping, data.size);
-    let bucket = data.bucket.filter(|bucket| !bucket.is_empty()).map_or_else(
-        || "No S3 bucket".to_string(),
-        |bucket| format!("s3://{bucket}"),
-    );
+    let bucket = data.bucket.filter(|bucket| !bucket.is_empty());
+    // A package with no bucket has no section; Revision says so instead.
+    let no_bucket = bucket.is_none().then(|| {
+        view! { <span class=style::muted>"No S3 bucket"</span> }
+    });
+    let bucket_section = bucket.map(|bucket| bucket_section(&bucket, catalog, w));
     let count = data.revision_count;
 
     let open = RwSignal::new(false);
@@ -129,12 +136,13 @@ pub fn CurrentRevisionPane(
             // The card is visually titleless, but its hidden h2 keeps the
             // PaneSection's h3 in a complete heading hierarchy.
             <Card label="About this package">
+                {bucket_section}
                 <PaneSection label="Revision">
                     <RevisionRow
                         message=data.revision.message.unwrap_or_default()
                         at=data.revision.obtained_at
                     />
-                    <span class=style::bucket>{bucket}</span>
+                    {no_bucket}
                     <AnchoredOverlay
                         trigger=trigger
                         open=open
@@ -163,6 +171,36 @@ pub fn CurrentRevisionPane(
             // Beside the popover, not in it: see `old_revisions`.
             {remover.map(old_revisions::dialog)}
         </aside>
+    }
+}
+
+/// The package's bucket and its catalog, each named, or the plain fact of no
+/// catalog, and the one action, which opens the header's bucket dialog.
+fn bucket_section(bucket: &str, catalog: Option<String>, w: Wiring) -> impl IntoView + use<> {
+    let address = format!("s3://{bucket}");
+    let action = if catalog.is_some() {
+        "Change"
+    } else {
+        "Add catalog"
+    };
+    let open = w.dialogs.bucket;
+    view! {
+        <PaneSection label="Bucket and catalog">
+            <dl class=style::facts>
+                <dt class=style::muted>"Bucket"</dt>
+                <dd class=style::address>{address}</dd>
+                <dt class=style::muted>"Catalog"</dt>
+                <dd class=style::catalog>
+                    {match catalog {
+                        Some(host) => view! { <span>{host}</span> }.into_any(),
+                        None => view! { <span class=style::muted>"No catalog"</span> }.into_any(),
+                    }}
+                    <Button on_click=move |_| open.set(true) disabled=w.busy>
+                        {action}
+                    </Button>
+                </dd>
+            </dl>
+        </PaneSection>
     }
 }
 
@@ -860,6 +898,139 @@ mod tests {
             "no link or input while closed; markup was {}",
             revision.inner_html()
         );
+    }
+
+    /// The pane over a package in `bucket`, with `catalog` or none, and the
+    /// dialog flag its action sets.
+    fn pane_in_bucket(
+        bucket: Option<&'static str>,
+        catalog: Option<&'static str>,
+    ) -> (web_sys::Element, Wiring) {
+        let w = Wiring::new();
+        let el = mount(move || {
+            view! {
+                <CurrentRevisionPane
+                    data=data(Some("Initial upload"), bucket, 1)
+                    namespace="team/dataset"
+                    fetch=never
+                    open_catalog=ignore()
+                    w=w
+                    commands=idle_commands()
+                    catalog=catalog.map(ToString::to_string)
+                />
+            }
+        });
+        (el, w)
+    }
+
+    /// The pane's section headings, in order.
+    fn headings(el: &web_sys::Element) -> Vec<String> {
+        let all = el.query_selector_all("h3").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().text_content().unwrap_or_default())
+            .collect()
+    }
+
+    fn bucket_section(el: &web_sys::Element) -> web_sys::Element {
+        let all = el.query_selector_all("h3").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .find(|h| h.text_content().as_deref() == Some("Bucket and catalog"))
+            .and_then(|h| h.closest("section").unwrap())
+            .unwrap_or_else(|| {
+                panic!(
+                    "a Bucket and catalog section; markup was {}",
+                    el.inner_html()
+                )
+            })
+    }
+
+    /// What the section says beside `label`: the term's description.
+    fn said_for(section: &web_sys::Element, label: &str) -> String {
+        let term = element_saying(section, label);
+        assert_eq!(term.tag_name(), "DT", "{label} is a term");
+        term.next_element_sibling()
+            .expect("its description")
+            .text_content()
+            .unwrap_or_default()
+    }
+
+    /// A bucket with no catalog: the section says so in plain words and
+    /// offers to add one, which opens the bucket dialog. The address moved
+    /// here from *Revision*.
+    #[wasm_bindgen_test]
+    async fn a_bucket_without_a_catalog_offers_to_add_one() {
+        let (el, w) = pane_in_bucket(Some("quilt-lab-plates"), None);
+        let section = bucket_section(&el);
+        assert!(said_for(&section, "Bucket").contains("s3://quilt-lab-plates"));
+        assert!(said_for(&section, "Catalog").contains("No catalog"));
+        assert_eq!(
+            headings(&el)[..2],
+            ["Bucket and catalog", "Revision"],
+            "above Revision"
+        );
+        let revision = element_saying(&el, "Revision")
+            .closest("section")
+            .unwrap()
+            .unwrap();
+        assert!(
+            !revision
+                .text_content()
+                .unwrap_or_default()
+                .contains("s3://"),
+            "the address is the Bucket and catalog section's alone"
+        );
+
+        assert!(!w.dialogs.bucket.get_untracked());
+        crate::test_support::button_saying(&section, "Add catalog").click();
+        leptos::task::tick().await;
+        assert!(w.dialogs.bucket.get_untracked(), "the dialog opens");
+    }
+
+    /// With a catalog, the section names its host, and the action changes it.
+    #[wasm_bindgen_test]
+    async fn a_bucket_with_a_catalog_offers_to_change_it() {
+        let (el, w) = pane_in_bucket(Some("quilt-lab-plates"), Some("quilt.test"));
+        let section = bucket_section(&el);
+        assert!(said_for(&section, "Bucket").contains("s3://quilt-lab-plates"));
+        assert!(
+            said_for(&section, "Catalog").contains("quilt.test"),
+            "the host is named as the catalog"
+        );
+        assert!(
+            !section
+                .text_content()
+                .unwrap_or_default()
+                .contains("No catalog"),
+            "markup was {}",
+            section.inner_html()
+        );
+        crate::test_support::button_saying(&section, "Change").click();
+        leptos::task::tick().await;
+        assert!(w.dialogs.bucket.get_untracked());
+    }
+
+    /// The action waits its turn behind the page's command lock.
+    #[wasm_bindgen_test]
+    async fn the_bucket_action_waits_for_the_lock() {
+        let (el, w) = pane_in_bucket(Some("quilt-lab-plates"), None);
+        w.busy.set(true);
+        leptos::task::tick().await;
+        let button = crate::test_support::button_saying(&bucket_section(&el), "Add catalog");
+        assert!(button.disabled());
+    }
+
+    /// A package with no bucket has no Bucket and catalog section; Revision says so, as
+    /// before.
+    #[wasm_bindgen_test]
+    fn a_local_package_has_no_bucket_section() {
+        let (el, _) = pane_in_bucket(None, None);
+        assert!(
+            !headings(&el).contains(&"Bucket and catalog".to_string()),
+            "markup was {}",
+            el.inner_html()
+        );
+        element_saying(&el, "No S3 bucket");
     }
 
     #[wasm_bindgen_test]

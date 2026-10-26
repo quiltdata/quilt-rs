@@ -292,7 +292,7 @@ pub fn CommitPageScene() -> impl IntoView {
             <Cell full=true label="files changed, at rest">
                 {page(Fixture::new("commit-rest"))}
             </Cell>
-            <Cell full=true label="published before — the header's [⋯] offers Show remote, not Change bucket">
+            <Cell full=true label="published before — the header's [⋯] drops Change bucket">
                 {page(Fixture { remote_locked: true, ..Fixture::new("commit-published") })}
             </Cell>
             <Cell
