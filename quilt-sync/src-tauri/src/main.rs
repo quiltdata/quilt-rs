@@ -4,6 +4,9 @@
 // trips `items_after_statements` on leading `use`s/items in test fns. Enforce
 // the lint in production; allow it only under `cfg(test)`.
 #![cfg_attr(test, allow(clippy::items_after_statements))]
+// A spawned task run's `Send` check nests the ACP client over quilt-rs's
+// package reads, deeper than the default limit of 128.
+#![recursion_limit = "256"]
 
 use std::sync::Arc;
 

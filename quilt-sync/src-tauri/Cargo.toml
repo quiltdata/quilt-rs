@@ -73,5 +73,9 @@ tokio-test.workspace = true
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = { version = "2.5.3", features = ["deep-link"] }
 
+# Stops an agent a hard kill left running; already in the lock, so no new crate.
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+libc = "0.2"
+
 [lints]
 workspace = true

@@ -8,10 +8,12 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::error::Error;
+use crate::tasks::agent_process::Spawned;
 
 const FILE_NAME: &str = "task_settings.json";
 const INVOCATIONS_FILE_NAME: &str = "task_invocations.json";
 const OUTCOMES_FILE_NAME: &str = "task_outcomes.json";
+const AGENTS_FILE_NAME: &str = "task_agents.json";
 
 /// Which buckets may hand this desktop a task, and which agents it can run.
 ///
@@ -132,6 +134,35 @@ pub async fn remembered_outcome(
 ) -> Result<Option<Value>, Error> {
     let mut outcomes: Outcomes = read(&data_dir.join(OUTCOMES_FILE_NAME)).await?;
     Ok(outcomes.outcomes.remove(invocation_id))
+}
+
+/// The agent a live run spawned, by invocation ID.
+#[derive(Serialize, Deserialize, Default)]
+struct Agents {
+    agents: BTreeMap<String, Spawned>,
+}
+
+/// `agent` as the one `invocation_id`'s run spawned, or no agent for it.
+pub async fn record_agent(
+    data_dir: &Path,
+    invocation_id: &str,
+    agent: Option<Spawned>,
+) -> Result<(), Error> {
+    update(data_dir, AGENTS_FILE_NAME, |agents: &mut Agents| {
+        match agent {
+            Some(agent) => agents.agents.insert(invocation_id.to_string(), agent),
+            None => agents.agents.remove(invocation_id),
+        };
+    })
+    .await
+}
+
+pub async fn recorded_agent(
+    data_dir: &Path,
+    invocation_id: &str,
+) -> Result<Option<Spawned>, Error> {
+    let mut agents: Agents = read(&data_dir.join(AGENTS_FILE_NAME)).await?;
+    Ok(agents.agents.remove(invocation_id))
 }
 
 #[cfg(test)]
