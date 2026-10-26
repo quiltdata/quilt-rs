@@ -23,7 +23,7 @@
 
 ### Added
 
-- `InstalledPackage::change_catalog` adds, changes or removes the catalog of a package's remote, keeping its bucket, remote hash and commits, also once the package is published (<https://github.com/quiltdata/quilt-rs/pull/1211>)
+- `InstalledPackage::change_catalog` adds, changes or removes the catalog of a package's remote, keeping its bucket, remote hash and commits, also once the package is published. Push uploads each committed row with the checksum type it was committed with, so a commit made before a catalog change still pushes (<https://github.com/quiltdata/quilt-rs/pull/1211>)
 - `Error::is_ambient_session_absent` says the AWS credentials on this computer, used for a bucket with no catalog, were missing or refused (<https://github.com/quiltdata/quilt-rs/pull/1193>)
 
 ### Changed

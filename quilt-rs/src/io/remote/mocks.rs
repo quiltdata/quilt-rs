@@ -15,7 +15,6 @@ use crate::io::remote::RemoteObjectStream;
 use crate::io::storage::Storage;
 use crate::io::storage::mocks::MockStorage;
 use crate::object_hash::ObjectHash;
-use crate::object_hash::Sha256ChunkedHash;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
@@ -173,19 +172,24 @@ impl Remote for MockRemote {
 
     async fn upload_file(
         &self,
-        _host_config: &HostConfig,
+        host_config: &HostConfig,
         source_path: impl AsRef<Path>,
         dest_uri: &S3Uri,
-        size: u64,
+        _size: u64,
     ) -> Res<(S3Uri, ObjectHash)> {
-        let file = self.storage.open_file(source_path.as_ref()).await?;
-        let hash = Sha256ChunkedHash::from_async_read(file, size).await?;
+        // S3 answers with the checksum type the upload asked for.
+        let (hash, _) = crate::checksum::hash_file(
+            &self.storage,
+            source_path.as_ref(),
+            host_config.checksums.algorithm_code(),
+        )
+        .await?;
         Ok((
             S3Uri {
                 version: Some("version".to_string()),
                 ..dest_uri.clone()
             },
-            hash.into(),
+            hash,
         ))
     }
 
