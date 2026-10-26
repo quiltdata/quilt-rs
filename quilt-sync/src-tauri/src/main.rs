@@ -90,12 +90,11 @@ fn main() {
                 Some(telemetry::Buffer::new(&data_dir)),
             );
 
-            // This is for runtime registering
+            // Registers the schemes from tauri.conf.json at runtime. macOS
+            // takes them from the bundle's Info.plist, so this only logs there.
             #[cfg(desktop)]
-            for scheme in ["quilt+s3", "quilt"] {
-                if let Err(err) = app.deep_link().register(scheme) {
-                    error!("Failed to register deep link for {}: {}", scheme, err);
-                }
+            if let Err(err) = app.deep_link().register_all() {
+                error!("Failed to register deep link schemes: {}", err);
             }
 
             let logging = telemetry::Telemetry::init_file_logging(&data_dir)?;
