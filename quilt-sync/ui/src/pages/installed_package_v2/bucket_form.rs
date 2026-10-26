@@ -137,6 +137,8 @@ pub(crate) const TITLE: &str = "Bucket and catalog";
 /// when the save left both as they were.
 fn what_changed(before: (&str, &str), after: (&str, &str)) -> Option<String> {
     let ((was_host, was_bucket), (host, bucket)) = (before, after);
+    let (was_host, host) = (as_saved(was_host), as_saved(host));
+    let (was_host, host) = (was_host.as_str(), host.as_str());
     let bucket_said = (was_bucket != bucket).then(|| format!("Bucket set to s3://{bucket}."));
     let catalog_said = match (was_host.is_empty(), host.is_empty()) {
         _ if was_host == host => None,
@@ -146,6 +148,13 @@ fn what_changed(before: (&str, &str), after: (&str, &str)) -> Option<String> {
     };
     let said: Vec<String> = bucket_said.into_iter().chain(catalog_said).collect();
     (!said.is_empty()).then(|| said.join(" "))
+}
+
+/// A host as the backend stores it, so `QUILT.TEST` over `quilt.test` is no
+/// change. Empty, or not a host, is left as typed.
+fn as_saved(host: &str) -> String {
+    host.parse::<quilt_uri::Host>()
+        .map_or_else(|_| host.to_string(), |parsed| parsed.to_string())
 }
 
 /// A save's report on the band, when it changed something.
@@ -765,6 +774,15 @@ mod tests {
         assert_eq!(
             said(("quilt.test", "data-bucket"), ("quilt.test", "data-bucket")),
             None
+        );
+        assert_eq!(
+            said(("quilt.test", "data-bucket"), ("QUILT.TEST", "data-bucket")),
+            None,
+            "the host is stored lowercased"
+        );
+        assert_eq!(
+            said(("", "data-bucket"), ("Quilt.Test", "data-bucket")).as_deref(),
+            Some("Catalog added: quilt.test.")
         );
     }
 
