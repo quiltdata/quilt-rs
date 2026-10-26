@@ -546,8 +546,9 @@ fn PackageItem(
                         {uri}
                     </span>
                 })}
+                // One line with an ellipsis, so the title keeps the whole remedy.
                 {move || hint.get().into_iter().map(|line| view! {
-                    <span class="item-error-hint">{line}</span>
+                    <span class="item-error-hint" title=line.clone()>{line}</span>
                 }).collect::<Vec<_>>()}
                 // Neutral, not the error hint: a package with a newer revision
                 // is not a fault, and the hint slot reddens the whole row.
