@@ -174,9 +174,8 @@ fn sweepable(state: UpstreamState) -> bool {
 impl Tasks {
     /// Whether only the sweep may publish `pkg`: its head is this desktop's own
     /// claim with no run alive, and a fresh read finds its base at `latest` or
-    /// can't read `latest`. Autosync's publish could get there first, or
-    /// replace `agent_exec`. The stored lineage's `latest` is only the last
-    /// push's or pull's.
+    /// can't read `latest`. Autosync's publish could get there first. The
+    /// stored lineage's `latest` is only the last push's or pull's.
     pub async fn awaits_sweep<M: QuiltModel>(
         &self,
         model: &M,

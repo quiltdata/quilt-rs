@@ -28,6 +28,7 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1199>
   - <https://github.com/quiltdata/quilt-rs/pull/1201>
   - <https://github.com/quiltdata/quilt-rs/pull/1204>
+- When autosync publishes with your default metadata, a package's `agent_exec` task stays as its current revision has it: autosync neither drops a task nor adds one (<https://github.com/quiltdata/quilt-rs/pull/1198>)
 
 ### Fixed
 
