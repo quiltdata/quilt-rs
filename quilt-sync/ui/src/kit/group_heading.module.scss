@@ -1,7 +1,8 @@
 /*
- * Group header. A tinted band that names a run of rows and counts them, with an
- * uppercase muted title like a card's, so it reads as a label over the rows
- * rather than as one more row.
+ * Group header. A tinted band that names a run of rows and counts them, with a
+ * muted title, so it reads as a label over the rows rather than as one more row.
+ * The title keeps its case: a bucket name is lowercase, and upper-casing it
+ * would show a name that isn't the real one.
  *
  * The annotation slot is what lets a list explain itself without repeating an
  * action on every row: on the bucket axis a shared cause annotates its group
@@ -28,12 +29,8 @@
   margin-top: var(--q-space-4);
 }
 
-/* Upper-cased here and not in the string: some screen readers spell out text
- * typed in capitals as an initialism. */
 .title {
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   color: var(--q-fgColor-muted);
   overflow: hidden;
   text-overflow: ellipsis;
