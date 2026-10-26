@@ -32,6 +32,7 @@
 
 ### Fixed
 
+- `InstalledPackage::set_remote` with no host re-commits a pending commit too, so the chosen or the bucket's default workflow is stamped instead of dropped; the rows hash with SHA-256 chunked (<https://github.com/quiltdata/quilt-rs/pull/1209>)
 - After the AWS credentials on this computer were missing or refused, or a bucket with no catalog refused a request, the next call reads `~/.aws` again instead of keeping the first credentials it loaded
   - <https://github.com/quiltdata/quilt-rs/pull/1193>
   - <https://github.com/quiltdata/quilt-rs/pull/1202>
