@@ -54,9 +54,6 @@ use quilt_uri::paths::tag_key;
 
 mod response_timeout;
 
-/// How many pointers [`RemoteS3::bucket_revisions`] reads at once.
-const POINTER_READS: usize = 16;
-
 /// A key under `prefix` names a revision when it is a timestamp: not
 /// `latest`, which only names one of them, as the registry lists them.
 fn is_revision_pointer(key: &str, prefix: &str) -> bool {
@@ -646,29 +643,13 @@ impl RemoteS3 {
             );
         }
 
-        let reads = Arc::new(tokio::sync::Semaphore::new(POINTER_READS));
-        let mut tasks = tokio::task::JoinSet::new();
-        for pointer in pointers {
-            let client = client.clone();
-            let reads = Arc::clone(&reads);
-            tasks.spawn(async move {
-                let _permit = reads.acquire_owned().await;
-                match get_object_stream(&client, &pointer, None).await {
-                    Ok(stream) => bytestream_to_string(stream.body).await.map(Some),
-                    Err(e) if e.is_not_found() => Ok(None),
-                    Err(e) => Err(e),
-                }
-            });
-        }
         let mut hashes = Vec::new();
-        while let Some(read) = tasks.join_next().await {
-            let read = read.map_err(|e| {
-                Error::S3(S3Error {
-                    host: None,
-                    kind: S3ErrorKind::GetObject(e.to_string()),
-                })
-            })?;
-            hashes.extend(read?);
+        for pointer in pointers {
+            match get_object_stream(&client, &pointer, None).await {
+                Ok(stream) => hashes.push(bytestream_to_string(stream.body).await?),
+                Err(e) if e.is_not_found() => {}
+                Err(e) => return Err(e),
+            }
         }
         Ok(hashes)
     }
