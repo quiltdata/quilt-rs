@@ -206,6 +206,23 @@ pub fn interrupted(user_meta: &Value) -> Value {
     claim
 }
 
+/// `default` with `head`'s `agent_exec` in place of its own, or with none
+/// where `head` has none. A `default` that is not an object gives way to the
+/// task.
+pub fn keep_head_task(default: Value, head: Option<&Value>) -> Value {
+    let task = head.and_then(|head| head.get("agent_exec"));
+    let mut meta = match default {
+        Value::Object(meta) => meta,
+        default if task.is_none() => return default,
+        _ => serde_json::Map::new(),
+    };
+    match task {
+        Some(task) => meta.insert("agent_exec".to_string(), task.clone()),
+        None => meta.remove("agent_exec"),
+    };
+    Value::Object(meta)
+}
+
 pub fn unrunnable(user_meta: &Value, reason: &str) -> Value {
     with_claim(
         user_meta,
