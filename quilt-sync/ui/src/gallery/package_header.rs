@@ -464,12 +464,7 @@ mod tests {
         let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
         assert_eq!(
             labels,
-            vec![
-                "Create new revision",
-                "Change bucket",
-                "Undo last revision",
-                "Remove",
-            ],
+            vec!["Create new revision", "Undo last revision", "Remove",],
         );
 
         let refused: Vec<(&str, &str)> = items

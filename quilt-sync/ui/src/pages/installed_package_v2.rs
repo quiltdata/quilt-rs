@@ -197,8 +197,7 @@ pub struct Replace {
 /// Which of the header's dialogs is open.
 #[derive(Clone, Copy)]
 pub struct Dialogs {
-    /// The context pane's Bucket and catalog section and the menu's
-    /// `Change bucket` open this one dialog.
+    /// The context pane's Bucket and catalog section opens it.
     pub bucket: RwSignal<bool>,
     /// What the reader has typed into that dialog. Here beside its flag, for
     /// the flag's reason: a re-read rebuilds the dialog, and the rebuilt one

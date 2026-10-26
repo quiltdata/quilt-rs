@@ -116,7 +116,8 @@ const BUSY: &str = "Something else is running";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuCommand {
     NewRevision,
-    /// Change bucket, before the package has been pushed.
+    /// Change bucket, before the package has been pushed. Only the commit
+    /// page's menu lists it.
     Remote,
     Undo,
     Remove,
@@ -147,9 +148,9 @@ impl MenuItem {
     }
 }
 
-/// The bucket's item, until the first push. A pushed package is pinned to its
-/// push history, so its bucket is fixed, and the package page's Bucket and catalog section
-/// shows it.
+/// The commit page's bucket item, until the first push. A pushed package is
+/// pinned to its push history, so its bucket is fixed. The package page's menu
+/// has none: its Bucket and catalog section opens the dialog.
 #[must_use]
 pub(crate) fn remote_item(remote_locked: bool, busy: bool) -> Option<MenuItem> {
     (!remote_locked).then(|| MenuItem {
@@ -193,8 +194,8 @@ fn undo_blocked(data: &commands::PackageHeaderData) -> Option<&'static str> {
 /// Fixed across states on purpose: the menu is where everything that is *not*
 /// the one primary action lives, so it does not change shape as the state does.
 /// What varies is what a command can be offered *for*: an undo needs something
-/// to undo. The one exception is *Change bucket*, which goes once the first
-/// push fixes the bucket.
+/// to undo. The bucket is not here; the context pane's Bucket and catalog
+/// section offers it.
 pub fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuItem> {
     let refused = || busy.then(|| BUSY.to_string());
     let new_revision = MenuItem {
@@ -204,23 +205,20 @@ pub fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuIte
         separated: false,
         disabled: refused(),
     };
-    [new_revision]
-        .into_iter()
-        .chain(remote_item(data.remote_locked, busy))
-        .chain([
-            MenuItem {
-                command: MenuCommand::Undo,
-                label: "Undo last revision".to_string(),
-                tone: ActionTone::Danger,
-                separated: true,
-                // A standing fact outranks a transient one: telling a reader
-                // something else is running, when undo would refuse whatever
-                // happened, is the lesser truth.
-                disabled: undo_blocked(data).map(ToString::to_string).or_else(refused),
-            },
-            remove_item(busy),
-        ])
-        .collect()
+    vec![
+        new_revision,
+        MenuItem {
+            command: MenuCommand::Undo,
+            label: "Undo last revision".to_string(),
+            tone: ActionTone::Danger,
+            separated: true,
+            // A standing fact outranks a transient one: telling a reader
+            // something else is running, when undo would refuse whatever
+            // happened, is the lesser truth.
+            disabled: undo_blocked(data).map(ToString::to_string).or_else(refused),
+        },
+        remove_item(busy),
+    ]
 }
 
 /// The overflow menu with a handler on each item.
@@ -1535,10 +1533,9 @@ mod tests {
     }
 
     /// The pane's Bucket and catalog section offers the bucket, so a package
-    /// with none has no primary here; the menu's *Change bucket* still opens
-    /// the dialog.
+    /// with none has no primary here, and the folder leads the row.
     #[wasm_bindgen_test]
-    async fn no_bucket_offers_no_primary_and_the_menu_opens_the_dialog() {
+    fn no_bucket_offers_no_primary() {
         let el = mount_header(data(kit::PackageState::NoRemote));
         assert!(
             el.query_selector("[data-primary-action]")
@@ -1547,31 +1544,7 @@ mod tests {
             "markup was {}",
             el.inner_html()
         );
-        assert_eq!(
-            location_names(&el)[0],
-            "Open folder",
-            "the folder leads the row"
-        );
-        assert!(
-            el.query_selector("dialog[open]").unwrap().is_none(),
-            "closed until asked"
-        );
-
-        el.query_selector(TRIGGER)
-            .unwrap()
-            .expect("the overflow trigger")
-            .unchecked_into::<web_sys::HtmlElement>()
-            .click();
-        leptos::task::tick().await;
-        button(&el, "Change bucket").click();
-        // The dialog opens from an effect, on the next tick.
-        leptos::task::tick().await;
-
-        let dialog = el
-            .query_selector("dialog[open]")
-            .unwrap()
-            .unwrap_or_else(|| panic!("the dialog opened; markup was {}", el.inner_html()));
-        element_saying(&dialog, "Bucket and catalog");
+        assert_eq!(location_names(&el)[0], "Open folder");
     }
 
     /// A single-role reader sees the reason and no button — the payload says so
@@ -2142,38 +2115,24 @@ mod tests {
             .collect()
     }
 
-    /// Once published, the menu offers neither the bucket nor the catalog:
+    /// Published or not, the menu offers neither the bucket nor the catalog:
     /// the context pane's Bucket and catalog section shows both and opens the
     /// dialog.
     #[test]
-    fn a_published_menu_does_not_offer_the_bucket() {
-        let labels: Vec<String> = menu_items(&with_catalog(kit::PackageState::Latest), false)
-            .into_iter()
-            .map(|item| item.label)
-            .collect();
-        assert_eq!(
-            labels,
-            ["Create new revision", "Undo last revision", "Remove"]
-        );
-    }
-
-    /// Before the first push the bucket can still change, so the menu keeps
-    /// *Change bucket*.
-    #[test]
-    fn an_unpublished_menu_offers_change_bucket() {
-        let labels: Vec<String> = menu_items(&data(kit::PackageState::Latest), false)
-            .into_iter()
-            .map(|item| item.label)
-            .collect();
-        assert_eq!(
-            labels,
-            [
-                "Create new revision",
-                "Change bucket",
-                "Undo last revision",
-                "Remove"
-            ]
-        );
+    fn the_menu_does_not_offer_the_bucket() {
+        for data in [
+            with_catalog(kit::PackageState::Latest),
+            data(kit::PackageState::Latest),
+        ] {
+            let labels: Vec<String> = menu_items(&data, false)
+                .into_iter()
+                .map(|item| item.label)
+                .collect();
+            assert_eq!(
+                labels,
+                ["Create new revision", "Undo last revision", "Remove"]
+            );
+        }
     }
 
     /// The copy touches neither the package nor the lock, so it stays live
