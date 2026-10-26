@@ -1017,6 +1017,12 @@ pub(crate) async fn sync_package(
             pause(inner, &namespace, origin, reason).await;
         }
         Err(WatchError::Transient(err)) => {
+            // Its retry delay was the old catalog's, if the catalog changed.
+            let _gate = inner.refusals.lock().await;
+            if catalog_changed(model, pkg, origin).await {
+                inner.reporter.report_autosync_changed();
+                return Pass::Done;
+            }
             bump_backoff(
                 &mut *inner.backoff.write().await,
                 &namespace,

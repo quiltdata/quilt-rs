@@ -2681,3 +2681,46 @@ async fn a_sign_in_the_old_catalog_asked_for_is_not_recorded() -> Result<(), Err
     assert!(inner.backoff.read().await.get(&ns).is_none());
     Ok(())
 }
+
+/// The same for a transient failure: its retry delay was the old catalog's.
+#[tokio::test]
+async fn a_transient_failure_from_the_old_catalog_leaves_no_backoff() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let current = Arc::new(std::sync::Mutex::new(behind_lineage_on(Some(
+        fixtures::host(),
+    ))));
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    let read = current.clone();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(read.lock().unwrap().clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    let moved = current.clone();
+    model.expect_locked_package_status().returning(move |_, _| {
+        *moved.lock().unwrap() = behind_lineage_on(None);
+        Err(Error::from(quilt::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "connection refused",
+        ))))
+    });
+    let inner = make_inner(enabled());
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(inner.backoff.read().await.get(&ns).is_none());
+    Ok(())
+}

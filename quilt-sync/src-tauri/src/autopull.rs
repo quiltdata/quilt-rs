@@ -122,8 +122,8 @@ pub(crate) struct WatcherInner {
     pub paused: RwLock<BTreeMap<Namespace, PausedReason>>,
     pub backoff: RwLock<BTreeMap<Namespace, BackoffState>>,
     pub login_blocked: RwLock<BTreeMap<Namespace, Option<Host>>>,
-    /// Held while a pass checks a package's catalog and records its refusal,
-    /// and while [`Watcher::forget_catalog`] clears what the old catalog left.
+    /// Held while a pass checks a package's catalog and records its refusal
+    /// or retry backoff, and while [`Watcher::forget_catalog`] clears what the old catalog left.
     /// A refusal from the old catalog is then either cleared or never recorded.
     pub refusals: tokio::sync::Mutex<()>,
     pub reporter: Arc<dyn StatusReporter>,
