@@ -189,11 +189,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         flow::count_revisions(&self.paths, &self.storage, &self.namespace).await
     }
 
-    /// [`Self::revisions`], each marked by whether the registry of
-    /// `lineage`'s remote lists it — a timestamped pointer to it exists.
-    /// One listing for the whole package, never inferred from `CommitState`.
-    /// No remote, or a remote with no catalog host (so no registry to ask):
-    /// no remote call, and every entry is unpublished.
+    /// [`Self::revisions`], each marked by whether `lineage`'s remote lists
+    /// it — a timestamped pointer to it exists. One listing for the whole
+    /// package, never inferred from `CommitState`. No remote: no remote
+    /// call, and every entry is unpublished.
     pub async fn revision_history(
         &self,
         lineage: &lineage::PackageLineage,
@@ -257,22 +256,22 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         flow::remove_revisions(&self.paths, &self.storage, &domain, &self.namespace, hashes).await
     }
 
-    /// The revisions the registry of `lineage`'s remote lists. No remote,
-    /// or no catalog host (so no registry to ask): no request, and none.
+    /// The revisions `lineage`'s remote lists: its catalog's registry, or
+    /// with no catalog the bucket itself. No remote: no request, and none.
     async fn registry_listing(&self, lineage: &lineage::PackageLineage) -> Res<HashSet<String>> {
         Ok(match lineage.remote_uri.as_ref() {
             Some(ManifestUri {
-                origin: Some(host),
+                origin,
                 bucket,
                 namespace,
                 ..
             }) => self
                 .remote
-                .published_revisions(host, bucket, namespace)
+                .published_revisions(origin.as_ref(), bucket, namespace)
                 .await?
                 .into_iter()
                 .collect(),
-            _ => HashSet::new(),
+            None => HashSet::new(),
         })
     }
 
@@ -306,8 +305,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     /// [`flow::compare_for_resolve`] over the manifest `lineage` selects and the
     /// published `latest`, resolved now rather than read from `lineage`, whose
     /// `latest_hash` is only as fresh as the last write. The published manifest
-    /// is cached by hash. The listing follows [`Self::revision_history`]'s rule:
-    /// no catalog host, no request, and the whole chain is unpublished.
+    /// is cached by hash. The listing is [`Self::revision_history`]'s.
     ///
     /// # Errors
     /// No remote; the tag read, the manifest fetch or the listing failing.

@@ -575,6 +575,35 @@ mod tests {
         Ok(())
     }
 
+    /// With no catalog the bucket's pointers judge the same revisions.
+    #[test(tokio::test)]
+    async fn kept_and_frees_without_a_catalog() -> Result<(), Error> {
+        let (package, _dirs) = old_revisions::package_without_a_catalog().await?;
+
+        let output = read(&package).await?;
+
+        assert!(output.judged);
+        let said: Vec<(&str, String)> = output
+            .rows
+            .iter()
+            .map(|row| (row.revision.hash.as_str(), row.kept_words()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                ("local-rev", "unpublished".to_string()),
+                (
+                    "current-rev",
+                    "current \u{b7} latest \u{b7} base".to_string()
+                ),
+                ("old-3", String::new()),
+                ("old-2", String::new()),
+                ("old-1", String::new()),
+            ]
+        );
+        Ok(())
+    }
+
     /// A registry that can't be listed doesn't fail the log: it lists the
     /// revisions without the kept and frees columns.
     #[test(tokio::test)]

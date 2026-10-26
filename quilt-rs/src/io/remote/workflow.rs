@@ -514,7 +514,7 @@ mod tests {
         }
         async fn published_revisions(
             &self,
-            _host: &Host,
+            _host: Option<&Host>,
             _bucket: &str,
             _namespace: &quilt_uri::Namespace,
         ) -> Res<Vec<String>> {
