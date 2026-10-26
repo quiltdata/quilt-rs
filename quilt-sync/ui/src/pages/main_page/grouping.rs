@@ -90,6 +90,8 @@ const LOCAL_ONLY: &str = "Local only";
 
 /// The heading for the packages with a bucket and no catalog host, on the
 /// catalog axis. Neutral words: such a package is supported, not misconfigured.
+/// First on that axis, since adding a catalog is what a reader most likely
+/// came to do there.
 const NO_CATALOG: &str = "No catalog";
 
 /// A row's group on the axis: its rank, then its heading. Groups are ordered
@@ -100,8 +102,8 @@ const NO_CATALOG: &str = "No catalog";
 /// bucket and burying them hides what most needs setup; then `s3://` buckets.
 /// The payload's `bucket` field is bare, so the scheme is added only here.
 ///
-/// Catalog: each catalog host, as the row's tooltip names it; then `No
-/// catalog`; then `Local only`.
+/// Catalog: `No catalog` first, then `Local only`, then each catalog host as
+/// the row's tooltip names it.
 ///
 /// Prefix: the namespace up to the first `/`; a namespace with no `/` is its
 /// own prefix.
@@ -109,9 +111,9 @@ fn group_key(row: &ListRowData, group_by: &str) -> (u8, String) {
     match (group_by, &row.bucket, &row.host) {
         (GROUP_BUCKET, None, _) => (0, LOCAL_ONLY.to_string()),
         (GROUP_BUCKET, Some(bucket), _) => (1, format!("s3://{bucket}")),
-        (GROUP_CATALOG, Some(_), Some(host)) => (0, host.clone()),
-        (GROUP_CATALOG, Some(_), None) => (1, NO_CATALOG.to_string()),
-        (GROUP_CATALOG, None, _) => (2, LOCAL_ONLY.to_string()),
+        (GROUP_CATALOG, Some(_), None) => (0, NO_CATALOG.to_string()),
+        (GROUP_CATALOG, None, _) => (1, LOCAL_ONLY.to_string()),
+        (GROUP_CATALOG, Some(_), Some(host)) => (2, host.clone()),
         _ => (0, row.namespace.prefix().to_string()),
     }
 }
@@ -319,9 +321,10 @@ mod tests {
     }
 
     #[test]
-    fn the_catalog_axis_lists_hosts_then_no_catalog_then_local_only() {
-        // Hosts alphabetically, then the packages with a bucket and no catalog,
-        // then the ones with no remote at all. The given order is none of these.
+    fn the_catalog_axis_lists_no_catalog_then_local_only_then_hosts() {
+        // The packages with a bucket and no catalog, then the ones with no
+        // remote at all, then hosts alphabetically. The given order is none of
+        // these.
         let rows = vec![
             remote("user/z", None, Some("zebra.quilt.test")),
             row("user/l", None, None),
@@ -335,23 +338,23 @@ mod tests {
         assert_eq!(
             titles(&groups),
             vec![
-                Some("apple.quilt.test"),
-                Some("zebra.quilt.test"),
                 Some("No catalog"),
                 Some("Local only"),
+                Some("apple.quilt.test"),
+                Some("zebra.quilt.test"),
             ]
         );
-        assert_eq!(groups[0].rows.len(), 2, "both apple packages in one group");
+        assert_eq!(groups[2].rows.len(), 2, "both apple packages in one group");
     }
 
     #[test]
-    fn a_host_that_sorts_after_the_fixed_titles_still_comes_before_them() {
-        // "No catalog" and "Local only" are last whatever a host is called, not
+    fn a_host_that_sorts_before_the_fixed_titles_still_comes_after_them() {
+        // "No catalog" and "Local only" lead whatever a host is called, not
         // where their own letters would put them.
         let rows = vec![
+            remote("user/a", None, Some("aaa.quilt.test")),
             row("user/l", None, None),
             remote("user/n", None, None),
-            remote("user/z", None, Some("zzz.quilt.test")),
         ];
 
         let groups = group_packages(rows, GROUP_CATALOG);
@@ -359,9 +362,9 @@ mod tests {
         assert_eq!(
             titles(&groups),
             vec![
-                Some("zzz.quilt.test"),
                 Some("No catalog"),
-                Some("Local only")
+                Some("Local only"),
+                Some("aaa.quilt.test")
             ]
         );
     }
@@ -387,8 +390,8 @@ mod tests {
         assert_eq!(
             names,
             vec![
-                vec!["user/new", "user/old"],
                 vec!["user/Beta", "user/alpha"],
+                vec!["user/new", "user/old"],
             ]
         );
     }
