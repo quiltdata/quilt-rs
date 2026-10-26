@@ -2754,7 +2754,7 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    async fn the_catalog_group_heads_no_catalog_then_local_only_then_each_host() {
+    async fn the_catalog_group_heads_local_only_then_no_catalog_then_each_host() {
         let package = |name: &str, bucket: Option<&str>, host: Option<&str>| MainPagePackageData {
             namespace: ns(name),
             state: PackageState::Latest,
@@ -2786,8 +2786,8 @@ mod tests {
         assert_eq!(
             titles,
             vec![
-                "No catalog",
                 "Local only",
+                "No catalog",
                 "apple.quilt.test",
                 "zebra.quilt.test"
             ]
