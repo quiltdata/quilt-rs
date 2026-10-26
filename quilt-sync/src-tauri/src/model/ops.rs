@@ -327,7 +327,7 @@ pub async fn package_publish(
 pub async fn set_remote(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
-    origin: quilt_uri::Host,
+    origin: Option<quilt_uri::Host>,
     bucket: String,
     workflow: WorkflowIntent,
 ) -> Result<Option<String>, Error> {
@@ -612,7 +612,7 @@ mod tests {
             )
             .returning(|_, _, _, _| Ok(None));
 
-        let origin = fixtures::host();
+        let origin = Some(fixtures::host());
         set_remote(&model, &namespace, origin, "my-bucket".to_string(), intent).await?;
         Ok(())
     }

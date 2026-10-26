@@ -20,6 +20,15 @@ pub struct SetRemotePopupData {
     pub has_local_commit: bool,
 }
 
+/// Whether each typed field is wrong: `(host, bucket)`. The host is optional,
+/// and without it the bucket is reached on this computer's AWS credentials.
+fn field_errors(host: &str, bucket: &str) -> (bool, bool) {
+    (
+        !host.is_empty() && !is_valid_hostname(host),
+        bucket.is_empty(),
+    )
+}
+
 #[component]
 #[allow(clippy::needless_pass_by_value)]
 #[allow(
@@ -74,13 +83,13 @@ pub fn SetRemotePopup(
     let selected_workflow = RwSignal::new(0usize);
 
     // The validated (host, bucket) pair the workflow config is keyed on. `Some`
-    // only when both inputs are non-empty and the host is a valid hostname, so
-    // the fetch reflects the currently-typed bucket and re-runs when it changes.
+    // only when the bucket is non-empty and the host, if any, is a valid
+    // hostname, so the fetch reflects the currently-typed bucket and re-runs
+    // when it changes.
     let valid_target = Memo::new(move |_| {
         let host = origin.get().trim().to_string();
         let bucket = bucket.get().trim().to_string();
-        (!host.is_empty() && is_valid_hostname(&host) && !bucket.is_empty())
-            .then_some((host, bucket))
+        (field_errors(&host, &bucket) == (false, false)).then_some((host, bucket))
     });
 
     // Debounced mirror of `valid_target`: the fetch keys on this so it fires
@@ -176,16 +185,10 @@ pub fn SetRemotePopup(
         let origin_val = origin.get_untracked().trim().to_string();
         let bucket_val = bucket.get_untracked().trim().to_string();
 
-        let mut valid = true;
-        if origin_val.is_empty() || !is_valid_hostname(&origin_val) {
-            host_error.set(true);
-            valid = false;
-        }
-        if bucket_val.is_empty() {
-            bucket_error.set(true);
-            valid = false;
-        }
-        if !valid {
+        let (host_invalid, bucket_invalid) = field_errors(&origin_val, &bucket_val);
+        host_error.set(host_invalid);
+        bucket_error.set(bucket_invalid);
+        if host_invalid || bucket_invalid {
             return;
         }
 
@@ -275,7 +278,7 @@ pub fn SetRemotePopup(
                     </h2>
                     <div class="set-remote-fields">
                         <div class="set-remote-field">
-                            <label>"Host"</label>
+                            <label>"Host (optional)"</label>
                             <div class="set-remote-input-group">
                                 <input
                                     class="set-remote-input"
@@ -389,5 +392,25 @@ pub fn SetRemotePopup(
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::field_errors;
+
+    /// A host, when given, must be a hostname; a bucket must be something.
+    #[test]
+    fn the_form_flags_each_wrong_field() {
+        assert_eq!(field_errors("", ""), (false, true));
+        assert_eq!(field_errors("not a host", "b"), (true, false));
+        assert_eq!(field_errors("quilt.test", "my-bucket"), (false, false));
+    }
+
+    /// The host is optional: a bucket with no catalog is reached on this
+    /// computer's AWS credentials.
+    #[test]
+    fn an_empty_host_is_accepted() {
+        assert_eq!(field_errors("", "my-bucket"), (false, false));
     }
 }

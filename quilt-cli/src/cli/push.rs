@@ -1,6 +1,9 @@
+use quilt_rs::InstalledPackage;
 use quilt_rs::PushOutcome;
 use quilt_rs::io::remote::HostConfig;
+use quilt_rs::io::remote::Remote;
 use quilt_rs::io::remote::WorkflowIntent;
+use quilt_rs::io::storage::Storage;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 
@@ -64,30 +67,39 @@ async fn push_package(
 ) -> Result<PushOutcome, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
-            // If bucket/origin provided, set remote before pushing.
-            // Safe: push() reads lineage fresh from disk, so it sees the
-            // remote_uri written by set_remote() — no caching in between.
-            // Note: clap enforces that bucket and origin are always provided
-            // together via `requires` constraints.
-            if let (Some(bucket), Some(origin)) = (bucket, origin) {
-                let outcome = installed_package
-                    .set_remote(bucket, Some(origin), workflow)
-                    .await?;
-                // The remote's default workflow could not be resolved on the
-                // best-effort BucketDefault path: the push proceeds without a
-                // workflow stamp, but tell the user why rather than leaving it
-                // silent. Warnings go to stderr so the success output on stdout
-                // stays machine-parseable; the exit status is unchanged.
-                if let Some(reason) = outcome.resolution_warning {
-                    eprintln!(
-                        "warning: couldn't resolve the bucket's default workflow ({reason}); pushing without a workflow"
-                    );
-                }
-            }
-            Ok(installed_package.push(host_config).await?)
+            set_remote_and_push(&installed_package, host_config, bucket, origin, workflow).await
         }
         None => Err(Error::NamespaceNotFound(namespace)),
     }
+}
+
+/// Sets the remote first when `bucket` is given, with or without a catalog
+/// host, then pushes.
+async fn set_remote_and_push<S: Storage + Clone + Sync, R: Remote>(
+    installed_package: &InstalledPackage<S, R>,
+    host_config: Option<HostConfig>,
+    bucket: Option<String>,
+    origin: Option<Host>,
+    workflow: WorkflowIntent,
+) -> Result<PushOutcome, Error> {
+    // Safe: push() reads lineage fresh from disk, so it sees the remote_uri
+    // written by set_remote() — no caching in between.
+    if let Some(bucket) = bucket {
+        let outcome = installed_package
+            .set_remote(bucket, origin, workflow)
+            .await?;
+        // The remote's default workflow could not be resolved on the
+        // best-effort BucketDefault path: the push proceeds without a
+        // workflow stamp, but tell the user why rather than leaving it
+        // silent. Warnings go to stderr so the success output on stdout
+        // stays machine-parseable; the exit status is unchanged.
+        if let Some(reason) = outcome.resolution_warning {
+            eprintln!(
+                "warning: couldn't resolve the bucket's default workflow ({reason}); pushing without a workflow"
+            );
+        }
+    }
+    Ok(installed_package.push(host_config).await?)
 }
 
 pub async fn model(
@@ -266,9 +278,14 @@ mod tests {
             .await?;
 
         // Attach the governed bucket `b` now, first-push (no remote hash yet),
-        // so push skips the remote-manifest browse and reaches the gate.
+        // so push skips the remote-manifest browse and reaches the gate. The
+        // config has no default workflow, so the recommit is told `gate`.
         package
-            .set_remote("b".to_string(), None, WorkflowIntent::BucketDefault)
+            .set_remote(
+                "b".to_string(),
+                None,
+                WorkflowIntent::Named("gate".to_string()),
+            )
             .await?;
 
         // The bucket owner tightens the *current* config: `gate` now requires an
@@ -313,6 +330,77 @@ mod tests {
             message.contains("owner"),
             "message must name the missing field, got: {message}"
         );
+
+        Ok(())
+    }
+
+    /// `quilt push --bucket b` with no `--host` gives a local-only package a
+    /// remote with no catalog, and pushes it there.
+    #[test(tokio::test)]
+    async fn test_first_push_with_bucket_and_no_host() -> Result<(), Error> {
+        use quilt_rs::InstalledPackage;
+        use quilt_rs::io::remote::mocks::MockRemote;
+        use quilt_rs::lineage::DomainLineageIo;
+        use quilt_rs::lineage::Home;
+        use quilt_rs::lineage::PackageLineageIo;
+        use quilt_rs::paths::DomainPaths;
+        use tempfile::TempDir;
+
+        let home_dir = TempDir::new()?;
+        let paths_dir = TempDir::new()?;
+        let storage = LocalStorage::new();
+        let namespace: Namespace = ("local", "only").into();
+        let home = Home::new(home_dir.path().to_path_buf());
+        let paths = DomainPaths::new(paths_dir.path().to_path_buf());
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+        let lineage_json = serde_json::json!({
+            "packages": {
+                "local/only": {
+                    "commit": null,
+                    "remote": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": &home,
+        })
+        .to_string();
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(
+                DomainLineageIo::new(paths.lineage()),
+                namespace.clone(),
+            ),
+            paths,
+            remote: std::sync::Arc::new(MockRemote::default()),
+            storage,
+            namespace: namespace.clone(),
+            state_store: None,
+        };
+        package
+            .commit("first".to_string(), UserMeta::Keep, None, None)
+            .await?;
+
+        let outcome = set_remote_and_push(
+            &package,
+            None,
+            Some("b".to_string()),
+            None,
+            WorkflowIntent::BucketDefault,
+        )
+        .await?;
+
+        let lineage = package.lineage().await?;
+        let remote_uri = lineage.remote_uri.expect("the push sets the remote");
+        assert_eq!(remote_uri.bucket, "b");
+        assert_eq!(remote_uri.origin, None);
+        assert_eq!(remote_uri.hash, outcome.manifest_uri.hash);
+        assert_eq!(outcome.manifest_uri.origin, None);
 
         Ok(())
     }
