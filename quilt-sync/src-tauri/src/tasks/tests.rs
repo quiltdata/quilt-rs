@@ -1011,19 +1011,23 @@ async fn a_later_revision_that_still_holds_the_claim_is_pulled_and_its_task_run(
     );
 }
 
+/// A failed re-read ends the run `not_started`, naming the error.
 #[tokio::test]
-async fn a_later_revision_whose_inputs_cannot_be_downloaded_is_not_started() -> Result<(), Error> {
+async fn a_later_revision_whose_inputs_cannot_be_downloaded_fails_the_reread() -> Result<(), Error>
+{
     let fixture = Fixture::new();
     tokio::fs::create_dir_all(fixture.home().join("TASK.md")).await?;
     let mut later = claimed_by_this_run();
     later["agent_exec"]["document"] = json!("NEXT.md");
     let model = rereading_model(&fixture, "h2", true, later);
 
-    let outcome = recheck_with(&fixture, &model).await;
+    let reread = recheck_claim(&model, &claimed_run(&fixture.tasks)).await;
 
     assert!(
-        matches!(&outcome, Err(acp::RunOutcome::NotStarted { reason }) if reason.contains("TASK.md")),
-        "{outcome:?}"
+        reread
+            .as_ref()
+            .is_err_and(|err| err.to_string().contains("TASK.md")),
+        "{reread:?}"
     );
     Ok(())
 }

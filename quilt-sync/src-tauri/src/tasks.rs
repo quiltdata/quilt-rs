@@ -704,13 +704,7 @@ async fn recheck_claim<M: QuiltModel>(
     let rechecked = agent_exec::recheck(meta, |path| lists(&latest, path), &run.agent_id);
     if let Ok(document) = &rechecked {
         let pulled = model.get_installed_package_lineage(&installed).await?;
-        if let Err(err) =
-            check_out(model, &installed, &locked, &pulled, &latest.rows, document).await
-        {
-            return Ok(Err(acp::RunOutcome::NotStarted {
-                reason: format!("could not check out the task: {err}"),
-            }));
-        }
+        check_out(model, &installed, &locked, &pulled, &latest.rows, document).await?;
     }
     Ok(rechecked)
 }
