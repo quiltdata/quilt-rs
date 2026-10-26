@@ -23,7 +23,7 @@
 
 ### Changed
 
-- Group headings on the main page stand out from the package and file rows below them (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+- Group headings on the main page stand out from the package and file rows below them (<https://github.com/quiltdata/quilt-rs/pull/1220>)
 
 ## [v0.25.0] - 2026-10-26
 
