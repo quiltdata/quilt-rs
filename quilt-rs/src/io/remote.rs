@@ -179,14 +179,14 @@ pub trait Remote {
     /// regardless of permissions.
     fn verify_bucket(&self, bucket: &str) -> impl Future<Output = Res> + Send;
 
-    /// The hashes of every revision `host`'s registry lists for `namespace`
-    /// in `bucket` — each one a timestamped pointer under
-    /// `.quilt/named_packages/`. Empty for a package never pushed; an error
-    /// if the package vanishes partway through the listing, never a short
-    /// list. One ask for the whole package, not one per revision.
+    /// The hashes of every revision of `namespace` in `bucket` — each one a
+    /// timestamped pointer under `.quilt/named_packages/`, not `latest`.
+    /// Asks `host`'s registry; with no host, lists the pointers in the bucket
+    /// and reads them. Empty for a package never pushed; an error if the
+    /// listing fails partway, never a short list.
     fn published_revisions(
         &self,
-        host: &Host,
+        host: Option<&Host>,
         bucket: &str,
         namespace: &Namespace,
     ) -> impl Future<Output = Res<Vec<String>>> + Send;

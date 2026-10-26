@@ -23,6 +23,7 @@
 
 ### Added
 
+- The main page can group packages by catalog: *Group: Catalog* lists the packages with no catalog first, then the local-only ones, then each catalog (<https://github.com/quiltdata/quilt-rs/pull/1214>)
 - A published package's catalog can be added, changed or removed, keeping its revisions: on the package page from its new *Bucket and catalog* section, which names the package's bucket and its catalog, or says *No catalog*, and from the popup on the classic one. The package page's dialog is titled *Bucket and catalog* and says what a save changed; its *More actions* menu no longer offers *Show remote*
   - <https://github.com/quiltdata/quilt-rs/pull/1211>
   - <https://github.com/quiltdata/quilt-rs/pull/1213>
@@ -46,6 +47,7 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1207>
   - <https://github.com/quiltdata/quilt-rs/pull/1208>
   - <https://github.com/quiltdata/quilt-rs/pull/1210>
+- The revision list of a package whose remote has no catalog marks its published revisions, read from the bucket, so old ones can be removed (<https://github.com/quiltdata/quilt-rs/pull/1212>)
 - The *Host* field of *Set remote*, *Choose S3 bucket* and *Change bucket* is optional: a local-only package can be published to a bucket with no catalog, on the AWS credentials on this computer (<https://github.com/quiltdata/quilt-rs/pull/1209>)
 - The classic package page no longer shows *Set remote* as a warning for a package with a bucket and no catalog (<https://github.com/quiltdata/quilt-rs/pull/1211>)
 
