@@ -29,7 +29,7 @@
 ### Changed
 
 - **Breaking:** `InstalledPackage::state` reads a remote with no catalog on the AWS credentials on this computer, like any other remote, instead of answering `Unknown`. `PackageLineage::misconfigured_remote` is removed (<https://github.com/quiltdata/quilt-rs/pull/1193>)
-- **Breaking:** `Remote::published_revisions` takes `Option<&Host>`. With no catalog, `RemoteS3` lists the package's timestamped pointers in the bucket, on the AWS credentials on this computer, so `InstalledPackage::revision_history` and `remove_revisions` know which revisions are published (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- **Breaking:** `Remote::published_revisions` takes `Option<&Host>`. With no catalog, `RemoteS3` lists the package's timestamped pointers in the bucket, on the AWS credentials on this computer, so `InstalledPackage::revision_history` and `remove_revisions` know which revisions are published (<https://github.com/quiltdata/quilt-rs/pull/1212>)
 - With no catalog, AWS credentials that cannot be found or used, including an SSO profile with no or an expired sign-in, are `LoginError::NoSession(None)`, so a status read reports them instead of answering from the last-known tip. A wrong secret key (`SignatureDoesNotMatch`) is a credential failure, not a denial (<https://github.com/quiltdata/quilt-rs/pull/1193>)
 
 ### Fixed
