@@ -37,6 +37,10 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1206>
 - When autosync publishes with your default metadata, a package's `agent_exec` task stays as its current revision has it: autosync neither drops a task nor adds one (<https://github.com/quiltdata/quilt-rs/pull/1198>)
 
+### Removed
+
+- QuiltSync no longer claims `quilt+file://` links, which it never handled (<https://github.com/quiltdata/quilt-rs/pull/1216>)
+
 ### Fixed
 
 - A package whose remote has no catalog shows its status on both pages, publishes from the commit page and syncs with autosync, on the AWS credentials on this computer. When those are missing or refused, it says so and suggests updating `~/.aws` or running `aws sso login`, instead of offering *Sign in*. Once published, it offers *Copy URI*, with no catalog in the copied address
