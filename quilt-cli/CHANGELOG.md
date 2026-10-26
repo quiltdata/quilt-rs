@@ -19,19 +19,19 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.38.0-dev]
+## [v0.38.0] - 2026-10-26
 
 ### Changed
 
-- `quilt push --bucket <b>` works without `--host`: the first push of a local-only package can go to a bucket with no catalog, on the AWS credentials on this computer (<https://github.com/quiltdata/quilt-rs/pull/1209>)
-- `quilt list --fetch` shows the status of a package whose remote has no catalog, read on the AWS credentials on this computer. When those are missing or refused, the row says so and suggests updating `~/.aws` or running `aws sso login`, and `--json` adds `"credentials_unusable": true`
+- `quilt push --bucket <b>` works without `--host`, so a local-only package can be pushed to a bucket with no catalog, on the AWS credentials on this computer (<https://github.com/quiltdata/quilt-rs/pull/1209>)
+- `quilt list --fetch` shows the status of a package whose bucket has no catalog. When the AWS credentials on this computer are missing or refused, the row says so and suggests updating `~/.aws` or running `aws sso login`, and `--json` adds `"credentials_unusable": true`
   - <https://github.com/quiltdata/quilt-rs/pull/1193>
   - <https://github.com/quiltdata/quilt-rs/pull/1210>
-- `quilt log` and `quilt remove-revisions` know which revisions of a package with no catalog are published, from its bucket, so old published revisions can be removed (<https://github.com/quiltdata/quilt-rs/pull/1212>)
+- `quilt log` and `quilt remove-revisions` know which revisions of a package with no catalog are published, so old ones can be removed (<https://github.com/quiltdata/quilt-rs/pull/1212>)
 
 ### quilt-rs
 
-- Updated [from v0.48.0 to v0.49.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.48.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.48.0 to v0.49.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.48.0...quilt-rs/v0.49.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.37.3] - 2026-10-23
 

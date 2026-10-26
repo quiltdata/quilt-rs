@@ -19,23 +19,23 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.49.0-dev]
+## [v0.49.0] - 2026-10-26
 
 ### Added
 
-- `InstalledPackage::change_catalog` adds, changes or removes the catalog of a package's remote, keeping its bucket, remote hash and commits, also once the package is published. Push uploads each committed row with the checksum type it was committed with, so a commit made before a catalog change still pushes (<https://github.com/quiltdata/quilt-rs/pull/1211>)
+- `InstalledPackage::change_catalog` adds, changes or removes the catalog of a package's remote, keeping its bucket, remote hash and commits, also once the package is published (<https://github.com/quiltdata/quilt-rs/pull/1211>)
 - `Error::is_ambient_session_absent` says the AWS credentials on this computer, used for a bucket with no catalog, were missing or refused (<https://github.com/quiltdata/quilt-rs/pull/1193>)
 
 ### Changed
 
-- **Breaking:** `InstalledPackage::state` reads a remote with no catalog on the AWS credentials on this computer, like any other remote, instead of answering `Unknown`. `PackageLineage::misconfigured_remote` is removed (<https://github.com/quiltdata/quilt-rs/pull/1193>)
-- **Breaking:** `Remote::published_revisions` takes `Option<&Host>`. With no catalog, `RemoteS3` lists the package's timestamped pointers in the bucket, on the AWS credentials on this computer, so `InstalledPackage::revision_history` and `remove_revisions` know which revisions are published (<https://github.com/quiltdata/quilt-rs/pull/1212>)
-- With no catalog, AWS credentials that cannot be found or used, including an SSO profile with no or an expired sign-in, are `LoginError::NoSession(None)`, so a status read reports them instead of answering from the last-known tip. A wrong secret key (`SignatureDoesNotMatch`) is a credential failure, not a denial (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+- **Breaking:** `InstalledPackage::state` reads a remote with no catalog on the AWS credentials on this computer instead of answering `Unknown`. `PackageLineage::misconfigured_remote` is removed (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+- **Breaking:** `Remote::published_revisions` takes `Option<&Host>`. With no catalog it lists the package's revisions from the bucket, so `InstalledPackage::revision_history` and `remove_revisions` know which revisions are published (<https://github.com/quiltdata/quilt-rs/pull/1212>)
+- With no catalog, AWS credentials that are missing or unusable, including an expired SSO sign-in, are `LoginError::NoSession(None)` (<https://github.com/quiltdata/quilt-rs/pull/1193>)
 
 ### Fixed
 
-- `InstalledPackage::set_remote` with no host re-commits a pending commit too, so the chosen or the bucket's default workflow is stamped instead of dropped; the rows hash with SHA-256 chunked (<https://github.com/quiltdata/quilt-rs/pull/1209>)
-- After the AWS credentials on this computer were missing or refused, or a bucket with no catalog refused a request, the next call reads `~/.aws` again instead of keeping the first credentials it loaded
+- `InstalledPackage::set_remote` with no host stamps the chosen or the bucket's default workflow on a pending commit instead of dropping it (<https://github.com/quiltdata/quilt-rs/pull/1209>)
+- After the AWS credentials on this computer were missing or refused, the next call reads `~/.aws` again
   - <https://github.com/quiltdata/quilt-rs/pull/1193>
   - <https://github.com/quiltdata/quilt-rs/pull/1202>
 

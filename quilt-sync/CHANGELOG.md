@@ -19,47 +19,43 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.24.1-dev]
+## [v0.25.0] - 2026-10-26
 
 ### Added
 
-- The main page can group packages by catalog: *Group: Catalog* lists the local-only packages first, then the ones with no catalog, then each catalog
-  - <https://github.com/quiltdata/quilt-rs/pull/1214>
-  - <https://github.com/quiltdata/quilt-rs/pull/1217>
-- A published package's catalog can be added, changed or removed, keeping its revisions: on the package page from its new *Bucket and catalog* section, which names the package's bucket and its catalog, or says *No catalog*, and from the popup on the classic one. The package page's dialog is titled *Bucket and catalog* and says what a save changed; its *More actions* menu no longer offers *Show remote*
+- A package can use a bucket with no catalog, on the AWS credentials on this computer: it shows its status, publishes from the commit page, syncs with autosync, copies its URI and marks its published revisions. A local-only package can be published to such a bucket, since the *Host* field is optional. When the credentials are missing or refused, QuiltSync says so and suggests updating `~/.aws` or running `aws sso login`
+  - <https://github.com/quiltdata/quilt-rs/pull/1193>
+  - <https://github.com/quiltdata/quilt-rs/pull/1203>
+  - <https://github.com/quiltdata/quilt-rs/pull/1207>
+  - <https://github.com/quiltdata/quilt-rs/pull/1208>
+  - <https://github.com/quiltdata/quilt-rs/pull/1209>
+  - <https://github.com/quiltdata/quilt-rs/pull/1210>
+  - <https://github.com/quiltdata/quilt-rs/pull/1212>
+- A published package's catalog can be added, changed or removed, keeping its revisions: from the *Bucket and catalog* section of the package page, or from the popup on the classic page
   - <https://github.com/quiltdata/quilt-rs/pull/1211>
   - <https://github.com/quiltdata/quilt-rs/pull/1213>
   - <https://github.com/quiltdata/quilt-rs/pull/1215>
+- The main page can group packages by catalog
+  - <https://github.com/quiltdata/quilt-rs/pull/1214>
+  - <https://github.com/quiltdata/quilt-rs/pull/1217>
 
 ### Changed
 
-- Under the hood, QuiltSync can run the task a package revision asks for: given a hand-written `task_settings.json`, it claims the task, runs a local agent over ACP in the package's folder, and publishes the result as the next revision
+- Under the hood, QuiltSync can run the task a package revision asks for with a local agent and publish the result as the next revision
   - <https://github.com/quiltdata/quilt-rs/pull/1195>
+  - <https://github.com/quiltdata/quilt-rs/pull/1198>
   - <https://github.com/quiltdata/quilt-rs/pull/1199>
   - <https://github.com/quiltdata/quilt-rs/pull/1201>
   - <https://github.com/quiltdata/quilt-rs/pull/1204>
   - <https://github.com/quiltdata/quilt-rs/pull/1206>
-- When autosync publishes with your default metadata, a package's `agent_exec` task stays as its current revision has it: autosync neither drops a task nor adds one (<https://github.com/quiltdata/quilt-rs/pull/1198>)
 
 ### Removed
 
 - QuiltSync no longer claims `quilt+file://` links, which it never handled (<https://github.com/quiltdata/quilt-rs/pull/1216>)
 
-### Fixed
-
-- A package whose remote has no catalog shows its status on both pages, publishes from the commit page and syncs with autosync, on the AWS credentials on this computer. When those are missing or refused, it says so and suggests updating `~/.aws` or running `aws sso login`, instead of offering *Sign in*. Once published, it offers *Copy URI*, with no catalog in the copied address
-  - <https://github.com/quiltdata/quilt-rs/pull/1193>
-  - <https://github.com/quiltdata/quilt-rs/pull/1203>
-  - <https://github.com/quiltdata/quilt-rs/pull/1207>
-  - <https://github.com/quiltdata/quilt-rs/pull/1208>
-  - <https://github.com/quiltdata/quilt-rs/pull/1210>
-- The revision list of a package whose remote has no catalog marks its published revisions, read from the bucket, so old ones can be removed (<https://github.com/quiltdata/quilt-rs/pull/1212>)
-- The *Host* field of *Set remote*, *Choose S3 bucket* and *Change bucket* is optional: a local-only package can be published to a bucket with no catalog, on the AWS credentials on this computer (<https://github.com/quiltdata/quilt-rs/pull/1209>)
-- The classic package page no longer shows *Set remote* as a warning for a package with a bucket and no catalog (<https://github.com/quiltdata/quilt-rs/pull/1211>)
-
 ### quilt-rs
 
-- Updated [from v0.48.0 to v0.49.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.48.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.48.0 to v0.49.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.48.0...quilt-rs/v0.49.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.24.0] - 2026-10-23
 
