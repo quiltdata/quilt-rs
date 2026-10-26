@@ -566,6 +566,12 @@ async fn check_out<M: QuiltModel>(
         if lineage.paths.contains_key(path) {
             continue;
         }
+        if !agent_exec::inside_package(path) {
+            return Err(Error::General(format!(
+                "{} is not a path inside the package",
+                path.display()
+            )));
+        }
         let on_disk = tokio::fs::symlink_metadata(home.join(path)).await;
         if !on_disk.is_ok_and(|meta| meta.is_file()) {
             missing.push(path.clone());

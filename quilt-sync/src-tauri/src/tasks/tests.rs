@@ -182,6 +182,8 @@ struct Fixture {
     walk_fails: bool,
     /// The paths this copy already tracks.
     tracked: &'static [&'static str],
+    /// The paths the head lists.
+    rows: &'static [&'static str],
 }
 
 impl Fixture {
@@ -206,6 +208,7 @@ impl Fixture {
             finished_meta: None,
             walk_fails: false,
             tracked: &[],
+            rows: &["TASK.md", "sub/TASK.md"],
         }
     }
 
@@ -251,9 +254,9 @@ impl Fixture {
             .collect()
     }
 
-    /// Check a package in a blessed bucket whose head carries `meta` and the
-    /// files `TASK.md` and `sub/TASK.md`, whose tree walks as `status`,
-    /// publishing with `certified_latest`.
+    /// Check a package in a blessed bucket whose head carries `meta` and lists
+    /// the fixture's `rows`, whose tree walks as `status`, publishing with
+    /// `certified_latest`.
     async fn check(
         &self,
         meta: Value,
@@ -279,23 +282,10 @@ impl Fixture {
         expect_push_and_reset(&mut model, &self.events, certified_latest);
         let latest = self.latest_meta.clone().unwrap_or(meta.clone());
         expect_latest(&mut model, latest, &[]);
+        let rows = self.rows;
         model
             .expect_get_installed_package_manifest()
-            .returning(move |_, _| {
-                Ok(quilt::manifest::Manifest {
-                    header: quilt::manifest::ManifestHeader {
-                        user_meta: Some(meta.clone()),
-                        ..quilt::manifest::ManifestHeader::default()
-                    },
-                    rows: ["TASK.md", "sub/TASK.md"]
-                        .into_iter()
-                        .map(|key| quilt::manifest::ManifestRow {
-                            logical_key: PathBuf::from(key),
-                            ..quilt::manifest::ManifestRow::default()
-                        })
-                        .collect(),
-                })
-            });
+            .returning(move |_, _| Ok(manifest(&meta, rows)));
         model
             .expect_try_lock_package()
             .returning(|p| Ok(Some(p.namespace.clone())));
@@ -433,6 +423,26 @@ async fn a_path_this_copy_tracks_is_not_downloaded_again() {
         *fixture.events.lock().unwrap(),
         ["download sub/TASK.md", "walk", "publish"]
     );
+}
+
+/// The download comes before the claim, outside any permission check.
+#[tokio::test]
+async fn a_revision_listing_a_path_outside_the_package_is_not_claimed() {
+    let fixture = Fixture {
+        rows: &["TASK.md", "../outside.csv"],
+        ..Fixture::new()
+    };
+
+    fixture
+        .check(unclaimed(), fresh(BTreeMap::new()), true)
+        .await;
+
+    assert_eq!(
+        *fixture.events.lock().unwrap(),
+        [] as [&str; 0],
+        "nothing downloaded"
+    );
+    assert_eq!(fixture.metas(), [] as [Value; 0], "nothing is claimed");
 }
 
 #[tokio::test]

@@ -99,7 +99,7 @@ pub async fn run(
     let pid = child.id();
     // Declared after `child`, so dropped first: the leader is still unreaped,
     // and its PID still names the group.
-    let _group = pid.map(agent_process::Group);
+    let group = pid.map(agent_process::Group);
     if let Some(pid) = pid {
         started(pid).await;
     }
@@ -113,7 +113,11 @@ pub async fn run(
         startup: agent.startup_timeout(),
         turn: agent.turn_timeout(),
     };
-    converse(transport, cwd, agent.trust_all, limits, recheck).await
+    let outcome = converse(transport, cwd, agent.trust_all, limits, recheck).await;
+    drop(group);
+    // So that nothing the agent writes lands after the outcome's walk.
+    let _ = child.kill().await;
+    outcome
 }
 
 async fn converse(
