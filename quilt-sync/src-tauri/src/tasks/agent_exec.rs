@@ -203,7 +203,7 @@ pub fn interrupted(user_meta: &Value) -> Value {
     let mut claim = user_meta["agent_exec"]["claim"].clone();
     claim["status"] = json!("failed");
     claim["reason"] = json!("interrupted by restart");
-    with_claim(user_meta, claim)
+    claim
 }
 
 /// `default` with `head`'s `agent_exec` in place of its own, or with none
@@ -425,11 +425,9 @@ mod tests {
             "TASK.md",
             &json!({ "status": "claimed", "invocation_id": "inv", "claimed_at": "t" }),
         );
-        let failed = interrupted(&meta);
         assert_eq!(
-            failed["agent_exec"]["claim"],
+            interrupted(&meta),
             json!({ "status": "failed", "invocation_id": "inv", "claimed_at": "t", "reason": "interrupted by restart" })
         );
-        assert_eq!(failed["other"], "kept");
     }
 }

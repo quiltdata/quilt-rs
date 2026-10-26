@@ -157,6 +157,8 @@ struct Fixture {
     latest_meta: Option<Value>,
     /// What the head a run ends on carries; [`edited_head`] unless set.
     finished_meta: Option<Value>,
+    /// Walking the tree the run ended on fails, as it does while signed out.
+    walk_fails: bool,
 }
 
 impl Fixture {
@@ -179,6 +181,7 @@ impl Fixture {
             pulled_meta: None,
             latest_meta: None,
             finished_meta: None,
+            walk_fails: false,
         }
     }
 
@@ -494,6 +497,70 @@ async fn our_own_interrupted_claim_is_published_failed_with_what_the_agent_left(
     assert_eq!(claim["invocation_id"], "ours");
     assert_eq!(published[0].paths, BTreeSet::from(["out.md".to_string()]));
     assert!(fixture.runs.lock().unwrap().is_empty(), "no second run");
+    Ok(())
+}
+
+/// The run saved its outcome, then its publish never landed, or landed outside
+/// `latest` and was reset onto a `latest` still holding the claim.
+#[tokio::test]
+async fn the_sweep_publishes_the_outcome_the_run_saved() -> Result<(), Error> {
+    let not_started = json!({ "status": "not_started", "invocation_id": "ours", "claimed_at": "t", "reason": "agent not signed in" });
+    let done = json!({ "status": "done", "invocation_id": "ours", "claimed_at": "t", "session_id": "s1", "stop_reason": "end_turn" });
+    for (saved, changes) in [(not_started, BTreeMap::new()), (done, written())] {
+        let fixture = Fixture::new();
+        settings::remember_invocation(fixture.dir.path(), "ours").await?;
+        settings::remember_outcome(fixture.dir.path(), "ours", &saved).await?;
+        let paths = changes.keys().map(|p| p.display().to_string()).collect();
+
+        fixture.check(ours_claimed(), fresh(changes), true).await;
+
+        let published = fixture.published.lock().unwrap();
+        assert_eq!(published.len(), 1, "one revision, the saved outcome's");
+        assert_eq!(
+            published[0].meta,
+            agent_exec::with_claim(&ours_claimed(), saved),
+            "the head's metadata, with only the claim moved on"
+        );
+        assert_eq!(published[0].paths, paths);
+    }
+    Ok(())
+}
+
+/// A folder in place of the file makes it unreadable.
+#[tokio::test]
+async fn the_sweep_publishes_failed_when_the_saved_outcomes_cannot_be_read() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    settings::remember_invocation(fixture.dir.path(), "ours").await?;
+    tokio::fs::create_dir(fixture.dir.path().join("task_outcomes.json")).await?;
+
+    fixture.check(ours_claimed(), fresh(written()), true).await;
+
+    let published = fixture.metas();
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0]["agent_exec"]["claim"]["status"], "failed");
+    Ok(())
+}
+
+/// The claim's own commit never left here, and `latest` already carries the
+/// run's outcome.
+#[tokio::test]
+async fn a_saved_outcome_already_in_latest_is_not_published_again() -> Result<(), Error> {
+    let saved = json!({ "status": "not_started", "invocation_id": "ours", "claimed_at": "t" });
+    let fixture = Fixture {
+        pending_commit: true,
+        latest_meta: Some(agent_exec::with_claim(&ours_claimed(), saved.clone())),
+        ..Fixture::new()
+    };
+    settings::remember_invocation(fixture.dir.path(), "ours").await?;
+    settings::remember_outcome(fixture.dir.path(), "ours", &saved).await?;
+    let ahead = quilt::lineage::InstalledPackageStatus {
+        upstream_state: UpstreamState::Ahead,
+        ..fresh(written())
+    };
+
+    fixture.check(ours_claimed(), ahead, true).await;
+
+    assert_eq!(fixture.metas(), [] as [Value; 0]);
     Ok(())
 }
 
@@ -945,6 +1012,7 @@ fn claimed_run(tasks: &Tasks) -> Run {
         agent: settings().agents["kiro"].clone(),
         claim,
         claim_hash: "h1".to_string(),
+        data_dir: tasks.data_dir.clone().expect("tasks on"),
         _hold: tasks.hold(&namespace()),
     }
 }
@@ -970,8 +1038,11 @@ fn finishing_model(
     // The publish commits the tree's changes, so later walks find it clean.
     let committed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let walked = Arc::clone(&committed);
+    let walk_fails = fixture.walk_fails;
     model.expect_locked_package_status().returning(move |_, _| {
-        if walked.load(std::sync::atomic::Ordering::SeqCst) {
+        if walk_fails {
+            Err(Error::General("signed out".to_string()))
+        } else if walked.load(std::sync::atomic::Ordering::SeqCst) {
             Ok(fresh(BTreeMap::new()))
         } else {
             Ok(fresh(changes.clone()))
@@ -1088,6 +1159,47 @@ async fn the_last_revision_publishes_the_agents_work_under_the_same_claim() -> R
         "the head's own metadata, with only the claim moved on"
     );
     assert_eq!(*paths, BTreeSet::from(["out.md".to_string()]));
+    Ok(())
+}
+
+/// The walk fails, so the outcome is never published.
+#[tokio::test]
+async fn a_run_that_cannot_publish_leaves_its_outcome_saved_for_the_sweep() -> Result<(), Error> {
+    let fixture = Fixture {
+        walk_fails: true,
+        ..Fixture::new()
+    };
+    let model = finishing_model(&fixture, written(), true);
+    let done = acp::RunOutcome::Done {
+        session_id: "s1".to_string(),
+        stop_reason: "end_turn".to_string(),
+    };
+    let run = claimed_run(&fixture.tasks);
+
+    assert!(finish(&model, &run, &done).await.is_err());
+
+    assert_eq!(
+        settings::remembered_outcome(fixture.dir.path(), "inv").await?,
+        run.claim.outcome(&done)
+    );
+    Ok(())
+}
+
+/// A folder in place of the file makes it unwritable.
+#[tokio::test]
+async fn an_outcome_that_cannot_be_saved_is_still_published() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    tokio::fs::create_dir(fixture.dir.path().join("task_outcomes.json")).await?;
+    let model = finishing_model(&fixture, written(), true);
+    let done = acp::RunOutcome::Done {
+        session_id: "s1".to_string(),
+        stop_reason: "end_turn".to_string(),
+    };
+
+    let finished = finish(&model, &claimed_run(&fixture.tasks), &done).await;
+
+    assert!(finished.is_ok(), "{finished:?}");
+    assert_eq!(fixture.metas()[0]["agent_exec"]["claim"]["status"], "done");
     Ok(())
 }
 

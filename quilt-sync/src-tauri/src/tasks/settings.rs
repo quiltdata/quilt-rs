@@ -1,15 +1,17 @@
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::path::PathBuf;
 
 use serde::Deserialize;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 use crate::error::Error;
 
 const FILE_NAME: &str = "task_settings.json";
 const INVOCATIONS_FILE_NAME: &str = "task_invocations.json";
+const OUTCOMES_FILE_NAME: &str = "task_outcomes.json";
 
 /// Which buckets may hand this desktop a task, and which agents it can run.
 ///
@@ -59,29 +61,77 @@ struct Invocations {
     invocation_ids: BTreeSet<String>,
 }
 
-fn invocations_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(INVOCATIONS_FILE_NAME)
+/// Each run's last claim, by invocation ID.
+#[derive(Serialize, Deserialize, Default)]
+struct Outcomes {
+    outcomes: BTreeMap<String, Value>,
 }
 
-pub async fn own_invocations(data_dir: &Path) -> Result<BTreeSet<String>, Error> {
-    match tokio::fs::read(invocations_path(data_dir)).await {
-        Ok(bytes) => Ok(serde_json::from_slice::<Invocations>(&bytes)?.invocation_ids),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
+/// Runs finish concurrently, so one writer at a time.
+static WRITING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+async fn read<T: DeserializeOwned + Default>(path: &Path) -> Result<T, Error> {
+    match tokio::fs::read(path).await {
+        Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
         Err(err) => Err(Error::from(err)),
     }
 }
 
-pub async fn remember_invocation(data_dir: &Path, invocation_id: &str) -> Result<(), Error> {
-    let mut invocations = Invocations {
-        invocation_ids: own_invocations(data_dir).await?,
-    };
-    invocations.invocation_ids.insert(invocation_id.to_string());
+async fn update<T: Serialize + DeserializeOwned + Default>(
+    data_dir: &Path,
+    file_name: &str,
+    change: impl FnOnce(&mut T),
+) -> Result<(), Error> {
+    let _writing = WRITING.lock().await;
+    let path = data_dir.join(file_name);
+    let mut value = read(&path).await?;
+    change(&mut value);
     tokio::fs::create_dir_all(data_dir).await?;
-    let path = invocations_path(data_dir);
     let tmp = path.with_extension("json.tmp");
-    tokio::fs::write(&tmp, serde_json::to_vec_pretty(&invocations)?).await?;
+    tokio::fs::write(&tmp, serde_json::to_vec_pretty(&value)?).await?;
     tokio::fs::rename(&tmp, &path).await?;
     Ok(())
+}
+
+pub async fn own_invocations(data_dir: &Path) -> Result<BTreeSet<String>, Error> {
+    Ok(read::<Invocations>(&data_dir.join(INVOCATIONS_FILE_NAME))
+        .await?
+        .invocation_ids)
+}
+
+pub async fn remember_invocation(data_dir: &Path, invocation_id: &str) -> Result<(), Error> {
+    update(
+        data_dir,
+        INVOCATIONS_FILE_NAME,
+        |invocations: &mut Invocations| {
+            invocations.invocation_ids.insert(invocation_id.to_string());
+        },
+    )
+    .await
+}
+
+/// The claim a run publishes as its last revision, saved before the publish,
+/// so the sweep can publish it if that publish never lands.
+pub async fn remember_outcome(
+    data_dir: &Path,
+    invocation_id: &str,
+    claim: &Value,
+) -> Result<(), Error> {
+    update(data_dir, OUTCOMES_FILE_NAME, |outcomes: &mut Outcomes| {
+        outcomes
+            .outcomes
+            .insert(invocation_id.to_string(), claim.clone());
+    })
+    .await
+}
+
+pub async fn remembered_outcome(
+    data_dir: &Path,
+    invocation_id: &str,
+) -> Result<Option<Value>, Error> {
+    let mut outcomes: Outcomes = read(&data_dir.join(OUTCOMES_FILE_NAME)).await?;
+    Ok(outcomes.outcomes.remove(invocation_id))
 }
 
 #[cfg(test)]
