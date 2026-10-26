@@ -116,7 +116,7 @@ const BUSY: &str = "Something else is running";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuCommand {
     NewRevision,
-    /// Change bucket, or Show remote once the package has been pushed.
+    /// Change bucket, before the package has been pushed.
     Remote,
     Undo,
     Remove,
@@ -147,22 +147,18 @@ impl MenuItem {
     }
 }
 
-/// The bucket's item. A pushed package is pinned to its push history, so the
-/// bucket can be shown and not changed. Same command, honest label.
+/// The bucket's item, until the first push. A pushed package is pinned to its
+/// push history, so its bucket is fixed, and the package page's Bucket section
+/// shows it.
 #[must_use]
-pub(crate) fn remote_item(remote_locked: bool, busy: bool) -> MenuItem {
-    MenuItem {
+pub(crate) fn remote_item(remote_locked: bool, busy: bool) -> Option<MenuItem> {
+    (!remote_locked).then(|| MenuItem {
         command: MenuCommand::Remote,
-        label: if remote_locked {
-            "Show remote"
-        } else {
-            "Change bucket"
-        }
-        .to_string(),
+        label: "Change bucket".to_string(),
         tone: ActionTone::Default,
         separated: false,
         disabled: busy.then(|| BUSY.to_string()),
-    }
+    })
 }
 
 /// The command beside the location group that adds or changes a published
@@ -215,30 +211,34 @@ fn undo_blocked(data: &commands::PackageHeaderData) -> Option<&'static str> {
 /// Fixed across states on purpose: the menu is where everything that is *not*
 /// the one primary action lives, so it does not change shape as the state does.
 /// What varies is what a command can be offered *for*: an undo needs something
-/// to undo.
+/// to undo. The one exception is *Change bucket*, which goes once the first
+/// push fixes the bucket.
 pub fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuItem> {
     let refused = || busy.then(|| BUSY.to_string());
-    vec![
-        MenuItem {
-            command: MenuCommand::NewRevision,
-            label: "Create new revision".to_string(),
-            tone: ActionTone::Default,
-            separated: false,
-            disabled: refused(),
-        },
-        remote_item(data.remote_locked, busy),
-        MenuItem {
-            command: MenuCommand::Undo,
-            label: "Undo last revision".to_string(),
-            tone: ActionTone::Danger,
-            separated: true,
-            // A standing fact outranks a transient one: telling a reader
-            // something else is running, when undo would refuse whatever
-            // happened, is the lesser truth.
-            disabled: undo_blocked(data).map(ToString::to_string).or_else(refused),
-        },
-        remove_item(busy),
-    ]
+    let new_revision = MenuItem {
+        command: MenuCommand::NewRevision,
+        label: "Create new revision".to_string(),
+        tone: ActionTone::Default,
+        separated: false,
+        disabled: refused(),
+    };
+    [new_revision]
+        .into_iter()
+        .chain(remote_item(data.remote_locked, busy))
+        .chain([
+            MenuItem {
+                command: MenuCommand::Undo,
+                label: "Undo last revision".to_string(),
+                tone: ActionTone::Danger,
+                separated: true,
+                // A standing fact outranks a transient one: telling a reader
+                // something else is running, when undo would refuse whatever
+                // happened, is the lesser truth.
+                disabled: undo_blocked(data).map(ToString::to_string).or_else(refused),
+            },
+            remove_item(busy),
+        ])
+        .collect()
 }
 
 /// The overflow menu with a handler on each item.
@@ -1593,14 +1593,7 @@ mod tests {
                 .query_selector("dialog[open]")
                 .unwrap()
                 .unwrap_or_else(|| panic!("the dialog opened; markup was {}", el.inner_html()));
-            assert!(
-                dialog
-                    .text_content()
-                    .unwrap_or_default()
-                    .contains("Change bucket"),
-                "markup was {}",
-                dialog.inner_html()
-            );
+            element_saying(&dialog, "Bucket and catalog");
         }
     }
 
@@ -2191,10 +2184,25 @@ mod tests {
         crate::test_support::button_saying(&added, "Change catalog");
     }
 
-    /// The menu no longer offers the catalog: the row does.
+    /// Once published, the menu offers neither the bucket nor the catalog:
+    /// the context pane's Bucket section shows both and opens the dialog.
     #[test]
-    fn the_menu_does_not_offer_the_catalog() {
+    fn a_published_menu_does_not_offer_the_bucket() {
         let labels: Vec<String> = menu_items(&with_catalog(kit::PackageState::Latest), false)
+            .into_iter()
+            .map(|item| item.label)
+            .collect();
+        assert_eq!(
+            labels,
+            ["Create new revision", "Undo last revision", "Remove"]
+        );
+    }
+
+    /// Before the first push the bucket can still change, so the menu keeps
+    /// *Change bucket*.
+    #[test]
+    fn an_unpublished_menu_offers_change_bucket() {
+        let labels: Vec<String> = menu_items(&data(kit::PackageState::Latest), false)
             .into_iter()
             .map(|item| item.label)
             .collect();
@@ -2202,7 +2210,7 @@ mod tests {
             labels,
             [
                 "Create new revision",
-                "Show remote",
+                "Change bucket",
                 "Undo last revision",
                 "Remove"
             ]

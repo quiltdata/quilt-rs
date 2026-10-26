@@ -26,6 +26,7 @@ use leptos_router::hooks::use_navigate;
 use crate::commands;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
 use crate::routes;
+use crate::util;
 
 use super::copy_mark::CopyMark;
 use super::row_menu::{COPY_FAILED, LocalPath, Ran, RowCommand, carry_out, local_path};
@@ -656,6 +657,7 @@ fn package_body(
     let ns = header.namespace.clone();
     let uri = header.uri.clone();
     let has_local_commit = header.has_local_commit;
+    let catalog = uri.as_ref().and_then(util::host_str);
     let namespace = ns.to_string();
     let (page_header, row_marks) = incoming_header(
         header,
@@ -699,6 +701,7 @@ fn package_body(
                     w=w
                     commands=keeping::KeepingCommands::app()
                     remove=old_revisions::remove_revisions
+                    catalog=catalog.clone()
                 />
             }
             .into_any(),

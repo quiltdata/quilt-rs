@@ -23,7 +23,8 @@
 
 ### Added
 
-- A published package's catalog can be added, changed or removed, keeping its revisions: *Add catalog* or *Change catalog* on the package page, and the remote popup on the classic one (<https://github.com/quiltdata/quilt-rs/pull/1211>)
+- A published package's catalog can be added, changed or removed, keeping its revisions, from the package page's new *Bucket* section, which shows the package's bucket and its catalog or *No catalog*, and from the popup on the classic package page. The package page's dialog is titled *Bucket and catalog* and says what a save changed; its *More actions* menu no longer offers *Show remote*
+  - <https://github.com/quiltdata/quilt-rs/pull/1211>
 
 ### Changed
 

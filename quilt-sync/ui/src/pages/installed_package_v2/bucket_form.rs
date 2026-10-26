@@ -1,5 +1,5 @@
-//! The set-remote dialog: *Change bucket* over host, bucket and workflow, and
-//! *Add catalog* / *Change catalog*, the same dialog with the bucket fixed.
+//! The *Bucket and catalog* dialog: host, bucket and workflow before the first
+//! push, and the same dialog with the bucket fixed after it.
 //!
 //! # The fields are the gallery's; the machinery is v1's
 //!
@@ -16,7 +16,8 @@
 //! catalog shape: the bucket is shown and disabled, there is no workflow to
 //! choose, and Save runs `change_catalog`, which replaces only the catalog.
 //! Otherwise Save runs `set_remote`. The state's *Choose S3 bucket* opens the
-//! editable shape, same as the menu's *Change bucket*.
+//! editable shape, same as the menu's *Change bucket*. Every entry, the
+//! context pane's Bucket section included, opens it under one title.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -129,17 +130,37 @@ fn change_catalog(
     Box::pin(commands::change_catalog(namespace, host))
 }
 
-/// The dialog's title: a published package keeps its bucket, so the dialog is
-/// about its catalog.
-pub(crate) fn title(published: bool, has_host: bool) -> &'static str {
-    match (published, has_host) {
-        (false, _) => "Change bucket",
-        (true, false) => "Add catalog",
-        (true, true) => "Change catalog",
+/// The dialog's title, whichever entry opened it and whichever shape it is in.
+pub(crate) const TITLE: &str = "Bucket and catalog";
+
+/// What a save changed, for the band: the bucket, then the catalog. `None`
+/// when the save left both as they were.
+fn what_changed(before: (&str, &str), after: (&str, &str)) -> Option<String> {
+    let ((was_host, was_bucket), (host, bucket)) = (before, after);
+    let bucket_said = (was_bucket != bucket).then(|| format!("Bucket set to s3://{bucket}."));
+    let catalog_said = match (was_host.is_empty(), host.is_empty()) {
+        _ if was_host == host => None,
+        (true, _) => Some(format!("Catalog added: {host}.")),
+        (_, true) => Some(format!("Catalog removed: {was_host}.")),
+        _ => Some(format!("Catalog changed from {was_host} to {host}.")),
+    };
+    let said: Vec<String> = bucket_said.into_iter().chain(catalog_said).collect();
+    (!said.is_empty()).then(|| said.join(" "))
+}
+
+/// A save's report on the band, when it changed something.
+fn report_saved(outcome: RwSignal<Option<Outcome>>, namespace: String, lead: Option<String>) {
+    if let Some(lead) = lead {
+        outcome.set(Some(Outcome {
+            namespace,
+            variant: BannerVariant::Success,
+            lead,
+            detail: None,
+        }));
     }
 }
 
-/// The set-remote dialog, in both of its shapes. The package page and the
+/// The bucket and catalog dialog, in both of its shapes. The package page and the
 /// commit page each hold its flag and draft, and lend it their lock, band and
 /// re-read.
 #[component]
@@ -191,8 +212,9 @@ pub(crate) fn BucketDialog(
     // rebuilds this dialog and its own seal goes with the old one.
     let ns = namespace;
     let current_host = uri.as_ref().and_then(util::host_str).unwrap_or_default();
-    let title = title(published, !current_host.is_empty());
     let current_bucket = uri.as_ref().and_then(util::bucket_str).unwrap_or_default();
+    // What a save is compared with, to say what it changed.
+    let was = StoredValue::new((current_host.clone(), current_bucket.clone()));
 
     // The page's, so a re-read that rebuilds this dialog finds them as the
     // reader left them. The field errors are this dialog's: the rebuilt one
@@ -355,6 +377,7 @@ pub(crate) fn BucketDialog(
     // touches is `Copy` and needs no clone.
     let submit = Submit::new("Save", move || {
         let ns = ns.clone();
+        let (was_host, was_bucket) = was.get_value();
         async move {
             let host = origin.get_untracked().trim().to_string();
             if published {
@@ -362,9 +385,14 @@ pub(crate) fn BucketDialog(
                 if host_invalid.get_untracked().is_some() {
                     return Err("Fix the highlighted fields.".to_string());
                 }
-                holding(busy, outcome, change_catalog(ns, host))
+                holding(busy, outcome, change_catalog(ns.clone(), host.clone()))
                     .await
                     .inspect_err(|_| draft.refused.set(true))?;
+                report_saved(
+                    outcome,
+                    ns,
+                    what_changed((&was_host, &was_bucket), (&host, &was_bucket)),
+                );
                 draft.refused.set(false);
                 reload.notify();
                 return Ok(());
@@ -398,10 +426,11 @@ pub(crate) fn BucketDialog(
                         .map(|option| option.intent)
                 })
                 .unwrap_or(WorkflowIntent::BucketDefault);
+            let changed = what_changed((&was_host, &was_bucket), (&host, &name));
             let response = holding(busy, outcome, set_remote(ns.clone(), host, name, workflow))
                 .await
                 .inspect_err(|_| draft.refused.set(true))?;
-            // The remote is set either way. A workflow that could not be
+            // The bucket is set either way. A workflow that could not be
             // resolved is the one partial success the band carries: the
             // package will publish ungoverned, and the reader should learn
             // that now rather than at push time.
@@ -409,11 +438,13 @@ pub(crate) fn BucketDialog(
                 outcome.set(Some(Outcome {
                     namespace: ns,
                     variant: BannerVariant::Warning,
-                    lead: "The remote is set, but the bucket's default workflow could not \
-                               be resolved, so this package will publish without one."
+                    lead: "The bucket is set, but its default workflow could not be \
+                           resolved, so this package will publish without one."
                         .to_string(),
                     detail: Some(reason),
                 }));
+            } else {
+                report_saved(outcome, ns, changed);
             }
             // This save is the one the page re-reads for.
             draft.refused.set(false);
@@ -536,7 +567,7 @@ pub(crate) fn BucketDialog(
     };
 
     view! {
-        <FormDialog open=open title=title submit=submit running=busy>
+        <FormDialog open=open title=TITLE submit=submit running=busy>
             {fields()}
         </FormDialog>
     }
@@ -683,20 +714,58 @@ mod tests {
             "no workflow; markup was {}",
             el.inner_html()
         );
-        element_saying(&el, "Add catalog");
+        element_saying(&el, TITLE);
         assert_eq!(
             footer_labels(&el),
             vec!["Cancel".to_string(), "Save".to_string()]
         );
     }
 
-    /// One catalog for another is *Change catalog*; before the first push
-    /// the dialog is about the bucket.
+    /// One title for both shapes, whichever entry opened the dialog.
+    #[wasm_bindgen_test]
+    async fn both_shapes_share_one_title() {
+        let mut published = data();
+        published.uri = Some(
+            "quilt+s3://data-bucket#package=team/dataset&catalog=quilt.test"
+                .parse()
+                .unwrap(),
+        );
+        published.remote_locked = true;
+        for d in [data(), published] {
+            let el = mount_dialog(d);
+            leptos::task::tick().await;
+            element_saying(&el, "Bucket and catalog");
+        }
+    }
+
+    /// The band names what a save changed, and stays quiet when nothing did.
     #[test]
-    fn the_title_names_what_saving_changes() {
-        assert_eq!(title(false, true), "Change bucket");
-        assert_eq!(title(true, false), "Add catalog");
-        assert_eq!(title(true, true), "Change catalog");
+    fn a_save_says_what_changed() {
+        let said = |before: (&str, &str), after: (&str, &str)| what_changed(before, after);
+        assert_eq!(
+            said(("", "data-bucket"), ("quilt.test", "data-bucket")).as_deref(),
+            Some("Catalog added: quilt.test.")
+        );
+        assert_eq!(
+            said(("quilt.test", "data-bucket"), ("other.test", "data-bucket")).as_deref(),
+            Some("Catalog changed from quilt.test to other.test.")
+        );
+        assert_eq!(
+            said(("quilt.test", "data-bucket"), ("", "data-bucket")).as_deref(),
+            Some("Catalog removed: quilt.test.")
+        );
+        assert_eq!(
+            said(("", ""), ("", "data-bucket")).as_deref(),
+            Some("Bucket set to s3://data-bucket.")
+        );
+        assert_eq!(
+            said(("", "old-bucket"), ("quilt.test", "data-bucket")).as_deref(),
+            Some("Bucket set to s3://data-bucket. Catalog added: quilt.test.")
+        );
+        assert_eq!(
+            said(("quilt.test", "data-bucket"), ("quilt.test", "data-bucket")),
+            None
+        );
     }
 
     thread_local! {
@@ -767,6 +836,9 @@ mod tests {
             vec![("team/dataset".to_string(), "quilt.test".to_string())]
         );
         assert_eq!(reloads.get_untracked(), 1, "read again");
+        let said = w.outcome.get_untracked().expect("the save is reported");
+        assert_eq!(said.variant, kit::BannerVariant::Success);
+        assert_eq!(said.lead, "Catalog added: quilt.test.");
         drop(owner);
     }
 
