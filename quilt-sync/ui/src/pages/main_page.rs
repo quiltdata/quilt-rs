@@ -110,6 +110,7 @@ const FILES_VIEW: &str = "Recent files";
 /// signal holding `Bucket` would render the feed's select blank the moment the
 /// reader switched to it, since `Bucket` is not one of its options.
 const GROUP_BUCKET: &str = "Bucket";
+const GROUP_CATALOG: &str = "Catalog";
 const GROUP_PREFIX: &str = "Prefix";
 const GROUP_NONE: &str = "None";
 const GROUP_PACKAGE: &str = "Package";
@@ -2733,6 +2734,64 @@ mod tests {
         toggle_option(&el, FILES_VIEW).click();
         sleep_ms(50).await;
         assert_eq!(group_select(&el).value(), GROUP_NONE);
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_catalog_group_survives_a_remount() {
+        crate::test_support::unmount_earlier();
+        forget_toolbar();
+        let el = remount_regions();
+        sleep_ms(50).await;
+        select_option(&group_select(&el), GROUP_CATALOG);
+        sleep_ms(20).await;
+
+        let el = remount_regions();
+        sleep_ms(50).await;
+
+        assert_eq!(group_select(&el).value(), GROUP_CATALOG);
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_catalog_group_heads_no_catalog_then_local_only_then_each_host() {
+        let package = |name: &str, bucket: Option<&str>, host: Option<&str>| MainPagePackageData {
+            namespace: ns(name),
+            state: PackageState::Latest,
+            changed_at: None,
+            bucket: bucket.map(str::to_string),
+            host: host.map(str::to_string),
+            provisional: false,
+            role_switch_host: None,
+        };
+        let payload = MainPagePackagesData {
+            packages: vec![
+                package("user/local", None, None),
+                package("user/bare", Some("bare-bucket"), None),
+                package("user/z", Some("b"), Some("zebra.quilt.test")),
+                package("user/a", Some("b"), Some("apple.quilt.test")),
+            ],
+        };
+        let el = mount_regions(Ok(payload), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        select_option(&group_select(&el), GROUP_CATALOG);
+        sleep_ms(20).await;
+
+        // `h3` is `GroupHeading`'s; a row's tooltip has a title span too.
+        let spans = el.query_selector_all("h3 > span[class*=title]").unwrap();
+        let titles: Vec<String> = (0..spans.length())
+            .filter_map(|i| spans.item(i)?.text_content())
+            .collect();
+        assert_eq!(
+            titles,
+            vec![
+                "No catalog",
+                "Local only",
+                "apple.quilt.test",
+                "zebra.quilt.test"
+            ]
+        );
         forget_toolbar();
     }
 

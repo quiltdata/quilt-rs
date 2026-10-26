@@ -23,6 +23,7 @@
 
 ### Added
 
+- The main page can group packages by catalog: *Group: Catalog* lists the packages with no catalog first, then the local-only ones, then each catalog (<https://github.com/quiltdata/quilt-rs/pull/1214>)
 - A published package's catalog can be added, changed or removed, keeping its revisions, on the package page and on the classic one
   - <https://github.com/quiltdata/quilt-rs/pull/1211>
   - <https://github.com/quiltdata/quilt-rs/pull/1213>
