@@ -96,10 +96,11 @@ pub async fn run(
             };
         }
     };
+    let pid = child.id();
     // Declared after `child`, so dropped first: the leader is still unreaped,
     // and its PID still names the group.
-    let _group = child.id().map(Group);
-    if let Some(pid) = child.id() {
+    let _group = pid.map(agent_process::Group);
+    if let Some(pid) = pid {
         started(pid).await;
     }
     let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
@@ -113,15 +114,6 @@ pub async fn run(
         turn: agent.turn_timeout(),
     };
     converse(transport, cwd, agent.trust_all, limits, recheck).await
-}
-
-/// The agent's process group, killed however the run ends.
-struct Group(u32);
-
-impl Drop for Group {
-    fn drop(&mut self) {
-        agent_process::kill_group(self.0);
-    }
 }
 
 async fn converse(

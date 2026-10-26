@@ -116,6 +116,26 @@ fn expect_push_and_reset(
         });
 }
 
+/// Record each download in `events`, refusing, as the engine does, to write
+/// over anything already in `home`.
+fn expect_downloads(model: &mut MockQuiltModel, events: &Arc<Mutex<Vec<String>>>, home: PathBuf) {
+    let events = Arc::clone(events);
+    model
+        .expect_locked_package_install_paths()
+        .returning(move |_, paths| {
+            for path in paths {
+                events
+                    .lock()
+                    .unwrap()
+                    .push(format!("download {}", path.display()));
+                if std::fs::symlink_metadata(home.join(path)).is_ok() {
+                    return Err(Error::General(format!("{} exists", path.display())));
+                }
+            }
+            Ok(quilt::flow::InstallPathsReport::default())
+        });
+}
+
 /// The remote's `latest` carries `meta` and lists `paths`.
 fn expect_latest(model: &mut MockQuiltModel, meta: Value, paths: &'static [&'static str]) {
     model
@@ -284,23 +304,7 @@ impl Fixture {
             events.lock().unwrap().push("walk".to_string());
             Ok(status.clone())
         });
-        let events = Arc::clone(&self.events);
-        let home = self.home();
-        model
-            .expect_locked_package_install_paths()
-            .returning(move |_, paths| {
-                for path in paths {
-                    events
-                        .lock()
-                        .unwrap()
-                        .push(format!("download {}", path.display()));
-                    // As the engine does, refuse to write over anything there.
-                    if std::fs::symlink_metadata(home.join(path)).is_ok() {
-                        return Err(Error::General(format!("{} exists", path.display())));
-                    }
-                }
-                Ok(quilt::flow::InstallPathsReport::default())
-            });
+        expect_downloads(&mut model, &self.events, self.home());
         let home = self.home();
         model
             .expect_package_home()
@@ -896,22 +900,7 @@ fn rereading_model(
     model
         .expect_package_home()
         .returning(move |_| Ok(home.clone()));
-    let downloaded = Arc::clone(events);
-    let home = fixture.home();
-    model
-        .expect_locked_package_install_paths()
-        .returning(move |_, paths| {
-            for path in paths {
-                downloaded
-                    .lock()
-                    .unwrap()
-                    .push(format!("download {}", path.display()));
-                if std::fs::symlink_metadata(home.join(path)).is_ok() {
-                    return Err(Error::General(format!("{} exists", path.display())));
-                }
-            }
-            Ok(quilt::flow::InstallPathsReport::default())
-        });
+    expect_downloads(&mut model, events, fixture.home());
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
             quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns.clone()),

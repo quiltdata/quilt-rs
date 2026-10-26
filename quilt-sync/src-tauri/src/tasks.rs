@@ -532,9 +532,8 @@ async fn publish_outcome<M: QuiltModel>(
     Ok(())
 }
 
-/// Put every path of the revision `rows` list in the package's folder, so the
-/// agent finds the task's inputs: a sparse copy lists a path without fetching
-/// it. A regular file already there stays: the walk compares it with the
+/// Put a revision's `rows` in the package's folder, which a sparse copy may
+/// lack. A regular file already there stays: the walk compares it with the
 /// revision. A symlink on the document's path stops the run: the walk skips
 /// links, and a linked folder leads outside the package.
 async fn check_out<M: QuiltModel>(
@@ -565,8 +564,11 @@ async fn check_out<M: QuiltModel>(
     let mut missing = Vec::new();
     for row in rows {
         let path = &row.logical_key;
+        if lineage.paths.contains_key(path) {
+            continue;
+        }
         let on_disk = tokio::fs::symlink_metadata(home.join(path)).await;
-        if !lineage.paths.contains_key(path) && !on_disk.is_ok_and(|meta| meta.is_file()) {
+        if !on_disk.is_ok_and(|meta| meta.is_file()) {
             missing.push(path.clone());
         }
     }
@@ -697,9 +699,9 @@ async fn recheck_claim<M: QuiltModel>(
     let rechecked = agent_exec::recheck(meta, |path| lists(&latest, path), &run.agent_id);
     if let Ok(document) = &rechecked {
         let pulled = model.get_installed_package_lineage(&installed).await?;
-        let checked_out =
-            check_out(model, &installed, &locked, &pulled, &latest.rows, document).await;
-        if let Err(err) = checked_out {
+        if let Err(err) =
+            check_out(model, &installed, &locked, &pulled, &latest.rows, document).await
+        {
             return Ok(Err(acp::RunOutcome::NotStarted {
                 reason: format!("could not check out the task: {err}"),
             }));

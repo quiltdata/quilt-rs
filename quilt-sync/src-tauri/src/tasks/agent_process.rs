@@ -47,9 +47,13 @@ impl Spawned {
     }
 }
 
-/// SIGKILL to the process group `leader` leads.
-pub fn kill_group(leader: u32) {
-    signal_group(leader, Signal::Kill);
+/// The process group its PID leads, sent SIGKILL when dropped.
+pub struct Group(pub u32);
+
+impl Drop for Group {
+    fn drop(&mut self) {
+        signal_group(self.0, Signal::Kill);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -80,7 +84,6 @@ fn group_running(leader: u32) -> bool {
         .any(|pid| started(pid).is_some())
 }
 
-/// The processes in the group `leader` leads, zombies included.
 #[cfg(target_os = "macos")]
 fn members(leader: u32) -> Vec<u32> {
     let Ok(group) = libc::pid_t::try_from(leader) else {
@@ -110,7 +113,8 @@ fn members(leader: u32) -> Vec<u32> {
         .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse().ok())
         .filter(|pid| {
             // The group is field 5.
-            stat_fields(*pid).and_then(|fields| fields.get(2)?.parse().ok()) == Some(leader)
+            stat_from_state(*pid).and_then(|stat| stat.split_whitespace().nth(2)?.parse().ok())
+                == Some(leader)
         })
         .collect()
 }
@@ -139,26 +143,26 @@ fn started(pid: u32) -> Option<u64> {
 /// a zombie with no thread left included.
 #[cfg(target_os = "linux")]
 fn started(pid: u32) -> Option<u64> {
-    let fields = stat_fields(pid)?;
+    let stat = stat_from_state(pid)?;
+    let mut fields = stat.split_whitespace();
     // A zombie leader may still have threads at work.
     let threads = || std::fs::read_dir(format!("/proc/{pid}/task")).map_or(0, Iterator::count);
     // The state is field 3, the start time field 22.
-    match fields.first()?.as_str() {
+    match fields.next()? {
         "X" => return None,
         "Z" if threads() <= 1 => return None,
         _ => {}
     }
-    fields.get(19)?.parse().ok()
+    fields.nth(18)?.parse().ok()
 }
 
 /// `/proc/<pid>/stat` from field 3 on, after the command name, which may
 /// itself hold spaces, parentheses and bytes that aren't UTF-8.
 #[cfg(target_os = "linux")]
-fn stat_fields(pid: u32) -> Option<Vec<String>> {
+fn stat_from_state(pid: u32) -> Option<String> {
     let stat = std::fs::read(format!("/proc/{pid}/stat")).ok()?;
     let after_name = stat.iter().rposition(|byte| *byte == b')')? + 1;
-    let fields = std::str::from_utf8(&stat[after_name..]).ok()?;
-    Some(fields.split_whitespace().map(str::to_string).collect())
+    String::from_utf8(stat[after_name..].to_vec()).ok()
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
