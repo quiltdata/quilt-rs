@@ -1605,8 +1605,9 @@ async fn test_state_short_circuits_and_resolves_the_status() -> Res {
     );
     assert_eq!(reads, 1, "the tip was read");
 
-    // No catalog host: nowhere to vend credentials from, so nothing is asked.
-    let (misconfigured, reads) = state_with(
+    // No catalog host: read on the machine's own AWS credentials, like any
+    // other remote.
+    let (catalog_less, reads) = state_with(
         Some("abcdef"),
         r#"{
             "bucket": "bkt",
@@ -1616,15 +1617,15 @@ async fn test_state_short_circuits_and_resolves_the_status() -> Res {
     )
     .await?;
     assert_eq!(
-        misconfigured,
+        catalog_less,
         PackageStateReport {
-            state: PackageState::Unknown,
-            upstream_state: UpstreamState::Error,
-            changed_files: None,
-            latest_refreshed: false,
+            state: PackageState::Latest,
+            upstream_state: UpstreamState::UpToDate,
+            changed_files: Some(0),
+            latest_refreshed: true,
         }
     );
-    assert_eq!(reads, 0, "a misconfigured remote is not asked");
+    assert_eq!(reads, 1, "a remote with no catalog is asked too");
 
     // No remote: resolved from lineage, the working tree not walked.
     let (local, _) = state_with(None, "null").await?;
