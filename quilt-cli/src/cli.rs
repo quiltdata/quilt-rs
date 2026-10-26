@@ -493,28 +493,28 @@ enum Commands {
         pkg: PackageRef,
     },
     /// Push
-    #[command(group(clap::ArgGroup::new("push_host").args(["host", "origin"])))]
     Push {
         #[command(flatten)]
         pkg: PackageRef,
         /// S3 bucket (required for first push of local-only packages)
-        #[arg(short, long, requires = "push_host")]
+        #[arg(short, long)]
         bucket: Option<String>,
-        /// Quilt stack to push to (required for first push of local-only packages).
+        /// Quilt stack of the bucket, for a first push (requires --bucket).
+        /// Omit to push on this computer's AWS credentials, with no catalog.
         /// Ex. open.quiltdata.com
         #[arg(long, requires = "bucket")]
         host: Option<Host>,
         /// Deprecated: use --host
         #[arg(short, long, requires = "bucket", conflicts_with = "host")]
         origin: Option<Host>,
-        /// Workflow ID for the first push (requires --bucket/--host).
+        /// Workflow ID for the first push (requires --bucket).
         /// Ex. `"my_workflow"`
         /// Omit to use the bucket's default workflow.
         /// Meaningful only on a first push: a subsequent push uploads an
         /// already-created commit whose workflow was chosen at commit time.
         #[arg(short, long)]
         workflow: Option<String>,
-        /// First push with no workflow (explicit opt-out; requires --bucket/--host)
+        /// First push with no workflow (explicit opt-out; requires --bucket)
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
     },
@@ -868,7 +868,7 @@ Then run:
     WorkflowEmpty,
 
     #[error(
-        "--workflow/--no-workflow apply only to a first push; pass --bucket and --host to set the remote, or omit them (the workflow was chosen at commit time)"
+        "--workflow/--no-workflow apply only to a first push; pass --bucket to set the remote, or omit them (the workflow was chosen at commit time)"
     )]
     WorkflowRequiresBucket,
 
@@ -1151,6 +1151,33 @@ mod tests {
         Ok(())
     }
 
+    /// A first push may name a bucket without a catalog, and the push then
+    /// sets the remote with no host.
+    #[test]
+    fn push_bucket_without_host_is_parsed() -> Result<(), Error> {
+        let args = Args::try_parse_from([
+            "quilt",
+            "push",
+            "--namespace",
+            "foo/bar",
+            "--bucket",
+            "some-bucket",
+        ])
+        .unwrap();
+        let Commands::Push {
+            bucket,
+            host,
+            origin,
+            ..
+        } = args.command
+        else {
+            panic!("expected the push command");
+        };
+        assert_eq!(bucket.as_deref(), Some("some-bucket"));
+        assert!(push_host(host, origin, &mut Vec::new())?.is_none());
+        Ok(())
+    }
+
     /// The deprecated `--origin` and `-o` still name the stack, with a warning.
     #[test]
     fn push_origin_flag_still_works_and_warns() -> Result<(), Error> {
@@ -1199,12 +1226,10 @@ mod tests {
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
-    /// A bucket needs a stack and a stack needs a bucket, whichever spelling
-    /// names the stack.
+    /// A stack needs a bucket, whichever spelling names the stack.
     #[test]
-    fn push_bucket_and_host_require_each_other() {
+    fn push_host_requires_bucket() {
         for argv in [
-            &["quilt", "push", "--bucket", "some-bucket"][..],
             &["quilt", "push", "--host", "quilt.test"][..],
             &["quilt", "push", "--origin", "quilt.test"][..],
         ] {

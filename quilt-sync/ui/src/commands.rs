@@ -1881,12 +1881,14 @@ pub async fn set_remote(
 /// set-remote popup can present the same tri-state control the commit dialog
 /// uses. Mirrors the backend `get_bucket_workflows` command; a fetch failure
 /// maps to [`CommitWorkflows::Unavailable`] rather than an error.
+/// A blank `host` is a bucket with no catalog.
 pub async fn get_bucket_workflows(host: String, bucket: String) -> Result<CommitWorkflows, String> {
     #[derive(Serialize)]
     struct Args {
-        host: String,
+        host: Option<String>,
         bucket: String,
     }
+    let host = Some(host).filter(|host| !host.trim().is_empty());
     tauri::invoke("get_bucket_workflows", &Args { host, bucket }).await
 }
 

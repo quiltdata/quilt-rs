@@ -253,4 +253,6 @@ quilt list
 Add `--source <dir>` to `create` to populate the package from an existing
 directory instead of starting empty. The package stays local-only — usable
 with `status`, `commit`, and `uninstall` — until you `push` a revision to a
-remote (the first push requires `--bucket` and `--host`).
+remote (the first push requires `--bucket`, and `--host` when the bucket has
+a Quilt stack; without one, the push uses the AWS credentials on this
+computer).

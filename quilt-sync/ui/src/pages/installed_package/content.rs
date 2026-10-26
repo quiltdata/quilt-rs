@@ -227,10 +227,9 @@ pub(super) fn InstalledPackageContent(
     });
     let pull_check = Signal::derive(move || pull_outcome_res.get().unwrap_or(PullCheck::Loading));
     let show_commit = status != "error";
-    let has_origin = origin_host.is_some();
     // Mirror the Publish gating from the Installed Packages List: Commit and
-    // Push is offered only when there's a remote and something to ship.
-    let is_publishable = has_origin
+    // Push is offered only when there's a bucket and something to ship.
+    let is_publishable = util::has_bucket(uri.as_ref())
         && (status == "ahead" || (status == "up_to_date" && has_changes) || status == "local");
     // A role denial disables the action bar's *action* — Commit and Push —
     // and gives it a tooltip. Disabled, not hidden: the user opened this page

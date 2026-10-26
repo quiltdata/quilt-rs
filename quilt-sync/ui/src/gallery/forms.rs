@@ -187,7 +187,8 @@ pub fn BucketForm(
             caption=if locked {
                 "Where this package is published."
             } else {
-                "Where this package is published. From your accounts."
+                "Optional: the bucket's catalog, from your accounts. Without one, this \
+                 computer's AWS credentials are used."
             }
             control=move |id| {
                 view! {

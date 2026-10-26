@@ -16,6 +16,7 @@ use crate::components::{
 use crate::tauri as tauri_bridge;
 use crate::util;
 use crate::util::make_action;
+use quilt_uri::S3PackageUri;
 
 /// Latest `package-status-changed` event received from the backend.
 ///
@@ -149,13 +150,18 @@ fn pull_popover(check: &PullCheck) -> Option<String> {
 /// The state flag (`has_changes`) and the affordance gate (`no_access`) are
 /// kept as separate terms for exactly this reason — deriving one from the
 /// other collapses a case where they must disagree.
-fn publish_affordance(status: &str, has_changes: bool, has_origin: bool, no_access: bool) -> bool {
+fn publish_affordance(status: &str, has_changes: bool, has_bucket: bool, no_access: bool) -> bool {
     if no_access {
         return false;
     }
-    let publishable_status = status == "ahead" || (status == "local" && has_origin);
-    let up_to_date_with_changes = status == "up_to_date" && has_changes && has_origin;
+    let publishable_status = status == "ahead" || (status == "local" && has_bucket);
+    let up_to_date_with_changes = status == "up_to_date" && has_changes && has_bucket;
     publishable_status || up_to_date_with_changes
+}
+
+/// Whether the row offers *Set remote*: only while the package has no bucket.
+fn offers_set_remote(uri: Option<&S3PackageUri>) -> bool {
+    !util::has_bucket(uri)
 }
 
 // ── Installed Packages List page ──
@@ -639,7 +645,8 @@ fn build_package_menu(
     let current_host = origin_host.clone();
     let current_bucket = data.uri.as_ref().and_then(util::bucket_str);
     let has_origin = origin_url.is_some();
-    let remote_configured = current_host.is_some() && current_bucket.is_some();
+    let has_bucket = util::has_bucket(data.uri.as_ref());
+    let set_remote = offers_set_remote(data.uri.as_ref());
 
     // ── Open in file browser ──
     let ns_for_open = namespace.clone();
@@ -750,10 +757,10 @@ fn build_package_menu(
         <li class="menu-item menu-divider"></li>
 
         // Publish: commit (if needed) + push in one click.
-        // Gated on having a remote origin, and on there being something to ship
+        // Gated on having a bucket, and on there being something to ship
         // (either uncommitted changes or a pending commit).
         <Show when=move || {
-            publish_affordance(&status.get(), has_changes.get(), has_origin, access.no_access.get())
+            publish_affordance(&status.get(), has_changes.get(), has_bucket, access.no_access.get())
         }>
             <li class="menu-item">
                 <buttons::Publish
@@ -803,8 +810,8 @@ fn build_package_menu(
         </Show>
 
         // Error actions
-        // Host or bucket missing → Set Remote (warning palette, always visible)
-        {(!remote_configured).then(|| view! {
+        // Bucket missing → Set Remote (warning palette, always visible)
+        {set_remote.then(|| view! {
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
                 <buttons::SetRemote
@@ -968,8 +975,8 @@ mod tests {
     use leptos::prelude::*;
 
     use super::{
-        AccessSignals, PAUSED_GUIDANCE, PullCheck, PullOutcome, hint_lines, paused_toast,
-        publish_affordance, pull_conflict_hint, pull_popover,
+        AccessSignals, PAUSED_GUIDANCE, PullCheck, PullOutcome, hint_lines, offers_set_remote,
+        paused_toast, publish_affordance, pull_conflict_hint, pull_popover,
     };
 
     /// A row seeded by the pre-filter as denied.
@@ -1040,6 +1047,43 @@ mod tests {
             publish_affordance("up_to_date", true, true, false),
             "a readable row with the same local changes must still offer it"
         );
+    }
+
+    /// A remote just set with a bucket and no catalog is `local` until its
+    /// first push, and the row offers Publish for it.
+    #[test]
+    fn a_local_row_with_a_bucket_and_no_catalog_offers_publish() {
+        let uri: quilt_uri::S3PackageUri = "quilt+s3://data-bucket#package=team/survey"
+            .parse()
+            .unwrap();
+        assert!(publish_affordance(
+            "local",
+            false,
+            crate::util::has_bucket(Some(&uri)),
+            false
+        ));
+        assert!(!publish_affordance(
+            "local",
+            false,
+            crate::util::has_bucket(None),
+            false
+        ));
+    }
+
+    /// *Set remote* is for a package with no bucket. A bucket with no catalog
+    /// is a configured remote, and once published its bucket is fixed.
+    #[test]
+    fn set_remote_is_offered_only_without_a_bucket() {
+        let catalog_less: quilt_uri::S3PackageUri = "quilt+s3://data-bucket#package=team/survey"
+            .parse()
+            .unwrap();
+        let with_catalog: quilt_uri::S3PackageUri =
+            "quilt+s3://data-bucket#package=team/survey&catalog=quilt.test"
+                .parse()
+                .unwrap();
+        assert!(offers_set_remote(None));
+        assert!(!offers_set_remote(Some(&catalog_less)));
+        assert!(!offers_set_remote(Some(&with_catalog)));
     }
 
     #[test]

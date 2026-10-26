@@ -509,12 +509,12 @@ pub trait QuiltModel {
     async fn set_remote(
         &self,
         package: &quilt::InstalledPackage,
-        origin: quilt_uri::Host,
+        origin: Option<quilt_uri::Host>,
         bucket: String,
         workflow: WorkflowIntent,
     ) -> Result<Option<String>, Error> {
         Ok(package
-            .set_remote(bucket, Some(origin), workflow)
+            .set_remote(bucket, origin, workflow)
             .await?
             .resolution_warning)
     }
