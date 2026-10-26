@@ -34,7 +34,7 @@
 
 ### Fixed
 
-- `InstalledPackage::set_remote` with no host keeps a pending commit's workflow (<https://github.com/quiltdata/quilt-rs/pull/1209>)
+- `InstalledPackage::set_remote` with no host stamps the chosen or the bucket's default workflow on a pending commit instead of dropping it (<https://github.com/quiltdata/quilt-rs/pull/1209>)
 - After the AWS credentials on this computer were missing or refused, the next call reads `~/.aws` again
   - <https://github.com/quiltdata/quilt-rs/pull/1193>
   - <https://github.com/quiltdata/quilt-rs/pull/1202>
