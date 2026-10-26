@@ -974,13 +974,14 @@ pub(crate) async fn sync_package(
                 .aggregator
                 .note_status(&namespace, outcome.has_changes);
         }
-        Err(WatchError::LoginRequired(_) | WatchError::Conflict(_))
-            if catalog_changed(model, pkg, origin).await =>
-        {
-            // The refusal was the old catalog's, and changing the catalog
-            // cleared what it had recorded. The next pass asks the new one.
-        }
         Err(WatchError::LoginRequired(host)) => {
+            // A refusal the old catalog gave is not this package's any more;
+            // the next pass asks the new one. See `WatcherInner::refusals`.
+            let _gate = inner.refusals.lock().await;
+            if catalog_changed(model, pkg, origin).await {
+                inner.reporter.report_autosync_changed();
+                return Pass::Done;
+            }
             // Backoff until the user re-auths; the Ok arm clears it. With no
             // host the failing call ran on this computer's AWS credentials.
             let error = host.as_ref().map_or_else(
@@ -1008,10 +1009,12 @@ pub(crate) async fn sync_package(
             // to be paused, so a denied host costs at most one `/me`
             // per role switch — not one per tick.
             let reason = name_denied_role(model, roles, origin, reason).await;
-            // Asked again: the catalog can change while the role is named.
-            if !catalog_changed(model, pkg, origin).await {
-                pause(inner, &namespace, origin, reason).await;
+            let _gate = inner.refusals.lock().await;
+            if catalog_changed(model, pkg, origin).await {
+                inner.reporter.report_autosync_changed();
+                return Pass::Done;
             }
+            pause(inner, &namespace, origin, reason).await;
         }
         Err(WatchError::Transient(err)) => {
             bump_backoff(

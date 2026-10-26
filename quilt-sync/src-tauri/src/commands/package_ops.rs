@@ -870,8 +870,8 @@ pub async fn change_catalog(
     Notify::new(format!("Changing the catalog of {namespace}"));
     match change_catalog_command(&*m, &namespace, &origin).await {
         Ok(ns) => {
-            // A sign-in the old catalog asked for is not the new one's.
-            watcher.clear_paused(&ns).await;
+            // What the old catalog refused is not the new one's.
+            watcher.forget_catalog(&ns).await;
             let message = format!("Changed the catalog of {namespace}");
             ::tracing::debug!("{message}");
             Ok(message)
