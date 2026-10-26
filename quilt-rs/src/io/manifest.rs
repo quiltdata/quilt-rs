@@ -39,7 +39,7 @@ use quilt_uri::Tag;
 use quilt_uri::TagUri;
 use quilt_uri::UriError;
 
-async fn bytestream_to_string(bytestream: ByteStream) -> Res<String> {
+pub(crate) async fn bytestream_to_string(bytestream: ByteStream) -> Res<String> {
     let mut reader = bytestream.into_async_read();
     let mut contents = Vec::new();
     reader.read_to_end(&mut contents).await?;
@@ -90,11 +90,11 @@ pub async fn upload_manifest(
 /// `ManifestRow` has a time field), so `.quilt/named_packages/<ns>/<epoch>` is
 /// the registry's revision history.
 ///
-/// It is **write-only from this client**: reading those times back means
-/// enumerating the tag objects, and [`Remote`] has no list operation. So
-/// nothing here can answer "when was revision X published" or "what revisions
-/// exist". The value written is the *local* `CommitState::timestamp` — when
-/// the commit was made on the pushing machine, not when the upload completed.
+/// This client reads back which revisions have one
+/// ([`Remote::published_revisions`]), never the times. So nothing here can
+/// answer "when was revision X published". The value written is the *local*
+/// `CommitState::timestamp` — when the commit was made on the pushing machine,
+/// not when the upload completed.
 pub async fn tag_timestamp(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,

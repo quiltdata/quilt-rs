@@ -186,7 +186,7 @@ impl Remote for BadBucketRemote {
     }
     async fn published_revisions(
         &self,
-        _host: &Host,
+        _host: Option<&Host>,
         _bucket: &str,
         _namespace: &Namespace,
     ) -> Res<Vec<String>> {

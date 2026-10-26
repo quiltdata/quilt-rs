@@ -47,9 +47,22 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
+use crate::io::manifest::bytestream_to_string;
 use crate::io::remote::RemoteObjectStream;
+use quilt_uri::Tag;
+use quilt_uri::paths::tag_key;
 
 mod response_timeout;
+
+/// How many pointers [`RemoteS3::bucket_revisions`] reads at once.
+const POINTER_READS: usize = 16;
+
+/// A key under `prefix` names a revision when it is a timestamp: not
+/// `latest`, which only names one of them, as the registry lists them.
+fn is_revision_pointer(key: &str, prefix: &str) -> bool {
+    key.strip_prefix(prefix)
+        .is_some_and(|name| matches!(name.parse(), Ok(Tag::Timestamp(_))))
+}
 
 /// S3's HEAD-bucket endpoint returns `x-amz-bucket-region` for any bucket
 /// that exists and is addressable, regardless of permissions. A missing
@@ -602,6 +615,64 @@ impl RemoteS3 {
         // by this RemoteS3 instance.
     }
 
+    /// [`Remote::published_revisions`] with no catalog: the timestamped
+    /// pointers under `.quilt/named_packages/<namespace>/`, listed page by
+    /// page on this computer's AWS credentials, then each one read. A pointer
+    /// gone before it is read is no longer a revision.
+    async fn bucket_revisions(&self, bucket: &str, namespace: &Namespace) -> Res<Vec<String>> {
+        let client = self.get_client_for_bucket(None, bucket).await?;
+        let prefix = tag_key(namespace, "");
+        let mut pages = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(&prefix)
+            .delimiter("/")
+            .into_paginator()
+            .send();
+        let mut pointers = Vec::new();
+        while let Some(page) = pages.next().await {
+            let page =
+                page.map_err(|err| s3_error_or_session_loss(err, None, S3ErrorKind::ListObjects))?;
+            pointers.extend(
+                page.contents()
+                    .iter()
+                    .filter_map(|object| object.key())
+                    .filter(|key| is_revision_pointer(key, &prefix))
+                    .map(|key| S3Uri {
+                        bucket: bucket.to_string(),
+                        key: key.to_string(),
+                        version: None,
+                    }),
+            );
+        }
+
+        let reads = Arc::new(tokio::sync::Semaphore::new(POINTER_READS));
+        let mut tasks = tokio::task::JoinSet::new();
+        for pointer in pointers {
+            let client = client.clone();
+            let reads = Arc::clone(&reads);
+            tasks.spawn(async move {
+                let _permit = reads.acquire_owned().await;
+                match get_object_stream(&client, &pointer, None).await {
+                    Ok(stream) => bytestream_to_string(stream.body).await.map(Some),
+                    Err(e) if e.is_not_found() => Ok(None),
+                    Err(e) => Err(e),
+                }
+            });
+        }
+        let mut hashes = Vec::new();
+        while let Some(read) = tasks.join_next().await {
+            let read = read.map_err(|e| {
+                Error::S3(S3Error {
+                    host: None,
+                    kind: S3ErrorKind::GetObject(e.to_string()),
+                })
+            })?;
+            hashes.extend(read?);
+        }
+        Ok(hashes)
+    }
+
     async fn get_client_for_bucket(
         &self,
         host: Option<&Host>,
@@ -792,13 +863,21 @@ impl Remote for RemoteS3 {
 
     async fn published_revisions(
         &self,
-        host: &Host,
+        host: Option<&Host>,
         bucket: &str,
         namespace: &Namespace,
     ) -> Res<Vec<String>> {
-        self.auth
-            .package_revisions(&self.http, host, bucket, namespace)
-            .await
+        match host {
+            Some(host) => {
+                self.auth
+                    .package_revisions(&self.http, host, bucket, namespace)
+                    .await
+            }
+            None => self
+                .bucket_revisions(bucket, namespace)
+                .await
+                .map_err(|e| self.forget_ambient_clients_on(e)),
+        }
     }
 
     fn clear_client_cache(&self, host: Option<&Host>) {
@@ -866,6 +945,46 @@ mod tests {
         assert_eq!(object_hash.to_string(), LESS_THAN_8MB_HASH_B64);
 
         Ok(())
+    }
+
+    /// With no catalog, the fixture package's revisions come from its
+    /// pointers in the bucket: the old revision and the latest one.
+    #[test(tokio::test)]
+    async fn live_bucket_revisions() -> Res<()> {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+
+        let hashes = remote
+            .published_revisions(None, "data-yaml-spec-tests", &("scale", "10u").into())
+            .await?;
+
+        for hash in [
+            "f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef",
+            "ae239090f2a01de382e8af719fe4a451ef1d1fa4a3ef7b21c6b36513d42c6630",
+        ] {
+            assert!(hashes.iter().any(|h| h == hash), "{hash} in {hashes:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn only_timestamp_pointers_are_revisions() {
+        let prefix = ".quilt/named_packages/team/data/";
+        assert!(is_revision_pointer(
+            ".quilt/named_packages/team/data/1758500000",
+            prefix
+        ));
+        assert!(!is_revision_pointer(
+            ".quilt/named_packages/team/data/latest",
+            prefix
+        ));
+        assert!(!is_revision_pointer(
+            ".quilt/named_packages/team/data/notes.txt",
+            prefix
+        ));
+        assert!(!is_revision_pointer(
+            ".quilt/named_packages/team/other/1758500000",
+            prefix
+        ));
     }
 
     #[test(tokio::test)]
@@ -1663,7 +1782,7 @@ mod tests {
         let _: RoleInfo = remote.switch_role(host, "ReadOnly").await?;
         let _: Vec<String> = remote.readable_buckets(host).await?;
         let _: Vec<String> = remote
-            .published_revisions(host, "bucket", &("team", "dataset").into())
+            .published_revisions(Some(host), "bucket", &("team", "dataset").into())
             .await?;
         Ok(())
     }

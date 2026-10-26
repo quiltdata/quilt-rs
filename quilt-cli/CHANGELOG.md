@@ -27,6 +27,7 @@
 - `quilt list --fetch` shows the status of a package whose remote has no catalog, read on the AWS credentials on this computer. When those are missing or refused, the row says so and suggests updating `~/.aws` or running `aws sso login`, and `--json` adds `"credentials_unusable": true`
   - <https://github.com/quiltdata/quilt-rs/pull/1193>
   - <https://github.com/quiltdata/quilt-rs/pull/1210>
+- `quilt log` and `quilt remove-revisions` know which revisions of a package with no catalog are published, from its bucket, so old published revisions can be removed (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
 
 ### quilt-rs
 

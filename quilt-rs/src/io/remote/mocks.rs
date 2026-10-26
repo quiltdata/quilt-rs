@@ -201,13 +201,13 @@ impl Remote for MockRemote {
         Ok(())
     }
 
-    /// What the registry would list: the hash in each timestamped pointer
+    /// What the registry, or the bucket, would list: the hash in each timestamped pointer
     /// `put_object` stored under `.quilt/named_packages/<namespace>/`, so a
     /// test seeds publication the way a push makes it. `latest` is a moving
     /// alias, not a revision.
     async fn published_revisions(
         &self,
-        _host: &Host,
+        _host: Option<&Host>,
         bucket: &str,
         namespace: &Namespace,
     ) -> Res<Vec<String>> {

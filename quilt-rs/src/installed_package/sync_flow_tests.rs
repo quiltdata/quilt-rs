@@ -482,7 +482,7 @@ impl crate::io::remote::Remote for RejectedCredentialRemote {
     }
     fn published_revisions(
         &self,
-        _host: &Host,
+        _host: Option<&Host>,
         _bucket: &str,
         _namespace: &Namespace,
     ) -> impl Future<Output = Res<Vec<String>>> {
@@ -545,7 +545,7 @@ impl crate::io::remote::Remote for LoggedOutRemote {
     }
     fn published_revisions(
         &self,
-        _host: &Host,
+        _host: Option<&Host>,
         _bucket: &str,
         _namespace: &Namespace,
     ) -> impl Future<Output = Res<Vec<String>>> {
@@ -604,7 +604,7 @@ impl crate::io::remote::Remote for DeniedRemote {
     }
     fn published_revisions(
         &self,
-        _host: &Host,
+        _host: Option<&Host>,
         bucket: &str,
         namespace: &Namespace,
     ) -> impl Future<Output = Res<Vec<String>>> {

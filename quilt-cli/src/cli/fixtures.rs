@@ -339,6 +339,19 @@ pub mod old_revisions {
         Ok((package, dirs))
     }
 
+    /// The same, its remote with no catalog: the bucket lists the revisions.
+    pub async fn package_without_a_catalog() -> Result<(Package, [TempDir; 2]), Error> {
+        let (package, dirs) = package().await?;
+        let path = package.paths.lineage();
+        let mut lineage: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        lineage["packages"]["test/history"]["remote"]
+            .as_object_mut()
+            .expect("a remote")
+            .remove("origin");
+        std::fs::write(&path, lineage.to_string())?;
+        Ok((package, dirs))
+    }
+
     /// The hashes `package` holds, sorted.
     pub async fn held(package: &Package) -> Result<Vec<String>, Error> {
         let mut held: Vec<String> = package
