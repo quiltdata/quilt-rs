@@ -1877,6 +1877,17 @@ pub async fn set_remote(
     .await
 }
 
+/// Add, change or remove the catalog of a package's remote; a blank `origin`
+/// removes it. The bucket stays, so this works once the package is published.
+pub async fn change_catalog(namespace: String, origin: String) -> Result<String, String> {
+    #[derive(Serialize)]
+    struct Args {
+        namespace: String,
+        origin: String,
+    }
+    tauri::invoke("change_catalog", &Args { namespace, origin }).await
+}
+
 /// Fetch a bucket's declared workflows before its remote is set, so the
 /// set-remote popup can present the same tri-state control the commit dialog
 /// uses. Mirrors the backend `get_bucket_workflows` command; a fetch failure

@@ -340,6 +340,19 @@ pub async fn set_remote(
         .await
 }
 
+/// Add, change or remove the catalog of the package's remote.
+pub async fn change_catalog(
+    model: &impl QuiltModel,
+    namespace: &quilt_uri::Namespace,
+    origin: Option<quilt_uri::Host>,
+) -> Result<quilt_uri::ManifestUri, Error> {
+    let installed_package = model
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
+    model.change_catalog(&installed_package, origin).await
+}
+
 pub async fn package_create(
     model: &impl QuiltModel,
     namespace: quilt_uri::Namespace,

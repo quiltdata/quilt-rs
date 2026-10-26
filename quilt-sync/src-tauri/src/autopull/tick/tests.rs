@@ -58,6 +58,7 @@ fn make_inner(settings: AutosyncSettings) -> WatcherInner {
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: Arc::new(LogReporter),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
@@ -479,6 +480,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
@@ -582,6 +584,7 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
@@ -667,6 +670,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         // Branch-only field (plan 3's `next_pull_at`), so `main`'s own test could
@@ -778,6 +782,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
@@ -891,6 +896,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
@@ -990,6 +996,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
@@ -1146,6 +1153,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
@@ -1221,6 +1229,7 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
@@ -1383,6 +1392,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
@@ -2557,5 +2567,160 @@ async fn unusable_credentials_without_a_catalog_name_the_aws_files() -> Result<(
         Some("AWS credentials on this computer aren't usable")
     );
     assert_eq!(*reporter.logins.lock().unwrap(), vec![None]);
+    Ok(())
+}
+
+/// A package whose lineage reads `before` until the pass's first remote answer,
+/// and `after` from then on: its catalog changed while the pass ran.
+fn catalog_changed_mid_pass(
+    before: Option<quilt_uri::Host>,
+    after: Option<quilt_uri::Host>,
+) -> (
+    MockQuiltModel,
+    Arc<std::sync::Mutex<quilt::lineage::PackageLineage>>,
+) {
+    let current = Arc::new(std::sync::Mutex::new(behind_lineage_on(before)));
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    let read = current.clone();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(read.lock().unwrap().clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    let mut tree = BTreeMap::new();
+    tree.insert(
+        std::path::PathBuf::from("conflict.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let moved = current.clone();
+    model.expect_locked_package_status().returning(move |_, _| {
+        *moved.lock().unwrap() = behind_lineage_on(after.clone());
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            tree.clone(),
+        ))
+    });
+    (model, current)
+}
+
+/// A refusal the old catalog gave is not recorded once the catalog has
+/// changed: the next pass asks the new one.
+#[tokio::test]
+async fn a_conflict_from_the_old_catalog_does_not_pause() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let (mut model, _) = catalog_changed_mid_pass(None, Some(fixtures::host()));
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| {
+            Ok(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            })
+        });
+    model.expect_locked_package_pull().times(0);
+    let inner = make_inner(enabled());
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert_eq!(inner.paused.read().await.get(&ns), None);
+    Ok(())
+}
+
+/// The same for a sign-in the old catalog asked for.
+#[tokio::test]
+async fn a_sign_in_the_old_catalog_asked_for_is_not_recorded() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let current = Arc::new(std::sync::Mutex::new(behind_lineage_on(Some(
+        fixtures::host(),
+    ))));
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    let read = current.clone();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(read.lock().unwrap().clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    let moved = current.clone();
+    model.expect_locked_package_status().returning(move |_, _| {
+        *moved.lock().unwrap() = behind_lineage_on(None);
+        Err(Error::from(quilt::Error::Login(
+            quilt::LoginError::NoSession(Some(fixtures::host())),
+        )))
+    });
+    let inner = make_inner(enabled());
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(inner.login_blocked.read().await.get(&ns).is_none());
+    assert!(inner.backoff.read().await.get(&ns).is_none());
+    Ok(())
+}
+
+/// The same for a transient failure: its retry delay was the old catalog's.
+#[tokio::test]
+async fn a_transient_failure_from_the_old_catalog_leaves_no_backoff() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let current = Arc::new(std::sync::Mutex::new(behind_lineage_on(Some(
+        fixtures::host(),
+    ))));
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    let read = current.clone();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(read.lock().unwrap().clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    let moved = current.clone();
+    model.expect_locked_package_status().returning(move |_, _| {
+        *moved.lock().unwrap() = behind_lineage_on(None);
+        Err(Error::from(quilt::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "connection refused",
+        ))))
+    });
+    let inner = make_inner(enabled());
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(inner.backoff.read().await.get(&ns).is_none());
     Ok(())
 }

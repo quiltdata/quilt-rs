@@ -20,6 +20,16 @@ pub struct SetRemotePopupData {
     pub has_local_commit: bool,
 }
 
+/// The popup's title. A published package keeps its bucket, so the popup
+/// only adds or changes its catalog.
+fn title(published: bool, has_host: bool) -> &'static str {
+    match (published, has_host) {
+        (false, _) => "Set remote",
+        (true, false) => "Add catalog",
+        (true, true) => "Change catalog",
+    }
+}
+
 /// Whether each typed field is wrong: `(host, bucket)`. The host is optional,
 /// and without it the bucket is reached on this computer's AWS credentials.
 fn field_errors(host: &str, bucket: &str) -> (bool, bool) {
@@ -39,12 +49,11 @@ pub fn SetRemotePopup(
     namespace: String,
     current_host: Option<String>,
     current_bucket: Option<String>,
-    /// When true, renders the popup as a read-only "Show remote" view:
-    /// disabled inputs, no Save button, secondary button becomes "Close".
-    /// Used for pushed packages where the remote is pinned to lineage
-    /// (see `InstalledPackage::set_remote` in quilt-rs).
+    /// The package is published, so its bucket is fixed: the bucket field is
+    /// locked, there is no workflow to choose, and Save changes only the
+    /// catalog (see `InstalledPackage::change_catalog` in quilt-rs).
     #[prop(optional)]
-    locked: bool,
+    published: bool,
     /// True when the package has a local commit. Setting a remote only
     /// re-commits (creating a new revision) when there is a commit to
     /// re-commit, so the "creates a new revision" notice shows only then.
@@ -72,6 +81,7 @@ pub fn SetRemotePopup(
         tasks: ArcRwSignal::new(Default::default()),
     });
 
+    let title = title(published, current_host.is_some());
     let origin = RwSignal::new(current_host.unwrap_or_default());
     let bucket = RwSignal::new(current_bucket.unwrap_or_default());
     let host_error = RwSignal::new(false);
@@ -86,7 +96,11 @@ pub fn SetRemotePopup(
     // only when the bucket is non-empty and the host, if any, is a valid
     // hostname, so the fetch reflects the currently-typed bucket and re-runs
     // when it changes.
+    // A published package's bucket is fixed, so it has no workflow to read.
     let valid_target = Memo::new(move |_| {
+        if published {
+            return None;
+        }
         let host = origin.get().trim().to_string();
         let bucket = bucket.get().trim().to_string();
         (field_errors(&host, &bucket) == (false, false)).then_some((host, bucket))
@@ -207,6 +221,22 @@ pub fn SetRemotePopup(
         submitting.set(true);
         let ns = ns.clone();
         let on_close = on_close_submit.clone();
+        if published {
+            leptos::task::spawn_local(async move {
+                match commands::change_catalog(ns, origin_val).await {
+                    Ok(message) => {
+                        notification.set(Some(Notification::Success(message)));
+                        on_close();
+                        refetch.notify();
+                    }
+                    Err(e) => {
+                        notification.set(Some(Notification::Error(e)));
+                        submitting.set(false);
+                    }
+                }
+            });
+            return;
+        }
         leptos::task::spawn_local(async move {
             match commands::set_remote(ns, origin_val, bucket_val, workflow).await {
                 Ok(resp) => {
@@ -240,13 +270,16 @@ pub fn SetRemotePopup(
     let on_close_cancel = on_close.clone();
     let on_cancel = move |_: leptos::ev::MouseEvent| on_close_cancel();
 
-    // Enter on host → focus bucket; Enter on bucket → submit
+    // Enter on host → focus bucket, or submit once published, when the bucket
+    // is locked; Enter on bucket → submit
+    let on_submit_host = on_submit.clone();
     let on_submit_bucket = on_submit.clone();
     let on_close_key_host = on_close.clone();
     let on_host_keydown = move |ev: leptos::ev::KeyboardEvent| {
         if ev.key() == "Enter" {
-            // Focus the bucket input
-            if let Some(doc) = web_sys::window().and_then(|w| w.document())
+            if published {
+                on_submit_host();
+            } else if let Some(doc) = web_sys::window().and_then(|w| w.document())
                 && let Some(el) = doc.get_element_by_id("set-remote-bucket")
                 && let Ok(input) = el.dyn_into::<web_sys::HtmlElement>()
             {
@@ -273,9 +306,7 @@ pub fn SetRemotePopup(
         }>
             <div class="popup-content" on:click=|ev| ev.stop_propagation()>
                 <div class="set-remote-form">
-                    <h2 class="section-title">
-                        {if locked { "Show remote" } else { "Set remote" }}
-                    </h2>
+                    <h2 class="section-title">{title}</h2>
                     <div class="set-remote-fields">
                         <div class="set-remote-field">
                             <label>"Host (optional)"</label>
@@ -285,7 +316,6 @@ pub fn SetRemotePopup(
                                     class:error=move || host_error.get()
                                     type="text"
                                     placeholder="open.quiltdata.com"
-                                    prop:disabled=locked
                                     prop:value=move || origin.get()
                                     on:input=move |ev| {
                                         origin.set(event_target_value(&ev));
@@ -311,7 +341,7 @@ pub fn SetRemotePopup(
                                     class:error=move || bucket_error.get()
                                     type="text"
                                     placeholder="my-s3-bucket"
-                                    prop:disabled=locked
+                                    prop:disabled=published
                                     prop:value=move || bucket.get()
                                     on:input=move |ev| {
                                         bucket.set(event_target_value(&ev));
@@ -330,11 +360,11 @@ pub fn SetRemotePopup(
                     </div>
 
                     // ── Workflow selector ──
-                    // Shown only in the editable (set-remote) mode: the bucket's
+                    // Shown only before the first push: the bucket's
                     // workflow config, fetched for the currently-typed bucket.
                     // A first push has no previous revision, so the bucket
                     // default is preselected.
-                    {(!locked).then(|| view! {
+                    {(!published).then(|| view! {
                         {move || {
                             if valid_target.get().is_none() {
                                 // No usable target yet: nothing to fetch or show.
@@ -370,24 +400,25 @@ pub fn SetRemotePopup(
                         }}
                     })}
 
-                    // Only an editable package that already has a local commit
-                    // re-commits on save (creating a new revision); the locked
-                    // "Show remote" view and a commit-less package create nothing.
-                    {(!locked && has_local_commit).then(|| view! {
+                    // Only an unpublished package that already has a local commit
+                    // re-commits on save (creating a new revision); a catalog
+                    // change and a commit-less package create nothing.
+                    {published.then(|| view! {
+                        <p class="set-remote-notice">
+                            "A published package keeps its bucket; only its catalog can change."
+                        </p>
+                    })}
+                    {(!published && has_local_commit).then(|| view! {
                         <p class="set-remote-notice">
                             "Setting a remote will create a new revision of the package."
                         </p>
                     })}
 
                     <div class="set-remote-actions">
-                        {(!locked).then(|| view! {
-                            <buttons::FormPrimary on_click=on_submit_click disabled=save_disabled>
-                                "Save"
-                            </buttons::FormPrimary>
-                        })}
-                        <buttons::FormSecondary on_click=on_cancel>
-                            {if locked { "Close" } else { "Cancel" }}
-                        </buttons::FormSecondary>
+                        <buttons::FormPrimary on_click=on_submit_click disabled=save_disabled>
+                            "Save"
+                        </buttons::FormPrimary>
+                        <buttons::FormSecondary on_click=on_cancel>"Cancel"</buttons::FormSecondary>
                     </div>
                 </div>
             </div>
@@ -397,7 +428,121 @@ pub fn SetRemotePopup(
 
 #[cfg(test)]
 mod tests {
-    use super::field_errors;
+    use super::*;
+    use crate::test_support::{element_saying, mount};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    /// A published package keeps its bucket, so the popup is about its
+    /// catalog.
+    #[test]
+    fn the_title_names_what_saving_changes() {
+        assert_eq!(title(false, false), "Set remote");
+        assert_eq!(title(false, true), "Set remote");
+        assert_eq!(title(true, false), "Add catalog");
+        assert_eq!(title(true, true), "Change catalog");
+    }
+
+    fn mount_popup(current_host: Option<&str>, published: bool) -> web_sys::Element {
+        let current_host = current_host.map(str::to_string);
+        mount(move || {
+            view! {
+                <SetRemotePopup
+                    namespace="team/survey".to_string()
+                    current_host=current_host
+                    current_bucket=Some("data-bucket".to_string())
+                    published=published
+                    has_local_commit=true
+                    notification=RwSignal::new(None)
+                    refetch=Trigger::new()
+                    on_close=|| ()
+                />
+            }
+        })
+    }
+
+    /// The host and bucket inputs, in that order.
+    fn inputs(el: &web_sys::Element) -> (web_sys::HtmlInputElement, web_sys::HtmlInputElement) {
+        let all = el.query_selector_all("input.set-remote-input").unwrap();
+        assert_eq!(all.length(), 2, "host and bucket");
+        let input = |i| {
+            all.item(i)
+                .unwrap()
+                .unchecked_into::<web_sys::HtmlInputElement>()
+        };
+        (input(0), input(1))
+    }
+
+    /// Once published, only the bucket is locked: the catalog can be added,
+    /// and Save stays.
+    #[wasm_bindgen_test]
+    async fn a_published_package_locks_only_the_bucket() {
+        let el = mount_popup(None, true);
+        leptos::task::tick().await;
+        let (host, bucket) = inputs(&el);
+
+        assert!(!host.disabled(), "the catalog can change");
+        assert!(bucket.disabled(), "the bucket is fixed");
+        assert_eq!(bucket.value(), "data-bucket");
+        element_saying(&el, "Add catalog");
+        crate::test_support::button_saying(&el, "Save");
+        assert!(
+            el.query_selector("select").unwrap().is_none(),
+            "no workflow"
+        );
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("create a new revision"),
+            "a catalog change makes no revision"
+        );
+    }
+
+    /// Once published, Enter in the catalog field saves: the bucket it would
+    /// otherwise move to is locked. With no Tauri host here, the save's
+    /// refusal is what shows that it ran.
+    #[wasm_bindgen_test]
+    async fn enter_in_the_catalog_saves_once_published() {
+        let notification = RwSignal::new(None);
+        let el = mount(move || {
+            view! {
+                <SetRemotePopup
+                    namespace="team/survey".to_string()
+                    current_host=None
+                    current_bucket=Some("data-bucket".to_string())
+                    published=true
+                    notification=notification
+                    refetch=Trigger::new()
+                    on_close=|| ()
+                />
+            }
+        });
+        leptos::task::tick().await;
+        let (host, _) = inputs(&el);
+        let init = web_sys::KeyboardEventInit::new();
+        init.set_key("Enter");
+        host.dispatch_event(
+            &web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init).unwrap(),
+        )
+        .unwrap();
+        crate::test_support::sleep_ms(50).await;
+
+        assert!(
+            matches!(notification.get_untracked(), Some(Notification::Error(_))),
+            "the save ran"
+        );
+    }
+
+    /// Before the first push both fields are open, as a first remote is.
+    #[wasm_bindgen_test]
+    fn an_unpublished_package_opens_both_fields() {
+        let el = mount_popup(Some("quilt.test"), false);
+        let (host, bucket) = inputs(&el);
+
+        assert!(!host.disabled());
+        assert!(!bucket.disabled());
+        element_saying(&el, "Set remote");
+    }
 
     /// A host, when given, must be a hostname; a bucket must be something.
     #[test]

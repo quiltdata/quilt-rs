@@ -479,7 +479,7 @@ pub(super) fn InstalledPackageContent(
                 current_host=current_host.clone()
                 current_bucket=current_bucket.clone()
                 has_local_commit=data.has_local_commit
-                locked=remote_locked
+                published=remote_locked
                 notification=notification
                 refetch=refetch
                 on_close=move || show_set_remote_popup.set(false)

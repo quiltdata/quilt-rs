@@ -21,6 +21,10 @@
 
 ## [v0.24.1-dev]
 
+### Added
+
+- A published package's catalog can be added, changed or removed, keeping its revisions: *Add catalog* or *Change catalog* on the package page, and the remote popup on the classic one (<https://github.com/quiltdata/quilt-rs/pull/1211>)
+
 ### Changed
 
 - Under the hood, QuiltSync can run the task a package revision asks for: given a hand-written `task_settings.json`, it claims the task, runs a local agent over ACP in the package's folder, and publishes the result as the next revision
@@ -39,6 +43,7 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1207>
   - <https://github.com/quiltdata/quilt-rs/pull/1208>
 - The *Host* field of *Set remote*, *Choose S3 bucket* and *Change bucket* is optional: a local-only package can be published to a bucket with no catalog, on the AWS credentials on this computer (<https://github.com/quiltdata/quilt-rs/pull/1209>)
+- The classic package page no longer shows *Set remote* as a warning for a package with a bucket and no catalog (<https://github.com/quiltdata/quilt-rs/pull/1211>)
 
 ### quilt-rs
 

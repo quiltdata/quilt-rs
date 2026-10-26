@@ -270,6 +270,7 @@ fn main() {
             commands::undo_commit,
             commands::reveal_in_file_browser,
             commands::set_remote,
+            commands::change_catalog,
             commands::package_create,
             commands::setup,
             commands::add_to_quiltignore,

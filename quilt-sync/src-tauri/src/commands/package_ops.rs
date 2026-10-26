@@ -847,6 +847,43 @@ pub async fn set_remote(
     }
 }
 
+async fn change_catalog_command(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+    origin: &str,
+) -> Result<quilt_uri::Namespace, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let origin = remote_origin(origin)?;
+    model::change_catalog(m, &namespace, origin).await?;
+    Ok(namespace)
+}
+
+/// Add, change or remove the catalog of a package's remote, also once it is
+/// published. A blank catalog removes it. Its bucket, hash and commits stay.
+#[tauri::command]
+pub async fn change_catalog(
+    m: tauri::State<'_, model::Model>,
+    watcher: tauri::State<'_, Watcher>,
+    namespace: String,
+    origin: String,
+) -> Result<String, String> {
+    Notify::new(format!("Changing the catalog of {namespace}"));
+    match change_catalog_command(&*m, &namespace, &origin).await {
+        Ok(ns) => {
+            // What the old catalog refused is not the new one's.
+            watcher.forget_catalog(&ns).await;
+            let message = format!("Changed the catalog of {namespace}");
+            ::tracing::debug!("{message}");
+            Ok(message)
+        }
+        Err(err) => {
+            let msg = format!("Could not change the catalog: {err}");
+            ::tracing::error!("{msg}");
+            Err(msg)
+        }
+    }
+}
+
 /// A typed name must be one quilt3 accepts: `prefix/name`, each part made of
 /// `_`, `-` and what Python's `str.isalnum()` takes, which is quilt3's `\w`.
 /// Only here, where a reader types it: `Namespace` parses names from remotes
@@ -2033,6 +2070,40 @@ mod tests {
             .await?;
         }
         Ok(())
+    }
+
+    /// A blank catalog removes it; a typed one is parsed as a host.
+    #[tokio::test]
+    async fn change_catalog_passes_the_typed_catalog() -> Result<(), Error> {
+        use mockall::predicate::always;
+        use mockall::predicate::eq;
+
+        for (typed, origin) in [
+            ("", None),
+            ("  ", None),
+            ("quilt.test", Some(fixtures::host())),
+        ] {
+            let mut model = installed_model();
+            model
+                .expect_change_catalog()
+                .times(1)
+                .with(always(), eq(origin))
+                .returning(|_, _| Err(Error::General("stop here".to_string())));
+            let err = super::change_catalog_command(&model, "acme/demo", typed)
+                .await
+                .expect_err("the mock stops it");
+            assert!(matches!(err, Error::General(_)), "{typed:?}: {err}");
+        }
+        Ok(())
+    }
+
+    /// A catalog that is not a hostname never reaches the package.
+    #[tokio::test]
+    async fn change_catalog_refuses_a_malformed_catalog() {
+        let model = installed_model();
+        super::change_catalog_command(&model, "acme/demo", "not a host")
+            .await
+            .expect_err("not a host");
     }
 
     /// A refusal drawn in a dialog stands above the fields the reader is about to

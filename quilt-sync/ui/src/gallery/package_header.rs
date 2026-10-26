@@ -68,7 +68,7 @@ use crate::kit::SplitButton;
 use crate::kit::SplitOption;
 use crate::kit::StateLabel;
 use crate::kit::render;
-use crate::pages::{MenuItem, menu_items, remote_target};
+use crate::pages::{MenuItem, catalog_command, menu_items, remote_target};
 
 const NAMESPACE: &str = "user/plate-07";
 
@@ -199,19 +199,32 @@ fn scene_menu() -> Vec<MenuItem> {
 /// [`remote_target`] over this state's remote: none without a bucket, and one
 /// with no revision yet when never published.
 fn has_remote_side(state: &PackageState) -> bool {
-    let payload = commands::PackageHeaderData {
-        uri: (!matches!(state, PackageState::NoRemote))
-            .then(|| scene_payload().uri)
-            .flatten(),
-        remote_locked: !matches!(state, PackageState::Unpublished),
-        ..scene_payload()
-    };
+    let payload = state_payload(state);
     remote_target(
         payload.uri.as_ref(),
         payload.remote_locked,
         payload.newer.as_deref(),
     )
     .is_some()
+}
+
+/// The scene's payload at one state: no remote without a bucket, and not
+/// locked before the first push.
+fn state_payload(state: &PackageState) -> commands::PackageHeaderData {
+    commands::PackageHeaderData {
+        uri: (!matches!(state, PackageState::NoRemote))
+            .then(|| scene_payload().uri)
+            .flatten(),
+        remote_locked: !matches!(state, PackageState::Unpublished),
+        ..scene_payload()
+    }
+}
+
+/// The page's own [`catalog_command`] over this state's remote: offered once
+/// the package is published.
+fn scene_catalog_command(state: &PackageState) -> Option<&'static str> {
+    let payload = state_payload(state);
+    catalog_command(payload.uri.as_ref(), payload.remote_locked)
 }
 
 /// The header at one state.
@@ -304,6 +317,8 @@ fn header(
                             }
                         })}
                     {location(has_remote_side(state), copied)}
+                    {scene_catalog_command(state)
+                        .map(|label| view! { <Button on_click=|_| ()>{label}</Button> })}
                     <ActionMenu
                         aria_label="More actions for this package"
                         actions={
