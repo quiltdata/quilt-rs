@@ -37,7 +37,9 @@ impl Spawned {
             if !self.alive() {
                 return true;
             }
-            signal(self.pid, signalled);
+            if self.running() {
+                signal(self.pid, signalled);
+            }
             signal_group(self.pid, signalled);
             let deadline = tokio::time::Instant::now() + grace;
             while self.alive() && tokio::time::Instant::now() < deadline {
