@@ -518,6 +518,17 @@ fn header(title: String, count: usize, bucket_axis: bool) -> AnyView {
     }
 }
 
+/// The catalog host each scene bucket's packages point at, as the Catalog axis
+/// heads them. `s3://org-archive` has none, so its packages group under
+/// `No catalog`, last.
+fn catalog(bucket: &str) -> &'static str {
+    match bucket {
+        "s3://my-bucket" => "catalog.example.com",
+        "s3://team-bucket" => "team.example.com",
+        _ => "No catalog",
+    }
+}
+
 /// The namespace's owner segment, with its slash — `user/package-a` groups under
 /// `user/`. The split is `quilt_uri::Namespace`'s; the slash is this heading's.
 fn prefix(namespace: &'static str) -> String {
@@ -607,6 +618,7 @@ pub fn PackagesRegion(
                     naming=Naming::Prefix("Group".to_string())
                     options=vec![
                         "Bucket".to_string(),
+                        "Catalog".to_string(),
                         "Prefix".to_string(),
                         "None".to_string(),
                     ]
@@ -631,12 +643,14 @@ pub fn PackagesRegion(
                         return list(rows, provisional, downloads);
                     }
                     let bucket_axis = axis == "Bucket";
-                    // One path for both axes, differing only in the key. Grouping by
+                    // One path for every axis, differing only in the key. Grouping by
                     // prefix used to fall through to the flat list, which read as
                     // "sorted by prefix" — the same rows in the same order with no
                     // headers at all.
-                    let key = move |entry: &Fixture| {
-                        if bucket_axis { entry.0.to_string() } else { prefix(entry.1) }
+                    let key = move |entry: &Fixture| match axis.as_str() {
+                        "Bucket" => entry.0.to_string(),
+                        "Catalog" => catalog(entry.0).to_string(),
+                        _ => prefix(entry.1),
                     };
                     // First-appearance order, not sorted: the fixture order is the
                     // page's sort order, and re-sorting the groups here would hide
@@ -693,8 +707,9 @@ pub fn PackagesScene() -> impl IntoView {
                   Latest. The open question is here — does a column of Latest read as a calm \
                   list, or as a wall of green that spends the signal the tone was bought \
                   for? Switch the theme; light and dark disagree about this more than about \
-                  anything else in the kit. All three Group options are live: switch between \
-                  Bucket and Prefix and watch `user/shared-archive` move."
+                  anything else in the kit. Every Group option is live: switch between Bucket \
+                  and Prefix and watch `user/shared-archive` move, or to Catalog to see \
+                  the packages without a catalog grouped last."
         >
             <PackagesRegion view_name="packages-view" />
         </Scene>
