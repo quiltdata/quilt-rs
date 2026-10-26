@@ -115,6 +115,26 @@ fn expect_push_and_reset(
         });
 }
 
+/// Record each download in `events`, refusing, as the engine does, to write
+/// over anything already in `home`.
+fn expect_downloads(model: &mut MockQuiltModel, events: &Arc<Mutex<Vec<String>>>, home: PathBuf) {
+    let events = Arc::clone(events);
+    model
+        .expect_locked_package_install_paths()
+        .returning(move |_, paths| {
+            for path in paths {
+                events
+                    .lock()
+                    .unwrap()
+                    .push(format!("download {}", path.display()));
+                if std::fs::symlink_metadata(home.join(path)).is_ok() {
+                    return Err(Error::General(format!("{} exists", path.display())));
+                }
+            }
+            Ok(quilt::flow::InstallPathsReport::default())
+        });
+}
+
 /// The remote's `latest` carries `meta` and lists `paths`.
 fn expect_latest(model: &mut MockQuiltModel, meta: Value, paths: &'static [&'static str]) {
     model
@@ -159,6 +179,10 @@ struct Fixture {
     finished_meta: Option<Value>,
     /// Walking the tree the run ended on fails, as it does while signed out.
     walk_fails: bool,
+    /// The paths this copy already tracks.
+    tracked: &'static [&'static str],
+    /// The paths the head lists.
+    rows: &'static [&'static str],
 }
 
 impl Fixture {
@@ -182,6 +206,8 @@ impl Fixture {
             latest_meta: None,
             finished_meta: None,
             walk_fails: false,
+            tracked: &[],
+            rows: &["TASK.md", "sub/TASK.md"],
         }
     }
 
@@ -194,6 +220,11 @@ impl Fixture {
             origin: Some(fixtures::host()),
         };
         let mut lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
+        for path in self.tracked {
+            lineage
+                .paths
+                .insert(PathBuf::from(path), quilt::lineage::PathState::default());
+        }
         if self.pending_commit {
             let prev_hashes = if self.stacked_commits {
                 vec!["c0".to_string()]
@@ -222,9 +253,9 @@ impl Fixture {
             .collect()
     }
 
-    /// Check a package in a blessed bucket whose head carries `meta` and the
-    /// file `TASK.md`, not yet downloaded, whose tree walks as `status`,
-    /// publishing with `certified_latest`.
+    /// Check a package in a blessed bucket whose head carries `meta` and lists
+    /// the fixture's `rows`, whose tree walks as `status`, publishing with
+    /// `certified_latest`.
     async fn check(
         &self,
         meta: Value,
@@ -250,23 +281,10 @@ impl Fixture {
         expect_push_and_reset(&mut model, &self.events, certified_latest);
         let latest = self.latest_meta.clone().unwrap_or(meta.clone());
         expect_latest(&mut model, latest, &[]);
+        let rows = self.rows;
         model
             .expect_get_installed_package_manifest()
-            .returning(move |_, _| {
-                Ok(quilt::manifest::Manifest {
-                    header: quilt::manifest::ManifestHeader {
-                        user_meta: Some(meta.clone()),
-                        ..quilt::manifest::ManifestHeader::default()
-                    },
-                    rows: ["TASK.md", "sub/TASK.md"]
-                        .into_iter()
-                        .map(|key| quilt::manifest::ManifestRow {
-                            logical_key: PathBuf::from(key),
-                            ..quilt::manifest::ManifestRow::default()
-                        })
-                        .collect(),
-                })
-            });
+            .returning(move |_, _| Ok(manifest(&meta, rows)));
         model
             .expect_try_lock_package()
             .returning(|p| Ok(Some(p.namespace.clone())));
@@ -275,23 +293,7 @@ impl Fixture {
             events.lock().unwrap().push("walk".to_string());
             Ok(status.clone())
         });
-        let events = Arc::clone(&self.events);
-        let home = self.home();
-        model
-            .expect_locked_package_install_paths()
-            .returning(move |_, paths| {
-                for path in paths {
-                    events
-                        .lock()
-                        .unwrap()
-                        .push(format!("download {}", path.display()));
-                    // As the engine does, refuse to write over anything there.
-                    if std::fs::symlink_metadata(home.join(path)).is_ok() {
-                        return Err(Error::General(format!("{} exists", path.display())));
-                    }
-                }
-                Ok(quilt::flow::InstallPathsReport::default())
-            });
+        expect_downloads(&mut model, &self.events, self.home());
         let home = self.home();
         model
             .expect_package_home()
@@ -347,8 +349,13 @@ async fn a_claim_changes_only_the_claim_and_starts_the_run() {
 
     assert_eq!(
         *fixture.events.lock().unwrap(),
-        ["download TASK.md", "walk", "publish"],
-        "the agent finds its document on disk, and the claim publishes a tree that has it"
+        [
+            "download TASK.md",
+            "download sub/TASK.md",
+            "walk",
+            "publish"
+        ],
+        "the agent finds the whole revision on disk, and the claim publishes a tree that has it"
     );
     let published = fixture.published.lock().unwrap();
     assert_eq!(published.len(), 1, "one claim revision");
@@ -381,7 +388,7 @@ async fn a_claim_changes_only_the_claim_and_starts_the_run() {
 
 /// The download refuses to write over a file that is already there.
 #[tokio::test]
-async fn a_document_already_in_the_folder_is_not_downloaded_again() -> Result<(), Error> {
+async fn a_file_already_in_the_folder_is_not_downloaded_again() -> Result<(), Error> {
     let fixture = Fixture::new();
     tokio::fs::create_dir_all(fixture.home()).await?;
     tokio::fs::write(fixture.home().join("TASK.md"), "the task").await?;
@@ -390,8 +397,64 @@ async fn a_document_already_in_the_folder_is_not_downloaded_again() -> Result<()
         .check(unclaimed(), fresh(BTreeMap::new()), true)
         .await;
 
-    assert_eq!(*fixture.events.lock().unwrap(), ["walk", "publish"]);
+    assert_eq!(
+        *fixture.events.lock().unwrap(),
+        ["download sub/TASK.md", "walk", "publish"]
+    );
     assert_eq!(fixture.runs.lock().unwrap().len(), 1, "the run starts");
+    Ok(())
+}
+
+/// Asking for one would fail the whole download: the engine refuses a path it
+/// already tracks.
+#[tokio::test]
+async fn a_path_this_copy_tracks_is_not_downloaded_again() {
+    let fixture = Fixture {
+        tracked: &["TASK.md"],
+        ..Fixture::new()
+    };
+
+    fixture
+        .check(unclaimed(), fresh(BTreeMap::new()), true)
+        .await;
+
+    assert_eq!(
+        *fixture.events.lock().unwrap(),
+        ["download sub/TASK.md", "walk", "publish"]
+    );
+}
+
+/// The download comes before the claim, outside any permission check.
+#[tokio::test]
+async fn a_revision_listing_a_path_outside_the_package_is_not_claimed() {
+    let fixture = Fixture {
+        rows: &["TASK.md", "../outside.csv"],
+        ..Fixture::new()
+    };
+
+    fixture
+        .check(unclaimed(), fresh(BTreeMap::new()), true)
+        .await;
+
+    assert_eq!(
+        *fixture.events.lock().unwrap(),
+        [] as [&str; 0],
+        "nothing downloaded"
+    );
+    assert_eq!(fixture.metas(), [] as [Value; 0], "nothing is claimed");
+}
+
+#[tokio::test]
+async fn a_task_input_that_cannot_be_downloaded_stops_the_claim() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    tokio::fs::create_dir_all(fixture.home().join("sub/TASK.md")).await?;
+
+    fixture
+        .check(unclaimed(), fresh(BTreeMap::new()), true)
+        .await;
+
+    assert_eq!(fixture.metas(), [] as [Value; 0], "nothing is claimed");
+    assert!(fixture.runs.lock().unwrap().is_empty(), "nothing runs");
     Ok(())
 }
 
@@ -464,7 +527,14 @@ async fn a_claim_that_did_not_become_latest_resets_to_latest_and_starts_no_run()
 
     assert_eq!(
         *fixture.events.lock().unwrap(),
-        ["download TASK.md", "walk", "publish", "walk", "reset"],
+        [
+            "download TASK.md",
+            "download sub/TASK.md",
+            "walk",
+            "publish",
+            "walk",
+            "reset"
+        ],
         "the claim was pushed, then the clean package went back to latest"
     );
     assert!(fixture.runs.lock().unwrap().is_empty(), "nothing runs");
@@ -821,7 +891,8 @@ async fn a_task_waits_while_latest_cannot_be_read() {
 
 /// A package whose remote `latest` reads as `latest_hash` (fresh unless
 /// `refreshed` is false), carries `latest_meta` and lists `TASK.md` and
-/// `NEXT.md`, neither on disk. Pulls and downloads go to the fixture's events.
+/// `NEXT.md`. Pulls and downloads go to the fixture's events, and a download
+/// refuses anything already in the folder.
 fn rereading_model(
     fixture: &Fixture,
     latest_hash: &str,
@@ -834,18 +905,7 @@ fn rereading_model(
     model
         .expect_package_home()
         .returning(move |_| Ok(home.clone()));
-    let downloaded = Arc::clone(events);
-    model
-        .expect_locked_package_install_paths()
-        .returning(move |_, paths| {
-            for path in paths {
-                downloaded
-                    .lock()
-                    .unwrap()
-                    .push(format!("download {}", path.display()));
-            }
-            Ok(quilt::flow::InstallPathsReport::default())
-        });
+    expect_downloads(&mut model, events, fixture.home());
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
             quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns.clone()),
@@ -946,8 +1006,29 @@ async fn a_later_revision_that_still_holds_the_claim_is_pulled_and_its_task_run(
     );
     assert_eq!(
         *fixture.events.lock().unwrap(),
-        ["pull", "download NEXT.md"]
+        ["pull", "download TASK.md", "download NEXT.md"]
     );
+}
+
+/// A failed re-read ends the run `not_started`, naming the error.
+#[tokio::test]
+async fn a_later_revision_whose_inputs_cannot_be_downloaded_fails_the_reread() -> Result<(), Error>
+{
+    let fixture = Fixture::new();
+    tokio::fs::create_dir_all(fixture.home().join("TASK.md")).await?;
+    let mut later = claimed_by_this_run();
+    later["agent_exec"]["document"] = json!("NEXT.md");
+    let model = rereading_model(&fixture, "h2", true, later);
+
+    let reread = recheck_claim(&model, &claimed_run(&fixture.tasks)).await;
+
+    assert!(
+        reread
+            .as_ref()
+            .is_err_and(|err| err.to_string().contains("TASK.md")),
+        "{reread:?}"
+    );
+    Ok(())
 }
 
 #[tokio::test]

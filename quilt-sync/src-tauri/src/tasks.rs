@@ -3,6 +3,7 @@
 //! and closed by publishing what the agent left as the next revision.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -127,6 +128,7 @@ struct Head {
     lineage: quilt::lineage::PackageLineage,
     user_meta: Value,
     workflow: Option<quilt::manifest::Workflow>,
+    rows: Vec<quilt::manifest::ManifestRow>,
     verdict: Verdict,
 }
 
@@ -161,6 +163,7 @@ async fn read_head<M: QuiltModel>(
     Ok(Some(Head {
         user_meta: user_meta.clone(),
         workflow: manifest.header.workflow,
+        rows: manifest.rows,
         lineage,
         verdict,
     }))
@@ -223,6 +226,7 @@ async fn try_check<M: QuiltModel>(
         lineage,
         user_meta,
         workflow,
+        rows,
         verdict,
     }) = read_head(model, data_dir, settings, pkg).await?
     else {
@@ -243,9 +247,9 @@ async fn try_check<M: QuiltModel>(
     {
         return Ok(());
     }
-    // Before the walk, so the claim publishes a status that includes it.
+    // Before the walk, so the claim publishes a status that includes them.
     if let Verdict::Claim { document, .. } = &verdict {
-        download(model, pkg, &locked, &lineage, document).await?;
+        check_out(model, pkg, &locked, &lineage, &rows, document).await?;
     }
     let Some(tree) = fresh_at_head(model, pkg, &locked, &lineage).await? else {
         return Ok(());
@@ -527,45 +531,62 @@ async fn publish_outcome<M: QuiltModel>(
     Ok(())
 }
 
-/// Put `document` in the package's folder, which a sparse copy may lack. A
-/// regular file already there stays: the walk compares it with the revision.
-/// A symlink on the path stops the claim: the walk skips links, and a linked
-/// folder leads outside the package.
-async fn download<M: QuiltModel>(
+/// Put a revision's `rows` in the package's folder, which a sparse copy may
+/// lack. A regular file already there stays: the walk compares it with the
+/// revision. A symlink on the document's path stops the run: the walk skips
+/// links, and a linked folder leads outside the package.
+async fn check_out<M: QuiltModel>(
     model: &M,
     pkg: &quilt::InstalledPackage,
     locked: &M::Locked,
     lineage: &quilt::lineage::PackageLineage,
+    rows: &[quilt::manifest::ManifestRow],
     document: &str,
 ) -> Result<(), Error> {
-    let path = PathBuf::from(document);
-    if lineage.paths.contains_key(&path) {
-        return Ok(());
-    }
     let home = model.package_home(&pkg.namespace).await?;
-    let target = home.join(&path);
-    let mut on_disk = home;
-    for part in path.components() {
-        on_disk.push(part);
-        let Ok(meta) = tokio::fs::symlink_metadata(&on_disk).await else {
-            break;
-        };
-        if meta.is_symlink() {
+    let document = Path::new(document);
+    if !lineage.paths.contains_key(document) {
+        let mut on_disk = home.clone();
+        for part in document.components() {
+            on_disk.push(part);
+            if tokio::fs::symlink_metadata(&on_disk)
+                .await
+                .is_ok_and(|meta| meta.is_symlink())
+            {
+                return Err(Error::General(format!(
+                    "{} is reached through a symlink",
+                    document.display()
+                )));
+            }
+        }
+    }
+    let mut missing = Vec::new();
+    for row in rows {
+        let path = &row.logical_key;
+        if lineage.paths.contains_key(path) {
+            continue;
+        }
+        if !agent_exec::inside_package(path) {
             return Err(Error::General(format!(
-                "{document} is reached through a symlink"
+                "{} is not a path inside the package",
+                path.display()
             )));
         }
-        if on_disk == target && meta.is_file() {
-            return Ok(());
+        let on_disk = tokio::fs::symlink_metadata(home.join(path)).await;
+        if !on_disk.is_ok_and(|meta| meta.is_file()) {
+            missing.push(path.clone());
         }
     }
-    let report = model.locked_package_install_paths(locked, &[path]).await?;
-    if report.skipped.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::General(format!(
-            "{document} could not be downloaded"
-        )))
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let report = model.locked_package_install_paths(locked, &missing).await?;
+    match report.skipped.first() {
+        None => Ok(()),
+        Some(path) => Err(Error::General(format!(
+            "{} could not be downloaded",
+            path.display()
+        ))),
     }
 }
 
@@ -683,7 +704,7 @@ async fn recheck_claim<M: QuiltModel>(
     let rechecked = agent_exec::recheck(meta, |path| lists(&latest, path), &run.agent_id);
     if let Ok(document) = &rechecked {
         let pulled = model.get_installed_package_lineage(&installed).await?;
-        download(model, &installed, &locked, &pulled, document).await?;
+        check_out(model, &installed, &locked, &pulled, &latest.rows, document).await?;
     }
     Ok(rechecked)
 }
