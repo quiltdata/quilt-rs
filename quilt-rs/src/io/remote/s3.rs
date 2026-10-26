@@ -574,8 +574,11 @@ impl RemoteS3 {
     /// After the AWS credentials on this computer were missing or refused,
     /// drop the clients that use them. A client reads `~/.aws` once and keeps
     /// the keys it was given, so only a new one sees a fixed file.
+    ///
+    /// A denial with no host counts too: a HEAD has no body, so bad keys there
+    /// are a bare 403, and a rebuilt client is cheap.
     fn forget_ambient_clients_on(&self, err: Error) -> Error {
-        if err.is_ambient_session_absent() {
+        if err.is_ambient_session_absent() || (err.is_access_denied() && err.s3_host().is_none()) {
             self.retain_clients(|creds_ref| creds_ref.host.is_some());
         }
         err
@@ -1545,6 +1548,22 @@ mod tests {
         )));
         remote.forget_ambient_clients_on(refused);
         assert_eq!(hosts(), vec![Some(host.clone())]);
+
+        // A HEAD has no body, so bad keys there are a bare 403: a denial that
+        // cannot be told from a missing permission.
+        fill();
+        remote.forget_ambient_clients_on(Error::S3(S3Error::new(S3ErrorKind::AccessDenied(
+            "HTTP 403".to_string(),
+        ))));
+        assert_eq!(hosts(), vec![Some(host.clone())]);
+        // A deployment's denial is about its role, not keys on this computer.
+        let denied = Error::S3(S3Error {
+            host: Some(host.clone()),
+            kind: S3ErrorKind::AccessDenied("HTTP 403".to_string()),
+        });
+        fill();
+        assert!(remote.forget_ambient_clients_on(denied).is_access_denied());
+        assert_eq!(hosts(), vec![None, Some(host.clone())]);
 
         fill();
         let missing = Error::Login(LoginError::NoSession(None));

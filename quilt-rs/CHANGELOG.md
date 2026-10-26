@@ -32,7 +32,9 @@
 
 ### Fixed
 
-- After the AWS credentials on this computer were missing or refused, the next call reads `~/.aws` again instead of keeping the first credentials it loaded (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+- After the AWS credentials on this computer were missing or refused, or a bucket with no catalog refused a request, the next call reads `~/.aws` again instead of keeping the first credentials it loaded
+  - <https://github.com/quiltdata/quilt-rs/pull/1193>
+  - <https://github.com/quiltdata/quilt-rs/pull/1202>
 
 ## [v0.48.0] - 2026-10-23
 
