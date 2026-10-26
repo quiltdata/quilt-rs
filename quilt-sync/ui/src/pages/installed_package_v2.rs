@@ -197,8 +197,9 @@ pub struct Replace {
 /// Which of the header's dialogs is open.
 #[derive(Clone, Copy)]
 pub struct Dialogs {
-    /// The row's `Choose S3 bucket` and the menu's `Change bucket` open this
-    /// one dialog: the state calls for it, or the reader chooses it.
+    /// The row's `Choose S3 bucket`, the menu's `Change bucket` and the
+    /// context pane's Bucket section open this one dialog: the state calls
+    /// for it, or the reader chooses it.
     pub bucket: RwSignal<bool>,
     /// What the reader has typed into that dialog. Here beside its flag, for
     /// the flag's reason: a re-read rebuilds the dialog, and the rebuilt one
