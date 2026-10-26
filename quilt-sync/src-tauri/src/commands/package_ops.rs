@@ -477,10 +477,6 @@ async fn package_pull_command(
 /// tick's refusal does, so the header shows the conflict now rather than
 /// offering the same pull until the next tick. Only a conflict: it is the one
 /// refusal with a state of its own that the working tree cannot report.
-///
-/// A pause is always attributed to the package's own host, so a package with
-/// no known deployment (a bucket with no catalog) is not paused: its header
-/// offers the pull again until the watcher can pause such a package.
 async fn pause_on_conflict(
     watcher: &Watcher,
     namespace: &quilt_uri::Namespace,
@@ -491,14 +487,10 @@ async fn pause_on_conflict(
     else {
         return;
     };
-    // No origin: nothing to attribute the pause to (see above).
-    let Some(origin) = lineage
+    let origin = lineage
         .remote_uri
         .as_ref()
-        .and_then(|remote| remote.origin.as_ref())
-    else {
-        return;
-    };
+        .and_then(|remote| remote.origin.as_ref());
     watcher
         .pause(namespace, origin, PausedReason::pull_conflict(conflicts))
         .await;
@@ -1530,18 +1522,28 @@ mod tests {
     /// A model whose pull fails with `error`, for a package published to a
     /// known deployment.
     fn failing_pull_model(error: impl Fn() -> Error + Send + Sync + 'static) -> MockQuiltModel {
+        failing_pull_model_on(Some(fixtures::host()), error)
+    }
+
+    /// [`failing_pull_model`] for a package whose remote has `origin`.
+    fn failing_pull_model_on(
+        origin: Option<quilt_uri::Host>,
+        error: impl Fn() -> Error + Send + Sync + 'static,
+    ) -> MockQuiltModel {
         let mut model = installed_model();
-        model.expect_get_installed_package_lineage().returning(|_| {
-            Ok(quilt::lineage::PackageLineage::from_remote(
-                quilt_uri::ManifestUri {
-                    bucket: "bucket".to_string(),
-                    namespace: ("acme", "demo").into(),
-                    hash: "h0".to_string(),
-                    origin: Some(fixtures::host()),
-                },
-                "h1".to_string(),
-            ))
-        });
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    quilt_uri::ManifestUri {
+                        bucket: "bucket".to_string(),
+                        namespace: ("acme", "demo").into(),
+                        hash: "h0".to_string(),
+                        origin: origin.clone(),
+                    },
+                    "h1".to_string(),
+                ))
+            });
         model
             .expect_lock_package()
             .returning(|p| Ok(p.namespace.clone()));
@@ -1594,7 +1596,29 @@ mod tests {
         // Announced as the tick announces it: the `autosync-paused` event,
         // attributed to the package's own deployment.
         assert_eq!(*reporter.paused.lock().unwrap(), vec![(ns, reason)]);
-        assert_eq!(*reporter.hosts.lock().unwrap(), vec![fixtures::host()]);
+        assert_eq!(
+            *reporter.hosts.lock().unwrap(),
+            vec![Some(fixtures::host())]
+        );
+    }
+
+    /// A package with a bucket and no catalog is paused too, with no host, so
+    /// its header stops offering the refused pull.
+    #[tokio::test]
+    async fn a_pull_refused_by_a_conflict_pauses_a_package_without_a_catalog() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let model = failing_pull_model_on(None, pull_conflict_error);
+
+        super::package_pull_command(&model, &watcher, "acme/demo")
+            .await
+            .expect_err("a conflict refuses the pull");
+
+        let reason = PausedReason::PullConflict(vec!["a.csv".to_string(), "b.csv".to_string()]);
+        assert_eq!(watcher.paused_reason(&ns).await, Some(reason.clone()));
+        assert_eq!(*reporter.paused.lock().unwrap(), vec![(ns, reason)]);
+        assert_eq!(*reporter.hosts.lock().unwrap(), vec![None]);
     }
 
     /// Any other refusal leaves the pause map alone: only a conflict has a
@@ -1679,7 +1703,7 @@ mod tests {
             let reporter = Arc::new(RecordingReporter::default());
             let watcher = Watcher::new_for_test(reporter.clone());
             watcher
-                .pause(&ns, &fixtures::host(), conflict_pause())
+                .pause(&ns, Some(&fixtures::host()), conflict_pause())
                 .await;
             let seen = reporter.statuses.lock().unwrap().len();
             let model = dry_run_model(verdict.clone());
@@ -1718,7 +1742,7 @@ mod tests {
         let reporter = Arc::new(RecordingReporter::default());
         let watcher = Watcher::new_for_test(reporter.clone());
         watcher
-            .pause(&ns, &fixtures::host(), conflict_pause())
+            .pause(&ns, Some(&fixtures::host()), conflict_pause())
             .await;
         let seen = reporter.statuses.lock().unwrap().len();
         let mut model = installed_model();
@@ -1757,7 +1781,7 @@ mod tests {
         let reporter = Arc::new(RecordingReporter::default());
         let watcher = Watcher::new_for_test(reporter.clone());
         watcher
-            .pause(&ns, &fixtures::host(), conflict_pause())
+            .pause(&ns, Some(&fixtures::host()), conflict_pause())
             .await;
         let seen = reporter.statuses.lock().unwrap().len();
         let model = dry_run_model(quilt::flow::PullOutcome::Blocked {
@@ -1788,7 +1812,9 @@ mod tests {
         ] {
             let reporter = Arc::new(RecordingReporter::default());
             let watcher = Watcher::new_for_test(reporter.clone());
-            watcher.pause(&ns, &fixtures::host(), reason.clone()).await;
+            watcher
+                .pause(&ns, Some(&fixtures::host()), reason.clone())
+                .await;
             let seen = reporter.statuses.lock().unwrap().len();
             let model = dry_run_model(quilt::flow::PullOutcome::CleanUpdate);
 

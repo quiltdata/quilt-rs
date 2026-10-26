@@ -891,13 +891,13 @@ mod tests {
         use crate::telemetry::event::{AutosyncEvent, AutosyncPausedEvent, PausedKind};
 
         let (name, props) = event_payload(&MixpanelEvent::AutosyncPublished(AutosyncEvent {
-            host: fixtures::host(),
+            host: Some(fixtures::host()),
         }))?;
         assert_eq!(name, "autosync_published");
         assert_eq!(props.expect("host").get("host"), Some(&host_value()));
 
         let (name, props) = event_payload(&MixpanelEvent::AutosyncPaused(AutosyncPausedEvent {
-            host: fixtures::host(),
+            host: Some(fixtures::host()),
             reason: PausedKind::RoleDenied,
         }))?;
         assert_eq!(name, "autosync_paused");
@@ -927,7 +927,7 @@ mod tests {
             PausedReason::Other("a raw refusal mentioning /home/someone/path".to_owned()),
         ] {
             let (_, props) = event_payload(&MixpanelEvent::AutosyncPaused(AutosyncPausedEvent {
-                host: fixtures::host(),
+                host: Some(fixtures::host()),
                 reason: PausedKind::from(&reason),
             }))?;
 
@@ -1084,11 +1084,10 @@ mod tests {
             Some(&fixtures::host())
         );
         assert_eq!(MixpanelEvent::AppLaunched.host(), None);
-        // Autosync's host is guaranteed, so the accessor must find it — an
-        // unattributed autosync event would be a contradiction.
+        // Autosync's host is the package's catalog, which the accessor finds.
         assert_eq!(
             MixpanelEvent::AutosyncPublished(crate::telemetry::event::AutosyncEvent {
-                host: fixtures::host()
+                host: Some(fixtures::host())
             })
             .host(),
             Some(&fixtures::host())
