@@ -29,6 +29,14 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1201>
   - <https://github.com/quiltdata/quilt-rs/pull/1204>
 
+### Fixed
+
+- A package whose remote has no catalog shows its status on both pages, read on the AWS credentials on this computer. When those are missing or refused, it says so instead of offering *Sign in* (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+
+### quilt-rs
+
+- Updated [from v0.48.0 to v0.49.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.48.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.24.0] - 2026-10-23
 
 ### Changed

@@ -37,9 +37,7 @@ pub struct InstalledPackageListItem {
     /// re-commit, so the UI gates the "creates a new revision" notice on this.
     pub has_local_commit: bool,
     pub uri: Option<quilt_uri::S3PackageUri>,
-    /// Raw `lineage.remote_uri` rendering, kept separate from `uri` so
-    /// the UI can still surface a misconfigured remote when origin
-    /// resolution fails (status: "error" branch).
+    /// Raw `lineage.remote_uri` rendering, kept separate from `uri`.
     pub remote_display: Option<String>,
     /// The autosync watcher's `Other` pause message for this namespace,
     /// if it is currently paused for a reason the status string cannot
@@ -326,22 +324,6 @@ async fn load_package_item(
 
     let typed_uri = quilt_uri::S3PackageUri::from(remote_uri);
 
-    if remote_uri.origin.is_none() {
-        return Ok(InstalledPackageListItem {
-            namespace,
-            status: "error".to_string(),
-            has_changes: false,
-            has_local_commit,
-            uri: Some(typed_uri),
-            remote_display: Some(remote_uri.to_string()),
-            paused_reason,
-            paused_kind,
-            no_access: false,
-            no_access_reason: None,
-            role_switch_host: None,
-        });
-    }
-
     if let Some(host) = typed_uri.catalog.as_ref() {
         tracing.add_host(host);
     }
@@ -493,10 +475,6 @@ pub(super) async fn refresh_package_status_from_model(
             has_changes,
         ));
     };
-    if remote_uri.origin.is_none() {
-        return Ok(RefreshedPackageStatus::new("error".to_string(), false));
-    }
-
     let host = remote_uri.origin.clone();
     if let Some(host) = host.as_ref() {
         tracing.add_host(host);
@@ -1516,7 +1494,7 @@ mod tests {
             .expect_get_installed_packages_list()
             .return_once(move || Ok(pkgs));
 
-        // Remote URI exists but has no origin → triggers early return with error status
+        // Remote URI exists but has no origin: read like any other remote.
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
@@ -1540,7 +1518,7 @@ mod tests {
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
         assert_eq!(pkg.namespace.to_string(), "test/noorigin");
-        assert_eq!(pkg.status, "error");
+        assert_eq!(pkg.status, "up_to_date");
         // URI is exposed (so the "Set remote" popup can pre-fill bucket)
         // but its catalog is unset.
         let pkg_uri = pkg.uri.as_ref().expect("URI present");
@@ -1723,6 +1701,16 @@ mod tests {
                     "abcdef".to_string(),
                 ))
             });
+        // Read on the machine's own AWS credentials, like any other remote.
+        model
+            .expect_get_installed_package_status()
+            .times(1)
+            .returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::Behind,
+                    quilt::lineage::ChangeSet::new(),
+                ))
+            });
 
         let tracing = crate::telemetry::Telemetry::default();
         let ns = ("test", "noorigin").into();
@@ -1731,7 +1719,7 @@ mod tests {
                 .await
                 .map_err(|e| e.to_string())?;
 
-        assert_eq!(result.status, "error");
+        assert_eq!(result.status, "behind");
         assert!(!result.has_changes);
         Ok(())
     }
