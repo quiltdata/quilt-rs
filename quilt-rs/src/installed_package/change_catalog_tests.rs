@@ -56,9 +56,10 @@ async fn published(
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        // Serialized, so a Windows path's backslashes are escaped.
+        serde_json::to_string(home.as_ref())?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
