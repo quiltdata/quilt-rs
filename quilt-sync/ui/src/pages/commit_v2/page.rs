@@ -1361,6 +1361,29 @@ mod tests {
         );
     }
 
+    /// The header has no catalog command, with a catalog or without: the
+    /// package page's context pane adds or changes it.
+    #[wasm_bindgen_test]
+    async fn the_header_offers_no_catalog_command() {
+        let no_command = |el: &web_sys::Element| {
+            let all = el.query_selector_all("button").unwrap();
+            let words: Vec<String> = (0..all.length())
+                .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+                .filter(|b| b.closest("dialog").unwrap().is_none())
+                .map(|b| b.text_content().unwrap_or_default())
+                .collect();
+            assert!(
+                !words
+                    .iter()
+                    .any(|w| w.contains("Add catalog") || w.contains("Change catalog")),
+                "{words:?}"
+            );
+        };
+        no_command(&page_at("/commit?namespace=org%2Fpkg").await);
+        no_command(&page_reading("/commit?namespace=org%2Fpkg", published_without_catalog).await);
+        no_command(&page_reading("/commit?namespace=org%2Fpkg", published).await);
+    }
+
     fn signed_out(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
         Box::pin(async {
             Ok(CommitData {

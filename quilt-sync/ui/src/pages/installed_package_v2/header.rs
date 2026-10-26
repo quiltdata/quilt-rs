@@ -165,24 +165,6 @@ pub(crate) fn remote_item(remote_locked: bool, busy: bool) -> MenuItem {
     }
 }
 
-/// The command beside the location group that adds or changes a published
-/// package's catalog, through the bucket dialog's catalog shape. `None` before
-/// the first push, when *Change bucket* sets the catalog with the bucket.
-///
-/// `pub` for the gallery's scene.
-#[must_use]
-pub fn catalog_command(
-    uri: Option<&quilt_uri::S3PackageUri>,
-    remote_locked: bool,
-) -> Option<&'static str> {
-    let uri = uri.filter(|u| remote_locked && util::has_bucket(Some(u)))?;
-    Some(if uri.catalog.is_some() {
-        "Change catalog"
-    } else {
-        "Add catalog"
-    })
-}
-
 /// Remove, which [`RemoveDialog`] confirms.
 #[must_use]
 pub(crate) fn remove_item(busy: bool) -> MenuItem {
@@ -841,17 +823,6 @@ pub fn PageHeader(
                         w.outcome,
                         copied,
                     )}
-                    {catalog_command(data.uri.as_ref(), data.remote_locked)
-                        .map(|label| {
-                            view! {
-                                <Button
-                                    disabled=Signal::derive(move || w.busy.get())
-                                    on_click=move |_| bucket_open.set(true)
-                                >
-                                    {label}
-                                </Button>
-                            }
-                        })}
                     // A derived signal, so the items follow `busy` while the menu
                     // stays open: the trigger is live during a run, see
                     // `the_menu_stays_open_when_a_command_settles`.
@@ -2137,61 +2108,43 @@ mod tests {
         );
     }
 
-    /// Once published, the row offers to add a catalog or change it, beside
-    /// the location group. Before the first push *Change bucket* sets it.
-    #[test]
-    fn a_published_package_offers_its_catalog_command() {
-        let command =
-            |d: commands::PackageHeaderData| catalog_command(d.uri.as_ref(), d.remote_locked);
-        assert_eq!(
-            command(without_catalog(kit::PackageState::Latest)),
-            Some("Add catalog")
-        );
-        assert_eq!(
-            command(with_catalog(kit::PackageState::Latest)),
-            Some("Change catalog")
-        );
+    /// The row has no catalog command, with a catalog or without, published
+    /// or not: the context pane's Bucket section adds or changes it. With a
+    /// catalog the row still opens the catalog page.
+    #[wasm_bindgen_test]
+    fn the_header_offers_no_catalog_command() {
         let unpublished = commands::PackageHeaderData {
             remote_locked: false,
             ..without_catalog(kit::PackageState::Unpublished)
         };
-        assert_eq!(command(unpublished), None);
-        assert_eq!(command(data(kit::PackageState::NoRemote)), None);
+        for d in [
+            with_catalog(kit::PackageState::Latest),
+            without_catalog(kit::PackageState::Latest),
+            unpublished,
+            data(kit::PackageState::NoRemote),
+        ] {
+            let el = mount_header(d);
+            let commands = row_buttons(&el);
+            assert!(
+                !commands
+                    .iter()
+                    .any(|c| c.contains("Add catalog") || c.contains("Change catalog")),
+                "{commands:?}"
+            );
+        }
     }
 
-    /// *Add catalog* opens the bucket dialog with only the bucket locked. Once
-    /// the catalog is added, the re-read header has *Open in catalog* and
-    /// *Change catalog*.
-    #[wasm_bindgen_test]
-    async fn add_catalog_opens_the_dialog_with_the_bucket_locked() {
-        let el = mount_header(without_catalog(kit::PackageState::Latest));
-        assert!(!location_names(&el).contains(&"Open in catalog".to_string()));
-
-        crate::test_support::button_saying(&el, "Add catalog").click();
-        leptos::task::tick().await;
-
-        let dialog = el
-            .query_selector("dialog[open]")
-            .unwrap()
-            .expect("the dialog is open");
-        let inputs = dialog.query_selector_all("input").unwrap();
-        let disabled: Vec<bool> = (0..inputs.length())
-            .map(|i| {
-                inputs
-                    .item(i)
-                    .unwrap()
-                    .unchecked_into::<web_sys::HtmlInputElement>()
-                    .disabled()
-            })
-            .collect();
-        assert_eq!(disabled, [false, true], "host open, bucket locked");
-
-        let added = mount_header(with_catalog(kit::PackageState::Latest));
-        assert!(location_names(&added).contains(&"Open in catalog".to_string()));
-        crate::test_support::button_saying(&added, "Change catalog");
+    /// The row's buttons by their words, outside the closed dialogs.
+    fn row_buttons(el: &web_sys::Element) -> Vec<String> {
+        let all = el.query_selector_all("button").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .filter(|b| b.closest("dialog").unwrap().is_none())
+            .map(|b| b.text_content().unwrap_or_default())
+            .collect()
     }
 
-    /// The menu no longer offers the catalog: the row does.
+    /// The menu does not offer the catalog.
     #[test]
     fn the_menu_does_not_offer_the_catalog() {
         let labels: Vec<String> = menu_items(&with_catalog(kit::PackageState::Latest), false)

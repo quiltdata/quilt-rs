@@ -68,7 +68,7 @@ use crate::kit::SplitButton;
 use crate::kit::SplitOption;
 use crate::kit::StateLabel;
 use crate::kit::render;
-use crate::pages::{MenuItem, catalog_command, menu_items, remote_target};
+use crate::pages::{MenuItem, menu_items, remote_target};
 
 const NAMESPACE: &str = "user/plate-07";
 
@@ -220,13 +220,6 @@ fn state_payload(state: &PackageState) -> commands::PackageHeaderData {
     }
 }
 
-/// The page's own [`catalog_command`] over this state's remote: offered once
-/// the package is published.
-fn scene_catalog_command(state: &PackageState) -> Option<&'static str> {
-    let payload = state_payload(state);
-    catalog_command(payload.uri.as_ref(), payload.remote_locked)
-}
-
 /// The header at one state.
 ///
 /// # The row is state-driven; the menu is not
@@ -317,8 +310,6 @@ fn header(
                             }
                         })}
                     {location(has_remote_side(state), copied)}
-                    {scene_catalog_command(state)
-                        .map(|label| view! { <Button on_click=|_| ()>{label}</Button> })}
                     <ActionMenu
                         aria_label="More actions for this package"
                         actions={
