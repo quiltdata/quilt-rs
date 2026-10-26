@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.25.1-dev]
+
+### Changed
+
+- **New design preview**: the package page shows *Bucket and catalog* for every package, with one button that opens the bucket dialog: *Choose* for a package with no bucket yet, *Change* otherwise. Long bucket and catalog names fit on one line. *Revisions you have* is now *History*, at the top of *Revision* (<https://github.com/quiltdata/quilt-rs/pull/PR>)
+
 ## [v0.25.0] - 2026-10-26
 
 ### Added

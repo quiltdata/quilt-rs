@@ -30,6 +30,10 @@ pub fn PaneSection(
     /// One level down, for a section inside a section.
     #[prop(optional)]
     nested: bool,
+    /// The section's one action, at the heading's end. It acts on the whole
+    /// section, so no row inside carries its own.
+    #[prop(optional)]
+    action: Option<AnyView>,
     children: Children,
 ) -> impl IntoView {
     let class = if nested {
@@ -44,10 +48,17 @@ pub fn PaneSection(
                 .map(|text| {
                     // `h4` under `h3`, never a skipped level: the pane is a `Card`
                     // and the page's regions are its `h2`s.
-                    if nested {
+                    let heading = if nested {
                         view! { <h4 class=style::label>{text}</h4> }.into_any()
                     } else {
                         view! { <h3 class=style::label>{text}</h3> }.into_any()
+                    };
+                    match action {
+                        Some(action) => {
+                            view! { <div class=style::heading>{heading}{action}</div> }
+                                .into_any()
+                        }
+                        None => heading,
                     }
                 })}
             {children()}

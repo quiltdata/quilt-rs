@@ -296,7 +296,6 @@ fn primary_action(
     w: Wiring,
     goto: RwSignal<Option<String>>,
     publish_choice: RwSignal<usize>,
-    bucket_open: RwSignal<bool>,
     role_open: RwSignal<bool>,
 ) -> AnyView {
     // The state offers no action for a denial — `kit::render` cannot know
@@ -387,10 +386,9 @@ fn primary_action(
         }
         Some(PackageAction::Resolve) => goto.set(Some(resolve_to.clone())),
         Some(PackageAction::SignIn) => goto.set(sign_in_to.clone()),
-        Some(PackageAction::ChooseS3Bucket) => bucket_open.set(true),
         Some(PackageAction::SwitchRole) => role_open.set(true),
-        // `Publish` returned above.
-        Some(PackageAction::Publish) | None => (),
+        // `Publish` returned above; the header never offers `ChooseS3Bucket`.
+        Some(PackageAction::Publish | PackageAction::ChooseS3Bucket) | None => (),
     };
 
     action.map_or_else(
@@ -759,7 +757,10 @@ pub fn PageHeader(
     } = dialogs;
     let payload = StoredValue::new(data.clone());
     let rendered = render(&data.state, kit::Site::PageHeader);
-    let action = rendered.action;
+    // The pane's Bucket and catalog section offers the bucket instead.
+    let action = rendered
+        .action
+        .filter(|action| *action != PackageAction::ChooseS3Bucket);
     let namespace = data.namespace.to_string();
     // Seeded from what the reader picked for this package last time, and
     // written back only when they pick: a visit that changes nothing stores
@@ -810,7 +811,6 @@ pub fn PageHeader(
                                     w,
                                     goto,
                                     publish_choice,
-                                    bucket_open,
                                     role_open,
                                 )
                             })
@@ -1534,38 +1534,44 @@ mod tests {
         }
     }
 
-    /// Both entries open the same form — the row offers it because the state
-    /// calls for it, the menu because the reader may choose it.
+    /// The pane's Bucket and catalog section offers the bucket, so a package
+    /// with none has no primary here; the menu's *Change bucket* still opens
+    /// the dialog.
     #[wasm_bindgen_test]
-    async fn choose_s3_bucket_and_change_bucket_open_the_same_dialog() {
-        for state in [kit::PackageState::NoRemote, kit::PackageState::Latest] {
-            let from_row = matches!(state, kit::PackageState::NoRemote);
-            let el = mount_header(data(state));
-            assert!(
-                el.query_selector("dialog[open]").unwrap().is_none(),
-                "closed until asked"
-            );
-
-            if from_row {
-                button(&el, "Choose S3 bucket").click();
-            } else {
-                el.query_selector(TRIGGER)
-                    .unwrap()
-                    .expect("the overflow trigger")
-                    .unchecked_into::<web_sys::HtmlElement>()
-                    .click();
-                leptos::task::tick().await;
-                button(&el, "Change bucket").click();
-            }
-            // The dialog opens from an effect, on the next tick.
-            leptos::task::tick().await;
-
-            let dialog = el
-                .query_selector("dialog[open]")
+    async fn no_bucket_offers_no_primary_and_the_menu_opens_the_dialog() {
+        let el = mount_header(data(kit::PackageState::NoRemote));
+        assert!(
+            el.query_selector("[data-primary-action]")
                 .unwrap()
-                .unwrap_or_else(|| panic!("the dialog opened; markup was {}", el.inner_html()));
-            element_saying(&dialog, "Bucket and catalog");
-        }
+                .is_none(),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert_eq!(
+            location_names(&el)[0],
+            "Open folder",
+            "the folder leads the row"
+        );
+        assert!(
+            el.query_selector("dialog[open]").unwrap().is_none(),
+            "closed until asked"
+        );
+
+        el.query_selector(TRIGGER)
+            .unwrap()
+            .expect("the overflow trigger")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        leptos::task::tick().await;
+        button(&el, "Change bucket").click();
+        // The dialog opens from an effect, on the next tick.
+        leptos::task::tick().await;
+
+        let dialog = el
+            .query_selector("dialog[open]")
+            .unwrap()
+            .unwrap_or_else(|| panic!("the dialog opened; markup was {}", el.inner_html()));
+        element_saying(&dialog, "Bucket and catalog");
     }
 
     /// A single-role reader sees the reason and no button — the payload says so

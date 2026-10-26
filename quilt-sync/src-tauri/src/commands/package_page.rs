@@ -187,7 +187,7 @@ pub struct CurrentRevisionData {
     pub obtained_at: f64,
 }
 
-/// `Revisions you have`: the rows, and what removing every removable one
+/// `History`: the rows, and what removing every removable one
 /// frees, measured for the set.
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -198,7 +198,7 @@ pub struct RevisionHistoryData {
     pub removable_frees: Option<u64>,
 }
 
-/// One row of `Revisions you have`, newest obtained first.
+/// One row of `History`, newest obtained first.
 #[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RevisionHistoryRow {

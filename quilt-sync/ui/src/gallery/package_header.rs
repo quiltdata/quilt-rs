@@ -301,7 +301,9 @@ fn header(
                         })}
                     {action
                         .filter(|_| !action_open)
-                        .filter(|a| !matches!(a, PackageAction::Publish))
+                        .filter(|a| {
+                            !matches!(a, PackageAction::Publish | PackageAction::ChooseS3Bucket)
+                        })
                         .map(|action| {
                             view! {
                                 <Button variant=ButtonVariant::Primary on_click=|_| ()>

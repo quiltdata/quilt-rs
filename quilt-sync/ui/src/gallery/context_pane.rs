@@ -167,7 +167,7 @@ fn trigger(open: RwSignal<bool>) -> impl FnOnce(String) -> AnyView {
                 aria_expanded=open
                 aria_controls=surface_id
             >
-                "Revisions you have (4)"
+                "History (4)"
             </Button>
         }
         .into_any()
@@ -321,30 +321,34 @@ fn pane(
     on_page: bool,
 ) -> AnyView {
     let sections = view! {
-        <PaneSection label="Bucket and catalog">
+        <PaneSection
+            label="Bucket and catalog"
+            action=view! { <Button on_click=|_| ()>"Change"</Button> }.into_any()
+        >
             <dl style="display:grid; grid-template-columns:auto 1fr; align-items:center; \
                        column-gap:var(--q-space-3); row-gap:var(--q-space-1); margin:0; \
-                       font-size:var(--q-text-body)">
+                       align-self:stretch; font-size:var(--q-text-body)">
                 <dt style="color:var(--q-fgColor-muted)">"Bucket"</dt>
                 <dd style="margin:0">{BUCKET}</dd>
                 <dt style="color:var(--q-fgColor-muted)">"Catalog"</dt>
-                <dd style="margin:0; display:flex; align-items:center; \
-                           justify-content:space-between; gap:var(--q-space-2)">
-                    <span>"open.quiltdata.com"</span>
-                    <Button on_click=|_| ()>"Change"</Button>
-                </dd>
+                <dd style="margin:0">"open.quiltdata.com"</dd>
             </dl>
         </PaneSection>
-        <PaneSection label="Revision">
+        <PaneSection
+            label="Revision"
+            action=view! {
+                <AnchoredOverlay
+                    trigger=trigger(open)
+                    open=open
+                    aria_label="History"
+                    align=Align::End
+                >
+                    {body}
+                </AnchoredOverlay>
+            }
+                .into_any()
+        >
             <RevisionRow message="Add intake folder-upload note" at=ago(2.0 * HOUR) />
-            <AnchoredOverlay
-                trigger=trigger(open)
-                open=open
-                aria_label="Revisions you have"
-                align=Align::End
-            >
-                {body}
-            </AnchoredOverlay>
         </PaneSection>
         <PaneSection>
             <ChoiceGroup
@@ -454,9 +458,10 @@ fn refused() -> ResolveData {
 const NOTE: &str = "280px holding three blocks: what the page says about the package rather \
     than about its files. \
     \
-    Bucket and catalog comes first, each named: the package's s3:// address, its catalog \
-    host or a plain No catalog, and one action into the Bucket and catalog dialog — Add catalog without \
-    one, Change with one. A package with no bucket has no Bucket and catalog section. \
+    Bucket and catalog comes first, on every package: the s3:// address and the catalog \
+    host, each cut with an ellipsis or a plain Not set, and one action at the heading's end \
+    into the Bucket and catalog dialog — Choose, as the primary, without a bucket, Change \
+    with one. History sits at Revision's heading end the same way. \
     \
     Keeping's count carries the package's size: the sum of the current revision's \
     manifest rows, and of those whose files are here. It is the logical size, not disk \
