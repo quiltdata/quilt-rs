@@ -891,8 +891,7 @@ async fn a_task_waits_while_latest_cannot_be_read() {
 
 /// A package whose remote `latest` reads as `latest_hash` (fresh unless
 /// `refreshed` is false), carries `latest_meta` and lists `TASK.md` and
-/// `NEXT.md`. Pulls and downloads go to the fixture's events, and a download
-/// refuses anything already in the folder.
+/// `NEXT.md`. Pulls and downloads go to the fixture's events.
 fn rereading_model(
     fixture: &Fixture,
     latest_hash: &str,
@@ -1010,7 +1009,6 @@ async fn a_later_revision_that_still_holds_the_claim_is_pulled_and_its_task_run(
     );
 }
 
-/// A failed re-read ends the run `not_started`, naming the error.
 #[tokio::test]
 async fn a_later_revision_whose_inputs_cannot_be_downloaded_fails_the_reread() -> Result<(), Error>
 {

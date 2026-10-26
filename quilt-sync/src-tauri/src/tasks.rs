@@ -3,7 +3,6 @@
 //! and closed by publishing what the agent left as the next revision.
 
 use std::collections::BTreeSet;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -533,7 +532,7 @@ async fn publish_outcome<M: QuiltModel>(
 
 /// Put a revision's `rows` in the package's folder, which a sparse copy may
 /// lack. A regular file already there stays: the walk compares it with the
-/// revision. A symlink on the document's path stops the run: the walk skips
+/// revision. A symlink on the document's path stops it: the walk skips
 /// links, and a linked folder leads outside the package.
 async fn check_out<M: QuiltModel>(
     model: &M,
@@ -544,7 +543,7 @@ async fn check_out<M: QuiltModel>(
     document: &str,
 ) -> Result<(), Error> {
     let home = model.package_home(&pkg.namespace).await?;
-    let document = Path::new(document);
+    let document = std::path::Path::new(document);
     if !lineage.paths.contains_key(document) {
         let mut on_disk = home.clone();
         for part in document.components() {
