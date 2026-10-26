@@ -270,13 +270,16 @@ pub fn SetRemotePopup(
     let on_close_cancel = on_close.clone();
     let on_cancel = move |_: leptos::ev::MouseEvent| on_close_cancel();
 
-    // Enter on host → focus bucket; Enter on bucket → submit
+    // Enter on host → focus bucket, or submit once published, when the bucket
+    // is locked; Enter on bucket → submit
+    let on_submit_host = on_submit.clone();
     let on_submit_bucket = on_submit.clone();
     let on_close_key_host = on_close.clone();
     let on_host_keydown = move |ev: leptos::ev::KeyboardEvent| {
         if ev.key() == "Enter" {
-            // Focus the bucket input
-            if let Some(doc) = web_sys::window().and_then(|w| w.document())
+            if published {
+                on_submit_host();
+            } else if let Some(doc) = web_sys::window().and_then(|w| w.document())
                 && let Some(el) = doc.get_element_by_id("set-remote-bucket")
                 && let Ok(input) = el.dyn_into::<web_sys::HtmlElement>()
             {
@@ -492,6 +495,41 @@ mod tests {
                 .unwrap_or_default()
                 .contains("create a new revision"),
             "a catalog change makes no revision"
+        );
+    }
+
+    /// Once published, Enter in the catalog field saves: the bucket it would
+    /// otherwise move to is locked. With no Tauri host here, the save's
+    /// refusal is what shows that it ran.
+    #[wasm_bindgen_test]
+    async fn enter_in_the_catalog_saves_once_published() {
+        let notification = RwSignal::new(None);
+        let el = mount(move || {
+            view! {
+                <SetRemotePopup
+                    namespace="team/survey".to_string()
+                    current_host=None
+                    current_bucket=Some("data-bucket".to_string())
+                    published=true
+                    notification=notification
+                    refetch=Trigger::new()
+                    on_close=|| ()
+                />
+            }
+        });
+        leptos::task::tick().await;
+        let (host, _) = inputs(&el);
+        let init = web_sys::KeyboardEventInit::new();
+        init.set_key("Enter");
+        host.dispatch_event(
+            &web_sys::KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init).unwrap(),
+        )
+        .unwrap();
+        crate::test_support::sleep_ms(50).await;
+
+        assert!(
+            matches!(notification.get_untracked(), Some(Notification::Error(_))),
+            "the save ran"
         );
     }
 
