@@ -566,13 +566,15 @@ pub type CopiedMark = crate::pages::copy_mark::CopyMark<String>;
 /// buttons, so the link and the copy always name the same revision.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteTarget {
-    pub catalog_url: String,
+    /// `None` when the remote names no catalog: the address is copied
+    /// without one, and there is no page to open.
+    pub catalog_url: Option<String>,
     pub address: quilt_uri::S3PackageUri,
 }
 
-/// The package's catalog page and Quilt URI, once there is a catalog page: a
-/// catalog URL can be built and the remote holds a revision. A bucket chosen
-/// but never published has no page yet.
+/// The package's Quilt URI, and its catalog page when the remote names a
+/// catalog, once the remote's bucket holds a revision. A bucket chosen but
+/// never published has neither yet.
 ///
 /// At `latest`, with no hash, when the revision the package holds is the
 /// remote's latest as this read saw it just now (`newer`). Otherwise pinned to
@@ -586,7 +588,7 @@ pub fn remote_target(
     remote_locked: bool,
     newer: Option<&str>,
 ) -> Option<RemoteTarget> {
-    let held = uri.filter(|_| remote_locked)?;
+    let held = uri.filter(|u| remote_locked && util::has_bucket(Some(u)))?;
     let at_latest = matches!(
         &held.revision,
         quilt_uri::RevisionPointer::Hash(hash) if newer == Some(hash.as_str())
@@ -601,12 +603,13 @@ pub fn remote_target(
         held.clone()
     };
     Some(RemoteTarget {
-        catalog_url: util::catalog_url(&address)?,
+        catalog_url: util::catalog_url(&address),
         address,
     })
 }
 
-/// Where the package is: its folder, then its catalog page and its Quilt URI.
+/// Where the package is: its folder, then its catalog page, if any, and its
+/// Quilt URI.
 /// The commit page's header draws it too.
 ///
 /// The remote side is dropped, not disabled, without a [`remote_target`]: there
@@ -639,12 +642,12 @@ pub(crate) fn location(
         .with_disabled(busy.into())
     }];
     if let Some(RemoteTarget {
-        catalog_url: url,
+        catalog_url,
         address,
     }) = target
     {
         let ns = namespace.clone();
-        buttons.push(
+        buttons.extend(catalog_url.map(|url| {
             GroupButton::labelled(
                 icons::link_external,
                 "Open in catalog",
@@ -660,8 +663,8 @@ pub(crate) fn location(
                     );
                 }),
             )
-            .with_disabled(busy.into()),
-        );
+            .with_disabled(busy.into())
+        }));
         buttons.push(
             GroupButton::icon(
                 icons::copy,
@@ -2061,13 +2064,32 @@ mod tests {
         }
     }
 
-    /// A package with no catalog, or not yet published, has no catalog page,
-    /// so the remote side is dropped rather than disabled: there is no reason to state and nothing
-    /// the reader could do about it.
+    fn without_catalog(state: kit::PackageState) -> commands::PackageHeaderData {
+        commands::PackageHeaderData {
+            uri: Some(
+                "quilt+s3://team-bucket#package=team/dataset@abc123"
+                    .parse()
+                    .expect("a uri with no catalog"),
+            ),
+            remote_locked: true,
+            ..data(state)
+        }
+    }
+
+    /// A package with no remote, or not yet published, has no address to copy
+    /// and no catalog page, so the remote side is dropped rather than disabled:
+    /// there is no reason to state and nothing the reader could do about it.
+    /// A published package with no catalog has its address but no page.
     #[wasm_bindgen_test]
-    fn the_remote_side_is_there_only_with_a_catalog() {
+    fn the_remote_side_is_there_once_published() {
         let plain = mount_header(data(kit::PackageState::Latest));
         assert_eq!(location_names(&plain), ["Open folder"]);
+
+        let bucket_only = mount_header(without_catalog(kit::PackageState::Latest));
+        assert_eq!(
+            location_names(&bucket_only),
+            ["Open folder", "Copy Quilt URI"]
+        );
 
         let unpublished = mount_header(commands::PackageHeaderData {
             remote_locked: false,
@@ -2176,8 +2198,8 @@ mod tests {
             "quilt+s3://team-bucket#package=team/dataset&catalog=quilt.test"
         );
         assert_eq!(
-            target.catalog_url,
-            "https://quilt.test/b/team-bucket/packages/team/dataset/tree/latest"
+            target.catalog_url.as_deref(),
+            Some("https://quilt.test/b/team-bucket/packages/team/dataset/tree/latest")
         );
     }
 
@@ -2190,8 +2212,8 @@ mod tests {
             "quilt+s3://team-bucket#package=team/dataset@abc123&catalog=quilt.test"
         );
         assert_eq!(
-            target.catalog_url,
-            "https://quilt.test/b/team-bucket/packages/team/dataset/tree/abc123"
+            target.catalog_url.as_deref(),
+            Some("https://quilt.test/b/team-bucket/packages/team/dataset/tree/abc123")
         );
     }
 
@@ -2202,6 +2224,20 @@ mod tests {
             remote_target_of(&holding_against(None)),
             remote_target_of(&holding_against(Some("def456")))
         );
+    }
+
+    /// With no catalog, the copy is the bucket's address alone, and there is
+    /// no catalog page.
+    #[test]
+    fn without_a_catalog_the_copy_names_the_bucket() {
+        let mut d = without_catalog(kit::PackageState::Latest);
+        d.newer = Some("abc123".to_string());
+        let target = remote_target_of(&d).unwrap();
+        assert_eq!(
+            target.address.to_copy_string(),
+            "quilt+s3://team-bucket#package=team/dataset"
+        );
+        assert_eq!(target.catalog_url, None);
     }
 
     /// A long hash is copied whole: the shortened form is for reading only.

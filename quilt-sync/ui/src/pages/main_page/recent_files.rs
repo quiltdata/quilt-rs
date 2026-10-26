@@ -51,7 +51,8 @@ pub fn RecentFilesRegion(
     /// namespace — what a row's Copy action addresses.
     ///
     /// A package with no bucket has no such address, so it is absent here and
-    /// its rows offer neither Copy URI nor Open in catalog. The feed's own
+    /// its rows offer neither Copy URI nor Open in catalog. One with no
+    /// catalog host offers Copy URI alone. The feed's own
     /// payload carries no bucket, which is why this comes from the caller
     /// rather than from `files`.
     #[prop(optional)]
@@ -251,10 +252,11 @@ fn held_address(address: Option<&S3PackageUri>, published: Option<&str>) -> Opti
 
 /// The items a row's `[⋯]` offers: open and reveal; then the catalog and the
 /// copy, which name the published revision the package holds. Both need a
-/// catalog host, that revision, and a package with no changed files: this page
+/// bucket, that revision, and a package with no changed files: this page
 /// cannot tell which file changed, and the revision would not hold a changed
-/// one as it is here. No *Ignore*: it edits the package's `.quiltignore` under
-/// the package page's lock, which this page does not hold.
+/// one as it is here. The catalog also needs a catalog host; without one the
+/// copy names the bucket alone. No *Ignore*: it edits the package's
+/// `.quiltignore` under the package page's lock, which this page does not hold.
 fn row_commands(
     path: &str,
     address: Option<&S3PackageUri>,
@@ -266,8 +268,10 @@ fn row_commands(
         RowCommand::Open(path.clone()),
         RowCommand::Reveal(path.clone()),
     ];
-    if address.is_some_and(|a| a.catalog.is_some()) && published && unchanged {
-        commands.push(RowCommand::OpenInCatalog(path.clone()));
+    if let Some(address) = address.filter(|a| !a.bucket.is_empty() && published && unchanged) {
+        if address.catalog.is_some() {
+            commands.push(RowCommand::OpenInCatalog(path.clone()));
+        }
         commands.push(RowCommand::CopyUri(path));
     }
     commands
@@ -545,11 +549,42 @@ mod tests {
     }
 
     #[test]
-    fn a_bucket_with_no_catalog_host_offers_only_the_local_file() {
+    fn a_bucket_with_no_catalog_host_offers_the_address_alone() {
         let bucket_only = crate::util::package_uri("team-bucket", &ns("user/alpha"), None);
         assert_eq!(
             menu("one.csv", Some(&bucket_only), true, true),
-            ["Open file", "Reveal in folder"]
+            ["Open file", "Reveal in folder", "| Copy URI"]
+        );
+        assert_eq!(
+            menu("one.csv", Some(&bucket_only), false, true),
+            ["Open file", "Reveal in folder"],
+            "an unpublished revision"
+        );
+        assert_eq!(
+            menu("one.csv", Some(&bucket_only), true, false),
+            ["Open file", "Reveal in folder"],
+            "local changes"
+        );
+    }
+
+    /// Without a catalog host, the copied address names the bucket and the
+    /// held revision, and no catalog.
+    #[wasm_bindgen_test]
+    async fn without_a_catalog_the_copy_names_the_bucket() {
+        let bucket_only = crate::util::package_uri("team-bucket", &ns("user/alpha"), None);
+        let held = held_address(Some(&bucket_only), Some("abc123")).expect("an address");
+        let (copied, _) = crate::pages::row_menu::clipped(
+            &RowCommand::CopyUri("one.csv".to_string()),
+            "user/alpha",
+            Some(&held),
+            local_path,
+        )
+        .await
+        .unwrap()
+        .expect("an address");
+        assert_eq!(
+            copied,
+            "quilt+s3://team-bucket#package=user/alpha@abc123&path=one.csv"
         );
     }
 

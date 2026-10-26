@@ -1318,12 +1318,38 @@ mod tests {
         })
     }
 
-    /// The package header's group: the remote side only once the package has
-    /// a catalog page, which a bucket never published to does not.
+    fn published_without_catalog(
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        Box::pin(async {
+            Ok(CommitData {
+                uri: Some(
+                    quilt_uri::S3PackageUri::try_from(
+                        "quilt+s3://team-bucket#package=org/pkg@abc123",
+                    )
+                    .unwrap(),
+                ),
+                remote_locked: true,
+                newer: Some("abc123".to_string()),
+                ..commit_data()
+            })
+        })
+    }
+
+    /// The package header's group: the remote side only once the package is
+    /// published, which a bucket never published to is not, and the catalog
+    /// page only with a catalog.
     #[wasm_bindgen_test]
     async fn the_header_shows_the_package_location() {
         let unpublished = page_at("/commit?namespace=org%2Fpkg").await;
         assert_eq!(location_names(&unpublished), ["Open folder"]);
+
+        let bucket_only =
+            page_reading("/commit?namespace=org%2Fpkg", published_without_catalog).await;
+        assert_eq!(
+            location_names(&bucket_only),
+            ["Open folder", "Copy Quilt URI"]
+        );
 
         let el = page_reading("/commit?namespace=org%2Fpkg", published).await;
         assert_eq!(

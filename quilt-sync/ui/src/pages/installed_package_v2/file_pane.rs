@@ -437,13 +437,16 @@ fn offered(rows: &[Row]) -> Vec<String> {
         .collect()
 }
 
-/// Whether a file can be named at the revision the package holds, which the
-/// catalog and *Copy URI* items need.
+/// Whether a file can be named at the revision the package holds, which
+/// *Copy URI* needs, and whether it has a catalog page, which *Open in
+/// catalog* needs too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Reach {
-    /// The remote names a catalog host and holds the revision the package
-    /// holds, with no unpublished revision on top.
+    /// The remote's bucket holds the revision the package holds, with no
+    /// unpublished revision on top.
     pub published: bool,
+    /// The remote names a catalog host.
+    pub catalog: bool,
 }
 
 impl Reach {
@@ -452,11 +455,12 @@ impl Reach {
     #[must_use]
     pub fn of(uri: Option<&quilt_uri::S3PackageUri>, has_local_commit: bool) -> Self {
         let held = uri.is_some_and(|u| {
-            u.catalog.is_some()
+            !u.bucket.is_empty()
                 && matches!(&u.revision, quilt_uri::RevisionPointer::Hash(h) if !h.is_empty())
         });
         Self {
             published: held && !has_local_commit,
+            catalog: uri.is_some_and(|u| u.catalog.is_some()),
         }
     }
 }
@@ -507,7 +511,7 @@ fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
 }
 
 /// The items a row offers, in their fixed order and groups: open and reveal;
-/// catalog and copy; then the `.quiltignore` item. v1's entries form
+/// catalog, if any, and copy; then the `.quiltignore` item. v1's entries form
 /// gates its buttons the same way, but Ignore is on every row: the pane does
 /// not read `junky_pattern`, and the popup is prefilled with the path instead.
 fn row_commands(
@@ -535,7 +539,9 @@ fn row_commands(
     // A changed or deleted file is not here as the held revision has it, and a
     // new one is in no revision.
     if reach.published && matches!(place, Place::Here | Place::Missing) {
-        commands.push(RowCommand::OpenInCatalog(path.clone()));
+        if reach.catalog {
+            commands.push(RowCommand::OpenInCatalog(path.clone()));
+        }
         commands.push(RowCommand::CopyUri(path.clone()));
     }
     if place == Place::New {
@@ -1610,7 +1616,10 @@ mod menu_tests {
             false,
             Place::of(status),
             ignored_by,
-            Reach { published },
+            Reach {
+                published,
+                catalog: true,
+            },
         )
         .iter()
         .map(RowCommand::label)
@@ -1648,7 +1657,10 @@ mod menu_tests {
             false,
             Place::of(status),
             ignored_by,
-            Reach { published },
+            Reach {
+                published,
+                catalog: true,
+            },
         );
         commands
             .iter()
@@ -1702,7 +1714,10 @@ mod menu_tests {
                 false,
                 Place::Here,
                 Some("*.tmp"),
-                Reach { published: true }
+                Reach {
+                    published: true,
+                    catalog: true,
+                }
             ),
             [RowCommand::StopIgnoring {
                 path: "a.tmp".to_string(),
@@ -1734,7 +1749,38 @@ mod menu_tests {
         }
     }
 
-    /// A catalog host, a revision on the remote, and nothing unpublished.
+    /// With no catalog, a file the held revision has as it is here keeps its
+    /// address, and has no catalog page.
+    #[test]
+    fn without_a_catalog_a_row_offers_its_address_alone() {
+        let commands = |status| {
+            row_commands(
+                "raw/a.csv",
+                false,
+                Place::of(status),
+                None,
+                Reach {
+                    published: true,
+                    catalog: false,
+                },
+            )
+            .iter()
+            .map(RowCommand::label)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            commands("pristine"),
+            ["Open file", "Reveal in folder", "Copy URI", "Ignore"]
+        );
+        assert_eq!(commands("remote"), ["Copy URI", "Ignore"]);
+        assert_eq!(
+            commands("modified"),
+            ["Open file", "Reveal in folder", "Ignore"]
+        );
+    }
+
+    /// A bucket holding the revision, and nothing unpublished; a catalog host
+    /// is not needed.
     #[test]
     fn a_package_reaches_its_files_when_its_held_revision_is_published() {
         let published =
@@ -1748,9 +1794,11 @@ mod menu_tests {
             "an unpublished revision"
         );
         assert!(
-            !published(Some(&remote(None, "abc123")), false),
+            published(Some(&remote(None, "abc123")), false),
             "no catalog host"
         );
+        assert!(!Reach::of(Some(&remote(None, "abc123")), false).catalog);
+        assert!(Reach::of(Some(&remote(Some("quilt.test"), "abc123")), false).catalog);
         assert!(
             !published(Some(&remote(Some("quilt.test"), "")), false),
             "a bucket never published to"
@@ -1767,7 +1815,10 @@ mod menu_tests {
                 false,
                 Place::New,
                 None,
-                Reach { published: true }
+                Reach {
+                    published: true,
+                    catalog: true,
+                }
             ),
             [
                 RowCommand::Open("raw/a.csv".to_string()),
@@ -1843,7 +1894,10 @@ mod menu_pane_tests {
 
     fn menu(busy: Signal<bool>, chosen: RwSignal<Option<RowCommand>>) -> RowMenu {
         RowMenu {
-            reach: Reach { published: true },
+            reach: Reach {
+                published: true,
+                catalog: true,
+            },
             busy,
             on_command: Callback::new(move |c| chosen.set(Some(c))),
             copied: CopyMark::new(),
