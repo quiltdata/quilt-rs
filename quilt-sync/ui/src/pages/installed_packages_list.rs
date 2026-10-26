@@ -149,12 +149,12 @@ fn pull_popover(check: &PullCheck) -> Option<String> {
 /// The state flag (`has_changes`) and the affordance gate (`no_access`) are
 /// kept as separate terms for exactly this reason — deriving one from the
 /// other collapses a case where they must disagree.
-fn publish_affordance(status: &str, has_changes: bool, has_origin: bool, no_access: bool) -> bool {
+fn publish_affordance(status: &str, has_changes: bool, has_bucket: bool, no_access: bool) -> bool {
     if no_access {
         return false;
     }
-    let publishable_status = status == "ahead" || (status == "local" && has_origin);
-    let up_to_date_with_changes = status == "up_to_date" && has_changes && has_origin;
+    let publishable_status = status == "ahead" || (status == "local" && has_bucket);
+    let up_to_date_with_changes = status == "up_to_date" && has_changes && has_bucket;
     publishable_status || up_to_date_with_changes
 }
 
@@ -637,6 +637,7 @@ fn build_package_menu(
     let current_host = origin_host.clone();
     let current_bucket = data.uri.as_ref().and_then(util::bucket_str);
     let has_origin = origin_url.is_some();
+    let has_bucket = util::has_bucket(data.uri.as_ref());
     let remote_configured = current_host.is_some() && current_bucket.is_some();
 
     // ── Open in file browser ──
@@ -748,10 +749,10 @@ fn build_package_menu(
         <li class="menu-item menu-divider"></li>
 
         // Publish: commit (if needed) + push in one click.
-        // Gated on having a remote origin, and on there being something to ship
+        // Gated on having a bucket, and on there being something to ship
         // (either uncommitted changes or a pending commit).
         <Show when=move || {
-            publish_affordance(&status.get(), has_changes.get(), has_origin, access.no_access.get())
+            publish_affordance(&status.get(), has_changes.get(), has_bucket, access.no_access.get())
         }>
             <li class="menu-item">
                 <buttons::Publish
@@ -1038,6 +1039,27 @@ mod tests {
             publish_affordance("up_to_date", true, true, false),
             "a readable row with the same local changes must still offer it"
         );
+    }
+
+    /// A remote just set with a bucket and no catalog is `local` until its
+    /// first push, and the row offers Publish for it.
+    #[test]
+    fn a_local_row_with_a_bucket_and_no_catalog_offers_publish() {
+        let uri: quilt_uri::S3PackageUri = "quilt+s3://data-bucket#package=team/survey"
+            .parse()
+            .unwrap();
+        assert!(publish_affordance(
+            "local",
+            false,
+            crate::util::has_bucket(Some(&uri)),
+            false
+        ));
+        assert!(!publish_affordance(
+            "local",
+            false,
+            crate::util::has_bucket(None),
+            false
+        ));
     }
 
     #[test]
