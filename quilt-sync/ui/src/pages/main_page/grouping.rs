@@ -90,8 +90,8 @@ const LOCAL_ONLY: &str = "Local only";
 
 /// The heading for the packages with a bucket and no catalog host, on the
 /// catalog axis. Neutral words: such a package is supported, not misconfigured.
-/// First on that axis, since adding a catalog is what a reader most likely
-/// came to do there.
+/// Before every host on that axis, since adding a catalog is what a reader most
+/// likely came to do there.
 const NO_CATALOG: &str = "No catalog";
 
 /// A row's group on the axis: its rank, then its heading. Groups are ordered
@@ -102,17 +102,16 @@ const NO_CATALOG: &str = "No catalog";
 /// bucket and burying them hides what most needs setup; then `s3://` buckets.
 /// The payload's `bucket` field is bare, so the scheme is added only here.
 ///
-/// Catalog: `No catalog` first, then `Local only`, then each catalog host as
-/// the row's tooltip names it.
+/// Catalog: `Local only`, then `No catalog`, then each catalog host as the
+/// row's tooltip names it. `Local only` leads as it does on the bucket axis.
 ///
 /// Prefix: the namespace up to the first `/`; a namespace with no `/` is its
 /// own prefix.
 fn group_key(row: &ListRowData, group_by: &str) -> (u8, String) {
     match (group_by, &row.bucket, &row.host) {
-        (GROUP_BUCKET, None, _) => (0, LOCAL_ONLY.to_string()),
+        (GROUP_BUCKET | GROUP_CATALOG, None, _) => (0, LOCAL_ONLY.to_string()),
         (GROUP_BUCKET, Some(bucket), _) => (1, format!("s3://{bucket}")),
-        (GROUP_CATALOG, Some(_), None) => (0, NO_CATALOG.to_string()),
-        (GROUP_CATALOG, None, _) => (1, LOCAL_ONLY.to_string()),
+        (GROUP_CATALOG, Some(_), None) => (1, NO_CATALOG.to_string()),
         (GROUP_CATALOG, Some(_), Some(host)) => (2, host.clone()),
         _ => (0, row.namespace.prefix().to_string()),
     }
@@ -321,9 +320,9 @@ mod tests {
     }
 
     #[test]
-    fn the_catalog_axis_lists_no_catalog_then_local_only_then_hosts() {
-        // The packages with a bucket and no catalog, then the ones with no
-        // remote at all, then hosts alphabetically. The given order is none of
+    fn the_catalog_axis_lists_local_only_then_no_catalog_then_hosts() {
+        // The packages with no bucket at all, then the ones with a bucket and
+        // no catalog, then hosts alphabetically. The given order is none of
         // these.
         let rows = vec![
             remote("user/z", None, Some("zebra.quilt.test")),
@@ -338,8 +337,8 @@ mod tests {
         assert_eq!(
             titles(&groups),
             vec![
-                Some("No catalog"),
                 Some("Local only"),
+                Some("No catalog"),
                 Some("apple.quilt.test"),
                 Some("zebra.quilt.test"),
             ]
@@ -349,7 +348,7 @@ mod tests {
 
     #[test]
     fn a_host_that_sorts_before_the_fixed_titles_still_comes_after_them() {
-        // "No catalog" and "Local only" lead whatever a host is called, not
+        // "Local only" and "No catalog" lead whatever a host is called, not
         // where their own letters would put them. A digit sorts before a
         // capital, so this host would come first on letters alone.
         let rows = vec![
@@ -362,7 +361,7 @@ mod tests {
 
         assert_eq!(
             titles(&groups),
-            vec![Some("No catalog"), Some("Local only"), Some("0.quilt.test")]
+            vec![Some("Local only"), Some("No catalog"), Some("0.quilt.test")]
         );
     }
 
