@@ -48,7 +48,7 @@ pub use installed_package_v2::incoming::{
     Catalog, IncomingSummary, LISTED, OPEN_LABEL, conflicting, header_state, state_with_summary,
 };
 // The gallery's header scene draws the page's own overflow menu, inert.
-pub use installed_package_v2::{MenuCommand, MenuItem, menu_items, remote_target};
+pub use installed_package_v2::{MenuCommand, MenuItem, catalog_command, menu_items, remote_target};
 // The gallery's live context pane takes the page's wiring; it builds an idle one.
 pub use installed_package_v2::Wiring;
 // What the file pane will read: the page's one differing set and its scope.

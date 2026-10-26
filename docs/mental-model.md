@@ -71,6 +71,7 @@ operation mutates*.
 | `flow::install_package` | — | install-time hash | install-time hash | `resolve_tag("latest")` |
 | `flow::create` (local-only) | initial top hash | — | `""` | `""` |
 | `InstalledPackage::set_remote` | unchanged | `""` (empty until first push) | unchanged | unchanged |
+| `InstalledPackage::change_catalog` (catalog only) | unchanged | unchanged | unchanged | unchanged |
 | `flow::commit` | new top hash | unchanged | unchanged | unchanged |
 | `flow::push` | `None` (taken) | new uploaded hash | first push → new hash; certifying push → via `update_latest` | re-resolved from remote mid-push; ← new hash if certified |
 | `flow::certify_latest` | — (cleared by inner push) | already set | ← `latest_hash` (via `update_latest`) | ← new manifest hash |

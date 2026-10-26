@@ -519,6 +519,16 @@ pub trait QuiltModel {
             .resolution_warning)
     }
 
+    /// Replace only the catalog of the package's remote, keeping its bucket,
+    /// remote hash and commits.
+    async fn change_catalog(
+        &self,
+        package: &quilt::InstalledPackage,
+        origin: Option<quilt_uri::Host>,
+    ) -> Result<quilt_uri::ManifestUri, Error> {
+        Ok(package.change_catalog(origin).await?)
+    }
+
     async fn package_create(
         &self,
         namespace: quilt_uri::Namespace,

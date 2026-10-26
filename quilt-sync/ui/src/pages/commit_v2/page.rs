@@ -526,7 +526,7 @@ impl HeaderMenu {
                 open=self.bucket
                 namespace=d.namespace.to_string()
                 uri=d.uri.clone()
-                locked=d.remote_locked
+                published=d.remote_locked
                 draft=self.draft
                 busy=busy
                 outcome=outcome

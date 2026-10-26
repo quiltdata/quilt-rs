@@ -1,5 +1,5 @@
 //! The set-remote dialog: *Change bucket* over host, bucket and workflow, and
-//! *Show remote*, the same dialog with nothing to submit.
+//! *Add catalog* / *Change catalog*, the same dialog with the bucket fixed.
 //!
 //! # The fields are the gallery's; the machinery is v1's
 //!
@@ -10,12 +10,13 @@
 //! around it (the overlay, Enter and Escape, the in-flight flag, the refusal)
 //! is `FormDialog`'s now, which is the reason the form moved.
 //!
-//! # Two shapes, one command
+//! # Two shapes, two commands
 //!
-//! A pushed package is pinned to its push history, so `remote_locked` selects
-//! the read-only shape: every control disabled and `submit: None`, which draws
-//! one `Close` and no form. The state's *Choose S3 bucket* opens the editable
-//! shape, same as the menu's *Change bucket*.
+//! A published package keeps its bucket, so `remote_locked` selects the
+//! catalog shape: the bucket is shown and disabled, there is no workflow to
+//! choose, and Save runs `change_catalog`, which replaces only the catalog.
+//! Otherwise Save runs `set_remote`. The state's *Choose S3 bucket* opens the
+//! editable shape, same as the menu's *Change bucket*.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -45,9 +46,13 @@ pub(super) fn field_errors(
     host: &str,
     bucket: &str,
 ) -> (Option<&'static str>, Option<&'static str>) {
-    let host_error = (!host.is_empty() && !util::is_valid_hostname(host)).then_some(HOST_INVALID);
     let bucket_error = bucket.is_empty().then_some(BUCKET_MISSING);
-    (host_error, bucket_error)
+    (host_error(host), bucket_error)
+}
+
+/// What is wrong with the typed host, if anything. Empty is no catalog.
+fn host_error(host: &str) -> Option<&'static str> {
+    (!host.is_empty() && !util::is_valid_hostname(host)).then_some(HOST_INVALID)
 }
 
 /// The options a reader can pick, as the kit's `Select` draws them. It has no
@@ -112,6 +117,28 @@ fn set_remote(
     Box::pin(commands::set_remote(namespace, host, bucket, workflow))
 }
 
+/// The command that replaces a published package's catalog: namespace and
+/// host in. A parameter so a test can answer it without a Tauri host.
+pub(crate) type ChangeCatalog =
+    fn(String, String) -> Pin<Box<dyn Future<Output = Result<String, String>>>>;
+
+fn change_catalog(
+    namespace: String,
+    host: String,
+) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+    Box::pin(commands::change_catalog(namespace, host))
+}
+
+/// The dialog's title: a published package keeps its bucket, so the dialog is
+/// about its catalog.
+pub(crate) fn title(published: bool, has_host: bool) -> &'static str {
+    match (published, has_host) {
+        (false, _) => "Change bucket",
+        (true, false) => "Add catalog",
+        (true, true) => "Change catalog",
+    }
+}
+
 /// The set-remote dialog, in both of its shapes. The package page and the
 /// commit page each hold its flag and draft, and lend it their lock, band and
 /// re-read.
@@ -128,8 +155,8 @@ pub(crate) fn BucketDialog(
     open: RwSignal<bool>,
     namespace: String,
     uri: Option<quilt_uri::S3PackageUri>,
-    /// The package has been pushed: the read-only shape.
-    locked: bool,
+    /// The package has been published: the catalog shape.
+    published: bool,
     /// What the reader has typed, held by the page so a re-read that rebuilds
     /// this dialog finds it.
     draft: BucketDraft,
@@ -143,9 +170,13 @@ pub(crate) fn BucketDialog(
     /// `set_remote` unless a test says otherwise.
     #[prop(optional)]
     set_remote_with: Option<SetRemote>,
+    /// `change_catalog` unless a test says otherwise.
+    #[prop(optional)]
+    change_catalog_with: Option<ChangeCatalog>,
 ) -> impl IntoView {
     let read = workflows.unwrap_or(read_workflows);
     let set_remote = set_remote_with.unwrap_or(set_remote);
+    let change_catalog = change_catalog_with.unwrap_or(change_catalog);
     // The workflow read must not re-trigger the page's `<Suspense>`; see
     // `components/set_remote_popup.rs` for the full argument.
     #[allow(
@@ -160,6 +191,7 @@ pub(crate) fn BucketDialog(
     // rebuilds this dialog and its own seal goes with the old one.
     let ns = namespace;
     let current_host = uri.as_ref().and_then(util::host_str).unwrap_or_default();
+    let title = title(published, !current_host.is_empty());
     let current_bucket = uri.as_ref().and_then(util::bucket_str).unwrap_or_default();
 
     // The page's, so a re-read that rebuilds this dialog finds them as the
@@ -221,11 +253,13 @@ pub(crate) fn BucketDialog(
     });
 
     // `Some` only when the dialog is open and the pair could be submitted, so a
-    // closed dialog reads nothing from S3.
+    // closed dialog reads nothing from S3. A published package's bucket is
+    // fixed, so it has no workflow to read.
     let valid_target = Memo::new(move |_| {
         let host = origin.get().trim().to_string();
         let name = bucket.get().trim().to_string();
-        (open.get() && field_errors(&host, &name) == (None, None)).then_some((host, name))
+        (open.get() && !published && field_errors(&host, &name) == (None, None))
+            .then_some((host, name))
     });
 
     // One fetch per settled bucket name rather than per keystroke, which would
@@ -316,67 +350,76 @@ pub(crate) fn BucketDialog(
         }
     });
 
-    let submit = (!locked).then(|| {
-        // `Submit::new` takes an `Fn`, so the closure clones what it owns per
-        // call and the `async move` block captures the clone. Every signal it
-        // touches is `Copy` and needs no clone.
-        Submit::new("Save", move || {
-            let ns = ns.clone();
-            async move {
-                let host = origin.get_untracked().trim().to_string();
-                let name = bucket.get_untracked().trim().to_string();
-                let (host_error, bucket_error) = field_errors(&host, &name);
-                // Per-field, so it draws under the field it is about rather than
-                // as the dialog's banner, which is for the backend refusing the
-                // whole submission.
-                host_invalid.set(host_error);
-                bucket_invalid.set(bucket_error);
-                if host_error.is_some() || bucket_error.is_some() {
+    // `Submit::new` takes an `Fn`, so the closure clones what it owns per
+    // call and the `async move` block captures the clone. Every signal it
+    // touches is `Copy` and needs no clone.
+    let submit = Submit::new("Save", move || {
+        let ns = ns.clone();
+        async move {
+            let host = origin.get_untracked().trim().to_string();
+            if published {
+                host_invalid.set(host_error(&host));
+                if host_invalid.get_untracked().is_some() {
                     return Err("Fix the highlighted fields.".to_string());
                 }
-                // The submitted workflow must belong to the bucket on screen.
-                if workflow_loading.get_untracked() {
-                    return Err(
-                        "This bucket's workflows are still loading. Try again in a moment."
-                            .to_string(),
-                    );
-                }
-                // The selected option's own intent, passed straight through, and
-                // `BucketDefault` when the config is not loaded — never
-                // `Named("")`. v1's rule.
-                let workflow = wf_view
-                    .get_untracked()
-                    .and_then(|view| {
-                        let label = draft.workflow.get_untracked();
-                        view.options
-                            .into_iter()
-                            .find(|option| option.label == label)
-                            .map(|option| option.intent)
-                    })
-                    .unwrap_or(WorkflowIntent::BucketDefault);
-                let response = holding(busy, outcome, set_remote(ns.clone(), host, name, workflow))
+                holding(busy, outcome, change_catalog(ns, host))
                     .await
                     .inspect_err(|_| draft.refused.set(true))?;
-                // The remote is set either way. A workflow that could not be
-                // resolved is the one partial success the band carries: the
-                // package will publish ungoverned, and the reader should learn
-                // that now rather than at push time.
-                if let Some(reason) = response.resolution_warning {
-                    outcome.set(Some(Outcome {
-                        namespace: ns,
-                        variant: BannerVariant::Warning,
-                        lead: "The remote is set, but the bucket's default workflow could not \
-                               be resolved, so this package will publish without one."
-                            .to_string(),
-                        detail: Some(reason),
-                    }));
-                }
-                // This save is the one the page re-reads for.
                 draft.refused.set(false);
                 reload.notify();
-                Ok(())
+                return Ok(());
             }
-        })
+            let name = bucket.get_untracked().trim().to_string();
+            let (host_error, bucket_error) = field_errors(&host, &name);
+            // Per-field, so it draws under the field it is about rather than
+            // as the dialog's banner, which is for the backend refusing the
+            // whole submission.
+            host_invalid.set(host_error);
+            bucket_invalid.set(bucket_error);
+            if host_error.is_some() || bucket_error.is_some() {
+                return Err("Fix the highlighted fields.".to_string());
+            }
+            // The submitted workflow must belong to the bucket on screen.
+            if workflow_loading.get_untracked() {
+                return Err(
+                    "This bucket's workflows are still loading. Try again in a moment.".to_string(),
+                );
+            }
+            // The selected option's own intent, passed straight through, and
+            // `BucketDefault` when the config is not loaded — never
+            // `Named("")`. v1's rule.
+            let workflow = wf_view
+                .get_untracked()
+                .and_then(|view| {
+                    let label = draft.workflow.get_untracked();
+                    view.options
+                        .into_iter()
+                        .find(|option| option.label == label)
+                        .map(|option| option.intent)
+                })
+                .unwrap_or(WorkflowIntent::BucketDefault);
+            let response = holding(busy, outcome, set_remote(ns.clone(), host, name, workflow))
+                .await
+                .inspect_err(|_| draft.refused.set(true))?;
+            // The remote is set either way. A workflow that could not be
+            // resolved is the one partial success the band carries: the
+            // package will publish ungoverned, and the reader should learn
+            // that now rather than at push time.
+            if let Some(reason) = response.resolution_warning {
+                outcome.set(Some(Outcome {
+                    namespace: ns,
+                    variant: BannerVariant::Warning,
+                    lead: "The remote is set, but the bucket's default workflow could not \
+                               be resolved, so this package will publish without one."
+                        .to_string(),
+                    detail: Some(reason),
+                }));
+            }
+            // This save is the one the page re-reads for.
+            draft.refused.set(false);
+            reload.notify();
+            Ok(())
+        }
     });
 
     // The config's own complaint, under the field it is about. Only a malformed
@@ -389,12 +432,6 @@ pub(crate) fn BucketDialog(
         _ => None,
     });
 
-    let title = if locked {
-        "Show remote"
-    } else {
-        "Change bucket"
-    };
-
     // Built once, in whichever shape the package is in: the kit's `FormDialog`
     // takes its `submit` as a value, not an `Option`.
     let fields = move || {
@@ -403,12 +440,8 @@ pub(crate) fn BucketDialog(
             // reader chooses an endpoint — see `gallery/forms.rs`.
             <FormControl
                 label="Host"
-                caption=if locked {
-                    "Where this package is published."
-                } else {
-                    "Optional: the bucket's catalog, from your accounts. Without one, this \
-                     computer's AWS credentials are used."
-                }
+                caption="Optional: the bucket's catalog, from your accounts. Without one, this \
+                         computer's AWS credentials are used."
                 error=Signal::derive(move || host_invalid.get().map(str::to_string))
                 control=move |id| {
                     view! {
@@ -416,18 +449,17 @@ pub(crate) fn BucketDialog(
                             id=id
                             value=origin
                             placeholder="open.quiltdata.com"
-                            disabled=locked
                             invalid=Signal::derive(move || host_invalid.get().is_some())
                         />
                     }
                         .into_any()
                 }
             />
-            {if locked {
+            {if published {
                 view! {
                     <FormControl
                         label="Bucket"
-                        caption="Fixed by this package's push history."
+                        caption="Fixed once the package is published."
                         control=move |id| {
                             view! { <TextInput id=id value=bucket disabled=true /> }.into_any()
                         }
@@ -456,7 +488,9 @@ pub(crate) fn BucketDialog(
                     .into_any()
             }}
             // Read from the bucket once it is known, so it is last. Redrawn as the
-            // read settles, because the kit's `Select` takes its options once.
+            // read settles, because the kit's `Select` takes its options once. A
+            // published package has its workflows already, from its bucket.
+            {(!published).then(|| view! {
             <FormControl
                 label="Workflow"
                 caption="Rules the bucket applies when you publish."
@@ -489,7 +523,7 @@ pub(crate) fn BucketDialog(
                                     naming=Naming::FormControl(id.clone())
                                     options=options
                                     selected=selected
-                                    disabled=locked || !choosing
+                                    disabled=!choosing
                                 />
                             }
                         }}
@@ -497,17 +531,14 @@ pub(crate) fn BucketDialog(
                         .into_any()
                 }
             />
+            })}
         }
     };
 
-    match submit {
-        Some(submit) => view! {
-            <FormDialog open=open title=title submit=submit running=busy>
-                {fields()}
-            </FormDialog>
-        }
-        .into_any(),
-        None => view! { <FormDialog open=open title=title>{fields()}</FormDialog> }.into_any(),
+    view! {
+        <FormDialog open=open title=title submit=submit running=busy>
+            {fields()}
+        </FormDialog>
     }
 }
 
@@ -542,7 +573,7 @@ mod tests {
                     open=RwSignal::new(true)
                     namespace=data.namespace.to_string()
                     uri=data.uri
-                    locked=data.remote_locked
+                    published=data.remote_locked
                     draft=w.dialogs.bucket_draft.get_value()
                     busy=w.busy
                     outcome=w.outcome
@@ -627,22 +658,116 @@ mod tests {
         assert_eq!(field_errors("", "my-bucket"), (None, None));
     }
 
-    /// The read-only shape is what `remote_locked` selects, and it is not a
-    /// spare variant: a package pinned to its push history has a remote to show
-    /// and not to change. `FormDialog`'s `submit: None` draws one `Close` and no
-    /// form at all.
+    /// A published package keeps its bucket, so `remote_locked` selects the
+    /// catalog shape: the host is open, the bucket is shown and locked, and
+    /// there is no workflow to choose.
     #[wasm_bindgen_test]
-    fn a_pushed_package_shows_its_remote_and_offers_no_save() {
+    async fn a_published_package_locks_only_the_bucket() {
         let mut d = data();
+        d.uri = Some(
+            "quilt+s3://data-bucket#package=team/dataset"
+                .parse()
+                .unwrap(),
+        );
         d.remote_locked = true;
         let el = mount_dialog(d);
+        leptos::task::tick().await;
 
+        let host: web_sys::HtmlInputElement = field(&el, "Host").unchecked_into();
+        let bucket: web_sys::HtmlInputElement = field(&el, "Bucket").unchecked_into();
+        assert!(!host.disabled(), "the catalog can change");
+        assert!(bucket.disabled(), "the bucket is fixed");
+        assert_eq!(bucket.value(), "data-bucket");
         assert!(
-            el.query_selector("form").unwrap().is_none(),
-            "nothing to submit"
+            !el.inner_html().contains(">Workflow<"),
+            "no workflow; markup was {}",
+            el.inner_html()
         );
-        let labels = footer_labels(&el);
-        assert_eq!(labels, vec!["Close".to_string()], "one way out");
+        element_saying(&el, "Add catalog");
+        assert_eq!(
+            footer_labels(&el),
+            vec!["Cancel".to_string(), "Save".to_string()]
+        );
+    }
+
+    /// One catalog for another is *Change catalog*; before the first push
+    /// the dialog is about the bucket.
+    #[test]
+    fn the_title_names_what_saving_changes() {
+        assert_eq!(title(false, true), "Change bucket");
+        assert_eq!(title(true, false), "Add catalog");
+        assert_eq!(title(true, true), "Change catalog");
+    }
+
+    thread_local! {
+        /// What the catalog change was asked for: namespace and host.
+        static CHANGED: std::cell::RefCell<Vec<(String, String)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn changing(
+        namespace: String,
+        host: String,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>>>> {
+        CHANGED.with_borrow_mut(|asked| asked.push((namespace, host)));
+        Box::pin(async { Ok(String::new()) })
+    }
+
+    fn never_set_remote(
+        _: String,
+        _: String,
+        _: String,
+        _: WorkflowIntent,
+    ) -> Pin<Box<dyn Future<Output = Result<commands::SetRemoteResponse, String>>>> {
+        panic!("a published package's bucket is not set again")
+    }
+
+    /// Saving the catalog shape changes only the catalog, and the page is
+    /// read again.
+    #[wasm_bindgen_test]
+    async fn saving_a_published_package_changes_only_its_catalog() {
+        CHANGED.with_borrow_mut(Vec::clear);
+        let w = Wiring::new();
+        let reloads = RwSignal::new(0_u32);
+        let owner = Owner::new();
+        owner.with(|| {
+            Effect::new(move |seen: Option<()>| {
+                w.reload.track();
+                if seen.is_some() {
+                    reloads.update(|n| *n += 1);
+                }
+            });
+        });
+        let el = mount(move || {
+            view! {
+                <BucketDialog
+                    open=w.dialogs.bucket
+                    namespace="team/dataset".to_string()
+                    uri=Some("quilt+s3://data-bucket#package=team/dataset".parse().unwrap())
+                    published=true
+                    draft=w.dialogs.bucket_draft.get_value()
+                    busy=w.busy
+                    outcome=w.outcome
+                    reload=w.reload
+                    set_remote_with=never_set_remote
+                    change_catalog_with=changing
+                />
+            }
+        });
+        w.dialogs.bucket.set(true);
+        leptos::task::tick().await;
+        type_into(&el, "Host", "quilt.test");
+        leptos::task::tick().await;
+
+        crate::test_support::button_saying(&el, "Save").click();
+        sleep_ms(50).await;
+
+        assert_eq!(
+            CHANGED.with_borrow(Clone::clone),
+            vec![("team/dataset".to_string(), "quilt.test".to_string())]
+        );
+        assert_eq!(reloads.get_untracked(), 1, "read again");
+        drop(owner);
     }
 
     /// The editable shape carries all three fields and the verb.
@@ -791,7 +916,7 @@ mod tests {
                             open=w.dialogs.bucket
                             namespace=data.namespace.to_string()
                             uri=data.uri
-                            locked=data.remote_locked
+                            published=data.remote_locked
                             draft=w.dialogs.bucket_draft.get_value()
                             busy=w.busy
                             outcome=w.outcome
@@ -1017,7 +1142,7 @@ mod tests {
                     open=w.dialogs.bucket
                     namespace="team/dataset".to_string()
                     uri=published().uri
-                    locked=false
+                    published=false
                     draft=w.dialogs.bucket_draft.get_value()
                     busy=w.busy
                     outcome=w.outcome

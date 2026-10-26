@@ -1417,6 +1417,29 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(SetRemoteOutcome::default())
     }
 
+    /// Replace only the catalog host of the package's remote: add, change or
+    /// remove it. The bucket, the remote hash and the commits stay, so unlike
+    /// [`Self::set_remote`] this is safe on a published package: manifests and
+    /// hashes live in the bucket, and no manifest names the catalog.
+    pub async fn change_catalog(&self, origin: Option<Host>) -> Res<ManifestUri> {
+        Box::pin(self.lock().await?.change_catalog(origin)).await
+    }
+
+    async fn change_catalog_unlocked(&self, origin: Option<Host>) -> Res<ManifestUri> {
+        let (_, mut lineage) = self.lineage.read(&self.storage).await?;
+        let Some(remote) = lineage.remote_uri.as_mut().filter(|r| !r.bucket.is_empty()) else {
+            return Err(Error::PackageOp(PackageOpError::Package(
+                "This package has no bucket yet; set a remote first".to_string(),
+            )));
+        };
+        if remote.origin == origin {
+            return Ok(remote.clone());
+        }
+        remote.origin = origin;
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        Ok(lineage.remote()?.clone())
+    }
+
     async fn recommit_for_remote(
         &self,
         lineage: lineage::PackageLineage,
@@ -1664,8 +1687,14 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
             .set_remote_unlocked(bucket, origin, workflow)
             .await
     }
+
+    pub async fn change_catalog(&self, origin: Option<Host>) -> Res<ManifestUri> {
+        self.package.change_catalog_unlocked(origin).await
+    }
 }
 
+#[cfg(test)]
+mod change_catalog_tests;
 #[cfg(test)]
 mod current_revision_tests;
 #[cfg(test)]
