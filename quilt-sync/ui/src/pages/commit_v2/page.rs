@@ -1361,8 +1361,7 @@ mod tests {
         );
     }
 
-    /// The header has no catalog command, with a catalog or without: the
-    /// package page's context pane adds or changes it.
+    /// The header has no catalog command, with a catalog or without.
     #[wasm_bindgen_test]
     async fn the_header_offers_no_catalog_command() {
         let no_command = |el: &web_sys::Element| {

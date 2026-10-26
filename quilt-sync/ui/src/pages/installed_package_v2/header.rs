@@ -2109,8 +2109,7 @@ mod tests {
     }
 
     /// The row has no catalog command, with a catalog or without, published
-    /// or not: the context pane's Bucket section adds or changes it. With a
-    /// catalog the row still opens the catalog page.
+    /// or not. With a catalog the location group still opens its page.
     #[wasm_bindgen_test]
     fn the_header_offers_no_catalog_command() {
         let unpublished = commands::PackageHeaderData {
