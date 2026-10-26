@@ -30,6 +30,10 @@ except where marked unreachable. Changed files are ones not committed yet.";
 /// is as of the last sync. See [`Fetched::remote_checked`].
 const UNREACHABLE_SUFFIX: &str = " (remote unreachable)";
 
+/// A `--fetch` row whose bucket has no catalog and whose check found the AWS
+/// credentials on this computer missing or refused. Worded as `QuiltSync` words it.
+const CREDENTIALS_UNUSABLE: &str = "AWS credentials on this computer aren't usable — update ~/.aws";
+
 /// How many packages `--fetch` checks at once. Each check is a remote round
 /// trip plus a working-tree walk, so an unbounded fan-out over a large domain
 /// would open as many connections and directory scans as there are packages.
@@ -61,13 +65,16 @@ pub struct Fetched {
     /// [`InstalledPackage::state`]: quilt_rs::InstalledPackage::state
     pub state: PackageState,
     /// Files changed since the last commit. `None` when the working tree was
-    /// not scanned: no remote, a misconfigured one, or a failed check.
+    /// not scanned: no remote, or a failed check.
     pub changed_files: Option<usize>,
     /// The remote refused the active role.
     pub access_denied: bool,
+    /// A bucket with no catalog, and the AWS credentials on this computer were
+    /// missing or refused ([`quilt_rs::Error::is_ambient_session_absent`]).
+    pub credentials_unusable: bool,
     /// The remote's `latest` tip was read in this run
     /// ([`PackageStateReport::latest_refreshed`]). `false` for a package with
-    /// no remote or a misconfigured one, a denial, a failed check, and a check
+    /// no remote, a denial, a failed check, and a check
     /// that could not reach the remote and answered from the last-known tip:
     /// that last row is the only one marked unreachable.
     pub remote_checked: bool,
@@ -80,6 +87,7 @@ impl Fetched {
             state: PackageState::Unknown,
             changed_files: None,
             access_denied: false,
+            credentials_unusable: false,
             remote_checked: false,
         }
     }
@@ -91,6 +99,7 @@ impl From<PackageStateReport> for Fetched {
             state: report.state,
             changed_files: report.changed_files,
             access_denied: false,
+            credentials_unusable: false,
             remote_checked: report.latest_refreshed,
         }
     }
@@ -168,6 +177,9 @@ fn last_synced(entry: &PackageEntry) -> &'static str {
 fn fetched_state(fetched: &Fetched) -> Cow<'static, str> {
     if fetched.access_denied {
         return "no access".into();
+    }
+    if fetched.credentials_unusable {
+        return CREDENTIALS_UNUSABLE.into();
     }
     match fetched.state {
         PackageState::Latest => "latest".into(),
@@ -254,6 +266,9 @@ impl Render for Output {
                     }
                     if fetched.access_denied {
                         row["access_denied"] = true.into();
+                    }
+                    if fetched.credentials_unusable {
+                        row["credentials_unusable"] = true.into();
                     }
                 }
                 row
@@ -348,15 +363,15 @@ pub async fn model(local_domain: &quilt_rs::LocalDomain, args: Input) -> Result<
 /// One `--fetch` row: [`InstalledPackage::state`], worded by [`state`].
 ///
 /// `state` asks the remote for its `latest` tag and scans the working tree,
-/// except for a package with no remote or a misconfigured one, which it answers
-/// without the network. The fetched tip is not written back to lineage, as
+/// except for a package with no remote, which it answers without the network. The fetched tip is not written back to lineage, as
 /// `QuiltSync` does not either.
 ///
 /// When the remote cannot be reached, the status call warns and answers from
 /// the last-known tip, so that row is only as fresh as a plain listing and is
 /// marked unreachable ([`Fetched::remote_checked`] stays `false`). Any error
 /// `state` returns is logged and shows as `unknown` for that row alone, except
-/// a denial, which is its own state.
+/// a denial and unusable AWS credentials on this computer, which are states of
+/// their own.
 ///
 /// [`InstalledPackage::state`]: quilt_rs::InstalledPackage::state
 async fn fetch_entry<F, Fut>(namespace: Namespace, bucket: Option<String>, state: F) -> PackageEntry
@@ -373,6 +388,16 @@ where
                 ..Fetched::failed()
             },
         ),
+        Err(err) if err.is_ambient_session_absent() => {
+            log::warn!("Failed to check {namespace}: {err}");
+            (
+                UpstreamState::Error,
+                Fetched {
+                    credentials_unusable: true,
+                    ..Fetched::failed()
+                },
+            )
+        }
         Err(err) => {
             log::warn!("Failed to check {namespace}: {err}");
             (UpstreamState::Error, Fetched::failed())
@@ -576,6 +601,13 @@ mod tests {
         }
     }
 
+    fn credentials_unusable() -> Fetched {
+        Fetched {
+            credentials_unusable: true,
+            ..Fetched::failed()
+        }
+    }
+
     /// Each state reads as `QuiltSync`'s main page words it, lowercased, and a
     /// denial outranks everything.
     #[test]
@@ -607,6 +639,7 @@ mod tests {
             (fetched(PackageState::NoRemote, None), "no S3 bucket yet"),
             (fetched(PackageState::Unknown, None), "unknown"),
             (denied(), "no access"),
+            (credentials_unusable(), CREDENTIALS_UNUSABLE),
         ];
         for (fetched, expected) in cases {
             let entry = fetched_entry(Some("acme-research"), "one", UpstreamState::Error, fetched);
@@ -686,6 +719,12 @@ mod tests {
                     unreachable(PackageState::PendingChanges { files: 1 }, 1),
                 ),
                 fetched_entry(
+                    Some("bare-bucket"),
+                    "four",
+                    UpstreamState::Error,
+                    credentials_unusable(),
+                ),
+                fetched_entry(
                     None,
                     "scratch",
                     UpstreamState::Local,
@@ -697,7 +736,7 @@ mod tests {
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"packages":[{"bucket":"acme-research","namespace":"example/one","status":"up_to_date","fetched":true,"changed_files":2},{"bucket":"acme-research","namespace":"example/three","status":"up_to_date","fetched":false,"changed_files":1},{"bucket":"acme-research","namespace":"example/two","status":"error","fetched":false,"access_denied":true},{"bucket":null,"namespace":"example/scratch","status":"local","fetched":false}]}"#
+            r#"{"packages":[{"bucket":"acme-research","namespace":"example/one","status":"up_to_date","fetched":true,"changed_files":2},{"bucket":"acme-research","namespace":"example/three","status":"up_to_date","fetched":false,"changed_files":1},{"bucket":"acme-research","namespace":"example/two","status":"error","fetched":false,"access_denied":true},{"bucket":"bare-bucket","namespace":"example/four","status":"error","fetched":false,"credentials_unusable":true},{"bucket":null,"namespace":"example/scratch","status":"local","fetched":false}]}"#
         );
     }
 
@@ -765,7 +804,9 @@ mod tests {
 
         for err in [
             s3_error(quilt_rs::S3ErrorKind::GetObject("boom".to_string())),
-            quilt_rs::Error::Login(quilt_rs::LoginError::NoSession(None)),
+            quilt_rs::Error::Login(quilt_rs::LoginError::NoSession(Some(
+                quilt_uri::fixtures::host(),
+            ))),
         ] {
             let failed = fetch_entry(
                 ("example", "one").into(),
@@ -776,6 +817,34 @@ mod tests {
             assert_eq!(failed.status, UpstreamState::Error);
             assert_eq!(failed.fetched, Some(Fetched::failed()));
             assert_eq!(state(&failed), "unknown");
+        }
+    }
+
+    /// A bucket with no catalog is read on the AWS credentials on this
+    /// computer. When those are missing or refused, there is no deployment to
+    /// sign in to, and the row says to fix the file.
+    #[test(tokio::test)]
+    async fn test_fetch_entry_names_unusable_aws_credentials() {
+        for err in [
+            || quilt_rs::Error::Login(quilt_rs::LoginError::NoSession(None)),
+            || {
+                s3_error(quilt_rs::S3ErrorKind::InvalidCredentials(
+                    "refused".to_string(),
+                ))
+            },
+        ] {
+            let row = fetch_entry(
+                ("example", "one").into(),
+                Some("bare-bucket".to_string()),
+                || async { Err(err()) },
+            )
+            .await;
+            assert_eq!(row.status, UpstreamState::Error);
+            assert_eq!(row.fetched, Some(credentials_unusable()));
+            assert_eq!(
+                state(&row),
+                "AWS credentials on this computer aren't usable — update ~/.aws"
+            );
         }
     }
 

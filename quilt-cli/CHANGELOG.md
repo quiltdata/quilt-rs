@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.38.0-dev]
+
+### Changed
+
+- `quilt list --fetch` shows the status of a package whose remote has no catalog, read on the AWS credentials on this computer. When those are missing or refused, the row says so, and `--json` adds `"credentials_unusable": true` (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+
+### quilt-rs
+
+- Updated [from v0.48.0 to v0.49.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.48.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.37.3] - 2026-10-23
 
 ### Fixed

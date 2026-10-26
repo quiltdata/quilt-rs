@@ -19,6 +19,21 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.49.0-dev]
+
+### Added
+
+- `Error::is_ambient_session_absent` says the AWS credentials on this computer, used for a bucket with no catalog, were missing or refused (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+
+### Changed
+
+- **Breaking:** `InstalledPackage::state` reads a remote with no catalog on the AWS credentials on this computer, like any other remote, instead of answering `Unknown`. `PackageLineage::misconfigured_remote` is removed (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+- With no catalog, AWS credentials that cannot be found or used, including an SSO profile with no or an expired sign-in, are `LoginError::NoSession(None)`, so a status read reports them instead of answering from the last-known tip. A wrong secret key (`SignatureDoesNotMatch`) is a credential failure, not a denial (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+
+### Fixed
+
+- After the AWS credentials on this computer were missing or refused, the next call reads `~/.aws` again instead of keeping the first credentials it loaded (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+
 ## [v0.48.0] - 2026-10-23
 
 ### Added
