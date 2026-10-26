@@ -198,7 +198,7 @@ pub struct Replace {
 #[derive(Clone, Copy)]
 pub struct Dialogs {
     /// The row's `Choose S3 bucket`, the menu's `Change bucket` and the
-    /// context pane's Bucket section open this one dialog: the state calls
+    /// context pane's Bucket and catalog section open this one dialog: the state calls
     /// for it, or the reader chooses it.
     pub bucket: RwSignal<bool>,
     /// What the reader has typed into that dialog. Here beside its flag, for

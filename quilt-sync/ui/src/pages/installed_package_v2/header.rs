@@ -148,7 +148,7 @@ impl MenuItem {
 }
 
 /// The bucket's item, until the first push. A pushed package is pinned to its
-/// push history, so its bucket is fixed, and the package page's Bucket section
+/// push history, so its bucket is fixed, and the package page's Bucket and catalog section
 /// shows it.
 #[must_use]
 pub(crate) fn remote_item(remote_locked: bool, busy: bool) -> Option<MenuItem> {
@@ -2185,7 +2185,7 @@ mod tests {
     }
 
     /// Once published, the menu offers neither the bucket nor the catalog:
-    /// the context pane's Bucket section shows both and opens the dialog.
+    /// the context pane's Bucket and catalog section shows both and opens the dialog.
     #[test]
     fn a_published_menu_does_not_offer_the_bucket() {
         let labels: Vec<String> = menu_items(&with_catalog(kit::PackageState::Latest), false)

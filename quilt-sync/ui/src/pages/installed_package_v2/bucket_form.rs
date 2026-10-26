@@ -17,7 +17,7 @@
 //! choose, and Save runs `change_catalog`, which replaces only the catalog.
 //! Otherwise Save runs `set_remote`. The state's *Choose S3 bucket* opens the
 //! editable shape, same as the menu's *Change bucket*. Every entry, the
-//! context pane's Bucket section included, opens it under one title.
+//! context pane's Bucket and catalog section included, opens it under one title.
 
 use std::future::Future;
 use std::pin::Pin;

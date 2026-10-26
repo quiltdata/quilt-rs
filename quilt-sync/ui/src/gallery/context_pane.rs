@@ -321,13 +321,19 @@ fn pane(
     on_page: bool,
 ) -> AnyView {
     let sections = view! {
-        <PaneSection label="Bucket">
-            <span style="font-size:var(--q-text-body)">{BUCKET}</span>
-            <div style="display:flex; align-items:center; justify-content:space-between; \
-                        gap:var(--q-space-2); font-size:var(--q-text-body)">
-                <span>"open.quiltdata.com"</span>
-                <Button on_click=|_| ()>"Change"</Button>
-            </div>
+        <PaneSection label="Bucket and catalog">
+            <dl style="display:grid; grid-template-columns:auto 1fr; align-items:center; \
+                       column-gap:var(--q-space-3); row-gap:var(--q-space-1); margin:0; \
+                       font-size:var(--q-text-body)">
+                <dt style="color:var(--q-fgColor-muted)">"Bucket"</dt>
+                <dd style="margin:0">{BUCKET}</dd>
+                <dt style="color:var(--q-fgColor-muted)">"Catalog"</dt>
+                <dd style="margin:0; display:flex; align-items:center; \
+                           justify-content:space-between; gap:var(--q-space-2)">
+                    <span>"open.quiltdata.com"</span>
+                    <Button on_click=|_| ()>"Change"</Button>
+                </dd>
+            </dl>
         </PaneSection>
         <PaneSection label="Revision">
             <RevisionRow message="Add intake folder-upload note" at=ago(2.0 * HOUR) />
@@ -448,9 +454,9 @@ fn refused() -> ResolveData {
 const NOTE: &str = "280px holding three blocks: what the page says about the package rather \
     than about its files. \
     \
-    Bucket comes first: the package's s3:// address, its catalog host or a plain \
-    No catalog, and one action into the Bucket and catalog dialog — Add catalog without \
-    one, Change with one. A package with no bucket has no Bucket section. \
+    Bucket and catalog comes first, each named: the package's s3:// address, its catalog \
+    host or a plain No catalog, and one action into the Bucket and catalog dialog — Add catalog without \
+    one, Change with one. A package with no bucket has no Bucket and catalog section. \
     \
     Keeping's count carries the package's size: the sum of the current revision's \
     manifest rows, and of those whose files are here. It is the logical size, not disk \
@@ -580,7 +586,7 @@ pub fn ContextPaneScene() -> impl IntoView {
             <Cell wide=true label="live — a bucket with a catalog: the host, and Change">
                 {live(Some("quilt-lab-plates"), Some("open.quiltdata.com"))}
             </Cell>
-            <Cell wide=true label="live — local only: no Bucket section, and Revision says so">
+            <Cell wide=true label="live — local only: no Bucket and catalog section, and Revision says so">
                 {live(None, None)}
             </Cell>
             <Cell wide=true label="at rest — files I pick, two outstanding">

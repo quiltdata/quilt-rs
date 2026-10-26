@@ -174,8 +174,8 @@ pub fn CurrentRevisionPane(
     }
 }
 
-/// The package's bucket, its catalog or the plain fact of none, and the one
-/// action, which opens the header's bucket dialog.
+/// The package's bucket and its catalog, each named, or the plain fact of no
+/// catalog, and the one action, which opens the header's bucket dialog.
 fn bucket_section(bucket: &str, catalog: Option<String>, w: Wiring) -> impl IntoView + use<> {
     let address = format!("s3://{bucket}");
     let action = if catalog.is_some() {
@@ -185,17 +185,21 @@ fn bucket_section(bucket: &str, catalog: Option<String>, w: Wiring) -> impl Into
     };
     let open = w.dialogs.bucket;
     view! {
-        <PaneSection label="Bucket">
-            <span class=style::address>{address}</span>
-            <div class=style::catalog>
-                {match catalog {
-                    Some(host) => view! { <span>{host}</span> }.into_any(),
-                    None => view! { <span class=style::muted>"No catalog"</span> }.into_any(),
-                }}
-                <Button on_click=move |_| open.set(true) disabled=w.busy>
-                    {action}
-                </Button>
-            </div>
+        <PaneSection label="Bucket and catalog">
+            <dl class=style::facts>
+                <dt class=style::muted>"Bucket"</dt>
+                <dd class=style::address>{address}</dd>
+                <dt class=style::muted>"Catalog"</dt>
+                <dd class=style::catalog>
+                    {match catalog {
+                        Some(host) => view! { <span>{host}</span> }.into_any(),
+                        None => view! { <span class=style::muted>"No catalog"</span> }.into_any(),
+                    }}
+                    <Button on_click=move |_| open.set(true) disabled=w.busy>
+                        {action}
+                    </Button>
+                </dd>
+            </dl>
         </PaneSection>
     }
 }
@@ -931,9 +935,24 @@ mod tests {
         let all = el.query_selector_all("h3").unwrap();
         (0..all.length())
             .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
-            .find(|h| h.text_content().as_deref() == Some("Bucket"))
+            .find(|h| h.text_content().as_deref() == Some("Bucket and catalog"))
             .and_then(|h| h.closest("section").unwrap())
-            .unwrap_or_else(|| panic!("a Bucket section; markup was {}", el.inner_html()))
+            .unwrap_or_else(|| {
+                panic!(
+                    "a Bucket and catalog section; markup was {}",
+                    el.inner_html()
+                )
+            })
+    }
+
+    /// What the section says beside `label`: the term's description.
+    fn said_for(section: &web_sys::Element, label: &str) -> String {
+        let term = element_saying(section, label);
+        assert_eq!(term.tag_name(), "DT", "{label} is a term");
+        term.next_element_sibling()
+            .expect("its description")
+            .text_content()
+            .unwrap_or_default()
     }
 
     /// A bucket with no catalog: the section says so in plain words and
@@ -943,9 +962,13 @@ mod tests {
     async fn a_bucket_without_a_catalog_offers_to_add_one() {
         let (el, w) = pane_in_bucket(Some("quilt-lab-plates"), None);
         let section = bucket_section(&el);
-        element_saying(&section, "s3://quilt-lab-plates");
-        element_saying(&section, "No catalog");
-        assert_eq!(headings(&el)[..2], ["Bucket", "Revision"], "above Revision");
+        assert!(said_for(&section, "Bucket").contains("s3://quilt-lab-plates"));
+        assert!(said_for(&section, "Catalog").contains("No catalog"));
+        assert_eq!(
+            headings(&el)[..2],
+            ["Bucket and catalog", "Revision"],
+            "above Revision"
+        );
         let revision = element_saying(&el, "Revision")
             .closest("section")
             .unwrap()
@@ -955,7 +978,7 @@ mod tests {
                 .text_content()
                 .unwrap_or_default()
                 .contains("s3://"),
-            "the address is the Bucket section's alone"
+            "the address is the Bucket and catalog section's alone"
         );
 
         assert!(!w.dialogs.bucket.get_untracked());
@@ -969,8 +992,11 @@ mod tests {
     async fn a_bucket_with_a_catalog_offers_to_change_it() {
         let (el, w) = pane_in_bucket(Some("quilt-lab-plates"), Some("quilt.test"));
         let section = bucket_section(&el);
-        element_saying(&section, "s3://quilt-lab-plates");
-        element_saying(&section, "quilt.test");
+        assert!(said_for(&section, "Bucket").contains("s3://quilt-lab-plates"));
+        assert!(
+            said_for(&section, "Catalog").contains("quilt.test"),
+            "the host is named as the catalog"
+        );
         assert!(
             !section
                 .text_content()
@@ -994,13 +1020,13 @@ mod tests {
         assert!(button.disabled());
     }
 
-    /// A package with no bucket has no Bucket section; Revision says so, as
+    /// A package with no bucket has no Bucket and catalog section; Revision says so, as
     /// before.
     #[wasm_bindgen_test]
     fn a_local_package_has_no_bucket_section() {
         let (el, _) = pane_in_bucket(None, None);
         assert!(
-            !headings(&el).contains(&"Bucket".to_string()),
+            !headings(&el).contains(&"Bucket and catalog".to_string()),
             "markup was {}",
             el.inner_html()
         );
