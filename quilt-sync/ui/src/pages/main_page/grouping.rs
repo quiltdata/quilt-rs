@@ -350,9 +350,10 @@ mod tests {
     #[test]
     fn a_host_that_sorts_before_the_fixed_titles_still_comes_after_them() {
         // "No catalog" and "Local only" lead whatever a host is called, not
-        // where their own letters would put them.
+        // where their own letters would put them. A digit sorts before a
+        // capital, so this host would come first on letters alone.
         let rows = vec![
-            remote("user/a", None, Some("aaa.quilt.test")),
+            remote("user/a", None, Some("0.quilt.test")),
             row("user/l", None, None),
             remote("user/n", None, None),
         ];
@@ -361,11 +362,7 @@ mod tests {
 
         assert_eq!(
             titles(&groups),
-            vec![
-                Some("No catalog"),
-                Some("Local only"),
-                Some("aaa.quilt.test")
-            ]
+            vec![Some("No catalog"), Some("Local only"), Some("0.quilt.test")]
         );
     }
 
