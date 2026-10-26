@@ -209,15 +209,17 @@ pub fn commit_denied_hint(no_access_reason: Option<&str>) -> Option<String> {
 
 /// Why committing is blocked when there is no session, and what fixes it.
 /// Never a role switch — the role was never the problem. Keyed on whether
-/// there is a deployment: one can be signed into, ambient AWS credentials can
-/// only be fixed in the file.
+/// there is a deployment: one can be signed into; ambient AWS credentials
+/// are fixed in `~/.aws` or by `aws sso login`.
 pub fn commit_no_session_hint(no_session: bool, no_session_host: Option<&str>) -> Option<String> {
     if !no_session {
         return None;
     }
     Some(match no_session_host.filter(|host| !host.is_empty()) {
         Some(host) => format!("Not signed in to {host}. Sign in to commit."),
-        None => "No usable AWS credentials. Update ~/.aws/credentials to commit.".to_string(),
+        None => {
+            "No usable AWS credentials. Update ~/.aws or run aws sso login to commit.".to_string()
+        }
     })
 }
 

@@ -250,7 +250,7 @@ async fn get_object_stream(
             kind: S3ErrorKind::NotFound(s3_uri.to_string()),
         }),
         // The host separates a deployment session, whose remedy is signing in,
-        // from ambient `~/.aws` credentials, whose remedy is the file. A `None`
+        // from ambient `~/.aws` credentials, whose remedy is `~/.aws` or `aws sso login`. A `None`
         // here is read downstream as the latter.
         _ => s3_error_or_session_loss(err, host, S3ErrorKind::Raw),
     })?;

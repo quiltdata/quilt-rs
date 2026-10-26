@@ -118,9 +118,9 @@ fn login_episode(
 }
 
 /// Why a package with no catalog cannot sync: there is no deployment to sign in
-/// to, only the AWS files to fix.
+/// to, only `~/.aws` to fix or `aws sso login` to run.
 const AMBIENT_CREDENTIALS_UNUSABLE: &str =
-    "AWS credentials on this computer aren't usable — update ~/.aws";
+    "AWS credentials on this computer aren't usable — update ~/.aws or run aws sso login";
 
 #[derive(Debug)]
 pub(crate) enum WatchError {

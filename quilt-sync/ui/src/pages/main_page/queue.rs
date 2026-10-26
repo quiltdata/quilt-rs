@@ -502,7 +502,9 @@ fn cause_trailing(
             .into_any()
         }
         CauseAction::SwitchRole => view! { "Change your role in Accounts, above." }.into_any(),
-        CauseAction::UpdateAwsCredentials => view! { "Update ~/.aws, then refresh." }.into_any(),
+        CauseAction::UpdateAwsCredentials => {
+            view! { "Update ~/.aws or run aws sso login, then refresh." }.into_any()
+        }
         CauseAction::TryAgain => {
             let members = members.to_vec();
             view! {

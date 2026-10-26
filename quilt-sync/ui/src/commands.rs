@@ -173,7 +173,7 @@ pub struct CommitData {
     /// like a denial, but the remedy is a sign-in.
     pub no_session: bool,
     /// The deployment to sign in to, when there is one; `None` for ambient
-    /// AWS credentials, whose remedy is the file.
+    /// AWS credentials, fixed in `~/.aws` or by `aws sso login`.
     pub no_session_host: Option<String>,
     pub entries: Vec<EntryData>,
     pub ignored_count: usize,

@@ -205,8 +205,8 @@ fn write_failure_message(action: &str, err: &Error) -> String {
 /// Remedy sentence for "there is no session to act with", or `None` otherwise.
 ///
 /// A toast cannot navigate, so the message carries the remedy itself. Keyed on
-/// whether there is a deployment: one can be signed into, ambient credentials
-/// can only be fixed in the file.
+/// whether there is a deployment: one can be signed into; ambient credentials
+/// are fixed in `~/.aws` or by `aws sso login`.
 fn auth_failure_message(err: &Error) -> Option<String> {
     if !err.is_session_absent() {
         return None;
@@ -217,7 +217,10 @@ fn auth_failure_message(err: &Error) -> Option<String> {
     };
     Some(match host {
         Some(host) => format!("Not signed in to {host} — sign in again"),
-        None => "AWS credentials in ~/.aws/credentials are invalid — update them".to_string(),
+        None => {
+            "AWS credentials on this computer aren't usable — update ~/.aws or run aws sso login"
+                .to_string()
+        }
     })
 }
 
@@ -2231,7 +2234,7 @@ mod tests {
     }
 
     /// Ambient credentials have no deployment to sign in to, so the remedy is
-    /// the file, not a login.
+    /// `~/.aws` or `aws sso login`, not a sign-in.
     #[test]
     fn push_with_invalid_local_credentials_names_the_file() {
         let err = Error::from(quilt::Error::S3(quilt::S3Error::new(
@@ -2239,7 +2242,8 @@ mod tests {
         )));
         let msg = super::write_failure_message("push package", &err);
 
-        assert!(msg.contains("~/.aws/credentials"), "got: {msg}");
+        assert!(msg.contains("~/.aws"), "got: {msg}");
+        assert!(msg.contains("aws sso login"), "got: {msg}");
         assert!(
             !msg.contains("sign in"),
             "there is no stack to sign in to: {msg}"

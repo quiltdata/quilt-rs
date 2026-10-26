@@ -2560,7 +2560,10 @@ async fn unusable_credentials_without_a_catalog_name_the_aws_files() -> Result<(
 
     assert_eq!(
         inner.backoff.read().await.get(&ns).map(|b| b.error.clone()),
-        Some("AWS credentials on this computer aren't usable — update ~/.aws".to_string())
+        Some(
+            "AWS credentials on this computer aren't usable — update ~/.aws or run aws sso login"
+                .to_string()
+        )
     );
     assert_eq!(
         rx.borrow().error.as_deref(),

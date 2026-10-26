@@ -92,7 +92,7 @@ fn hint_lines(
         } else {
             // A bucket with no catalog, read on this computer's AWS credentials.
             // `error` covers any failure, so this suggests rather than diagnoses.
-            "Unable to check remote status — check the AWS credentials in ~/.aws".to_string()
+            "Unable to check remote status — check the AWS credentials in ~/.aws or run aws sso login".to_string()
         }];
     }
     Vec::new()
@@ -552,8 +552,10 @@ fn PackageItem(
                         {uri}
                     </span>
                 })}
-                {move || hint.get().into_iter().map(|line| view! {
-                    <span class="item-error-hint">{line}</span>
+                // One line with an ellipsis, so the title keeps the whole remedy.
+                {move || hint.get().into_iter().map(|line| {
+                    let title = line.clone();
+                    view! { <span class="item-error-hint" title=title>{line}</span> }
                 }).collect::<Vec<_>>()}
                 // Neutral, not the error hint: a package with a newer revision
                 // is not a fault, and the hint slot reddens the whole row.
@@ -1214,7 +1216,7 @@ mod tests {
     fn error_without_a_host_points_at_the_credentials_file() {
         assert_eq!(
             hint_lines("error", false, None, None, None),
-            vec!["Unable to check remote status — check the AWS credentials in ~/.aws".to_string()]
+            vec!["Unable to check remote status — check the AWS credentials in ~/.aws or run aws sso login".to_string()]
         );
     }
 

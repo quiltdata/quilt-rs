@@ -184,7 +184,7 @@ pub fn render(state: &PackageState, site: Site) -> Rendered {
 /// A session state with no host: the AWS credentials on this computer were
 /// missing or refused.
 const AMBIENT_CREDENTIALS_UNUSABLE: &str =
-    "AWS credentials on this computer aren't usable — update ~/.aws";
+    "AWS credentials on this computer aren't usable — update ~/.aws or run aws sso login";
 
 /// The words, which are the only part that depends on the site.
 ///
@@ -285,7 +285,7 @@ fn words(state: &PackageState, site: Site) -> String {
         //
         // With no host the credentials are the machine's own AWS ones (a bucket
         // with no catalog), so missing and rejected say the same thing: there is
-        // no sign-in to name, and the remedy is the file.
+        // no sign-in to name, and the remedy is `~/.aws` or `aws sso login`.
         (
             PackageState::NoSession { host: None } | PackageState::SignInExpired { host: None },
             _,
@@ -450,7 +450,7 @@ mod tests {
             for site in [Site::ListRow, Site::QueueRow, Site::Cause, Site::PageHeader] {
                 assert_eq!(
                     render(&s, site).words,
-                    "AWS credentials on this computer aren't usable — update ~/.aws",
+                    "AWS credentials on this computer aren't usable — update ~/.aws or run aws sso login",
                     "{s:?} at {site:?}"
                 );
             }
