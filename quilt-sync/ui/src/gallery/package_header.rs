@@ -198,7 +198,7 @@ fn scene_menu() -> Vec<MenuItem> {
 /// Whether the location group has its remote side, decided by the page's own
 /// [`remote_target`] over this state's remote: none without a bucket, and one
 /// with no revision yet when never published.
-fn has_catalog_page(state: &PackageState) -> bool {
+fn has_remote_side(state: &PackageState) -> bool {
     let payload = commands::PackageHeaderData {
         uri: (!matches!(state, PackageState::NoRemote))
             .then(|| scene_payload().uri)
@@ -303,7 +303,7 @@ fn header(
                                 </Button>
                             }
                         })}
-                    {location(has_catalog_page(state), copied)}
+                    {location(has_remote_side(state), copied)}
                     <ActionMenu
                         aria_label="More actions for this package"
                         actions={
