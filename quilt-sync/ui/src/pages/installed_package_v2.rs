@@ -60,7 +60,7 @@ use header::PageHeader;
 pub(crate) use header::{
     CopiedMark, RemoveDialog, Uninstall, ask_to_remove, location, remote_item, remove_item,
 };
-pub use header::{MenuCommand, MenuItem, catalog_command, menu_items, remote_target};
+pub use header::{MenuCommand, MenuItem, menu_items, remote_target};
 use incoming::{HoverCard, IncomingSummary};
 use resolve::{ResolveCommands, ResolvePane};
 
