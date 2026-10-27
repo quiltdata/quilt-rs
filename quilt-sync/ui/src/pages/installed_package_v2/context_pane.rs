@@ -274,13 +274,17 @@ pub fn CurrentRevisionPaneSkeleton() -> impl IntoView {
                     </dl>
                 </PaneSection>
                 <PaneSection label="Revision" action=button("96px")>
-                    <SkeletonText width="80%" />
-                    <SkeletonText width="42%" />
+                    <div class=style::lines>
+                        <SkeletonText width="80%" />
+                        <SkeletonText width="42%" />
+                    </div>
                 </PaneSection>
                 <PaneSection label="Keeping">
-                    <SkeletonText width="45%" />
-                    <SkeletonText width="55%" />
-                    <SkeletonText width="85%" />
+                    <div class=style::lines>
+                        <SkeletonText width="45%" />
+                        <SkeletonText width="55%" />
+                        <SkeletonText width="85%" />
+                    </div>
                 </PaneSection>
             </Card>
         </aside>
@@ -1287,20 +1291,56 @@ mod tests {
             .unwrap()
             .expect("the composing card");
         assert_eq!(card.get_attribute("aria-busy").as_deref(), Some("true"));
-
         assert_eq!(headings(&el), ["Bucket and catalog", "Revision", "Keeping"]);
-        let sections = card.query_selector_all("section").unwrap();
+    }
+
+    /// Under the page's stylesheets every bar has width: a section sizes its
+    /// children to their content, and a bar sized in percent must not
+    /// collapse inside it.
+    #[wasm_bindgen_test]
+    async fn every_skeleton_bar_is_drawn() {
+        stylance::import_crate_style!(pane, "src/kit/pane_section.module.scss");
+        stylance::import_crate_style!(bar, "src/kit/skeleton_box.module.scss");
+        crate::test_support::load_module_style(
+            include_str!("../../kit/pane_section.module.scss"),
+            &[
+                ("root", pane::root),
+                ("label", pane::label),
+                ("nested", pane::nested),
+                ("heading", pane::heading),
+            ],
+        );
+        crate::test_support::load_module_style(
+            include_str!("../../kit/skeleton_box.module.scss"),
+            &[("root", bar::root), ("text", bar::text)],
+        );
+        crate::test_support::load_module_style(
+            include_str!("context_pane.module.scss"),
+            &[
+                ("root", style::root),
+                ("muted", style::muted),
+                ("facts", style::facts),
+                ("value", style::value),
+                ("lines", style::lines),
+            ],
+        );
+        let el = mount(|| view! { <CurrentRevisionPaneSkeleton /> });
+        sleep_ms(0).await;
+
+        let sections = el.query_selector_all("aside section section").unwrap();
         assert_eq!(sections.length(), 3);
         for i in 0..sections.length() {
             let section: web_sys::Element = sections.item(i).unwrap().unchecked_into();
-            assert!(
-                section
-                    .query_selector("[aria-hidden='true']")
-                    .unwrap()
-                    .is_some(),
-                "bars in each section; markup was {}",
-                section.inner_html()
-            );
+            let bars = section.query_selector_all("[aria-hidden='true']").unwrap();
+            assert!(bars.length() > 0, "bars in section {i}");
+            for j in 0..bars.length() {
+                let bar: web_sys::HtmlElement = bars.item(j).unwrap().unchecked_into();
+                assert!(
+                    bar.offset_width() > 0,
+                    "bar {j} of section {i} has no width; markup was {}",
+                    section.inner_html()
+                );
+            }
         }
     }
 }

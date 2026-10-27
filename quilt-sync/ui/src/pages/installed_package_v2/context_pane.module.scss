@@ -32,6 +32,11 @@
   }
 }
 
+/* The skeleton's bars, as wide as the section so a percent width has a base. */
+.lines {
+  align-self: stretch;
+}
+
 .value {
   font-size: var(--q-text-body);
   overflow: hidden;
