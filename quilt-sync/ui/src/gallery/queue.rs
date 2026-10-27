@@ -64,7 +64,7 @@ const REJECTION: &str = concat!(
 /// The other shape: one line, from a malformed `.quilt/workflows/config.yml`.
 const BAD_CONFIG: &str = "Invalid workflows config: missing required key 'version'";
 
-/// A row as the page builds one — the vocabulary's words and tone, and the remedy
+/// A row as the page builds one — the vocabulary's words, and the remedy
 /// pointing wherever the page would point it. Nothing here is hand-written, so a
 /// gallery row cannot say something the app would not.
 pub(crate) fn row(namespace: &'static str, state: &PackageState) -> AnyView {
@@ -89,7 +89,6 @@ pub(crate) fn detailed_row(
         <QueueRow
             namespace=namespace
             state=rendered.words
-            tone=rendered.tone
             remedy=remedy
             detail=detail
         />
@@ -139,9 +138,8 @@ fn QueueRowStory() -> impl IntoView {
             note="The row is the link: every verb here opens a page, so a button would \
                   promise an operation that does not happen on press. The verb stays as text \
                   at the right edge, one tab stop per row. The state reads as a clause after \
-                  the name rather than as a chip beside it, and the tone is a rule \
-                  on the row's left edge — colour and nothing else, which is allowed because \
-                  the clause says the state in words."
+                  the name rather than as a chip beside it, and the row draws no colour for \
+                  it: the clause says the state in words."
         >
             {actionable()
                 .into_iter()
@@ -348,9 +346,7 @@ pub fn QueueScene() -> impl IntoView {
             note="Shared causes first, then per-package rows in precedence order. Open both \
                   expanders and watch what nineteen items costs in vertical space, because \
                   that is what this design spends to buy the region. Read down the verbs: \
-                  five, one per row, each true of the row it sits on. Read down the left \
-                  edge: the tone marks band rather than scatter, since the severe states \
-                  sort first. The paused row costs the most height and goes nowhere — it \
+                  five, one per row, each true of the row it sits on. The paused row costs the most height and goes nowhere — it \
                   carries the engine's own rejection."
         >
             <QueueRegion />

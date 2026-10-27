@@ -187,7 +187,6 @@ mod tests {
                 ("subject", queue_row::subject),
                 ("namespace", queue_row::namespace),
                 ("clause", queue_row::clause),
-                ("danger", queue_row::danger),
             ],
         );
         let el = mount(|| {
@@ -197,7 +196,7 @@ mod tests {
                     <ZeroLineSkeleton />
                     <ZeroLine text="All packages are up to date" />
                     <ZeroLine text="2 packages need your attention" tone=StateTone::Attention />
-                    <QueueRow namespace="org/dataset-c" state="has conflicts" tone=StateTone::Danger />
+                    <QueueRow namespace="org/dataset-c" state="has conflicts" />
                     <CauseRow
                         text="Signed out from quilt.test"
                         count=2

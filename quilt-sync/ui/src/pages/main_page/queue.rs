@@ -403,7 +403,6 @@ fn package_row(
         <QueueRow
             namespace=namespace.to_string()
             state=rendered.words
-            tone=rendered.tone
             remedy=remedy
             detail=detail
         />

@@ -608,18 +608,15 @@ the name holds its full width until the clause is nearly gone: a name cut
 mid-owner is unrecognisable, while a clause cut at its end is still readable up
 to the cut.
 
-The tone the chip used to carry becomes a **rule on the row's edge**, inset by the
-row's own padding so a column of rows shows separate marks rather than one
-unbroken band. Colour and nothing else, which is allowed here because the colour
-carries nothing on its own: the clause states the row's state in words, so two
-rows of different severity read differently with the colour taken away. The chip
-needed a glyph beside it because its words were a short label doing the same job
-as its tint; these words are the whole account.
+The row draws **no tone**: no chip, no tint and no rule. The clause states the
+row's state in words, which is the whole account; the chip needed a tint and a
+glyph because its words were a short label. The queue's status line carries the
+region's one tone, in its glyph.
 
 The leading column — the one a cause row fills with its expander, which is what
 keeps a cause and a package aligned on their text — stays open and stays empty.
-A row that has a state is marked twice already, by its edge rule and by its
-clause; a third marker there would say nothing the other two do not. Only a row
+A row that has a state is marked by its clause already; a second marker there
+would say nothing the clause does not. Only a row
 that is a bare name, one of the packages an expanded cause speaks for, carries
 a bullet.
 
@@ -660,9 +657,7 @@ translate is exempt because it is instantaneous and carries no transition.
 is a colour and a glyph silhouette, so it survives desaturation. A provisional
 row is a dashed edge and a dim, so it is findable by someone who is not already
 looking for it. The test is whether the channel carries meaning on its own: a
-queue row's tone rule is colour and nothing else, and that is allowed, because
-the clause beside it states the row's state in words. Take the colour away and
-the row still says everything it said.
+colour that only repeats words beside it is decoration, and may be dropped.
 
 **The Platform Owns The Keyboard Rule.** Where a native element exists, wrap it
 rather than rebuild it. Native select, native radios, native checkbox. This is

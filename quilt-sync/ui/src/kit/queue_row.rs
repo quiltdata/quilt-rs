@@ -18,18 +18,14 @@
 //! The words are [`render`](super::render)'s at [`Site::QueueRow`](super::Site), which
 //! is where the queue's grammar is chosen; this file only draws them.
 //!
-//! The tone is a rule on the row's left edge, which is what makes a column of rows
-//! scannable. Colour is all it is, and that is enough here
-//! precisely because it carries nothing: the clause states the row's state in words,
-//! so two rows of different severity always read differently with the colour taken
-//! away. The chip needed a glyph beside it because its words were a short label
-//! doing the same job as its tint; these words are the whole account.
+//! The row draws no tone. The clause states the row's state in words, which is the
+//! whole account; the chip needed a tint and a glyph because its words were a short
+//! label.
 
 use leptos::prelude::*;
 
 use super::PackageAction;
 use super::SkeletonBox;
-use super::state_label::StateTone;
 
 stylance::import_crate_style!(style, "src/kit/queue_row.module.scss");
 
@@ -50,30 +46,16 @@ pub struct Remedy {
     pub href: String,
 }
 
-/// The tone's own class, which sets the tone rule's and the glyph's colour.
-fn tone_class(tone: StateTone) -> &'static str {
-    match tone {
-        StateTone::Success => style::success,
-        StateTone::Neutral => style::neutral,
-        StateTone::Attention => style::attention,
-        StateTone::Danger => style::danger,
-    }
-}
-
 #[component]
 pub fn QueueRow(
     /// `owner/name`. Truncates right, as in `PackageRow`.
     #[prop(into)]
     namespace: String,
-    /// The state's words and its tone. **Both or neither** — a tone with no words is
-    /// a colour that means nothing, and words with no tone have no rule to draw.
-    ///
-    /// Neither, for a sub-row: expanding `Signed out — 11 packages` answers *which*
-    /// packages, and repeating `Signed out` on all eleven is exactly the redundancy
-    /// the cause row above exists to remove.
+    /// The state's words. None for a sub-row: expanding `Signed out — 11 packages`
+    /// answers *which* packages, and repeating `Signed out` on all eleven is exactly
+    /// the redundancy the cause row above exists to remove.
     #[prop(optional, into)]
     state: Option<String>,
-    #[prop(optional, into)] tone: Option<StateTone>,
     /// What to do and where. Absent when the state names no operation, and the row is
     /// then not a link.
     ///
@@ -91,10 +73,6 @@ pub fn QueueRow(
     #[prop(optional, into)]
     detail: MaybeProp<String>,
 ) -> impl IntoView {
-    // Both or neither, enforced here rather than at each of the three places the pair
-    // draws — the glyph, the tone rule and the clause.
-    let (state, tone) = state.zip(tone).unzip();
-
     // Split once: the verb draws inside the row and the destination wraps it, and
     // neither exists without the other.
     let (verb, href) = match remedy {
@@ -107,10 +85,6 @@ pub fn QueueRow(
         class.push(' ');
         class.push_str(style::sub);
     }
-    if let Some(tone) = tone {
-        class.push(' ');
-        class.push_str(tone_class(tone));
-    }
     if href.is_some() {
         class.push(' ');
         class.push_str(style::linked);
@@ -119,11 +93,10 @@ pub fn QueueRow(
     // The column `CauseRow` fills with its expander, held open so a cause and a
     // package start their text at the same x.
     //
-    // No bullet on a row that has a state: the tone rule on its edge marks it,
-    // the clause names it, and a bullet would be a third marker saying nothing the
-    // other two do not. A row that is only a name gets a bullet, which is the one case
-    // where a list marker is the only marker there is.
-    let bullet = match tone {
+    // No bullet on a row that has a state: the clause marks it. A row that is only a
+    // name gets a bullet, which is the one case where a list marker is the only
+    // marker there is.
+    let bullet = match state {
         Some(_) => view! { <span class=style::bullet></span> }.into_any(),
         None => {
             view! { <span class=format!("{} {}", style::bullet, style::dot)></span> }.into_any()
@@ -153,8 +126,7 @@ pub fn QueueRow(
 
     // The ROW is the link, not the line inside it: `PackageRow` is an anchor at its
     // root for the same reason, and the two kinds of row share a region. An anchor
-    // around the line alone would leave the row's own padding and its tone rule
-    // outside the target, so the tint would blink off between rows and a click in
+    // around the line alone would leave the row's own padding outside the target, so the tint would blink off between rows and a click in
     // the gap would do nothing.
     let body = view! {
         <div class=style::line>{line}</div>
@@ -217,7 +189,6 @@ mod tests {
                 <QueueRow
                     namespace="org/dataset-c"
                     state="has conflicts in 2 files"
-                    tone=StateTone::Danger
                     remedy=Some(Remedy {
                         action: PackageAction::Publish,
                         href: "/installed-package?namespace=org%2Fdataset-c&filter=unmodified".to_string(),
@@ -248,7 +219,6 @@ mod tests {
                 <QueueRow
                     namespace="team/imaging-cohort-b"
                     state="has stopped syncing"
-                    tone=StateTone::Danger
                 />
             }
         });
@@ -258,31 +228,9 @@ mod tests {
         );
     }
 
-    /// The tone rule is the tone's only channel, and it hangs off this class.
-    /// Dropping it leaves a row that reads correctly — the clause says everything —
-    /// and loses the mark that makes a column of them scannable.
-    #[wasm_bindgen_test]
-    fn the_tone_also_reaches_the_row_that_draws_its_tone_rule() {
-        let el = mount(|| {
-            view! {
-                <QueueRow
-                    namespace="org/dataset-c"
-                    state="has conflicts in 2 files"
-                    tone=StateTone::Danger
-                />
-            }
-        });
-        let root = el.first_element_child().expect("the row");
-        let class = root.get_attribute("class").unwrap_or_default();
-        assert!(
-            class.contains(style::danger),
-            "the tone rule hangs off the tone class, and it is not on the row: {class}"
-        );
-    }
-
     /// The leading column holds a list marker only where there is nothing else to
     /// mark the row: a package revealed by an expanded cause is a bare name, while a
-    /// row with a state has a tone rule and a clause already.
+    /// row with a state has its clause.
     #[wasm_bindgen_test]
     fn only_a_bare_name_carries_a_bullet() {
         let named = mount(|| view! { <QueueRow namespace="user/package-x" sub=true /> });
@@ -300,7 +248,6 @@ mod tests {
                 <QueueRow
                     namespace="org/dataset-c"
                     state="has conflicts in 2 files"
-                    tone=StateTone::Danger
                 />
             }
         });
@@ -309,7 +256,7 @@ mod tests {
                 .query_selector(&format!("[class*={}]", style::dot))
                 .unwrap()
                 .is_none(),
-            "a third marker beside the tone rule and the clause"
+            "a second marker beside the clause"
         );
     }
 
@@ -338,10 +285,6 @@ mod tests {
                 ("root", style::root),
                 ("line", style::line),
                 ("linked", style::linked),
-                ("success", style::success),
-                ("neutral", style::neutral),
-                ("attention", style::attention),
-                ("danger", style::danger),
                 ("detail", style::detail),
                 ("bullet", style::bullet),
                 ("dot", style::dot),
@@ -358,7 +301,6 @@ mod tests {
                     <QueueRow
                         namespace=name
                         state="has conflicts in 2 files"
-                        tone=StateTone::Danger
                         remedy=Some(Remedy {
                             action: PackageAction::Publish,
                             href: "/installed-package".to_string(),

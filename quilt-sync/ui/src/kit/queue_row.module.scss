@@ -1,16 +1,10 @@
 /*
- * Queue row. Namespace, state as a clause, the remedy as text.
- *
- * The tone is a rule on the row's left edge and nothing else, drawn from `--tone-mark`,
- * which the four tone classes at the foot of this file set. Colour alone, and that is
- * allowed here because it carries nothing on its own: the clause states the row's
- * state in words, so the rule is emphasis over text that already says it.
+ * Queue row. Namespace, state as a clause, the remedy as text. The clause states the
+ * row's state in words, and the row draws no colour for it.
  */
 
-/* A column, because a row may carry a detail line under its first one.
- * `relative` for the tone rule, which is absolute so that it spans the whole row. */
+/* A column, because a row may carry a detail line under its first one. */
 .root {
-  position: relative;
   display: flex;
   flex-direction: column;
   /* Same reason as the list rows: a flex item's automatic minimum size is its
@@ -30,7 +24,7 @@
   min-height: calc(var(--q-queue-line-height) - 2 * var(--q-space-1));
 }
 
-/* On `.root`, so the whole row is the target — its padding and its tone rule
+/* On `.root`, so the whole row is the target — its padding
  * included. The row IS an anchor, so the document conventions have to be switched
  * off explicitly, colour and underline both, as in `package_row.module.scss`. The
  * tint is the only affordance and there is no hover underline to go with it; the
@@ -44,25 +38,6 @@
 
 .linked:hover {
   background: var(--q-overlay-hover);
-}
-
-/* The tone's first channel, on the row's left edge and the row's full height, from
- * one hairline to the next. On the row rather than in the bullet column, so it spans
- * a detail line too.
- *
- * On the tone classes and not on `.root`, so a row with no state draws no rule
- * instead of an invisible one. */
-.success::before,
-.neutral::before,
-.attention::before,
-.danger::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: var(--q-space-1);
-  background: var(--tone-mark);
 }
 
 /* The pause's own message, from the engine rather than from this vocabulary.
@@ -97,7 +72,7 @@
 
 /* A row with no state of its own gets a plain bullet — it is one of a set of names,
  * and that is what a bullet is for. A row that has a state leaves this column empty:
- * its tone rule and its clause already mark it. */
+ * its clause already marks it. */
 .dot::before {
   content: "";
   width: 4px;
@@ -169,8 +144,3 @@
   padding-left: calc(var(--q-control-height-sm) + var(--q-space-2));
   color: var(--q-fgColor-muted);
 }
-
-.success { --tone-mark: var(--q-fgColor-success); }
-.neutral { --tone-mark: var(--q-fgColor-neutral); }
-.attention { --tone-mark: var(--q-fgColor-attention); }
-.danger { --tone-mark: var(--q-fgColor-danger); }

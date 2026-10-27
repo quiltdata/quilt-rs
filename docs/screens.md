@@ -124,9 +124,10 @@ needs a decision, and says so in one line instead.
 |  > Signed out from demo.quiltdata.com — 2 packages      |
 |                                              [Sign in]  |
 |  ------------------------------------------------------ |
-|  | user/pkg-a  has a newer revision        Get latest → |
+|    user/pkg-a  has a newer revision        Get latest → |
 |  ------------------------------------------------------ |
-|  | user/pkg-b  has 2 changed files            Publish → |
+|    user/pkg-b  has 2 changed files            Publish → |
+|  ------------------------------------------------------ |
 +--[toolbar]----------------------------------------------+
 | [Packages|Recent files]  [Search…] [Group:Bucket]        |
 |                          [Sort:Changed] [Create package] |
