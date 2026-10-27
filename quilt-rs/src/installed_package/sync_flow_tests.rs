@@ -343,7 +343,7 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
 
 /// A package with no pending commit, its remote set or not.
 async fn package_without_commit(
-    remote_json: &str,
+    remote: serde_json::Value,
 ) -> Res<(
     InstalledPackage<LocalStorage, MockRemote>,
     Vec<tempfile::TempDir>,
@@ -356,23 +356,23 @@ async fn package_without_commit(
     paths
         .scaffold_for_installing(&storage, &home, &namespace)
         .await?;
-    let lineage_json = format!(
-        r#"{{
-            "packages": {{
-                "test/nothing_to_push": {{
-                    "commit": null,
-                    "remote": {remote_json},
-                    "base_hash": "BASE_HASH",
-                    "latest_hash": "BASE_HASH",
-                    "paths": {{}}
-                }}
-            }},
-            "home": "{}"
-        }}"#,
-        home.as_ref().display(),
-    );
+    let lineage_json = serde_json::json!({
+        "packages": {
+            "test/nothing_to_push": {
+                "commit": null,
+                "remote": remote,
+                "base_hash": "BASE_HASH",
+                "latest_hash": "BASE_HASH",
+                "paths": {}
+            }
+        },
+        "home": home.as_ref(),
+    });
     storage
-        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .write_byte_stream(
+            &paths.lineage(),
+            lineage_json.to_string().into_bytes().into(),
+        )
         .await?;
 
     let domain_lineage_io = DomainLineageIo::new(paths.lineage());
@@ -391,9 +391,11 @@ async fn package_without_commit(
 /// `Pushed::NothingToPush` and writes nothing, here or on the remote.
 #[test(tokio::test)]
 async fn test_push_without_commit_has_nothing_to_push() -> Res {
-    let (package, _temp_dirs) = package_without_commit(
-        r#"{"bucket": "bkt", "namespace": "test/nothing_to_push", "hash": "BASE_HASH"}"#,
-    )
+    let (package, _temp_dirs) = package_without_commit(serde_json::json!({
+        "bucket": "bkt",
+        "namespace": "test/nothing_to_push",
+        "hash": "BASE_HASH",
+    }))
     .await?;
     let lineage_before = package.lineage().await?;
 
@@ -411,7 +413,7 @@ async fn test_push_without_commit_has_nothing_to_push() -> Res {
 /// setup problem, not nothing to do.
 #[test(tokio::test)]
 async fn test_push_without_remote_fails() -> Res {
-    let (package, _temp_dirs) = package_without_commit("null").await?;
+    let (package, _temp_dirs) = package_without_commit(serde_json::Value::Null).await?;
 
     let err = package.push(None).await.unwrap_err();
 
