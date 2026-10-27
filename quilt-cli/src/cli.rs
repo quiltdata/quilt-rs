@@ -463,7 +463,7 @@ enum Commands {
         keep_folder: Vec<String>,
         /// With --keep-all or --keep-folder, save the setting without
         /// downloading anything
-        #[arg(long, requires = "keep")]
+        #[arg(long, requires = "keep", conflicts_with = "path")]
         no_download: bool,
     },
     /// Show or set which of a package's files this copy keeps
@@ -1441,6 +1441,7 @@ mod tests {
             }
         ));
         assert!(parse(&["--keep-all", "--keep-folder", "a"]).is_err());
+        assert!(parse(&["--keep-all", "--no-download", "--path", "a"]).is_err());
         assert!(parse(&["--no-download"]).is_err());
     }
 

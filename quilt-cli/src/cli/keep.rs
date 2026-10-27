@@ -296,6 +296,13 @@ mod tests {
         assert_eq!((saved.downloaded, saved.outstanding), (0, 1));
         assert!(installed.lineage().await?.paths.is_empty());
 
+        // A file already at the path is left for the user, not overwritten.
+        let readme = installed.package_home().await?.join(pkg::README_LK);
+        std::fs::create_dir_all(readme.parent().unwrap())?;
+        std::fs::write(&readme, "mine")?;
+        assert_eq!(installed.backlog().await?, [] as [PathBuf; 0]);
+        std::fs::remove_file(&readme)?;
+
         let fetched = m
             .keep(Input {
                 namespace: pkg::NAMESPACE.into(),
