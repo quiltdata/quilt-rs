@@ -91,7 +91,7 @@ pub fn PageLayout(
 
 type Observing = (
     web_sys::ResizeObserver,
-    Closure<dyn FnMut()>,
+    Closure<dyn FnMut(js_sys::Array)>,
     Rc<RefCell<Option<web_sys::HtmlElement>>>,
 );
 
@@ -107,7 +107,24 @@ pub fn publish_height(node: NodeRef<leptos::html::Div>, var: &'static str) {
         let frame: Rc<RefCell<Option<web_sys::HtmlElement>>> = Rc::default();
         let found = Rc::clone(&frame);
         let target = el.clone();
-        let callback = Closure::<dyn FnMut()>::new(move || {
+        // The observer's own border box, not the element's on-screen rect: the
+        // rect counts a transform on an ancestor, such as `body`'s opening
+        // animation, and an observer is not told when a transform ends.
+        let callback = Closure::<dyn FnMut(js_sys::Array)>::new(move |entries: js_sys::Array| {
+            let Some(size) = entries
+                .get(0)
+                .dyn_into::<web_sys::ResizeObserverEntry>()
+                .ok()
+                .and_then(|entry| {
+                    entry
+                        .border_box_size()
+                        .get(0)
+                        .dyn_into::<web_sys::ResizeObserverSize>()
+                        .ok()
+                })
+            else {
+                return;
+            };
             let mut found = found.borrow_mut();
             if found.is_none() {
                 *found = target
@@ -117,7 +134,7 @@ pub fn publish_height(node: NodeRef<leptos::html::Div>, var: &'static str) {
                     .map(JsCast::unchecked_into);
             }
             if let Some(frame) = found.as_ref() {
-                let height = target.get_bounding_client_rect().height();
+                let height = size.block_size();
                 let _ = frame.style().set_property(var, &format!("{height}px"));
             }
         });
@@ -187,6 +204,37 @@ mod tests {
         shown.set(false);
         sleep_ms(50).await;
         assert_eq!(height(), "", "no part, no height");
+    }
+
+    /// A scaled ancestor, as `body` is while it fades in, does not count: the
+    /// height is the element's own, with no later resize to correct it.
+    #[wasm_bindgen_test]
+    async fn a_scaled_ancestor_does_not_inflate_the_height() {
+        #[component]
+        fn Band() -> impl IntoView {
+            let band = NodeRef::new();
+            publish_height(band, "--q-test-height");
+            view! { <div node_ref=band style="height:40px"></div> }
+        }
+        let el = mount(|| {
+            view! {
+                <div style="transform:scale(2)">
+                    <PageLayout heading="Page" page_scroll=true>
+                        <Band />
+                    </PageLayout>
+                </div>
+            }
+        });
+        let frame: web_sys::HtmlElement = el
+            .query_selector("[data-v2-page]")
+            .unwrap()
+            .expect("the frame")
+            .unchecked_into();
+        sleep_ms(50).await;
+        assert_eq!(
+            frame.style().get_property_value("--q-test-height").unwrap(),
+            "40px"
+        );
     }
 
     /// One `h1`, and only a screen reader sees it: the appbar carries the wordmark,
