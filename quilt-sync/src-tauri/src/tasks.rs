@@ -457,8 +457,9 @@ async fn sweep<M: QuiltModel>(
     if commit.is_some() && status.changes.is_empty() {
         // Publishing would drop the new metadata: push the commit as it is,
         // and fail its claim next tick.
-        let push = model.locked_package_push(locked).await?;
-        note_not_latest(&pkg.namespace, &push);
+        if let quilt::Pushed::Uploaded(push) = model.locked_package_push(locked).await? {
+            note_not_latest(&pkg.namespace, &push);
+        }
         return Ok(());
     }
     let invocation_id = user_meta["agent_exec"]["claim"]["invocation_id"]

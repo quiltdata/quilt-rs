@@ -48,12 +48,21 @@ use quilt_uri::S3Uri;
 use quilt_uri::UriError;
 
 /// Result of a push operation visible to callers outside `quilt-rs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PushOutcome {
     pub manifest_uri: ManifestUri,
     /// Whether the pushed revision was certified as "latest".
     /// `false` when the remote's latest tag moved since we last checked
     /// (i.e. someone else pushed in the meantime).
     pub certified_latest: bool,
+}
+
+/// What a push did: nothing, because there was no pending commit, or the
+/// [`PushOutcome`] of the revision it uploaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pushed {
+    NothingToPush,
+    Uploaded(PushOutcome),
 }
 
 /// Result of a publish operation visible to callers outside `quilt-rs`.
@@ -918,11 +927,11 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     /// Push the local revision to the remote.
-    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<PushOutcome> {
+    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<Pushed> {
         Box::pin(self.lock().await?.push(host_config_opt)).await
     }
 
-    async fn push_unlocked(&self, host_config_opt: Option<HostConfig>) -> Res<PushOutcome> {
+    async fn push_unlocked(&self, host_config_opt: Option<HostConfig>) -> Res<Pushed> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
         Ok(self.push_from(lineage, host_config_opt).await?.0)
     }
@@ -933,7 +942,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         &self,
         lineage: lineage::PackageLineage,
         host_config_opt: Option<HostConfig>,
-    ) -> Res<(PushOutcome, lineage::PackageLineage)> {
+    ) -> Res<(Pushed, lineage::PackageLineage)> {
         self.scaffold_paths().await?;
 
         let remote_uri = match lineage.remote_uri.as_ref() {
@@ -951,9 +960,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         };
 
         if lineage.commit.is_none() {
-            return Err(Error::PackageOp(PackageOpError::Push(
-                "No commits to push".to_string(),
-            )));
+            return Ok((Pushed::NothingToPush, lineage));
         }
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
@@ -979,7 +986,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             manifest_uri: lineage.remote()?.clone(),
             certified_latest,
         };
-        Ok((outcome, lineage))
+        Ok((Pushed::Uploaded(outcome), lineage))
     }
 
     /// Record this package's standing [`SyncScope`].
@@ -1638,7 +1645,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
             .await
     }
 
-    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<PushOutcome> {
+    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<Pushed> {
         self.package.push_unlocked(host_config_opt).await
     }
 

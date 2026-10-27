@@ -249,9 +249,9 @@ async fn note_publish_failed(m: &impl model::QuiltModel, watcher: &Watcher, name
 }
 
 async fn package_push_command(
-    m: &model::Model,
+    m: &impl model::QuiltModel,
     namespace: &str,
-) -> Result<(quilt_uri::Namespace, quilt::PushOutcome), Error> {
+) -> Result<(quilt_uri::Namespace, quilt::Pushed), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let outcome = model::package_push(m, &namespace, None).await?;
     Ok((namespace, outcome))
@@ -265,19 +265,40 @@ pub async fn package_push(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    push_and_report(&*m, &tracing, &watcher, &namespace, uri.as_ref()).await
+}
+
+/// The Push button's whole answer: the push, its event and its line.
+async fn push_and_report(
+    m: &impl model::QuiltModel,
+    tracing: &crate::telemetry::Telemetry,
+    watcher: &Watcher,
+    namespace: &str,
+    uri: Option<&S3PackageUri>,
+) -> Result<String, String> {
     let msg_init = format!("Pushing package {namespace}");
 
-    let result = package_push_command(&m, &namespace).await;
+    let result = package_push_command(m, namespace).await;
     // The time stays: edits made after the commit are still to publish, and
     // the next walk deletes it if none are.
     if let Ok((ns, _)) = &result {
         watcher.clear_paused(ns).await;
     }
+    let mut notify = Notify::new(msg_init);
+    // Another push got there first: nothing left, so no push event. A
+    // failure keeps the event, which is what reports a refusal.
+    if !matches!(result, Ok((_, quilt::Pushed::NothingToPush))) {
+        notify = notify.on_success(
+            tracing,
+            MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(uri)),
+        );
+    }
     // TODO: push-not-certified should be surfaced as a warning, not a success.
     // Currently both outcomes go through the success path because converting to
     // Err skips on_done()/refetch and leaves the UI stale.
     let msg_ok = match &result {
-        Ok((_, outcome)) if outcome.certified_latest => {
+        Ok((_, quilt::Pushed::NothingToPush)) => format!("Package {namespace} has nothing to push"),
+        Ok((_, quilt::Pushed::Uploaded(outcome))) if outcome.certified_latest => {
             format!("Successfully pushed package {namespace}")
         }
         Ok(_) => {
@@ -287,12 +308,7 @@ pub async fn package_push(
     };
     let msg_err = |err: &Error| write_failure_message("push package", err);
 
-    Notify::new(msg_init)
-        .on_success(
-            &tracing,
-            MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(uri.as_ref())),
-        )
-        .map(result.map(|_| ()), msg_ok, msg_err)
+    notify.map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn package_publish_command(
@@ -1762,6 +1778,56 @@ mod tests {
             .expect_err("a conflict refuses the pull");
 
         assert_eq!(telemetry.queued_events(), vec!["action_refused".to_owned()]);
+    }
+
+    /// A model whose push answers `pushed`.
+    fn push_model(pushed: quilt::Pushed) -> MockQuiltModel {
+        let mut model = installed_model();
+        model
+            .expect_package_push()
+            .times(1)
+            .returning(move |_, _| Ok(pushed.clone()));
+        model
+    }
+
+    /// Another push got there first: the button says so, with no push event.
+    #[tokio::test]
+    async fn a_push_with_nothing_to_push_says_so_and_reports_nothing() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::telemetry::Telemetry::default();
+        let model = push_model(quilt::Pushed::NothingToPush);
+
+        let said = super::push_and_report(&model, &telemetry, &watcher, "acme/demo", None).await;
+
+        assert_eq!(
+            said,
+            Ok("Package acme/demo has nothing to push".to_string())
+        );
+        assert_eq!(telemetry.queued_events(), Vec::<String>::new());
+    }
+
+    /// A push that uploads a revision still reports it.
+    #[tokio::test]
+    async fn a_push_that_uploads_reports_the_push() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::telemetry::Telemetry::default();
+        let model = push_model(quilt::Pushed::Uploaded(quilt::PushOutcome {
+            manifest_uri: quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            },
+            certified_latest: true,
+        }));
+
+        let said = super::push_and_report(&model, &telemetry, &watcher, "acme/demo", None).await;
+
+        assert_eq!(
+            said,
+            Ok("Successfully pushed package acme/demo".to_string())
+        );
+        assert_eq!(telemetry.queued_events(), vec!["package_pushed".to_owned()]);
     }
 
     /// A model whose dry run, on the held lock, answers `verdict`, for a
