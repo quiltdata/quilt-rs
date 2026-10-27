@@ -1,10 +1,10 @@
 // Styles for the gallery's old_revisions_inline.rs scene only.
 
-/* The surface's contents at the pane's width. 256 plus the surface's own 12px
- * padding either side is the 280 the design gives the pane — and the popover
+/* The surface's contents at the pane's width. 296 plus the surface's own 12px
+ * padding either side is the 320 the design gives the pane — and the popover
  * would otherwise take its width from its longest message, up to 360. */
 .g-ori-body {
-  width: 256px;
+  width: 296px;
   display: flex;
   flex-direction: column;
   gap: var(--q-space-2);
