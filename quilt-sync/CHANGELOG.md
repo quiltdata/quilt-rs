@@ -24,6 +24,7 @@
 ### Changed
 
 - Group headings on the main page stand out from the package and file rows below them (<https://github.com/quiltdata/quilt-rs/pull/1220>)
+- The main page's attention queue is a status line with its rows below, not a card; when nothing needs you it reads *All packages are up to date* (<https://github.com/quiltdata/quilt-rs/pull/1222>)
 
 ## [v0.25.0] - 2026-10-26
 
