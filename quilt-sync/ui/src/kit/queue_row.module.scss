@@ -54,13 +54,9 @@
   max-width: 70ch;
 }
 
-/* The disclosure column, never left empty. Same 24px as `CauseRow`'s expander, so a
- * cause and a package start their text at the same x and the parent is not indented
- * past its own children.
- *
- * Occupied rather than blank because the column is structural: with something in it,
- * the region reads as one list whose items either expand or do not. Blank space read
- * as a missing element. */
+/* The disclosure column. Same 24px as `CauseRow`'s expander, so a cause and a
+ * package start their text at the same x, under the status line's text, and the
+ * parent is not indented past its own children. */
 .bullet {
   flex: none;
   display: flex;
