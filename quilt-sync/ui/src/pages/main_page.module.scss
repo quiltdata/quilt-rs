@@ -14,35 +14,6 @@
   flex-direction: column;
 }
 
-/* The parts above the list stay in place while its rows scroll the page under
- * them. Each is its own sticky band, since no one box holds them all: the
- * strip is built outside the package read, and the queue, the toolbar and the
- * rows inside it. A band's `top` is the appbar's fixed height plus the bands
- * above it, which `publish_height` measures and writes on the frame.
- *
- * Each band reaches up over the gap above it and paints it with the page's
- * background, so rows never show through a gap, and a band sits at the same
- * place stuck or not. */
-[data-page-scroll] {
-  /* What a band's offset is made of. The frame height is the window's, or the
-   * floor the gallery sets; the floor here is a group heading and about one row,
-   * the least of the list that has to stay in view, above `.main`'s bottom padding. */
-  --pinned-frame: var(--q-frame-height, 100vh);
-  --pinned-floor: calc(var(--q-space-8) + var(--q-space-12) + var(--q-space-8));
-  --pinned-strip: var(--q-strip-height, 0px);
-  --pinned-queue: var(--q-queue-height, 0px);
-  --pinned-toolbar: var(--q-toolbar-height, 0px);
-
-  /* Where the bands end: the room a focused row keeps clear of them, and where a
-   * group heading sticks. The frame is the scroller, so the padding is set there. */
-  --pinned-bottom: min(
-    var(--q-appbar-height) + var(--pinned-strip) + var(--pinned-queue) + var(--pinned-toolbar),
-    var(--pinned-frame) - var(--pinned-floor)
-  );
-
-  scroll-padding-top: var(--pinned-bottom);
-}
-
 /* A group heading stays under the bands while its rows scroll, so the bucket or
  * package being read stays named. The headings share one parent, so the next one
  * stops over the last. */
@@ -58,6 +29,16 @@
   isolation: isolate;
 }
 
+/* The parts above the list stay in place while its rows scroll the page under
+ * them. Each is its own sticky band, since no one box holds them all: the
+ * strip is built outside the package read, and the queue, the toolbar and the
+ * rows inside it. A band's `top` is the appbar's fixed height plus the bands
+ * above it, which `publish_height` measures and writes on the frame, where
+ * the `--pinned-*` values are made of them.
+ *
+ * Each band reaches up over the gap above it and paints it with the page's
+ * background, so rows never show through a gap, and a band sits at the same
+ * place stuck or not. */
 [data-page-scroll] .strip,
 [data-page-scroll] .queue,
 [data-page-scroll] .toolbar {

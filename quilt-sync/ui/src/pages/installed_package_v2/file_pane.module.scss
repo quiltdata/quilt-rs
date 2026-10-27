@@ -1,6 +1,6 @@
 /*
- * The file pane. The page's growing half: it takes what the context pane
- * leaves, and its list takes what the controls above it leave.
+ * The file pane. The page's growing half: it takes the width the context pane
+ * leaves, and its rows scroll the page under its search and toolbar.
  */
 
 .root {
@@ -8,8 +8,6 @@
   flex-direction: column;
   flex: 1;
   min-width: 0;
-  min-height: 0;
-  gap: var(--q-space-2);
 }
 
 /* Grouping and the facets, as one right-hand group. It keeps justifying right
@@ -22,24 +20,37 @@
   margin-left: auto;
 }
 
-/* The toolbar and the list it acts on, as one child of the pane's column.
- * `ListToolbar` carries its own `space-2` below it; as two siblings the
- * column's gap came on top of that, and the toolbar sat twice as far from its
- * list as from the search above it. Nested, the column's gap falls once, above
- * the toolbar, and the two gaps match. The main page's `.list_region` is the
- * same arrangement for the same reason. The skeleton nests its bars likewise. */
-.listing {
+/* The search and the toolbar, one band. The gap falls between the two, and
+ * `ListToolbar` carries its own `space-2` below it, so the toolbar sits as far
+ * from the search as from the list.
+ *
+ * On the page it stays under the header while the rows scroll. It stops high
+ * enough to leave the floor in view, reaches up over the gap above it and
+ * paints it, so rows never show through the gap, and it sits at the same place
+ * stuck or not. The pane is its parent and runs to the end of the list. */
+.band {
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-height: 0;
+  gap: var(--q-space-2);
 }
 
-/* The rows scroll inside the box; the cap notice above them does not. */
+[data-page-scroll] .band {
+  position: sticky;
+  top: min(
+    var(--q-appbar-height) + var(--pinned-header),
+    var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar)
+  );
+  z-index: 1;
+  margin-top: calc(-1 * var(--q-space-3));
+  padding-top: var(--q-space-3);
+  background: var(--q-bgColor-page);
+}
+
+/* The rows hold positioned parts with a `z-index` of their own, such as a
+ * checkbox. Isolated, they stack inside the list and cannot rise over the band
+ * or the footer, and a folder heading over its rows stays inside it too. */
 .list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
+  isolation: isolate;
 }
 
 .cap {
@@ -53,19 +64,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--q-space-3);
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
   padding: var(--q-space-2) var(--q-space-3);
-}
-
-/* Stacked under the context pane, the list keeps a floor and the page scrolls,
- * rather than the list taking the little the context pane leaves. Eight rows,
- * the same list the wide arrangement gives at the height floor. */
-@container (max-width: 800px) {
-  .root {
-    min-height: 269px;
-  }
 }
 
 /* The search row. A row, because `SearchInput` fills its parent's main axis. */
@@ -73,11 +72,10 @@
   display: flex;
 }
 
-/* Select-all's box in the rows' checkbox column. Built as a row is, not
- * computed: the Card's 1px border stands in for the list box's own edge, then a
- * row's `space-3` inset, the gutter spacer (`--q-entry-gutter`, set by the pane,
- * `0px` when the list has no heading) and a row's `space-2` gap before its box.
- * So the two boxes share one x with or without headings.
+/* Select-all's box in the rows' checkbox column, a row's `space-3` inset from
+ * the pane's edge, so the two boxes share one x. The caption puts the box's
+ * hole and the gutter spacer (`--q-entry-gutter`, set by the pane, `0px` when
+ * the list has no heading) before its words, as a row does before its name.
  *
  * The spacers below carry a `width` as well as their flex basis. WebKit sizes
  * this slot's content from its children's own widths and ignores their bases,
@@ -89,12 +87,14 @@
   display: flex;
   align-items: center;
   gap: var(--q-space-2);
-  padding-left: calc(1px + var(--q-space-3));
+  padding-left: var(--q-space-3);
 }
 
+/* As `EntryRow`'s: no gutter gives back the gap after it. */
 .gutter {
   flex: 0 0 var(--q-entry-gutter, 16px);
   width: var(--q-entry-gutter, 16px);
+  margin-left: min(0px, var(--q-entry-gutter, 16px) - var(--q-space-2));
 }
 
 /* The box's hole, as `EntryRow`'s `.nobox` keeps it: the caption's words start
@@ -128,8 +128,9 @@
   color: var(--q-fgColor-muted);
 }
 
-/* The list box's footer: a spacer and the `[Download]` primary, flush right on
- * the list's inset. `Card` draws the hairline above it. The one carve-out from
+/* The list's footer: a spacer and the `[Download]` primary, flush right on
+ * the list's inset. `Card` draws the hairline above it. On the page it stays
+ * at the bottom of the window while the list runs past it. The one carve-out from
  * the Never Move Geometry Rule, copied from the Banner: 4px and a fade, 160ms,
  * and no exit animation — unticking the last row grows the list back, and
  * animating that moves rows under the pointer. Under reduced motion it simply
@@ -140,6 +141,13 @@
   justify-content: flex-end;
   padding: var(--q-space-2) var(--q-space-3);
   animation: footer-rise 160ms ease-out;
+}
+
+[data-page-scroll] .footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--q-bgColor-page);
 }
 
 @keyframes footer-rise {

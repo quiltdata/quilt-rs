@@ -72,10 +72,11 @@
 //!
 //! # The gutter is the list's, and it can be nothing
 //!
-//! The empty column before the checkbox is the width of a group's disclosure
-//! button, so a file's box lands under its group's box rather than a triangle's
-//! width to the left of it. It comes from `--q-entry-gutter`, which the list
-//! sets once for its rows, its headings and its select-all.
+//! The box column is the row's left edge, as it is a heading's. The empty
+//! column after it is the width of a group's disclosure button, so a file's
+//! name starts under its folder's name rather than a triangle's width to the
+//! left of it. It comes from `--q-entry-gutter`, which the list sets once for
+//! its rows, its headings and its select-all's caption.
 //!
 //! **A list with no headings at all sets it to `0`** — a package whose files are
 //! all at the root, or any package under `Group: None`, which is a control the
@@ -324,8 +325,8 @@ pub fn EntryRow(
         }
     };
 
-    // Empty, and exactly a disclosure button wide, so a file's box sits under
-    // its group's box rather than a triangle's width to the left of it.
+    // Empty, and exactly a disclosure button wide, so a file's name starts
+    // under its folder's name.
     let gutter = move || view! { <span class=style::gutter /> };
 
     let main = match action {
@@ -337,13 +338,13 @@ pub fn EntryRow(
             disabled,
         })) => view! {
             <label class=style::main on:focusin=focus_in on:focusout=focus_out>
-                {gutter()}
                 <Checkbox
                     state=Signal::derive(move || selected.get().into())
                     on_toggle=move |next| on_toggle.run(next)
                     disabled=disabled
                     aria_describedby=described.clone()
                 />
+                {gutter()}
                 <span class=style::name data-full-name=full_name>{name}</span>
                 {trailing()}
             </label>
@@ -359,8 +360,8 @@ pub fn EntryRow(
                 on:focusin=focus_in
                 on:focusout=focus_out
             >
-                {(!plain).then(gutter)}
                 {(!plain).then(|| nobox(have_mark))}
+                {(!plain).then(gutter)}
                 <button
                     type="button"
                     class=style::open
@@ -376,8 +377,8 @@ pub fn EntryRow(
         // Neither. Inert, and says so: no pointer, no hover target.
         None => view! {
             <div class=format!("{} {}", style::main, style::inert)>
-                {(!plain).then(gutter)}
                 {(!plain).then(|| nobox(have_mark))}
+                {(!plain).then(gutter)}
                 <span class=style::name data-full-name=full_name>{name}</span>
                 {trailing()}
             </div>
@@ -502,19 +503,53 @@ mod tests {
         assert_eq!(first.text_content().as_deref(), Some("data/a.csv"));
     }
 
-    /// Without `plain`, the name keeps its place after the gutter and the hole.
+    /// Without `plain`, the hole leads the row and the gutter follows it, so
+    /// the box column is the list's left edge and the name keeps its place.
     #[wasm_bindgen_test]
     fn a_row_keeps_its_leading_column_by_default() {
         let el = mount(|| view! { <EntryRow name="data/a.csv" size="1 kB" /> });
+        let main = el
+            .query_selector(&format!(".{}", style::main))
+            .unwrap()
+            .unwrap();
+        let first = main.first_element_child().unwrap();
+        assert!(first.class_list().contains(style::nobox), "the hole first");
+        let second = first.next_element_sibling().unwrap();
         assert!(
-            el.query_selector(&format!(".{}", style::gutter))
-                .unwrap()
-                .is_some()
+            second.class_list().contains(style::gutter),
+            "then the gutter"
         );
+    }
+
+    /// A selectable row's box leads it too, before the gutter.
+    #[wasm_bindgen_test]
+    fn a_selectable_row_starts_with_its_box() {
+        let el = mount(|| {
+            view! {
+                <EntryRow
+                    name="raw/plate-07.csv"
+                    size="4.1 MB"
+                    action=EntryAction::Select(EntrySelection::new(Signal::stored(false), Callback::new(|_| ())))
+                />
+            }
+        });
+        let main = el
+            .query_selector(&format!(".{}", style::main))
+            .unwrap()
+            .unwrap();
+        let first = main.first_element_child().unwrap();
         assert!(
-            el.query_selector(&format!(".{}", style::nobox))
+            first
+                .query_selector("input[type=checkbox]")
                 .unwrap()
-                .is_some()
+                .is_some(),
+            "the box first; markup was {}",
+            main.inner_html()
+        );
+        let second = first.next_element_sibling().unwrap();
+        assert!(
+            second.class_list().contains(style::gutter),
+            "then the gutter"
         );
     }
 

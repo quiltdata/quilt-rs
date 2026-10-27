@@ -24,7 +24,7 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands;
-use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout};
+use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout, publish_height};
 use crate::routes;
 use crate::util;
 
@@ -708,7 +708,7 @@ fn package_body(
     };
     view! {
         <div class=style::page>
-            {page_header}
+            <PackageHeaderBand>{page_header}</PackageHeaderBand>
             <div class=style::shell>
                 {pane}
                 <FilePane
@@ -1174,7 +1174,7 @@ fn open_file(
 #[component]
 pub fn PackagePageSkeleton(actions: AnyView) -> impl IntoView {
     view! {
-        <PageLayout heading="Package" banner=().into_any() actions=actions>
+        <PageLayout heading="Package" banner=().into_any() actions=actions page_scroll=true>
             {package_skeleton()}
         </PageLayout>
     }
@@ -1185,7 +1185,9 @@ pub fn PackagePageSkeleton(actions: AnyView) -> impl IntoView {
 fn package_skeleton() -> AnyView {
     view! {
         <div class=style::page>
-            <PageHeaderSkeleton />
+            <PackageHeaderBand>
+                <PageHeaderSkeleton />
+            </PackageHeaderBand>
             <div class=style::shell>
                 <CurrentRevisionPaneSkeleton />
                 <FilePaneSkeleton />
@@ -1193,6 +1195,27 @@ fn package_skeleton() -> AnyView {
         </div>
     }
     .into_any()
+}
+
+/// The package header's sticky band, under the appbar. The file pane's search
+/// and toolbar stick under it, and the context pane beside them.
+#[component]
+pub fn PackageHeaderBand(children: Children) -> impl IntoView {
+    let band = NodeRef::new();
+    publish_height(band, "--q-header-height");
+    view! { <div class=style::header node_ref=band>{children()}</div> }
+}
+
+/// The page's column and its two-pane shell. Public, with the bands, for the
+/// gallery's whole-page scenes: they draw fixture regions rather than this
+/// page, but in the page's own layout, so a change to it shows there too.
+pub fn package_page_class() -> &'static str {
+    style::page
+}
+
+/// See [`package_page_class`].
+pub fn package_shell_class() -> &'static str {
+    style::shell
 }
 
 fn package_failure(namespace: String, reload: Trigger) -> AnyView {
@@ -1386,6 +1409,7 @@ fn PackageScreen(
         {row_popups(files, w)}
         <V2Page
             heading="Package"
+            page_scroll=true
             page=page
             answer=answer
             showing=ns
@@ -1554,6 +1578,7 @@ fn PackageEventListener(reload: Trigger) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pages::installed_package_v2::file_pane::FileToolbarBand;
     use crate::test_support::{button_saying, element_saying, mount, sleep_ms};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
@@ -2705,7 +2730,7 @@ mod tests {
         // The classes of the toolbar's direct children, which name the spots.
         fn spots(el: &web_sys::Element) -> Vec<String> {
             let bar = el
-                .query_selector("section[aria-label=Files] > [class^=listing] > :first-child")
+                .query_selector("section[aria-label=Files] > [class^=band] > :last-child")
                 .unwrap()
                 .expect("the file pane's toolbar");
             let children = bar.children();
@@ -3931,5 +3956,273 @@ mod tests {
         sleep_ms(80).await;
         assert_eq!(summary(&el).as_deref(), Some("2 file changes"));
         assert!(!popover_open(&el), "the pin followed to another package");
+    }
+
+    #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
+    mod sheets {
+        stylance::import_crate_style!(pub layout, "src/kit/page_layout.module.scss");
+        stylance::import_crate_style!(
+            pub files,
+            "src/pages/installed_package_v2/file_pane.module.scss"
+        );
+        stylance::import_crate_style!(pub group, "src/kit/entry_group.module.scss");
+    }
+
+    /// The tokens the sheets read, which the test page does not load.
+    const TOKENS: &str = "--q-frame-height:560px; --q-appbar-height:48px; --q-space-2:8px; \
+                          --q-space-3:12px; --q-space-5:20px; --q-space-8:32px; \
+                          --q-space-12:48px";
+
+    fn load_page_sheets() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("../kit/page_layout.module.scss"),
+            &[
+                ("root", sheets::layout::root),
+                ("main", sheets::layout::main),
+            ],
+        );
+        load_module_style(
+            include_str!("installed_package_v2.module.scss"),
+            &[
+                ("page", style::page),
+                ("shell", style::shell),
+                ("header", style::header),
+            ],
+        );
+        load_module_style(
+            include_str!("installed_package_v2/file_pane.module.scss"),
+            &[
+                ("root", sheets::files::root),
+                ("band", sheets::files::band),
+                ("list", sheets::files::list),
+                ("footer", sheets::files::footer),
+            ],
+        );
+        load_module_style(
+            include_str!("../kit/entry_group.module.scss"),
+            &[("root", sheets::group::root), ("head", sheets::group::head)],
+        );
+        // The app's normalize sheet, which the test page does not load.
+        load_module_style("[data-page-test] * { box-sizing: border-box }", &[]);
+    }
+
+    /// The page at `width`: a header, a context pane `pane` tall, and the
+    /// file pane's band over `rows` and whatever follows them.
+    fn scrolling_page(width: u32, pane: u32, rows: AnyView) -> web_sys::Element {
+        load_page_sheets();
+        mount(move || {
+            view! {
+                <div data-page-test style=format!("width:{width}px; {TOKENS}")>
+                    <PageLayout heading="Package" page_scroll=true>
+                        <div class=style::page>
+                            <PackageHeaderBand>
+                                <div style="height:60px"></div>
+                            </PackageHeaderBand>
+                            <div class=style::shell>
+                                <aside style="width:320px; flex:none">
+                                    <div style=format!("height:{pane}px")></div>
+                                </aside>
+                                <section class=sheets::files::root>
+                                    <FileToolbarBand>
+                                        <div style="height:72px"></div>
+                                    </FileToolbarBand>
+                                    {rows}
+                                </section>
+                            </div>
+                        </div>
+                    </PageLayout>
+                </div>
+            }
+        })
+    }
+
+    fn plain_rows() -> AnyView {
+        view! {
+            <div class=sheets::files::list>
+                {(0..60).map(|_| view! { <div style="height:32px"></div> }).collect_view()}
+            </div>
+        }
+        .into_any()
+    }
+
+    fn find(el: &web_sys::Element, selector: &str) -> web_sys::Element {
+        el.query_selector(selector).unwrap().expect(selector)
+    }
+
+    fn frame(el: &web_sys::Element) -> web_sys::Element {
+        find(el, &format!(".{}", sheets::layout::root))
+    }
+
+    /// The header stays under the appbar, the file pane's search and toolbar
+    /// under the header, and the context pane beside them, while the rows
+    /// scroll the page.
+    #[wasm_bindgen_test]
+    async fn the_header_the_toolbar_and_the_pane_stay_while_the_rows_scroll() {
+        let el = scrolling_page(1024, 200, plain_rows());
+        sleep_ms(50).await;
+        let frame = frame(&el);
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        assert_eq!(frame.scroll_top(), 1000, "the frame scrolls the page");
+        let origin = frame.get_bounding_client_rect().top();
+        let rect = |selector: &str| find(&el, selector).get_bounding_client_rect();
+        let header = rect(&format!(".{}", style::header));
+        let band = rect(&format!(".{}", sheets::files::band));
+        let pane = rect("aside");
+        assert_eq!(
+            header.top() - origin,
+            48.0,
+            "the header stays under the appbar"
+        );
+        assert_eq!(band.top(), header.bottom(), "the toolbar under the header");
+        assert_eq!(
+            pane.top(),
+            header.bottom() + 12.0,
+            "the pane beside it, the shell's gap under the header"
+        );
+    }
+
+    /// A pane taller than the room under the header scrolls inside, and the
+    /// rest of the page does not wait for it.
+    #[wasm_bindgen_test]
+    async fn a_pane_taller_than_the_window_scrolls_on_its_own() {
+        let el = scrolling_page(1024, 1200, plain_rows());
+        sleep_ms(50).await;
+        let pane: web_sys::HtmlElement = find(&el, "aside").unchecked_into();
+        assert!(
+            pane.scroll_height() > pane.client_height(),
+            "the pane scrolls inside"
+        );
+        let frame = frame(&el);
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        assert!(
+            pane.get_bounding_client_rect().bottom() <= frame.get_bounding_client_rect().bottom(),
+            "and, held, it ends inside the window"
+        );
+    }
+
+    /// Narrow, the context pane sits above the files and scrolls away with
+    /// the page; only the header and the file toolbar stay.
+    #[wasm_bindgen_test]
+    async fn a_narrow_pane_scrolls_away_with_the_page() {
+        let el = scrolling_page(600, 200, plain_rows());
+        sleep_ms(50).await;
+        let frame = frame(&el);
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        let origin = frame.get_bounding_client_rect().top();
+        let header = find(&el, &format!(".{}", style::header)).get_bounding_client_rect();
+        let band = find(&el, &format!(".{}", sheets::files::band)).get_bounding_client_rect();
+        assert!(
+            find(&el, "aside").get_bounding_client_rect().bottom() < origin,
+            "the pane went up with the page"
+        );
+        assert_eq!(header.top() - origin, 48.0);
+        assert_eq!(band.top(), header.bottom());
+    }
+
+    /// While something is ticked the footer stays at the bottom of the window
+    /// over the rows that run past it.
+    #[wasm_bindgen_test]
+    async fn the_footer_stays_at_the_bottom_of_the_window() {
+        let rows = view! {
+            <div class=sheets::files::list>
+                {(0..60).map(|_| view! { <div style="height:32px"></div> }).collect_view()}
+            </div>
+            <div class=sheets::files::footer style="height:40px"></div>
+        }
+        .into_any();
+        let el = scrolling_page(1024, 200, rows);
+        // Past the footer's entrance.
+        sleep_ms(250).await;
+        let frame = frame(&el);
+        let footer = find(&el, &format!(".{}", sheets::files::footer));
+        assert_eq!(
+            footer.get_bounding_client_rect().bottom(),
+            frame.get_bounding_client_rect().bottom(),
+            "the footer is on the window's bottom edge"
+        );
+    }
+
+    /// A folder heading sticks under the file toolbar while its rows scroll,
+    /// and draws over them, even over a row's checkbox with a `z-index` of its
+    /// own. The view is pinned on screen, so the hit test finds it.
+    #[wasm_bindgen_test]
+    async fn a_stuck_folder_heading_draws_over_its_rows() {
+        load_page_sheets();
+        let el = mount(|| {
+            view! {
+                <div
+                    data-page-test
+                    style=format!(
+                        "position:fixed; top:0; left:0; width:1024px; z-index:10; {TOKENS}",
+                    )
+                >
+                    <PageLayout heading="Package" page_scroll=true>
+                        <div class=style::page>
+                            <PackageHeaderBand>
+                                <div style="height:60px"></div>
+                            </PackageHeaderBand>
+                            <div class=style::shell>
+                                <aside style="width:320px; flex:none"></aside>
+                                <section class=sheets::files::root>
+                                    <FileToolbarBand>
+                                        <div style="height:72px"></div>
+                                    </FileToolbarBand>
+                                    <div class=sheets::files::list>
+                                        <crate::kit::EntryGroup
+                                            name="raw/"
+                                            shown=60
+                                            total=60
+                                            open=RwSignal::new(true)
+                                        >
+                                            {(0..60)
+                                                .map(|_| {
+                                                    view! {
+                                                        <div style="height:32px">
+                                                            <button style="position:relative; \
+                                                                           z-index:1; width:100%; \
+                                                                           height:100%">"row"</button>
+                                                        </div>
+                                                    }
+                                                })
+                                                .collect_view()}
+                                        </crate::kit::EntryGroup>
+                                    </div>
+                                </section>
+                            </div>
+                        </div>
+                    </PageLayout>
+                </div>
+            }
+        });
+        sleep_ms(50).await;
+        let frame = frame(&el);
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        let heading = find(&el, &format!(".{}", sheets::group::head));
+        let rect = heading.get_bounding_client_rect();
+        let band = find(&el, &format!(".{}", sheets::files::band)).get_bounding_client_rect();
+        assert_eq!(
+            rect.top(),
+            band.bottom(),
+            "the heading sticks under the toolbar"
+        );
+        #[allow(clippy::cast_possible_truncation, reason = "a point on screen")]
+        let hit = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .element_from_point(
+                (rect.left() + rect.right()) as f32 / 2.0,
+                (rect.top() + rect.bottom()) as f32 / 2.0,
+            )
+            .expect("something is drawn there");
+        assert!(
+            heading.contains(Some(&hit)),
+            "the heading, not a row, is on top"
+        );
     }
 }

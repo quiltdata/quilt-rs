@@ -9,8 +9,10 @@
   min-width: 0;
 }
 
-/* Sticky against the list's own scroll, so the folder you are reading inside
- * stays named while you move through it.
+/* Sticky under whatever the page holds above the list (`--pinned-bottom`, set
+ * where the page scrolls as one), or at the top of a list that scrolls in a box
+ * of its own, so the folder you are reading inside stays named while you move
+ * through it. It stays only while its own rows are in view.
  *
  * It costs 29px against a 32px row, which at the height floor is most of a row
  * per heading — the reason collapsing by default is still an open question. */
@@ -23,13 +25,19 @@
   background: var(--q-bgColor-inset);
   border-bottom: 1px solid var(--q-borderColor-muted);
   position: sticky;
-  top: 0;
+  top: var(--pinned-bottom, 0px);
   /* Above the rows it scrolls over, and below the overlay that opens from one. */
   z-index: 1;
 }
 
-/* The gutter's width exactly, and the same value the rows leave empty, so a
- * file's box sits directly under its group's. */
+/* A row's checkbox has a `z-index` of its own. Isolated, each row stacks it
+ * inside itself, and the heading draws over the rows it scrolls over. */
+.head ~ * {
+  isolation: isolate;
+}
+
+/* The gutter's width exactly, and the same value the rows leave empty after
+ * their box, so a file's name starts directly under its folder's. */
 .disclose {
   display: inline-flex;
   align-items: center;
@@ -53,7 +61,7 @@
 }
 
 /* A box-shaped hole, matching the rows'. A group with nothing to select still
- * has to start its name on the same x as one that has. */
+ * has to start its disclosure and name on the same x as one that has. */
 .nobox {
   flex: 0 0 17px;
 }

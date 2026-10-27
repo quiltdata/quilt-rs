@@ -27,9 +27,11 @@
   color: var(--q-fgColor-muted);
 }
 
-/* A label with the section's action at its end. */
+/* A label with the section's action at its end. In a column too narrow for
+ * both, the action wraps under the label. */
 .heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--q-space-2);
