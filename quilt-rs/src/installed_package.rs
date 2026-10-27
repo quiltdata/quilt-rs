@@ -1003,30 +1003,16 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     /// The current revision's files the stored [`SyncScope`] covers that this
-    /// copy does not hold yet, sorted: the outstanding files of
-    /// [`lineage::DownloadCounts::in_backlog`] with no file at their path,
-    /// which installing them would refuse to overwrite. Empty under
-    /// individual-file scope. Reads the working tree, not the remote.
+    /// copy neither tracks nor has a file for, sorted: what installing the
+    /// backlog fetches. Empty under individual-file scope. Hashes nothing and
+    /// reads nothing from the remote.
     pub async fn backlog(&self) -> Res<Vec<PathBuf>> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let manifest = self.manifest_from_lineage(&lineage).await?;
-        // The backlog is untracked paths with no local file, which the checksum
-        // choice does not change, so an unreachable catalog falls back to the
-        // default rather than failing.
-        let host_config = match lineage.remote_uri.as_ref() {
-            Some(remote_uri) if !remote_uri.bucket.is_empty() => self
-                .remote
-                .host_config(remote_uri.origin.as_ref())
-                .await
-                .unwrap_or_default(),
-            _ => HostConfig::default(),
-        };
-        let (lineage, status) = self
-            .walk(lineage, &manifest, &package_home, host_config)
-            .await?;
+        let no_changes = lineage::ChangeSet::new();
         let mut backlog = Vec::new();
         for key in manifest.rows.iter().map(|row| &row.logical_key) {
-            if lineage::DownloadCounts::in_backlog(&lineage, &status.changes, key)
+            if lineage::DownloadCounts::in_backlog(&lineage, &no_changes, key)
                 && !self.storage.exists(package_home.join(key)).await
             {
                 backlog.push(key.clone());

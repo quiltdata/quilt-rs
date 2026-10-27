@@ -150,8 +150,11 @@ pub async fn model(
     let path = uri.path.clone();
 
     let namespace = namespace.unwrap_or(uri.namespace.clone());
-    let installed_package = install_package(local_domain, &uri, namespace).await?;
     let paths = get_entries(path, paths);
+    if keep.is_some() && !download && !paths.is_empty() {
+        return Err(Error::NoDownloadWithPath);
+    }
+    let installed_package = install_package(local_domain, &uri, namespace).await?;
 
     let skipped = if paths.is_empty() {
         Vec::new()
@@ -477,6 +480,28 @@ mod tests {
             )),
             "{output}"
         );
+        Ok(())
+    }
+
+    /// Checked before anything is installed.
+    #[test(tokio::test)]
+    async fn no_download_refuses_a_path_in_the_uri() -> Result<(), Error> {
+        use crate::cli::model::create_model_in_temp_dir;
+
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        let err = model(
+            m.get_local_domain(),
+            Input {
+                namespace: None,
+                paths: None,
+                uri: "quilt+s3://bucket#package=a/b&path=data.csv".to_string(),
+                keep: Some(SyncScope::EntirePackage),
+                download: false,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, Error::NoDownloadWithPath), "{err}");
         Ok(())
     }
 

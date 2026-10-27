@@ -463,7 +463,7 @@ enum Commands {
         keep_folder: Vec<String>,
         /// With --keep-all or --keep-folder, save the setting without
         /// downloading anything
-        #[arg(long, requires = "keep", conflicts_with = "path")]
+        #[arg(long, requires = "keep")]
         no_download: bool,
     },
     /// Show or set which of a package's files this copy keeps
@@ -915,6 +915,9 @@ Then run:
     #[error("Package {0} not found")]
     NamespaceNotFound(Namespace),
 
+    #[error("--no-download downloads nothing, so it cannot install --path or a &path= in the URI")]
+    NoDownloadWithPath,
+
     #[error(
         "Could not infer a namespace from the current directory. Pass --namespace or run inside <home>/<prefix>/<name>"
     )]
@@ -982,6 +985,7 @@ impl Error {
             },
             Error::LoginRequired(_) => "login_required",
             Error::NamespaceNotFound(_) => "namespace_not_found",
+            Error::NoDownloadWithPath => "no_download_with_path",
             Error::NamespaceRequired => "namespace_required",
             Error::CommitMetaInvalid(_) => "commit_meta_invalid",
             Error::WorkflowEmpty => "workflow_empty",
@@ -1441,7 +1445,6 @@ mod tests {
             }
         ));
         assert!(parse(&["--keep-all", "--keep-folder", "a"]).is_err());
-        assert!(parse(&["--keep-all", "--no-download", "--path", "a"]).is_err());
         assert!(parse(&["--no-download"]).is_err());
     }
 
