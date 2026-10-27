@@ -23,8 +23,8 @@
 
 ### Changed
 
-- **Breaking:** `InstalledPackage::pull` returns `flow::Pulled`: `UpToDate` when the remote's `latest` is the revision the package already has, `Applied` with the `PullReport` otherwise. `PackageOpError::AlreadyUpToDate` is removed
-- A pull with nothing to fetch still saves the `latest` it read
+- **Breaking:** `InstalledPackage::pull` returns `flow::Pulled`: `UpToDate` when the remote's `latest` is the revision the package already has, `Applied` with the `PullReport` otherwise. `PackageOpError::AlreadyUpToDate` is removed (<https://github.com/quiltdata/quilt-rs/pull/1227>)
+- A pull with nothing to fetch still saves the `latest` it read (<https://github.com/quiltdata/quilt-rs/pull/1227>)
 
 ## [v0.49.0] - 2026-10-26
 

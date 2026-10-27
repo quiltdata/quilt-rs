@@ -23,7 +23,7 @@
 
 ### Changed
 
-- `quilt pull` on an up-to-date package prints `Already up to date` and exits 0, instead of failing. `--json` keeps the pull's shape with `"hash": null`
+- `quilt pull` on an up-to-date package prints `Already up to date` and exits 0, instead of failing. `--json` keeps the pull's shape with `"hash": null` (<https://github.com/quiltdata/quilt-rs/pull/1227>)
 
 ### quilt-rs
 

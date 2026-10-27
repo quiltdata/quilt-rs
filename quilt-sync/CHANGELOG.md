@@ -29,7 +29,7 @@
 
 ### Fixed
 
-- *Pull* on a package another pull has just brought up to date says it is already up to date instead of failing
+- *Pull* on a package another pull has just brought up to date says it is already up to date instead of failing (<https://github.com/quiltdata/quilt-rs/pull/1227>)
 
 ### quilt-rs
 
