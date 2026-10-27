@@ -535,8 +535,8 @@ pub const NO_BUCKETS: &str = "No buckets: tasks are off";
 
 pub const TRUST_ALL: &str = "Approve every request the agent makes";
 
-pub const TRUST_ALL_WARNING: &str = "Off, the agent may change files in the package's folder; \
-     any other request, such as running a command or touching a file outside the folder, is \
+pub const TRUST_ALL_WARNING: &str = "Off, a request is approved only when every file it names \
+     is in the package's folder; one that names no file, or a file outside the folder, is \
      refused, and the agent carries on without it. On, every request is approved, commands and \
      files outside the folder included.";
 
