@@ -2375,6 +2375,38 @@ mod tests {
         }
     }
 
+    /// An agent's legend breaks only part of its fieldset's border.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn the_agent_legend_is_narrow() {
+        crate::test_support::unmount_earlier();
+        let scss = include_str!("settings_v2.module.scss");
+        let start = scss.find(".agent_fields {").expect("the rule");
+        // Without the file's `//` comments, which are not CSS.
+        let css: String = scss[start..]
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        crate::test_support::load_module_style(
+            &css,
+            &[
+                ("agent_fields", style::agent_fields),
+                ("agent_legend", style::agent_legend),
+            ],
+        );
+        let el = crate::test_support::mount(|| {
+            let agents = RwSignal::new(vec![AgentDraft::new("kiro", &AgentSettings::default())]);
+            view! {
+                <div style="width:600px">
+                    <AgentTasksForm buckets=RwSignal::new(String::new()) agents=agents />
+                </div>
+            }
+        });
+        crate::test_support::sleep_ms(0).await;
+        let legend = el.query_selector("legend").unwrap().expect("the legend");
+        assert_eq!(legend.get_bounding_client_rect().width(), 48.0);
+    }
+
     /// v2 vocabulary: no commit, push, pull or remote in the page's words.
     #[test]
     fn no_fixed_string_uses_a_banned_word() {

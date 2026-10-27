@@ -226,8 +226,10 @@
   overflow-wrap: anywhere;
 }
 
-// As wide as its word, so it breaks only part of the border.
+// A fixed width, so it breaks only part of the border: in the fieldset's
+// column layout a legend can stretch across all of it.
 .agent_legend {
+  width: 48px;
   padding: 0 var(--q-space-1);
   font-weight: 600;
 }
