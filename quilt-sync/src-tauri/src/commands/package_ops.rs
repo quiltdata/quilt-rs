@@ -540,20 +540,22 @@ pub async fn package_pull(
     let msg_init = format!("Pulling package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
-    let mut notify = Notify::new(msg_init);
     let result = package_pull_command(&*m, &watcher, &namespace).await;
+    let mut notify = Notify::new(msg_init);
+    // Another pull got there first: nothing arrived, so no pull event. A
+    // failure keeps the event, which is what reports a refusal.
+    if !matches!(result, Ok((_, quilt::flow::Pulled::UpToDate))) {
+        notify = notify.on_success(
+            &tracing,
+            MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri.as_ref())),
+        );
+    }
     let mut msg_ok = String::new();
     if let Ok((ns, pulled)) = &result {
         watcher.clear_paused(ns).await;
         msg_ok = match pulled {
-            // Another pull got there first: nothing arrived, so no toast and
-            // no pull event.
             quilt::flow::Pulled::UpToDate => format!("Package {namespace} is already up to date"),
             quilt::flow::Pulled::Applied(report) => {
-                notify = notify.on_success(
-                    &tracing,
-                    MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri.as_ref())),
-                );
                 // The same report the tick posts, from the same wording. A
                 // manual pull brings files too, and "Successfully pulled" says
                 // nothing about which — which is the whole of what this
