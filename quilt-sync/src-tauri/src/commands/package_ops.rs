@@ -537,17 +537,29 @@ pub async fn package_pull(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    pull_and_report(&*m, &tracing, &watcher, &toasts, &namespace, uri.as_ref()).await
+}
+
+/// The Pull button's whole answer: the pull, its toast, its event and its line.
+async fn pull_and_report(
+    m: &impl model::QuiltModel,
+    tracing: &crate::telemetry::Telemetry,
+    watcher: &Watcher,
+    toasts: &ToastCenter,
+    namespace: &str,
+    uri: Option<&S3PackageUri>,
+) -> Result<String, String> {
     let msg_init = format!("Pulling package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
-    let result = package_pull_command(&*m, &watcher, &namespace).await;
+    let result = package_pull_command(m, watcher, namespace).await;
     let mut notify = Notify::new(msg_init);
     // Another pull got there first: nothing arrived, so no pull event. A
     // failure keeps the event, which is what reports a refusal.
     if !matches!(result, Ok((_, quilt::flow::Pulled::UpToDate))) {
         notify = notify.on_success(
-            &tracing,
-            MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri.as_ref())),
+            tracing,
+            MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri)),
         );
     }
     let mut msg_ok = String::new();
@@ -573,7 +585,7 @@ pub async fn package_pull(
                         })
                         .await;
                 }
-                pull_success_message(&namespace, reported)
+                pull_success_message(namespace, reported)
             }
         };
     }
@@ -1695,6 +1707,61 @@ mod tests {
 
         assert_eq!(watcher.paused_reason(&ns).await, None);
         assert!(reporter.paused.lock().unwrap().is_empty());
+    }
+
+    struct ToastCollector(Arc<std::sync::Mutex<Vec<crate::toast::Toast>>>);
+
+    impl crate::toast::ToastEmitter for ToastCollector {
+        fn emit(&self, toast: &crate::toast::Toast) {
+            self.0.lock().unwrap().push(toast.clone());
+        }
+    }
+
+    /// Another pull got there first: the button says so, with no toast and
+    /// no pull event.
+    #[tokio::test]
+    async fn a_pull_that_finds_nothing_to_do_says_so_and_reports_nothing() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::telemetry::Telemetry::default();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let toasts = super::ToastCenter::new(Box::new(ToastCollector(Arc::clone(&seen))));
+        let mut model = installed_model();
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
+        model
+            .expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        model
+            .expect_locked_package_pull()
+            .times(1)
+            .returning(|_, _, _| Ok(quilt::flow::Pulled::UpToDate));
+
+        let said =
+            super::pull_and_report(&model, &telemetry, &watcher, &toasts, "acme/demo", None).await;
+
+        assert_eq!(
+            said,
+            Ok("Package acme/demo is already up to date".to_string())
+        );
+        assert_eq!(seen.lock().unwrap().len(), 0, "no toast");
+        assert_eq!(telemetry.queued_events(), Vec::<String>::new());
+    }
+
+    /// A refused pull still reports the refusal, though an up-to-date one
+    /// reports no event.
+    #[tokio::test]
+    async fn a_refused_pull_reports_the_refusal() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::telemetry::Telemetry::default();
+        let toasts = super::ToastCenter::new(Box::new(ToastCollector(Arc::default())));
+        let model = failing_pull_model(pull_conflict_error);
+
+        super::pull_and_report(&model, &telemetry, &watcher, &toasts, "acme/demo", None)
+            .await
+            .expect_err("a conflict refuses the pull");
+
+        assert_eq!(telemetry.queued_events(), vec!["action_refused".to_owned()]);
     }
 
     /// A model whose dry run, on the held lock, answers `verdict`, for a
