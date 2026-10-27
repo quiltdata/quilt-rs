@@ -14,7 +14,11 @@
   max-width: 48ch;
   padding: var(--q-space-1) var(--q-space-3);
   border-radius: var(--q-radius);
-  background: var(--q-bgColor-attention-onBrand);
+  /* The tint over the brand ground itself, so the part of a long line that
+   * hangs below the bar reads the same as the part on it. */
+  background:
+    linear-gradient(var(--q-bgColor-attention-onBrand), var(--q-bgColor-attention-onBrand)),
+    var(--q-bgColor-brand);
   color: var(--q-fgColor-onBrand-muted);
   font-size: var(--q-text-body);
   line-height: var(--q-line-tight);

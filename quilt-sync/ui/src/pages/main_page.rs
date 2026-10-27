@@ -3778,7 +3778,7 @@ mod tests {
         let el = mount(|| {
             view! {
                 <div style="--q-frame-height:560px; --q-appbar-height:48px; --q-space-5:20px; \
-                            --q-space-6:24px; --q-space-12:48px">
+                            --q-space-6:24px; --q-space-8:32px; --q-space-12:48px">
                     <PageLayout heading="QuiltSync" page_scroll=true>
                         <StateStrip>
                             <div style="height:100px"></div>
@@ -3853,7 +3853,7 @@ mod tests {
         let el = mount(|| {
             view! {
                 <div style="--q-frame-height:560px; --q-appbar-height:48px; --q-space-5:20px; \
-                            --q-space-6:24px; --q-space-12:48px">
+                            --q-space-6:24px; --q-space-8:32px; --q-space-12:48px">
                     <PageLayout heading="QuiltSync" page_scroll=true>
                         <StateStrip>
                             <div style="height:400px"></div>
@@ -3889,8 +3889,8 @@ mod tests {
         let origin = frame.get_bounding_client_rect().top();
         assert_eq!(
             bottom(style::toolbar) - origin,
-            512.0,
-            "the toolbar stops a row above the window's bottom"
+            480.0,
+            "the toolbar stops a row above the page's bottom padding"
         );
         assert_eq!(top(style::toolbar), bottom(style::queue));
         assert_eq!(top(style::queue), bottom(style::strip));
