@@ -135,7 +135,7 @@ pub trait QuiltModel {
         package: &Self::Locked,
         host_config: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error> {
+    ) -> Result<quilt::flow::Pulled, Error> {
         package.pull(host_config, scope).await
     }
 
@@ -750,7 +750,7 @@ pub trait LockedOps: Send + Sync + Sized {
         &self,
         host_config: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error>;
+    ) -> Result<quilt::flow::Pulled, Error>;
 
     async fn install_paths(
         &self,
@@ -807,7 +807,7 @@ impl LockedOps for quilt::LockedPackage {
         &self,
         host_config: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error> {
+    ) -> Result<quilt::flow::Pulled, Error> {
         Ok(quilt::LockedPackage::pull(self, host_config, scope).await?)
     }
 
@@ -885,7 +885,7 @@ impl LockedOps for quilt_uri::Namespace {
         &self,
         _: Option<HostConfig>,
         _: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error> {
+    ) -> Result<quilt::flow::Pulled, Error> {
         unreachable!("a mocked model sets its own pull")
     }
 

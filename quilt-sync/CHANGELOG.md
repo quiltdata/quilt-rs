@@ -29,6 +29,14 @@
 - The main page's attention queue is a status line with its rows below, not a card; when nothing needs you it reads *All packages are up to date* (<https://github.com/quiltdata/quilt-rs/pull/1222>)
 - Under the hood, an agent task's last revision says how many files the run added, changed and removed, and its message ends with *no changes* when there were none (<https://github.com/quiltdata/quilt-rs/pull/1224>)
 
+### Fixed
+
+- *Pull* on a package another pull has just brought up to date says it is already up to date instead of failing (<https://github.com/quiltdata/quilt-rs/pull/1227>)
+
+### quilt-rs
+
+- Updated [from v0.49.0 to v0.50.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.25.0] - 2026-10-26
 
 ### Added

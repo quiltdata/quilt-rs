@@ -707,11 +707,19 @@ async fn recheck_claim<M: QuiltModel>(
         return Ok(Err(acp::RunOutcome::Superseded));
     }
     let locked = model.lock_package(&installed).await?;
-    let pulled = model
+    let pulled = match model
         .locked_package_pull(&locked, None, lineage.sync_scope)
         .await?
-        .manifest_uri
-        .hash;
+    {
+        quilt::flow::Pulled::Applied(report) => report.manifest_uri.hash,
+        // Already at `latest`, so the base is the revision to read.
+        quilt::flow::Pulled::UpToDate => {
+            model
+                .get_installed_package_lineage(&installed)
+                .await?
+                .base_hash
+        }
+    };
     // The pull resolves `latest` again, and may land a revision later still.
     let latest = if pulled == status.latest_hash {
         latest

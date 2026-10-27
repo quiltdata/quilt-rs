@@ -291,8 +291,7 @@ impl From<&crate::quilt::Error> for Failure {
                 Self::Refusal(RefusalKind::PullConflict)
             }
 
-            E::PackageOp(PackageOpError::AlreadyUpToDate)
-            | E::InstallPackage(
+            E::InstallPackage(
                 InstallPackageError::AlreadyInstalled(_) | InstallPackageError::NotInstalled(_),
             ) => Self::Refusal(RefusalKind::AlreadySettled),
 

@@ -116,14 +116,6 @@ fn classify_sync_diverged() {
 }
 
 #[test]
-fn classify_sync_already_up_to_date_is_ok() {
-    let err = Error::from(quilt::Error::PackageOp(
-        quilt::PackageOpError::AlreadyUpToDate,
-    ));
-    assert!(classify_sync_err(err).is_ok());
-}
-
-#[test]
 fn classify_sync_login_required() {
     let host = fixtures::host();
     let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
@@ -465,12 +457,14 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         .expect_locked_package_pull()
         .times(1)
         .returning(|_, _, _| {
-            Ok(pulled(quilt_uri::ManifestUri {
-                bucket: "bucket".to_string(),
-                namespace: ("acme", "demo").into(),
-                hash: "h1".to_string(),
-                origin: None,
-            }))
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
         });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -569,12 +563,14 @@ async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<()
         .withf(|_, _, scope| *scope == SyncScope::EntirePackage)
         .times(1)
         .returning(|_, _, _| {
-            Ok(pulled(quilt_uri::ManifestUri {
-                bucket: "bucket".to_string(),
-                namespace: ("acme", "demo").into(),
-                hash: "h1".to_string(),
-                origin: None,
-            }))
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
         });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -660,7 +656,7 @@ async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
             });
             report.added_not_fetched = vec![std::path::PathBuf::from("qc/summary.csv")];
             report.updated = vec![std::path::PathBuf::from("reads/day2.fastq")];
-            Ok(report)
+            Ok(quilt::flow::Pulled::Applied(report))
         });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -767,12 +763,14 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         .expect_locked_package_pull()
         .times(1)
         .returning(|_, _, _| {
-            Ok(pulled(quilt_uri::ManifestUri {
-                bucket: "bucket".to_string(),
-                namespace: ("acme", "demo").into(),
-                hash: "h1".to_string(),
-                origin: None,
-            }))
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
         });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -881,12 +879,14 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         .expect_locked_package_pull()
         .times(1)
         .returning(|_, _, _| {
-            Ok(pulled(quilt_uri::ManifestUri {
-                bucket: "bucket".to_string(),
-                namespace: ("acme", "demo").into(),
-                hash: "h1".to_string(),
-                origin: None,
-            }))
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
         });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -981,12 +981,14 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         .expect_locked_package_pull()
         .times(1)
         .returning(|_, _, _| {
-            Ok(pulled(quilt_uri::ManifestUri {
-                bucket: "bucket".to_string(),
-                namespace: ("acme", "demo").into(),
-                hash: "h1".to_string(),
-                origin: None,
-            }))
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
         });
 
     let reporter = Arc::new(RecordingReporter::default());
@@ -1742,6 +1744,32 @@ fn inner_with(aggregator: Arc<crate::autopull::status::SyncTrayAggregator>) -> W
     }
 }
 
+/// A pull that raced another pull finds nothing to do: the tick keeps
+/// syncing quietly, with no toast and no pause.
+#[tokio::test]
+async fn a_pull_that_finds_nothing_to_do_reports_nothing() -> Result<(), Error> {
+    let mut model = behind_clean_model();
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::UpToDate));
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        reporter: reporter.clone(),
+        ..make_inner(enabled())
+    };
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(reporter.pulled.lock().unwrap().is_empty(), "no toast");
+    assert!(reporter.paused.lock().unwrap().is_empty(), "no pause");
+    Ok(())
+}
+
 #[tokio::test]
 async fn apply_flag_is_clear_while_the_tick_classifies() -> Result<(), Error> {
     let agg = test_aggregator();
@@ -1759,7 +1787,7 @@ async fn apply_flag_is_clear_while_the_tick_classifies() -> Result<(), Error> {
     model
         .expect_locked_package_pull()
         .times(1)
-        .returning(|_, _, _| Ok(applied()));
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::Applied(applied())));
 
     run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
 
@@ -1788,7 +1816,7 @@ async fn apply_flag_is_set_while_the_pull_applies() -> Result<(), Error> {
         .times(1)
         .returning(move |_, _, _| {
             *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
-            Ok(applied())
+            Ok(quilt::flow::Pulled::Applied(applied()))
         });
 
     run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
@@ -1812,7 +1840,7 @@ async fn apply_flag_is_cleared_after_the_pull_returns() -> Result<(), Error> {
     model
         .expect_locked_package_pull()
         .times(1)
-        .returning(|_, _, _| Ok(applied()));
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::Applied(applied())));
 
     run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
 
@@ -2055,7 +2083,7 @@ fn two_behind_packages(busy: bool) -> MockQuiltModel {
     model
         .expect_locked_package_pull()
         .times(if busy { 1 } else { 2 })
-        .returning(|_, _, _| Ok(applied()));
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::Applied(applied())));
     model
 }
 
@@ -2123,7 +2151,7 @@ async fn the_pull_holds_its_activity_while_it_applies() -> Result<(), Error> {
         .times(1)
         .returning(move |_, _, _| {
             *seen_hook.lock().unwrap() = Some(agg_hook.activity());
-            Ok(applied())
+            Ok(quilt::flow::Pulled::Applied(applied()))
         });
 
     run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
@@ -2217,7 +2245,7 @@ async fn the_classify_shows_no_activity() -> Result<(), Error> {
     model
         .expect_locked_package_pull()
         .times(1)
-        .returning(|_, _, _| Ok(applied()));
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::Applied(applied())));
 
     run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
 
@@ -2470,7 +2498,7 @@ async fn a_package_without_a_catalog_is_pulled() -> Result<(), Error> {
     model
         .expect_locked_package_pull()
         .times(1)
-        .returning(|_, _, _| Ok(applied()));
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::Applied(applied())));
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         reporter: reporter.clone(),

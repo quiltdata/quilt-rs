@@ -990,7 +990,7 @@ fn rereading_model(
         .expect_locked_package_pull()
         .returning(move |_, _, _| {
             pulled.lock().unwrap().push("pull".to_string());
-            Ok(quilt::flow::PullReport {
+            Ok(quilt::flow::Pulled::Applied(quilt::flow::PullReport {
                 manifest_uri: quilt_uri::ManifestUri {
                     bucket: "quilt-dev".to_string(),
                     namespace: namespace(),
@@ -1002,7 +1002,7 @@ fn rereading_model(
                 updated: Vec::new(),
                 removed: Vec::new(),
                 message: None,
-            })
+            }))
         });
     model
 }
