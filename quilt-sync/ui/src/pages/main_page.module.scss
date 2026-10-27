@@ -33,12 +33,22 @@
   --pinned-queue: var(--q-queue-height, 0px);
   --pinned-toolbar: var(--q-toolbar-height, 0px);
 
-  /* The frame is the scroller, so the room a focused row keeps clear of the
-   * bands is set there. */
-  scroll-padding-top: min(
+  /* Where the bands end: the room a focused row keeps clear of them, and where a
+   * group heading sticks. The frame is the scroller, so the padding is set there. */
+  --pinned-bottom: min(
     var(--q-appbar-height) + var(--pinned-strip) + var(--pinned-queue) + var(--pinned-toolbar),
     var(--pinned-frame) - var(--pinned-floor)
   );
+
+  scroll-padding-top: var(--pinned-bottom);
+}
+
+/* A group heading stays under the bands while its rows scroll, so the bucket or
+ * package being read stays named. The headings share one parent, so the next one
+ * stops over the last. */
+[data-page-scroll] .list_region h3 {
+  position: sticky;
+  top: var(--pinned-bottom);
 }
 
 [data-page-scroll] .strip,
