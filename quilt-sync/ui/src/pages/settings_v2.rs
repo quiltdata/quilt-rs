@@ -2387,6 +2387,8 @@ mod tests {
             .filter(|line| !line.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n");
+        // As the app's normalize sets every box.
+        let css = format!("{css}\n[data-legend-test] legend {{ box-sizing: border-box; }}");
         crate::test_support::load_module_style(
             &css,
             &[
@@ -2397,7 +2399,7 @@ mod tests {
         let el = crate::test_support::mount(|| {
             let agents = RwSignal::new(vec![AgentDraft::new("kiro", &AgentSettings::default())]);
             view! {
-                <div style="width:600px">
+                <div data-legend-test style="width:600px">
                     <AgentTasksForm buckets=RwSignal::new(String::new()) agents=agents />
                 </div>
             }
