@@ -17,8 +17,11 @@
   /* The 2px left padding matches `QueueRow`'s exactly, and it has to: the disclosure
    * column starts after it in both rows, so 2px here and 0 there would misalign the
    * chevron against the bullets by 2px — small, and visible the moment the rows are
-   * adjacent, which they always are. */
-  padding: 6px 2px;
+   * adjacent, which they always are.
+   *
+   * Vertically, the expander's line is centred in the queue's line, which makes the
+   * row exactly that tall while its text fits on one line. */
+  padding: calc((var(--q-queue-line-height) - var(--q-control-height-sm)) / 2) 2px;
   color: var(--q-fgColor-default);
 }
 
@@ -49,10 +52,11 @@
   flex: none;
   display: flex;
   align-items: center;
-  /* Full control height, pulled up by half the difference, so a Button and a
-   * sentence both centre on the expander's 24px line. */
+  /* Full control height, pulled out by half the difference above and below, so a
+   * Button and a sentence both centre on the expander's line and a Button reaches
+   * into the row's padding rather than making the row taller. */
   min-height: var(--q-control-height);
-  margin-top: calc((var(--q-control-height-sm) - var(--q-control-height)) / 2);
+  margin-block: calc((var(--q-control-height-sm) - var(--q-control-height)) / 2);
   gap: var(--q-space-2);
   color: var(--q-fgColor-muted);
 }

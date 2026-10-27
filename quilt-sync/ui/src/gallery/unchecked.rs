@@ -67,6 +67,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
+use crate::kit::AttentionQueue;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::Card;
@@ -175,8 +176,8 @@ fn SomeFailed() -> impl IntoView {
                   settled row."
         >
             <Cell full=true label="the cause, beside the one it is modelled on">
-                <Card title="Needs your attention" count=14>
-                    <div>
+                <AttentionQueue text="14 packages need your attention">
+                    <li>
                         <CauseRow
                             text="Couldn't check for new revisions on open.quiltdata.com"
                             count=3
@@ -184,6 +185,8 @@ fn SomeFailed() -> impl IntoView {
                             trailing=try_again()
                         />
                         <Show when=move || unchecked.get()>{unchecked_rows()}</Show>
+                    </li>
+                    <li>
                         <CauseRow
                             text="Signed out from custom.registry.io"
                             count=11
@@ -195,12 +198,12 @@ fn SomeFailed() -> impl IntoView {
                             }
                                 .into_any()
                         />
-                    </div>
-                </Card>
+                    </li>
+                </AttentionQueue>
             </Cell>
             <Cell full=true label="expanded — the sentence and the packages it speaks for">
-                <Card title="Needs your attention" count=3>
-                    <div>
+                <AttentionQueue text="3 packages need your attention">
+                    <li>
                         <CauseRow
                             text="Couldn't check for new revisions on open.quiltdata.com"
                             count=3
@@ -208,20 +211,20 @@ fn SomeFailed() -> impl IntoView {
                             trailing=try_again()
                         />
                         <Show when=move || expanded.get()>{unchecked_rows()}</Show>
-                    </div>
-                </Card>
+                    </li>
+                </AttentionQueue>
             </Cell>
             <Cell full=true label="one package — CauseRow's own singular">
-                <Card title="Needs your attention" count=1>
-                    <div>
+                <AttentionQueue text="1 package needs your attention">
+                    <li>
                         <CauseRow
                             text="Couldn't check for new revisions on open.quiltdata.com"
                             count=1
                             expanded=single
                             trailing=try_again()
                         />
-                    </div>
-                </Card>
+                    </li>
+                </AttentionQueue>
             </Cell>
             <Cell full=true label="and the rows underneath, unconfirmed in two channels">
                 {dimmed_list(1)}
@@ -239,14 +242,14 @@ fn AllFailed() -> impl IntoView {
             title="Scene · offline — nothing could be checked"
             note="The likely case: no network, every call rejects, and not one row is \
                   confirmed. Without a cause row the region is not merely quiet but absent — \
-                  no card, no heading, no zero line — so the reader is left with a page of \
+                  no status line and no rows — so the reader is left with a page of \
                   grey rows and no statement. That is what settled this between the two \
                   candidate homes. Here one sentence accounts for the whole page, standing \
-                  where `Everything is Latest` stands on a good day."
+                  where `All packages are up to date` stands on a good day."
         >
             <Cell full=true label="one sentence for the whole page">
-                <Card title="Needs your attention" count=6>
-                    <div>
+                <AttentionQueue text="6 packages need your attention">
+                    <li>
                         <CauseRow
                             text="Couldn't check for new revisions on open.quiltdata.com"
                             count=6
@@ -260,8 +263,8 @@ fn AllFailed() -> impl IntoView {
                                 })
                                 .collect_view()}
                         </Show>
-                    </div>
-                </Card>
+                    </li>
+                </AttentionQueue>
             </Cell>
             // A second cell rather than a second card in the same one: `.g-cell__body`
             // is a flex ROW, so two cards inside one cell sit shoulder to shoulder and

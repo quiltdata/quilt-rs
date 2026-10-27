@@ -13,8 +13,8 @@ use super::super::main_page::list_class;
 use crate::commands::MainPagePackageData;
 use crate::commands::PausedPackageData;
 use crate::commands::PausedReasonData;
+use crate::kit::AttentionQueue;
 use crate::kit::Button;
-use crate::kit::Card;
 use crate::kit::CauseRow;
 use crate::kit::PackageAction;
 use crate::kit::PackageState;
@@ -403,7 +403,6 @@ fn package_row(
         <QueueRow
             namespace=namespace.to_string()
             state=rendered.words
-            tone=rendered.tone
             remedy=remedy
             detail=detail
         />
@@ -426,13 +425,13 @@ pub fn pause_messages(paused: &[PausedPackageData]) -> HashMap<Namespace, String
         .collect()
 }
 
-/// `Everything is Latest — 43 packages`. One string, because the singular case
+/// The status line above the queue's rows. One string, because the singular case
 /// is not a plural rule `ZeroLine` can apply.
-fn zero_line_text(total: usize) -> String {
-    if total == 1 {
-        "Everything is Latest — 1 package".to_string()
+fn attention_line_text(count: usize) -> String {
+    if count == 1 {
+        "1 package needs your attention".to_string()
     } else {
-        format!("Everything is Latest — {total} packages")
+        format!("{count} packages need your attention")
     }
 }
 
@@ -576,8 +575,8 @@ pub fn QueueRegion(
     let items = Signal::derive(move || derive_queue(&packages.get(), &unchecked.get()));
 
     // Derived from the rows rendered, never written by hand — a `Cause`'s count
-    // is its members, a `Package` is one of itself. A signal, so the card can
-    // take a new count without being rebuilt.
+    // is its members, a `Package` is one of itself. A signal, so the status line
+    // can take a new count without the rows being rebuilt.
     let count = Signal::derive(move || {
         items.with(|items| {
             items
@@ -597,8 +596,8 @@ pub fn QueueRegion(
             return Shape::Pending;
         }
         if packages.with(Vec::is_empty) && unchecked.with(Vec::is_empty) {
-            // A fresh install: "Everything is Latest — 0 packages" would be a
-            // non-sequitur, and the list's blankslate speaks for it. `unchecked`
+            // A fresh install: "All packages are up to date" over no packages would
+            // be a non-sequitur, and the list's blankslate speaks for it. `unchecked`
             // keeps the all-failed case, whose settled list is empty too, out.
             return Shape::Nothing;
         }
@@ -617,11 +616,9 @@ pub fn QueueRegion(
     move || match shape.get() {
         Shape::Nothing | Shape::Silent => ().into_any(),
         Shape::Pending => view! { <ZeroLineSkeleton /> }.into_any(),
-        // Acceptance criterion 8, unchanged. The count is the light total,
-        // not `packages.len()`: the sentence speaks for every package the
-        // list draws. `shape`'s guard makes the two equal wherever this line is
-        // reached, and naming the one the sentence means keeps it that way.
-        Shape::Zero => view! { <ZeroLine text=zero_line_text(total.get()) /> }.into_any(),
+        // Acceptance criterion 8. The sentence speaks for every package the list
+        // draws, which `shape`'s guard checks against the light total.
+        Shape::Zero => view! { <ZeroLine text="All packages are up to date" /> }.into_any(),
         // `view!` moves its children into closures of their own, so a handle
         // captured by this closure cannot merely be borrowed out of it and leave
         // it `FnMut`. `owner` is cloned here and nowhere else; `navigate` is
@@ -630,11 +627,7 @@ pub fn QueueRegion(
             let navigate = navigate.clone();
             let owner = owner.clone();
             view! {
-            // One wrapper child, so `Card`'s between-children hairline does not
-            // fire: a queue is a list of decisions, and dividing every row would
-            // make it read as a table. A `ul`, because it is also a list of them.
-            <Card title="Needs your attention" count=count>
-                <ul class=list_class() role="list">
+                <AttentionQueue text=move || attention_line_text(count.get())>
                     // Keyed, not `Vec`'s positional diff. `derive_queue` sorts
                     // by precedence, so one package settling into a higher rank
                     // inserts at the top and shifts every row below it — and an
@@ -665,8 +658,7 @@ pub fn QueueRegion(
                             }
                         }
                     />
-                    </ul>
-                </Card>
+                </AttentionQueue>
             }
             .into_any()
         }
@@ -690,9 +682,9 @@ enum Shape {
     Pending,
     /// No region: every call answered, some package still unread.
     Silent,
-    /// One line, no card.
+    /// The all-clear line alone.
     Zero,
-    /// The card and its rows.
+    /// The attention line and its rows.
     Queue,
 }
 
@@ -1293,53 +1285,57 @@ mod tests {
         // the package list below the fold to announce that nothing is wrong.
         let el = mount_region(Signal::stored(all_latest(43)), Signal::stored(false));
         let text = el.text_content().unwrap();
-        assert!(text.contains("Everything is Latest"), "got: {text}");
+        assert_eq!(text, "All packages are up to date");
         assert!(
-            text.contains("43 packages"),
-            "the count is derived from the rows: {text}"
-        );
-        assert!(
-            !text.contains("Needs your attention"),
-            "a bare ZeroLine, not a Card wrapping it — a heading above a line \
-             that says nothing is wrong would be a falsehood in its own chrome: {text}"
+            el.query_selector("section, h2, ul").unwrap().is_none(),
+            "a bare line, not a region with a heading and an empty list"
         );
         assert_eq!(el.query_selector_all("button").unwrap().length(), 0);
     }
 
     #[wasm_bindgen_test]
-    fn a_healthy_queue_of_a_different_size_states_its_own_count() {
-        // A second N, never 43 again: a hard-coded "43 packages" string would
-        // pass the test above and only fail here, where the fixture's count
-        // actually varies.
-        let el = mount_region(Signal::stored(all_latest(7)), Signal::stored(false));
+    fn a_queue_of_one_package_is_singular() {
+        // `attention_line_text`'s `count == 1` branch is real code, not a case
+        // ever proven by the plural fixtures — deleting it and always taking
+        // the plural arm must fail exactly here.
+        let el = mount_region(Signal::stored(one_behind()), Signal::stored(false));
+        let text = el.text_content().unwrap();
         assert!(
-            el.text_content().unwrap().contains("7 packages"),
-            "got: {}",
-            el.text_content().unwrap()
+            text.contains("1 package needs your attention"),
+            "got: {text}"
         );
     }
 
+    /// A `section` with no accessible name is not a region at all, so the
+    /// status line names it, and the rows are a list.
     #[wasm_bindgen_test]
-    fn a_healthy_queue_of_one_is_singular() {
-        // `zero_line_text`'s `total == 1` branch is real code, not a case ever
-        // proven by the plural fixtures above — deleting it and always taking
-        // the plural arm must fail exactly here.
-        let el = mount_region(Signal::stored(all_latest(1)), Signal::stored(false));
-        let text = el.text_content().unwrap();
-        assert!(text.contains("1 package"), "got: {text}");
+    fn the_status_line_names_the_queue_and_its_rows() {
+        let el = mount_region(Signal::stored(two_signed_out()), Signal::stored(false));
+        let section = el.query_selector("section").unwrap().expect("a region");
+        let id = section.get_attribute("aria-labelledby").expect("named");
+        let heading = el
+            .query_selector(&format!("#{id}"))
+            .unwrap()
+            .expect("the line it points at");
+        assert_eq!(heading.tag_name(), "H2");
+        assert_eq!(
+            heading.text_content().as_deref(),
+            Some("2 packages need your attention")
+        );
         assert!(
-            !text.contains("1 packages"),
-            "singular, not the plural branch: {text}"
+            section
+                .query_selector(":scope > ul[role=list] > li")
+                .unwrap()
+                .is_some(),
+            "the rows follow the line, as list items"
         );
     }
 
     #[wasm_bindgen_test]
     fn no_packages_at_all_renders_nothing() {
-        // Finding 1: a fresh install has no packages, so "Everything is
-        // Latest — 0 packages" above an empty Packages card is a
-        // non-sequitur that invents copy for a case the zero line was never
-        // meant to speak for. Render nothing — the empty-install story
-        // belongs to the list's own blankslate.
+        // A fresh install has no packages, so "All packages are up to date"
+        // above an empty Packages card is a non-sequitur. Render nothing — the
+        // empty-install story belongs to the list's own blankslate.
         let el = mount_region(Signal::stored(vec![]), Signal::stored(false));
         assert_eq!(
             el.text_content().unwrap().trim(),
@@ -1421,7 +1417,7 @@ mod tests {
         );
         assert!(placeholder(&el).is_none(), "silent, and not waiting");
         assert!(
-            !el.text_content().unwrap().contains("Everything is Latest"),
+            !el.text_content().unwrap().contains("up to date"),
             "and still no all-clear"
         );
     }
@@ -1448,9 +1444,11 @@ mod tests {
         )]);
         leptos::task::tick().await;
 
-        assert!(placeholder(&el).is_none(), "the card, not the placeholder");
+        assert!(placeholder(&el).is_none(), "the queue, not the placeholder");
         assert!(
-            el.text_content().unwrap().contains("Needs your attention"),
+            el.text_content()
+                .unwrap()
+                .contains("1 package needs your attention"),
             "got: {}",
             el.text_content().unwrap()
         );
@@ -1473,7 +1471,7 @@ mod tests {
         assert!(text.contains("changed in both places"), "got: {text}");
         assert!(text.contains("Resolve"), "got: {text}");
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("up to date"),
             "known rows, but still no all-clear: {text}"
         );
     }
@@ -1489,7 +1487,7 @@ mod tests {
             )]),
             in_flight.into(),
         );
-        assert!(!el.text_content().unwrap().contains("Everything is Latest"));
+        assert!(!el.text_content().unwrap().contains("up to date"));
         assert!(
             placeholder(&el).is_some(),
             "the line is held while it waits"
@@ -1506,16 +1504,15 @@ mod tests {
         assert!(
             el.text_content()
                 .unwrap()
-                .contains("Everything is Latest — 1 package"),
+                .contains("All packages are up to date"),
             "got: {}",
             el.text_content().unwrap()
         );
     }
 
     #[wasm_bindgen_test]
-    fn the_cards_count_is_every_package_not_every_row() {
-        // M6: `Card.count`'s own doc reads as "how many rows the card
-        // holds", which is the natural mistake here — the queue's count is
+    fn the_status_lines_count_is_every_package_not_every_row() {
+        // The natural mistake is to count the rows drawn — the queue's count is
         // every package represented, not every row drawn. A cause of 2
         // collapses to one row but must still count as 2, so a payload with
         // one cause AND one package row pins the count as their SUM, not
@@ -1530,12 +1527,9 @@ mod tests {
         );
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("(3)"),
-            "2 grouped into one cause + 1 own row = 3 packages: {text}"
-        );
-        assert!(
-            !text.contains("(2)"),
-            "not the row count (one cause row + one package row): {text}"
+            text.contains("3 packages need your attention"),
+            "2 grouped into one cause + 1 own row = 3 packages, not the row count \
+             (one cause row + one package row): {text}"
         );
     }
 
@@ -2053,7 +2047,7 @@ mod tests {
     fn the_region_speaks_when_every_check_failed() {
         // The case this cause exists for. With every call failed the settled list
         // is empty too, so the region used to return nothing TWICE over and was
-        // absent — no card, no heading, no zero line — over a page of rows the
+        // absent — no status line and no rows — over a page of rows the
         // app could not read.
         let el = mount_region_unchecked(
             Signal::stored(Vec::new()),
@@ -2067,7 +2061,7 @@ mod tests {
             "the region must speak rather than vanish; got {text:?}"
         );
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("up to date"),
             "and must not post an all-clear over packages it could not read"
         );
     }

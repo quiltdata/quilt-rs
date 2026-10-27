@@ -173,7 +173,7 @@ fn TroubleScenes() -> impl IntoView {
         <Scene
             title="Scene · one package can't publish"
             note="The paused package sits in the stack with a Paused label; hover it for \
-                  why and the fix. The others keep their rings. \"Needs your attention\" is \
+                  why and the fix. The others keep their rings. The attention queue is \
                   unchanged and still carries the conflict."
         >
             <PerPackage packages=vec![
