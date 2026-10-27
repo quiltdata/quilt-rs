@@ -119,13 +119,14 @@ needs a decision, and says so in one line instead.
 |  +--------------------+  |   Signed out    [Sign in]   | |
 |                          +-----------------------------+ |
 +---------------------------------------------------------+
-|  Needs your attention (4)                               |
-|  +---------------------------------------------------+  |
-|  | • Signed out from demo.quiltdata.com — 2 packages  |  |
-|  |                                        [Sign in]   |  |
-|  | ! user/pkg-a  has a newer revision     Get latest →|  |
-|  | • user/pkg-b  has 2 changed files         Publish →|  |
-|  +---------------------------------------------------+  |
+|  ▲ 4 packages need your attention                       |
+|  ------------------------------------------------------ |
+|  > Signed out from demo.quiltdata.com — 2 packages      |
+|                                              [Sign in]  |
+|  ------------------------------------------------------ |
+|  | user/pkg-a  has a newer revision        Get latest → |
+|  ------------------------------------------------------ |
+|  | user/pkg-b  has 2 changed files            Publish → |
 +--[toolbar]----------------------------------------------+
 | [Packages|Recent files]  [Search…] [Group:Bucket]        |
 |                          [Sort:Changed] [Create package] |
@@ -141,12 +142,13 @@ needs a decision, and says so in one line instead.
   each switchable on its own, and when the next check is due.
 - **Accounts card** — every catalog your packages point at plus every host you
   have signed into, with the role each is using.
-- **Attention queue** — one row per package needing a decision, beside the one
-  thing to do about it. Where a whole catalog or bucket is the cause, it is
-  said once with a count rather than repeated per package. When nothing needs
-  you: `Everything is Latest — N packages`. Until every package's check has
-  answered, a placeholder holds that line's place, so a healthy load does not
-  move the list.
+- **Attention queue** — a status line, `N packages need your attention`, then
+  one row per package needing a decision, beside the one thing to do about it.
+  Where a whole catalog or bucket is the cause, it is said once with a count
+  rather than repeated per package. When nothing needs you, the line alone:
+  `All packages are up to date`. Until every package's check has answered, a
+  placeholder holds that line's place, so a healthy load does not move the
+  list.
 - **List** — your packages with each one's state and when it last changed,
   searchable, groupable by Bucket / Prefix / None and sortable by Changed /
   Name; or switched to a feed of recently changed files.

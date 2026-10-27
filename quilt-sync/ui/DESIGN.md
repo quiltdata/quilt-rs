@@ -572,7 +572,7 @@ as well as a state.
   check, and over the list cap the folder the cut runs through shows none.
   When every file is here, the select-all slot carries the Success tone's tick
   before `All 1,090 files downloaded`, the same tick as the main page's
-  `Everything is Latest`; a deleted file holds the caption back too.
+  `All packages are up to date`; a deleted file holds the caption back too.
 
 ### Package Row
 
@@ -660,7 +660,7 @@ translate is exempt because it is instantaneous and carries no transition.
 is a colour and a glyph silhouette, so it survives desaturation. A provisional
 row is a dashed edge and a dim, so it is findable by someone who is not already
 looking for it. The test is whether the channel carries meaning on its own: a
-queue row's edge rule is colour and nothing else, and that is allowed, because
+queue row's tone rule is colour and nothing else, and that is allowed, because
 the clause beside it states the row's state in words. Take the colour away and
 the row still says everything it said.
 

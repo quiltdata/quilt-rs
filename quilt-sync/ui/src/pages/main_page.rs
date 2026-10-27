@@ -458,8 +458,8 @@ pub fn rows_class() -> &'static str {
     style::rows
 }
 
-/// The class a list with no dividing rule carries — the queue's items, and the
-/// packages an expanded cause reveals.
+/// The class a list with no dividing rule carries — the packages an expanded
+/// cause reveals.
 pub(super) fn list_class() -> &'static str {
     style::list
 }
@@ -1212,7 +1212,7 @@ fn MainPageRegions(
                         // The queue reads what the heavy phase confirmed, not the
                         // light phase's guess. The light phase never looks at the
                         // working tree, so a package with local edits would sit
-                        // under "Everything is Latest". Reactive, so a row
+                        // under "All packages are up to date". Reactive, so a row
                         // settling re-renders the queue and nothing else: the list
                         // below reads its own per-row signals.
                         let unchecked_light = light.clone();
@@ -1661,7 +1661,7 @@ mod tests {
         // a `StoredValue`, which is not reactive, so with `get_untracked()` a
         // `Signal::derive` over it would have no dependencies. The queue reads
         // that derivation, so it would stay on the light phase's states and could
-        // show "Everything is Latest" above a package with local changes.
+        // show "All packages are up to date" above a package with local changes.
         let light = vec![pkg("user/plate-07", PackageState::Latest)];
         let store = PackageStore::seed(&light);
         let settled = Signal::derive(move || store.settled(&light));
@@ -1932,7 +1932,7 @@ mod tests {
     }
 
     /// Two packages on one host, one of them stuck behind a signed-out session.
-    /// The queue therefore has something to say — `Needs your attention` — which
+    /// The queue therefore has something to say — `1 package needs your attention` — which
     /// is the case the ordering test must be able to fail on: a queue that renders
     /// nothing would leave the assertion with nothing to find between the strip
     /// and the list.
@@ -3188,19 +3188,18 @@ mod tests {
 
     /// The queue card's own text, or `None` when the region drew nothing.
     ///
-    /// Scoped to the card rather than taken from the whole page because the list
-    /// row below says some of the same words — `render(&state, Site::ListRow)`
-    /// gives `1 file changed` too — so an unscoped `contains` would pass on a
-    /// queue that never heard about the settle. Found by its title rather than by
-    /// a class: `stylance` emits `Card`'s own identifiers, which are `root`,
-    /// `title` and `body` for every card on the page.
+    /// Scoped to the queue's section rather than taken from the whole page because
+    /// the list row below says some of the same words — `render(&state,
+    /// Site::ListRow)` gives `1 file changed` too — so an unscoped `contains` would
+    /// pass on a queue that never heard about the settle. Found by its status line's
+    /// words rather than by a class, which `stylance` hashes.
     fn queue_text(el: &web_sys::Element) -> Option<String> {
         let sections = el.query_selector_all("section").unwrap();
         (0..sections.length())
             .filter_map(|i| sections.item(i))
             .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
             .filter_map(|section| section.text_content())
-            .find(|text| text.contains("Needs your attention"))
+            .find(|text| text.contains("your attention"))
     }
 
     /// The strip element itself, so a test can ask what is inside it rather than
@@ -3242,8 +3241,8 @@ mod tests {
         let html = el.inner_html();
         let strip = html.find("Accounts").expect("strip");
         let queue = html
-            .find("Everything is Latest")
-            .or_else(|| html.find("Needs your attention"))
+            .find("All packages are up to date")
+            .or_else(|| html.find("your attention"))
             .expect("queue");
         let list = html.find("Packages").expect("list");
         assert!(
@@ -3261,7 +3260,7 @@ mod tests {
             "the strip is what was found: {strip}"
         );
         assert!(
-            !strip.contains("Needs your attention"),
+            !strip.contains("your attention"),
             "the queue is a region of the page, not a card in the strip: {strip}"
         );
     }
@@ -3310,7 +3309,7 @@ mod tests {
     async fn the_queue_names_a_package_the_heavy_phase_found_changes_in() {
         // End to end at the page level. The light phase cannot see the working
         // tree, so only the heavy phase's answer can put this package in the
-        // queue. Without it the queue says "Everything is Latest" above a package
+        // queue. Without it the queue says "All packages are up to date" above a package
         // with uncommitted changes.
         //
         // No state here is a shared cause, so every row that reaches the queue is
@@ -3334,7 +3333,11 @@ mod tests {
         // takes its `packages.is_empty()` early return. Silence for that reason,
         // not for R3's in-flight guard, which `queue.rs`'s own tests pin: by now
         // every one of those failed calls has decremented the counter.
-        assert!(!el.text_content().unwrap().contains("Everything is Latest"));
+        assert!(
+            !el.text_content()
+                .unwrap()
+                .contains("All packages are up to date")
+        );
 
         settle(
             seeded_store(slot),
@@ -3352,7 +3355,7 @@ mod tests {
         assert!(queue.contains("Publish"), "beside its action: {queue}");
         let text = el.text_content().unwrap();
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("All packages are up to date"),
             "and no longer claims otherwise: {text}"
         );
     }
@@ -3391,7 +3394,7 @@ mod tests {
         leptos::task::tick().await;
         let text = el.text_content().unwrap();
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("All packages are up to date"),
             "R3: an answer is still outstanding, so the all-clear is not a fact yet: {text}"
         );
 
@@ -3399,7 +3402,7 @@ mod tests {
         leptos::task::tick().await;
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Everything is Latest — 2 packages"),
+            text.contains("All packages are up to date"),
             "and it says so the moment the last answer lands: {text}"
         );
     }
@@ -3436,7 +3439,7 @@ mod tests {
         assert!(
             el.text_content()
                 .unwrap()
-                .contains("Everything is Latest — 2 packages"),
+                .contains("All packages are up to date"),
             "got: {}",
             el.text_content().unwrap()
         );
@@ -3463,7 +3466,7 @@ mod tests {
         // failed row stays provisional so R2 drops it from `settled` — so a page
         // that could not read three of its forty-three packages arrives at
         // "nothing is outstanding, nothing needs attention" and would announce
-        // "Everything is Latest — 40 packages" over three rows still drawn dashed
+        // "All packages are up to date" over three rows still drawn dashed
         // in the list below. An unreachable host is the ordinary way to get there:
         // `refresh_main_page_package` propagates a failure it cannot word as a
         // state rather than degrading it, precisely so the row stays dashed.
@@ -3493,7 +3496,7 @@ mod tests {
 
         let text = el.text_content().unwrap();
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("All packages are up to date"),
             "one package could not be read, so the page has not earned this: {text}"
         );
 
@@ -3503,7 +3506,7 @@ mod tests {
         leptos::task::tick().await;
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Everything is Latest — 2 packages"),
+            text.contains("All packages are up to date"),
             "every package accounted for, and the count matches the list: {text}"
         );
     }
@@ -3555,7 +3558,7 @@ mod tests {
             "the list row says it in the kit's words: {text}"
         );
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("All packages are up to date"),
             "and the page does not claim an all-clear over it: {text}"
         );
     }
@@ -3590,7 +3593,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_failed_packages_read_leaves_no_queue_to_claim_all_is_well() {
-        // A failed read is not an empty one: `Everything is Latest — 0 packages`
+        // A failed read is not an empty one: `All packages are up to date`
         // over a fetch that never answered is a manufactured all-clear. The strip
         // is unaffected, because it is outside that boundary.
         let el = mount_regions(
@@ -3606,7 +3609,7 @@ mod tests {
             "the raw backend error must not reach the page: {text}"
         );
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("All packages are up to date"),
             "nothing answered; the page cannot say everything is fine: {text}"
         );
         assert!(
@@ -4086,7 +4089,9 @@ mod tests {
         settle_all(seeded_store(slot), &payload);
         leptos::task::tick().await;
         assert!(
-            el.text_content().unwrap().contains("Everything is Latest"),
+            el.text_content()
+                .unwrap()
+                .contains("All packages are up to date"),
             "the queue speaks before the switch: {}",
             el.text_content().unwrap()
         );
@@ -4104,7 +4109,7 @@ mod tests {
 
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Everything is Latest — 2 packages"),
+            text.contains("All packages are up to date"),
             "and it is still on the page after a Refresh taken on the feed: {text}"
         );
         assert!(
@@ -4137,7 +4142,7 @@ mod tests {
 
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Everything is Latest — 2 packages"),
+            text.contains("All packages are up to date"),
             "the queue arrives even though the list never drew a row: {text}"
         );
     }

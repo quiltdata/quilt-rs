@@ -119,8 +119,7 @@ pub fn PageScene() -> impl IntoView {
             <div class="g-window">
                 <PageLayout heading="QuiltSync" actions=appbar_actions()>
                     <StateStripRegion />
-                    // Bare, with no card, as `QueueRegion` draws it.
-                    <ZeroLine text="Everything is Latest — 43 packages" />
+                    <ZeroLine text="All packages are up to date" />
                     <PackagesRegion view_name="normal-day-view" />
                 </PageLayout>
             </div>
@@ -223,7 +222,7 @@ fn CheckingScene() -> impl IntoView {
                 <div class="g-window">
                     <PageLayout heading="QuiltSync" actions=appbar_actions()>
                         <StateStripRegion />
-                        <ZeroLine text="Everything is Latest — 43 packages" />
+                        <ZeroLine text="All packages are up to date" />
                         <PackagesRegion view_name="checked-view" />
                     </PageLayout>
                 </div>

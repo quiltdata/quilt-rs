@@ -18,8 +18,8 @@
 //! The words are [`render`](super::render)'s at [`Site::QueueRow`](super::Site), which
 //! is where the queue's grammar is chosen; this file only draws them.
 //!
-//! The tone the chip used to carry moves to a rule on the row's edge, which is what
-//! makes a column of rows scannable. Colour is all it is, and that is enough here
+//! The tone is a rule in the row's bullet column, which is what makes a column of
+//! rows scannable. Colour is all it is, and that is enough here
 //! precisely because it carries nothing: the clause states the row's state in words,
 //! so two rows of different severity always read differently with the colour taken
 //! away. The chip needed a glyph beside it because its words were a short label
@@ -50,7 +50,7 @@ pub struct Remedy {
     pub href: String,
 }
 
-/// The tone's own class, which sets the edge rule's and the glyph's colour.
+/// The tone's own class, which sets the tone rule's and the glyph's colour.
 fn tone_class(tone: StateTone) -> &'static str {
     match tone {
         StateTone::Success => style::success,
@@ -66,7 +66,7 @@ pub fn QueueRow(
     #[prop(into)]
     namespace: String,
     /// The state's words and its tone. **Both or neither** — a tone with no words is
-    /// a colour that means nothing, and words with no tone have no edge to sit on.
+    /// a colour that means nothing, and words with no tone have no rule to draw.
     ///
     /// Neither, for a sub-row: expanding `Signed out — 11 packages` answers *which*
     /// packages, and repeating `Signed out` on all eleven is exactly the redundancy
@@ -92,7 +92,7 @@ pub fn QueueRow(
     detail: MaybeProp<String>,
 ) -> impl IntoView {
     // Both or neither, enforced here rather than at each of the three places the pair
-    // draws — the glyph, the edge rule and the clause.
+    // draws — the glyph, the tone rule and the clause.
     let (state, tone) = state.zip(tone).unzip();
 
     // Split once: the verb draws inside the row and the destination wraps it, and
@@ -119,9 +119,9 @@ pub fn QueueRow(
     // The column `CauseRow` fills with its expander, held open so a cause and a
     // package start their text at the same x.
     //
-    // Empty on a row that has a state: the edge rule marks it, the clause names it,
-    // and a glyph or a bullet here would be a third marker saying nothing the other
-    // two do not. A row that is only a name gets a bullet, which is the one case
+    // No bullet on a row that has a state: the tone rule in this column marks it,
+    // the clause names it, and a bullet would be a third marker saying nothing the
+    // other two do not. A row that is only a name gets a bullet, which is the one case
     // where a list marker is the only marker there is.
     let bullet = match tone {
         Some(_) => view! { <span class=style::bullet></span> }.into_any(),
@@ -258,11 +258,11 @@ mod tests {
         );
     }
 
-    /// The edge rule is the tone's only channel, and it hangs off this class.
+    /// The tone rule is the tone's only channel, and it hangs off this class.
     /// Dropping it leaves a row that reads correctly — the clause says everything —
     /// and loses the mark that makes a column of them scannable.
     #[wasm_bindgen_test]
-    fn the_tone_also_reaches_the_row_that_draws_its_edge_rule() {
+    fn the_tone_also_reaches_the_row_that_draws_its_tone_rule() {
         let el = mount(|| {
             view! {
                 <QueueRow
@@ -276,13 +276,13 @@ mod tests {
         let class = root.get_attribute("class").unwrap_or_default();
         assert!(
             class.contains(style::danger),
-            "the edge rule hangs off the tone class, and it is not on the row: {class}"
+            "the tone rule hangs off the tone class, and it is not on the row: {class}"
         );
     }
 
     /// The leading column holds a list marker only where there is nothing else to
     /// mark the row: a package revealed by an expanded cause is a bare name, while a
-    /// row with a state has an edge rule and a clause already.
+    /// row with a state has a tone rule and a clause already.
     #[wasm_bindgen_test]
     fn only_a_bare_name_carries_a_bullet() {
         let named = mount(|| view! { <QueueRow namespace="user/package-x" sub=true /> });
@@ -309,7 +309,7 @@ mod tests {
                 .query_selector(&format!("[class*={}]", style::dot))
                 .unwrap()
                 .is_none(),
-            "a third marker beside the edge rule and the clause"
+            "a third marker beside the tone rule and the clause"
         );
     }
 

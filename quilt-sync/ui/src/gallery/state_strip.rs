@@ -11,6 +11,7 @@ use leptos::prelude::*;
 
 use crate::Scene;
 use crate::gallery::queue::row;
+use crate::kit::AttentionQueue;
 use crate::kit::Card;
 use crate::kit::Countdown;
 use crate::kit::HostRow;
@@ -210,11 +211,9 @@ fn PausedWithReason() -> impl IntoView {
                     />
                 </Card>
             </StateStrip>
-            <Card title="Needs your attention" count=1>
-                <div>
-                    {row("user/package-b", &PackageState::PendingChanges { files: 2 })}
-                </div>
-            </Card>
+            <AttentionQueue text="1 package needs your attention">
+                <li>{row("user/package-b", &PackageState::PendingChanges { files: 2 })}</li>
+            </AttentionQueue>
         </Scene>
     }
 }
@@ -227,8 +226,8 @@ fn PausedStale() -> impl IntoView {
     view! {
         <Scene
             title="Scene · paused with nothing to fix — the 2026-07-11 bug"
-            note="The failure state: the card says paused and the queue says everything \
-                  is Latest. The 2026-07-11 support bundle showed this: all 13 packages \
+            note="The failure state: the card says paused and the queue says all \
+                  packages are up to date. The 2026-07-11 support bundle showed this: all 13 packages \
                   fully synced while the pause stayed in memory, and only restarting the \
                   app cleared it. It does not clear by itself, because autopull's tick \
                   skips any namespace already in the paused set. This state should not be \
@@ -251,7 +250,7 @@ fn PausedStale() -> impl IntoView {
                     />
                 </Card>
             </StateStrip>
-            <ZeroLine text="Everything is Latest — 13 packages" />
+            <ZeroLine text="All packages are up to date" />
         </Scene>
     }
 }

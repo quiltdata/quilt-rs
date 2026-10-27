@@ -1,4 +1,4 @@
-//! Queue components and the "Needs your attention" scene.
+//! Queue components and the attention queue scene.
 //!
 //! This is the region the whole redesign is for, so the scene carries the load: the
 //! stories prove each row, and only the scene shows whether nineteen rows of things
@@ -9,13 +9,14 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::Story;
+use crate::kit::AttentionQueue;
 use crate::kit::Button;
-use crate::kit::Card;
 use crate::kit::CauseRow;
 use crate::kit::PackageState;
 use crate::kit::QueueRow;
 use crate::kit::Remedy;
 use crate::kit::Site;
+use crate::kit::StateTone;
 use crate::kit::ZeroLine;
 use crate::kit::ZeroLineSkeleton;
 use crate::kit::render;
@@ -106,25 +107,25 @@ fn ZeroLineStory() -> impl IntoView {
     view! {
         <Story
             title="ZeroLine"
-            note="The state most users see most days, and it must stay one line \
-                  (acceptance criterion 8) — a full-height empty state here would push the \
-                  package list below the fold in order to say that nothing is wrong. \
-                  \
-                  It has no card; the heading and count come with a queue. \
-                  ZeroLineSkeleton holds its place while checks are out, at the same height."
+            note="The queue's status line. On a calm day it is the whole region, and it \
+                  must stay one line (acceptance criterion 8) — a full-height empty state \
+                  here would push the package list below the fold in order to say that \
+                  nothing is wrong. With rows, the same line in the attention tone names \
+                  them. ZeroLineSkeleton holds its place while checks are out, at the \
+                  same height."
         >
             <Cell full=true label="the healthy queue">
-                <ZeroLine text="Everything is Latest — 43 packages" />
+                <ZeroLine text="All packages are up to date" />
             </Cell>
             <Cell full=true label="still checking — the placeholder directly above the line it becomes">
                 <ZeroLineSkeleton />
-                <ZeroLine text="Everything is Latest — 43 packages" />
+                <ZeroLine text="All packages are up to date" />
             </Cell>
-            <Cell full=true label="singular">
-                <ZeroLine text="Everything is Latest — 1 package" />
+            <Cell full=true label="attention — the line above the queue's rows">
+                <ZeroLine text="3 packages need your attention" tone=StateTone::Attention />
             </Cell>
             <Cell wide=true label="narrow · long text — truncates rather than wrapping">
-                <ZeroLine text="Everything is Latest — 43 packages across 4 buckets and 2 hosts" />
+                <ZeroLine text="All packages are up to date across 4 buckets and 2 hosts" />
             </Cell>
         </Story>
     }
@@ -138,9 +139,9 @@ fn QueueRowStory() -> impl IntoView {
             note="The row is the link: every verb here opens a page, so a button would \
                   promise an operation that does not happen on press. The verb stays as text \
                   at the right edge, one tab stop per row. The state reads as a clause after \
-                  the name rather than as a chip beside it, and the tone the chip carried is \
-                  now an inset rule on the row's edge — colour and nothing else, which is \
-                  allowed because the clause says the state in words."
+                  the name rather than as a chip beside it, and the tone is an inset rule \
+                  in the bullet column — colour and nothing else, which is allowed because \
+                  the clause says the state in words."
         >
             {actionable()
                 .into_iter()
@@ -274,17 +275,14 @@ pub fn QueueRegion() -> impl IntoView {
 
     // Derived, never written — 11 + 3 + 5 + the paused row. The mock's hand-written
     // (17) is off against its own rows, which is what this closure exists to avoid.
-    // Bound once rather than rebuilt on every read of the card's count: `actionable`
+    // Bound once rather than rebuilt on every read of the count: `actionable`
     // allocates.
     let actionable = actionable();
     let total = 11 + 3 + actionable.len() + 1;
 
     view! {
-        // One wrapper child, so `Card`'s between-children hairline does not fire: a
-        // queue is a list of decisions, and dividing every row would make it read as a
-        // table of data.
-        <Card title="Needs your attention" count=total>
-            <div>
+        <AttentionQueue text=format!("{total} packages need your attention")>
+            <li>
                 <CauseRow
                     text="Signed out from custom.registry.io"
                     count=11
@@ -303,6 +301,8 @@ pub fn QueueRegion() -> impl IntoView {
                         .collect_view()}
                     <QueueRow namespace="…and 8 more" sub=true />
                 </Show>
+            </li>
+            <li>
                 <CauseRow
                     text="No access as analyst on custom.registry.io, 3 packages in s3://team-bucket"
                     count=3
@@ -315,26 +315,28 @@ pub fn QueueRegion() -> impl IntoView {
                         .map(|namespace| view! { <QueueRow namespace=namespace sub=true /> })
                         .collect_view()}
                 </Show>
-                {actionable
-                    .iter()
-                    .take(1)
-                    .map(|(namespace, state)| row(namespace, state))
-                    .collect_view()}
-                // Precedence row 3, between the conflict above and everything below,
-                // and the only row here that goes nowhere: nothing in the app can
-                // restart a sync the remote refused.
+            </li>
+            {actionable
+                .iter()
+                .take(1)
+                .map(|(namespace, state)| view! { <li>{row(namespace, state)}</li> })
+                .collect_view()}
+            // Precedence row 3, between the conflict above and everything below,
+            // and the only row here that goes nowhere: nothing in the app can
+            // restart a sync the remote refused.
+            <li>
                 {detailed_row(
                     "team/imaging-cohort-b",
                     &PackageState::Paused,
                     Some(REJECTION.to_string()),
                 )}
-                {actionable
-                    .iter()
-                    .skip(1)
-                    .map(|(namespace, state)| row(namespace, state))
-                    .collect_view()}
-            </div>
-        </Card>
+            </li>
+            {actionable
+                .iter()
+                .skip(1)
+                .map(|(namespace, state)| view! { <li>{row(namespace, state)}</li> })
+                .collect_view()}
+        </AttentionQueue>
     }
 }
 
@@ -356,10 +358,11 @@ pub fn QueueScene() -> impl IntoView {
         <Scene
             title="Scene · nothing needs you"
             note="The same region on a working day, which is the common case with autosync \
-                  on. One line, no card and no count — counting to zero would be noise — \
-                  and the package list starts immediately below rather than a screen down."
+                  on. The status line alone, with no rows and no count — counting to zero \
+                  would be noise — and the package list starts immediately below rather \
+                  than a screen down."
         >
-            <ZeroLine text="Everything is Latest — 43 packages" />
+            <ZeroLine text="All packages are up to date" />
         </Scene>
     }
 }
