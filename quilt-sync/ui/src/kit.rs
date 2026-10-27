@@ -159,6 +159,7 @@ pub use page_header::PageHeader;
 pub use page_header::PageHeaderSkeleton;
 pub use page_header::Trail;
 pub use page_layout::PageLayout;
+pub use page_layout::publish_height;
 pub use pane_section::PaneSection;
 pub use queue_row::QueueRow;
 pub use queue_row::QueueRowSkeleton;

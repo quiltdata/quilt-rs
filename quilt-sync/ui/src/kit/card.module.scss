@@ -73,6 +73,14 @@ ul.body {
   padding: 0;
 }
 
+/* A list on the page itself. The hairlines between its children stay. */
+.root.bare {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
 /* A card that is the page's growing region. `min-height: 0` is the load-bearing
  * half: a flex child defaults to `min-height: auto` and refuses to shrink below
  * its content, so a card holding seven hundred rows pushes the page taller
