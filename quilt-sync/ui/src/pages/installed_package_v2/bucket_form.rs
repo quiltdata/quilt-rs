@@ -15,9 +15,9 @@
 //! A published package keeps its bucket, so `remote_locked` selects the
 //! catalog shape: the bucket is shown and disabled, there is no workflow to
 //! choose, and Save runs `change_catalog`, which replaces only the catalog.
-//! Otherwise Save runs `set_remote`. The state's *Choose S3 bucket* opens the
-//! editable shape, same as the menu's *Change bucket*. Every entry, the
-//! context pane's Bucket and catalog section included, opens it under one title.
+//! Otherwise Save runs `set_remote`. On the package page the context pane's
+//! Bucket and catalog section opens it; on the commit page, the menu's
+//! *Change bucket*.
 
 use std::future::Future;
 use std::pin::Pin;

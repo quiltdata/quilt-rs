@@ -8,9 +8,9 @@
 //! as one region, whether the states the page can reach are all drawable, and
 //! what the pane does when it has nothing to draw.
 //!
-//! The pane is the page's growing half — the context pane is fixed at 280 and
+//! The pane is the page's growing half — the context pane is fixed at 320 and
 //! this takes the rest — so the cells are `full` and the list is framed at the
-//! **700px the pane gets at a 1024 window**, which is the width every claim
+//! **660px the pane gets at a 1024 window**, which is the width every claim
 //! about this region is made at.
 //!
 //! # The list is a flush `Card`, and the footer is its last child
@@ -48,7 +48,7 @@
 //!   footer, and the footer measures 49 — so the card is 315 either way and the
 //!   pane does not change height when the first row is ticked. §9's number is
 //!   the selecting state, as §5 worked out on paper and this confirms.
-//! - **End-truncation destroys a path.** Under `Group: None` at 700px, five
+//! - **End-truncation destroys a path.** Under `Group: None` at 660px, five
 //!   consecutive rows read
 //!   `investigations/2026-09-15-installed-package-page/design-0…` and three of
 //!   them are indistinguishable: the ellipsis eats the leaf, which is the only
@@ -56,17 +56,18 @@
 //!   this is the argument for settling it — the end of a path is what a reader
 //!   needs and the start is what they can infer.
 //! - **The third toolbar row belongs to the minimum window, and only to it.**
-//!   The toolbar's content is 716px against the pane's 700, and the pane is the
-//!   window less 324 — `page_layout`'s 32, the context pane's 280 and the gap.
+//!   The toolbar's content is 716px against the pane's 660, and the pane is the
+//!   window less 364 — `page_layout`'s 32, the context pane's 320 and the gap.
 //!   So it wraps at a **1024** window, the app's `minWidth` when this was
 //!   measured (now 640, where the pane stacks under the context pane), and stops
-//!   wrapping at **1040**: sixteen pixels of window buy the row back. Accepted
+//!   wrapping at **1080**: 56 pixels of window buy the row back. At the
+//!   default 1280 the pane is 916 and the toolbar is one line. Accepted
 //!   on 2026-09-18 for that reason — the cost lands on the narrowest window
 //!   rather than on the shipping one.
 //! - **`Group: None` also changes how many rows the toolbar takes.** `Group:
-//!   Base folder` is 166px and `Group: None` about 130, which is more than the
-//!   16 the toolbar is short by — so the controls fit one line under `None` and
-//!   wrap under the default. The wrap is not a property of the width alone.
+//!   Base folder` is 166px and `Group: None` about 130, so from a 1044 window
+//!   to 1080 the controls fit one line under `None` and wrap under the
+//!   default. The wrap is not a property of the width alone.
 //! - **A group of one is mostly heading.** The `Ignored` facet draws three
 //!   `.DS_Store` rows under two headings holding one file each, so half the view
 //!   is headings and all three rows have the same name. §6's *suppress the
@@ -144,9 +145,9 @@ pub const MARKED: &[&str] = &[
 ];
 
 /// The pane at a 1024 window: 1024 less `page_layout`'s 32 of padding, less the
-/// context pane's fixed 280 and the gap between them. Every measurement this
+/// context pane's fixed 320 and the gap between them. Every measurement this
 /// scene reports is at this width.
-const PANE: &str = "width:700px; max-width:100%; gap:var(--q-space-2)";
+const PANE: &str = "width:660px; max-width:100%; gap:var(--q-space-2)";
 
 /// The list's viewport with nothing ticked, and with a footer under it. §9's
 /// number is the second one, and it quotes it as the page's capacity — which is
@@ -1503,7 +1504,7 @@ fn heavy_selection() -> Vec<File> {
     files
 }
 
-const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it. Tick a \
+const NOTE: &str = "The page's growing half, at the 660px a 1024 window gives it. Tick a \
     row: the footer arrives and the list goes 313px to 264, measured — the card stays 315 \
     either way, so the pane never changes height. Type in the search or pick a facet: \
     select-all states its own extent, and under `Changed` it goes, having nothing to tick. \

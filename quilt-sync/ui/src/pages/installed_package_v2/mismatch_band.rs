@@ -325,7 +325,7 @@ mod tests {
     async fn no_mismatch_no_band() {
         let el = screen(PLAIN, settled, held).await;
 
-        element_saying(&el, "Revisions you have (1)");
+        element_saying(&el, "History (1)");
         assert!(
             !el.text_content()
                 .unwrap_or_default()
@@ -431,7 +431,7 @@ mod tests {
         )
         .await;
 
-        element_saying(&el, "Revisions you have (1)");
+        element_saying(&el, "History (1)");
         assert!(
             !el.text_content()
                 .unwrap_or_default()

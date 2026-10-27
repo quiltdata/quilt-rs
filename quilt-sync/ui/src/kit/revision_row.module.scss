@@ -9,7 +9,7 @@
 /* `width` and not just `max-width`. A `PaneSection` lays its children out with
  * `align-items: flex-start`, so a child is sized to its content and a long
  * message grows the row past the pane instead of ellipsising inside it — which
- * is invisible in a wide cell and immediate at the pane's 280px. */
+ * is invisible in a wide cell and immediate at the pane's 320px. */
 .root {
   display: flex;
   align-items: flex-start;
@@ -66,7 +66,7 @@
 /* The catalog link. Muted until it is pointed at: it is one action among rows
  * that are mostly read, and a column of accent glyphs would be the column of
  * accent links again. `flex: none` so an ellipsising message gives up its width
- * first and the icon is never pushed out of a 280px pane; the `2px` sits it on
+ * first and the icon is never pushed out of a 320px pane; the `2px` sits it on
  * the message's line, as `.glyph` does. */
 .open {
   display: inline-flex;

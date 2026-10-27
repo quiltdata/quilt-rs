@@ -384,12 +384,12 @@ body {
   gap: var(--q-space-2);
 }
 
-/* The context pane's width on the page. 280 is the design's own bet — the file
+/* The context pane's width on the page. 320 is the design's own bet — the file
  * list grows and this does not — and it holds only while the two share a row.
  * Declared before the container query below, which narrows it: same specificity,
  * so source order is what decides, and the query has to come second. */
 .g-ip-contextpane {
-  width: 280px;
+  width: 320px;
 }
 
 /* The context pane comes first in the DOM, so reading and focus order is
@@ -426,7 +426,7 @@ body {
     min-height: 269px;
   }
 
-  /* Stacked, it shares a row with nothing, so 280px would leave two thirds of
+  /* Stacked, it shares a row with nothing, so 320px would leave most of
    * the column empty beside it. */
   .g-ip-contextpane {
     width: 100%;

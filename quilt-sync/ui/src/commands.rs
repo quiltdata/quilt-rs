@@ -642,7 +642,7 @@ pub struct CurrentRevisionData {
     pub obtained_at: f64,
 }
 
-/// `Revisions you have`: the rows, and the footer's figure. Mirrors
+/// `History`: the rows, and the footer's figure. Mirrors
 /// `src-tauri/src/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -665,7 +665,7 @@ pub enum KeptReason {
     Unpublished,
 }
 
-/// One row of `Revisions you have`. Mirrors
+/// One row of `History`. Mirrors
 /// `src-tauri/src/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
