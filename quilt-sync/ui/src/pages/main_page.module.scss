@@ -25,10 +25,10 @@
  * place stuck or not. */
 [data-page-scroll] {
   /* What a band's offset is made of. The frame height is the window's, or the
-   * floor the gallery sets; the floor here is about one row, the least of the
-   * list that has to stay in view, above `.main`'s bottom padding. */
+   * floor the gallery sets; the floor here is a group heading and about one row,
+   * the least of the list that has to stay in view, above `.main`'s bottom padding. */
   --pinned-frame: var(--q-frame-height, 100vh);
-  --pinned-floor: calc(var(--q-space-12) + var(--q-space-8));
+  --pinned-floor: calc(var(--q-space-8) + var(--q-space-12) + var(--q-space-8));
   --pinned-strip: var(--q-strip-height, 0px);
   --pinned-queue: var(--q-queue-height, 0px);
   --pinned-toolbar: var(--q-toolbar-height, 0px);
@@ -46,7 +46,7 @@
 /* A group heading stays under the bands while its rows scroll, so the bucket or
  * package being read stays named. The headings share one parent, so the next one
  * stops over the last. */
-[data-page-scroll] .list_region h3 {
+[data-page-scroll] .list_region [data-group-heading] {
   position: sticky;
   top: var(--pinned-bottom);
   z-index: 1;
@@ -54,7 +54,7 @@
 
 /* The rows hold positioned parts with a `z-index` of their own, such as a split
  * button. Isolated, they stack inside their list and cannot rise over a heading. */
-[data-page-scroll] .list_region h3 + * {
+[data-page-scroll] .list_region [data-group-heading] + * {
   isolation: isolate;
 }
 

@@ -3860,7 +3860,7 @@ mod tests {
                             <ToolbarBand>
                                 <div style="height:30px"></div>
                             </ToolbarBand>
-                            <h3 style="height:30px; margin:0; background:white">"s3://bucket"</h3>
+                            <h3 data-group-heading style="height:30px; margin:0; background:white">"s3://bucket"</h3>
                             <ul>
                                 {(0..60)
                                     .map(|_| {
@@ -3975,8 +3975,8 @@ mod tests {
         let origin = frame.get_bounding_client_rect().top();
         assert_eq!(
             bottom(style::toolbar) - origin,
-            480.0,
-            "the toolbar stops a row above the page's bottom padding"
+            448.0,
+            "the toolbar stops a heading and a row above the page's bottom padding"
         );
         assert_eq!(top(style::toolbar), bottom(style::queue));
         assert_eq!(top(style::queue), bottom(style::strip));
