@@ -1,4 +1,4 @@
-//! Removing old revisions from the "Revisions you have" popover.
+//! Removing old revisions from the History popover.
 //!
 //! The gallery's `old_revisions_inline.rs` scene is the design record; this is
 //! the same surface over the backend's answer.

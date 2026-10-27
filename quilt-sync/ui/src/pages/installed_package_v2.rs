@@ -197,9 +197,7 @@ pub struct Replace {
 /// Which of the header's dialogs is open.
 #[derive(Clone, Copy)]
 pub struct Dialogs {
-    /// The row's `Choose S3 bucket`, the menu's `Change bucket` and the
-    /// context pane's Bucket and catalog section open this one dialog: the state calls
-    /// for it, or the reader chooses it.
+    /// The context pane's Bucket and catalog section opens it.
     pub bucket: RwSignal<bool>,
     /// What the reader has typed into that dialog. Here beside its flag, for
     /// the flag's reason: a re-read rebuilds the dialog, and the rebuilt one
@@ -2152,7 +2150,7 @@ mod tests {
                 <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files(), idle_incoming())}</Router>
             }
         });
-        let trigger = element_saying(&el, "Revisions you have (1)")
+        let trigger = element_saying(&el, "History (1)")
             .closest("button")
             .unwrap()
             .expect("the trigger is a button");
@@ -2269,7 +2267,7 @@ mod tests {
             PAGE.contains("order: 0"),
             "context above files, in DOM order, when stacked"
         );
-        assert!(PANE.contains("width: 280px"));
+        assert!(PANE.contains("width: 320px"));
         assert!(PANE.contains("@container (max-width: 800px)"));
         assert!(PANE.contains("width: 100%"));
         assert!(
@@ -2759,7 +2757,7 @@ mod tests {
         assert!(
             !el.text_content()
                 .unwrap_or_default()
-                .contains("Revisions you have (1)"),
+                .contains("History (1)"),
             "the ordinary pane is swapped out; markup was {}",
             el.inner_html()
         );
@@ -2773,7 +2771,7 @@ mod tests {
 
         assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
         assert_eq!(history_length(), before, "replaced, not pushed");
-        element_saying(&el, "Revisions you have (1)");
+        element_saying(&el, "History (1)");
     }
 
     /// The watcher's re-read, or Refresh, must not blank the list while it is
@@ -3079,7 +3077,7 @@ mod tests {
             before,
             "replaced, so Back does not return to the mode"
         );
-        element_saying(&el, "Revisions you have (1)");
+        element_saying(&el, "History (1)");
         assert_eq!(
             READS.with(std::cell::Cell::get),
             1,

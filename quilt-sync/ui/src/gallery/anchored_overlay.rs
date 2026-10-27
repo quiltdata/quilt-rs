@@ -55,9 +55,9 @@ pub fn AnchoredOverlayStories() -> impl IntoView {
         >
             <Cell wide=true label="click it — the revisions this copy holds">
                 <AnchoredOverlay
-                    trigger=trigger("Revisions you have (3)", loaded)
+                    trigger=trigger("History (3)", loaded)
                     open=loaded
-                    aria_label="Revisions you have"
+                    aria_label="History"
                 >
                     <PaneSection>
                         <RevisionRow message="Add kickoff thread" at=ago(2.0 * HOUR) />
@@ -68,9 +68,9 @@ pub fn AnchoredOverlayStories() -> impl IntoView {
             </Cell>
             <Cell wide=true label="click it — pending, opens first and fills after">
                 <AnchoredOverlay
-                    trigger=trigger("Revisions you have (3)", pending)
+                    trigger=trigger("History (3)", pending)
                     open=pending
-                    aria_label="Revisions you have"
+                    aria_label="History"
                 >
                     <PaneSection>
                         <SkeletonBox width="220px" />
@@ -81,9 +81,9 @@ pub fn AnchoredOverlayStories() -> impl IntoView {
             </Cell>
             <Cell wide=true label="click it — a Tauri call that did not return">
                 <AnchoredOverlay
-                    trigger=trigger("Revisions you have", failed)
+                    trigger=trigger("History", failed)
                     open=failed
-                    aria_label="Revisions you have"
+                    aria_label="History"
                 >
                     <LoadFailure
                         words="Could not load your revisions."
@@ -93,9 +93,9 @@ pub fn AnchoredOverlayStories() -> impl IntoView {
             </Cell>
             <Cell wide=true label="click it — one revision, so callers hide the trigger instead">
                 <AnchoredOverlay
-                    trigger=trigger("Revisions you have (1)", empty)
+                    trigger=trigger("History (1)", empty)
                     open=empty
-                    aria_label="Revisions you have"
+                    aria_label="History"
                 >
                     <PaneSection>
                         <RevisionRow message="Add kickoff thread" at=ago(2.0 * HOUR) />

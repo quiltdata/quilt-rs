@@ -1,5 +1,5 @@
 .root {
-  width: 280px;
+  width: 320px;
   flex: none;
 }
 
@@ -23,6 +23,7 @@
   align-items: center;
   column-gap: var(--q-space-3);
   row-gap: var(--q-space-1);
+  align-self: stretch;
   margin: 0;
 
   dd {
@@ -31,19 +32,16 @@
   }
 }
 
-.address {
-  font-size: var(--q-text-body);
-  overflow-wrap: anywhere;
+/* The skeleton's bars, as wide as the section so a percent width has a base. */
+.lines {
+  align-self: stretch;
 }
 
-/* The host or its absence, then the action at the row's end. */
-.catalog {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--q-space-2);
+.value {
   font-size: var(--q-text-body);
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @container (max-width: 800px) {

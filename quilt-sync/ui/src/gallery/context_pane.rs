@@ -3,7 +3,7 @@
 //! # What this scene is for
 //!
 //! The pane is the page's *other* half, and every one of its parts already has a
-//! Core cell. What no Core cell can show is the three of them at 280px with a
+//! Core cell. What no Core cell can show is the three of them at 320px with a
 //! popover hanging off one — whether the surface fits the pane it belongs to,
 //! whether two blocks labelled by two different components look like siblings,
 //! and whether the conditional download action reads as part of the choice above
@@ -63,7 +63,7 @@ use quilt_sync_ui::util::thousands;
 /// The design's fixed pane width. Written here rather than taken from a token
 /// because it is this page's bet, not the system's: the file list grows and the
 /// pane does not.
-const PANE: &str = "width:280px";
+const PANE: &str = "width:320px";
 
 const NAMESPACE: &str = "user/plate-07";
 /// A fact about the package, so it sits in the section and never on a row —
@@ -167,7 +167,7 @@ fn trigger(open: RwSignal<bool>) -> impl FnOnce(String) -> AnyView {
                 aria_expanded=open
                 aria_controls=surface_id
             >
-                "Revisions you have (4)"
+                "History (4)"
             </Button>
         }
         .into_any()
@@ -321,30 +321,34 @@ fn pane(
     on_page: bool,
 ) -> AnyView {
     let sections = view! {
-        <PaneSection label="Bucket and catalog">
+        <PaneSection
+            label="Bucket and catalog"
+            action=view! { <Button on_click=|_| ()>"Change"</Button> }.into_any()
+        >
             <dl style="display:grid; grid-template-columns:auto 1fr; align-items:center; \
                        column-gap:var(--q-space-3); row-gap:var(--q-space-1); margin:0; \
-                       font-size:var(--q-text-body)">
+                       align-self:stretch; font-size:var(--q-text-body)">
                 <dt style="color:var(--q-fgColor-muted)">"Bucket"</dt>
                 <dd style="margin:0">{BUCKET}</dd>
                 <dt style="color:var(--q-fgColor-muted)">"Catalog"</dt>
-                <dd style="margin:0; display:flex; align-items:center; \
-                           justify-content:space-between; gap:var(--q-space-2)">
-                    <span>"open.quiltdata.com"</span>
-                    <Button on_click=|_| ()>"Change"</Button>
-                </dd>
+                <dd style="margin:0">"open.quiltdata.com"</dd>
             </dl>
         </PaneSection>
-        <PaneSection label="Revision">
+        <PaneSection
+            label="Revision"
+            action=view! {
+                <AnchoredOverlay
+                    trigger=trigger(open)
+                    open=open
+                    aria_label="History"
+                    align=Align::End
+                >
+                    {body}
+                </AnchoredOverlay>
+            }
+                .into_any()
+        >
             <RevisionRow message="Add intake folder-upload note" at=ago(2.0 * HOUR) />
-            <AnchoredOverlay
-                trigger=trigger(open)
-                open=open
-                aria_label="Revisions you have"
-                align=Align::End
-            >
-                {body}
-            </AnchoredOverlay>
         </PaneSection>
         <PaneSection>
             <ChoiceGroup
@@ -377,7 +381,7 @@ fn pane(
 ///
 /// The three overlay cells are drawn inside this and the others are not, because
 /// the surface is the one part of the pane whose behaviour is about the pane's
-/// *position*. A 280px pane floating alone in a cell would let a popover open
+/// *position*. A 320px pane floating alone in a cell would let a popover open
 /// rightwards into empty gallery, which is the one direction the real page does
 /// not have.
 fn in_page(pane: AnyView) -> AnyView {
@@ -451,12 +455,13 @@ fn refused() -> ResolveData {
 }
 
 /// What the cells are for, and what looking at them settled.
-const NOTE: &str = "280px holding three blocks: what the page says about the package rather \
+const NOTE: &str = "320px holding three blocks: what the page says about the package rather \
     than about its files. \
     \
-    Bucket and catalog comes first, each named: the package's s3:// address, its catalog \
-    host or a plain No catalog, and one action into the Bucket and catalog dialog — Add catalog without \
-    one, Change with one. A package with no bucket has no Bucket and catalog section. \
+    Bucket and catalog comes first, on every package: the s3:// address and the catalog \
+    host, each cut with an ellipsis or a plain Not set, and one action at the heading's end \
+    into the Bucket and catalog dialog — Choose, as the primary, without a bucket, Change \
+    with one. History sits at Revision's heading end the same way. \
     \
     Keeping's count carries the package's size: the sum of the current revision's \
     manifest rows, and of those whose files are here. It is the logical size, not disk \
@@ -472,7 +477,7 @@ const NOTE: &str = "280px holding three blocks: what the page says about the pac
     wears a cloud and ends in an icon that opens the catalog; the unsent one \
     wears the slashed cloud and no icon. \
     \
-    In resolve mode both choices fit on one line at 280px, each with the \
+    In resolve mode both choices fit on one line at 320px, each with the \
     sentence that says what it does beneath it. They are a block of their own \
     under the comparison, ruled off from Published, and each hint sits close \
     under its button and well clear of the next.";
