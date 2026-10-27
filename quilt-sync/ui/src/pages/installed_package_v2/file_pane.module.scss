@@ -130,13 +130,15 @@
 
 /* The list's footer: a spacer and the `[Download]` primary, flush right on
  * the list's inset. `Card` draws the hairline above it. On the page it stays
- * at the bottom of the window while the list runs past it. The one carve-out from
+ * at the bottom of the window while the list runs past it, and under a short
+ * list the card's height puts it at the bottom. The one carve-out from
  * the Never Move Geometry Rule, copied from the Banner: 4px and a fade, 160ms,
  * and no exit animation — unticking the last row grows the list back, and
  * animating that moves rows under the pointer. Under reduced motion it simply
  * appears. The gallery's scene draws the same footer with `g-fp-footer`, which
  * is gallery chrome and so absent from the app's stylesheet. */
 .footer {
+  margin-top: auto;
   display: flex;
   justify-content: flex-end;
   padding: var(--q-space-2) var(--q-space-3);

@@ -3966,6 +3966,7 @@ mod tests {
             "src/pages/installed_package_v2/file_pane.module.scss"
         );
         stylance::import_crate_style!(pub group, "src/kit/entry_group.module.scss");
+        stylance::import_crate_style!(pub card, "src/kit/card.module.scss");
     }
 
     /// The tokens the sheets read, which the test page does not load.
@@ -4002,6 +4003,15 @@ mod tests {
         load_module_style(
             include_str!("../kit/entry_group.module.scss"),
             &[("root", sheets::group::root), ("head", sheets::group::head)],
+        );
+        load_module_style(
+            include_str!("../kit/card.module.scss"),
+            &[
+                ("root", sheets::card::root),
+                ("body", sheets::card::body),
+                ("bare", sheets::card::bare),
+                ("fill", sheets::card::fill),
+            ],
         );
         // The app's normalize sheet, which the test page does not load.
         load_module_style("[data-page-test] * { box-sizing: border-box }", &[]);
@@ -4128,16 +4138,7 @@ mod tests {
     /// keeps clear of it.
     #[wasm_bindgen_test]
     async fn the_footer_stays_at_the_bottom_of_the_window() {
-        let rows = view! {
-            <div class=sheets::files::list>
-                {(0..60).map(|_| view! { <div style="height:32px"></div> }).collect_view()}
-            </div>
-            <FooterBand>
-                <div style="height:40px"></div>
-            </FooterBand>
-        }
-        .into_any();
-        let el = scrolling_page(1024, 200, rows);
+        let el = scrolling_page(1024, 200, listed(60));
         // Past the footer's entrance.
         sleep_ms(250).await;
         let frame = frame(&el);
@@ -4156,6 +4157,37 @@ mod tests {
             .unwrap();
         // The footer: its content and its own padding.
         assert_eq!(padding, "56px", "the room a focused row keeps below");
+    }
+
+    /// Under a list shorter than the window the footer still sits at the
+    /// bottom, above the page's bottom padding, rather than under the rows.
+    #[wasm_bindgen_test]
+    async fn under_a_short_list_the_footer_stays_low() {
+        let el = scrolling_page(1024, 200, listed(3));
+        sleep_ms(250).await;
+        let frame = frame(&el);
+        let footer = find(&el, &format!(".{}", sheets::files::footer));
+        assert_eq!(
+            footer.get_bounding_client_rect().bottom(),
+            frame.get_bounding_client_rect().bottom() - 32.0,
+            "the footer ends where the page's bottom padding starts"
+        );
+    }
+
+    /// The file pane's list as the page draws it: `rows` rows in a bare,
+    /// filling card, and the footer after them.
+    fn listed(rows: usize) -> AnyView {
+        view! {
+            <crate::kit::Card bare=true fill=true label="Files">
+                <div class=sheets::files::list>
+                    {(0..rows).map(|_| view! { <div style="height:32px"></div> }).collect_view()}
+                </div>
+                <FooterBand>
+                    <div style="height:40px"></div>
+                </FooterBand>
+            </crate::kit::Card>
+        }
+        .into_any()
     }
 
     /// A folder heading sticks under the file toolbar while its rows scroll,

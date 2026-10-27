@@ -1335,8 +1335,9 @@ fn ready(
                 )}
             </FileToolbarBand>
             // The rows sit on the page; `Card` rules between the notice, the
-            // rows and the footer.
-            <Card bare=true label="Files">
+            // rows and the footer. It fills the window's height, so a short
+            // list still has its footer at the bottom.
+            <Card bare=true fill=true label="Files">
                 {truncated.then(|| view! { <CapNotice total=total shown=loaded_count /> })}
                 {body}
                 {footer(picking, rows)}

@@ -993,7 +993,7 @@ fn pane(p: Pane) -> AnyView {
             </FileToolbarBand>
             // Bare, as on the page: the rows sit on the page, and `Card`
             // rules between the notice, the rows and the footer.
-            <Card bare=true label="Files">
+            <Card bare=true fill=fill label="Files">
                 {match body {
                     Body::Failed => {
                         view! {
