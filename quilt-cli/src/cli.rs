@@ -24,6 +24,7 @@ mod gc;
 mod history;
 mod home;
 mod install;
+mod keep;
 mod list;
 mod login;
 mod model;
@@ -440,6 +441,7 @@ enum Commands {
         overwrite: bool,
     },
     /// Install package locally
+    #[command(group(clap::ArgGroup::new("keep").args(["keep_all", "keep_folder"])))]
     Install {
         /// Source URI for the package.
         /// Ex. `quilt+s3://bucket#package=foo/bar`
@@ -452,6 +454,41 @@ enum Commands {
         /// You can provide multiple paths.
         #[arg(short, long)]
         path: Option<Vec<PathBuf>>,
+        /// Keep every file in the package, as `quilt keep --all`, and download them
+        #[arg(long)]
+        keep_all: bool,
+        /// Keep every file under this folder, as `quilt keep --folder`, and
+        /// download them. Repeat for more folders
+        #[arg(long, value_name = "DIR")]
+        keep_folder: Vec<String>,
+        /// With --keep-all or --keep-folder, save the setting without
+        /// downloading anything
+        #[arg(long, requires = "keep")]
+        no_download: bool,
+    },
+    /// Show or set which of a package's files this copy keeps
+    ///
+    /// With no flag, prints the current setting. A setting then downloads the
+    /// files it covers that are not here yet; `--no-download` only saves it.
+    /// Every `quilt pull` follows the setting, as `QuiltSync`'s pulls do.
+    #[command(group(clap::ArgGroup::new("scope").args(["files", "all", "folder"])))]
+    Keep {
+        #[command(flatten)]
+        pkg: PackageRef,
+        /// Keep only the files you picked, as `install --path` does
+        #[arg(long)]
+        files: bool,
+        /// Keep every file in the package, including files added later
+        #[arg(long)]
+        all: bool,
+        /// Keep every file under this folder, including files added later.
+        /// A path from the package root; it need not exist yet. Repeat for
+        /// more folders
+        #[arg(long, value_name = "DIR")]
+        folder: Vec<String>,
+        /// Save the setting without downloading anything
+        #[arg(long, requires = "scope")]
+        no_download: bool,
     },
     /// Authenticate against a Quilt stack
     Login {
@@ -711,15 +748,37 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             namespace,
             path,
             uri,
+            keep_all,
+            keep_folder,
+            no_download,
         } => {
             let args = install::Input {
                 namespace: parse_optional_namespace(namespace)?,
                 paths: path,
                 uri,
+                keep: keep::scope_from(false, keep_all, keep_folder),
+                download: !no_download,
             };
 
             log::debug!("Installing {args:?}");
             Ok(install::command(m, args).await)
+        }
+        Commands::Keep {
+            pkg,
+            files,
+            all,
+            folder,
+            no_download,
+        } => {
+            let namespace = pkg.resolve(&m).await?;
+            let args = keep::Input {
+                namespace,
+                scope: keep::scope_from(files, all, folder),
+                download: !no_download,
+            };
+
+            log::debug!("Keep {args:?}");
+            Ok(keep::command(m, args).await)
         }
         Commands::Login { code, host } => {
             if let Some(code) = code {
@@ -1337,6 +1396,54 @@ mod tests {
     }
 
     /// `--count` is optional, and refuses 0 as an argument error.
+    #[test]
+    fn keep_takes_one_scope_and_no_download_needs_one() {
+        let parse = |args: &[&str]| Args::try_parse_from([&["quilt", "keep"], args].concat());
+        assert!(matches!(
+            parse(&[]).expect("parses").command,
+            Commands::Keep { files: false, all: false, ref folder, no_download: false, .. }
+                if folder.is_empty()
+        ));
+        assert!(matches!(
+            parse(&["--folder", "a", "--folder", "b/"]).expect("parses").command,
+            Commands::Keep { ref folder, .. } if folder == &["a", "b/"]
+        ));
+        assert!(matches!(
+            parse(&["--all", "--no-download"]).expect("parses").command,
+            Commands::Keep {
+                all: true,
+                no_download: true,
+                ..
+            }
+        ));
+        assert!(parse(&["--all", "--files"]).is_err());
+        assert!(parse(&["--all", "--folder", "a"]).is_err());
+        assert!(parse(&["--no-download"]).is_err());
+    }
+
+    #[test]
+    fn install_takes_one_keep_flag_and_no_download_needs_one() {
+        let parse = |args: &[&str]| {
+            Args::try_parse_from([&["quilt", "install", "quilt+s3://b#package=a/b"], args].concat())
+        };
+        assert!(matches!(
+            parse(&["--keep-folder", "a", "--keep-folder", "b"]).expect("parses").command,
+            Commands::Install { ref keep_folder, keep_all: false, .. } if keep_folder == &["a", "b"]
+        ));
+        assert!(matches!(
+            parse(&["--keep-all", "--no-download"])
+                .expect("parses")
+                .command,
+            Commands::Install {
+                keep_all: true,
+                no_download: true,
+                ..
+            }
+        ));
+        assert!(parse(&["--keep-all", "--keep-folder", "a"]).is_err());
+        assert!(parse(&["--no-download"]).is_err());
+    }
+
     #[test]
     fn remove_revisions_count_is_optional_and_at_least_one() {
         let all = Args::try_parse_from(["quilt", "remove-revisions", "-n", "a/b"]).expect("parses");
@@ -1975,6 +2082,9 @@ mod tests {
                 namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
                 uri: pkg::URI.to_string(),
                 path: None,
+                keep_all: false,
+                keep_folder: Vec::new(),
+                no_download: false,
             },
         };
         let mut output = Vec::new();
@@ -3088,6 +3198,9 @@ mod tests {
                 namespace: None,
                 uri: pkg::URI.to_string(),
                 path: None,
+                keep_all: false,
+                keep_folder: Vec::new(),
+                no_download: false,
             },
         };
 

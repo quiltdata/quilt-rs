@@ -39,6 +39,7 @@ cargo install quilt-cli
 | `create`    | Create a new local-only package                  |
 | `home`      | Print or set the folder packages keep files in   |
 | `install`   | Install a remote package locally                 |
+| `keep`      | Show or set which of a package's files are kept  |
 | `status`    | Show working-directory changes                   |
 | `commit`    | Commit a new package revision                    |
 | `undo-commit` | Undo the newest commit, before the first push  |
@@ -95,13 +96,27 @@ Under `--json`, `ignored` holds the `files` and `folders` counts, and with
 
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
-`&path=` parameter in the URI.
+`&path=` parameter in the URI, unless `--keep-all` or `--keep-folder` sets what
+the package keeps, as `keep` does.
+
+`keep` sets which of a package's files this copy keeps: `--files`, the files
+you picked (the default); `--all`, every file in the package; or
+`--folder <dir>` (repeatable), every file under those folders. A folder is a
+path from the package root, need not exist yet, and covers only the paths under
+it, so `data/raw` does not cover `data/raw2`; `--folder ./` is `--all`. It then
+downloads the files the setting covers that are not here yet; `--no-download`
+only saves the setting and says how many files wait. With no flag it prints the
+setting. Every `pull` follows it, so files a new revision adds under a kept
+folder, or anywhere under `--all`, are downloaded too. Under `--json` it prints
+`namespace`, `scope` (`individual_files`, `entire_package` or `folders`),
+`folders` for a folders setting, and `outstanding`, the files still waiting.
 
 `pull` reports the files it moved, in four groups: downloaded, left on the
-remote, updated, removed. A path you do not track is absent from all four — a
-pull writes nothing for it, so a copy that installed no paths reports no files
-at all. The message that follows is the newest revision's only: a pull advances
-to `latest` in one step and may span several revisions.
+remote, updated, removed. A path you do not track and the package does not keep
+is absent from all four — a pull writes nothing for it, so a copy that installed
+no paths and keeps only picked files reports no files at all. The message that
+follows is the newest revision's only: a pull advances to `latest` in one step
+and may span several revisions.
 
 `home` prints the home, the folder where installed packages keep their files.
 It defaults to `~/QuiltSync` on first use. `quilt home <dir>` sets it; a

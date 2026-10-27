@@ -19,6 +19,21 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.39.0-dev]
+
+### Added
+
+- `quilt keep --files | --all | --folder <dir>` sets which of a package's files this copy keeps, and downloads the files it covers; `--no-download` only saves the setting, and no flag prints it (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- `quilt install --keep-all` and `--keep-folder <dir>` set the same at install (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+
+### Changed
+
+- `quilt pull` follows the package's setting, so a package that keeps every file, or a folder, also gets the files a new revision adds there (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+
+### quilt-rs
+
+- Updated [from v0.49.0 to v0.50.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.38.0] - 2026-10-26
 
 ### Changed

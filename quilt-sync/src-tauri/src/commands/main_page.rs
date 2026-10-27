@@ -844,10 +844,14 @@ pub struct MainPagePackageRefresh {
 #[serde(rename_all = "camelCase")]
 pub struct MainPageDownloads {
     pub scope: KeepingScope,
+    /// How many folders a folders scope keeps; 0 for any other scope.
+    pub folders: usize,
     /// The files the current revision lists.
     pub total: usize,
-    /// The listed files still to download, as Keeping counts them.
+    /// The listed files not downloaded here, as Keeping counts them.
     pub outstanding: usize,
+    /// The outstanding files the scope covers: Keeping's `Download N files`.
+    pub backlog: usize,
     /// Every deletion the status reports.
     pub deleted_here: usize,
     /// `None` when the rows' sizes do not add up in a `u64`.
@@ -857,9 +861,11 @@ pub struct MainPageDownloads {
 impl From<quilt::lineage::DownloadCounts> for MainPageDownloads {
     fn from(counts: quilt::lineage::DownloadCounts) -> Self {
         Self {
-            scope: counts.scope.into(),
+            scope: (&counts.scope).into(),
+            folders: super::package_page::kept_folders(&counts.scope).len(),
             total: counts.listed,
             outstanding: counts.outstanding,
+            backlog: counts.backlog,
             deleted_here: counts.deleted_here,
             size: counts.size.map(PackageSize::from),
         }
@@ -2662,10 +2668,12 @@ mod tests {
             scope: quilt::lineage::SyncScope::EntirePackage,
             listed: 5,
             outstanding: 2,
+            backlog: 2,
             deleted_here: 1,
             size: Some(quilt::lineage::DownloadSize {
                 listed: 3_400_000,
                 outstanding: 1_500_000,
+                backlog: 1_500_000,
             }),
         };
         let m =
@@ -2675,12 +2683,15 @@ mod tests {
             refresh(&m, &RoleCache::default()).await.downloads,
             Some(MainPageDownloads {
                 scope: KeepingScope::EntirePackage,
+                folders: 0,
                 total: 5,
                 outstanding: 2,
+                backlog: 2,
                 deleted_here: 1,
                 size: Some(PackageSize {
                     total: 3_400_000,
                     downloaded: 1_900_000,
+                    backlog: 1_500_000,
                 }),
             })
         );
@@ -2693,19 +2704,22 @@ mod tests {
             role_switch_host: None,
             downloads: Some(MainPageDownloads {
                 scope: KeepingScope::IndividualFiles,
+                folders: 0,
                 total: 340,
                 outstanding: 328,
+                backlog: 0,
                 deleted_here: 1,
                 size: Some(PackageSize {
                     total: 3_400_000,
                     downloaded: 1_900_000,
+                    backlog: 0,
                 }),
             }),
             changed_files: Some(0),
         };
         assert_eq!(
             serde_json::to_string(&refreshed).unwrap(),
-            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000}},"changedFiles":0}"#,
+            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","folders":0,"total":340,"outstanding":328,"backlog":0,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000,"backlog":0}},"changedFiles":0}"#,
         );
     }
 

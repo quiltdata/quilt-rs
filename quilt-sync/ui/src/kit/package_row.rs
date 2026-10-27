@@ -186,8 +186,12 @@ fn tooltip_lines(
         .map(|host| TooltipLine::new(format!("Host: {host}")).icon(icons::cloud));
     let scope = downloads.map(|downloads| {
         TooltipLine::new(match downloads {
-            RowDownloads::EntirePackage { .. } => "Every file in the package is kept",
-            RowDownloads::IndividualFiles { .. } => "Only the files you picked are kept",
+            RowDownloads::EntirePackage { .. } => "Every file in the package is kept".to_string(),
+            RowDownloads::IndividualFiles { .. } => {
+                "Only the files you picked are kept".to_string()
+            }
+            RowDownloads::Folders { folders: 1, .. } => "Files in 1 folder are kept".to_string(),
+            RowDownloads::Folders { folders, .. } => format!("Files in {folders} folders are kept"),
         })
         .icon(icons::download)
     });
@@ -204,6 +208,9 @@ pub enum RowDownloads {
     EntirePackage { to_download: usize },
     /// Only the files someone picked: `downloaded` of the package's `total`.
     IndividualFiles { downloaded: usize, total: usize },
+    /// Every file under `folders` folders, with `to_download` of them not
+    /// downloaded yet.
+    Folders { folders: usize, to_download: usize },
 }
 
 impl RowDownloads {
@@ -212,8 +219,10 @@ impl RowDownloads {
     #[must_use]
     pub fn marker(self) -> Option<String> {
         match self {
-            Self::EntirePackage { to_download: 0 } => None,
-            Self::EntirePackage { to_download } => Some(format!("{to_download} to download")),
+            Self::EntirePackage { to_download: 0 } | Self::Folders { to_download: 0, .. } => None,
+            Self::EntirePackage { to_download } | Self::Folders { to_download, .. } => {
+                Some(format!("{to_download} to download"))
+            }
             Self::IndividualFiles { downloaded, total } => {
                 Some(format!("{downloaded} of {total} {}", files(total)))
             }
@@ -227,8 +236,14 @@ impl RowDownloads {
     #[must_use]
     pub fn variant(self) -> LabelVariant {
         match self {
-            Self::EntirePackage { to_download } if to_download > 0 => LabelVariant::Accent,
-            Self::EntirePackage { .. } | Self::IndividualFiles { .. } => LabelVariant::Outline,
+            Self::EntirePackage { to_download } | Self::Folders { to_download, .. }
+                if to_download > 0 =>
+            {
+                LabelVariant::Accent
+            }
+            Self::EntirePackage { .. } | Self::Folders { .. } | Self::IndividualFiles { .. } => {
+                LabelVariant::Outline
+            }
         }
     }
 }
@@ -260,6 +275,18 @@ mod marker_tests {
             words(RowDownloads::EntirePackage { to_download: 3 }).as_deref(),
             Some("3 to download")
         );
+    }
+
+    /// Kept folders read as the whole package does, over their own files.
+    #[test]
+    fn kept_folders_count_their_files_left_to_download() {
+        let folders = |to_download| RowDownloads::Folders {
+            folders: 2,
+            to_download,
+        };
+        assert_eq!(words(folders(0)), None);
+        assert_eq!(words(folders(3)).as_deref(), Some("3 to download"));
+        assert_eq!(folders(3).variant(), super::LabelVariant::Accent);
     }
 
     #[test]
@@ -391,6 +418,7 @@ mod tests {
         size: Some(PackageSize {
             total: 3_400_000,
             downloaded: 1_900_000,
+            backlog: 0,
         }),
     };
 
@@ -562,6 +590,18 @@ mod tooltip_tests {
             ),
             ["Only the files you picked are kept"]
         );
+        let folders = |folders| {
+            tooltip_lines(
+                None,
+                Some(RowDownloads::Folders {
+                    folders,
+                    to_download: 0,
+                }),
+                None,
+            )
+        };
+        assert_eq!(folders(2), ["Files in 2 folders are kept"]);
+        assert_eq!(folders(1), ["Files in 1 folder are kept"]);
     }
 
     /// Keeping's own words, so the row and the package page agree.
@@ -575,6 +615,7 @@ mod tooltip_tests {
             size: Some(PackageSize {
                 total: 3_400_000,
                 downloaded: 3_400_000,
+                backlog: 0,
             }),
         };
         assert_eq!(size(held), [counted(held)]);

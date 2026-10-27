@@ -162,8 +162,9 @@ its tooltip; the pointer passes through it to the rows below. It gives:
 
 - the package's full name, which the row may cut short;
 - *Host: open.quiltdata.com*, left out for a package with no catalog;
-- what it keeps: *Every file in the package is kept* or *Only the files you
-  picked are kept*;
+- what it keeps: *Every file in the package is kept*, *Only the files you
+  picked are kept*, or *Files in 2 folders are kept* for folders set with
+  `quilt keep --folder`;
 - how much is downloaded, in Keeping's words on the package page, as in *"12 of
   340 files · 1.9 MB of 3.4 MB downloaded."*
 
@@ -268,6 +269,10 @@ the current revision is here, in files and in bytes:
 - *"This revision has no files."* for an empty revision.
 - Under *The whole package* the caption adds *"— files added later are
   downloaded too."*, and *Download 2 files · 1.5 MB* fetches the backlog.
+- Folders kept with `quilt keep --folder` select neither option, and the
+  caption names them first, as in *"Files in data/raw and results are kept. 54
+  of 56 files · 1.9 MB of 3.4 MB downloaded."* *Download N files* fetches the
+  backlog under those folders only, and choosing an option replaces them.
 
 The sizes are the manifest rows' sizes summed, not disk usage. Only the files
 the current revision lists are counted: a new file is not counted until it is

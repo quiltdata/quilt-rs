@@ -14,6 +14,7 @@ use crate::cli::gc;
 use crate::cli::history;
 use crate::cli::home;
 use crate::cli::install;
+use crate::cli::keep;
 use crate::cli::list;
 use crate::cli::login;
 use crate::cli::pull;
@@ -58,6 +59,11 @@ pub trait Commands {
     async fn install(&self, args: install::Input) -> Result<install::Output, Error> {
         let local_domain = self.get_local_domain();
         install::model(local_domain, args).await
+    }
+
+    async fn keep(&self, args: keep::Input) -> Result<keep::Output, Error> {
+        let local_domain = self.get_local_domain();
+        keep::model(local_domain, args).await
     }
 
     async fn list(&self, args: list::Input) -> Result<list::Output, Error> {
@@ -181,6 +187,8 @@ pub async fn install_paths_into_temp_dir(
             namespace: None,
             paths,
             uri: uri_str.to_string(),
+            keep: None,
+            download: true,
         })
         .await?;
 

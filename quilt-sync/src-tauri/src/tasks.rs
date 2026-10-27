@@ -687,7 +687,7 @@ async fn recheck_claim<M: QuiltModel>(
     }
     let locked = model.lock_package(&installed).await?;
     let pulled = model
-        .locked_package_pull(&locked, None, lineage.sync_scope)
+        .locked_package_pull(&locked, None, lineage.sync_scope.clone())
         .await?
         .manifest_uri
         .hash;

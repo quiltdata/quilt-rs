@@ -3,9 +3,13 @@
 //!
 //! The words are pure so their rules are host-tested: the caption always
 //! counts what is here, only the whole package promises files added later, and
-//! only the whole package with files outstanding offers the counted download
-//! (`scope-and-backlog`). Choosing a scope stores it and moves no bytes; the
-//! download installs exactly the paths the page read listed.
+//! only the whole package or kept folders with files outstanding offer the
+//! counted download (`scope-and-backlog`). Choosing a scope stores it and
+//! moves no bytes; the download installs exactly the paths the page read
+//! listed.
+//!
+//! Kept folders, which only the CLI sets for now, select neither option and
+//! the caption names them. Choosing an option replaces them.
 //!
 //! The size joins the count: the count says how much of the package is here,
 //! and the size says it in bytes. A file deleted here counts as downloaded — it
@@ -56,6 +60,7 @@ fn choice_value(scope: KeepingScope) -> &'static str {
     match scope {
         KeepingScope::IndividualFiles => "pick",
         KeepingScope::EntirePackage => "all",
+        KeepingScope::Folders => "folders",
     }
 }
 
@@ -74,11 +79,12 @@ pub(super) fn KeepingSection(
 ) -> impl IntoView {
     let commands::KeepingData {
         scope,
+        folders,
         total,
+        outstanding,
         remote_only,
         deleted_here,
     } = data;
-    let outstanding = remote_only.len();
     // What the backend holds: the payload's scope until a store succeeds, since
     // the group is live again before that store's re-read lands.
     let stored = StoredValue::new(choice_value(scope).to_string());
@@ -121,7 +127,7 @@ pub(super) fn KeepingSection(
         });
     }
 
-    let download = download_label(scope, outstanding, size).map(|label| {
+    let download = download_label(scope, remote_only.len(), size).map(|label| {
         let press = move |_| {
             // The read's list, not what is outstanding by the time of the press.
             let (ns, paths) = (namespace.clone(), remote_only.clone());
@@ -160,7 +166,7 @@ pub(super) fn KeepingSection(
             // Sealed by the page's signal, so a section rebuilt mid-command is drawn sealed.
             <ChoiceGroup
                 label="Keeping"
-                caption=caption(scope, Held { total, outstanding, deleted_here, size })
+                caption=caption(scope, &folders, Held { total, outstanding, deleted_here, size })
                 options=vec![
                     Choice::new("pick", "Files I pick"),
                     Choice::new("all", "The whole package"),
@@ -174,43 +180,51 @@ pub(super) fn KeepingSection(
 }
 
 /// What the choice means now: the present count, and — only under the whole
-/// package — the promise about files that do not exist yet.
-pub(super) fn caption(scope: KeepingScope, held: Held) -> String {
+/// package — the promise about files that do not exist yet. Kept folders are
+/// named before the count.
+pub(super) fn caption(scope: KeepingScope, folders: &[String], held: Held) -> String {
     let counted = counted(held);
     match scope {
         KeepingScope::EntirePackage => {
             format!("{counted} — files added later are downloaded too.")
         }
         KeepingScope::IndividualFiles => format!("{counted}."),
+        KeepingScope::Folders => format!("Files in {} are kept. {counted}.", listed(folders)),
     }
 }
 
-/// `Download N files · 1.5 MB`, or `None`: only the whole package with a
-/// backlog offers it (`scope-and-backlog`). The bytes are the backlog's, total
-/// less downloaded, so a size that cannot be read leaves the count alone.
+/// `a`, `a and b`, `a, b and c`.
+fn listed(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => only.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// `Download N files · 1.5 MB`, or `None`: only a scope with a backlog offers
+/// it (`scope-and-backlog`). The bytes are the backlog's, so a size that
+/// cannot be read leaves the count alone.
 pub(super) fn download_label(
     scope: KeepingScope,
-    outstanding: usize,
+    backlog: usize,
     size: Option<PackageSize>,
 ) -> Option<String> {
-    let files = match (scope, outstanding) {
-        (KeepingScope::IndividualFiles, _) | (KeepingScope::EntirePackage, 0) => return None,
-        (KeepingScope::EntirePackage, 1) => "Download 1 file".to_string(),
-        (KeepingScope::EntirePackage, n) => format!("Download {} files", thousands(n)),
+    let files = match (scope, backlog) {
+        (KeepingScope::IndividualFiles, _) | (_, 0) => return None,
+        (_, 1) => "Download 1 file".to_string(),
+        (_, n) => format!("Download {} files", thousands(n)),
     };
     Some(match size {
-        Some(size) => format!(
-            "{files} · {}",
-            format_size(size.total.saturating_sub(size.downloaded))
-        ),
+        Some(size) => format!("{files} · {}", format_size(size.backlog)),
         None => files,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, Held, KeepingCommands, KeepingSection, caption, download_label};
-    use crate::commands::KeepingScope::{self, EntirePackage, IndividualFiles};
+    use super::{Answer, Held, KeepingCommands, KeepingSection, download_label};
+    use crate::commands::KeepingScope::{self, EntirePackage, Folders, IndividualFiles};
     use crate::commands::{KeepingData, PackageSize};
     use crate::kit::BannerVariant;
     use crate::pages::installed_package_v2::{Outcome, Wiring};
@@ -235,6 +249,7 @@ mod tests {
                 } else {
                     19 * MB / 10
                 },
+                backlog: if outstanding == 0 { 0 } else { 15 * MB / 10 },
             }),
         }
     }
@@ -245,6 +260,46 @@ mod tests {
             size: None,
             ..plate(outstanding)
         }
+    }
+
+    /// The caption of a scope that keeps no folders.
+    fn caption(scope: KeepingScope, held: Held) -> String {
+        super::caption(scope, &[], held)
+    }
+
+    fn folders(names: &[&str]) -> Vec<String> {
+        names.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn kept_folders_are_named_before_the_count() {
+        assert_eq!(
+            plain(&super::caption(
+                Folders,
+                &folders(&["data/raw", "results"]),
+                plate(2)
+            )),
+            "Files in data/raw and results are kept. 54 of 56 files · 1.9 MB of 3.4 MB downloaded."
+        );
+        assert_eq!(
+            super::caption(Folders, &folders(&["a", "b", "c"]), unread(0)),
+            "Files in a, b and c are kept. All files are downloaded."
+        );
+        assert_eq!(
+            super::caption(Folders, &folders(&["data"]), unread(0)),
+            "Files in data are kept. All files are downloaded."
+        );
+    }
+
+    #[test]
+    fn kept_folders_offer_their_backlog() {
+        assert_eq!(
+            download_label(Folders, 2, plate(2).size)
+                .map(|w| plain(&w))
+                .as_deref(),
+            Some("Download 2 files · 1.5 MB")
+        );
+        assert_eq!(download_label(Folders, 0, plate(2).size), None);
     }
 
     /// The words as read, with the no-break spaces shown as spaces.
@@ -290,6 +345,7 @@ mod tests {
             size: Some(PackageSize {
                 total: 0,
                 downloaded: 0,
+                backlog: 0,
             }),
         };
         assert_eq!(
@@ -317,6 +373,7 @@ mod tests {
             size: Some(PackageSize {
                 total: 1_200_000 * MB,
                 downloaded: 86_300 * MB,
+                backlog: 0,
             }),
         };
         assert_eq!(
@@ -425,11 +482,23 @@ mod tests {
         assert_eq!(download_label(IndividualFiles, 7, plate(2).size), None);
     }
 
+    /// Keeping with `outstanding` not here, every one in the backlog unless
+    /// the scope is picked files.
     fn data(scope: KeepingScope, total: usize, outstanding: &[&str]) -> KeepingData {
         KeepingData {
             scope,
+            folders: if scope == Folders {
+                vec!["plate".to_string(), "qc".to_string()]
+            } else {
+                Vec::new()
+            },
             total,
-            remote_only: outstanding.iter().map(ToString::to_string).collect(),
+            outstanding: outstanding.len(),
+            remote_only: if scope == IndividualFiles {
+                Vec::new()
+            } else {
+                outstanding.iter().map(ToString::to_string).collect()
+            },
             deleted_here: 0,
         }
     }
@@ -632,6 +701,35 @@ mod tests {
             .closest("button")
             .unwrap();
         assert!(button.is_some(), "the count is a button");
+    }
+
+    #[wasm_bindgen_test]
+    fn kept_folders_select_neither_option_and_offer_their_backlog() {
+        let el = section(
+            data(Folders, 56, &["plate/b.csv", "plate/c.csv"]),
+            Wiring::new(),
+        );
+        let group = group(&el);
+        assert!(!radio(&group, "Files I pick").checked());
+        assert!(!radio(&group, "The whole package").checked());
+        element_saying(&el, "Files in plate and qc are kept. 54 of 56 downloaded.");
+        download_button(&el);
+    }
+
+    #[wasm_bindgen_test]
+    async fn choosing_an_option_replaces_kept_folders() {
+        clear();
+        let el = pressable(
+            a_backlog_in(Folders),
+            Wiring::new(),
+            commands(stores_ok, downloads_ok),
+        );
+        leptos::task::tick().await;
+
+        element_saying(&el, "Files I pick").click();
+        settle().await;
+
+        assert_eq!(stored(), vec![("team/dataset".to_string(), false)]);
     }
 
     #[wasm_bindgen_test]

@@ -19,6 +19,18 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.50.0-dev]
+
+### Added
+
+- `SyncScope::Folders` keeps every file under chosen folders, files added there later included; `SyncScope::folders` builds it in one stored form, and a list naming the package root is the entire package (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- `InstalledPackage::backlog` lists the current revision's files the stored scope covers that are not here yet, and `DownloadCounts` counts them in `backlog` (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+
+### Changed
+
+- `SyncScope` is no longer `Copy`, and `covers_untracked` takes the path it asks about (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+- A `sync_scope` value this version does not know reads as individual files, so `data.json` still loads (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+
 ## [v0.49.0] - 2026-10-26
 
 ### Added

@@ -464,7 +464,7 @@ async fn package_pull_command(
     // interrupt it without asking.
     let pulled = {
         let _applying = watcher.apply_guard(&namespace);
-        m.locked_package_pull(&locked, None, lineage.sync_scope)
+        m.locked_package_pull(&locked, None, lineage.sync_scope.clone())
             .await
     };
     match pulled {

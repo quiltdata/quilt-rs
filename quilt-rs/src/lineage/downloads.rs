@@ -7,7 +7,7 @@ use super::PackageLineage;
 use super::SyncScope;
 
 /// How much of its current revision a copy holds, in files and in bytes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DownloadCounts {
     /// The scope the copy keeps.
     pub scope: SyncScope,
@@ -15,6 +15,8 @@ pub struct DownloadCounts {
     pub listed: usize,
     /// The listed files still to download: see [`Self::is_outstanding`].
     pub outstanding: usize,
+    /// The outstanding files the scope covers: see [`Self::in_backlog`].
+    pub backlog: usize,
     /// Every deletion the status reports.
     pub deleted_here: usize,
     /// The bytes the manifest records for the same files; `None` when they do
@@ -28,6 +30,7 @@ pub struct DownloadCounts {
 pub struct DownloadSize {
     pub listed: u64,
     pub outstanding: u64,
+    pub backlog: u64,
 }
 
 impl DownloadSize {
@@ -50,24 +53,29 @@ impl DownloadCounts {
     ) -> Self {
         let mut listed = 0;
         let mut outstanding = 0;
+        let mut backlog = 0;
         let mut size = Some(DownloadSize::default());
         for (key, bytes) in rows {
             let missing = Self::is_outstanding(lineage, changes, key);
+            let wanted = missing && lineage.sync_scope.covers_untracked(key);
             listed += 1;
             outstanding += usize::from(missing);
-            // `outstanding` sums a subset of `listed`, so it fits whenever
-            // `listed` does.
+            backlog += usize::from(wanted);
+            // `outstanding` and `backlog` sum subsets of `listed`, so they fit
+            // whenever `listed` does.
             size = size.and_then(|size| {
                 Some(DownloadSize {
                     listed: size.listed.checked_add(bytes)?,
                     outstanding: size.outstanding + if missing { bytes } else { 0 },
+                    backlog: size.backlog + if wanted { bytes } else { 0 },
                 })
             });
         }
         Self {
-            scope: lineage.sync_scope,
+            scope: lineage.sync_scope.clone(),
             listed,
             outstanding,
+            backlog,
             deleted_here: changes
                 .values()
                 .filter(|change| matches!(change, Change::Removed(_)))
@@ -82,6 +90,14 @@ impl DownloadCounts {
     #[must_use]
     pub fn is_outstanding(lineage: &PackageLineage, changes: &ChangeSet, key: &Path) -> bool {
         !lineage.paths.contains_key(key) && !changes.contains_key(key)
+    }
+
+    /// Whether the revision's file at `key` is outstanding and the scope
+    /// covers it: what downloading the backlog fetches. Never true under
+    /// individual-file scope, where nothing waits for a download.
+    #[must_use]
+    pub fn in_backlog(lineage: &PackageLineage, changes: &ChangeSet, key: &Path) -> bool {
+        Self::is_outstanding(lineage, changes, key) && lineage.sync_scope.covers_untracked(key)
     }
 
     /// The listed files that are not outstanding.
@@ -143,10 +159,12 @@ mod tests {
                 scope: SyncScope::EntirePackage,
                 listed: 2,
                 outstanding: 0,
+                backlog: 0,
                 deleted_here: 0,
                 size: Some(DownloadSize {
                     listed: 14,
                     outstanding: 0,
+                    backlog: 0,
                 }),
             }
         );
@@ -164,7 +182,52 @@ mod tests {
 
         assert_eq!(counts.listed, 3);
         assert_eq!(counts.outstanding, 2);
+        assert_eq!(counts.backlog, 2);
         assert_eq!(counts.downloaded(), 1);
+    }
+
+    #[test]
+    fn kept_folders_count_only_their_files_as_the_backlog() {
+        let lineage = tracking(&["top.csv"], SyncScope::folders(["data/raw"]));
+
+        let counts = count(
+            &lineage,
+            &rows(&[
+                "top.csv",
+                "data/raw/a.csv",
+                "data/raw/x/b.csv",
+                "data/raw2/c.csv",
+            ]),
+            &ChangeSet::new(),
+        );
+
+        assert_eq!(
+            (counts.listed, counts.outstanding, counts.backlog),
+            (4, 3, 2)
+        );
+        assert_eq!(
+            counts.size,
+            Some(DownloadSize {
+                listed: 28,
+                outstanding: 21,
+                backlog: 14,
+            })
+        );
+    }
+
+    #[test]
+    fn picked_files_have_no_backlog() {
+        let lineage = tracking(&["a.csv"], SyncScope::IndividualFiles);
+        let changes = ChangeSet::new();
+
+        let counts = count(&lineage, &rows(&["a.csv", "b.csv"]), &changes);
+
+        assert_eq!((counts.outstanding, counts.backlog), (1, 0));
+        assert!(!DownloadCounts::in_backlog(
+            &lineage,
+            &changes,
+            Path::new("b.csv")
+        ));
     }
 
     #[test]
@@ -245,6 +308,7 @@ mod tests {
             Some(DownloadSize {
                 listed: 4_321,
                 outstanding: 4_000,
+                backlog: 4_000,
             })
         );
         assert_eq!(counts.size.unwrap().downloaded(), 321);

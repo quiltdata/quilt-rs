@@ -132,10 +132,10 @@ pub async fn snapshot_for_pull(
 pub struct PullReport {
     /// The revision the pull advanced to.
     pub manifest_uri: ManifestUri,
-    /// Added by the remote and fetched — whole-package scope only, since an
-    /// added path is never already tracked.
+    /// Added by the remote and fetched — whole-package or folders scope only,
+    /// since an added path is never already tracked.
     pub added: Vec<PathBuf>,
-    /// Added by the remote and left on it — individual-file scope only.
+    /// Added by the remote and left on it — any scope but the whole package.
     pub added_not_fetched: Vec<PathBuf>,
     /// A tracked path the remote changed, rewritten from `latest`.
     pub updated: Vec<PathBuf>,
@@ -221,7 +221,8 @@ fn report_of(
 ///
 /// - the scope decides whether a path this copy does not track is in play at
 ///   all — sparse checkout under [`SyncScope::IndividualFiles`], everything the
-///   remote touched under [`SyncScope::EntirePackage`], which is what lets a
+///   remote touched under [`SyncScope::EntirePackage`], and what it touched
+///   under a kept folder under [`SyncScope::Folders`], which is what lets a
 ///   remote *addition* be fetched;
 /// - a path the user changed locally is dropped under **either** scope. The
 ///   classifier has already blocked the pull if that change disagrees with the
@@ -232,11 +233,11 @@ fn touch_set(
     remote_changed: impl IntoIterator<Item = PathBuf>,
     tracked: &LineagePaths,
     locally_changed: &ChangeSet,
-    scope: SyncScope,
+    scope: &SyncScope,
 ) -> Vec<PathBuf> {
     remote_changed
         .into_iter()
-        .filter(|p| scope.covers_untracked() || tracked.contains_key(p))
+        .filter(|p| tracked.contains_key(p) || scope.covers_untracked(p))
         .filter(|p| !locally_changed.contains_key(p))
         .collect()
 }
@@ -251,9 +252,8 @@ fn touch_set(
 /// [`snapshot_for_pull`], which does all network *before* the status walk, so
 /// `snapshot.status` is the freshest possible input to classification.
 ///
-/// `scope` is the caller's, never read from the lineage: this engine also backs
-/// the `quilt` CLI, which passes [`SyncScope::IndividualFiles`] and so keeps
-/// sparse-checkout behaviour whatever a desktop app wrote to `data.json`.
+/// `scope` is the caller's, never read from the lineage, so a caller can still
+/// choose. The `quilt` CLI and the desktop app both pass the stored one.
 #[allow(clippy::too_many_arguments)]
 pub async fn pull_package(
     lineage: PackageLineage,
@@ -373,7 +373,7 @@ pub async fn pull_package(
         delta.keys().cloned(),
         &lineage.paths,
         &snapshot.status.changes,
-        scope,
+        &scope,
     );
     // Verify-before-uninstall. For every touched path, confirm the working-tree
     // file still holds the BASE content the classifier assumed — the row in
@@ -673,7 +673,7 @@ mod tests {
             remote_delta(&base, &latest).into_keys(),
             &tracked,
             &status.changes,
-            SyncScope::IndividualFiles,
+            &SyncScope::IndividualFiles,
         );
         assert_eq!(
             touched,
@@ -1136,15 +1136,37 @@ mod tests {
                 remote_changed(),
                 &tracked,
                 &none,
-                SyncScope::IndividualFiles
+                &SyncScope::IndividualFiles
             ),
             vec![PathBuf::from("have.csv")],
             "sparse checkout leaves a path it does not track"
         );
         assert_eq!(
-            touch_set(remote_changed(), &tracked, &none, SyncScope::EntirePackage),
+            touch_set(remote_changed(), &tracked, &none, &SyncScope::EntirePackage),
             vec![PathBuf::from("have.csv"), PathBuf::from("added.csv")],
             "whole-package scope takes it"
+        );
+    }
+
+    /// Under folders scope a remote addition is taken when it sits under a kept
+    /// folder, and only on a folder boundary.
+    #[test]
+    fn a_remote_added_path_is_taken_under_a_kept_folder() {
+        let remote_changed = vec![
+            PathBuf::from("have.csv"),
+            PathBuf::from("qc/summary.csv"),
+            PathBuf::from("qc2/notes.txt"),
+        ];
+        let tracked = tracked_map(["have.csv"]);
+
+        assert_eq!(
+            touch_set(
+                remote_changed,
+                &tracked,
+                &ChangeSet::new(),
+                &SyncScope::folders(["qc"])
+            ),
+            vec![PathBuf::from("have.csv"), PathBuf::from("qc/summary.csv")],
         );
     }
 
@@ -1159,11 +1181,11 @@ mod tests {
         let none = ChangeSet::new();
 
         assert_eq!(
-            touch_set(never.clone(), &tracked, &none, SyncScope::IndividualFiles),
+            touch_set(never.clone(), &tracked, &none, &SyncScope::IndividualFiles),
             [] as [PathBuf; 0]
         );
         assert_eq!(
-            touch_set(never.clone(), &tracked, &none, SyncScope::EntirePackage),
+            touch_set(never.clone(), &tracked, &none, &SyncScope::EntirePackage),
             never
         );
     }
@@ -1183,7 +1205,7 @@ mod tests {
 
         for scope in [SyncScope::IndividualFiles, SyncScope::EntirePackage] {
             assert!(
-                touch_set(remote_changed(), &tracked, &mine, scope).is_empty(),
+                touch_set(remote_changed(), &tracked, &mine, &scope).is_empty(),
                 "{scope:?} must not overwrite the user's own change"
             );
         }

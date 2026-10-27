@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+use quilt_rs::lineage::SyncScope;
 use quilt_uri::Namespace;
 
 use crate::cli::Error;
+use crate::cli::keep;
 use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
@@ -12,6 +14,10 @@ pub struct Input {
     pub namespace: Option<Namespace>,
     pub paths: Option<Vec<PathBuf>>,
     pub uri: String,
+    /// The scope to keep, set after the install.
+    pub keep: Option<SyncScope>,
+    /// Whether to download the files `keep` covers.
+    pub download: bool,
 }
 
 #[derive(Debug)]
@@ -21,6 +27,8 @@ pub struct Output {
     /// Requested paths not installed because the remote no longer holds their
     /// bytes (an unversioned bucket, overwritten since).
     skipped: Vec<std::path::PathBuf>,
+    /// What `--keep-all` or `--keep-folder` set and downloaded.
+    keep: Option<keep::Output>,
 }
 
 #[cfg(test)]
@@ -56,6 +64,9 @@ impl std::fmt::Display for Output {
                 path.display()
             ));
         }
+        if let Some(keep) = &self.keep {
+            output.push(keep.to_string());
+        }
         write!(f, "{}", output.join("\n"))
     }
 }
@@ -78,6 +89,7 @@ impl Render for Output {
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
+            "keep": self.keep.as_ref().map(Render::to_json),
         })
     }
 }
@@ -130,6 +142,8 @@ pub async fn model(
         namespace,
         paths,
         uri,
+        keep,
+        download,
     }: Input,
 ) -> Result<Output, Error> {
     let uri: quilt_uri::S3PackageUri = uri.parse()?;
@@ -145,10 +159,16 @@ pub async fn model(
         install_paths(&installed_package, &paths).await?
     };
 
+    let keep = match keep {
+        Some(scope) => Some(keep::keep(&installed_package, Some(scope), download).await?),
+        None => None,
+    };
+
     Ok(Output {
         installed_package,
         paths,
         skipped,
+        keep,
     })
 }
 
@@ -196,6 +216,8 @@ mod tests {
                     namespace: None,
                     paths: Some(vec![timestamp_logical_key.clone()]),
                     uri,
+                    keep: None,
+                    download: true,
                 },
             )
             .await?;
@@ -285,6 +307,8 @@ mod tests {
                     namespace: None,
                     paths: None,
                     uri: pkg::URI.to_string(),
+                    keep: None,
+                    download: true,
                 },
             )
             .await?;
@@ -333,6 +357,8 @@ mod tests {
                 namespace: None,
                 paths: Some(requested.clone()),
                 uri: pkg::R1_URI.to_string(),
+                keep: None,
+                download: true,
             },
         )
         .await?;
@@ -377,6 +403,8 @@ mod tests {
                 namespace: None,
                 paths: Some(vec![PathBuf::from(pkg::REPLACED)]),
                 uri: pkg::R1_URI.to_string(),
+                keep: None,
+                download: true,
             },
         )
         .await?;
@@ -409,11 +437,12 @@ mod tests {
                 std::path::PathBuf::from("data/two.csv"),
             ],
             skipped: vec![std::path::PathBuf::from("data/two.csv")],
+            keep: None,
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/pkg","paths":["data/one.csv"],"skipped":["data/two.csv"]}"#
+            r#"{"namespace":"test/pkg","paths":["data/one.csv"],"skipped":["data/two.csv"],"keep":null}"#
         );
         Ok(())
     }
@@ -438,6 +467,7 @@ mod tests {
             installed_package: created.installed_package,
             paths: vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")],
             skipped: vec![PathBuf::from("b.txt")],
+            keep: None,
         };
 
         assert!(
@@ -469,11 +499,12 @@ mod tests {
             installed_package: created.installed_package,
             paths: Vec::new(),
             skipped: Vec::new(),
+            keep: None,
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/bare","paths":[],"skipped":[]}"#
+            r#"{"namespace":"test/bare","paths":[],"skipped":[],"keep":null}"#
         );
         Ok(())
     }

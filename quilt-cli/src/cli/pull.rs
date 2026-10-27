@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use quilt_rs::io::remote::HostConfig;
-use quilt_rs::lineage::SyncScope;
 use quilt_uri::Namespace;
 
 use crate::cli::Error;
@@ -26,9 +25,9 @@ pub struct Output {
 /// One group of the report: its heading, then its paths one per line.
 ///
 /// Grouped by what happened to this copy rather than by the remote's diff, and
-/// worded so the two "new files" cases cannot be confused — under the CLI's
-/// sparse scope an added path is listed and not fetched, and saying so is the
-/// difference between a true line and a misleading one.
+/// worded so the two "new files" cases cannot be confused — outside the
+/// package's sync scope an added path is listed and not fetched, and saying so
+/// is the difference between a true line and a misleading one.
 fn group(f: &mut std::fmt::Formatter<'_>, heading: &str, paths: &[PathBuf]) -> std::fmt::Result {
     if paths.is_empty() {
         return Ok(());
@@ -95,13 +94,12 @@ async fn pull_package(
     host_config: Option<HostConfig>,
 ) -> Result<quilt_rs::flow::PullReport, Error> {
     match local_domain.get_installed_package(&namespace).await? {
-        // Sparse checkout, always. The CLI has no setting for the sync scope
-        // and no surface to show one, so it asks for the narrow scope rather
-        // than honouring whatever a desktop app may have written to this
-        // package's lineage.
-        Some(installed_package) => Ok(installed_package
-            .pull(host_config, SyncScope::IndividualFiles)
-            .await?),
+        // The stored scope, as the desktop app's pulls pass it, so a package
+        // pulls the same files whichever front door pulls it.
+        Some(installed_package) => {
+            let scope = installed_package.lineage().await?.sync_scope;
+            Ok(installed_package.pull(host_config, scope).await?)
+        }
         None => Err(Error::NamespaceNotFound(namespace)),
     }
 }

@@ -984,9 +984,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     /// Record this package's standing [`SyncScope`].
     ///
-    /// Storage only, and deliberately separate from [`Self::pull`]: writing the
-    /// choice and acting on it are different decisions, made by different
-    /// callers. Nothing in this crate reads the stored value back.
+    /// Storage only, and deliberately separate from [`Self::pull`] and from
+    /// installing the [`Self::backlog`]: writing the choice and acting on it
+    /// are different decisions, made by different callers.
     ///
     /// Like every writer here it holds the package's lock, so a choice made
     /// while the autosync tick pulls waits for the pull and then lands on the
@@ -1002,11 +1002,36 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(())
     }
 
+    /// The current revision's files the stored [`SyncScope`] covers that this
+    /// copy does not hold yet, sorted: the outstanding files of
+    /// [`lineage::DownloadCounts::in_backlog`]. Empty under individual-file
+    /// scope. Reads the working tree, not the remote.
+    pub async fn backlog(&self) -> Res<Vec<PathBuf>> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let manifest = self.manifest().await?;
+        let host_config = match lineage.remote_uri.as_ref() {
+            Some(remote_uri) if !remote_uri.bucket.is_empty() => {
+                self.remote.host_config(remote_uri.origin.as_ref()).await?
+            }
+            _ => HostConfig::default(),
+        };
+        let (lineage, status) = self
+            .walk(lineage, &manifest, &package_home, host_config)
+            .await?;
+        let mut backlog: Vec<PathBuf> = manifest
+            .rows
+            .iter()
+            .map(|row| &row.logical_key)
+            .filter(|key| lineage::DownloadCounts::in_backlog(&lineage, &status.changes, key))
+            .cloned()
+            .collect();
+        backlog.sort();
+        Ok(backlog)
+    }
+
     /// `scope` comes from the caller, not from the package's stored
-    /// [`SyncScope`]. Both faces of this engine —
-    /// the desktop app and the `quilt` CLI — reach pull through here, and only
-    /// one of them has a setting; reading the field at this level would let
-    /// state the app wrote change what the CLI does.
+    /// [`SyncScope`], so a caller can still choose. The desktop app and the
+    /// `quilt` CLI both pass the stored one.
     pub async fn pull(
         &self,
         host_config_opt: Option<HostConfig>,
