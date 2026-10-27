@@ -1,7 +1,11 @@
 /*
  * One line, and it has to stay one line at any width (acceptance criterion 8).
- * Truncating is the price of that, and it is the right price here: the tick and the
- * first words carry the meaning, and the tail is a count.
+ * Truncating is the price of that, and it is the right price here: the glyph and the
+ * first words carry the meaning.
+ *
+ * The glyph sits in a column as wide as a queue row's bullet column, with the row's
+ * gap and side padding, so the glyph lines up with the rows' bullets and chevrons,
+ * and the text with theirs.
  */
 
 /* Shared with `.placeholder`: stylance leaves `composes` untranslated. */
@@ -9,27 +13,41 @@
 .placeholder {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--q-space-2);
   width: 100%;
   min-width: 0;
+  min-height: var(--q-queue-line-height);
   margin: 0;
-  padding: 5px 2px;
+  padding: 0 2px;
   color: var(--q-fgColor-muted);
-  font-size: var(--q-text-body);
+  font-size: var(--q-text-lead);
+  font-weight: 400;
   line-height: var(--q-line-tight);
 }
 
+.icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--q-control-height-sm);
+}
+
 /* No fill and no box, unlike a `StateLabel` — which is what keeps this from
- * reading as a row that needs something. It is the absence of rows.
+ * reading as a row that needs something.
  *
  * `fg` and not `onMuted` because there is no fill under it, and legal here
- * because this line does not hover: 4.72:1 on the card. */
+ * because this line does not hover. */
 .root svg {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  color: var(--q-fgColor-success);
+  width: 16px;
+  height: 16px;
+  color: var(--tone-mark);
 }
+
+.success { --tone-mark: var(--q-fgColor-success); }
+.neutral { --tone-mark: var(--q-fgColor-neutral); }
+.attention { --tone-mark: var(--q-fgColor-attention); }
+.danger { --tone-mark: var(--q-fgColor-danger); }
 
 .text {
   min-width: 0;
@@ -38,15 +56,26 @@
   white-space: nowrap;
 }
 
-/* The line's size while the page is still being read, so the list below does
- * not start high and jump down when the queue arrives.
- *
- * Sized like the zero line, not like a cause card, because most loads end with
- * the zero line: reserving a card's height would make the list jump up on every
- * load with nothing to report. A load that does show a card still shifts the
- * list, by less.
- *
- * Its own class name rather than `skeleton`, which `PackageRow` and `FileRow`
+/* A hairline above every row, so the first one also divides the rows from the
+ * line, and one under the last, so the region has a bottom edge. Full width: the
+ * rows reach the region's edges, and so do the rules. */
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* `list-style: none` is enough for WebKit to drop the list semantics with it,
+ * so the list carries an explicit `role="list"`. */
+.rows > li {
+  border-top: 1px solid var(--q-borderColor-muted);
+}
+
+.rows > li:last-child {
+  border-bottom: 1px solid var(--q-borderColor-muted);
+}
+
+/* Its own class name rather than `skeleton`, which `PackageRow` and `FileRow`
  * already use, so a test can select this one alone.
  *
  * The bar is a block and forms no line box, so the text's line height is set
@@ -54,5 +83,5 @@
 .placeholder .text {
   display: flex;
   align-items: center;
-  height: calc(var(--q-text-body) * var(--q-line-tight));
+  height: calc(var(--q-text-lead) * var(--q-line-tight));
 }

@@ -5,6 +5,7 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::Story;
+use crate::kit::AttentionQueue;
 use crate::kit::Banner;
 use crate::kit::BannerVariant;
 use crate::kit::Button;
@@ -146,13 +147,13 @@ pub fn BannerScene() -> impl IntoView {
                         trailing=view! { "0:23" }.into_any()
                     />
                 </Card>
-                <Card title="Needs your attention">
-                    <div>
+                <AttentionQueue text="1 package needs your attention">
+                    <li>
                         <Button on_click=move |_| variant.set(Some(BannerVariant::Success))>
                             "Show a success instead"
                         </Button>
-                    </div>
-                </Card>
+                    </li>
+                </AttentionQueue>
             </PageLayout>
         </Scene>
     }

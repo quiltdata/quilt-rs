@@ -189,6 +189,7 @@ pub use tooltip::Tooltip;
 pub use tooltip::TooltipHandle;
 pub use tooltip::TooltipLine;
 pub use two_columns::TwoColumns;
+pub use zero_line::AttentionQueue;
 pub use zero_line::ZeroLine;
 pub use zero_line::ZeroLineSkeleton;
 

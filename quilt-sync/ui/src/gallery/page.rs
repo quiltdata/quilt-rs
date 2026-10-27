@@ -127,7 +127,7 @@ pub fn PageScene() -> impl IntoView {
                     <StateStripRegion />
                     // Bare, with no card, in the band `QueueRegion` draws it in.
                     <pages::QueueBand>
-                        <ZeroLine text="Everything is Latest — 43 packages" />
+                        <ZeroLine text="All packages are up to date" />
                     </pages::QueueBand>
                     <PackagesRegion view_name="normal-day-view" />
                 </PageLayout>
@@ -179,7 +179,7 @@ pub fn PageScene() -> impl IntoView {
                     <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                         <StateStripRegion />
                         <pages::QueueBand>
-                            <ZeroLine text="Everything is Latest — 43 packages" />
+                            <ZeroLine text="All packages are up to date" />
                         </pages::QueueBand>
                         <PackagesRegion view_name="long-activity-view" />
                     </PageLayout>
@@ -251,7 +251,7 @@ fn CheckingScene() -> impl IntoView {
                     <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                         <StateStripRegion />
                         <pages::QueueBand>
-                            <ZeroLine text="Everything is Latest — 43 packages" />
+                            <ZeroLine text="All packages are up to date" />
                         </pages::QueueBand>
                         <PackagesRegion view_name="checked-view" />
                     </PageLayout>
