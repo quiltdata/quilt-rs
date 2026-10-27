@@ -20,7 +20,8 @@ pub fn GroupHeading(
     let full_title = title.clone();
     view! {
         // `h3`: it sits under a `Card`'s `h2`, and a run of rows is a section of one.
-        <h3 class=style::root>
+        // `data-group-heading` names it for a page that holds it in place.
+        <h3 class=style::root data-group-heading>
             <span class=style::title title=full_title>{title}</span>
             {annotation
                 .map(|note| {

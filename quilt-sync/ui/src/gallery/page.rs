@@ -63,6 +63,10 @@ fn actions(busy: bool) -> AnyView {
     .into_any()
 }
 
+/// A label long enough to wrap on any bar.
+const LONG_ACTIVITY: &str =
+    "Getting latest for a-team-with-a-long-name/an-analysis-package-whose-name-goes-on\u{2026}";
+
 /// One autopull activity, for a bar of its own.
 fn activities(label: &str) -> Activities {
     let activities = Activities::new();
@@ -91,9 +95,11 @@ pub fn BusyDayScene() -> impl IntoView {
                   queue above the list earns the height it takes."
         >
             <div class="g-window">
-                <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                     <StateStripRegion />
-                    <QueueRegion />
+                    <pages::QueueBand>
+                        <QueueRegion />
+                    </pages::QueueBand>
                     <PackagesRegion view_name="busy-day-view" />
                 </PageLayout>
             </div>
@@ -117,9 +123,12 @@ pub fn PageScene() -> impl IntoView {
                   running, which is as true on a calm day as on a bad one."
         >
             <div class="g-window">
-                <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                     <StateStripRegion />
-                    <ZeroLine text="All packages are up to date" />
+                    // Bare, with no card, in the band `QueueRegion` draws it in.
+                    <pages::QueueBand>
+                        <ZeroLine text="All packages are up to date" />
+                    </pages::QueueBand>
                     <PackagesRegion view_name="normal-day-view" />
                 </PageLayout>
             </div>
@@ -144,19 +153,36 @@ pub fn PageScene() -> impl IntoView {
                   in the on-brand ink at reduced strength on a faint amber tint with the kit \
                   radius. It fades in after about 400ms, so reload to watch it arrive. Each \
                   bar has its own Activities; without one, as in the scene above, the bar \
-                  draws no line at all. The second label is long enough to wrap: it grows \
-                  the bar, and is never cut."
+                  draws no line at all. The second label is long enough to wrap: the bar \
+                  keeps its height and the line hangs below it, over the page, never cut. \
+                  Its frame is taller than the bar to show where the line lands."
         >
             <div class="g-window g-window--bar">
                 <Provider value=activities("Getting latest for team/pkg\u{2026}")>
                     <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>
                 </Provider>
             </div>
-            <div class="g-window g-window--bar">
-                <Provider value=activities(
-                    "Getting latest for a-team-with-a-long-name/an-analysis-package-whose-name-goes-on\u{2026}",
-                )>
+            <div class="g-window g-window--bar" style="--q-frame-height:96px">
+                <Provider value=activities(LONG_ACTIVITY)>
                     <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>
+                </Provider>
+            </div>
+        </Scene>
+        <Scene
+            title="Scene · the whole page while a long activity line shows"
+            note="The calm day with the long label on the bar. The bar keeps its height, so \
+                  nothing below it moves; the line's second row hangs over the state strip \
+                  and stays above it when the list scrolls under the bands."
+        >
+            <div class="g-window">
+                <Provider value=activities(LONG_ACTIVITY)>
+                    <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
+                        <StateStripRegion />
+                        <pages::QueueBand>
+                            <ZeroLine text="All packages are up to date" />
+                        </pages::QueueBand>
+                        <PackagesRegion view_name="long-activity-view" />
+                    </PageLayout>
                 </Provider>
             </div>
         </Scene>
@@ -213,16 +239,20 @@ fn CheckingScene() -> impl IntoView {
         >
             <div class="g-window-pair">
                 <div class="g-window">
-                    <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                    <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                         <StateStripRegion />
-                        <ZeroLineSkeleton />
+                        <pages::QueueBand>
+                            <ZeroLineSkeleton />
+                        </pages::QueueBand>
                         <PackagesRegion view_name="checking-view" provisional=true />
                     </PageLayout>
                 </div>
                 <div class="g-window">
-                    <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                    <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                         <StateStripRegion />
-                        <ZeroLine text="All packages are up to date" />
+                        <pages::QueueBand>
+                            <ZeroLine text="All packages are up to date" />
+                        </pages::QueueBand>
                         <PackagesRegion view_name="checked-view" />
                     </PageLayout>
                 </div>
@@ -237,9 +267,10 @@ fn CheckingScene() -> impl IntoView {
 ///
 /// Nothing scrolls sideways at either width. At 640 the strip's two cards no longer
 /// fit one row (`flex: 1 1 300px` asks for 612px of the 608 the page gives) and it
-/// stacks: 343px against 170 at 1024. The queue is 550 and 535, a queue row's name and
-/// clause sharing a line until they do not fit and then taking two. The list keeps its
-/// 160px floor at both, so the page scrolls, 609px at 640 and 422 at 1024.
+/// stacks: 343px against 170 at 1024. The queue's rows are 550 and 535 tall, a queue
+/// row's name and clause sharing a line until they do not fit and then taking two;
+/// the queue shows a third of the window of them and scrolls the rest. The package
+/// rows scroll the page under the bands above them at both widths.
 #[component]
 fn NarrowScene() -> impl IntoView {
     view! {
@@ -250,16 +281,20 @@ fn NarrowScene() -> impl IntoView {
                   scroll sideways or be cut at either width."
         >
             <div id="main-640" class="g-window" style="width:640px; max-width:100%">
-                <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                     <StateStripRegion />
-                    <QueueRegion />
+                    <pages::QueueBand>
+                        <QueueRegion />
+                    </pages::QueueBand>
                     <PackagesRegion view_name="narrow-640-view" />
                 </PageLayout>
             </div>
             <div id="main-1024" class="g-window" style="width:1024px; max-width:100%">
-                <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                     <StateStripRegion />
-                    <QueueRegion />
+                    <pages::QueueBand>
+                        <QueueRegion />
+                    </pages::QueueBand>
                     <PackagesRegion view_name="narrow-1024-view" />
                 </PageLayout>
             </div>

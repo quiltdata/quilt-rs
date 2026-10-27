@@ -9,6 +9,7 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 use quilt_uri::Namespace;
 
+use super::super::main_page::QueueBand;
 use super::super::main_page::list_class;
 use crate::commands::MainPagePackageData;
 use crate::commands::PausedPackageData;
@@ -615,10 +616,22 @@ pub fn QueueRegion(
 
     move || match shape.get() {
         Shape::Nothing | Shape::Silent => ().into_any(),
-        Shape::Pending => view! { <ZeroLineSkeleton /> }.into_any(),
+        // The band goes with the shape: `Nothing` and `Silent` draw none, so
+        // the bands below move up into the place a queue would take.
+        Shape::Pending => view! {
+            <QueueBand>
+                <ZeroLineSkeleton />
+            </QueueBand>
+        }
+        .into_any(),
         // Acceptance criterion 8. The sentence speaks for every package the list
         // draws, which `shape`'s guard checks against the light total.
-        Shape::Zero => view! { <ZeroLine text="All packages are up to date" /> }.into_any(),
+        Shape::Zero => view! {
+            <QueueBand>
+                <ZeroLine text="All packages are up to date" />
+            </QueueBand>
+        }
+        .into_any(),
         // `view!` moves its children into closures of their own, so a handle
         // captured by this closure cannot merely be borrowed out of it and leave
         // it `FnMut`. `owner` is cloned here and nowhere else; `navigate` is
@@ -627,6 +640,7 @@ pub fn QueueRegion(
             let navigate = navigate.clone();
             let owner = owner.clone();
             view! {
+            <QueueBand>
                 <AttentionQueue text=move || attention_line_text(count.get())>
                     // Keyed, not `Vec`'s positional diff. `derive_queue` sorts
                     // by precedence, so one package settling into a higher rank
@@ -659,6 +673,7 @@ pub fn QueueRegion(
                         }
                     />
                 </AttentionQueue>
+            </QueueBand>
             }
             .into_any()
         }

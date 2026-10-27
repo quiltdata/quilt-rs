@@ -69,7 +69,7 @@ pub fn RecentFilesRegion(
 
     if files.is_empty() {
         return view! {
-            <Card label="Recent files">
+            <Card label="Recent files" bare=true>
                 <Blankslate
                     heading="No files yet"
                     description="Files appear here once you install a package or publish a change."
@@ -131,7 +131,7 @@ pub fn RecentFilesRegion(
         // One tooltip for every row's cut path or package tag. Around the card,
         // not inside it: the card spaces its body's children itself.
         <NameTooltip>
-        <Card label="Recent files">
+        <Card label="Recent files" bare=true>
             {move || match shape.get() {
                 FeedShape::NoMatch => {
                     // Its own closure: the words carry the query, so they follow
@@ -732,11 +732,11 @@ mod tests {
         stylance::import_crate_style!(pub card, "src/kit/card.module.scss");
     }
 
-    /// The card is the list region's scroller with the tooltip's wrapper
-    /// around it: a long feed scrolls inside the card, under a toolbar that
-    /// keeps its place, rather than growing the page.
+    /// The feed has no scroller of its own: a long feed grows the region, and
+    /// the page scrolls it, so the wheel moves the list from anywhere on the
+    /// window.
     #[wasm_bindgen_test]
-    async fn a_long_feed_scrolls_inside_its_card() {
+    async fn a_long_feed_scrolls_the_page_not_its_card() {
         use crate::test_support::load_module_style;
         load_module_style(
             include_str!("../main_page.module.scss"),
@@ -744,7 +744,11 @@ mod tests {
         );
         load_module_style(
             include_str!("../../kit/card.module.scss"),
-            &[("root", sheets::card::root), ("body", sheets::card::body)],
+            &[
+                ("root", sheets::card::root),
+                ("body", sheets::card::body),
+                ("bare", sheets::card::bare),
+            ],
         );
         let files: Vec<_> = (0..60)
             .map(|i| file(&format!("data/{i}.csv"), "user/alpha", f64::from(i)))
@@ -752,9 +756,9 @@ mod tests {
         let el = mount(move || {
             view! {
                 <leptos_router::components::Router>
-                    <div style="height:300px; display:flex; flex-direction:column">
+                    <div data-page style="height:300px; overflow-y:auto">
                         <div class=sheets::page::list_region>
-                            <div style="height:32px; flex:none">"Toolbar"</div>
+                            <div style="height:32px">"Toolbar"</div>
                             <RecentFilesRegion
                                 files=files.clone()
                                 query=Signal::stored(String::new())
@@ -771,14 +775,19 @@ mod tests {
             .unwrap()
             .expect("the card")
             .unchecked_into();
-        assert!(
-            card.client_height() <= 300,
-            "the card grew to {}px instead of scrolling",
-            card.client_height()
+        assert_eq!(
+            card.scroll_height(),
+            card.client_height(),
+            "the card scrolls nothing itself"
         );
+        let page: web_sys::HtmlElement = el
+            .query_selector("[data-page]")
+            .unwrap()
+            .expect("the page")
+            .unchecked_into();
         assert!(
-            card.scroll_height() > card.client_height(),
-            "the rows scroll"
+            page.scroll_height() > page.client_height(),
+            "the page scrolls the rows"
         );
     }
 
