@@ -1054,7 +1054,7 @@ fn footer(picking: Picking, rows: StoredValue<Vec<Row>>) -> AnyView {
     let chosen = Memo::new(move |_| ticked.with(|t| rows.with_value(|rs| ticked_rows(t, rs))));
     view! {
         <Show when=move || chosen.with(|(paths, _)| !paths.is_empty())>
-            <div class=style::footer>
+            <FooterBand>
                 <Button
                     variant=ButtonVariant::Primary
                     loading=picking.downloading
@@ -1063,10 +1063,19 @@ fn footer(picking: Picking, rows: StoredValue<Vec<Row>>) -> AnyView {
                 >
                     {move || chosen.with(|(paths, bytes)| footer_words(paths.len(), *bytes))}
                 </Button>
-            </div>
+            </FooterBand>
         </Show>
     }
     .into_any()
+}
+
+/// The footer's band, held at the bottom of the window. It publishes its
+/// height, which a row reached from the keyboard keeps clear of.
+#[component]
+pub(crate) fn FooterBand(children: Children) -> impl IntoView {
+    let band = NodeRef::new();
+    publish_height(band, "--q-footer-height");
+    view! { <div class=style::footer node_ref=band>{children()}</div> }
 }
 
 /// The ticked paths among the rows on offer, in path order, and their bytes:

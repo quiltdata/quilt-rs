@@ -107,9 +107,11 @@
   --pinned-queue: var(--q-queue-height, 0px);
   --pinned-header: var(--q-header-height, 0px);
   --pinned-toolbar: var(--q-toolbar-height, 0px);
+  --pinned-footer: var(--q-footer-height, 0px);
 
   /* Where the bands end: the room a focused row keeps clear of them, and where a
-   * group heading sticks. The frame is the scroller, so the padding is set here. */
+   * group heading sticks. The frame is the scroller, so the padding is set here,
+   * and a band held at the bottom keeps the same room below. */
   --pinned-bottom: min(
     var(--q-appbar-height) + var(--pinned-strip) + var(--pinned-queue) + var(--pinned-header) +
       var(--pinned-toolbar),
@@ -117,4 +119,5 @@
   );
 
   scroll-padding-top: var(--pinned-bottom);
+  scroll-padding-bottom: var(--pinned-footer);
 }

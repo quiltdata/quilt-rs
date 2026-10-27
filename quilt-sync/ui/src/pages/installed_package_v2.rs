@@ -1578,7 +1578,7 @@ fn PackageEventListener(reload: Trigger) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pages::installed_package_v2::file_pane::FileToolbarBand;
+    use crate::pages::installed_package_v2::file_pane::{FileToolbarBand, FooterBand};
     use crate::test_support::{button_saying, element_saying, mount, sleep_ms};
     use leptos_router::components::{Route, Router, Routes};
     use leptos_router::path;
@@ -4124,14 +4124,17 @@ mod tests {
     }
 
     /// While something is ticked the footer stays at the bottom of the window
-    /// over the rows that run past it.
+    /// over the rows that run past it, and a row reached from the keyboard
+    /// keeps clear of it.
     #[wasm_bindgen_test]
     async fn the_footer_stays_at_the_bottom_of_the_window() {
         let rows = view! {
             <div class=sheets::files::list>
                 {(0..60).map(|_| view! { <div style="height:32px"></div> }).collect_view()}
             </div>
-            <div class=sheets::files::footer style="height:40px"></div>
+            <FooterBand>
+                <div style="height:40px"></div>
+            </FooterBand>
         }
         .into_any();
         let el = scrolling_page(1024, 200, rows);
@@ -4144,6 +4147,15 @@ mod tests {
             frame.get_bounding_client_rect().bottom(),
             "the footer is on the window's bottom edge"
         );
+        let padding = web_sys::window()
+            .unwrap()
+            .get_computed_style(&frame)
+            .unwrap()
+            .unwrap()
+            .get_property_value("scroll-padding-bottom")
+            .unwrap();
+        // The footer: its content and its own padding.
+        assert_eq!(padding, "56px", "the room a focused row keeps below");
     }
 
     /// A folder heading sticks under the file toolbar while its rows scroll,
