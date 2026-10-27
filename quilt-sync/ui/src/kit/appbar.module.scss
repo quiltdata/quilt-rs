@@ -40,6 +40,8 @@
  * bar still grows with it. */
 [data-v2-page] .bar {
   height: var(--q-appbar-height);
+  /* The row too, or it grows to the line and moves the logo and the controls. */
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .logo {

@@ -101,7 +101,7 @@ mod tests {
                     style="width:320px; --q-appbar-height:48px; --q-space-1:4px; \
                            --q-space-2:8px; --q-space-3:12px"
                 >
-                    <Appbar />
+                    <Appbar actions=Some(view! { <button>"Refresh"</button> }.into_any()) />
                 </div>
             }
         });
@@ -117,6 +117,10 @@ mod tests {
         assert_eq!(bar.height(), 48.0, "the bar keeps its height");
         assert!(line.bottom() > bar.bottom(), "the line wraps below the bar");
         assert!(line.top() >= bar.top(), "and never reaches above it");
+        assert!(
+            rect("button").bottom() <= bar.bottom(),
+            "the controls stay on the bar"
+        );
     }
 
     #[wasm_bindgen_test]
