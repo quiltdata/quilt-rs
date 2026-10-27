@@ -4,7 +4,7 @@
 //! # Where it lives
 //!
 //! In the "History" surface the context pane already opens, at the
-//! pane's 280px. The list is the thing a reader is looking at when they wonder
+//! pane's 320px. The list is the thing a reader is looking at when they wonder
 //! why there are six of them, so the removal sits on the rows.
 //!
 //! # Every removal is confirmed by the kit's `ConfirmDialog`

@@ -39,7 +39,7 @@
 /* A section inside a section fills the one above it. `align-items: flex-start`
  * sizes children to their content, which is what keeps a Button from stretching
  * — but it also lets a nested section take its own width from its widest child,
- * and a child that has to ellipsise inside a 280px pane can then never see the
+ * and a child that has to ellipsise inside a 320px pane can then never see the
  * width it is supposed to fit. */
 .root > .root {
   width: 100%;

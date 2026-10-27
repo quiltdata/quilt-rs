@@ -3,7 +3,7 @@
 //! # What this scene is for
 //!
 //! The pane is the page's *other* half, and every one of its parts already has a
-//! Core cell. What no Core cell can show is the three of them at 280px with a
+//! Core cell. What no Core cell can show is the three of them at 320px with a
 //! popover hanging off one — whether the surface fits the pane it belongs to,
 //! whether two blocks labelled by two different components look like siblings,
 //! and whether the conditional download action reads as part of the choice above
@@ -63,7 +63,7 @@ use quilt_sync_ui::util::thousands;
 /// The design's fixed pane width. Written here rather than taken from a token
 /// because it is this page's bet, not the system's: the file list grows and the
 /// pane does not.
-const PANE: &str = "width:280px";
+const PANE: &str = "width:320px";
 
 const NAMESPACE: &str = "user/plate-07";
 /// A fact about the package, so it sits in the section and never on a row —
@@ -381,7 +381,7 @@ fn pane(
 ///
 /// The three overlay cells are drawn inside this and the others are not, because
 /// the surface is the one part of the pane whose behaviour is about the pane's
-/// *position*. A 280px pane floating alone in a cell would let a popover open
+/// *position*. A 320px pane floating alone in a cell would let a popover open
 /// rightwards into empty gallery, which is the one direction the real page does
 /// not have.
 fn in_page(pane: AnyView) -> AnyView {
@@ -455,7 +455,7 @@ fn refused() -> ResolveData {
 }
 
 /// What the cells are for, and what looking at them settled.
-const NOTE: &str = "280px holding three blocks: what the page says about the package rather \
+const NOTE: &str = "320px holding three blocks: what the page says about the package rather \
     than about its files. \
     \
     Bucket and catalog comes first, on every package: the s3:// address and the catalog \
@@ -477,7 +477,7 @@ const NOTE: &str = "280px holding three blocks: what the page says about the pac
     wears a cloud and ends in an icon that opens the catalog; the unsent one \
     wears the slashed cloud and no icon. \
     \
-    In resolve mode both choices fit on one line at 280px, each with the \
+    In resolve mode both choices fit on one line at 320px, each with the \
     sentence that says what it does beneath it. They are a block of their own \
     under the comparison, ruled off from Published, and each hint sits close \
     under its button and well clear of the next.";

@@ -17,7 +17,7 @@ use super::revision_history::{History, Key, Shown};
 use crate::commands;
 use crate::kit::{
     Align, AnchoredOverlay, Button, ButtonVariant, Card, LoadFailure, PaneSection, RevisionRow,
-    SkeletonBox,
+    SkeletonBox, SkeletonText,
 };
 
 stylance::import_crate_style!(
@@ -251,16 +251,36 @@ fn surface_body(
     }
 }
 
-/// The pane's loading geometry, occupying the same card and section structure.
+/// The pane's loading geometry: the same three sections, each heading and
+/// label in place, with bars for what the payload fills in.
 #[component]
 pub fn CurrentRevisionPaneSkeleton() -> impl IntoView {
+    let button = |width: &str| {
+        view! { <SkeletonBox width=width height="var(--q-control-height)" /> }.into_any()
+    };
     view! {
         <aside aria-label="About this package" class=style::root>
             <Card label="About this package" busy=Signal::stored(true)>
-                <PaneSection label="Revision">
-                    <SkeletonBox width="80%" />
-                    <SkeletonBox width="42%" />
-                    <SkeletonBox width="68%" />
+                <PaneSection label="Bucket and catalog" action=button("72px")>
+                    <dl class=style::facts>
+                        <dt class=style::muted>"Bucket"</dt>
+                        <dd class=style::value>
+                            <SkeletonText width="70%" />
+                        </dd>
+                        <dt class=style::muted>"Catalog"</dt>
+                        <dd class=style::value>
+                            <SkeletonText width="55%" />
+                        </dd>
+                    </dl>
+                </PaneSection>
+                <PaneSection label="Revision" action=button("96px")>
+                    <SkeletonText width="80%" />
+                    <SkeletonText width="42%" />
+                </PaneSection>
+                <PaneSection label="Keeping">
+                    <SkeletonText width="45%" />
+                    <SkeletonText width="55%" />
+                    <SkeletonText width="85%" />
                 </PaneSection>
             </Card>
         </aside>
@@ -1258,8 +1278,9 @@ mod tests {
         );
     }
 
+    /// The skeleton draws the loaded pane's three sections, each with bars.
     #[wasm_bindgen_test]
-    fn the_skeleton_marks_the_composing_region_busy() {
+    fn the_skeleton_draws_every_section_and_marks_the_region_busy() {
         let el = mount(|| view! { <CurrentRevisionPaneSkeleton /> });
         let card = el
             .query_selector("aside > section")
@@ -1267,7 +1288,19 @@ mod tests {
             .expect("the composing card");
         assert_eq!(card.get_attribute("aria-busy").as_deref(), Some("true"));
 
-        let bars = el.query_selector_all("[aria-hidden='true']").unwrap();
-        assert_eq!(bars.length(), 3);
+        assert_eq!(headings(&el), ["Bucket and catalog", "Revision", "Keeping"]);
+        let sections = card.query_selector_all("section").unwrap();
+        assert_eq!(sections.length(), 3);
+        for i in 0..sections.length() {
+            let section: web_sys::Element = sections.item(i).unwrap().unchecked_into();
+            assert!(
+                section
+                    .query_selector("[aria-hidden='true']")
+                    .unwrap()
+                    .is_some(),
+                "bars in each section; markup was {}",
+                section.inner_html()
+            );
+        }
     }
 }

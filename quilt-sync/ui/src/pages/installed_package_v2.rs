@@ -2267,7 +2267,7 @@ mod tests {
             PAGE.contains("order: 0"),
             "context above files, in DOM order, when stacked"
         );
-        assert!(PANE.contains("width: 280px"));
+        assert!(PANE.contains("width: 320px"));
         assert!(PANE.contains("@container (max-width: 800px)"));
         assert!(PANE.contains("width: 100%"));
         assert!(
