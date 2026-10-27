@@ -63,6 +63,10 @@ fn actions(busy: bool) -> AnyView {
     .into_any()
 }
 
+/// A label long enough to wrap on any bar.
+const LONG_ACTIVITY: &str =
+    "Getting latest for a-team-with-a-long-name/an-analysis-package-whose-name-goes-on\u{2026}";
+
 /// One autopull activity, for a bar of its own.
 fn activities(label: &str) -> Activities {
     let activities = Activities::new();
@@ -149,19 +153,36 @@ pub fn PageScene() -> impl IntoView {
                   in the on-brand ink at reduced strength on a faint amber tint with the kit \
                   radius. It fades in after about 400ms, so reload to watch it arrive. Each \
                   bar has its own Activities; without one, as in the scene above, the bar \
-                  draws no line at all. The second label is long enough to wrap: it grows \
-                  the bar, and is never cut."
+                  draws no line at all. The second label is long enough to wrap: the bar \
+                  keeps its height and the line hangs below it, over the page, never cut. \
+                  Its frame is taller than the bar to show where the line lands."
         >
             <div class="g-window g-window--bar">
                 <Provider value=activities("Getting latest for team/pkg\u{2026}")>
                     <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>
                 </Provider>
             </div>
-            <div class="g-window g-window--bar">
-                <Provider value=activities(
-                    "Getting latest for a-team-with-a-long-name/an-analysis-package-whose-name-goes-on\u{2026}",
-                )>
+            <div class="g-window g-window--bar" style="--q-frame-height:96px">
+                <Provider value=activities(LONG_ACTIVITY)>
                     <PageLayout heading="QuiltSync" actions=appbar_actions()>""</PageLayout>
+                </Provider>
+            </div>
+        </Scene>
+        <Scene
+            title="Scene · the whole page while a long activity line shows"
+            note="The calm day with the long label on the bar. The bar keeps its height, so \
+                  nothing below it moves; the line's second row hangs over the state strip \
+                  and stays above it when the list scrolls under the bands."
+        >
+            <div class="g-window">
+                <Provider value=activities(LONG_ACTIVITY)>
+                    <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
+                        <StateStripRegion />
+                        <pages::QueueBand>
+                            <ZeroLine text="Everything is Latest — 43 packages" />
+                        </pages::QueueBand>
+                        <PackagesRegion view_name="long-activity-view" />
+                    </PageLayout>
                 </Provider>
             </div>
         </Scene>

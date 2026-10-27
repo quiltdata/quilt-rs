@@ -18,7 +18,7 @@
 }
 
 /* Defaults match the frame's `.notice` and `.main`, so the logo lines up with the regions.
- * Equal outer columns center the activity line on the bar; a long line wraps and grows it. */
+ * Equal outer columns center the activity line on the bar. */
 .bar {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -32,6 +32,14 @@
   min-height: var(--q-appbar-height);
   /* Both themes' rings are under 3:1 on the brand ground. */
   --q-focus-outlineColor: var(--q-fgColor-onBrand);
+}
+
+/* In the v2 frame the bar is one fixed height, which the sticky parts under it
+ * take as their offset. A long activity line wraps past its bottom edge and is
+ * drawn over the page below, so nothing moves and the text is never cut. v1's
+ * bar still grows with it. */
+[data-v2-page] .bar {
+  height: var(--q-appbar-height);
 }
 
 .logo {

@@ -22,6 +22,11 @@
   /* Never cut: a namespace has no spaces, so it may break anywhere. */
   white-space: normal;
   overflow-wrap: anywhere;
+  /* Centered on the bar, but a line taller than the bar hangs from its top
+   * rather than reaching above the window. `start` is for a browser without
+   * `safe`. */
+  align-self: start;
+  align-self: safe center;
   opacity: 0;
   /* Leaving: quick, at once. */
   transition: opacity 120ms ease;

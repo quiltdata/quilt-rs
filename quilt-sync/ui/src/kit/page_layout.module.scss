@@ -74,12 +74,18 @@
   min-height: 0;
 }
 
+/* Above the page, so an activity line that hangs below the bar is drawn over
+ * the regions and over a page's sticky bands. */
+.root > header {
+  position: relative;
+  z-index: 2;
+}
+
 /* A page that scrolls as one. The appbar sticks at the top, and the page's own
  * bands stick under it. */
 .root[data-page-scroll] > header {
   position: sticky;
   top: 0;
-  z-index: 2;
 }
 
 /* The column grows with its content. A sticky band stays only inside its

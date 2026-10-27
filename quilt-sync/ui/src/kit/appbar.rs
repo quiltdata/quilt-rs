@@ -60,6 +60,65 @@ mod tests {
         );
     }
 
+    mod sheets {
+        stylance::import_crate_style!(pub line, "src/kit/activity_line.module.scss");
+    }
+
+    /// In the v2 frame the bar keeps its height, which the sticky parts under
+    /// it take as their offset, and a long line hangs below it instead.
+    #[wasm_bindgen_test]
+    async fn a_long_line_hangs_below_a_bar_of_fixed_height() {
+        use crate::kit::Activity;
+        use crate::kit::ActivityKind;
+        use crate::test_support::load_module_style;
+        use crate::test_support::sleep_ms;
+        load_module_style(
+            include_str!("appbar.module.scss"),
+            &[("appbar", style::appbar), ("bar", style::bar)],
+        );
+        load_module_style(
+            include_str!("activity_line.module.scss"),
+            &[("line", sheets::line::line)],
+        );
+        // The app's normalize sheet, which the test page does not load.
+        load_module_style("[data-bar-test] * { box-sizing: border-box }", &[]);
+        let activities = Activities::new();
+        activities.set(
+            ActivityKind::Autopull,
+            vec![Activity {
+                kind: ActivityKind::Autopull,
+                label: "Getting latest for a-team-with-a-long-name/a-package-whose-name-goes-on\u{2026}"
+                    .to_owned(),
+                package: None,
+            }],
+        );
+        let el = mount(move || {
+            provide_context(activities);
+            view! {
+                <div
+                    data-v2-page
+                    data-bar-test
+                    style="width:320px; --q-appbar-height:48px; --q-space-1:4px; \
+                           --q-space-2:8px; --q-space-3:12px"
+                >
+                    <Appbar />
+                </div>
+            }
+        });
+        sleep_ms(0).await;
+        let rect = |selector: &str| {
+            el.query_selector(selector)
+                .unwrap()
+                .expect(selector)
+                .get_bounding_client_rect()
+        };
+        let bar = rect("header");
+        let line = rect("[role=status]");
+        assert_eq!(bar.height(), 48.0, "the bar keeps its height");
+        assert!(line.bottom() > bar.bottom(), "the line wraps below the bar");
+        assert!(line.top() >= bar.top(), "and never reaches above it");
+    }
+
     #[wasm_bindgen_test]
     fn the_bar_carries_no_surface_marker() {
         let el = mount(
