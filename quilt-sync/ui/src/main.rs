@@ -343,15 +343,14 @@ mod tests {
             publish: PublishSettingsData::default(),
             autosync: AutosyncSettingsData::default(),
             fswatcher: FsWatcherSettingsData::default(),
-            experimental: ExperimentalSettingsData {
-                entire_package_sync: false,
-            },
+            experimental: ExperimentalSettingsData::default(),
             design: if v2 {
                 commands::Design::V2
             } else {
                 commands::Design::V1
             },
             ignore_rules: commands::IgnoreRulesData::default(),
+            tasks: commands::TaskSettingsData::default(),
         }
     }
 

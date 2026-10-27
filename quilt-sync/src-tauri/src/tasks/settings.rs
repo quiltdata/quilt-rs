@@ -17,9 +17,9 @@ const AGENTS_FILE_NAME: &str = "task_agents.json";
 
 /// Which buckets may hand this desktop a task, and which agents it can run.
 ///
-/// Read from `task_settings.json` in `app_local_data_dir`, written by hand: the
-/// app has no screen for it.
-#[derive(Deserialize, Debug, PartialEq, Eq)]
+/// Read from `task_settings.json` in `app_local_data_dir`, which the Settings
+/// page writes, or the user by hand.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct TaskSettings {
     #[serde(default)]
     pub blessed_buckets: Vec<String>,
@@ -27,7 +27,7 @@ pub struct TaskSettings {
     pub agents: BTreeMap<String, AgentSettings>,
 }
 
-#[derive(Deserialize, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct AgentSettings {
     /// The program and its arguments, run with the package's folder as cwd.
     pub command: Vec<String>,
@@ -39,14 +39,23 @@ pub struct AgentSettings {
 impl TaskSettings {
     /// `None` when tasks are off: no file, or no blessed bucket.
     pub async fn load(data_dir: &Path) -> Result<Option<Self>, Error> {
-        match tokio::fs::read(data_dir.join(FILE_NAME)).await {
-            Ok(bytes) => {
-                let settings: Self = serde_json::from_slice(&bytes)?;
-                Ok(Some(settings).filter(|s| !s.blessed_buckets.is_empty()))
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(Error::from(err)),
-        }
+        Ok(Some(Self::read(data_dir).await?).filter(|s| !s.blessed_buckets.is_empty()))
+    }
+
+    /// The file as written; empty when there is none.
+    pub async fn read(data_dir: &Path) -> Result<Self, Error> {
+        read(&data_dir.join(FILE_NAME)).await
+    }
+
+    /// Write the whole file atomically. Fields it does not know, such as
+    /// `version`, are not kept.
+    pub async fn save(&self, data_dir: &Path) -> Result<(), Error> {
+        tokio::fs::create_dir_all(data_dir).await?;
+        let path = data_dir.join(FILE_NAME);
+        let tmp = path.with_extension("json.tmp");
+        tokio::fs::write(&tmp, serde_json::to_vec_pretty(self)?).await?;
+        tokio::fs::rename(&tmp, &path).await?;
+        Ok(())
     }
 
     /// Whether `bucket`, a bare bucket name, is listed, as `s3://name` or `name`.
@@ -208,6 +217,38 @@ mod tests {
             !settings.agents["other"].trust_all,
             "trust_all is off unless set"
         );
+        Ok(())
+    }
+
+    /// What the Settings page saves is what it reads back, and the next
+    /// load sees it. Fields the app does not know are not kept.
+    #[tokio::test]
+    async fn a_save_reads_back_with_only_the_known_fields() -> Result<(), Error> {
+        let dir = TempDir::new()?;
+        assert_eq!(
+            TaskSettings::read(dir.path()).await?,
+            TaskSettings::default()
+        );
+        tokio::fs::write(
+            dir.path().join(FILE_NAME),
+            r#"{"version":1,"blessed_buckets":["s3://old"]}"#,
+        )
+        .await?;
+        let settings = TaskSettings {
+            blessed_buckets: vec!["s3://quilt-dev".to_string()],
+            agents: BTreeMap::from([(
+                "kiro".to_string(),
+                AgentSettings {
+                    command: vec!["kiro-cli-chat".to_string(), "acp".to_string()],
+                    trust_all: true,
+                },
+            )]),
+        };
+        settings.save(dir.path()).await?;
+        assert_eq!(TaskSettings::read(dir.path()).await?, settings);
+        assert_eq!(TaskSettings::load(dir.path()).await?, Some(settings));
+        let written = tokio::fs::read_to_string(dir.path().join(FILE_NAME)).await?;
+        assert!(!written.contains("version"), "{written}");
         Ok(())
     }
 

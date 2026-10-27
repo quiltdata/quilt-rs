@@ -26,6 +26,7 @@ use crate::model::QuiltModel;
 use crate::publish_settings::PublishSettings;
 use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
+use crate::tasks::settings::TaskSettings;
 
 // ── Settings data for Leptos UI ──
 
@@ -180,14 +181,71 @@ impl From<FsWatcherSettings> for FsWatcherSettingsData {
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentalSettingsData {
     pub entire_package_sync: bool,
+    pub agent_tasks: bool,
 }
 
 impl From<ExperimentalSettings> for ExperimentalSettingsData {
     fn from(s: ExperimentalSettings) -> Self {
         Self {
             entire_package_sync: s.entire_package_sync,
+            agent_tasks: s.agent_tasks,
         }
     }
+}
+
+/// `task_settings.json` as written, for the Settings page.
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSettingsData {
+    /// Empty when there is no file, or it could not be read.
+    pub settings: TaskSettings,
+    /// Why the file could not be read. The page then offers no edit, so a
+    /// save never replaces a file the user has to fix by hand.
+    pub error: Option<String>,
+}
+
+impl TaskSettingsData {
+    async fn read(data_dir: &std::path::Path) -> Self {
+        match TaskSettings::read(data_dir).await {
+            Ok(settings) => Self {
+                settings,
+                error: None,
+            },
+            Err(err) => Self {
+                settings: TaskSettings::default(),
+                error: Some(err.to_string()),
+            },
+        }
+    }
+}
+
+/// `settings` as the file stores it, or why it cannot be saved: each bucket
+/// as `s3://name`, each command with at least a program.
+fn checked_task_settings(mut settings: TaskSettings) -> Result<TaskSettings, String> {
+    for bucket in &mut settings.blessed_buckets {
+        let name = bucket.trim();
+        let name = name
+            .strip_prefix("s3://")
+            .unwrap_or(name)
+            .trim_end_matches('/');
+        if name.is_empty() || name.contains('/') {
+            return Err(format!("Not a bucket name: {bucket}"));
+        }
+        *bucket = format!("s3://{name}");
+    }
+    for (name, agent) in &settings.agents {
+        if name.trim().is_empty() {
+            return Err("An agent has no name".to_string());
+        }
+        if agent
+            .command
+            .first()
+            .is_none_or(|program| program.trim().is_empty())
+        {
+            return Err(format!("Agent {name} has no command"));
+        }
+    }
+    Ok(settings)
 }
 
 /// Each built-in ignore rule as Settings shows it: its group, and a few
@@ -329,6 +387,7 @@ pub struct SettingsData {
     pub experimental: ExperimentalSettingsData,
     pub design: Design,
     pub ignore_rules: IgnoreRulesData,
+    pub tasks: TaskSettingsData,
 }
 
 #[tauri::command]
@@ -374,6 +433,7 @@ pub async fn get_settings_data(
         .map(|s| s.design)
         .unwrap_or_default();
     let user_rules = m.get_quilt().lock().await.user_quiltignore();
+    let tasks = TaskSettingsData::read(&data_dir).await;
 
     Ok(SettingsData {
         version: app.version.to_string(),
@@ -392,7 +452,24 @@ pub async fn get_settings_data(
         experimental: experimental_data,
         design,
         ignore_rules: IgnoreRulesData::read(&user_rules),
+        tasks,
     })
+}
+
+/// Replace `task_settings.json`. The task runner reads it again on its next
+/// check, so this needs no restart.
+#[tauri::command]
+pub async fn update_task_settings(
+    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
+    settings: TaskSettings,
+) -> Result<(), String> {
+    let settings = checked_task_settings(settings)?;
+    let app_handle = app_handle.lock().await;
+    let data_dir = app_handle
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?;
+    settings.save(&data_dir).await.map_err(|e| e.to_string())
 }
 
 /// Turn off exactly the built-in ignore rules in `off`, for every package.
@@ -680,6 +757,7 @@ pub async fn update_experimental_settings(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     experimental: tauri::State<'_, SharedExperimentalSettings>,
     entire_package_sync: Option<bool>,
+    agent_tasks: Option<bool>,
 ) -> Result<(), String> {
     let app_handle = app_handle.lock().await;
     let data_dir = app_handle
@@ -689,7 +767,7 @@ pub async fn update_experimental_settings(
 
     // Read guard dropped before the write guard is taken.
     let mut new = { experimental.read().await.clone() };
-    new.patch(entire_package_sync);
+    new.patch(entire_package_sync, agent_tasks);
     new.save(&data_dir).await.map_err(|e| e.to_string())?;
     *experimental.write().await = new;
     Ok(())
@@ -719,6 +797,57 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::Error;
+
+    fn tasks(buckets: &[&str], agents: &[(&str, &[&str])]) -> TaskSettings {
+        TaskSettings {
+            blessed_buckets: buckets.iter().map(ToString::to_string).collect(),
+            agents: agents
+                .iter()
+                .map(|(name, command)| {
+                    (
+                        (*name).to_string(),
+                        crate::tasks::settings::AgentSettings {
+                            command: command.iter().map(ToString::to_string).collect(),
+                            trust_all: false,
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn task_buckets_are_stored_as_s3_uris() {
+        let checked = checked_task_settings(tasks(&["quilt-dev", "s3://quilt-prod/ "], &[]));
+        assert_eq!(
+            checked.map(|s| s.blessed_buckets),
+            Ok(vec![
+                "s3://quilt-dev".to_string(),
+                "s3://quilt-prod".to_string()
+            ])
+        );
+    }
+
+    #[test]
+    fn task_settings_that_cannot_run_are_refused() {
+        assert!(checked_task_settings(tasks(&["s3://"], &[])).is_err());
+        assert!(checked_task_settings(tasks(&["quilt-dev/data"], &[])).is_err());
+        assert!(checked_task_settings(tasks(&[], &[(" ", &["agent"])])).is_err());
+        assert!(checked_task_settings(tasks(&[], &[("kiro", &[])])).is_err());
+        assert!(checked_task_settings(tasks(&[], &[("kiro", &["kiro-cli", "acp"])])).is_ok());
+    }
+
+    /// A file the app cannot read says why, and shows as empty.
+    #[tokio::test]
+    async fn a_malformed_task_file_says_why() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(TaskSettingsData::read(dir.path()).await.error, None);
+        tokio::fs::write(dir.path().join("task_settings.json"), b"{\"agents\": [").await?;
+        let data = TaskSettingsData::read(dir.path()).await;
+        assert!(data.error.is_some());
+        assert_eq!(data.settings, TaskSettings::default());
+        Ok(())
+    }
 
     /// A built-in rule added or removed in quilt-rs needs its words here.
     #[test]
