@@ -24,7 +24,7 @@
 ### Changed
 
 - `quilt pull` on an up-to-date package prints `Already up to date` and exits 0, instead of failing. `--json` keeps the pull's shape with `"hash": null` (<https://github.com/quiltdata/quilt-rs/pull/1227>)
-- `quilt push` with no commit to push prints `Nothing to push` and exits 0, instead of failing. `--json` keeps the push's shape with `"hash": null` (PR_URL)
+- `quilt push` with no commit to push prints `Nothing to push` and exits 0, instead of failing. `--json` keeps the push's shape with `"hash": null` (<https://github.com/quiltdata/quilt-rs/pull/1230>)
 
 ### quilt-rs
 

@@ -25,7 +25,7 @@
 
 - **Breaking:** `InstalledPackage::pull` returns `flow::Pulled`: `UpToDate` when the remote's `latest` is the revision the package already has, `Applied` with the `PullReport` otherwise. `PackageOpError::AlreadyUpToDate` is removed (<https://github.com/quiltdata/quilt-rs/pull/1227>)
 - A pull with nothing to fetch still saves the `latest` it read (<https://github.com/quiltdata/quilt-rs/pull/1227>)
-- **Breaking:** `InstalledPackage::push` and `LockedPackage::push` return `Pushed`: `NothingToPush` when there is no pending commit, `Uploaded` with the `PushOutcome` otherwise. A push with no pending commit no longer fails with `PackageOpError::Push("No commits to push")` (PR_URL)
+- **Breaking:** `InstalledPackage::push` and `LockedPackage::push` return `Pushed`: `NothingToPush` when there is no pending commit, `Uploaded` with the `PushOutcome` otherwise. A push with no pending commit no longer fails with `PackageOpError::Push("No commits to push")` (<https://github.com/quiltdata/quilt-rs/pull/1230>)
 
 ## [v0.49.0] - 2026-10-26
 
