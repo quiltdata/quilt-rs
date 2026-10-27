@@ -3961,6 +3961,7 @@ mod tests {
     #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
     mod sheets {
         stylance::import_crate_style!(pub layout, "src/kit/page_layout.module.scss");
+        stylance::import_crate_style!(pub appbar, "src/kit/appbar.module.scss");
         stylance::import_crate_style!(
             pub files,
             "src/pages/installed_package_v2/file_pane.module.scss"
@@ -3971,7 +3972,7 @@ mod tests {
 
     /// The tokens the sheets read, which the test page does not load.
     const TOKENS: &str = "--q-frame-height:560px; --q-appbar-height:48px; --q-space-2:8px; \
-                          --q-space-3:12px; --q-space-5:20px; --q-space-8:32px; \
+                          --q-space-3:12px; --q-space-4:16px; --q-space-5:20px; --q-space-8:32px; \
                           --q-space-12:48px";
 
     fn load_page_sheets() {
@@ -3981,6 +3982,14 @@ mod tests {
             &[
                 ("root", sheets::layout::root),
                 ("main", sheets::layout::main),
+                ("notice", sheets::layout::notice),
+            ],
+        );
+        load_module_style(
+            include_str!("../kit/appbar.module.scss"),
+            &[
+                ("appbar", sheets::appbar::appbar),
+                ("bar", sheets::appbar::bar),
             ],
         );
         load_module_style(
@@ -4015,6 +4024,12 @@ mod tests {
         );
         // The app's normalize sheet, which the test page does not load.
         load_module_style("[data-page-test] * { box-sizing: border-box }", &[]);
+        // And the base sheet's hidden heading, which would push the page down.
+        load_module_style(
+            "[data-page-test] [data-sr-only] { position: absolute; width: 1px; height: 1px; \
+             overflow: hidden }",
+            &[],
+        );
     }
 
     /// The page at `width`: a header, a context pane `pane` tall, and the
@@ -4024,7 +4039,8 @@ mod tests {
         mount(move || {
             view! {
                 <div data-page-test style=format!("width:{width}px; {TOKENS}")>
-                    <PageLayout heading="Package" page_scroll=true>
+                    // An empty banner row, as the page always passes one.
+                    <PageLayout heading="Package" page_scroll=true banner=().into_any()>
                         <div class=style::page>
                             <PackageHeaderBand>
                                 <div style="height:60px"></div>
@@ -4072,6 +4088,14 @@ mod tests {
         let el = scrolling_page(1024, 200, plain_rows());
         sleep_ms(50).await;
         let frame = frame(&el);
+        assert_eq!(
+            find(&el, &format!(".{}", style::header))
+                .get_bounding_client_rect()
+                .top()
+                - frame.get_bounding_client_rect().top(),
+            48.0,
+            "before any scroll the header already rests where it sticks"
+        );
         frame.set_scroll_top(1000);
         sleep_ms(50).await;
         assert_eq!(frame.scroll_top(), 1000, "the frame scrolls the page");

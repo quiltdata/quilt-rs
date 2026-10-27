@@ -59,6 +59,12 @@
   flex: none;
 }
 
+/* A page that scrolls holds its first band right under the appbar, so a row
+ * with no banner in it takes no room: its padding would be scrolled away first. */
+.root[data-page-scroll] > .notice:not(:has(*)) {
+  padding-top: 0;
+}
+
 /* The page column, and the one place the gap between regions is set. Regions carry no
  * outer margin of their own: one of them spacing itself would look right alone and
  * wrong beside the others, and there would be no single place to change the rhythm. */
