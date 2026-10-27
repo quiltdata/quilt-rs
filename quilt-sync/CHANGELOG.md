@@ -23,7 +23,7 @@
 
 ### Added
 
-- **Experimental**: with *Agent tasks* on, the Settings page has an *Agent tasks* card for choosing which buckets can ask this computer to run a task, and which local agents run it, instead of editing `task_settings.json` by hand
+- **Experimental**: with *Agent tasks* on, the Settings page has an *Agent tasks* card for choosing which buckets can ask this computer to run a task, and which local agents run it, instead of editing `task_settings.json` by hand (<https://github.com/quiltdata/quilt-rs/pull/1225>)
 
 ### Changed
 
