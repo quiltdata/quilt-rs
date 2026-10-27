@@ -545,6 +545,9 @@ pub struct AgentDraft {
     /// One argument per line, the program first.
     pub command: RwSignal<String>,
     pub trust_all: RwSignal<bool>,
+    /// The command as stored. Saved as it is while its text is not edited,
+    /// so an argument the box cannot show, such as an empty one, survives.
+    pub stored: StoredValue<Vec<String>>,
 }
 
 impl AgentDraft {
@@ -554,6 +557,7 @@ impl AgentDraft {
             name: RwSignal::new(name.to_string()),
             command: RwSignal::new(agent.command.join("\n")),
             trust_all: RwSignal::new(agent.trust_all),
+            stored: StoredValue::new(agent.command.clone()),
         }
     }
 
@@ -568,16 +572,39 @@ impl AgentDraft {
     }
 }
 
-/// An agent's fields as typed: its name, its command, and whether it is
-/// trusted with everything.
-pub type AgentFields = (String, String, bool);
+/// An agent's fields as typed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentFields {
+    pub name: String,
+    /// One argument per line.
+    pub command: String,
+    pub trust_all: bool,
+    /// The command as stored; empty for a new agent.
+    pub stored: Vec<String>,
+}
+
+impl AgentFields {
+    /// The command to save: as stored while its text is unchanged.
+    fn args(&self) -> Vec<String> {
+        if !self.stored.is_empty() && self.command == self.stored.join("\n") {
+            self.stored.clone()
+        } else {
+            command_args(&self.command)
+        }
+    }
+}
 
 /// Each draft's fields, read where the caller tracks.
 #[must_use]
 pub fn agent_fields(agents: &[AgentDraft]) -> Vec<AgentFields> {
     agents
         .iter()
-        .map(|a| (a.name.get(), a.command.get(), a.trust_all.get()))
+        .map(|a| AgentFields {
+            name: a.name.get(),
+            command: a.command.get(),
+            trust_all: a.trust_all.get(),
+            stored: a.stored.get_value(),
+        })
         .collect()
 }
 
@@ -646,17 +673,17 @@ pub fn command_error(text: &str) -> Option<&'static str> {
 #[must_use]
 pub fn task_settings_of(buckets: &str, agents: &[AgentFields]) -> Option<TaskSettings> {
     let blessed_buckets = task_buckets(buckets).ok()?;
-    let names: Vec<String> = agents.iter().map(|(name, ..)| name.clone()).collect();
+    let names: Vec<String> = agents.iter().map(|a| a.name.clone()).collect();
     let mut stored = std::collections::BTreeMap::new();
-    for (at, (name, command, trust_all)) in agents.iter().enumerate() {
-        if agent_name_error(&names, at).is_some() || command_error(command).is_some() {
+    for (at, agent) in agents.iter().enumerate() {
+        if agent_name_error(&names, at).is_some() || command_error(&agent.command).is_some() {
             return None;
         }
         stored.insert(
-            name.trim().to_string(),
+            agent.name.trim().to_string(),
             AgentSettings {
-                command: command_args(command),
-                trust_all: *trust_all,
+                command: agent.args(),
+                trust_all: agent.trust_all,
             },
         );
     }
@@ -2166,7 +2193,11 @@ mod tests {
 
     #[test]
     fn save_writes_only_a_valid_draft() {
-        let agent = |name: &str, command: &str| (name.to_string(), command.to_string(), false);
+        let agent = |name: &str, command: &str| AgentFields {
+            name: name.to_string(),
+            command: command.to_string(),
+            ..AgentFields::default()
+        };
         assert_eq!(
             task_settings_of("quilt-dev", &[agent(" kiro ", "kiro\nacp")]),
             Some(TaskSettings {
@@ -2187,6 +2218,35 @@ mod tests {
         assert_eq!(
             task_settings_of("", &[agent("kiro", "a"), agent("kiro", "b")]),
             None
+        );
+    }
+
+    /// A stored command the box cannot show, such as one with an empty
+    /// argument, is saved as it is until its text is edited.
+    #[test]
+    fn an_unedited_command_is_saved_as_stored() {
+        let stored: Vec<String> = ["sh", "-c", "exec agent \"$@\"", "", "--acp"]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let mut fields = AgentFields {
+            name: "wrapped".to_string(),
+            command: stored.join("\n"),
+            trust_all: false,
+            stored: stored.clone(),
+        };
+        let saved = |fields: &AgentFields| {
+            task_settings_of("", std::slice::from_ref(fields))
+                .unwrap()
+                .agents["wrapped"]
+                .command
+                .clone()
+        };
+        assert_eq!(saved(&fields), stored);
+        fields.command.push_str("\n--verbose");
+        assert_eq!(
+            saved(&fields),
+            ["sh", "-c", "exec agent \"$@\"", "--acp", "--verbose"]
         );
     }
 
