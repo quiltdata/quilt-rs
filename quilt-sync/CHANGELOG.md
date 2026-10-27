@@ -24,7 +24,7 @@
 ### Changed
 
 - Group headings on the main page stand out from the package and file rows below them (<https://github.com/quiltdata/quilt-rs/pull/1220>)
-- **New design preview**: the main page scrolls as one page, so the wheel moves the package or file list from anywhere in the window. The bar, *Autosync*, *Accounts*, *Needs your attention* and the list's toolbar stay in place above it. A long *Needs your attention* scrolls in its own box, up to a third of the window (<https://github.com/quiltdata/quilt-rs/pull/1223>)
+- **New design preview**: the main page scrolls as one page, so the wheel moves the package or file list from anywhere in the window. The bar, *Autosync*, *Accounts*, *Needs your attention* and the list's toolbar stay in place above it. A long *Needs your attention* scrolls in its own box, up to a third of the window. A long activity line in the bar shows over the page instead of pushing it down (<https://github.com/quiltdata/quilt-rs/pull/1223>)
 - **New design preview**: the package page shows *Bucket and catalog* for every package, with one button that opens the bucket dialog: *Choose* for a package with no bucket yet, *Change* otherwise. The header no longer offers *Choose S3 bucket* or *Change bucket*. Long bucket and catalog names fit on one line. *Revisions you have* is now *History*, at the top of *Revision*. The pane is wider, so more of the revision message shows, and while loading it outlines all three sections (<https://github.com/quiltdata/quilt-rs/pull/1221>)
 
 ## [v0.25.0] - 2026-10-26
