@@ -535,8 +535,10 @@ pub const NO_BUCKETS: &str = "No buckets: tasks are off";
 
 pub const TRUST_ALL: &str = "Approve every request the agent makes";
 
-pub const TRUST_ALL_WARNING: &str =
-    "The agent may then write, run and delete anything without asking you.";
+pub const TRUST_ALL_WARNING: &str = "Off, the agent may change files in the package's folder; \
+     any other request, such as running a command or touching a file outside the folder, is \
+     refused, and the agent carries on without it. On, every request is approved, commands and \
+     files outside the folder included.";
 
 /// One agent in the popup's draft.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -696,9 +698,6 @@ pub fn task_settings_of(buckets: &str, agents: &[AgentFields]) -> Option<TaskSet
 /// What `task_settings.json` holds, read-only, and **Edit…**, which opens
 /// [`AgentTasksDialog`]. A file that could not be read says why, and is not
 /// offered for editing: the user fixes it by hand.
-///
-/// It starts a row of its own in [`SettingsLayout`], so it never sits beside
-/// Ignore rules.
 #[component]
 pub fn AgentTasksCard(
     #[prop(into)] stored: Signal<TaskSettingsData>,
@@ -725,12 +724,10 @@ pub fn AgentTasksCard(
                 .agents
                 .iter()
                 .map(|(name, agent)| {
-                    let command = agent.command.join(" ");
-                    let title = command.clone();
                     view! {
                         <li class=style::agent>
                             <span>{name.clone()}</span>
-                            <span class=style::path title=title>{command}</span>
+                            <span class=style::command>{agent.command.join(" ")}</span>
                             {agent
                                 .trust_all
                                 .then(|| view! { <span class=style::quiet>"Approves every request"</span> })}
@@ -743,7 +740,7 @@ pub fn AgentTasksCard(
     };
     let unreadable = move || stored.with(|t| t.error.clone());
     view! {
-        <div class=style::own_row data-agent-tasks>
+        <div class=style::slot data-agent-tasks>
         <Card title="Agent tasks">
             <p class=style::lead>{AGENT_TASKS_USE}</p>
             {move || match unreadable() {
@@ -801,7 +798,7 @@ pub fn AgentTasksForm(
                 });
                 view! {
                     <fieldset class=style::agent_fields>
-                        <legend class=style::field_name>"Agent"</legend>
+                        <legend class=style::agent_legend>"Agent"</legend>
                         <FormControl
                             label="Name"
                             error=name_error
@@ -2250,11 +2247,8 @@ mod tests {
         );
     }
 
-    /// Agent tasks starts a row of its own: wide, it is under Ignore rules
-    /// rather than beside it; narrow, it is next in the one column.
-    #[wasm_bindgen_test::wasm_bindgen_test]
-    #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
-    async fn agent_tasks_is_never_beside_ignore_rules() {
+    /// The grid's styles and the card rows', for a layout test.
+    fn load_layout_styles() {
         stylance::import_crate_style!(grid, "src/kit/two_columns.module.scss");
         crate::test_support::load_module_style(
             include_str!("../kit/two_columns.module.scss"),
@@ -2264,15 +2258,70 @@ mod tests {
                 ("fill", grid::fill),
             ],
         );
-        // The rule alone: the file's `//` comments are not CSS.
+        // The rules alone: the file's `//` comments are not CSS.
         let scss = include_str!("settings_v2.module.scss");
-        let start = scss.find(".own_row {").expect("the rule");
-        let end = start + scss[start..].find('}').expect("its end") + 1;
-        crate::test_support::load_module_style(&scss[start..end], &[("own_row", style::own_row)]);
+        let rule = |name: &str| {
+            let start = scss.find(&format!(".{name} {{")).expect("the rule");
+            let end = start + scss[start..].find('}').expect("its end") + 1;
+            scss[start..end].to_string()
+        };
+        let css = [
+            "slot",
+            "row",
+            "row_text",
+            "row_value",
+            "agents",
+            "agent",
+            "command",
+        ]
+        .map(rule)
+        .join("\n");
+        crate::test_support::load_module_style(
+            &css,
+            &[
+                ("slot", style::slot),
+                ("row", style::row),
+                ("row_text", style::row_text),
+                ("row_value", style::row_value),
+                ("agents", style::agents),
+                ("agent", style::agent),
+                ("command", style::command),
+            ],
+        );
+    }
+
+    /// Agent tasks shares Ignore rules' row: wide, it is beside it; narrow,
+    /// it is next in the one column. A long command wraps inside the card.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
+    async fn agent_tasks_sits_beside_ignore_rules() {
+        load_layout_styles();
+        let long = TaskSettingsData {
+            settings: TaskSettings {
+                blessed_buckets: Vec::new(),
+                agents: [(
+                    "codex".to_string(),
+                    AgentSettings {
+                        command: vec![
+                            "/Users/a/.nvm/versions/node/v24.12.0/lib/node_modules/\
+                             @agentclientprotocol/codex-acp/dist/index.js"
+                                .to_string(),
+                            // No place a browser breaks on its own.
+                            format!("--key={}", "x".repeat(150)),
+                        ],
+                        trust_all: false,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            error: None,
+        };
         for width in [1024, 640] {
             crate::test_support::unmount_earlier();
             let card =
                 |name: &'static str| view! { <section data-card=name>{name}</section> }.into_any();
+            let stored = long.clone();
             let el = crate::test_support::mount(move || {
                 view! {
                     <div style=format!("--q-space-4:16px; width:{width}px")>
@@ -2288,10 +2337,7 @@ mod tests {
                             troubleshooting=card("troubleshooting")
                             about=card("about")
                             agent_tasks=view! {
-                                <AgentTasksCard
-                                    stored=TaskSettingsData::default()
-                                    on_edit=Callback::new(|()| ())
-                                />
+                                <AgentTasksCard stored=stored on_edit=Callback::new(|()| ()) />
                             }
                                 .into_any()
                         />
@@ -2306,13 +2352,26 @@ mod tests {
                     .get_bounding_client_rect()
             };
             let ignore = rect("[data-card=ignore]");
-            let tasks = rect("[data-agent-tasks]");
-            assert_eq!(tasks.left(), ignore.left(), "{width}: the first column");
-            assert!(tasks.top() > ignore.bottom(), "{width}: under Ignore rules");
+            let tasks = rect("[data-agent-tasks] > *");
             if width == 1024 {
-                let about = rect("[data-card=about]");
-                assert!(about.left() > ignore.left(), "two columns at {width}");
+                assert_eq!(tasks.top(), ignore.top(), "{width}: on Ignore rules' row");
+                assert!(tasks.left() > ignore.right(), "{width}: to its right");
+            } else {
+                assert_eq!(tasks.left(), ignore.left(), "{width}: one column");
+                assert!(tasks.top() > ignore.bottom(), "{width}: under it");
             }
+            let command = el
+                .query_selector("[data-agent-tasks] li > :nth-child(2)")
+                .unwrap()
+                .expect("the command");
+            assert!(
+                command.scroll_width() <= command.client_width(),
+                "{width}: the command wraps inside its box"
+            );
+            assert!(
+                command.get_bounding_client_rect().right() <= tasks.right() + 0.5,
+                "{width}: and the box inside the card"
+            );
         }
     }
 

@@ -2642,11 +2642,9 @@ mod tests {
         let text = card.text_content().unwrap_or_default();
         assert!(text.contains(super::super::NO_BUCKETS), "{text}");
         assert!(text.contains("No agents"), "{text}");
-        // Ignore rules, before it, is kept alone on its row.
-        assert!(card.class_list().contains(super::style::own_row));
         assert!(
-            include_str!("../settings_v2.module.scss")
-                .contains(".own_row {\n  grid-column-start: 1;")
+            card.class_list().contains(super::style::slot),
+            "a grid cell"
         );
     }
 

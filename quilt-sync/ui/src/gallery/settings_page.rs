@@ -262,8 +262,8 @@ fn publishing_real(p: Publishing) -> AnyView {
 
 // ── Agent tasks ──
 
-/// Two buckets, and two agents: one trusted with everything, with a long
-/// command.
+/// Two buckets, and three agents: one trusted with everything, and one whose
+/// command is a long path with no spaces to wrap at.
 fn tasks() -> TaskSettings {
     let agent = |command: &[&str], trust_all| AgentSettings {
         command: command.iter().map(ToString::to_string).collect(),
@@ -284,6 +284,14 @@ fn tasks() -> TaskSettings {
                 ),
             ),
             ("claude".to_string(), agent(&["claude-code-acp"], false)),
+            (
+                "codex".to_string(),
+                agent(
+                    &["/Users/a/.nvm/versions/node/v24.12.0/lib/node_modules/\
+                         @agentclientprotocol/codex-acp/dist/index.js"],
+                    false,
+                ),
+            ),
         ]
         .into_iter()
         .collect(),
@@ -691,7 +699,7 @@ pub fn SettingsPageScene() -> impl IntoView {
             <Cell full=true label="Agent tasks — nothing stored: tasks are off">
                 {column(agent_tasks(TaskSettings::default(), None))}
             </Cell>
-            <Cell full=true label="Agent tasks — two buckets and two agents; a long command is cut short, with all of it on hover">
+            <Cell full=true label="Agent tasks — two buckets and three agents; a long command path wraps inside the card">
                 {column(agent_tasks(tasks(), None))}
             </Cell>
             <Cell full=true label="Agent tasks — narrow">
