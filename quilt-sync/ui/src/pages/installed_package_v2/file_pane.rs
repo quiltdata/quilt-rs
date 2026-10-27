@@ -369,7 +369,8 @@ impl Place {
 ///
 /// Page-local and not a kit piece: not a `Banner`, which reports an outcome
 /// for the whole page, and not a `ZeroLine`, which is the healthy queue's
-/// one-liner. It opens the list, above the rows it qualifies.
+/// one-liner. It sits under the toolbar, held with it, above the rows it
+/// qualifies.
 #[component]
 fn CapNotice(total: usize, shown: usize) -> impl IntoView {
     view! {
@@ -1333,12 +1334,14 @@ fn ready(
                     left_slot(picking, shown_offered, narrowed, headed, &counts),
                     Some(facets(&counts, facet).into_any()),
                 )}
-            </FileToolbarBand>
-            // The rows sit on the page; `Card` rules between the notice, the
-            // rows and the footer. It fills the window's height, so a short
-            // list still has its footer at the bottom.
-            <Card bare=true fill=true label="Files">
+                // Held with the toolbar, so a reader deep in the rows still
+                // sees why the list stops where it does.
                 {truncated.then(|| view! { <CapNotice total=total shown=loaded_count /> })}
+            </FileToolbarBand>
+            // The rows sit on the page; `Card` rules between the rows and the
+            // footer. It fills the window's height, so a short list still has
+            // its footer at the bottom.
+            <Card bare=true fill=true label="Files">
                 {body}
                 {footer(picking, rows)}
             </Card>
@@ -2652,6 +2655,13 @@ mod pane_tests {
             text(&cut)
                 .contains("This package has 4,312 files. This list covers the first 2 by path."),
             "markup was {}",
+            cut.inner_html()
+        );
+        assert!(
+            cut.query_selector(&format!(".{} .{}", style::band, style::cap))
+                .unwrap()
+                .is_some(),
+            "held with the toolbar; markup was {}",
             cut.inner_html()
         );
 

@@ -4179,8 +4179,12 @@ mod tests {
             .unwrap()
             .get_property_value("scroll-padding-bottom")
             .unwrap();
-        // The footer: its content and its own padding.
-        assert_eq!(padding, "56px", "the room a focused row keeps below");
+        // The footer's own height, which its button's font sets.
+        assert_eq!(
+            padding,
+            format!("{}px", footer.get_bounding_client_rect().height()),
+            "the room a focused row keeps below"
+        );
     }
 
     /// Under a list shorter than the window the footer still sits at the
