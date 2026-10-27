@@ -1009,10 +1009,15 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     pub async fn backlog(&self) -> Res<Vec<PathBuf>> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let manifest = self.manifest().await?;
+        // The backlog is untracked paths with no local file, which the checksum
+        // choice does not change, so an unreachable catalog falls back to the
+        // default rather than failing.
         let host_config = match lineage.remote_uri.as_ref() {
-            Some(remote_uri) if !remote_uri.bucket.is_empty() => {
-                self.remote.host_config(remote_uri.origin.as_ref()).await?
-            }
+            Some(remote_uri) if !remote_uri.bucket.is_empty() => self
+                .remote
+                .host_config(remote_uri.origin.as_ref())
+                .await
+                .unwrap_or_default(),
             _ => HostConfig::default(),
         };
         let (lineage, status) = self
