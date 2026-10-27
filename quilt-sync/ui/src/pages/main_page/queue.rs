@@ -9,6 +9,7 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 use quilt_uri::Namespace;
 
+use super::super::main_page::QueueBand;
 use super::super::main_page::list_class;
 use crate::commands::MainPagePackageData;
 use crate::commands::PausedPackageData;
@@ -616,12 +617,24 @@ pub fn QueueRegion(
 
     move || match shape.get() {
         Shape::Nothing | Shape::Silent => ().into_any(),
-        Shape::Pending => view! { <ZeroLineSkeleton /> }.into_any(),
+        // The band goes with the shape: `Nothing` and `Silent` draw none, so
+        // the bands below move up into the place a queue would take.
+        Shape::Pending => view! {
+            <QueueBand>
+                <ZeroLineSkeleton />
+            </QueueBand>
+        }
+        .into_any(),
         // Acceptance criterion 8, unchanged. The count is the light total,
         // not `packages.len()`: the sentence speaks for every package the
         // list draws. `shape`'s guard makes the two equal wherever this line is
         // reached, and naming the one the sentence means keeps it that way.
-        Shape::Zero => view! { <ZeroLine text=zero_line_text(total.get()) /> }.into_any(),
+        Shape::Zero => view! {
+            <QueueBand>
+                <ZeroLine text=zero_line_text(total.get()) />
+            </QueueBand>
+        }
+        .into_any(),
         // `view!` moves its children into closures of their own, so a handle
         // captured by this closure cannot merely be borrowed out of it and leave
         // it `FnMut`. `owner` is cloned here and nowhere else; `navigate` is
@@ -630,6 +643,7 @@ pub fn QueueRegion(
             let navigate = navigate.clone();
             let owner = owner.clone();
             view! {
+            <QueueBand>
             // One wrapper child, so `Card`'s between-children hairline does not
             // fire: a queue is a list of decisions, and dividing every row would
             // make it read as a table. A `ul`, because it is also a list of them.
@@ -667,6 +681,7 @@ pub fn QueueRegion(
                     />
                     </ul>
                 </Card>
+            </QueueBand>
             }
             .into_any()
         }

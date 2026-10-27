@@ -29,7 +29,7 @@
   margin-inline: auto;
   padding-inline: var(--q-appbar-gutter, var(--q-space-4));
   padding-block: var(--q-space-2);
-  min-height: calc(var(--q-control-height) + 2 * var(--q-space-2));
+  min-height: var(--q-appbar-height);
   /* Both themes' rings are under 3:1 on the brand ground. */
   --q-focus-outlineColor: var(--q-fgColor-onBrand);
 }

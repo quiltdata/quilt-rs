@@ -23,6 +23,7 @@ use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::StateTone;
 use quilt_sync_ui::commands::PackageSize;
+use quilt_sync_ui::pages::ToolbarBand;
 use quilt_sync_ui::pages::list_region_class;
 use quilt_sync_ui::pages::rows_class;
 use quilt_sync_ui::util::Held;
@@ -600,42 +601,44 @@ pub fn PackagesRegion(
     let sort = RwSignal::new("Changed".to_string());
 
     view! {
-        // The page's region 4: the toolbar, then the card that scrolls under it,
-        // laid out by the page's own class. The toolbar sits on the card, not in
-        // it. No title on the card: the SegmentedControl names the view, and a
-        // card headed `Packages` above a Packages / Recent files switch says it
-        // twice.
+        // The page's region 4: the toolbar in its band, then the list that
+        // scrolls the page under it, laid out by the page's own classes. The
+        // list is a bare card, as on the page. No title on it: the
+        // SegmentedControl names the view, and a card headed `Packages` above a
+        // Packages / Recent files switch says it twice.
         <div class=list_region_class()>
-            <ListToolbar>
-                <SegmentedControl
-                    aria_label="List view"
-                    name=view_name
-                    options=vec!["Packages".into(), "Recent files".into()]
-                    selected=view_mode
-                />
-                <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
-                <Select
-                    naming=Naming::Prefix("Group".to_string())
-                    options=vec![
-                        "Bucket".to_string(),
-                        "Catalog".to_string(),
-                        "Prefix".to_string(),
-                        "None".to_string(),
-                    ]
-                    selected=group
-                />
-                <Select
-                    naming=Naming::Prefix("Sort".to_string())
-                    options=vec!["Changed".to_string(), "Name".to_string()]
-                    selected=sort
-                />
-                // Default, as the page draws it: the accent is the fresh
-                // install's Blankslate action, not a toolbar's.
-                <Button on_click=|_| ()>"Create package"</Button>
-            </ListToolbar>
+            <ToolbarBand>
+                <ListToolbar>
+                    <SegmentedControl
+                        aria_label="List view"
+                        name=view_name
+                        options=vec!["Packages".into(), "Recent files".into()]
+                        selected=view_mode
+                    />
+                    <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
+                    <Select
+                        naming=Naming::Prefix("Group".to_string())
+                        options=vec![
+                            "Bucket".to_string(),
+                            "Catalog".to_string(),
+                            "Prefix".to_string(),
+                            "None".to_string(),
+                        ]
+                        selected=group
+                    />
+                    <Select
+                        naming=Naming::Prefix("Sort".to_string())
+                        options=vec!["Changed".to_string(), "Name".to_string()]
+                        selected=sort
+                    />
+                    // Default, as the page draws it: the accent is the fresh
+                    // install's Blankslate action, not a toolbar's.
+                    <Button on_click=|_| ()>"Create package"</Button>
+                </ListToolbar>
+            </ToolbarBand>
             // Headings and lists are the card's direct children, as on the page:
             // `Card` rules between them, and the list rules between its rows.
-            <Card label="Packages">
+            <Card label="Packages" bare=true>
                 {move || {
                     let rows = fixtures();
                     let axis = group.get();

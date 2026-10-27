@@ -2,9 +2,7 @@
  * Page frame: the v2 surface, and the column under the appbar.
  */
 
-/* The frame owns the window height, and the list inside it takes the leftover and
- * scrolls itself — so the appbar, the strip, the queue and the toolbar stay on
- * screen however long the roster is.
+/* The frame owns the window height and is the page's scroller.
  *
  * It has to own the height rather than let the document scroll: `body` carries
  * `overflow: hidden` from v1's global layout (`assets/css/layout.css`), which
@@ -12,9 +10,10 @@
  * clipped with no scrollbar anywhere. v1 never noticed because its own wrapper
  * scrolls itself the same way.
  *
- * `overflow-y: auto` stays as the fallback: below the window floor the regions
- * above the list cannot all fit, and then this scrolls rather than crushing the
- * list to nothing. See `.list_region`'s own floor. */
+ * Most pages fill it, and a long list scrolls in its own box below the parts
+ * that stay. Then `overflow-y: auto` is the fallback below the window floor,
+ * where those parts cannot all fit. A `data-page-scroll` page scrolls here
+ * instead, and its fixed parts stick. */
 .root {
   /* The gallery sets `--q-frame-height` to the window floor; the app leaves it at the viewport. */
   height: var(--q-frame-height, 100vh);
@@ -73,4 +72,19 @@
    * its intrinsic height and the child scroller never gets a chance to scroll. */
   flex: 1 1 auto;
   min-height: 0;
+}
+
+/* A page that scrolls as one. The appbar sticks at the top, and the page's own
+ * bands stick under it. */
+.root[data-page-scroll] > header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+/* The column grows with its content. A sticky band stays only inside its
+ * parent's box, so a column cut to the window would carry the bands away
+ * with it. */
+.root[data-page-scroll] > .main {
+  flex: 1 0 auto;
 }

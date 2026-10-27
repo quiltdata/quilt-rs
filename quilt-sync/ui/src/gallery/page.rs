@@ -91,9 +91,11 @@ pub fn BusyDayScene() -> impl IntoView {
                   queue above the list earns the height it takes."
         >
             <div class="g-window">
-                <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                     <StateStripRegion />
-                    <QueueRegion />
+                    <pages::QueueBand>
+                        <QueueRegion />
+                    </pages::QueueBand>
                     <PackagesRegion view_name="busy-day-view" />
                 </PageLayout>
             </div>
@@ -117,10 +119,12 @@ pub fn PageScene() -> impl IntoView {
                   running, which is as true on a calm day as on a bad one."
         >
             <div class="g-window">
-                <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                     <StateStripRegion />
-                    // Bare, with no card, as `QueueRegion` draws it.
-                    <ZeroLine text="Everything is Latest — 43 packages" />
+                    // Bare, with no card, in the band `QueueRegion` draws it in.
+                    <pages::QueueBand>
+                        <ZeroLine text="Everything is Latest — 43 packages" />
+                    </pages::QueueBand>
                     <PackagesRegion view_name="normal-day-view" />
                 </PageLayout>
             </div>
@@ -214,16 +218,20 @@ fn CheckingScene() -> impl IntoView {
         >
             <div class="g-window-pair">
                 <div class="g-window">
-                    <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                    <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                         <StateStripRegion />
-                        <ZeroLineSkeleton />
+                        <pages::QueueBand>
+                            <ZeroLineSkeleton />
+                        </pages::QueueBand>
                         <PackagesRegion view_name="checking-view" provisional=true />
                     </PageLayout>
                 </div>
                 <div class="g-window">
-                    <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                    <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                         <StateStripRegion />
-                        <ZeroLine text="Everything is Latest — 43 packages" />
+                        <pages::QueueBand>
+                            <ZeroLine text="Everything is Latest — 43 packages" />
+                        </pages::QueueBand>
                         <PackagesRegion view_name="checked-view" />
                     </PageLayout>
                 </div>
@@ -238,9 +246,10 @@ fn CheckingScene() -> impl IntoView {
 ///
 /// Nothing scrolls sideways at either width. At 640 the strip's two cards no longer
 /// fit one row (`flex: 1 1 300px` asks for 612px of the 608 the page gives) and it
-/// stacks: 343px against 170 at 1024. The queue is 550 and 535, a queue row's name and
-/// clause sharing a line until they do not fit and then taking two. The list keeps its
-/// 160px floor at both, so the page scrolls, 609px at 640 and 422 at 1024.
+/// stacks: 343px against 170 at 1024. The queue's rows are 550 and 535 tall, a queue
+/// row's name and clause sharing a line until they do not fit and then taking two;
+/// the queue shows a third of the window of them and scrolls the rest. The package
+/// rows scroll the page under the bands above them at both widths.
 #[component]
 fn NarrowScene() -> impl IntoView {
     view! {
@@ -251,16 +260,20 @@ fn NarrowScene() -> impl IntoView {
                   scroll sideways or be cut at either width."
         >
             <div id="main-640" class="g-window" style="width:640px; max-width:100%">
-                <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                     <StateStripRegion />
-                    <QueueRegion />
+                    <pages::QueueBand>
+                        <QueueRegion />
+                    </pages::QueueBand>
                     <PackagesRegion view_name="narrow-640-view" />
                 </PageLayout>
             </div>
             <div id="main-1024" class="g-window" style="width:1024px; max-width:100%">
-                <PageLayout heading="QuiltSync" actions=appbar_actions()>
+                <PageLayout heading="QuiltSync" actions=appbar_actions() page_scroll=true>
                     <StateStripRegion />
-                    <QueueRegion />
+                    <pages::QueueBand>
+                        <QueueRegion />
+                    </pages::QueueBand>
                     <PackagesRegion view_name="narrow-1024-view" />
                 </PageLayout>
             </div>

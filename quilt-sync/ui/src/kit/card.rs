@@ -11,6 +11,8 @@ use leptos::prelude::*;
 stylance::import_crate_style!(style, "src/kit/card.module.scss");
 
 #[component]
+// Each bool is its own optional prop, set by name at the call site.
+#[allow(clippy::fn_params_excessive_bools)]
 pub fn Card(
     /// Optional, because the list card has none: its `SegmentedControl` names the view, and a
     /// card titled `Packages` above a Packages / Recent files switch says it twice.
@@ -61,6 +63,11 @@ pub fn Card(
     /// the page taller instead of scrolling.
     #[prop(optional)]
     fill: bool,
+    /// No border, padding or background: the rows sit on the page itself. For
+    /// a list whose rows scroll the page under sticky parts above it, where a
+    /// card's top edge would scroll away with the first row.
+    #[prop(optional)]
+    bare: bool,
     children: Children,
 ) -> impl IntoView {
     let heading_id = super::unique_id("card-title");
@@ -77,6 +84,7 @@ pub fn Card(
         Some(style::root),
         flush.then_some(style::flush),
         fill.then_some(style::fill),
+        bare.then_some(style::bare),
     ]
     .into_iter()
     .flatten()

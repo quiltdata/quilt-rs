@@ -1013,6 +1013,7 @@ mod layout_tests {
                 ("body", card::body),
                 ("flush", card::flush),
                 ("fill", card::fill),
+                ("bare", card::bare),
             ],
         );
         load_module_style(
