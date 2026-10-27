@@ -18,8 +18,8 @@
 //! The words are [`render`](super::render)'s at [`Site::QueueRow`](super::Site), which
 //! is where the queue's grammar is chosen; this file only draws them.
 //!
-//! The tone is a rule in the row's bullet column, which is what makes a column of
-//! rows scannable. Colour is all it is, and that is enough here
+//! The tone is a rule on the row's left edge, which is what makes a column of rows
+//! scannable. Colour is all it is, and that is enough here
 //! precisely because it carries nothing: the clause states the row's state in words,
 //! so two rows of different severity always read differently with the colour taken
 //! away. The chip needed a glyph beside it because its words were a short label
@@ -119,7 +119,7 @@ pub fn QueueRow(
     // The column `CauseRow` fills with its expander, held open so a cause and a
     // package start their text at the same x.
     //
-    // No bullet on a row that has a state: the tone rule in this column marks it,
+    // No bullet on a row that has a state: the tone rule on its edge marks it,
     // the clause names it, and a bullet would be a third marker saying nothing the
     // other two do not. A row that is only a name gets a bullet, which is the one case
     // where a list marker is the only marker there is.

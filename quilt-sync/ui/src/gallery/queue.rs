@@ -139,8 +139,8 @@ fn QueueRowStory() -> impl IntoView {
             note="The row is the link: every verb here opens a page, so a button would \
                   promise an operation that does not happen on press. The verb stays as text \
                   at the right edge, one tab stop per row. The state reads as a clause after \
-                  the name rather than as a chip beside it, and the tone is an inset rule \
-                  in the bullet column — colour and nothing else, which is allowed because \
+                  the name rather than as a chip beside it, and the tone is a rule \
+                  on the row's left edge — colour and nothing else, which is allowed because \
                   the clause says the state in words."
         >
             {actionable()

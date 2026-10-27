@@ -4,8 +4,8 @@
  * first words carry the meaning.
  *
  * The glyph sits in a column as wide as a queue row's bullet column, with the row's
- * gap and side padding, so the glyph, every row's tone mark and every row's text line
- * up below it.
+ * gap and side padding, so the glyph lines up with the rows' bullets and chevrons,
+ * and the text with theirs.
  */
 
 /* Shared with `.placeholder`: stylance leaves `composes` untranslated. */
@@ -57,7 +57,8 @@
 }
 
 /* A hairline above every row, so the first one also divides the rows from the
- * line. Full width: the rows reach the region's edges, and so do the rules. */
+ * line, and one under the last, so the region has a bottom edge. Full width: the
+ * rows reach the region's edges, and so do the rules. */
 .rows {
   list-style: none;
   margin: 0;
@@ -68,6 +69,10 @@
  * so the list carries an explicit `role="list"`. */
 .rows > li {
   border-top: 1px solid var(--q-borderColor-muted);
+}
+
+.rows > li:last-child {
+  border-bottom: 1px solid var(--q-borderColor-muted);
 }
 
 /* Its own class name rather than `skeleton`, which `PackageRow` and `FileRow`

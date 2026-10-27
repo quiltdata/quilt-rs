@@ -1,16 +1,15 @@
 /*
  * Queue row. Namespace, state as a clause, the remedy as text.
  *
- * The tone is a rule in the row's bullet column and nothing else, drawn from `--tone-mark`,
+ * The tone is a rule on the row's left edge and nothing else, drawn from `--tone-mark`,
  * which the four tone classes at the foot of this file set. Colour alone, and that is
  * allowed here because it carries nothing on its own: the clause states the row's
  * state in words, so the rule is emphasis over text that already says it.
  */
 
 /* A column, because a row may carry a detail line under its first one.
- * `relative` for the tone rule, which is absolute so that it can inset. */
+ * `relative` for the tone rule, which is absolute so that it spans the whole row. */
 .root {
-  --inline-pad: 2px;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -18,7 +17,7 @@
    * max-content width, so without a definite width a long namespace pushes the row
    * past its container instead of ellipsising. */
   width: 100%;
-  padding: 4px var(--inline-pad);
+  padding: 4px 2px;
 }
 
 .line {
@@ -47,10 +46,9 @@
   background: var(--q-overlay-hover);
 }
 
-/* The tone's first channel, centred in the bullet column, where the status line above
- * the rows centres its glyph. Inset by the row's own vertical padding, so a column of
- * rows carries separate marks rather than one unbroken band down the region. On the
- * row rather than in the bullet, so it spans a detail line too.
+/* The tone's first channel, on the row's left edge and the row's full height, from
+ * one hairline to the next. On the row rather than in the bullet column, so it spans
+ * a detail line too.
  *
  * On the tone classes and not on `.root`, so a row with no state draws no rule
  * instead of an invisible one. */
@@ -60,11 +58,10 @@
 .danger::before {
   content: "";
   position: absolute;
-  left: calc(var(--inline-pad) + (var(--q-control-height-sm) - var(--q-space-1)) / 2);
-  top: var(--q-space-1);
-  bottom: var(--q-space-1);
+  left: 0;
+  top: 0;
+  bottom: 0;
   width: var(--q-space-1);
-  border-radius: var(--q-radius);
   background: var(--tone-mark);
 }
 
@@ -99,8 +96,8 @@
 }
 
 /* A row with no state of its own gets a plain bullet — it is one of a set of names,
- * and that is what a bullet is for. A row that has a state draws its tone rule in
- * this column instead. */
+ * and that is what a bullet is for. A row that has a state leaves this column empty:
+ * its tone rule and its clause already mark it. */
 .dot::before {
   content: "";
   width: 4px;
