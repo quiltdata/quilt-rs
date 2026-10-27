@@ -49,6 +49,13 @@
 [data-page-scroll] .list_region h3 {
   position: sticky;
   top: var(--pinned-bottom);
+  z-index: 1;
+}
+
+/* The rows hold positioned parts with a `z-index` of their own, such as a split
+ * button. Isolated, they stack inside their list and cannot rise over a heading. */
+[data-page-scroll] .list_region h3 + * {
+  isolation: isolate;
 }
 
 [data-page-scroll] .strip,

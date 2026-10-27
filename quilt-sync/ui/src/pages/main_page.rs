@@ -3831,6 +3831,89 @@ mod tests {
         );
     }
 
+    /// A stuck group heading sits under the toolbar and above the rows that
+    /// scroll under it, even a row's part with a `z-index` of its own.
+    #[wasm_bindgen_test]
+    async fn a_stuck_group_heading_draws_over_its_rows() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("../kit/page_layout.module.scss"),
+            &[
+                ("root", frame_sheet::layout::root),
+                ("main", frame_sheet::layout::main),
+            ],
+        );
+        load_module_style(
+            include_str!("main_page.module.scss"),
+            &[
+                ("list_region", style::list_region),
+                ("toolbar", style::toolbar),
+            ],
+        );
+        let el = mount(|| {
+            view! {
+                <div style="position:fixed; top:0; left:0; width:800px; z-index:10; \
+                            --q-frame-height:560px; --q-appbar-height:48px; --q-space-5:20px; \
+                            --q-space-6:24px; --q-space-8:32px; --q-space-12:48px">
+                    <PageLayout heading="QuiltSync" page_scroll=true>
+                        <div class=style::list_region>
+                            <ToolbarBand>
+                                <div style="height:30px"></div>
+                            </ToolbarBand>
+                            <h3 style="height:30px; margin:0; background:white">"s3://bucket"</h3>
+                            <ul>
+                                {(0..60)
+                                    .map(|_| {
+                                        view! {
+                                            <li style="height:40px">
+                                                <button style="position:relative; z-index:2; \
+                                                               width:100%; height:100%">
+                                                    "row"
+                                                </button>
+                                            </li>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </ul>
+                        </div>
+                    </PageLayout>
+                </div>
+            }
+        });
+        sleep_ms(50).await;
+        let frame = el
+            .query_selector(&format!(".{}", frame_sheet::layout::root))
+            .unwrap()
+            .expect("the frame");
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        let heading = el.query_selector("h3").unwrap().expect("the heading");
+        let toolbar = el
+            .query_selector(&format!(".{}", style::toolbar))
+            .unwrap()
+            .expect("the toolbar");
+        let rect = heading.get_bounding_client_rect();
+        assert_eq!(
+            rect.top(),
+            toolbar.get_bounding_client_rect().bottom(),
+            "the heading sticks under the toolbar"
+        );
+        #[allow(clippy::cast_possible_truncation, reason = "a point on screen")]
+        let hit = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .element_from_point(
+                (rect.left() + rect.right()) as f32 / 2.0,
+                (rect.top() + rect.bottom()) as f32 / 2.0,
+            )
+            .expect("something is drawn there");
+        assert!(
+            heading.contains(Some(&hit)),
+            "the heading, not a row, is on top"
+        );
+    }
+
     /// Bands taller than the window stack upwards from the floor, so the list
     /// keeps a row in view and no band covers another.
     #[wasm_bindgen_test]
