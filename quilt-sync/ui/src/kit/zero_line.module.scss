@@ -16,10 +16,11 @@
   gap: var(--q-space-2);
   width: 100%;
   min-width: 0;
+  min-height: var(--q-queue-line-height);
   margin: 0;
-  padding: 5px 2px;
+  padding: 0 2px;
   color: var(--q-fgColor-muted);
-  font-size: var(--q-text-body);
+  font-size: var(--q-text-lead);
   font-weight: 400;
   line-height: var(--q-line-tight);
 }
@@ -38,8 +39,8 @@
  * `fg` and not `onMuted` because there is no fill under it, and legal here
  * because this line does not hover. */
 .root svg {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   color: var(--tone-mark);
 }
 
@@ -77,5 +78,5 @@
 .placeholder .text {
   display: flex;
   align-items: center;
-  height: calc(var(--q-text-body) * var(--q-line-tight));
+  height: calc(var(--q-text-lead) * var(--q-line-tight));
 }

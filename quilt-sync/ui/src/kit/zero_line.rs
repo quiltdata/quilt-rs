@@ -90,7 +90,7 @@ pub fn ZeroLineSkeleton() -> impl IntoView {
     view! {
         <p class=style::placeholder aria-busy="true">
             <span class=style::icon>
-                <SkeletonBox width="14px" height="14px" />
+                <SkeletonBox width="16px" height="16px" />
             </span>
             <span class=style::text>
                 <SkeletonBox width="240px" />
@@ -136,6 +136,87 @@ mod tests {
                 .as_deref(),
             Some("row"),
         );
+    }
+
+    /// The placeholder, the all-clear, the attention line and the first line of
+    /// both kinds of row are one height, so the region does not change size or
+    /// proportion between its states.
+    #[wasm_bindgen_test]
+    async fn every_line_of_the_queue_is_one_height() {
+        use crate::kit::CauseRow;
+        use crate::kit::QueueRow;
+        use crate::test_support::load_module_style;
+        // The rows' own stylesheets, for the few classes this test draws.
+        #[allow(dead_code)]
+        mod sheets {
+            stylance::import_crate_style!(pub cause, "src/kit/cause_row.module.scss");
+            stylance::import_crate_style!(pub queue_row, "src/kit/queue_row.module.scss");
+        }
+        use sheets::cause;
+        use sheets::queue_row;
+
+        load_module_style(include_str!("../../assets/css/kit/_tokens.scss"), &[]);
+        load_module_style(
+            include_str!("zero_line.module.scss"),
+            &[
+                ("root", style::root),
+                ("placeholder", style::placeholder),
+                ("icon", style::icon),
+                ("text", style::text),
+                ("rows", style::rows),
+                ("success", style::success),
+                ("attention", style::attention),
+            ],
+        );
+        load_module_style(
+            include_str!("cause_row.module.scss"),
+            &[
+                ("root", cause::root),
+                ("text", cause::text),
+                ("count", cause::count),
+                ("trailing", cause::trailing),
+                ("expander", cause::expander),
+            ],
+        );
+        load_module_style(
+            include_str!("queue_row.module.scss"),
+            &[
+                ("root", queue_row::root),
+                ("line", queue_row::line),
+                ("bullet", queue_row::bullet),
+                ("subject", queue_row::subject),
+                ("namespace", queue_row::namespace),
+                ("clause", queue_row::clause),
+                ("danger", queue_row::danger),
+            ],
+        );
+        let el = mount(|| {
+            view! {
+                // The page sets the body size; the test page does not.
+                <div style="width:640px; font-size:var(--q-text-body)">
+                    <ZeroLineSkeleton />
+                    <ZeroLine text="All packages are up to date" />
+                    <ZeroLine text="2 packages need your attention" tone=StateTone::Attention />
+                    <QueueRow namespace="org/dataset-c" state="has conflicts" tone=StateTone::Danger />
+                    <CauseRow
+                        text="Signed out from quilt.test"
+                        count=2
+                        expanded=RwSignal::new(false)
+                        // A stand-in as tall as a Button, whose stylesheet is not loaded.
+                        trailing=view! {
+                            <span style="display:block; height:var(--q-control-height)"></span>
+                        }
+                            .into_any()
+                    />
+                </div>
+            }
+        });
+        crate::test_support::sleep_ms(0).await;
+        let lines = el.first_element_child().unwrap().children();
+        let heights: Vec<f64> = (0..lines.length())
+            .map(|i| lines.item(i).unwrap().get_bounding_client_rect().height())
+            .collect();
+        assert_eq!(heights, vec![36.0; 5]);
     }
 
     /// The all-clear is a sentence, not a heading over nothing.

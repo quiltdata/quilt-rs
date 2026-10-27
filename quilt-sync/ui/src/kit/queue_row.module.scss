@@ -27,9 +27,8 @@
   width: 100%;
   min-width: 0;
   gap: var(--q-space-2);
-  /* A control plus its 4px padding. No queue row carries a control any more, but
-   * `CauseRow` still does, and the two kinds of row alternate down one list. */
-  min-height: calc(var(--q-control-height) + 2 * var(--q-space-1));
+  /* The queue's line, less the row's own vertical padding. */
+  min-height: calc(var(--q-queue-line-height) - 2 * var(--q-space-1));
 }
 
 /* On `.root`, so the whole row is the target — its padding and its tone rule
