@@ -11,6 +11,7 @@ use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_uri::Namespace;
 use serde_json::Value;
+use serde_json::json;
 
 use crate::Error;
 use crate::model::QuiltModel;
@@ -500,6 +501,19 @@ fn outcome_message(document: &str, claim: &Value) -> String {
     )
 }
 
+/// How many entries `changes` adds, modifies and removes.
+fn count_changes(changes: &quilt::lineage::ChangeSet) -> Value {
+    let (mut added, mut modified, mut removed) = (0, 0, 0);
+    for change in changes.values() {
+        match change {
+            quilt::lineage::Change::Added(_) => added += 1,
+            quilt::lineage::Change::Modified(_) => modified += 1,
+            quilt::lineage::Change::Removed(_) => removed += 1,
+        }
+    }
+    json!({ "added": added, "modified": modified, "removed": removed })
+}
+
 /// Publish the tree as a run's last revision. One that changes only the
 /// metadata resets if it isn't `latest`; any other is left Diverged.
 #[allow(clippy::too_many_arguments, reason = "one publish's inputs")]
@@ -509,10 +523,17 @@ async fn publish_outcome<M: QuiltModel>(
     pkg: &quilt::InstalledPackage,
     workflow: WorkflowIntent,
     user_meta: &Value,
-    claim: Value,
-    message: String,
+    mut claim: Value,
+    mut message: String,
     Tree { status, commit }: Tree,
 ) -> Result<(), Error> {
+    // A pending commit makes the walk compare against it, not the claim.
+    if matches!(claim["status"].as_str(), Some("done" | "failed")) && commit.is_none() {
+        claim["changes"] = count_changes(&status.changes);
+        if status.changes.is_empty() {
+            message.push_str(", no changes");
+        }
+    }
     // A sign-in lost mid-turn is `not_started` too, after the agent wrote files;
     // and a commit made by hand during the run would be pushed in its place.
     let metadata_only = matches!(claim["status"].as_str(), Some("not_started" | "unrunnable"))
