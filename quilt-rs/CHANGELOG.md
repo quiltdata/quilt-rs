@@ -19,6 +19,13 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.50.0-dev]
+
+### Changed
+
+- **Breaking:** `InstalledPackage::pull` returns `flow::Pulled`: `UpToDate` when the remote's `latest` is the revision the package already has, `Applied` with the `PullReport` otherwise. `PackageOpError::AlreadyUpToDate` is removed
+- A pull with nothing to fetch still saves the `latest` it read
+
 ## [v0.49.0] - 2026-10-26
 
 ### Added

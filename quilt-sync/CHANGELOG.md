@@ -27,6 +27,14 @@
 - **New design preview**: the package page shows *Bucket and catalog* for every package, with one button that opens the bucket dialog: *Choose* for a package with no bucket yet, *Change* otherwise. The header no longer offers *Choose S3 bucket* or *Change bucket*. Long bucket and catalog names fit on one line. *Revisions you have* is now *History*, at the top of *Revision*. The pane is wider, so more of the revision message shows, and while loading it outlines all three sections (<https://github.com/quiltdata/quilt-rs/pull/1221>)
 - The main page's attention queue is a status line with its rows below, not a card; when nothing needs you it reads *All packages are up to date* (<https://github.com/quiltdata/quilt-rs/pull/1222>)
 
+### Fixed
+
+- *Pull* on a package another pull has just brought up to date says it is already up to date instead of failing
+
+### quilt-rs
+
+- Updated [from v0.49.0 to v0.50.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.25.0] - 2026-10-26
 
 ### Added

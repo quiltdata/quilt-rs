@@ -1011,7 +1011,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         &self,
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Res<flow::PullReport> {
+    ) -> Res<flow::Pulled> {
         Box::pin(self.lock().await?.pull(host_config_opt, scope)).await
     }
 
@@ -1019,7 +1019,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         &self,
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Res<flow::PullReport> {
+    ) -> Res<flow::Pulled> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -1044,7 +1044,13 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             host_config,
         )
         .await?;
-        let (lineage, report) = flow::pull(
+        // Nothing to pull, but the lineage still carries the `latest_hash` the
+        // tag read refreshed.
+        let Some(snapshot) = snapshot else {
+            self.lineage.write(&self.storage, lineage).await?;
+            return Ok(flow::Pulled::UpToDate);
+        };
+        let (lineage, pulled) = flow::pull(
             lineage,
             &mut manifest,
             &self.paths,
@@ -1057,7 +1063,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         )
         .await?;
         self.lineage.write(&self.storage, lineage).await?;
-        Ok(report)
+        Ok(pulled)
     }
 
     /// Dry-run: what would `pull` do right now, without mutating anything?
@@ -1154,7 +1160,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         // tag resolution, then the manifest fetch, then the walk. The ctor
         // short-circuits `base == latest` before any fetch, so `Ahead` (where
         // `latest == base`) costs no network here.
-        let (lineage, snapshot) = match flow::snapshot_for_pull(
+        let (lineage, Some(snapshot)) = flow::snapshot_for_pull(
             lineage,
             &base,
             &self.paths,
@@ -1163,13 +1169,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             &package_home,
             host_config,
         )
-        .await
-        {
-            Ok(snapshot) => snapshot,
-            Err(Error::PackageOp(PackageOpError::AlreadyUpToDate)) => {
-                return Ok(nothing_to_pull());
-            }
-            Err(err) => return Err(err),
+        .await?
+        else {
+            return Ok(nothing_to_pull());
         };
 
         // `upstream_state` is computed from the ctor-refreshed lineage, so
@@ -1659,7 +1661,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         &self,
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Res<flow::PullReport> {
+    ) -> Res<flow::Pulled> {
         self.package.pull_unlocked(host_config_opt, scope).await
     }
 

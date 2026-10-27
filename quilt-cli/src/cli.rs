@@ -2206,6 +2206,48 @@ mod tests {
         Ok(())
     }
 
+    /// A second pull finds nothing new and still succeeds: text says so, and
+    /// the JSON keeps the pull shape with no `hash`.
+    #[test(tokio::test)]
+    async fn live_pull_twice_succeeds() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::outdated as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+        let pull_args = |json| Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
+            log: None,
+            format: None,
+            json,
+            command: Commands::Pull {
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
+            },
+        };
+
+        let mut stderr = Vec::new();
+        let result = init(pull_args(false)).await?;
+        print(result, Format::Text, &mut Vec::new(), &mut stderr)?;
+        assert_eq!(String::from_utf8_lossy(&stderr), "");
+
+        let mut output = Vec::new();
+        let result = init(pull_args(false)).await?;
+        print(result, Format::Text, &mut output, &mut stderr)?;
+        assert_eq!(String::from_utf8(output).unwrap(), "Already up to date\n");
+        assert_eq!(String::from_utf8_lossy(&stderr), "");
+
+        let mut output = Vec::new();
+        let result = init(pull_args(true)).await?;
+        print(result, Format::Json, &mut output, &mut stderr)?;
+        let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(json["hash"], serde_json::Value::Null);
+        assert_eq!(String::from_utf8_lossy(&stderr), "");
+
+        Ok(())
+    }
+
     /// The report, end to end against a real package. This is the only test
     /// that proves the whole path — engine grouping, the CLI's wording, and a
     /// manifest pair that actually differs — rather than a hand-built delta.

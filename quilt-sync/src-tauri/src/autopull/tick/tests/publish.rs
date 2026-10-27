@@ -1351,12 +1351,14 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         .expect_locked_package_pull()
         .times(1)
         .returning(|_, _, _| {
-            Ok(pulled(quilt_uri::ManifestUri {
-                bucket: "bucket".to_string(),
-                namespace: ("acme", "demo").into(),
-                hash: "h1".to_string(),
-                origin: None,
-            }))
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
         });
     let reporter = Arc::new(RecordingReporter::default());
     let (tx, rx) = tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());

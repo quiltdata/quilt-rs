@@ -166,9 +166,6 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
                 Err(WatchError::Conflict(PausedReason::Other(msg.clone())))
             }
         }
-        // A pull that raced another pull and found nothing to do. Benign:
-        // the namespace is already at `latest`, so keep syncing quietly.
-        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::AlreadyUpToDate)) => Ok(()),
         Error::Quilt(quilt::Error::PackageOp(
             quilt::PackageOpError::Push(msg)
             | quilt::PackageOpError::Commit(msg)
@@ -528,7 +525,15 @@ pub(crate) async fn refresh_then_maybe_sync(
                     model.locked_package_pull(&locked, None, scope).await
                 };
                 return match applied {
-                    Ok(report) => {
+                    // A pull that raced another pull and found nothing to do.
+                    // The namespace is already at `latest`, so keep syncing
+                    // quietly.
+                    Ok(quilt::flow::Pulled::UpToDate) => Ok(Some(RefreshOutcome::observed(
+                        upstream,
+                        has_changes,
+                        fingerprint,
+                    ))),
+                    Ok(quilt::flow::Pulled::Applied(report)) => {
                         info!("autosync: pulled namespace={namespace}");
                         if kept_changes {
                             match model.locked_package_status(&locked, None).await {

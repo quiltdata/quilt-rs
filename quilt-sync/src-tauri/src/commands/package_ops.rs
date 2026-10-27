@@ -450,7 +450,7 @@ async fn package_pull_command(
     m: &impl model::QuiltModel,
     watcher: &Watcher,
     namespace: &str,
-) -> Result<(quilt_uri::Namespace, quilt::flow::PullReport), Error> {
+) -> Result<(quilt_uri::Namespace, quilt::flow::Pulled), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let installed = installed_package(m, &namespace).await?;
     // Lock before raising the flag. While another writer (the `quilt` CLI, a
@@ -468,7 +468,7 @@ async fn package_pull_command(
             .await
     };
     match pulled {
-        Ok(report) => Ok((namespace, report)),
+        Ok(pulled) => Ok((namespace, pulled)),
         Err(err) => {
             pause_on_conflict(watcher, &namespace, &lineage, &err).await;
             Err(err)
@@ -540,36 +540,42 @@ pub async fn package_pull(
     let msg_init = format!("Pulling package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
+    let mut notify = Notify::new(msg_init);
     let result = package_pull_command(&*m, &watcher, &namespace).await;
-    let mut reported = false;
-    if let Ok((ns, report)) = &result {
+    let mut msg_ok = String::new();
+    if let Ok((ns, pulled)) = &result {
         watcher.clear_paused(ns).await;
-        // The same report the tick posts, from the same wording. A manual pull
-        // brings files too, and "Successfully pulled" says nothing about which —
-        // which is the whole of what this feature adds.
-        if let Some(toast) = pull_toast::report_toast(ns, report) {
-            toasts
-                .post(crate::toast::ToastDraft {
-                    kind: toast.kind,
-                    title: Some(toast.title),
-                    body: toast.body,
-                    groups: toast.groups,
-                    timeout_ms: None,
-                })
-                .await;
-            reported = true;
-        }
+        msg_ok = match pulled {
+            // Another pull got there first: nothing arrived, so no toast and
+            // no pull event.
+            quilt::flow::Pulled::UpToDate => format!("Package {namespace} is already up to date"),
+            quilt::flow::Pulled::Applied(report) => {
+                notify = notify.on_success(
+                    &tracing,
+                    MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri.as_ref())),
+                );
+                // The same report the tick posts, from the same wording. A
+                // manual pull brings files too, and "Successfully pulled" says
+                // nothing about which — which is the whole of what this
+                // feature adds.
+                let toast = pull_toast::report_toast(ns, report);
+                let reported = toast.is_some();
+                if let Some(toast) = toast {
+                    toasts
+                        .post(crate::toast::ToastDraft {
+                            kind: toast.kind,
+                            title: Some(toast.title),
+                            body: toast.body,
+                            groups: toast.groups,
+                            timeout_ms: None,
+                        })
+                        .await;
+                }
+                pull_success_message(&namespace, reported)
+            }
+        };
     }
-    Notify::new(msg_init)
-        .on_success(
-            &tracing,
-            MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri.as_ref())),
-        )
-        .map(
-            result.map(|_| ()),
-            pull_success_message(&namespace, reported),
-            msg_err,
-        )
+    notify.map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 /// The page's own confirmation of a pull — empty when the toast has already
@@ -1543,7 +1549,7 @@ mod tests {
             .times(1)
             .returning(move |_, _, _| {
                 assert!(aggregator.apply_in_progress(), "up while pulling");
-                Ok(quilt::flow::PullReport {
+                Ok(quilt::flow::Pulled::Applied(quilt::flow::PullReport {
                     manifest_uri: quilt_uri::ManifestUri {
                         bucket: "bucket".to_string(),
                         namespace: ("acme", "demo").into(),
@@ -1555,7 +1561,7 @@ mod tests {
                     updated: Vec::new(),
                     removed: Vec::new(),
                     message: None,
-                })
+                }))
             });
 
         super::package_pull_command(&model, &watcher, "acme/demo")

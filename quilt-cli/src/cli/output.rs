@@ -177,17 +177,19 @@ mod tests {
         assert!(push_out.to_json().is_object());
 
         let pull_out = pull::Output {
-            hash: "abc123".to_string(),
-            report: quilt_rs::flow::PullReport {
+            report: Some(quilt_rs::flow::PullReport {
                 manifest_uri,
                 added: Vec::new(),
                 added_not_fetched: Vec::new(),
                 updated: Vec::new(),
                 removed: Vec::new(),
                 message: None,
-            },
+            }),
         };
         assert!(pull_out.to_json().is_object());
+
+        let pull_up_to_date_out = pull::Output { report: None };
+        assert!(pull_up_to_date_out.to_json().is_object());
 
         let status_out = status::Output {
             status: InstalledPackageStatus::default(),

@@ -817,7 +817,7 @@ async fn test_status_propagates_login_required() -> Res {
 /// prior `status` call would persist the refreshed `latest_hash`, so
 /// disk was reliably fresh when `pull` ran. Without that persist,
 /// the disk-stale `latest_hash` always equalled `base_hash` and
-/// pull short-circuited with "already up-to-date" — both the
+/// pull short-circuited as up to date — both the
 /// autosync watcher's pull branch and the manual Pull button were
 /// affected.
 #[test(tokio::test)]
@@ -893,20 +893,90 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
         state_store: None,
     };
 
-    // Pull will eventually fail downstream — we have not staged the
-    // manifest at `new_hash`, so `cache_remote_manifest` will return a
-    // NotFound — but the *specific* error we are guarding against is
-    // "package is already up-to-date". Any other failure mode proves
-    // the refresh-then-check path ran.
-    let err = package
+    // Pull fails downstream — we have not staged the manifest at
+    // `new_hash`, so `cache_remote_manifest` returns a NotFound. An up-to-date
+    // short-circuit would have returned `Ok`, so the error proves the
+    // refresh-then-check path ran.
+    package
         .pull(None, SyncScope::IndividualFiles)
         .await
         .expect_err("pull should fail downstream on the missing NEW_HASH manifest");
-    let msg = err.to_string();
-    assert!(
-        !msg.contains("already up-to-date"),
-        "pull must refresh latest_hash before the up-to-date guard; got: {msg}"
+
+    Ok(())
+}
+
+/// A pull whose remote `latest` is the base it already has succeeds with
+/// `Pulled::UpToDate`, and still writes the `latest_hash` the tag read
+/// refreshed — here a stale tip the tag has since moved back from.
+#[test(tokio::test)]
+async fn test_pull_up_to_date_returns_up_to_date_and_writes_latest_hash() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "pull_up_to_date").into();
+    let bucket = "bkt";
+    let base_hash = "BASE_HASH";
+    let stale_hash = "STALE_HASH";
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/pull_up_to_date": {{
+                    "commit": null,
+                    "remote": {{
+                        "bucket": "{bucket}",
+                        "namespace": "test/pull_up_to_date",
+                        "hash": "{base_hash}",
+                        "catalog": "quilt.test"
+                    }},
+                    "base_hash": "{base_hash}",
+                    "latest_hash": "{stale_hash}",
+                    "paths": {{}}
+                }}
+            }},
+            "home": "{}"
+        }}"#,
+        home.as_ref().display(),
     );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+    storage
+        .write_byte_stream(
+            paths.installed_manifest(&namespace, base_hash),
+            ByteStream::from_static(br#"{"version": "v0"}"#),
+        )
+        .await?;
+    remote
+        .put_object(
+            None,
+            &S3Uri::try_from(
+                format!("s3://{bucket}/.quilt/named_packages/test/pull_up_to_date/latest").as_str(),
+            )?,
+            base_hash.as_bytes().to_vec(),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(remote),
+        storage,
+        namespace,
+        state_store: None,
+    };
+
+    let pulled = package.pull(None, SyncScope::IndividualFiles).await?;
+    assert_eq!(pulled, crate::flow::Pulled::UpToDate);
+
+    let lineage = package.lineage().await?;
+    assert_eq!(lineage.latest_hash, base_hash);
 
     Ok(())
 }
