@@ -49,18 +49,23 @@
   background: var(--q-bgColor-page);
 }
 
+/* Each band stops high enough to leave the floor in view under the toolbar.
+ * When the bands are taller than the window, as with many hosts in Accounts,
+ * they stack upwards from there instead, and the top of the stack goes under
+ * the appbar rather than the list out of sight. */
+
 /* Its gap is `.main`'s top padding. */
 [data-page-scroll] .strip {
-  top: var(--q-appbar-height);
+  top: min(
+    var(--q-appbar-height),
+    var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar) - var(--pinned-queue) -
+      var(--pinned-strip)
+  );
   margin-top: calc(-1 * var(--q-space-5));
   padding-top: var(--q-space-5);
 }
 
-/* Its gap, and the toolbar's, is `.main`'s gap between regions.
- *
- * The queue and the toolbar stop high enough to leave the floor in view. When
- * the bands are taller than the window, as with many hosts in Accounts, they
- * slide over the band above them rather than push the list out of sight. */
+/* Its gap, and the toolbar's, is `.main`'s gap between regions. */
 [data-page-scroll] .queue {
   top: min(
     var(--q-appbar-height) + var(--pinned-strip),

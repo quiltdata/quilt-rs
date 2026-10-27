@@ -3828,6 +3828,74 @@ mod tests {
         );
     }
 
+    /// Bands taller than the window stack upwards from the floor, so the list
+    /// keeps a row in view and no band covers another.
+    #[wasm_bindgen_test]
+    async fn bands_taller_than_the_window_leave_the_list_in_view() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("../kit/page_layout.module.scss"),
+            &[
+                ("root", frame_sheet::layout::root),
+                ("main", frame_sheet::layout::main),
+            ],
+        );
+        load_module_style(
+            include_str!("main_page.module.scss"),
+            &[
+                ("list_region", style::list_region),
+                ("strip", style::strip),
+                ("queue", style::queue),
+                ("queue_scroll", style::queue_scroll),
+                ("toolbar", style::toolbar),
+            ],
+        );
+        let el = mount(|| {
+            view! {
+                <div style="--q-frame-height:560px; --q-appbar-height:48px; --q-space-5:20px; \
+                            --q-space-6:24px; --q-space-12:48px">
+                    <PageLayout heading="QuiltSync" page_scroll=true>
+                        <StateStrip>
+                            <div style="height:400px"></div>
+                        </StateStrip>
+                        <QueueBand>
+                            <div style="height:50px"></div>
+                        </QueueBand>
+                        <div class=style::list_region>
+                            <ToolbarBand>
+                                <div style="height:30px"></div>
+                            </ToolbarBand>
+                            <ul>
+                                {(0..60)
+                                    .map(|_| view! { <li style="height:40px"></li> })
+                                    .collect_view()}
+                            </ul>
+                        </div>
+                    </PageLayout>
+                </div>
+            }
+        });
+        sleep_ms(50).await;
+        let find = |class: &str| -> web_sys::Element {
+            el.query_selector(&format!(".{class}"))
+                .unwrap()
+                .expect(class)
+        };
+        let frame = find(frame_sheet::layout::root);
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        let top = |class: &str| find(class).get_bounding_client_rect().top();
+        let bottom = |class: &str| find(class).get_bounding_client_rect().bottom();
+        let origin = frame.get_bounding_client_rect().top();
+        assert_eq!(
+            bottom(style::toolbar) - origin,
+            512.0,
+            "the toolbar stops a row above the window's bottom"
+        );
+        assert_eq!(top(style::toolbar), bottom(style::queue));
+        assert_eq!(top(style::queue), bottom(style::strip));
+    }
+
     #[wasm_bindgen_test]
     async fn the_toolbar_and_its_list_share_one_parent() {
         // `PageLayout`'s column sets the gap between regions, so the toolbar and
