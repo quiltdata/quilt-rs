@@ -28,7 +28,7 @@
 
 ### Changed
 
-- **Breaking:** pull, push, commit and publish report when there is nothing to do instead of failing. `InstalledPackage::pull` returns `flow::Pulled` (`UpToDate` or `Applied`), `push` returns `Pushed` (`NothingToPush` or `Uploaded`), `commit` returns `flow::Committed` (`NothingToCommit` or `Recorded`), and `PublishOutcome` gains `NothingToPublish`. `PackageOpError::AlreadyUpToDate` is removed
+- **Breaking:** pull, push, commit and publish report when there is nothing to do instead of failing. `InstalledPackage::pull` returns `flow::Pulled` (`UpToDate` or `Applied`), `push` returns `Pushed` (`NothingToPush` or `Uploaded`), `commit` returns `flow::Committed` (`NothingToCommit` or `Recorded`), and `PublishOutcome` gains `NothingToPublish`, so `PublishOutcome::push` returns an `Option`. `PackageOpError::AlreadyUpToDate` is removed
   - <https://github.com/quiltdata/quilt-rs/pull/1227>
   - <https://github.com/quiltdata/quilt-rs/pull/1230>
   - <https://github.com/quiltdata/quilt-rs/pull/1242>
