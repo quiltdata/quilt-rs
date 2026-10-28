@@ -93,12 +93,13 @@ mod shell {
             }
         };
         let path = tokio::time::timeout(timeout, read).await.ok().flatten();
+        // Without a PATH, kill what the startup files left running too, even
+        // once the shell has exited, or each retry adds to it. The shell is
+        // not reaped before this, so its PID still names its group.
         if path.is_none()
-            && matches!(child.try_wait(), Ok(None))
             && let Some(group) = child.id().and_then(|id| libc::pid_t::try_from(id).ok())
         {
             // SAFETY: `kill` takes plain integers and touches no memory of ours.
-            // The shell is unreaped, so its PID still names its group.
             unsafe { libc::kill(-group, libc::SIGKILL) };
         }
         path
@@ -164,17 +165,49 @@ mod shell {
             Ok(())
         }
 
-        /// A shell that never prints the PATH is given up on, and what it
-        /// started is killed with it.
-        #[tokio::test]
-        async fn a_shell_that_hangs_is_given_up_on() -> std::io::Result<()> {
+        /// Runs a shell whose startup starts a job holding stdout, then `end`s
+        /// without printing the PATH; whether the job is gone afterwards.
+        async fn job_outlives_a_shell_that(end: &str) -> std::io::Result<bool> {
             let dir = tempfile::TempDir::new()?;
             let shell = dir.path().join("shell");
-            tokio::fs::write(&shell, "#!/bin/sh\nsleep 30\n").await?;
+            let job = dir.path().join("job");
+            tokio::fs::write(
+                &shell,
+                format!(
+                    "#!/bin/sh\nsleep 30 &\necho $! > '{}'\n{end}\n",
+                    job.display()
+                ),
+            )
+            .await?;
             tokio::fs::set_permissions(&shell, std::os::unix::fs::PermissionsExt::from_mode(0o755))
                 .await?;
             let path = from_shell(shell.as_os_str(), Duration::from_millis(300)).await;
             assert_eq!(path, None);
+            let job: libc::pid_t = tokio::fs::read_to_string(&job)
+                .await?
+                .trim()
+                .parse()
+                .expect("a PID");
+            for _ in 0..40 {
+                // SAFETY: signal 0 only checks that `job` exists.
+                if unsafe { libc::kill(job, 0) } != 0 {
+                    return Ok(false);
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Ok(true)
+        }
+
+        #[tokio::test]
+        async fn a_shell_that_hangs_is_given_up_on_with_its_job() -> std::io::Result<()> {
+            assert!(!job_outlives_a_shell_that("wait").await?);
+            Ok(())
+        }
+
+        #[tokio::test]
+        async fn a_job_left_by_a_shell_that_exited_without_a_path_is_killed() -> std::io::Result<()>
+        {
+            assert!(!job_outlives_a_shell_that("exit 0").await?);
             Ok(())
         }
     }
