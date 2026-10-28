@@ -122,7 +122,7 @@ impl<'de> Deserialize<'de> for SyncScope {
         let value = serde_json::Value::deserialize(deserializer)?;
         Ok(match serde_json::from_value(value) {
             Ok(Known::EntirePackage) => Self::EntirePackage,
-            Ok(Known::Folders(folders)) => Self::folders(folders),
+            Ok(Known::Folders(folders)) => Self::folders(folders).unwrap_or_default(),
             Ok(Known::IndividualFiles) | Err(_) => Self::IndividualFiles,
         })
     }
@@ -135,21 +135,27 @@ impl SyncScope {
     /// Folders are stored without a leading `./` or `/` or a trailing `/`,
     /// sorted, with duplicates and folders inside another kept folder dropped.
     /// A list that names the root (`.`, `./`, `/` or an empty string) is the
-    /// entire package, and an empty list keeps individual files.
-    #[must_use]
-    pub fn folders<S: AsRef<str>>(folders: impl IntoIterator<Item = S>) -> Self {
+    /// entire package, and an empty list keeps individual files. A folder
+    /// with a `..` part is refused: a folder is a path inside the package.
+    pub fn folders<S: AsRef<str>>(folders: impl IntoIterator<Item = S>) -> Res<Self> {
         let mut kept: Vec<String> = Vec::new();
+        let mut root = false;
         for folder in folders {
-            let folder = folder
+            let parts: Vec<&str> = folder
                 .as_ref()
                 .split('/')
                 .filter(|part| !part.is_empty() && *part != ".")
-                .collect::<Vec<_>>()
-                .join("/");
-            if folder.is_empty() {
-                return Self::EntirePackage;
+                .collect();
+            if parts.contains(&"..") {
+                return Err(LineageError::FolderOutsidePackage(folder.as_ref().to_string()).into());
             }
-            kept.push(folder);
+            if parts.is_empty() {
+                root = true;
+            }
+            kept.push(parts.join("/"));
+        }
+        if root {
+            return Ok(Self::EntirePackage);
         }
         kept.sort();
         kept.dedup();
@@ -160,11 +166,11 @@ impl SyncScope {
                 outer.push(folder);
             }
         }
-        if outer.is_empty() {
+        Ok(if outer.is_empty() {
             Self::IndividualFiles
         } else {
             Self::Folders(outer)
-        }
+        })
     }
 
     /// Whether this is the scope a package has when nothing asked otherwise.
@@ -407,7 +413,7 @@ mod tests {
     #[test]
     fn folders_are_stored_in_one_form() {
         assert_eq!(
-            SyncScope::folders(["./results/", "data/raw", "/data/raw/", "data//raw"]),
+            SyncScope::folders(["./results/", "data/raw", "/data/raw/", "data//raw"]).unwrap(),
             folders(&["data/raw", "results"])
         );
     }
@@ -415,7 +421,7 @@ mod tests {
     #[test]
     fn a_folder_inside_a_kept_folder_is_dropped() {
         assert_eq!(
-            SyncScope::folders(["data/raw/x", "data-x", "data", "data2/a"]),
+            SyncScope::folders(["data/raw/x", "data-x", "data", "data2/a"]).unwrap(),
             folders(&["data", "data-x", "data2/a"])
         );
     }
@@ -424,7 +430,7 @@ mod tests {
     fn a_list_naming_the_root_is_the_entire_package() {
         for root in [".", "./", "/", ""] {
             assert_eq!(
-                SyncScope::folders(["data", root]),
+                SyncScope::folders(["data", root]).unwrap(),
                 SyncScope::EntirePackage,
                 "{root:?}"
             );
@@ -432,9 +438,22 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_reaching_outside_the_package_is_refused() {
+        for folder in ["data/../results", "..", "../data"] {
+            assert!(
+                matches!(
+                    SyncScope::folders(["data", folder]),
+                    Err(Error::Lineage(LineageError::FolderOutsidePackage(ref named))) if named == folder
+                ),
+                "{folder}"
+            );
+        }
+    }
+
+    #[test]
     fn no_folders_keep_individual_files() {
         assert_eq!(
-            SyncScope::folders(Vec::<String>::new()),
+            SyncScope::folders(Vec::<String>::new()).unwrap(),
             SyncScope::IndividualFiles
         );
     }

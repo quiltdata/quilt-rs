@@ -23,7 +23,7 @@
 
 ### Added
 
-- `SyncScope::Folders` keeps every file under chosen folders, files added there later included; `SyncScope::folders` builds it in one stored form, and a list naming the package root is the entire package (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `SyncScope::Folders` keeps every file under chosen folders, files added there later included; `SyncScope::folders` builds it in one stored form, a list naming the package root is the entire package, and a folder with a `..` part is refused with `LineageError::FolderOutsidePackage` (<https://github.com/quiltdata/quilt-rs/pull/1229>)
 - `InstalledPackage::backlog` lists the current revision's files the stored scope covers that are not here yet, and `DownloadCounts` counts them in `backlog`; `InstalledPackage::keep` stores a scope and downloads that backlog under one package lock (<https://github.com/quiltdata/quilt-rs/pull/1229>)
 
 ### Changed

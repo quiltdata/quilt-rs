@@ -1169,7 +1169,7 @@ mod tests {
                 remote_changed,
                 &tracked,
                 &ChangeSet::new(),
-                &SyncScope::folders(["qc"])
+                &SyncScope::folders(["qc"]).unwrap()
             ),
             vec![PathBuf::from("have.csv"), PathBuf::from("qc/summary.csv")],
         );

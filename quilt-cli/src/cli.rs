@@ -756,7 +756,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
                 namespace: parse_optional_namespace(namespace)?,
                 paths: path,
                 uri,
-                keep: keep::scope_from(false, keep_all, keep_folder),
+                keep: keep::scope_from(false, keep_all, keep_folder)?,
                 download: !no_download,
             };
 
@@ -773,7 +773,7 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             let namespace = pkg.resolve(&m).await?;
             let args = keep::Input {
                 namespace,
-                scope: keep::scope_from(files, all, folder),
+                scope: keep::scope_from(files, all, folder)?,
                 download: !no_download,
             };
 
@@ -979,6 +979,9 @@ impl Error {
                 quilt_rs::Error::Uri(_) => "invalid_uri",
                 quilt_rs::Error::Auth(..) => "auth",
                 quilt_rs::Error::Login(_) => "login",
+                quilt_rs::Error::Lineage(quilt_rs::LineageError::FolderOutsidePackage(_)) => {
+                    "folder_outside_package"
+                }
                 quilt_rs::Error::Lineage(_) => "lineage",
                 quilt_rs::Error::WorkflowValidation(_) => "workflow_validation",
                 _ => "quilt_error",

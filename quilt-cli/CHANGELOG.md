@@ -23,7 +23,7 @@
 
 ### Added
 
-- `quilt keep --files | --all | --folder <dir>` sets which of a package's files this copy keeps, and downloads the files it covers; `--no-download` only saves the setting, and no flag prints it (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `quilt keep --files | --all | --folder <dir>` sets which of a package's files this copy keeps, and downloads the files it covers; `--no-download` only saves the setting, and no flag prints it; a folder with a `..` part is refused (<https://github.com/quiltdata/quilt-rs/pull/1229>)
 - `quilt install --keep-all` and `--keep-folder <dir>` set the same at install (<https://github.com/quiltdata/quilt-rs/pull/1229>)
 
 ### Changed

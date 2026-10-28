@@ -1533,7 +1533,7 @@ mod tests {
     #[test]
     fn kept_folders_bound_the_backlog() {
         let mut lineage = lineage_tracking(&[]);
-        lineage.sync_scope = quilt::lineage::SyncScope::folders(["data", "results"]);
+        lineage.sync_scope = quilt::lineage::SyncScope::folders(["data", "results"]).unwrap();
 
         let (keeping, size) = keeping_data(
             &lineage,

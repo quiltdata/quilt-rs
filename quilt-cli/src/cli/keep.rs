@@ -32,16 +32,20 @@ pub struct Output {
 
 /// The scope a set of `keep` or `install` flags asks for, or `None` when they
 /// ask for none.
-pub fn scope_from(files: bool, all: bool, folders: Vec<String>) -> Option<SyncScope> {
-    if all {
+pub fn scope_from(
+    files: bool,
+    all: bool,
+    folders: Vec<String>,
+) -> Result<Option<SyncScope>, Error> {
+    Ok(if all {
         Some(SyncScope::EntirePackage)
     } else if files {
         Some(SyncScope::IndividualFiles)
     } else if folders.is_empty() {
         None
     } else {
-        Some(SyncScope::folders(folders))
-    }
+        Some(SyncScope::folders(folders)?)
+    })
 }
 
 /// `a`, `a and b`, `a, b and c`.
@@ -170,24 +174,26 @@ mod tests {
 
     #[test]
     fn the_flags_pick_one_scope() {
-        assert_eq!(scope_from(false, false, Vec::new()), None);
+        assert_eq!(scope_from(false, false, Vec::new()).unwrap(), None);
         assert_eq!(
-            scope_from(true, false, Vec::new()),
+            scope_from(true, false, Vec::new()).unwrap(),
             Some(SyncScope::IndividualFiles)
         );
         assert_eq!(
-            scope_from(false, true, Vec::new()),
+            scope_from(false, true, Vec::new()).unwrap(),
             Some(SyncScope::EntirePackage)
         );
         assert_eq!(
-            scope_from(false, false, vec!["data/".to_string()]),
+            scope_from(false, false, vec!["data/".to_string()]).unwrap(),
             Some(SyncScope::Folders(vec!["data".to_string()]))
         );
         assert_eq!(
-            scope_from(false, false, vec!["./".to_string()]),
+            scope_from(false, false, vec!["./".to_string()]).unwrap(),
             Some(SyncScope::EntirePackage),
             "--folder ./ is --all"
         );
+        let err = scope_from(false, false, vec!["data/../results".to_string()]).unwrap_err();
+        assert_eq!(err.kind(), "folder_outside_package", "{err}");
     }
 
     #[test]
@@ -204,7 +210,7 @@ mod tests {
             Output {
                 downloaded: 3,
                 skipped: vec![PathBuf::from("data/gone.csv")],
-                ..output(SyncScope::folders(["data", "results"]), 1)
+                ..output(SyncScope::folders(["data", "results"]).unwrap(), 1)
             }
             .to_string(),
             "team/plates keeps every file in data and results\nDownloaded 3 files\n\
@@ -219,7 +225,7 @@ mod tests {
             r#"{"namespace":"team/plates","scope":"entire_package","outstanding":2}"#
         );
         assert_eq!(
-            output(SyncScope::folders(["data"]), 0)
+            output(SyncScope::folders(["data"]).unwrap(), 0)
                 .to_json()
                 .to_string(),
             r#"{"namespace":"team/plates","scope":"folders","folders":["data"],"outstanding":0}"#
@@ -246,7 +252,9 @@ mod tests {
         };
 
         let set = m
-            .keep(input(Some(SyncScope::folders(["data/", "data/raw"]))))
+            .keep(input(Some(
+                SyncScope::folders(["data/", "data/raw"]).unwrap(),
+            )))
             .await?;
         assert_eq!(set.scope, SyncScope::Folders(vec!["data".to_string()]));
         assert_eq!((set.downloaded, set.outstanding), (0, 0));
@@ -280,7 +288,7 @@ mod tests {
         let saved = m
             .keep(Input {
                 namespace: pkg::NAMESPACE.into(),
-                scope: Some(SyncScope::folders(["one"])),
+                scope: Some(SyncScope::folders(["one"]).unwrap()),
                 download: false,
             })
             .await?;
@@ -297,7 +305,7 @@ mod tests {
         let fetched = m
             .keep(Input {
                 namespace: pkg::NAMESPACE.into(),
-                scope: Some(SyncScope::folders(["one"])),
+                scope: Some(SyncScope::folders(["one"]).unwrap()),
                 download: true,
             })
             .await?;

@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn kept_folders_count_only_their_files_as_the_backlog() {
-        let lineage = tracking(&["top.csv"], SyncScope::folders(["data/raw"]));
+        let lineage = tracking(&["top.csv"], SyncScope::folders(["data/raw"]).unwrap());
 
         let counts = count(
             &lineage,
