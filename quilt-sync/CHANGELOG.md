@@ -23,6 +23,10 @@
 
 ### Added
 
+- A package can keep chosen folders: QuiltSync downloads every file under them, including files added there later. `quilt keep --folder` sets them too. **New design preview**: *Keeping* has a *Folders* option, with *Change folders* to edit the list, and *Download N files* fetches the files still missing. The main page counts them in *N to download*
+  - <https://github.com/quiltdata/quilt-rs/pull/1229>
+  - <https://github.com/quiltdata/quilt-rs/pull/1245>
+  - <https://github.com/quiltdata/quilt-rs/pull/1250>
 - **Experimental**: agent tasks can be set up in Settings. With *Agent tasks* on, the Settings page has an *Agent tasks* card for choosing which buckets can ask this computer to run a task and which local agents run it. The revision a task publishes says how many files it added, changed and removed. Agents run with the PATH of your login shell, so they find your tools
   - <https://github.com/quiltdata/quilt-rs/pull/1224>
   - <https://github.com/quiltdata/quilt-rs/pull/1225>
@@ -30,7 +34,6 @@
 
 ### Changed
 
-- A package set with `quilt keep --folder` keeps the files under its folders, and a pull downloads the new files there. **New design preview**: *Keeping* names the folders and offers to download their files, and the main page counts them in *N to download* (<https://github.com/quiltdata/quilt-rs/pull/1229>)
 - **New design preview**: the main page and the package page scroll as one page, so the mouse wheel moves the list from anywhere in the window, while the bar, toolbar and headings stay in place. On the package page, *Download* stays at the bottom while files are ticked, and *Bucket and catalog*, *Revision* and *Keeping* sit beside the files in a wide window and above them in a narrow one
   - <https://github.com/quiltdata/quilt-rs/pull/1223>
   - <https://github.com/quiltdata/quilt-rs/pull/1228>

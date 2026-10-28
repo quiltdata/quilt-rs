@@ -47,7 +47,7 @@ pub use installed_package_v2::{PackageHeaderBand, package_page_class, package_sh
 pub use installed_package_v2::context_pane::{CurrentRevisionPane, RevisionHistoryFetch};
 // And the live file pane, over the scene's fixture, beside the scene's drawing.
 pub use installed_package_v2::file_pane::{
-    Facet, FileList, FilePane, Grouping, Listing, downloaded_words,
+    Facet, FileList, FilePane, Grouping, Kept, Listing, downloaded_words,
 };
 // The header's summary of what a newer revision brings, which the gallery's
 // scene draws over fixtures.

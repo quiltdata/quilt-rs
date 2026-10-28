@@ -410,7 +410,11 @@ mod tests {
         })
     }
 
-    fn stores_ok(_: String, _: bool) -> Pin<Box<dyn Future<Output = Result<(), String>>>> {
+    fn stores_ok(
+        _: String,
+        _: crate::commands::KeepingScope,
+        _: Vec<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>>>> {
         Box::pin(async { Ok(()) })
     }
 
