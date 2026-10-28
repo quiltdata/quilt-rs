@@ -307,17 +307,15 @@ const UNREAD: Held = Held {
 /// exist yet. Only whole-package scope may make that promise — under
 /// individual-file scope the next revision can add a file and falsify it.
 ///
-/// Kept folders are named before the count, once saved: a Folders choice with
-/// nothing saved yet still says what the stored scope does.
+/// Reads the stored scope, not the radio: a Folders choice with nothing saved
+/// yet still says what the stored scope does. Kept folders are named before
+/// the count.
 fn consequence(scope: RwSignal<String>, held: Held, kept: RwSignal<Vec<String>>) -> Signal<String> {
     Signal::derive(move || {
         let counted = counted(held);
-        let folders = kept.get();
         match scope.get().as_str() {
             "all" => format!("{counted} — files added later are downloaded too."),
-            "folders" if !folders.is_empty() => {
-                format!("Files in {} are kept. {counted}.", listed(&folders))
-            }
+            "folders" => format!("Files in {} are kept. {counted}.", listed(&kept.get())),
             _ => format!("{counted}."),
         }
     })
@@ -345,15 +343,10 @@ fn download_words(held: Held) -> String {
 /// all: a standing `Download all files` with no extent was removed on purpose,
 /// and this appears only where the scope change would otherwise strand files
 /// already listed.
-fn download(scope: RwSignal<String>, held: Held, kept: RwSignal<Vec<String>>) -> AnyView {
+fn download(scope: RwSignal<String>, held: Held) -> AnyView {
     view! {
         {move || {
-            let offered = match scope.get().as_str() {
-                "all" => true,
-                "folders" => kept.with(|kept| !kept.is_empty()),
-                _ => false,
-            };
-            (offered && held.outstanding > 0)
+            (scope.get() != "pick" && held.outstanding > 0)
                 .then(|| view! { <Button on_click=|_| ()>{download_words(held)}</Button> })
         }}
     }
@@ -365,6 +358,7 @@ fn download(scope: RwSignal<String>, held: Held, kept: RwSignal<Vec<String>>) ->
 /// library refuses it.
 fn folder_inputs(
     scope: RwSignal<String>,
+    stored: RwSignal<String>,
     kept: RwSignal<Vec<String>>,
     refused: Option<&'static str>,
 ) -> AnyView {
@@ -378,6 +372,7 @@ fn folder_inputs(
         } else {
             error.set(None);
             kept.set(folders);
+            stored.set("folders".to_string());
         }
     });
     view! {
@@ -402,6 +397,21 @@ fn pane(
     folders: Kept,
     on_page: bool,
 ) -> AnyView {
+    // What the backend would hold. The other two options store on choosing;
+    // Folders stores on Save, so a Folders cell with nothing saved holds `pick`.
+    let stored = RwSignal::new(
+        if folders.folders.is_empty() && scope.get_untracked() == "folders" {
+            "pick".to_string()
+        } else {
+            scope.get_untracked()
+        },
+    );
+    Effect::new(move |_| {
+        let chosen = scope.get();
+        if chosen != "folders" {
+            stored.set(chosen);
+        }
+    });
     let kept = RwSignal::new(
         folders
             .folders
@@ -442,12 +452,12 @@ fn pane(
         <PaneSection>
             <ChoiceGroup
                 label="Keeping"
-                caption=consequence(scope, held, kept)
+                caption=consequence(stored, held, kept)
                 options=scopes()
                 selected=scope
             />
-            {folder_inputs(scope, kept, folders.refused)}
-            {download(scope, held, kept)}
+            {folder_inputs(scope, stored, kept, folders.refused)}
+            {download(stored, held)}
         </PaneSection>
     };
 

@@ -31,7 +31,7 @@ pub fn filled(rows: &[String]) -> Vec<String> {
 pub fn FolderList(
     /// The rows as typed. At least one row is always drawn.
     rows: RwSignal<Vec<String>>,
-    /// Gets the [`filled`] rows. Never called with none: Save is disabled then.
+    /// Gets the [`filled`] rows. Never called with none, nor while disabled.
     on_save: Callback<Vec<String>>,
     /// Why the last save was refused, under the rows.
     #[prop(optional, into)]
@@ -115,7 +115,7 @@ pub fn FolderList(
                 </Button>
                 <Button
                     on_click=move |_| on_save.run(rows.with_untracked(|rows| filled(rows)))
-                    disabled=Signal::derive(move || empty.get())
+                    disabled=Signal::derive(move || disabled.get().unwrap_or(false) || empty.get())
                     loading=saving
                 >
                     "Save"
@@ -183,6 +183,15 @@ mod tests {
         button(&el, "Save").click();
         leptos::task::tick().await;
         assert_eq!(saved.get_untracked(), Some(rows(&["data/raw"])));
+    }
+
+    #[wasm_bindgen_test]
+    fn a_disabled_list_does_not_save() {
+        let list = RwSignal::new(rows(&["data/raw"]));
+        let el = mount(move || {
+            view! { <FolderList rows=list on_save=Callback::new(|_| ()) disabled=true /> }
+        });
+        assert!(button(&el, "Save").disabled());
     }
 
     #[wasm_bindgen_test]
