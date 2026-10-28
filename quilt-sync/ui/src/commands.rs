@@ -393,6 +393,9 @@ pub struct AgentSettings {
     /// Approve every permission request the agent makes.
     #[serde(default)]
     pub trust_all: bool,
+    /// Variables set for the agent. Settings keeps them as they are.
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
 }
 
 /// `task_settings.json` as read.

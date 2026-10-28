@@ -821,6 +821,7 @@ mod tests {
                         crate::tasks::settings::AgentSettings {
                             command: command.iter().map(ToString::to_string).collect(),
                             trust_all: false,
+                            env: std::collections::BTreeMap::new(),
                         },
                     )
                 })

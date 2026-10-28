@@ -268,6 +268,7 @@ fn tasks() -> TaskSettings {
     let agent = |command: &[&str], trust_all| AgentSettings {
         command: command.iter().map(ToString::to_string).collect(),
         trust_all,
+        ..AgentSettings::default()
     };
     TaskSettings {
         blessed_buckets: vec!["s3://quilt-dev".to_string(), "s3://plate-reads".to_string()],
@@ -341,7 +342,7 @@ fn wrong_tasks() -> TaskSettings {
         "kiro ".to_string(),
         AgentSettings {
             command: Vec::new(),
-            trust_all: false,
+            ..AgentSettings::default()
         },
     );
     settings

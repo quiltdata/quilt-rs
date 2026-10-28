@@ -2665,6 +2665,7 @@ mod tests {
                         "acp".to_string(),
                     ],
                     trust_all: true,
+                    ..commands::AgentSettings::default()
                 },
             )]
             .into_iter()

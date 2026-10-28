@@ -547,9 +547,10 @@ pub struct AgentDraft {
     /// One argument per line, the program first.
     pub command: RwSignal<String>,
     pub trust_all: RwSignal<bool>,
-    /// The command as stored. Saved as it is while its text is not edited,
-    /// so an argument the box cannot show, such as an empty one, survives.
-    pub stored: StoredValue<Vec<String>>,
+    /// The agent as stored. Its command is saved as it is while its text is
+    /// not edited, so an argument the box cannot show, such as an empty one,
+    /// survives; its `env`, which the popup does not show, always is.
+    pub stored: StoredValue<AgentSettings>,
 }
 
 impl AgentDraft {
@@ -559,7 +560,18 @@ impl AgentDraft {
             name: RwSignal::new(name.to_string()),
             command: RwSignal::new(agent.command.join("\n")),
             trust_all: RwSignal::new(agent.trust_all),
-            stored: StoredValue::new(agent.command.clone()),
+            stored: StoredValue::new(agent.clone()),
+        }
+    }
+
+    /// Its fields, read where the caller tracks.
+    #[must_use]
+    pub fn fields(self) -> AgentFields {
+        AgentFields {
+            name: self.name.get(),
+            command: self.command.get(),
+            trust_all: self.trust_all.get(),
+            stored: self.stored.get_value(),
         }
     }
 
@@ -581,33 +593,36 @@ pub struct AgentFields {
     /// One argument per line.
     pub command: String,
     pub trust_all: bool,
-    /// The command as stored; empty for a new agent.
-    pub stored: Vec<String>,
+    /// The agent as stored; empty for a new one.
+    pub stored: AgentSettings,
 }
 
 impl AgentFields {
     /// The command to save: as stored while its text is unchanged.
     fn args(&self) -> Vec<String> {
-        if !self.stored.is_empty() && self.command == self.stored.join("\n") {
-            self.stored.clone()
+        let stored = &self.stored.command;
+        if !stored.is_empty() && self.command == stored.join("\n") {
+            stored.clone()
         } else {
             command_args(&self.command)
         }
+    }
+
+    /// What is wrong with the command Save would write, if anything: a
+    /// stored one can start with a blank program.
+    #[must_use]
+    pub fn command_error(&self) -> Option<&'static str> {
+        self.args()
+            .first()
+            .is_none_or(|program| program.trim().is_empty())
+            .then_some("Enter the program to run, then its arguments")
     }
 }
 
 /// Each draft's fields, read where the caller tracks.
 #[must_use]
 pub fn agent_fields(agents: &[AgentDraft]) -> Vec<AgentFields> {
-    agents
-        .iter()
-        .map(|a| AgentFields {
-            name: a.name.get(),
-            command: a.command.get(),
-            trust_all: a.trust_all.get(),
-            stored: a.stored.get_value(),
-        })
-        .collect()
+    agents.iter().map(|a| a.fields()).collect()
 }
 
 /// A command as typed, one argument per line; blank lines are dropped.
@@ -667,13 +682,6 @@ pub fn agent_name_error(names: &[String], at: usize) -> Option<&'static str> {
     }
 }
 
-#[must_use]
-pub fn command_error(text: &str) -> Option<&'static str> {
-    command_args(text)
-        .is_empty()
-        .then_some("Enter the program to run, then its arguments")
-}
-
 /// What Save writes, or `None` while a field is wrong.
 #[must_use]
 pub fn task_settings_of(buckets: &str, agents: &[AgentFields]) -> Option<TaskSettings> {
@@ -681,7 +689,7 @@ pub fn task_settings_of(buckets: &str, agents: &[AgentFields]) -> Option<TaskSet
     let names: Vec<String> = agents.iter().map(|a| a.name.clone()).collect();
     let mut stored = std::collections::BTreeMap::new();
     for (at, agent) in agents.iter().enumerate() {
-        if agent_name_error(&names, at).is_some() || command_error(&agent.command).is_some() {
+        if agent_name_error(&names, at).is_some() || agent.command_error().is_some() {
             return None;
         }
         stored.insert(
@@ -689,6 +697,7 @@ pub fn task_settings_of(buckets: &str, agents: &[AgentFields]) -> Option<TaskSet
             AgentSettings {
                 command: agent.args(),
                 trust_all: agent.trust_all,
+                env: agent.stored.env.clone(),
             },
         );
     }
@@ -796,9 +805,8 @@ pub fn AgentTasksForm(
                         agents.with(|all| all.iter().map(|a| a.name.get()).collect());
                     agent_name_error(&names, at).map(ToString::to_string)
                 });
-                let command_error = Signal::derive(move || {
-                    draft.command.with(|text| command_error(text)).map(ToString::to_string)
-                });
+                let command_error =
+                    Signal::derive(move || draft.fields().command_error().map(ToString::to_string));
                 view! {
                     <fieldset class=style::agent_fields>
                         <legend class=style::agent_legend>"Agent"</legend>
@@ -2176,11 +2184,61 @@ mod tests {
             command_args("/Applications/Kiro CLI.app/kiro\n\n acp \n"),
             vec!["/Applications/Kiro CLI.app/kiro", "acp"]
         );
+        let typed = |command: &str| AgentFields {
+            command: command.to_string(),
+            ..AgentFields::default()
+        };
         assert_eq!(
-            command_error(" \n"),
+            typed(" \n").command_error(),
             Some("Enter the program to run, then its arguments")
         );
-        assert_eq!(command_error("kiro"), None);
+        assert_eq!(typed("kiro").command_error(), None);
+    }
+
+    /// A stored command whose program is blank cannot be saved as it is,
+    /// and says so under Command; edited, its blank line is dropped.
+    #[test]
+    fn a_stored_blank_program_is_an_error() {
+        for program in ["", "  "] {
+            let stored = vec![program.to_string(), "acp".to_string()];
+            let mut fields = AgentFields {
+                name: "kiro".to_string(),
+                command: stored.join("\n"),
+                stored: AgentSettings {
+                    command: stored,
+                    ..AgentSettings::default()
+                },
+                ..AgentFields::default()
+            };
+            assert_eq!(
+                fields.command_error(),
+                Some("Enter the program to run, then its arguments"),
+                "{program:?}"
+            );
+            assert_eq!(task_settings_of("", std::slice::from_ref(&fields)), None);
+            fields.command = "kiro\nacp".to_string();
+            assert_eq!(fields.command_error(), None);
+        }
+    }
+
+    /// The popup does not show an agent's variables, and a save keeps them,
+    /// whatever else changed.
+    #[test]
+    fn a_save_keeps_each_agents_env() {
+        let env: std::collections::BTreeMap<String, String> =
+            [("DENO_DIR".to_string(), "/tmp/deno".to_string())].into();
+        let fields = AgentFields {
+            name: "kiro".to_string(),
+            command: "kiro\nacp\n--verbose".to_string(),
+            trust_all: true,
+            stored: AgentSettings {
+                command: vec!["kiro".to_string(), "acp".to_string()],
+                trust_all: false,
+                env: env.clone(),
+            },
+        };
+        let saved = task_settings_of("", &[fields]).expect("valid");
+        assert_eq!(saved.agents["kiro"].env, env);
     }
 
     #[test]
@@ -2209,7 +2267,7 @@ mod tests {
                     "kiro".to_string(),
                     AgentSettings {
                         command: vec!["kiro".to_string(), "acp".to_string()],
-                        trust_all: false,
+                        ..AgentSettings::default()
                     },
                 )]
                 .into_iter()
@@ -2236,7 +2294,10 @@ mod tests {
             name: "wrapped".to_string(),
             command: stored.join("\n"),
             trust_all: false,
-            stored: stored.clone(),
+            stored: AgentSettings {
+                command: stored.clone(),
+                ..AgentSettings::default()
+            },
         };
         let saved = |fields: &AgentFields| {
             task_settings_of("", std::slice::from_ref(fields))
@@ -2315,7 +2376,7 @@ mod tests {
                             // No place a browser breaks on its own.
                             format!("--key={}", "x".repeat(150)),
                         ],
-                        trust_all: false,
+                        ..AgentSettings::default()
                     },
                 )]
                 .into_iter()

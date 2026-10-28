@@ -247,6 +247,7 @@ mod tests {
                 AgentSettings {
                     command: vec!["kiro-cli-chat".to_string(), "acp".to_string()],
                     trust_all: true,
+                    env: BTreeMap::from([("DENO_DIR".to_string(), "/tmp/deno".to_string())]),
                 },
             )]),
         };
