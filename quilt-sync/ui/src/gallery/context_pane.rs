@@ -432,12 +432,6 @@ fn pane(
     // What the backend would hold. The other two options store on choosing;
     // Folders stores on Save.
     let stored = RwSignal::new(scope.get_untracked());
-    Effect::new(move |_| {
-        let chosen = scope.get();
-        if chosen != "folders" {
-            stored.set(chosen);
-        }
-    });
     let kept = RwSignal::new(
         folders
             .folders
@@ -445,6 +439,14 @@ fn pane(
             .map(ToString::to_string)
             .collect::<Vec<_>>(),
     );
+    // Choosing another option replaces the stored setting, folders and all.
+    Effect::new(move |_| {
+        let chosen = scope.get();
+        if chosen != "folders" {
+            stored.set(chosen);
+            kept.set(Vec::new());
+        }
+    });
     let sections = view! {
         <PaneSection
             label="Bucket and catalog"
