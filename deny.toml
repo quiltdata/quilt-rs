@@ -21,12 +21,6 @@ ignore = [
     # drops rustls-pemfile 1.x.
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 1.x via aws-smithy-http-client; awaiting AWS SDK update" },
 
-    # --- crypto-bigint 0.5.x pulled in by aws-sigv4 v1.6.x ---
-    # The fix shipped only in crypto-bigint 0.7.6 (the 0.7 copy is bumped).
-    # aws-sigv4 1.6.3 still requires ^0.5, which has no patched release; drop
-    # this once aws-sigv4 moves to crypto-bigint 0.7.
-    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5.x via aws-sigv4; no patched 0.5 release, awaiting AWS SDK update" },
-
     # --- Tauri Linux backend (GTK3 / webkit2gtk) ---
     # Tauri 2.x has not migrated off GTK3. These advisories will clear when
     # Tauri ships a GTK4 backend or we drop the Linux target.
@@ -68,20 +62,6 @@ ignore = [
     # Note this ignore is by advisory id, which is all cargo-deny supports here,
     # so it would also mask a future h2 0.4 regression under the same id.
     { id = "RUSTSEC-2026-0258", reason = "h2 0.3 via mixpanel-rs -> reqwest 0.11 -> hyper 0.14; no patched 0.3 release exists" },
-
-    # --- zip 4.x via tauri-plugin-updater (Windows only) ---
-    # Upstream yanked every zip release before 9.0.3 for extraction bugs.
-    # tauri-plugin-updater, up to 2.14.0 and 3.0.0-alpha, still requires
-    # zip ^4. It only unpacks our own update bundles after checking their
-    # signature. Drop this when the updater moves to zip 9.
-    { crate = "zip@4.6.1", reason = "yanked; tauri-plugin-updater still requires zip ^4" },
-    # The same zip 4 also carries three extraction advisories (SUID bits,
-    # symlink targets, permissions through symlinks), all fixed only in zip 9.
-    # They need an attacker-controlled archive; the updater extracts only our
-    # signed update bundles, and only on Windows.
-    { id = "RUSTSEC-2026-0367", reason = "zip 4 via tauri-plugin-updater; only extracts signed update bundles" },
-    { id = "RUSTSEC-2026-0368", reason = "zip 4 via tauri-plugin-updater; only extracts signed update bundles" },
-    { id = "RUSTSEC-2026-0369", reason = "zip 4 via tauri-plugin-updater; only extracts signed update bundles" },
 
     # --- zbus 5 helper crates via opener / tauri-plugin-single-instance (Linux only) ---
     # zbus 6 folded zbus_names, zvariant and zvariant_derive into itself, so the
