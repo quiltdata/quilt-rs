@@ -394,7 +394,7 @@ fn folders_block(
         <Show when=move || stored.get() == "folders">
             <div style="display:flex; flex-direction:column; align-items:flex-start; \
                         gap:var(--q-space-2); padding-left:calc(17px + var(--q-space-2))">
-                <ul style="margin:0; padding:0; list-style:none; font-size:var(--q-text-body); \
+                <ul style="margin:0; padding-left:1.25em; list-style:disc; font-size:var(--q-text-body); \
                            line-height:var(--q-line-body)">
                     {move || {
                         kept.get().into_iter().map(|folder| view! { <li>{folder}</li> }).collect_view()
