@@ -52,13 +52,23 @@ impl TaskSettings {
         read(&data_dir.join(FILE_NAME)).await
     }
 
-    /// Write the whole file atomically. Fields it does not know, such as
+    /// Write the whole file atomically, readable by the user alone: an
+    /// agent's `env` can hold secrets. Fields it does not know, such as
     /// `version`, are not kept.
     pub async fn save(&self, data_dir: &Path) -> Result<(), Error> {
+        use tokio::io::AsyncWriteExt;
+
         tokio::fs::create_dir_all(data_dir).await?;
         let path = data_dir.join(FILE_NAME);
         let tmp = path.with_extension("json.tmp");
-        tokio::fs::write(&tmp, serde_json::to_vec_pretty(self)?).await?;
+        let mut options = tokio::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&tmp).await?;
+        file.write_all(&serde_json::to_vec_pretty(self)?).await?;
+        file.flush().await?;
+        drop(file);
         tokio::fs::rename(&tmp, &path).await?;
         Ok(())
     }
@@ -256,6 +266,25 @@ mod tests {
         assert_eq!(TaskSettings::load(dir.path()).await?, Some(settings));
         let written = tokio::fs::read_to_string(dir.path().join(FILE_NAME)).await?;
         assert!(!written.contains("version"), "{written}");
+        Ok(())
+    }
+
+    /// A save leaves the file to the user alone, also over one others could
+    /// read.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_save_is_readable_by_the_user_alone() -> Result<(), Error> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new()?;
+        let path = dir.path().join(FILE_NAME);
+        let mode =
+            || -> Result<u32, Error> { Ok(std::fs::metadata(&path)?.permissions().mode() & 0o777) };
+        TaskSettings::default().save(dir.path()).await?;
+        assert_eq!(mode()?, 0o600);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
+        TaskSettings::default().save(dir.path()).await?;
+        assert_eq!(mode()?, 0o600);
         Ok(())
     }
 

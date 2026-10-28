@@ -747,7 +747,9 @@ pub fn AgentTasksCard(
                     }
                 })
                 .collect_view();
-            view! { <ul class=style::agents>{rows}</ul> }.into_any()
+            // `list-style: none` drops the list semantics in WebKit, so the
+            // role is explicit.
+            view! { <ul class=style::agents role="list">{rows}</ul> }.into_any()
         })
     };
     let unreadable = move || stored.with(|t| t.error.clone());
