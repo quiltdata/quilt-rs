@@ -23,7 +23,7 @@ use leptos::prelude::*;
 
 use super::{Reread, Wiring, run};
 use crate::commands::{self, KeepingScope, PackageSize};
-use crate::kit::{Button, Choice, ChoiceGroup, PaneSection};
+use crate::kit::{Button, ButtonVariant, Choice, ChoiceGroup, PaneSection};
 use crate::util::{Held, counted, format_size, thousands};
 
 type Answer<T> = Pin<Box<dyn Future<Output = Result<T, String>>>>;
@@ -155,7 +155,12 @@ pub(super) fn KeepingSection(
             );
         };
         view! {
-            <Button on_click=press disabled=w.busy loading=w.downloading>
+            <Button
+                variant=ButtonVariant::Primary
+                on_click=press
+                disabled=w.busy
+                loading=w.downloading
+            >
                 {label}
             </Button>
         }
