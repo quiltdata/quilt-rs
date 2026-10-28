@@ -1100,8 +1100,9 @@ pub struct AccountHost {
     pub provisional: bool,
 }
 
-pub const NO_ACCOUNTS: &str = "Accounts appear here for each Quilt catalog your packages point \
-     at. Give a package an S3 bucket to connect it to one.";
+pub const NO_ACCOUNTS: &str = "Accounts appear here for each Quilt catalog you sign in to. To \
+     sign in, choose Open in QuiltSync on a package in your catalog, or create a package in one \
+     of your S3 buckets.";
 
 /// The sentence in the Sign out confirmation.
 #[must_use]

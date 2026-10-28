@@ -52,7 +52,7 @@ pub(super) fn AccountsBody(
             <Card title="Accounts">
                 <Blankslate
                     heading="No accounts yet"
-                    description="Accounts appear here for each Quilt catalog your packages point at, showing the role you are using on it. Give a package an S3 bucket to connect it to one."
+                    description="Accounts appear here for each Quilt catalog you sign in to, showing the role you are using on it. To sign in, choose Open in QuiltSync on a package in your catalog, or create a package in one of your S3 buckets."
                 />
             </Card>
         }
