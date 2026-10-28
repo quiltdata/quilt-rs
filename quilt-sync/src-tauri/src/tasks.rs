@@ -22,6 +22,7 @@ use crate::telemetry::prelude::*;
 pub mod acp;
 pub mod agent_exec;
 pub mod agent_process;
+pub mod login_path;
 pub mod settings;
 
 use agent_exec::Claim;

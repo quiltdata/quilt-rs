@@ -24,6 +24,7 @@ use agent_client_protocol::schema::v1::TextContent;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 
+use crate::tasks::login_path::login_path;
 use crate::tasks::settings::AgentSettings;
 
 const SIGNED_OUT: &str = "agent not signed in";
@@ -64,7 +65,14 @@ pub async fn run(
             reason: "the agent's command is empty".to_string(),
         };
     };
-    let spawned = tokio::process::Command::new(program)
+    let mut command = tokio::process::Command::new(program);
+    // Set before the agent's own `env`, which may override it. On Unix a bare
+    // `program` is looked up on the PATH set here.
+    if let Some(path) = login_path().await {
+        command.env("PATH", path);
+    }
+    let spawned = command
+        .envs(&agent.env)
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::piped())
@@ -280,6 +288,8 @@ fn normalise(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    use std::collections::BTreeMap;
+
     use agent_client_protocol::Channel;
     use agent_client_protocol::schema::v1::InitializeResponse;
     use agent_client_protocol::schema::v1::NewSessionResponse;
@@ -432,6 +442,7 @@ mod tests {
         let agent = AgentSettings {
             command: vec!["/nonexistent/quiltsync-test-agent".to_string()],
             trust_all: false,
+            env: BTreeMap::new(),
         };
         let outcome = run(
             &agent,
@@ -452,6 +463,7 @@ mod tests {
         let agent = AgentSettings {
             command: vec!["true".to_string()],
             trust_all: false,
+            env: BTreeMap::new(),
         };
         let mut reported = None;
 
@@ -464,6 +476,36 @@ mod tests {
         .await;
 
         assert!(reported.is_some_and(|pid| pid > 0), "{reported:?}");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[tokio::test]
+    async fn the_agents_env_is_set_over_the_login_path() -> Result<(), std::io::Error> {
+        let cwd = tempfile::TempDir::new()?;
+        let agent = AgentSettings {
+            command: vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                r#"printf '%s %s' "$PATH" "$QUILTSYNC_TEST" > seen"#.to_string(),
+            ],
+            trust_all: false,
+            env: BTreeMap::from([
+                ("PATH".to_string(), "/agent/bin".to_string()),
+                ("QUILTSYNC_TEST".to_string(), "set".to_string()),
+            ]),
+        };
+
+        run(
+            &agent,
+            cwd.path(),
+            async |_| {},
+            async || Ok("TASK.md".to_string()),
+        )
+        .await;
+
+        let seen = tokio::fs::read_to_string(cwd.path().join("seen")).await?;
+        assert_eq!(seen, "/agent/bin set");
+        Ok(())
     }
 
     /// An in-process agent: it opens session `s1` and, prompted, asks to write

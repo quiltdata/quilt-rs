@@ -28,6 +28,7 @@
 - **New design preview**: the package page shows *Bucket and catalog* for every package, with one button that opens the bucket dialog: *Choose* for a package with no bucket yet, *Change* otherwise. The header no longer offers *Choose S3 bucket* or *Change bucket*. Long bucket and catalog names fit on one line. *Revisions you have* is now *History*, at the top of *Revision*. The pane is wider, so more of the revision message shows, and while loading it outlines all three sections (<https://github.com/quiltdata/quilt-rs/pull/1221>)
 - The main page's attention queue is a status line with its rows below, not a card; when nothing needs you it reads *All packages are up to date* (<https://github.com/quiltdata/quilt-rs/pull/1222>)
 - Under the hood, an agent task's last revision says how many files the run added, changed and removed, and its message ends with *no changes* when there were none (<https://github.com/quiltdata/quilt-rs/pull/1224>)
+- Under the hood, an agent task runs with the PATH of the user's login shell, not launchd's bare one, so the agent finds the user's tools instead of searching the home folder for them and setting off macOS privacy prompts; an agent's `env` in `task_settings.json` sets variables over it (<https://github.com/quiltdata/quilt-rs/issues/1233>)
 
 ### Fixed
 
