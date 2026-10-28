@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use quilt_rs::io::remote::HostConfig;
-use quilt_rs::lineage::SyncScope;
 use quilt_uri::Namespace;
 
 use crate::cli::Error;
@@ -26,9 +25,9 @@ pub struct Output {
 /// One group of the report: its heading, then its paths one per line.
 ///
 /// Grouped by what happened to this copy rather than by the remote's diff, and
-/// worded so the two "new files" cases cannot be confused — under the CLI's
-/// sparse scope an added path is listed and not fetched, and saying so is the
-/// difference between a true line and a misleading one.
+/// worded so the two "new files" cases cannot be confused — outside the
+/// package's sync scope an added path is listed and not fetched, and saying so
+/// is the difference between a true line and a misleading one.
 fn group(f: &mut std::fmt::Formatter<'_>, heading: &str, paths: &[PathBuf]) -> std::fmt::Result {
     if paths.is_empty() {
         return Ok(());
@@ -111,13 +110,13 @@ async fn pull_package(
     host_config: Option<HostConfig>,
 ) -> Result<quilt_rs::flow::Pulled, Error> {
     match local_domain.get_installed_package(&namespace).await? {
-        // Sparse checkout, always. The CLI has no setting for the sync scope
-        // and no surface to show one, so it asks for the narrow scope rather
-        // than honouring whatever a desktop app may have written to this
-        // package's lineage.
-        Some(installed_package) => Ok(installed_package
-            .pull(host_config, SyncScope::IndividualFiles)
-            .await?),
+        // The stored scope, as the desktop app's pulls pass it, read under the
+        // pull's lock so a scope changed meanwhile is not applied stale.
+        Some(installed_package) => {
+            let locked = installed_package.lock().await?;
+            let scope = installed_package.lineage().await?.sync_scope;
+            Ok(Box::pin(locked.pull(host_config, scope)).await?)
+        }
         None => Err(Error::NamespaceNotFound(namespace)),
     }
 }
@@ -171,6 +170,52 @@ mod tests {
             );
         }
 
+        Ok(())
+    }
+
+    /// The pull follows the package's stored scope: a path the revision adds
+    /// under a kept folder is downloaded, and one outside it is left on the
+    /// remote and reported as such.
+    #[test(tokio::test)]
+    async fn live_pull_follows_the_stored_folders_scope() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::revision_report as report_pkg;
+        use crate::cli::keep;
+
+        const KEPT: &str =
+            "add/deeply/nested/directory/with/a/very-long-name/summary-of-everything.parquet";
+        const OUTSIDE: &str = "add/one.txt";
+
+        let (m, installed, _temp_dir) = install_package_into_temp_dir(report_pkg::R1_URI).await?;
+        let namespace: Namespace = report_pkg::NAMESPACE_STR.try_into()?;
+        m.keep(keep::Input {
+            namespace: namespace.clone(),
+            scope: Some(quilt_rs::lineage::SyncScope::folders(["add/deeply"])?),
+            download: false,
+        })
+        .await?;
+
+        let report = model(
+            m.get_local_domain(),
+            Input {
+                namespace,
+                host_config: None,
+            },
+        )
+        .await?
+        .report
+        .expect("r1 is behind");
+
+        let home = installed.package_home().await?;
+        assert!(
+            home.join(KEPT).exists(),
+            "the kept folder's new file is downloaded"
+        );
+        assert!(!home.join(OUTSIDE).exists(), "a new file outside it is not");
+        assert!(report.added.contains(&PathBuf::from(KEPT)), "{report:?}");
+        assert!(
+            report.added_not_fetched.contains(&PathBuf::from(OUTSIDE)),
+            "{report:?}"
+        );
         Ok(())
     }
 

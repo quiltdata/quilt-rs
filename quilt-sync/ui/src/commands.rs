@@ -620,8 +620,10 @@ pub struct PackageContextData {
 pub struct PackageSize {
     /// Every listed file.
     pub total: u64,
-    /// Every listed file outside the backlog, a file deleted here included.
+    /// Every listed file not outstanding, a file deleted here included.
     pub downloaded: u64,
+    /// The backlog's files: what `Download N files` fetches.
+    pub backlog: u64,
 }
 
 /// What each resolve choice would cost, or why that cannot be read.
@@ -652,6 +654,8 @@ pub enum ResolveData {
 pub enum KeepingScope {
     IndividualFiles,
     EntirePackage,
+    /// Every file under some folders; only the CLI sets it for now.
+    Folders,
 }
 
 /// The Keeping section: the standing rule, and what it has not yet fetched.
@@ -660,9 +664,14 @@ pub enum KeepingScope {
 #[serde(rename_all = "camelCase")]
 pub struct KeepingData {
     pub scope: KeepingScope,
+    /// The kept folders under folders scope, which the caption names.
+    pub folders: Vec<String>,
     /// Files in the current revision — the caption's M.
     pub total: usize,
-    /// The backlog, and exactly what `Download N files` installs.
+    /// Listed files not downloaded here, so the caption's M less its N.
+    pub outstanding: usize,
+    /// The backlog, and exactly what `Download N files` installs. Empty under
+    /// individual-file scope.
     pub remote_only: Vec<String>,
     /// Files deleted here, which count as downloaded and the caption names;
     /// 0 when the status could not be read.
@@ -1031,10 +1040,14 @@ pub struct MainPagePackageRefreshData {
 #[serde(rename_all = "camelCase")]
 pub struct MainPageDownloadsData {
     pub scope: KeepingScope,
+    /// How many folders a folders scope keeps; 0 for any other scope.
+    pub folders: usize,
     /// The files the current revision lists.
     pub total: usize,
-    /// The listed files still to download.
+    /// The listed files not downloaded here.
     pub outstanding: usize,
+    /// The outstanding files the scope covers, which Keeping downloads.
+    pub backlog: usize,
     /// Every deletion the status reports.
     pub deleted_here: usize,
     /// The listed files' bytes; `None` when they cannot be read.
@@ -1057,7 +1070,11 @@ impl From<MainPageDownloadsData> for crate::kit::RowDownloads {
     fn from(data: MainPageDownloadsData) -> Self {
         match data.scope {
             KeepingScope::EntirePackage => Self::EntirePackage {
-                to_download: data.outstanding,
+                to_download: data.backlog,
+            },
+            KeepingScope::Folders => Self::Folders {
+                folders: data.folders,
+                to_download: data.backlog,
             },
             KeepingScope::IndividualFiles => Self::IndividualFiles {
                 downloaded: data.total.saturating_sub(data.outstanding),
@@ -2330,7 +2347,7 @@ mod tests {
     #[test]
     fn current_revision_context_wire_form_is_verbatim() {
         let context = serde_json::from_str::<PackageContextData>(
-            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000},"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","folders":[],"total":56,"outstanding":2,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000,"backlog":1500000},"resolve":null}"#,
         )
         .unwrap();
 
@@ -2344,6 +2361,7 @@ mod tests {
         assert_eq!(context.revision_count, 4);
         assert_eq!(context.keeping.scope, KeepingScope::EntirePackage);
         assert_eq!(context.keeping.total, 56);
+        assert_eq!(context.keeping.outstanding, 2);
         assert_eq!(context.keeping.remote_only, ["plate/b.csv", "plate/c.csv"]);
         assert_eq!(context.keeping.deleted_here, 1);
         assert_eq!(
@@ -2351,6 +2369,7 @@ mod tests {
             Some(PackageSize {
                 total: 3_400_000,
                 downloaded: 1_900_000,
+                backlog: 1_500_000,
             })
         );
         assert_eq!(context.resolve, None);
@@ -2361,7 +2380,7 @@ mod tests {
     #[test]
     fn an_unread_package_size_crosses_as_null() {
         let context = serde_json::from_str::<PackageContextData>(
-            r#"{"revision":{"hash":"abc123","message":null,"obtainedAt":0.0},"bucket":null,"revisionCount":1,"keeping":{"scope":"individualFiles","total":0,"remoteOnly":[],"deletedHere":0},"size":null,"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":null,"obtainedAt":0.0},"bucket":null,"revisionCount":1,"keeping":{"scope":"individualFiles","folders":[],"total":0,"outstanding":0,"remoteOnly":[],"deletedHere":0},"size":null,"resolve":null}"#,
         )
         .unwrap();
 
@@ -2733,35 +2752,46 @@ mod tests {
         assert_eq!(denied.downloads, None);
 
         let counted = serde_json::from_str::<super::MainPagePackageRefreshData>(
-            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000}}}"#,
+            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","folders":0,"total":340,"outstanding":328,"backlog":0,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000,"backlog":0}}}"#,
         )
         .unwrap();
         assert_eq!(
             counted.downloads,
             Some(super::MainPageDownloadsData {
                 scope: KeepingScope::IndividualFiles,
+                folders: 0,
                 total: 340,
                 outstanding: 328,
+                backlog: 0,
                 deleted_here: 1,
                 size: Some(super::PackageSize {
                     total: 3_400_000,
                     downloaded: 1_900_000,
+                    backlog: 0,
                 }),
             })
         );
 
         let unread = serde_json::from_str::<super::MainPageDownloadsData>(
-            r#"{"scope":"entirePackage","total":2,"outstanding":0,"deletedHere":0,"size":null}"#,
+            r#"{"scope":"entirePackage","folders":0,"total":2,"outstanding":0,"backlog":0,"deletedHere":0,"size":null}"#,
         )
         .unwrap();
         assert_eq!(unread.size, None);
     }
 
+    /// A row whose outstanding files are all in the backlog, unless the scope
+    /// is picked files.
     fn row_downloads(scope: KeepingScope, total: usize, outstanding: usize) -> RowDownloads {
         super::MainPageDownloadsData {
             scope,
+            folders: usize::from(scope == KeepingScope::Folders),
             total,
             outstanding,
+            backlog: if scope == KeepingScope::IndividualFiles {
+                0
+            } else {
+                outstanding
+            },
             deleted_here: 0,
             size: None,
         }
@@ -2777,6 +2807,17 @@ mod tests {
         assert_eq!(
             row_downloads(KeepingScope::EntirePackage, 5, 2),
             RowDownloads::EntirePackage { to_download: 2 }
+        );
+    }
+
+    #[test]
+    fn kept_folders_mark_what_they_have_still_to_download() {
+        assert_eq!(
+            row_downloads(KeepingScope::Folders, 5, 2),
+            RowDownloads::Folders {
+                folders: 1,
+                to_download: 2
+            }
         );
     }
 

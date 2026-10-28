@@ -221,7 +221,11 @@ const fn keeping(files: usize, pending: usize, size: Option<(u64, u64)>) -> Held
         outstanding: pending,
         deleted_here: 0,
         size: match size {
-            Some((total, downloaded)) => Some(PackageSize { total, downloaded }),
+            Some((total, downloaded)) => Some(PackageSize {
+                total,
+                downloaded,
+                backlog: total - downloaded,
+            }),
             None => None,
         },
     }
@@ -526,13 +530,16 @@ fn live(bucket: Option<&str>, catalog: Option<&str>) -> AnyView {
                 revision_count: 4,
                 keeping: crate::commands::KeepingData {
                     scope: crate::commands::KeepingScope::EntirePackage,
+                    folders: Vec::new(),
                     total: TOTAL,
+                    outstanding: 2,
                     remote_only: vec!["plate/b.csv".to_string(), "plate/c.csv".to_string()],
                     deleted_here: 1,
                 },
                 size: Some(crate::commands::PackageSize {
                     total: 34 * MB / 10,
                     downloaded: 19 * MB / 10,
+                    backlog: 15 * MB / 10,
                 }),
                 resolve: None,
             }

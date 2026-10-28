@@ -21,8 +21,15 @@
 
 ## [v0.50.0-dev]
 
+### Added
+
+- `SyncScope::Folders` keeps every file under chosen folders, files added there later included; `SyncScope::folders` builds it in one stored form, a list naming the package root is the entire package, and a folder with a `..` part is refused with `LineageError::FolderOutsidePackage` (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `InstalledPackage::backlog` lists the current revision's files the stored scope covers that are not here yet, and `DownloadCounts` counts them in `backlog`, leaving out the paths that already have a file here, which `InstalledPackage::untracked_on_disk` lists; `InstalledPackage::keep` stores a scope and downloads that backlog under one package lock, and `InstalledPackage::kept` reads the scope and the backlog's size under it (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+
 ### Changed
 
+- `SyncScope` is no longer `Copy`, and `covers_untracked` takes the path it asks about (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- A `sync_scope` value this version does not know reads as individual files, so `data.json` still loads (<https://github.com/quiltdata/quilt-rs/pull/1229>)
 - **Breaking:** `InstalledPackage::pull` returns `flow::Pulled`: `UpToDate` when the remote's `latest` is the revision the package already has, `Applied` with the `PullReport` otherwise. `PackageOpError::AlreadyUpToDate` is removed (<https://github.com/quiltdata/quilt-rs/pull/1227>)
 - A pull with nothing to fetch still saves the `latest` it read (<https://github.com/quiltdata/quilt-rs/pull/1227>)
 - **Breaking:** `InstalledPackage::push` and `LockedPackage::push` return `Pushed`: `NothingToPush` when there is no pending commit, `Uploaded` with the `PushOutcome` otherwise. A push with no pending commit no longer fails with `PackageOpError::Push("No commits to push")` (<https://github.com/quiltdata/quilt-rs/pull/1230>)

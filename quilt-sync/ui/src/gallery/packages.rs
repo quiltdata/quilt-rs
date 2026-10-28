@@ -205,6 +205,7 @@ fn TooltipStory() -> impl IntoView {
             size: Some(PackageSize {
                 total: bytes,
                 downloaded,
+                backlog: bytes - downloaded,
             }),
         })
     };

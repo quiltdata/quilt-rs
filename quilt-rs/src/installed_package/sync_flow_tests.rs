@@ -1906,10 +1906,12 @@ async fn test_status_with_downloads_counts_the_current_revision() -> Res {
             scope: SyncScope::IndividualFiles,
             listed: 1,
             outstanding: 1,
+            backlog: 0,
             deleted_here: 0,
             size: Some(crate::lineage::DownloadSize {
                 listed: 0,
                 outstanding: 0,
+                backlog: 0,
             }),
         }
     );

@@ -65,6 +65,20 @@ pub enum Pushed {
     Uploaded(PushOutcome),
 }
 
+/// What [`InstalledPackage::keep`] did, or what [`InstalledPackage::kept`]
+/// read.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeepReport {
+    /// The scope the package keeps.
+    pub scope: SyncScope,
+    /// The backlog files it downloaded, sorted.
+    pub downloaded: Vec<PathBuf>,
+    /// The backlog files whose bytes the remote no longer holds.
+    pub skipped: Vec<PathBuf>,
+    /// The backlog files still not here afterwards.
+    pub outstanding: usize,
+}
+
 /// Result of a publish operation visible to callers outside `quilt-rs`.
 /// Alias of [`flow::PublishOutcome`] parameterized over the public
 /// [`PushOutcome`], so external callers see a non-generic type name.
@@ -556,10 +570,14 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         host_config_opt: Option<HostConfig>,
     ) -> Res<(InstalledPackageStatus, lineage::DownloadCounts)> {
         let (lineage, manifest, status) = self.status_with_manifest(host_config_opt).await?;
+        let on_disk = self
+            .untracked_on_disk(&self.package_home().await?, &lineage, &manifest)
+            .await;
         let counts = lineage::DownloadCounts::count(
             &lineage,
             manifest.rows.iter().map(|row| (&row.logical_key, row.size)),
             &status.changes,
+            &on_disk,
         );
         Ok((status, counts))
     }
@@ -995,9 +1013,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     /// Record this package's standing [`SyncScope`].
     ///
-    /// Storage only, and deliberately separate from [`Self::pull`]: writing the
-    /// choice and acting on it are different decisions, made by different
-    /// callers. Nothing in this crate reads the stored value back.
+    /// Storage only, and deliberately separate from [`Self::pull`] and from
+    /// installing the [`Self::backlog`]: writing the choice and acting on it
+    /// are different decisions, made by different callers.
     ///
     /// Like every writer here it holds the package's lock, so a choice made
     /// while the autosync tick pulls waits for the pull and then lands on the
@@ -1013,11 +1031,104 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(())
     }
 
+    /// Store `scope`, then, when `download` asks, download its
+    /// [`Self::backlog`], all under one hold of the package's lock, so no pull
+    /// lands between reading the backlog and installing it.
+    pub async fn keep(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
+        Box::pin(self.lock().await?.keep(scope, download)).await
+    }
+
+    async fn keep_unlocked(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
+        self.set_sync_scope_unlocked(scope).await?;
+        let kept = self.kept_unlocked().await?;
+        if !download || kept.outstanding == 0 {
+            return Ok(kept);
+        }
+        let backlog = self.backlog().await?;
+        let report = self.install_paths_unlocked(&backlog).await?;
+        Ok(KeepReport {
+            scope: kept.scope,
+            downloaded: backlog
+                .into_iter()
+                .filter(|path| {
+                    !report.skipped.contains(path) && !report.already_installed.contains(path)
+                })
+                .collect(),
+            outstanding: report.skipped.len(),
+            skipped: report.skipped,
+        })
+    }
+
+    /// The stored [`SyncScope`] and how many files its [`Self::backlog`] holds,
+    /// read together under the package's lock.
+    pub async fn kept(&self) -> Res<KeepReport> {
+        Box::pin(self.lock().await?.kept()).await
+    }
+
+    async fn kept_unlocked(&self) -> Res<KeepReport> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let outstanding = self.backlog_of(&package_home, &lineage).await?.len();
+        Ok(KeepReport {
+            scope: lineage.sync_scope,
+            outstanding,
+            ..KeepReport::default()
+        })
+    }
+
+    /// The current revision's files the stored [`SyncScope`] covers that this
+    /// copy neither tracks nor has a file for, sorted: what installing the
+    /// backlog fetches. Empty under individual-file scope. Hashes nothing and
+    /// reads nothing from the remote.
+    pub async fn backlog(&self) -> Res<Vec<PathBuf>> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        self.backlog_of(&package_home, &lineage).await
+    }
+
+    async fn backlog_of(
+        &self,
+        package_home: &Path,
+        lineage: &lineage::PackageLineage,
+    ) -> Res<Vec<PathBuf>> {
+        let manifest = self.manifest_from_lineage(lineage).await?;
+        let on_disk = self
+            .untracked_on_disk(package_home, lineage, &manifest)
+            .await;
+        let no_changes = lineage::ChangeSet::new();
+        let mut backlog: Vec<PathBuf> = manifest
+            .rows
+            .iter()
+            .map(|row| &row.logical_key)
+            .filter(|key| lineage::DownloadCounts::in_backlog(lineage, &no_changes, &on_disk, key))
+            .cloned()
+            .collect();
+        backlog.sort();
+        Ok(backlog)
+    }
+
+    /// The paths of `manifest` the scope covers that this copy does not track
+    /// but that have a file in the working folder: the files the backlog
+    /// leaves out, since installing them would refuse to overwrite them.
+    pub async fn untracked_on_disk(
+        &self,
+        package_home: &Path,
+        lineage: &lineage::PackageLineage,
+        manifest: &Manifest,
+    ) -> BTreeSet<PathBuf> {
+        let mut on_disk = BTreeSet::new();
+        for key in manifest.rows.iter().map(|row| &row.logical_key) {
+            if !lineage.paths.contains_key(key)
+                && lineage.sync_scope.covers_untracked(key)
+                && self.storage.exists(package_home.join(key)).await
+            {
+                on_disk.insert(key.clone());
+            }
+        }
+        on_disk
+    }
+
     /// `scope` comes from the caller, not from the package's stored
-    /// [`SyncScope`]. Both faces of this engine —
-    /// the desktop app and the `quilt` CLI — reach pull through here, and only
-    /// one of them has a setting; reading the field at this level would let
-    /// state the app wrote change what the CLI does.
+    /// [`SyncScope`], so a caller can still choose. The desktop app and the
+    /// `quilt` CLI both pass the stored one.
     pub async fn pull(
         &self,
         host_config_opt: Option<HostConfig>,
@@ -1655,6 +1766,14 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
 
     pub async fn set_sync_scope(&self, scope: SyncScope) -> Res<()> {
         self.package.set_sync_scope_unlocked(scope).await
+    }
+
+    pub async fn keep(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
+        self.package.keep_unlocked(scope, download).await
+    }
+
+    pub async fn kept(&self) -> Res<KeepReport> {
+        self.package.kept_unlocked().await
     }
 
     pub async fn stop_ignoring(

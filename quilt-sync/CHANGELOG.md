@@ -34,6 +34,7 @@
 - The main page's attention queue is a status line with its rows below, not a card; when nothing needs you it reads *All packages are up to date* (<https://github.com/quiltdata/quilt-rs/pull/1222>)
 - Under the hood, an agent task's last revision says how many files the run added, changed and removed, and its message ends with *no changes* when there were none (<https://github.com/quiltdata/quilt-rs/pull/1224>)
 - Under the hood, an agent task runs with the PATH of the user's login shell, not launchd's bare one, so the agent finds the user's tools instead of searching the home folder for them and setting off macOS privacy prompts; an agent's `env` in `task_settings.json` sets variables over it (<https://github.com/quiltdata/quilt-rs/pull/1236>)
+- A package set with `quilt keep --folder` to keep chosen folders pulls the files under them. **New design preview**: *Keeping* names the folders and offers to download their files, and the main page counts them in *N to download* (<https://github.com/quiltdata/quilt-rs/pull/1229>)
 
 ### Fixed
 
