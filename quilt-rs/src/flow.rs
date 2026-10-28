@@ -34,6 +34,7 @@ pub(crate) use apply_update::apply_latest_update;
 pub use browse::browse_remote_manifest as browse;
 pub use browse::cache_remote_manifest;
 pub use certify_latest::certify_latest;
+pub use commit::Committed;
 pub use commit::UserMeta;
 pub use commit::commit_package as commit;
 pub use create_package::LeftOut;

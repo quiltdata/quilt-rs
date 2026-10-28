@@ -37,7 +37,7 @@ pub async fn package_commit(
     metadata: &str,
     workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
-) -> Result<(), Error> {
+) -> Result<quilt::flow::Committed, Error> {
     debug!(
         "Committing the package.\nNamespace:\n{},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
         namespace, message, metadata, workflow
@@ -58,8 +58,7 @@ pub async fn package_commit(
             workflow,
             host_config,
         )
-        .await?;
-    Ok(())
+        .await
 }
 
 /// Installs `paths`, then shows them in the file browser. Returns the paths it

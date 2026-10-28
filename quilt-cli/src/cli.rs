@@ -2016,15 +2016,12 @@ mod tests {
             },
         };
 
-        // Test init with valid arguments
+        // The installed revision's own message: the same hash, so nothing to commit
         let mut output = Vec::new();
         let result = init(commit_args).await?;
         print(result, Format::Text, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
-        assert_eq!(
-            output_str,
-            "New commit \"095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f\" created\n".to_string()
-        );
+        assert_eq!(output_str, "Nothing to commit\n".to_string());
 
         Ok(())
     }
