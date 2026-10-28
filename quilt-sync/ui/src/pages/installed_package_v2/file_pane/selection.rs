@@ -11,7 +11,43 @@ use std::collections::BTreeSet;
 
 use leptos::prelude::*;
 
+use crate::commands::{KeepingData, KeepingScope};
 use crate::kit::CheckState;
+
+/// What the Keeping scope fetches by itself, so no box offers it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Kept {
+    /// `The whole package`: every file.
+    Package,
+    /// Every file under these folders. None under individual-file Keeping.
+    Folders(Vec<String>),
+}
+
+impl Kept {
+    /// The scope as the page read it.
+    #[must_use]
+    pub fn of(keeping: &KeepingData) -> Self {
+        match keeping.scope {
+            KeepingScope::EntirePackage => Self::Package,
+            KeepingScope::Folders => Self::Folders(keeping.folders.clone()),
+            KeepingScope::IndividualFiles => Self::Folders(Vec::new()),
+        }
+    }
+
+    /// Whether the scope fetches `path`. A folder covers the paths under it
+    /// on a folder boundary: `data/raw` covers `data/raw/x/b.csv`, not
+    /// `data/raw2/a.csv`.
+    #[must_use]
+    pub fn fetches(&self, path: &str) -> bool {
+        match self {
+            Self::Package => true,
+            Self::Folders(folders) => folders.iter().any(|folder| {
+                path.strip_prefix(folder.as_str())
+                    .is_some_and(|rest| rest.starts_with('/'))
+            }),
+        }
+    }
+}
 
 /// The pane's selection and what it feeds. The page owns the signals, so a
 /// re-read — the watcher's news while the download writes files — neither
@@ -26,9 +62,9 @@ pub struct Picking {
     pub busy: Signal<bool>,
     /// `[Download]`: the ticked paths, in path order.
     pub on_download: Callback<Vec<String>>,
-    /// Keeping is `The whole package`: the scope has taken the per-file choice
-    /// away, so there are no boxes, no select-all and no footer.
-    pub whole_package: bool,
+    /// What Keeping fetches by itself: its rows get no box, and neither
+    /// select-all nor the footer counts them.
+    pub kept: StoredValue<Kept>,
 }
 
 /// Nothing ticked, nothing running, and a download that goes nowhere — what
@@ -40,7 +76,7 @@ impl Default for Picking {
             downloading: Signal::stored(false),
             busy: Signal::stored(false),
             on_download: Callback::new(|_| ()),
-            whole_package: false,
+            kept: StoredValue::new(Kept::Folders(Vec::new())),
         }
     }
 }
@@ -110,6 +146,18 @@ mod tests {
 
     fn set(ps: &[&str]) -> BTreeSet<String> {
         ps.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn a_kept_folder_covers_the_paths_under_it_on_a_folder_boundary() {
+        let kept = Kept::Folders(paths(&["data/raw"]));
+        assert!(kept.fetches("data/raw/a.csv"));
+        assert!(kept.fetches("data/raw/x/b.csv"));
+        assert!(!kept.fetches("data/raw2/a.csv"));
+        assert!(!kept.fetches("data/raw"));
+        assert!(!kept.fetches("notes.txt"));
+        assert!(!Kept::Folders(Vec::new()).fetches("data/raw/a.csv"));
+        assert!(Kept::Package.fetches("notes.txt"));
     }
 
     #[test]

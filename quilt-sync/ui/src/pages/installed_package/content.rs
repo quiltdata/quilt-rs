@@ -352,6 +352,7 @@ pub(super) fn InstalledPackageContent(
                             with_status=with_status
                             pending=pending_count
                             entire_package=syncs_entire_package
+                            keeps_folders=data.keeps_folders
                             notification=notification
                             ui_locked=ui_locked
                             refetch=refetch

@@ -54,7 +54,7 @@ mod role_dialog;
 use crate::kit::PageHeaderSkeleton;
 pub(crate) use bucket_form::BucketDialog;
 use context_pane::{CurrentRevisionPane, CurrentRevisionPaneSkeleton};
-use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Listing, Picking};
+use file_pane::{Facet, FilePane, FilePaneSkeleton, Grouping, Kept, Listing, Picking};
 use file_pane::{Reach, RowMenu};
 use header::PageHeader;
 pub(crate) use header::{
@@ -365,8 +365,8 @@ struct Files {
 pub struct FileMarks {
     /// Keys are `EntryData.filename`'s form: the logical key's `display()`.
     pub differing: Memo<Option<Arc<BTreeSet<String>>>>,
-    /// The scope as read back (`KeepingData.scope`), never one still being stored.
-    pub scope: commands::KeepingScope,
+    /// The scope as read back (`KeepingData`), never one still being stored.
+    pub kept: StoredValue<Kept>,
 }
 
 /// The page's one differing set: present only while the mode is open on a
@@ -635,14 +635,14 @@ fn package_body(
     let open = Memo::new(move |_| asked.get() && diverged);
     let marks = FileMarks {
         differing: differing_marks(open.into(), context.resolve.as_ref()),
-        scope: context.keeping.scope,
+        kept: StoredValue::new(Kept::of(&context.keeping)),
     };
     let picking = Picking {
         ticked: files.ticked,
         downloading: files.downloading.into(),
         busy: w.busy.into(),
         on_download: file_downloader(header.namespace.to_string(), w, files),
-        whole_package: marks.scope == commands::KeepingScope::EntirePackage,
+        kept: marks.kept,
     };
     // The confirmation's flag is the page's, so it outlives the mode unless
     // closed here: a mode that reopens must not find it already open.
@@ -773,7 +773,7 @@ fn incoming_header(
             "Could not open this file in the catalog.",
         ),
     );
-    let whole = marks.scope == commands::KeepingScope::EntirePackage;
+    let kept = marks.kept.get_value();
     let header = StoredValue::new(header);
     let page_header = move || {
         let mut data = header.get_value();
@@ -782,7 +782,7 @@ fn incoming_header(
             <IncomingSummary
                 check=check
                 conflicts=conflicts
-                whole=whole
+                kept=kept.clone()
                 catalog=newer.clone()
                 on_retry=Callback::new(move |()| incoming.retry())
                 card=incoming.card

@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use serde::Serialize;
 
 use crate::autopull::PausedReason;
@@ -122,7 +123,7 @@ impl From<quilt::lineage::DownloadSize> for PackageSize {
 /// Which files this copy keeps, as the pane says it. Its own wire enum rather
 /// than `SyncScope`, whose serde form is the lineage file's, not this page's.
 /// A folders scope's folders travel beside it, where a page needs them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum KeepingScope {
     IndividualFiles,

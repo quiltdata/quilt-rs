@@ -39,6 +39,7 @@ use crate::kit::PackageState;
 use crate::kit::PageLayout;
 use crate::pages::Catalog;
 use crate::pages::IncomingSummary;
+use crate::pages::Kept;
 use crate::pages::conflicting;
 use crate::pages::header_state;
 use crate::pages::{PackageHeaderBand, package_page_class, package_shell_class};
@@ -169,7 +170,7 @@ fn page(p: Page) -> AnyView {
                                     <IncomingSummary
                                         check=Signal::stored(Some(check))
                                         conflicts=Signal::stored(conflict_files)
-                                        whole=whole
+                                        kept=if whole { Kept::Package } else { Kept::Folders(Vec::new()) }
                                         catalog=catalog()
                                         on_retry=Callback::new(|()| ())
                                         opened=opened

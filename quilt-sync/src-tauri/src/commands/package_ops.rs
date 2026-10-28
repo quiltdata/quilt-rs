@@ -16,6 +16,7 @@ use crate::autopull::PausedReason;
 use crate::autopull::Watcher;
 use crate::autopull::last_change::PendingCommit;
 use crate::autopull::pull_toast;
+use crate::commands::package_page::KeepingScope;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::notify::Notify;
@@ -520,7 +521,8 @@ async fn pause_on_conflict(
         .await;
 }
 
-/// Record whether this package keeps its whole contents.
+/// Record which files this package keeps: picked files, the whole package,
+/// or every file under `folders`, which only a folders scope reads.
 ///
 /// Storage only — it writes the standing choice and returns. Catching up on
 /// files already listed is the caller's separate `package_install_paths` call,
@@ -530,15 +532,12 @@ async fn pause_on_conflict(
 pub async fn package_set_sync_scope(
     m: tauri::State<'_, model::Model>,
     namespace: String,
-    entire_package: bool,
+    scope: KeepingScope,
+    folders: Vec<String>,
 ) -> Result<(), String> {
     let namespace = quilt_uri::Namespace::try_from(namespace.as_str())
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
-    let scope = if entire_package {
-        SyncScope::EntirePackage
-    } else {
-        SyncScope::IndividualFiles
-    };
+    let scope = sync_scope(scope, folders)?;
     let installed = m
         .get_installed_package(&namespace)
         .await
@@ -547,6 +546,17 @@ pub async fn package_set_sync_scope(
     m.package_set_sync_scope(&installed, scope)
         .await
         .map_err(|e| e.to_frontend_string())
+}
+
+/// The stored scope a Keeping choice names. Folders go through the library's
+/// rule, so `./data/` is `data`, the root is the whole package, and a `..`
+/// part is refused with nothing stored.
+fn sync_scope(scope: KeepingScope, folders: Vec<String>) -> Result<SyncScope, String> {
+    match scope {
+        KeepingScope::IndividualFiles => Ok(SyncScope::IndividualFiles),
+        KeepingScope::EntirePackage => Ok(SyncScope::EntirePackage),
+        KeepingScope::Folders => SyncScope::folders(folders).map_err(|e| e.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -1409,6 +1419,26 @@ pub async fn get_revision_message(
 mod tests {
     use quilt_uri::fixtures;
     use std::sync::Arc;
+
+    /// A Keeping choice names the stored scope; folders keep the library's rule.
+    #[test]
+    fn a_keeping_choice_names_the_stored_scope() {
+        use super::{KeepingScope, SyncScope};
+        let folders = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            super::sync_scope(KeepingScope::EntirePackage, folders(&["ignored"])),
+            Ok(SyncScope::EntirePackage)
+        );
+        assert_eq!(
+            super::sync_scope(KeepingScope::Folders, folders(&["./results/", "data/raw"])),
+            Ok(SyncScope::Folders(folders(&["data/raw", "results"])))
+        );
+        assert_eq!(
+            super::sync_scope(KeepingScope::Folders, folders(&["."])),
+            Ok(SyncScope::EntirePackage)
+        );
+        assert!(super::sync_scope(KeepingScope::Folders, folders(&["data/../x"])).is_err());
+    }
 
     use crate::Error;
     use crate::autopull::PausedReason;
