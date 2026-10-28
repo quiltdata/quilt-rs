@@ -1575,13 +1575,31 @@ fn PackageEventListener(reload: Trigger) -> impl IntoView {
     });
 }
 
-/// Scroll `el` into view if its top has gone above the page frame, and leave
-/// the page where it is otherwise.
+/// Scroll `el` into view if its top has gone above the frame's held parts or
+/// under them, and leave the page where it is otherwise. A held `el` is always
+/// in view.
 fn reveal(el: &web_sys::Element) {
     let Some(frame) = el.closest("[data-v2-page]").ok().flatten() else {
         return;
     };
-    if el.get_bounding_client_rect().top() < frame.get_bounding_client_rect().top() {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let px = |el: &web_sys::Element, property: &str| {
+        window
+            .get_computed_style(el)
+            .ok()
+            .flatten()
+            .and_then(|style| style.get_property_value(property).ok())
+    };
+    if px(el, "position").as_deref() == Some("sticky") {
+        return;
+    }
+    // Where the held parts end, as the frame tells a focused row.
+    let held = px(&frame, "scroll-padding-top")
+        .and_then(|value| value.trim_end_matches("px").parse::<f64>().ok())
+        .unwrap_or(0.0);
+    if el.get_bounding_client_rect().top() < frame.get_bounding_client_rect().top() + held - 0.5 {
         el.scroll_into_view_with_bool(true);
     }
 }
@@ -4204,15 +4222,32 @@ mod tests {
         let pane = find(&el, "aside");
         super::reveal(&pane);
         assert_eq!(frame.scroll_top(), 0, "in view, the page stays");
+        // Far past it, and just far enough that the header covers its top.
+        for scrolled in [1000, 40] {
+            frame.set_scroll_top(scrolled);
+            sleep_ms(50).await;
+            super::reveal(&pane);
+            sleep_ms(50).await;
+            let header = find(&el, &format!(".{}", style::header)).get_bounding_client_rect();
+            assert!(
+                pane.get_bounding_client_rect().top() >= header.bottom(),
+                "scrolled {scrolled}, the pane shows below the header"
+            );
+        }
+    }
+
+    /// Wide, the pane is held beside the files, and revealing it leaves the
+    /// page where it is.
+    #[wasm_bindgen_test]
+    async fn a_held_pane_does_not_move_the_page() {
+        let el = scrolling_page(1024, 200, plain_rows());
+        sleep_ms(50).await;
+        let frame = frame(&el);
         frame.set_scroll_top(1000);
         sleep_ms(50).await;
-        super::reveal(&pane);
+        super::reveal(&find(&el, "aside"));
         sleep_ms(50).await;
-        let header = find(&el, &format!(".{}", style::header)).get_bounding_client_rect();
-        assert!(
-            pane.get_bounding_client_rect().top() >= header.bottom(),
-            "the pane shows below the header"
-        );
+        assert_eq!(frame.scroll_top(), 1000);
     }
 
     /// A pane taller than the room under the header scrolls inside, and the
