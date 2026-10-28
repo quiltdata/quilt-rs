@@ -175,6 +175,12 @@ pub fn CurrentRevisionPane(
     }
 }
 
+/// The pane's column, for the gallery's drawn pane: see
+/// [`package_page_class`](super::package_page_class).
+pub fn context_pane_class() -> &'static str {
+    style::root
+}
+
 /// The package's bucket and its catalog, each named or *Not set*, and the
 /// section's one action, which opens the header's bucket dialog.
 fn bucket_section(
@@ -1296,13 +1302,17 @@ mod tests {
         assert_eq!(headings(&el), ["Bucket and catalog", "Revision", "Keeping"]);
     }
 
-    /// Under the page's stylesheets every bar has width: a section sizes its
-    /// children to their content, and a bar sized in percent must not
-    /// collapse inside it.
-    #[wasm_bindgen_test]
-    async fn every_skeleton_bar_is_drawn() {
-        stylance::import_crate_style!(pane, "src/kit/pane_section.module.scss");
-        stylance::import_crate_style!(bar, "src/kit/skeleton_box.module.scss");
+    #[expect(dead_code, reason = "only the classes these tests need are loaded")]
+    mod sheets {
+        stylance::import_crate_style!(pub pane, "src/kit/pane_section.module.scss");
+        stylance::import_crate_style!(pub bar, "src/kit/skeleton_box.module.scss");
+        stylance::import_crate_style!(pub page, "src/pages/installed_package_v2.module.scss");
+    }
+
+    /// The sheets the pane is drawn with, and the page's, whose column is the
+    /// container the pane's narrow layout asks about.
+    fn load_pane_sheets() {
+        use sheets::{bar, page, pane};
         crate::test_support::load_module_style(
             include_str!("../../kit/pane_section.module.scss"),
             &[
@@ -1326,6 +1336,18 @@ mod tests {
                 ("lines", style::lines),
             ],
         );
+        crate::test_support::load_module_style(
+            include_str!("../installed_package_v2.module.scss"),
+            &[("page", page::page)],
+        );
+    }
+
+    /// Under the page's stylesheets every bar has width: a section sizes its
+    /// children to their content, and a bar sized in percent must not
+    /// collapse inside it.
+    #[wasm_bindgen_test]
+    async fn every_skeleton_bar_is_drawn() {
+        load_pane_sheets();
         let el = mount(|| view! { <CurrentRevisionPaneSkeleton /> });
         sleep_ms(0).await;
 
@@ -1340,6 +1362,85 @@ mod tests {
                 assert!(
                     bar.offset_width() > 0,
                     "bar {j} of section {i} has no width; markup was {}",
+                    section.inner_html()
+                );
+            }
+        }
+    }
+
+    /// The skeleton pane in the page's column at `width`, with the tokens the
+    /// sheets read.
+    fn pane_at(width: u32) -> web_sys::Element {
+        load_pane_sheets();
+        mount(move || {
+            view! {
+                <div
+                    class=sheets::page::page
+                    style=format!(
+                        "width:{width}px; --q-space-1:4px; --q-space-2:8px; \
+                         --q-space-3:12px; --q-space-4:16px",
+                    )
+                >
+                    <CurrentRevisionPaneSkeleton />
+                </div>
+            }
+        })
+    }
+
+    fn sections(el: &web_sys::Element) -> Vec<web_sys::DomRect> {
+        let list = el.query_selector_all("aside section section").unwrap();
+        (0..list.length())
+            .map(|i| {
+                list.item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::Element>()
+                    .get_bounding_client_rect()
+            })
+            .collect()
+    }
+
+    /// Narrow, the three sections are three columns, not a stack, so the
+    /// pane is one section tall above the files.
+    #[wasm_bindgen_test]
+    async fn narrow_the_sections_are_three_columns() {
+        let el = pane_at(600);
+        sleep_ms(0).await;
+        let rects = sections(&el);
+        assert_eq!(rects.len(), 3);
+        for pair in rects.windows(2) {
+            assert_eq!(pair[0].top(), pair[1].top(), "one top line");
+            assert!(pair[0].right() <= pair[1].left(), "side by side");
+        }
+    }
+
+    /// Wide, they stack in the pane beside the files.
+    #[wasm_bindgen_test]
+    async fn wide_the_sections_stack() {
+        let el = pane_at(1024);
+        sleep_ms(0).await;
+        let rects = sections(&el);
+        assert_eq!(rects.len(), 3);
+        for pair in rects.windows(2) {
+            assert!(pair[0].bottom() <= pair[1].top(), "one under the other");
+        }
+    }
+
+    /// In a column too narrow for a heading and its action, the action wraps
+    /// under the heading rather than past the column's edge.
+    #[wasm_bindgen_test]
+    async fn a_section_s_action_stays_inside_a_narrow_column() {
+        let el = pane_at(400);
+        sleep_ms(0).await;
+        let list = el.query_selector_all("aside section section").unwrap();
+        for i in 0..list.length() {
+            let section: web_sys::Element = list.item(i).unwrap().unchecked_into();
+            let edge = section.get_bounding_client_rect().right();
+            let parts = section.query_selector_all("h3, h3 ~ *").unwrap();
+            for j in 0..parts.length() {
+                let part: web_sys::Element = parts.item(j).unwrap().unchecked_into();
+                assert!(
+                    part.get_bounding_client_rect().right() <= edge + 0.5,
+                    "section {i} spills past its column; markup was {}",
                     section.inner_html()
                 );
             }

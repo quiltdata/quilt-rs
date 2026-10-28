@@ -23,8 +23,10 @@
 //!
 //! # The gutter is the list's
 //!
-//! The disclosure sits in `--q-entry-gutter`, the same column the rows leave
-//! empty. A list that renders no group at all sets that value to `0` — see
+//! The box column leads the heading, as it leads every row, and the
+//! disclosure sits after it in `--q-entry-gutter`, the same column the rows
+//! leave empty: `[box][chevron][folder/]` over `[box][gutter][file]`. A list
+//! that renders no group at all sets that value to `0` — see
 //! [`EntryRow`](super::EntryRow) — which is why the width lives on the list
 //! rather than in here.
 //!
@@ -157,30 +159,6 @@ pub fn EntryGroup(
     view! {
         <div class=style::root>
             <div class=style::head>
-                <button
-                    type="button"
-                    class=style::disclose
-                    aria-expanded=move || open.get().to_string()
-                    // Names what it does, not what it looks like. The glyph is
-                    // `aria-hidden`, so without this the button announces nothing.
-                    aria-label=move || {
-                        if open.get() { "Collapse group" } else { "Expand group" }
-                    }
-                    aria-describedby=move || {
-                        hides_difference().then(|| format!("{} {differs_id}", tip.id()))
-                    }
-                    // Only while the dot is there to explain; open, the rows
-                    // carry their own marks and their own sentences.
-                    on:focusin=move |event| {
-                        if hides_difference() {
-                            tip.focus_in(&event);
-                        }
-                    }
-                    on:focusout=move |_| tip.focus_out()
-                    on:click=move |_| open.update(|o| *o = !*o)
-                >
-                    {move || if open.get() { icons::chevron_down() } else { icons::chevron_right() }}
-                </button>
                 {match selection {
                     Some(GroupSelection { state, on_toggle, disabled }) => {
                         view! {
@@ -206,6 +184,30 @@ pub fn EntryGroup(
                     }
                     None => view! { <span class=style::nobox /> }.into_any(),
                 }}
+                <button
+                    type="button"
+                    class=style::disclose
+                    aria-expanded=move || open.get().to_string()
+                    // Names what it does, not what it looks like. The glyph is
+                    // `aria-hidden`, so without this the button announces nothing.
+                    aria-label=move || {
+                        if open.get() { "Collapse group" } else { "Expand group" }
+                    }
+                    aria-describedby=move || {
+                        hides_difference().then(|| format!("{} {differs_id}", tip.id()))
+                    }
+                    // Only while the dot is there to explain; open, the rows
+                    // carry their own marks and their own sentences.
+                    on:focusin=move |event| {
+                        if hides_difference() {
+                            tip.focus_in(&event);
+                        }
+                    }
+                    on:focusout=move |_| tip.focus_out()
+                    on:click=move |_| open.update(|o| *o = !*o)
+                >
+                    {move || if open.get() { icons::chevron_down() } else { icons::chevron_right() }}
+                </button>
                 <span class=style::name data-full-name=full_name>{name}</span>
                 <Show when=hides_difference>
                     <Tooltip
@@ -366,6 +368,44 @@ mod tests {
         assert!(
             describing_tooltip(&disclose).is_none(),
             "an open heading still names the dot's tooltip"
+        );
+    }
+
+    /// The box column leads the heading as it leads a row, so the boxes make
+    /// the list's left edge: `[box][chevron][folder/]`.
+    #[wasm_bindgen_test]
+    fn the_box_leads_the_heading_and_the_disclosure_follows_it() {
+        let el = mount(|| {
+            view! {
+                <EntryGroup
+                    name="raw/"
+                    shown=2
+                    total=2
+                    open=RwSignal::new(true)
+                    selection=GroupSelection::new(CheckState::Off, Callback::new(|_| ()))
+                >
+                    <span />
+                </EntryGroup>
+            }
+        });
+        let head = el
+            .query_selector(&format!(".{}", style::head))
+            .unwrap()
+            .expect("the heading");
+        let first = head.first_element_child().unwrap();
+        assert!(
+            first
+                .query_selector("input[type=checkbox]")
+                .unwrap()
+                .is_some(),
+            "the box first; markup was {}",
+            head.inner_html()
+        );
+        let second = first.next_element_sibling().unwrap();
+        assert!(
+            second.class_list().contains(style::disclose),
+            "then the disclosure; markup was {}",
+            head.inner_html()
         );
     }
 }

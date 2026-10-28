@@ -211,6 +211,41 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
     Ok(())
 }
 
+/// A publish with nothing to publish is a quiet no-op: no publish report,
+/// no pause, and the observed state stays.
+#[tokio::test]
+async fn run_once_with_nothing_to_publish_is_quiet() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+
+    let (mut model, _) =
+        fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
+    model
+        .expect_locked_package_publish()
+        .times(1)
+        .returning(|_, _, _, _, _, _| Ok(quilt::PublishOutcome::NothingToPublish));
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(reporter.published.lock().unwrap().is_empty());
+    assert!(reporter.paused.lock().unwrap().is_empty());
+    {
+        let statuses = reporter.statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].1.status, "up_to_date");
+        assert!(statuses[0].1.has_changes);
+    }
+    assert!(inner.paused.read().await.is_empty());
+    Ok(())
+}
+
 #[tokio::test]
 async fn autosync_default_metadata_keeps_the_heads_agent_exec() -> Result<(), Error> {
     let task = serde_json::json!({ "document": "TASK.md", "claim": { "status": "unclaimed" } });

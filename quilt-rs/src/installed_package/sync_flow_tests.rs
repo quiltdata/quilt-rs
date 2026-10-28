@@ -88,7 +88,7 @@ async fn test_spamming_commit_writes() -> Res {
                 None,
             )
             .await?;
-        expected_hashes.insert(i, commit.hash);
+        expected_hashes.insert(i, commit.hash().unwrap().to_string());
     }
 
     // Remove last, cause it's the "current" hash, not a part of `prev_hashes`

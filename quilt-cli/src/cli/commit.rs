@@ -1,3 +1,4 @@
+use quilt_rs::flow::Committed;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
@@ -19,20 +20,25 @@ pub struct Input {
     pub host_config: Option<HostConfig>,
 }
 
+/// `None` when the new hash was the current revision's and nothing was
+/// committed.
 #[derive(Debug)]
 pub struct Output {
-    pub commit: CommitState,
+    pub commit: Option<CommitState>,
 }
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, r#"New commit "{}" created"#, self.commit.hash)
+        match &self.commit {
+            Some(commit) => write!(f, r#"New commit "{}" created"#, commit.hash),
+            None => write!(f, "Nothing to commit"),
+        }
     }
 }
 
 impl Render for Output {
     fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({ "hash": &self.commit.hash })
+        serde_json::json!({ "hash": self.commit.as_ref().map(|commit| &commit.hash) })
     }
 }
 
@@ -47,7 +53,7 @@ async fn commit_package(
     user_meta: UserMeta,
     workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
-) -> Result<CommitState, Error> {
+) -> Result<Committed, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
             // Preserve the requested id before the intent is consumed so we can
@@ -94,6 +100,10 @@ pub async fn model(
         host_config,
     )
     .await?;
+    let commit = match commit {
+        Committed::NothingToCommit => None,
+        Committed::Recorded(commit) => Some(commit),
+    };
     Ok(Output { commit })
 }
 
@@ -115,16 +125,36 @@ mod tests {
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
+    /// Our hash of the installed revision's own message and metadata is the
+    /// fixture's `top_hash`, so the commit found nothing to commit.
+    async fn assert_reproduces(
+        installed_package: &quilt_rs::InstalledPackage,
+        output: &Output,
+        top_hash: &str,
+    ) -> Result<(), Error> {
+        assert_eq!(
+            installed_package.lineage().await?.current_hash(),
+            Some(top_hash)
+        );
+        assert!(
+            output.commit.is_none(),
+            "the commit made a hash other than {top_hash}: {:?}",
+            output.commit
+        );
+        Ok(())
+    }
+
     /// Verify the commit of that package:
     ///  * workflow/config.yml exists
     ///  * workflow id is not set
-    ///  * no files to commit,
+    ///  * no files to commit, and the installed revision's own message, so
+    ///    the hash is the installed one and there is nothing to commit
     #[test(tokio::test)]
     async fn live_commit_package_with_message_and_null_workflow() -> Result<(), Error> {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         let uri = pkg::URI;
-        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        let (m, installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
 
@@ -140,8 +170,37 @@ mod tests {
             )
             .await?;
 
-            assert_eq!(output.commit.hash, pkg::TOP_HASH);
+            assert_reproduces(&installed_package, &output, pkg::TOP_HASH).await?;
+            assert_eq!(output.to_string(), "Nothing to commit");
+            assert_eq!(output.to_json().to_string(), r#"{"hash":null}"#);
         }
+
+        Ok(())
+    }
+
+    /// A new message makes a new hash, so it is a real commit even with no
+    /// file changes.
+    #[test(tokio::test)]
+    async fn live_commit_package_with_new_message_and_null_workflow() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::workflow_null as pkg;
+
+        let uri = pkg::URI;
+        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        let output = model(
+            m.get_local_domain(),
+            Input {
+                message: format!("{} again", pkg::MESSAGE),
+                namespace: pkg::NAMESPACE.into(),
+                user_meta: UserMeta::Keep,
+                workflow: WorkflowIntent::NoWorkflow,
+                host_config: None,
+            },
+        )
+        .await?;
+
+        let commit = output.commit.expect("a new message is a commit");
+        assert_ne!(commit.hash, pkg::TOP_HASH);
+        assert_eq!(commit.prev_hashes, Vec::<String>::new());
 
         Ok(())
     }
@@ -160,7 +219,7 @@ mod tests {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         let uri = pkg::URI;
-        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        let (m, installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
 
@@ -178,7 +237,7 @@ mod tests {
 
             // Same hash as the explicit `NoWorkflow` commit: the config has no
             // `default_workflow`, so bucket-default resolves to the null-id record.
-            assert_eq!(output.commit.hash, pkg::TOP_HASH);
+            assert_reproduces(&installed_package, &output, pkg::TOP_HASH).await?;
         }
 
         Ok(())
@@ -238,7 +297,7 @@ mod tests {
         use crate::cli::fixtures::packages::my_workflow as pkg;
 
         let uri = pkg::URI;
-        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        let (m, installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
 
@@ -259,7 +318,7 @@ mod tests {
             )
             .await?;
 
-            assert_eq!(output.commit.hash, pkg::TOP_HASH);
+            assert_reproduces(&installed_package, &output, pkg::TOP_HASH).await?;
         }
 
         Ok(())
@@ -274,7 +333,7 @@ mod tests {
         use crate::cli::fixtures::packages::no_workflows_message_only as pkg;
 
         let uri = pkg::URI;
-        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        let (m, installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
 
@@ -290,7 +349,7 @@ mod tests {
             )
             .await?;
 
-            assert_eq!(output.commit.hash, pkg::TOP_HASH);
+            assert_reproduces(&installed_package, &output, pkg::TOP_HASH).await?;
         }
 
         Ok(())
@@ -331,7 +390,7 @@ mod tests {
         use crate::cli::fixtures::packages::no_workflows_with_meta as pkg;
 
         let uri = pkg::URI;
-        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        let (m, installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
 
@@ -355,7 +414,7 @@ mod tests {
             )
             .await?;
 
-            assert_eq!(output.commit.hash, pkg::TOP_HASH);
+            assert_reproduces(&installed_package, &output, pkg::TOP_HASH).await?;
         }
 
         Ok(())
@@ -391,7 +450,7 @@ mod tests {
         )
         .await?;
 
-        assert!(!output.commit.hash.is_empty(), "commit should succeed");
+        assert!(output.commit.is_some(), "commit should succeed");
 
         // No workflow was stamped: the manifest header carries no workflow.
         let manifest = create_output.installed_package.manifest().await?;
@@ -443,11 +502,8 @@ mod tests {
                 .await
                 .expect("Failed to commit second commit which is identical to the first one");
 
-            assert_eq!(second_commit.commit.hash, hash_for_initial_test_commit);
-            assert_eq!(
-                second_commit.commit.prev_hashes,
-                vec![hash_for_initial_test_commit]
-            );
+            // The same hash as the pending commit: nothing to commit.
+            assert!(second_commit.commit.is_none());
         }
 
         {
@@ -465,14 +521,12 @@ mod tests {
             .await
             .expect("Failed to commit third commit different from the first one");
 
+            let third_commit = third_commit.commit.expect("a new message is a commit");
             assert_eq!(
-                third_commit.commit.hash,
+                third_commit.hash,
                 "e2a86408670c7a33f78758d72166333e4a96b6aadbb3b03d25fd6e209dc6e0b3"
             );
-            assert_eq!(
-                third_commit.commit.prev_hashes,
-                vec![hash_for_initial_test_commit, hash_for_initial_test_commit]
-            );
+            assert_eq!(third_commit.prev_hashes, vec![hash_for_initial_test_commit]);
         }
 
         {
@@ -516,7 +570,7 @@ mod tests {
             .await
             .expect("Failed to commit the same file ensuring the commit hash will persist");
             assert_eq!(
-                commit_the_same_file.commit.hash,
+                commit_the_same_file.commit.unwrap().hash,
                 hash_for_initial_test_commit
             );
         }
@@ -544,7 +598,7 @@ mod tests {
         )
         .await?;
         assert_eq!(
-            output.commit.hash,
+            output.commit.unwrap().hash,
             "b9853f32d9b87b28a617a51acbdb3dffdb0974053a3415dedfef3950c6e239ef"
         );
         Ok(())
@@ -553,13 +607,21 @@ mod tests {
     #[test]
     fn json_carries_the_hash_and_no_timestamp() {
         let output = Output {
-            commit: CommitState {
+            commit: Some(CommitState {
                 timestamp: std::time::SystemTime::UNIX_EPOCH.into(),
                 hash: "abc123".to_string(),
                 prev_hashes: vec!["older".to_string()],
-            },
+            }),
         };
 
         assert_eq!(output.to_json().to_string(), r#"{"hash":"abc123"}"#);
+    }
+
+    #[test]
+    fn nothing_to_commit_says_so_with_a_null_hash() {
+        let output = Output { commit: None };
+
+        assert_eq!(output.to_string(), "Nothing to commit");
+        assert_eq!(output.to_json().to_string(), r#"{"hash":null}"#);
     }
 }

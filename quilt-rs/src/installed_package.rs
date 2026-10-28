@@ -771,7 +771,8 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         unimplemented!()
     }
 
-    /// Commit the package's pending changes as a new revision.
+    /// Commit the package's pending changes as a new revision, or nothing
+    /// when that revision's hash is the current one's.
     ///
     /// See [`UserMeta`] for the metadata contract: `Keep` inherits the
     /// previous revision's package-level metadata, `Clear` removes it,
@@ -782,7 +783,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         user_meta: UserMeta,
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
-    ) -> Res<CommitState> {
+    ) -> Res<flow::Committed> {
         Box::pin(
             self.lock()
                 .await?
@@ -797,7 +798,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         user_meta: UserMeta,
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
-    ) -> Res<CommitState> {
+    ) -> Res<flow::Committed> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -845,8 +846,8 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     /// Commit any working-directory changes (if any) and push the revision to
-    /// the remote in one step. Errors if the package has no remote or nothing
-    /// to publish.
+    /// the remote in one step. Errors if the package has no remote; returns
+    /// `NothingToPublish` when there is nothing to commit or push.
     ///
     /// Walks the working tree under the lock. A caller that already has a
     /// status walked under the same lock passes it to
@@ -929,6 +930,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let (committed, push_result) = match outcome {
             flow::PublishOutcome::CommittedAndPushed(p) => (true, p),
             flow::PublishOutcome::PushedOnly(p) => (false, p),
+            flow::PublishOutcome::NothingToPublish => return Ok(PublishOutcome::NothingToPublish),
         };
         let certified_latest = push_result.certified_latest;
         let lineage = self
@@ -1735,7 +1737,7 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
         user_meta: UserMeta,
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
-    ) -> Res<CommitState> {
+    ) -> Res<flow::Committed> {
         self.package
             .commit_unlocked(message, user_meta, workflow, host_config_opt)
             .await

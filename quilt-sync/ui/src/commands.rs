@@ -371,6 +371,41 @@ impl Default for FsWatcherSettingsData {
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentalSettingsData {
     pub entire_package_sync: bool,
+    /// Whether the v2 Settings page shows the Agent tasks card.
+    #[serde(default)]
+    pub agent_tasks: bool,
+}
+
+/// `task_settings.json`: which buckets may hand this computer a task, and the
+/// agents it can run. Field names as the file has them.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TaskSettings {
+    #[serde(default)]
+    pub blessed_buckets: Vec<String>,
+    #[serde(default)]
+    pub agents: std::collections::BTreeMap<String, AgentSettings>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AgentSettings {
+    /// The program, then its arguments.
+    pub command: Vec<String>,
+    /// Approve every permission request the agent makes.
+    #[serde(default)]
+    pub trust_all: bool,
+    /// Variables set for the agent. Settings keeps them as they are.
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+/// `task_settings.json` as read.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSettingsData {
+    /// Empty when there is no file, or it could not be read.
+    pub settings: TaskSettings,
+    /// Why the file could not be read.
+    pub error: Option<String>,
 }
 
 /// Which design generation the app draws: v2 unless the reader chose the
@@ -435,6 +470,8 @@ pub struct SettingsData {
     pub design: Design,
     #[serde(default)]
     pub ignore_rules: IgnoreRulesData,
+    #[serde(default)]
+    pub tasks: TaskSettingsData,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -1596,19 +1633,33 @@ pub async fn update_log_settings(level: String) -> Result<(), String> {
 
 /// Turn an experiment on or off. `None` leaves a flag as it is — a caller that
 /// knows about one experiment must not reset another.
-pub async fn update_experimental_settings(entire_package_sync: Option<bool>) -> Result<(), String> {
+pub async fn update_experimental_settings(
+    entire_package_sync: Option<bool>,
+    agent_tasks: Option<bool>,
+) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         entire_package_sync: Option<bool>,
+        agent_tasks: Option<bool>,
     }
     tauri::invoke(
         "update_experimental_settings",
         &Args {
             entire_package_sync,
+            agent_tasks,
         },
     )
     .await
+}
+
+/// Replace `task_settings.json`.
+pub async fn update_task_settings(settings: TaskSettings) -> Result<(), String> {
+    #[derive(Serialize)]
+    struct Args {
+        settings: TaskSettings,
+    }
+    tauri::invoke("update_task_settings", &Args { settings }).await
 }
 
 /// Choose the design generation. The next page that asks draws it.

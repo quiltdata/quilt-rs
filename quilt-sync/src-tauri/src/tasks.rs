@@ -291,7 +291,11 @@ async fn try_check<M: QuiltModel>(
             let message = format!("Task {document} claimed");
             let outcome =
                 publish(model, &locked, pkg, workflow, claimed_meta, message, status).await?;
-            let push = outcome.push();
+            // A claim's metadata is new each time, so its publish always pushes.
+            let Some(push) = outcome.push() else {
+                warn!("tasks: {}: the claim published nothing", pkg.namespace);
+                return Ok(());
+            };
             if !push.certified_latest {
                 info!(
                     "tasks: {}: another revision became latest first, not running",
@@ -315,7 +319,7 @@ async fn try_check<M: QuiltModel>(
         }
     };
     let outcome = publish(model, &locked, pkg, workflow, meta, message, status).await?;
-    if !outcome.push().certified_latest {
+    if outcome.push().is_some_and(|push| !push.certified_latest) {
         reset_if_clean(model, pkg, &locked).await?;
     }
     Ok(())
@@ -543,12 +547,15 @@ async fn publish_outcome<M: QuiltModel>(
         && commit.is_none();
     let meta = agent_exec::with_claim(user_meta, claim);
     let published = publish(model, locked, pkg, workflow, meta, message, status).await?;
+    let Some(push) = published.push() else {
+        return Ok(());
+    };
     if metadata_only {
-        if !published.push().certified_latest {
+        if !push.certified_latest {
             reset_if_clean(model, pkg, locked).await?;
         }
     } else {
-        note_not_latest(&pkg.namespace, published.push());
+        note_not_latest(&pkg.namespace, push);
     }
     Ok(())
 }

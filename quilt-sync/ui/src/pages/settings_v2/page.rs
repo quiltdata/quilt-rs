@@ -11,6 +11,7 @@
 //! - every control's value ([`Fields`]): the toggles, the minute fields as
 //!   typed, the log level;
 //! - the Publishing popup: open or not, and its draft;
+//! - the Agent tasks popup: open or not, and its draft;
 //! - the built-in rules popup: open or not, and its draft of the rules
 //!   turned off; and whether the reader has opened
 //!   their rules file to edit, so coming back to the window reads it again;
@@ -40,8 +41,8 @@
 //! or the log level disabled, a minutes field read-only so the cursor stays —
 //! so one setting never has two saves in flight, and a failure is never about
 //! a value the reader has since replaced. The commands that run longer do — Free up space, a role
-//! switch, Sign out — and so does the Publishing popup's Save, which waits for its
-//! own write on the queue; the dialogs read it.
+//! switch, Sign out — and so do the Publishing and Agent tasks popups' Save, which
+//! waits for its own write on the queue; the dialogs read it.
 
 use std::collections::BTreeSet;
 use std::collections::VecDeque;
@@ -55,7 +56,7 @@ use leptos_router::hooks::use_navigate;
 
 use crate::commands::{
     self, AccountHostData, AutosyncPatch, ChangelogEntry, Design, FreedSpace, LogEnv,
-    PublishSettingsData, SettingsData,
+    PublishSettingsData, SettingsData, TaskSettings, TaskSettingsData,
 };
 use crate::kit::{
     Button, ButtonVariant, Card, Dialog, HostRowSkeleton, LoadFailure, PageLayout,
@@ -64,10 +65,11 @@ use crate::kit::{
 
 use super::super::v2_page::{PageHandle, PageRead, V2Page, critical, hold};
 use super::{
-    AboutCard, AccountHost, AccountsCard, AppCard, BuiltInRule, ExperimentalCard, IgnoreRulesCard,
-    IgnoreRulesDialog, PublishingCard, PublishingDialog, ReportDialog, ReportState, Saved,
-    SettingsHeader, SettingsLayout, SignOutDialog, StorageCard, StorageSize, SyncingCard,
-    TroubleshootingCard, log_level_label, minutes_secs, minutes_shown,
+    AboutCard, AccountHost, AccountsCard, AgentDraft, AgentTasksCard, AgentTasksDialog, AppCard,
+    BuiltInRule, ExperimentalCard, IgnoreRulesCard, IgnoreRulesDialog, PublishingCard,
+    PublishingDialog, ReportDialog, ReportState, Saved, SettingsHeader, SettingsLayout,
+    SignOutDialog, StorageCard, StorageSize, SyncingCard, TroubleshootingCard, agent_fields,
+    log_level_label, minutes_secs, minutes_shown, task_settings_of,
 };
 
 use super::style;
@@ -81,11 +83,14 @@ pub(crate) enum Write {
     Autosync(AutosyncPatch),
     Watch(bool),
     DesignPreview(bool),
+    /// Whether the Agent tasks card shows.
+    AgentTasks(bool),
     /// Lowercase, as the backend names it.
     LogLevel(String),
     Publishing(PublishSettingsData),
     /// Exactly these built-in ignore rules off, for every package.
     IgnoreRules(Vec<String>),
+    TaskSettings(TaskSettings),
 }
 
 /// What the page reads and writes, as parameters so a test can answer
@@ -120,6 +125,7 @@ fn write_setting(write: Write) -> Answer<()> {
                 let design = if on { Design::V2 } else { Design::V1 };
                 commands::update_design_settings(design).await
             }
+            Write::AgentTasks(on) => commands::update_experimental_settings(None, Some(on)).await,
             Write::LogLevel(level) => commands::update_log_settings(level).await,
             Write::Publishing(p) => {
                 commands::update_publish_settings(
@@ -130,6 +136,7 @@ fn write_setting(write: Write) -> Answer<()> {
                 .await
             }
             Write::IgnoreRules(off) => commands::set_default_ignore_rules(off).await,
+            Write::TaskSettings(settings) => commands::update_task_settings(settings).await,
         }
     })
 }
@@ -298,6 +305,7 @@ struct Fields {
     watch: RwSignal<bool>,
     tray: RwSignal<bool>,
     design_preview: RwSignal<bool>,
+    agent_tasks: RwSignal<bool>,
     /// One of `LOG_LEVELS`.
     log_level: RwSignal<String>,
     /// The built-in rules popup's draft: the rules turned off, filled from
@@ -307,6 +315,9 @@ struct Fields {
     template: RwSignal<String>,
     workflow: RwSignal<String>,
     metadata: RwSignal<String>,
+    /// The Agent tasks popup's draft, filled from what is stored as it opens.
+    buckets: RwSignal<String>,
+    agents: RwSignal<Vec<AgentDraft>>,
 }
 
 impl Fields {
@@ -319,11 +330,14 @@ impl Fields {
             watch: RwSignal::new(false),
             tray: RwSignal::new(false),
             design_preview: RwSignal::new(false),
+            agent_tasks: RwSignal::new(false),
             log_level: RwSignal::new(String::new()),
             rules_off: RwSignal::new(BTreeSet::new()),
             template: RwSignal::new(String::new()),
             workflow: RwSignal::new(String::new()),
             metadata: RwSignal::new(String::new()),
+            buckets: RwSignal::new(String::new()),
+            agents: RwSignal::new(Vec::new()),
         }
     }
 
@@ -348,12 +362,15 @@ struct Written {
     watch: StoredValue<bool>,
     tray: StoredValue<bool>,
     design_preview: StoredValue<bool>,
+    agent_tasks: StoredValue<bool>,
     log_level: StoredValue<String>,
     rules_off: StoredValue<BTreeSet<String>>,
     /// The built-in rules as the popup lists them, from the last read.
     rules: RwSignal<Vec<BuiltInRule>>,
     /// Reactive, because the Publishing card draws it.
     publishing: RwSignal<PublishSettingsData>,
+    /// Reactive, because the Agent tasks card draws it.
+    tasks: RwSignal<TaskSettingsData>,
     /// Whether the first read has seeded the fields.
     seeded: StoredValue<bool>,
 }
@@ -368,10 +385,12 @@ impl Written {
             watch: StoredValue::new(false),
             tray: StoredValue::new(false),
             design_preview: StoredValue::new(false),
+            agent_tasks: StoredValue::new(false),
             log_level: StoredValue::new(String::new()),
             rules_off: StoredValue::new(BTreeSet::new()),
             rules: RwSignal::new(Vec::new()),
             publishing: RwSignal::new(PublishSettingsData::default()),
+            tasks: RwSignal::new(TaskSettingsData::default()),
             seeded: StoredValue::new(false),
         }
     }
@@ -404,6 +423,11 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
         fields.design_preview,
         written.design_preview,
         d.design == Design::V2,
+    );
+    seed(
+        fields.agent_tasks,
+        written.agent_tasks,
+        d.experimental.agent_tasks,
     );
     seed(
         fields.log_level,
@@ -451,6 +475,9 @@ fn seed_all(fields: Fields, written: Written, d: &SettingsData) {
     }
     if written.publishing.with_untracked(|was| *was != d.publish) {
         written.publishing.set(d.publish.clone());
+    }
+    if written.tasks.with_untracked(|was| *was != d.tasks) {
+        written.tasks.set(d.tasks.clone());
     }
 }
 
@@ -767,7 +794,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
     // ── Saving as each control changes ──
     let save = move |row: Saved, write: Write| saves.push(Some(row), write, None, io, page);
     let navigate = use_navigate();
-    let toggles: [Toggle; 5] = [
+    let toggles: [Toggle; 6] = [
         (fields.pull, written.pull, Saved::Pull, |on| {
             Write::Autosync(AutosyncPatch {
                 pull_enabled: Some(on),
@@ -792,6 +819,12 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             written.design_preview,
             Saved::DesignPreview,
             Write::DesignPreview,
+        ),
+        (
+            fields.agent_tasks,
+            written.agent_tasks,
+            Saved::AgentTasks,
+            Write::AgentTasks,
         ),
     ];
     for (field, was, row, write) in toggles {
@@ -890,6 +923,48 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             let answer = hold(busy, outcome, answer).await;
             answer.map_err(|detail| {
                 written.publishing.try_set(before);
+                format!("{SAVE_FAILED} {detail}")
+            })
+        }
+    };
+
+    // ── Agent tasks ──
+    // As Publishing. The draft's signals are the page's, not the Edit…
+    // button's: a rebuilt body would take them with it.
+    let tasks_open = RwSignal::new(false);
+    let owner = Owner::current();
+    let on_edit_tasks = Callback::new(move |()| {
+        let stored = written.tasks.get_untracked().settings;
+        fields.buckets.set(stored.blessed_buckets.join("\n"));
+        let drafts = match &owner {
+            Some(owner) => owner.with(|| AgentDraft::all(&stored)),
+            None => AgentDraft::all(&stored),
+        };
+        fields.agents.set(drafts);
+        tasks_open.set(true);
+    });
+    let save_tasks = move || {
+        let draft = untrack(|| {
+            let agents = fields.agents.with(|all| agent_fields(all));
+            fields.buckets.with(|text| task_settings_of(text, &agents))
+        });
+        async move {
+            // Save is off while a field is wrong.
+            let Some(draft) = draft else {
+                return Err(SAVE_FAILED.to_string());
+            };
+            let before = written.tasks.get_untracked();
+            if before.settings == draft {
+                return Ok(());
+            }
+            written.tasks.set(TaskSettingsData {
+                settings: draft.clone(),
+                error: None,
+            });
+            let (reply, answer) = reply();
+            saves.push(None, Write::TaskSettings(draft), Some(reply), io, page);
+            hold(busy, outcome, answer).await.map_err(|detail| {
+                written.tasks.try_set(before);
                 format!("{SAVE_FAILED} {detail}")
             })
         }
@@ -1290,6 +1365,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 experimental=view! {
                     <ExperimentalCard
                         design_preview=fields.design_preview
+                        agent_tasks=fields.agent_tasks
                         saved=just_saved
                         pending=pending
                     />
@@ -1311,6 +1387,17 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                 }
                     .into_any()
                 about=view! { <AboutCard version=f.version on_release_notes=on_release_notes /> }
+                    .into_any()
+                agent_tasks=view! {
+                    {move || {
+                        fields
+                            .agent_tasks
+                            .get()
+                            .then(|| {
+                                view! { <AgentTasksCard stored=written.tasks on_edit=on_edit_tasks /> }
+                            })
+                    }}
+                }
                     .into_any()
             />
         }
@@ -1339,6 +1426,13 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             rules=written.rules
             off=fields.rules_off
             save=save_rules
+            running=busy
+        />
+        <AgentTasksDialog
+            open=tasks_open
+            buckets=fields.buckets
+            agents=fields.agents
+            save=save_tasks
             running=busy
         />
         <PublishingDialog
@@ -1479,9 +1573,7 @@ mod tests {
                 close_to_tray: false,
             },
             fswatcher: FsWatcherSettingsData { enabled: true },
-            experimental: ExperimentalSettingsData {
-                entire_package_sync: false,
-            },
+            experimental: ExperimentalSettingsData::default(),
             design: Design::V2,
             ignore_rules: IgnoreRulesData {
                 file: "/data/.quiltignore".to_string(),
@@ -1491,6 +1583,7 @@ mod tests {
                     rule("*.pem", true),
                 ]),
             },
+            tasks: TaskSettingsData::default(),
         }
     }
 
@@ -2501,6 +2594,186 @@ mod tests {
         );
         sleep_ms(100).await;
         assert!(!button_saying(&dialog, "Save").disabled(), "free again");
+    }
+
+    const AGENT_TASKS: &str = "Agent tasks";
+
+    fn agent_tasks_card(el: &web_sys::Element) -> Option<web_sys::Element> {
+        el.query_selector("[data-agent-tasks]").unwrap()
+    }
+
+    fn tasks_popup(el: &web_sys::Element) -> Option<web_sys::Element> {
+        el.query_selector("dialog[open][aria-label='Agent tasks']")
+            .unwrap()
+    }
+
+    fn textarea_labelled(el: &web_sys::Element, label: &str) -> web_sys::HtmlTextAreaElement {
+        let id = element_saying(el, label)
+            .get_attribute("for")
+            .expect("a label for a control");
+        el.query_selector(&format!("#{id}"))
+            .unwrap()
+            .expect("the control")
+            .unchecked_into()
+    }
+
+    fn type_text(area: &web_sys::HtmlTextAreaElement, text: &str) {
+        area.set_value(text);
+        area.dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+    }
+
+    fn with_agent_tasks() -> SettingsData {
+        let mut on = settings();
+        on.experimental.agent_tasks = true;
+        on
+    }
+
+    /// The card shows only while its experiment is on, and turning it on
+    /// saves the flag alone.
+    #[wasm_bindgen_test]
+    async fn the_agent_tasks_card_follows_its_toggle() {
+        let el = page(vec![settings(), with_agent_tasks()]).await;
+        assert!(agent_tasks_card(&el).is_none(), "off by default");
+        toggle(&el, AGENT_TASKS).click();
+        sleep_ms(50).await;
+        assert_eq!(writes(), vec![Write::AgentTasks(true)]);
+        let card = agent_tasks_card(&el).expect("the card shows");
+        let text = card.text_content().unwrap_or_default();
+        assert!(text.contains(super::super::NO_BUCKETS), "{text}");
+        assert!(text.contains("No agents"), "{text}");
+        assert!(
+            card.class_list().contains(super::style::slot),
+            "a grid cell"
+        );
+    }
+
+    /// Edit… opens on what is stored; Save writes the draft as the file
+    /// keeps it: buckets as `s3://name`, one argument per line, blank lines
+    /// dropped. The card shows it.
+    #[wasm_bindgen_test]
+    async fn agent_tasks_saves_the_draft() {
+        let mut stored = with_agent_tasks();
+        stored.tasks.settings.blessed_buckets = vec!["s3://quilt-dev".to_string()];
+        let saved = TaskSettings {
+            blessed_buckets: vec!["s3://quilt-dev".to_string(), "s3://plate-reads".to_string()],
+            agents: [(
+                "kiro".to_string(),
+                commands::AgentSettings {
+                    command: vec![
+                        "/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-chat".to_string(),
+                        "acp".to_string(),
+                    ],
+                    trust_all: true,
+                    ..commands::AgentSettings::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+        };
+        let mut after = stored.clone();
+        after.tasks.settings = saved.clone();
+        let el = page(vec![stored, after]).await;
+        let card = agent_tasks_card(&el).expect("the card");
+        button_saying(&card, "Edit…").click();
+        sleep_ms(10).await;
+        let dialog = tasks_popup(&el).expect("the popup opened");
+        let buckets = textarea_labelled(&dialog, "Run tasks from");
+        assert_eq!(buckets.value(), "s3://quilt-dev");
+        type_text(&buckets, "s3://quilt-dev\n\nplate-reads/\n");
+        button_saying(&dialog, "Add agent").click();
+        sleep_ms(10).await;
+        assert!(
+            button_saying(&dialog, "Save").disabled(),
+            "the agent is empty"
+        );
+        type_into(&labelled(&dialog, "Name"), "kiro");
+        type_text(
+            &textarea_labelled(&dialog, "Command"),
+            "/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-chat\n\n acp \n",
+        );
+        toggle(&dialog, super::super::TRUST_ALL).click();
+        sleep_ms(10).await;
+        button_saying(&dialog, "Save").click();
+        sleep_ms(60).await;
+
+        assert!(tasks_popup(&el).is_none(), "Save closed the popup");
+        assert_eq!(writes(), vec![Write::TaskSettings(saved)]);
+        let text = agent_tasks_card(&el)
+            .unwrap()
+            .text_content()
+            .unwrap_or_default();
+        assert!(text.contains("s3://plate-reads"), "{text}");
+        assert!(text.contains("kiro-cli-chat acp"), "{text}");
+        assert!(text.contains("Approves every request"), "{text}");
+    }
+
+    /// A wrong field says why under it, and Save is off until it is fixed.
+    #[wasm_bindgen_test]
+    async fn a_wrong_agent_tasks_field_blocks_save() {
+        let el = page(vec![with_agent_tasks()]).await;
+        button_saying(&agent_tasks_card(&el).unwrap(), "Edit…").click();
+        sleep_ms(10).await;
+        let dialog = tasks_popup(&el).expect("the popup opened");
+        type_text(&textarea_labelled(&dialog, "Run tasks from"), "Quilt Dev");
+        sleep_ms(10).await;
+        let text = || dialog.text_content().unwrap_or_default();
+        assert!(
+            text().contains("Not a bucket name: Quilt Dev"),
+            "{}",
+            text()
+        );
+        assert!(button_saying(&dialog, "Save").disabled());
+        type_text(&textarea_labelled(&dialog, "Run tasks from"), "quilt-dev");
+        sleep_ms(10).await;
+        assert!(!button_saying(&dialog, "Save").disabled());
+    }
+
+    /// A file that could not be read says why, and is not offered for
+    /// editing.
+    #[wasm_bindgen_test]
+    async fn an_unreadable_task_file_disables_edit() {
+        let mut broken = with_agent_tasks();
+        broken.tasks.error = Some("Failed to parse JSON".to_string());
+        let el = page(vec![broken]).await;
+        let card = agent_tasks_card(&el).expect("the card");
+        let text = card.text_content().unwrap_or_default();
+        assert!(
+            text.contains("Can't read task_settings.json: Failed to parse JSON"),
+            "{text}"
+        );
+        assert!(button_saying(&card, "Edit…").disabled());
+    }
+
+    /// A failed save says why in the popup, which stays open with the draft;
+    /// the card keeps what is stored.
+    #[wasm_bindgen_test]
+    async fn a_failed_agent_tasks_save_keeps_the_draft() {
+        let el = page(vec![with_agent_tasks()]).await;
+        WRITE_FAILS.with(|f| f.set(true));
+        button_saying(&agent_tasks_card(&el).unwrap(), "Edit…").click();
+        sleep_ms(10).await;
+        let dialog = tasks_popup(&el).expect("the popup opened");
+        type_text(&textarea_labelled(&dialog, "Run tasks from"), "quilt-dev");
+        sleep_ms(10).await;
+        button_saying(&dialog, "Save").click();
+        sleep_ms(60).await;
+        assert!(tasks_popup(&el).is_some(), "still open");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains(&format!("{SAVE_FAILED} disk full"))
+        );
+        assert_eq!(
+            textarea_labelled(&dialog, "Run tasks from").value(),
+            "quilt-dev"
+        );
+        let text = agent_tasks_card(&el)
+            .unwrap()
+            .text_content()
+            .unwrap_or_default();
+        assert!(text.contains(super::super::NO_BUCKETS), "{text}");
     }
 
     #[test]

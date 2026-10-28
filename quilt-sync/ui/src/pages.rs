@@ -35,6 +35,13 @@ pub use installed_package_v2::InstalledPackageV2;
 // the gallery to draw beside the other page scenes: one definition, so the three
 // cannot disagree about where the header lands.
 pub use installed_package_v2::PackagePageSkeleton;
+// The page's layout classes and bands, so the gallery's whole-page scenes lay
+// their fixture regions out by the page's own rules rather than a copy of them.
+pub use installed_package_v2::context_pane::context_pane_class;
+pub use installed_package_v2::file_pane::{
+    FileToolbarBand, file_footer_class, file_list_class, file_pane_class,
+};
+pub use installed_package_v2::{PackageHeaderBand, package_page_class, package_shell_class};
 // The gallery draws this exact live slice rather than maintaining another
 // approximation of the page component.
 pub use installed_package_v2::context_pane::{CurrentRevisionPane, RevisionHistoryFetch};
