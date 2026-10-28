@@ -173,6 +173,52 @@ mod tests {
         Ok(())
     }
 
+    /// The pull follows the package's stored scope: a path the revision adds
+    /// under a kept folder is downloaded, and one outside it is left on the
+    /// remote and reported as such.
+    #[test(tokio::test)]
+    async fn live_pull_follows_the_stored_folders_scope() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::revision_report as report_pkg;
+        use crate::cli::keep;
+
+        const KEPT: &str =
+            "add/deeply/nested/directory/with/a/very-long-name/summary-of-everything.parquet";
+        const OUTSIDE: &str = "add/one.txt";
+
+        let (m, installed, _temp_dir) = install_package_into_temp_dir(report_pkg::R1_URI).await?;
+        let namespace: Namespace = report_pkg::NAMESPACE_STR.try_into()?;
+        m.keep(keep::Input {
+            namespace: namespace.clone(),
+            scope: Some(quilt_rs::lineage::SyncScope::folders(["add/deeply"])?),
+            download: false,
+        })
+        .await?;
+
+        let report = model(
+            m.get_local_domain(),
+            Input {
+                namespace,
+                host_config: None,
+            },
+        )
+        .await?
+        .report
+        .expect("r1 is behind");
+
+        let home = installed.package_home().await?;
+        assert!(
+            home.join(KEPT).exists(),
+            "the kept folder's new file is downloaded"
+        );
+        assert!(!home.join(OUTSIDE).exists(), "a new file outside it is not");
+        assert!(report.added.contains(&PathBuf::from(KEPT)), "{report:?}");
+        assert!(
+            report.added_not_fetched.contains(&PathBuf::from(OUTSIDE)),
+            "{report:?}"
+        );
+        Ok(())
+    }
+
     fn manifest_uri(hash: &str) -> quilt_uri::ManifestUri {
         quilt_uri::ManifestUri {
             origin: None,
