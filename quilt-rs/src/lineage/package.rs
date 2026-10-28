@@ -187,13 +187,16 @@ impl SyncScope {
 
     /// Whether a pull under this scope may fetch `path` when this copy does
     /// not track it. A folder covers the paths under it on a folder boundary:
-    /// `data/raw` covers `data/raw/a.csv` and not `data/raw2/a.csv`.
+    /// `data/raw` covers `data/raw/a.csv` and not `data/raw2/a.csv`, nor a file
+    /// named `data/raw`.
     #[must_use]
     pub fn covers_untracked(&self, path: &Path) -> bool {
         match self {
             Self::IndividualFiles => false,
             Self::EntirePackage => true,
-            Self::Folders(folders) => folders.iter().any(|folder| path.starts_with(folder)),
+            Self::Folders(folders) => folders
+                .iter()
+                .any(|folder| path.starts_with(folder) && path != Path::new(folder)),
         }
     }
 }
@@ -478,6 +481,13 @@ mod tests {
         assert!(scope.covers_untracked(Path::new("data/raw/x/b.csv")));
         assert!(!scope.covers_untracked(Path::new("data/raw2/a.csv")));
         assert!(!scope.covers_untracked(Path::new("data/a.csv")));
+
+        let data = folders(&["data"]);
+        assert!(data.covers_untracked(Path::new("data/a.csv")));
+        assert!(
+            !data.covers_untracked(Path::new("data")),
+            "a file named like the folder is not in it"
+        );
     }
 
     #[test]
