@@ -59,8 +59,17 @@
   flex: none;
 }
 
-/* A page that scrolls holds its first band right under the appbar, so a row
- * with no banner in it takes no room: its padding would be scrolled away first. */
+/* A page that scrolls holds the banner row under the appbar, so a bar shows
+ * wherever the reader is in the list. Above the page's bands, which stop under
+ * it, and below the appbar, whose activity line hangs over it. A row with no
+ * banner in it takes no room. */
+.root[data-page-scroll] > .notice {
+  position: sticky;
+  top: var(--q-appbar-height);
+  z-index: 2;
+  background: var(--q-bgColor-page);
+}
+
 .root[data-page-scroll] > .notice:not(:has(*)) {
   padding-top: 0;
 }
@@ -84,7 +93,7 @@
  * the regions and over a page's sticky bands. */
 .root > header {
   position: relative;
-  z-index: 2;
+  z-index: 3;
 }
 
 /* A page that scrolls as one. The appbar sticks at the top, and the page's own
@@ -108,6 +117,8 @@
  * to stay in view, above `.main`'s bottom padding. */
 .root[data-page-scroll] {
   --pinned-frame: var(--q-frame-height, 100vh);
+  /* Where the page's own bands start: under the appbar and the banner row. */
+  --pinned-top: calc(var(--q-appbar-height) + var(--q-banner-height, 0px));
   --pinned-floor: calc(var(--q-space-8) + var(--q-space-12) + var(--q-space-8));
   --pinned-strip: var(--q-strip-height, 0px);
   --pinned-queue: var(--q-queue-height, 0px);
@@ -119,7 +130,7 @@
    * group heading sticks. The frame is the scroller, so the padding is set here,
    * and a band held at the bottom keeps the same room below. */
   --pinned-bottom: min(
-    var(--q-appbar-height) + var(--pinned-strip) + var(--pinned-queue) + var(--pinned-header) +
+    var(--pinned-top) + var(--pinned-strip) + var(--pinned-queue) + var(--pinned-header) +
       var(--pinned-toolbar),
     var(--pinned-frame) - var(--pinned-floor)
   );

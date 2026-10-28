@@ -16,15 +16,15 @@
   flex: 1;
 }
 
-/* The header's band, under the appbar. It stops high enough to leave the
- * floor in view under the file toolbar, and a header taller than that goes up
- * under the appbar instead. It reaches up over `.main`'s top padding and paints
- * it, so rows never show through the gap, and it sits at the same place stuck
- * or not. */
+/* The header's band, under the appbar and any banner. It stops high enough to
+ * leave the floor in view under the file toolbar, and a header taller than that
+ * goes up under the appbar instead. It reaches up over `.main`'s top padding
+ * and paints it, so rows never show through the gap, and it sits at the same
+ * place stuck or not. */
 [data-page-scroll] .header {
   position: sticky;
   top: min(
-    var(--q-appbar-height),
+    var(--pinned-top),
     var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar) - var(--pinned-header)
   );
   z-index: 1;
@@ -47,7 +47,7 @@
   position: sticky;
   top: calc(
     min(
-      var(--q-appbar-height) + var(--pinned-header),
+      var(--pinned-top) + var(--pinned-header),
       var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar)
     ) +
       var(--q-space-3)
@@ -56,7 +56,7 @@
   max-height: calc(
     var(--pinned-frame) -
       min(
-        var(--q-appbar-height) + var(--pinned-header),
+        var(--pinned-top) + var(--pinned-header),
         var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar)
       ) -
       2 * var(--q-space-3)

@@ -37,7 +37,7 @@
 [data-page-scroll] .band {
   position: sticky;
   top: min(
-    var(--q-appbar-height) + var(--pinned-header),
+    var(--pinned-top) + var(--pinned-header),
     var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar)
   );
   z-index: 1;

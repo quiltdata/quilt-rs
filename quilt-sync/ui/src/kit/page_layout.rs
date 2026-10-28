@@ -57,9 +57,10 @@ pub fn PageLayout(
     #[prop(optional)] actions: Option<AnyView>,
     /// A `Banner`, when there is one. In the flow directly under the appbar, so it
     /// pushes the page down rather than floating over it — the design bans anchored
-    /// positioning, and a bar cannot be missed by someone looking at the bottom of a long
-    /// list. A slot rather than the signal itself, so the layout stays ignorant of what
-    /// kinds exist and who dismisses them.
+    /// positioning. On a page that scrolls it is held under the appbar, so a bar
+    /// cannot be missed by someone deep in a long list. A slot rather than the
+    /// signal itself, so the layout stays ignorant of what kinds exist and who
+    /// dismisses them.
     #[prop(optional)]
     banner: Option<AnyView>,
     /// The logo navigates in place of this page's history entry, for a page
@@ -73,6 +74,8 @@ pub fn PageLayout(
     page_scroll: bool,
     children: Children,
 ) -> impl IntoView {
+    let notice = NodeRef::new();
+    publish_height(notice, "--q-banner-height");
     view! {
         // `data-v2-page` marks the surface the v2 palette paints, which is what
         // `color-scheme` keys on: `qui-v2` marks a READER who opted in, and that
@@ -82,7 +85,11 @@ pub fn PageLayout(
             <Appbar actions=actions replace=replace />
             {banner
                 .map(|banner| {
-                    view! { <div class=style::notice>{banner}</div> }
+                    view! {
+                        <div class=style::notice node_ref=notice>
+                            {banner}
+                        </div>
+                    }
                 })}
             <main class=style::main>{children()}</main>
         </div>

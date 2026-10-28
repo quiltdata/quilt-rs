@@ -32,9 +32,9 @@
 /* The parts above the list stay in place while its rows scroll the page under
  * them. Each is its own sticky band, since no one box holds them all: the
  * strip is built outside the package read, and the queue, the toolbar and the
- * rows inside it. A band's `top` is the appbar's fixed height plus the bands
- * above it, which `publish_height` measures and writes on the frame, where
- * the `--pinned-*` values are made of them.
+ * rows inside it. A band's `top` is the appbar's fixed height plus the banner
+ * row and the bands above it, which `publish_height` measures and writes on
+ * the frame, where the `--pinned-*` values are made of them.
  *
  * Each band reaches up over the gap above it and paints it with the page's
  * background, so rows never show through a gap, and a band sits at the same
@@ -55,7 +55,7 @@
 /* Its gap is `.main`'s top padding. */
 [data-page-scroll] .strip {
   top: min(
-    var(--q-appbar-height),
+    var(--pinned-top),
     var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar) - var(--pinned-queue) -
       var(--pinned-strip)
   );
@@ -66,7 +66,7 @@
 /* Its gap, and the toolbar's, is `.main`'s gap between regions. */
 [data-page-scroll] .queue {
   top: min(
-    var(--q-appbar-height) + var(--pinned-strip),
+    var(--pinned-top) + var(--pinned-strip),
     var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar) - var(--pinned-queue)
   );
   margin-top: calc(-1 * var(--q-space-6));
@@ -75,7 +75,7 @@
 
 [data-page-scroll] .toolbar {
   top: min(
-    var(--q-appbar-height) + var(--pinned-strip) + var(--pinned-queue),
+    var(--pinned-top) + var(--pinned-strip) + var(--pinned-queue),
     var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar)
   );
   margin-top: calc(-1 * var(--q-space-6));

@@ -4035,12 +4035,21 @@ mod tests {
     /// The page at `width`: a header, a context pane `pane` tall, and the
     /// file pane's band over `rows` and whatever follows them.
     fn scrolling_page(width: u32, pane: u32, rows: AnyView) -> web_sys::Element {
+        // An empty banner row, as the page always passes one.
+        scrolling_page_with_banner(width, pane, rows, ().into_any())
+    }
+
+    fn scrolling_page_with_banner(
+        width: u32,
+        pane: u32,
+        rows: AnyView,
+        banner: AnyView,
+    ) -> web_sys::Element {
         load_page_sheets();
         mount(move || {
             view! {
                 <div data-page-test style=format!("width:{width}px; {TOKENS}")>
-                    // An empty banner row, as the page always passes one.
-                    <PageLayout heading="Package" page_scroll=true banner=().into_any()>
+                    <PageLayout heading="Package" page_scroll=true banner=banner>
                         <div class=style::page>
                             <PackageHeaderBand>
                                 <div style="height:60px"></div>
@@ -4115,6 +4124,43 @@ mod tests {
             header.bottom() + 12.0,
             "the pane beside it, the shell's gap under the header"
         );
+    }
+
+    /// A banner stays under the appbar wherever the reader is in the list, and
+    /// the header stays under it.
+    #[wasm_bindgen_test]
+    async fn a_banner_stays_in_view_while_the_rows_scroll() {
+        let el = scrolling_page_with_banner(
+            1024,
+            200,
+            plain_rows(),
+            view! { <div data-banner style="height:40px"></div> }.into_any(),
+        );
+        sleep_ms(50).await;
+        let frame = frame(&el);
+        let header_top = || {
+            find(&el, &format!(".{}", style::header))
+                .get_bounding_client_rect()
+                .top()
+                - frame.get_bounding_client_rect().top()
+        };
+        let row = find(&el, &format!(".{}", sheets::layout::notice))
+            .get_bounding_client_rect()
+            .height();
+        let resting = header_top();
+        assert_eq!(resting, 48.0 + row, "the header rests under the banner row");
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        assert_eq!(frame.scroll_top(), 1000, "the frame scrolls the page");
+        assert_eq!(
+            find(&el, "[data-banner]")
+                .get_bounding_client_rect()
+                .bottom()
+                - frame.get_bounding_client_rect().top(),
+            48.0 + row,
+            "the banner stays under the appbar"
+        );
+        assert_eq!(header_top(), resting, "and the header under the banner");
     }
 
     /// A pane taller than the room under the header scrolls inside, and the
