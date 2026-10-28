@@ -14,3 +14,8 @@
   align-items: center;
   gap: var(--q-space-1);
 }
+
+/* Clear of the last field, so it reads as adding a row rather than belonging to one. */
+.add {
+  margin-top: var(--q-space-2);
+}

@@ -59,6 +59,11 @@ pub fn ChoiceGroup(
     options: Vec<Choice>,
     selected: RwSignal<String>,
     #[prop(optional, into)] disabled: MaybeProp<bool>,
+    /// Drawn between the options and the caption: what the current choice
+    /// holds and how to change it, such as Keeping's kept folders. The caption
+    /// stays last, beside whatever acts on it.
+    #[prop(optional)]
+    children: Option<Children>,
 ) -> impl IntoView {
     let name = unique_id("choice");
     let label_id = format!("{name}-label");
@@ -113,6 +118,7 @@ pub fn ChoiceGroup(
             aria-describedby=described_by>
             <span class=style::label id=label_id.clone()>{label}</span>
             {rows}
+            {children.map(|children| children())}
             {move || {
                 caption
                     .get()

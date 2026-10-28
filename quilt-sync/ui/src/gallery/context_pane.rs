@@ -46,6 +46,7 @@ use crate::gallery::file_pane::MARKED;
 use crate::kit::Align;
 use crate::kit::AnchoredOverlay;
 use crate::kit::Button;
+use crate::kit::ButtonVariant;
 use crate::kit::Card;
 use crate::kit::CatalogLink;
 use crate::kit::Choice;
@@ -337,7 +338,13 @@ fn download(scope: RwSignal<String>, held: Held) -> AnyView {
     view! {
         {move || {
             (scope.get() != "pick" && held.outstanding > 0)
-                .then(|| view! { <Button on_click=|_| ()>{download_words(held)}</Button> })
+                .then(|| {
+                    view! {
+                        <Button variant=ButtonVariant::Primary on_click=|_| ()>
+                            {download_words(held)}
+                        </Button>
+                    }
+                })
         }}
     }
     .into_any()
@@ -383,12 +390,18 @@ fn folders_block(
         Ok(())
     });
     view! {
+        // Indented to the options' words, so the list reads as Folders' own.
         <Show when=move || stored.get() == "folders">
-            <ul style="margin:0; padding:0; list-style:none; font-size:var(--q-text-body); \
-                       line-height:var(--q-line-body)">
-                {move || kept.get().into_iter().map(|folder| view! { <li>{folder}</li> }).collect_view()}
-            </ul>
-            <Button on_click=move |_| start()>"Change folders"</Button>
+            <div style="display:flex; flex-direction:column; align-items:flex-start; \
+                        gap:var(--q-space-2); padding-left:calc(17px + var(--q-space-2))">
+                <ul style="margin:0; padding:0; list-style:none; font-size:var(--q-text-body); \
+                           line-height:var(--q-line-body)">
+                    {move || {
+                        kept.get().into_iter().map(|folder| view! { <li>{folder}</li> }).collect_view()
+                    }}
+                </ul>
+                <Button on_click=move |_| start()>"Change folders"</Button>
+            </div>
         </Show>
         <FormDialog
             open=open
@@ -468,8 +481,9 @@ fn pane(
                 caption=consequence(stored, held)
                 options=scopes()
                 selected=scope
-            />
-            {folders_block(scope, stored, kept, folders.typed)}
+            >
+                {folders_block(scope, stored, kept, folders.typed)}
+            </ChoiceGroup>
             {download(stored, held)}
         </PaneSection>
     };
@@ -569,38 +583,21 @@ fn refused() -> ResolveData {
 }
 
 /// What the cells are for, and what looking at them settled.
-const NOTE: &str = "320px holding three blocks: what the page says about the package rather \
-    than about its files. \
+const NOTE: &str = "320px holding three blocks about the package rather than its files. \
     \
-    Bucket and catalog comes first, on every package: the s3:// address and the catalog \
-    host, each cut with an ellipsis or a plain Not set, and one action at the heading's end \
-    into the Bucket and catalog dialog — Choose, as the primary, without a bucket, Change \
-    with one. History sits at Revision's heading end the same way. \
+    Bucket and catalog shows the s3:// address and the catalog host, or Not set, with one \
+    action at the heading's end: Choose, as the primary, without a bucket, Change with one. \
+    History sits at Revision's heading end; its surface opens leftwards over the file list. \
+    A published revision wears a cloud and links to the catalog; the unsent one wears the \
+    slashed cloud. \
     \
-    Keeping's count carries the package's size: the sum of the current revision's \
-    manifest rows, and of those whose files are here. It is the logical size, not disk \
-    usage: on APFS the object store shares blocks with the working files. The pane's words \
-    say downloaded, about files; only the revisions surface's frees is about this disk. A \
-    size that cannot be read leaves the count alone. \
+    Keeping reads top to bottom: the options, what Folders holds, the count with the \
+    package's size, and Download N files when files wait. Folders lists the kept folders \
+    read-only with Change folders, which opens a dialog of plain paths; choosing Folders \
+    with nothing saved opens it, and Cancel puts the radio back. Saving downloads nothing. \
+    The live cells keep two options until the app can store folders. \
     \
-    Folders lists the kept folders read-only, with Change folders. The folders are typed \
-    in a dialog, one plain path a row; choosing Folders with nothing saved opens it, and \
-    Cancel puts the radio back. Saving downloads nothing: the counted button does. The \
-    caption is the count alone, as the list already names the folders. The live cells \
-    keep two options until the app can store folders. \
-    \
-    Flip a radio in a hand-built cell and the caption and the download action \
-    answer together; the live cell's answer only once a stored choice is re-read, \
-    which the gallery never does. \
-    Click a trigger: the surface hangs leftwards over the file list, which is \
-    the only direction the page has for it. In the list a published revision \
-    wears a cloud and ends in an icon that opens the catalog; the unsent one \
-    wears the slashed cloud and no icon. \
-    \
-    In resolve mode both choices fit on one line at 320px, each with the \
-    sentence that says what it does beneath it. They are a block of their own \
-    under the comparison, ruled off from Published, and each hint sits close \
-    under its button and well clear of the next.";
+    In resolve mode the two choices share a line, each with its hint beneath.";
 
 /// The region itself, for the whole-page scene.
 ///
@@ -723,7 +720,7 @@ pub fn ContextPaneScene() -> impl IntoView {
             <Cell wide=true label="live — a bucket with a catalog: the host, and Change">
                 {live(Some("quilt-lab-plates"), Some("open.quiltdata.com"))}
             </Cell>
-            <Cell wide=true label="live — local only: no Bucket and catalog section, and Revision says so">
+            <Cell wide=true label="live — local only: Bucket and catalog says Not set and offers Choose">
                 {live(None, None)}
             </Cell>
             <Cell wide=true label="at rest — files I pick, two outstanding">

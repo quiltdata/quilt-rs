@@ -85,7 +85,7 @@ pub fn FolderList(
     view! {
         <div class=style::root>
             <For each=move || 0..rows.with(Vec::len) key=|i| *i children=row />
-            <div>
+            <div class=style::add>
                 <Button on_click=move |_| rows.update(|rows| rows.push(String::new()))>
                     "Add folder"
                 </Button>
