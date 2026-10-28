@@ -125,6 +125,25 @@ mod tests {
     use quilt_rs::io::storage::LocalStorage;
     use quilt_rs::io::storage::Storage;
 
+    /// Our hash of the installed revision's own message and metadata is the
+    /// fixture's `top_hash`, so the commit found nothing to commit.
+    async fn assert_reproduces(
+        installed_package: &quilt_rs::InstalledPackage,
+        output: &Output,
+        top_hash: &str,
+    ) -> Result<(), Error> {
+        assert_eq!(
+            installed_package.lineage().await?.current_hash(),
+            Some(top_hash)
+        );
+        assert!(
+            output.commit.is_none(),
+            "the commit made a hash other than {top_hash}: {:?}",
+            output.commit
+        );
+        Ok(())
+    }
+
     /// Verify the commit of that package:
     ///  * workflow/config.yml exists
     ///  * workflow id is not set
@@ -135,7 +154,7 @@ mod tests {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         let uri = pkg::URI;
-        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        let (m, installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
 
@@ -151,6 +170,7 @@ mod tests {
             )
             .await?;
 
+            assert_reproduces(&installed_package, &output, pkg::TOP_HASH).await?;
             assert_eq!(output.to_string(), "Nothing to commit");
             assert_eq!(output.to_json().to_string(), r#"{"hash":null}"#);
         }
@@ -199,7 +219,7 @@ mod tests {
         use crate::cli::fixtures::packages::workflow_null as pkg;
 
         let uri = pkg::URI;
-        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        let (m, installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
 
@@ -217,8 +237,7 @@ mod tests {
 
             // Same hash as the explicit `NoWorkflow` commit: the config has no
             // `default_workflow`, so bucket-default resolves to the null-id record.
-            // That is the installed hash, so there is nothing to commit.
-            assert!(output.commit.is_none());
+            assert_reproduces(&installed_package, &output, pkg::TOP_HASH).await?;
         }
 
         Ok(())
@@ -278,7 +297,7 @@ mod tests {
         use crate::cli::fixtures::packages::my_workflow as pkg;
 
         let uri = pkg::URI;
-        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        let (m, installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
 
@@ -299,8 +318,7 @@ mod tests {
             )
             .await?;
 
-            // The installed hash, so there is nothing to commit.
-            assert!(output.commit.is_none());
+            assert_reproduces(&installed_package, &output, pkg::TOP_HASH).await?;
         }
 
         Ok(())
@@ -315,7 +333,7 @@ mod tests {
         use crate::cli::fixtures::packages::no_workflows_message_only as pkg;
 
         let uri = pkg::URI;
-        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        let (m, installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
 
@@ -331,8 +349,7 @@ mod tests {
             )
             .await?;
 
-            // The installed hash, so there is nothing to commit.
-            assert!(output.commit.is_none());
+            assert_reproduces(&installed_package, &output, pkg::TOP_HASH).await?;
         }
 
         Ok(())
@@ -373,7 +390,7 @@ mod tests {
         use crate::cli::fixtures::packages::no_workflows_with_meta as pkg;
 
         let uri = pkg::URI;
-        let (m, _installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
+        let (m, installed_package, _tempdir) = install_package_into_temp_dir(uri).await?;
         {
             let local_domain = m.get_local_domain();
 
@@ -397,8 +414,7 @@ mod tests {
             )
             .await?;
 
-            // The installed hash, so there is nothing to commit.
-            assert!(output.commit.is_none());
+            assert_reproduces(&installed_package, &output, pkg::TOP_HASH).await?;
         }
 
         Ok(())

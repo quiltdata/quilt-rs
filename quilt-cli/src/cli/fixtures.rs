@@ -25,18 +25,24 @@ pub mod packages {
 
     pub mod my_workflow {
         pub const URI: &str = "quilt+s3://udp-spec#package=reference/with-workflow@4a9a3d39f655a03659333aad787b182e477e335e0fa78dd4d029521a9ca18dad";
+        pub const TOP_HASH: &str =
+            "4a9a3d39f655a03659333aad787b182e477e335e0fa78dd4d029521a9ca18dad";
         pub const MESSAGE: &str = "Test message";
         pub const NAMESPACE: (&str, &str) = ("reference", "with-workflow");
     }
 
     pub mod no_workflows_message_only {
         pub const URI: &str = "quilt+s3://data-yaml-spec-tests#package=reference/message-only@ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
+        pub const TOP_HASH: &str =
+            "ce2ca6a39eb02725b24e3ccf158022dc80c2ab96b066e5660d87abafdbaee768";
         pub const NAMESPACE: (&str, &str) = ("reference", "message-only");
         pub const MESSAGE: &str = "#Test message 1234!?#";
     }
 
     pub mod no_workflows_with_meta {
         pub const URI: &str = "quilt+s3://data-yaml-spec-tests#package=reference/meta@a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388";
+        pub const TOP_HASH: &str =
+            "a0e161c9a281f38382007f4775e7d6ecbb50f929a197ba3e84443ec911ab6388";
         pub const NAMESPACE: (&str, &str) = ("reference", "meta");
     }
 
