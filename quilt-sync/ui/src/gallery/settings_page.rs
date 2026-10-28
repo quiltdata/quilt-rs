@@ -44,13 +44,16 @@ use crate::kit::Button;
 use crate::kit::ButtonVariant;
 use crate::kit::PageLayout;
 use crate::pages::settings_v2::{
-    AboutCard, AccountHost, AccountsCard, AppCard, BuiltInRule, ExperimentalCard, IgnoreRulesCard,
-    IgnoreRulesForm, PublishingCard, PublishingDialog, PublishingForm, ReportBody, ReportDialog,
-    ReportFooter, ReportState, Saved, SettingsHeader, SettingsLayout, SignOutDialog, StorageCard,
-    StorageSize, SyncingCard, TroubleshootingCard, metadata_error, minutes_shown,
-    sign_out_consequence,
+    AboutCard, AccountHost, AccountsCard, AgentDraft, AgentTasksCard, AgentTasksDialog,
+    AgentTasksForm, AppCard, BuiltInRule, ExperimentalCard, IgnoreRulesCard, IgnoreRulesForm,
+    PublishingCard, PublishingDialog, PublishingForm, ReportBody, ReportDialog, ReportFooter,
+    ReportState, Saved, SettingsHeader, SettingsLayout, SignOutDialog, StorageCard, StorageSize,
+    SyncingCard, TroubleshootingCard, agent_fields, metadata_error, minutes_shown,
+    sign_out_consequence, task_settings_of,
 };
-use quilt_sync_ui::commands::{LogEnv, PublishSettingsData};
+use quilt_sync_ui::commands::{
+    AgentSettings, LogEnv, PublishSettingsData, TaskSettings, TaskSettingsData,
+};
 
 const HOME_DIR: &str = "/Users/a-user/QuiltSync";
 const DATA_DIR: &str = "/Users/a-user/Library/Application Support/com.quiltdata.quilt-sync";
@@ -257,6 +260,111 @@ fn publishing_real(p: Publishing) -> AnyView {
     .into_any()
 }
 
+// ── Agent tasks ──
+
+/// Two buckets, and three agents: one trusted with everything, and one whose
+/// command is a long path with no spaces to wrap at.
+fn tasks() -> TaskSettings {
+    let agent = |command: &[&str], trust_all| AgentSettings {
+        command: command.iter().map(ToString::to_string).collect(),
+        trust_all,
+        ..AgentSettings::default()
+    };
+    TaskSettings {
+        blessed_buckets: vec!["s3://quilt-dev".to_string(), "s3://plate-reads".to_string()],
+        agents: [
+            (
+                "kiro".to_string(),
+                agent(
+                    &[
+                        "/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-chat",
+                        "acp",
+                        "--agent-engine=v3",
+                    ],
+                    true,
+                ),
+            ),
+            ("claude".to_string(), agent(&["claude-code-acp"], false)),
+            (
+                "codex".to_string(),
+                agent(
+                    &["/Users/a/.nvm/versions/node/v24.12.0/lib/node_modules/\
+                         @agentclientprotocol/codex-acp/dist/index.js"],
+                    false,
+                ),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    }
+}
+
+fn agent_tasks(settings: TaskSettings, error: Option<&str>) -> AnyView {
+    let stored = TaskSettingsData {
+        settings,
+        error: error.map(ToString::to_string),
+    };
+    view! { <AgentTasksCard stored=stored on_edit=noop() /> }.into_any()
+}
+
+/// The popup drawn inline at the modal's width; the last cell opens the real
+/// one.
+fn agent_tasks_popup(buckets: &str, settings: &TaskSettings) -> AnyView {
+    let buckets = RwSignal::new(buckets.to_string());
+    let agents = RwSignal::new(AgentDraft::all(settings));
+    let blocked = Signal::derive(move || {
+        let fields = agents.with(|all| agent_fields(all));
+        buckets.with(|text| task_settings_of(text, &fields).is_none())
+    });
+    view! {
+        <div class="g-bars g-dialog-inline g-dialog-inline--wide">
+            <form>
+                <fieldset class="g-bars g-fieldset">
+                    <AgentTasksForm buckets=buckets agents=agents />
+                </fieldset>
+            </form>
+            <div class="g-inline g-inline--end">
+                <Button on_click=move |_| ()>"Cancel"</Button>
+                <Button variant=ButtonVariant::Primary disabled=blocked on_click=move |_| ()>
+                    "Save"
+                </Button>
+            </div>
+        </div>
+    }
+    .into_any()
+}
+
+/// Two agents with the same name, one with no command, and a bucket that
+/// is not one.
+fn wrong_tasks() -> TaskSettings {
+    let mut settings = tasks();
+    settings.agents.insert(
+        "kiro ".to_string(),
+        AgentSettings {
+            command: Vec::new(),
+            ..AgentSettings::default()
+        },
+    );
+    settings
+}
+
+fn agent_tasks_real() -> AnyView {
+    let open = RwSignal::new(false);
+    let stored = tasks();
+    view! {
+        <div class="g-inline">
+            <Button on_click=move |_| open.set(true)>"Open the real one"</Button>
+        </div>
+        <AgentTasksDialog
+            open=open
+            buckets=RwSignal::new(stored.blessed_buckets.join("\n"))
+            agents=RwSignal::new(AgentDraft::all(&stored))
+            save=|| async { Ok(()) }
+        />
+    }
+    .into_any()
+}
+
 // ── Storage ──
 
 fn storage(size: StorageSize, freeing: bool, freed: Option<&'static str>) -> AnyView {
@@ -404,12 +512,14 @@ fn whole_page(width: u32, height: u32) -> AnyView {
                     experimental=view! {
                         <ExperimentalCard
                             design_preview=RwSignal::new(true)
+                            agent_tasks=RwSignal::new(true)
                         />
                     }
                         .into_any()
                     troubleshooting=troubleshooting(LogEnv::Unset, "Default", false)
                     about=view! { <AboutCard version=VERSION on_release_notes=noop() /> }.into_any()
                     ignore_rules=ignore_rules(true)
+                    agent_tasks=agent_tasks(tasks(), None)
                 />
             </PageLayout>
         </div>
@@ -419,9 +529,9 @@ fn whole_page(width: u32, height: u32) -> AnyView {
 
 const NOTE: &str = "The settings page v2. From a 1024px window, two cards to a row: Syncing and \
     Accounts, Storage and App, Publishing and Troubleshooting, Experimental and About, then Ignore \
-    rules alone. Narrower, \
+    rules, with Agent tasks beside it while its experiment is on. Narrower, \
     the same order in one column. Toggles, selects and minute fields save as they change and say \
-    Saved; Publishing is read-only, edited in a popup with Save. Routed at /settings in the v2 \
+    Saved; Publishing and Agent tasks are read-only, edited in a popup with Save. Routed at /settings in the v2 \
     design.";
 
 #[component]
@@ -551,10 +661,11 @@ pub fn SettingsPageScene() -> impl IntoView {
             <Cell full=true label="Storage — the measure failed">
                 {column(storage(StorageSize::Failed, false, None))}
             </Cell>
-            <Cell full=true label="Experimental">
+            <Cell full=true label="Experimental — Agent tasks on, so its card shows">
                 {column(view! {
                     <ExperimentalCard
                         design_preview=RwSignal::new(true)
+                        agent_tasks=RwSignal::new(true)
                     />
                 }
                     .into_any())}
@@ -585,6 +696,33 @@ pub fn SettingsPageScene() -> impl IntoView {
             </Cell>
             <Cell full=true label="Built-in rules popup — the checklist, two rules turned off; Confirm saves, Cancel or ✕ discards">
                 {rules_form(&[".*/", "*.pem"])}
+            </Cell>
+            <Cell full=true label="Agent tasks — nothing stored: tasks are off">
+                {column(agent_tasks(TaskSettings::default(), None))}
+            </Cell>
+            <Cell full=true label="Agent tasks — two buckets and three agents; a long command path wraps inside the card">
+                {column(agent_tasks(tasks(), None))}
+            </Cell>
+            <Cell full=true label="Agent tasks — narrow">
+                {narrow(agent_tasks(tasks(), None))}
+            </Cell>
+            <Cell full=true label="Agent tasks — the file could not be read: why, and Edit… is off">
+                {column(agent_tasks(
+                    TaskSettings::default(),
+                    Some("Failed to parse JSON: expected value at line 3 column 5"),
+                ))}
+            </Cell>
+            <Cell wide=true label="The Agent tasks popup — nothing stored: Add agent">
+                {agent_tasks_popup("", &TaskSettings::default())}
+            </Cell>
+            <Cell wide=true label="The Agent tasks popup — the stored settings">
+                {agent_tasks_popup("s3://quilt-dev\nplate-reads", &tasks())}
+            </Cell>
+            <Cell wide=true label="The Agent tasks popup — a bucket that is not one, a name taken twice, a command missing: each says why, Save disabled">
+                {agent_tasks_popup("s3://quilt-dev\nQuilt Dev", &wrong_tasks())}
+            </Cell>
+            <Cell wide=true label="The Agent tasks popup, the real one">
+                {agent_tasks_real()}
             </Cell>
             <Cell wide=true label="Report a problem — empty">
                 {report("", ReportState::Writing)}

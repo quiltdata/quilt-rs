@@ -185,3 +185,51 @@
   gap: var(--q-space-2);
   cursor: pointer;
 }
+
+// The stored agents, one to a line.
+.agents {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+// A command, such as a long path, wraps anywhere rather than widening the
+// card.
+.command {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--q-font-mono);
+}
+
+// One agent's fields in the popup.
+.agent_fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+  // A fieldset holds its content's width unless told otherwise.
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--q-space-3);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+}
+
+.agent_fields textarea {
+  overflow-wrap: anywhere;
+}
+
+// A fixed width, so it breaks only part of the border: in the fieldset's
+// column layout a legend can stretch across all of it.
+.agent_legend {
+  width: 48px;
+  padding: 0 var(--q-space-1);
+  font-weight: 600;
+}

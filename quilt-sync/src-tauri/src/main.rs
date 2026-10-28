@@ -252,6 +252,7 @@ fn main() {
             commands::open_user_ignore_rules,
             commands::update_log_settings,
             commands::update_experimental_settings,
+            commands::update_task_settings,
             commands::update_design_settings,
             commands::get_main_page_packages,
             commands::get_main_page_recent_files,
