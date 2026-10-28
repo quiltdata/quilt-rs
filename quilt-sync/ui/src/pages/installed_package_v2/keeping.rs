@@ -61,6 +61,24 @@ impl KeepingCommands {
     }
 }
 
+/// The folders dialog's open flag and typed rows. The page provides them, so
+/// a re-read that rebuilds the section keeps both; a section drawn alone has
+/// its own.
+#[derive(Clone, Copy)]
+pub struct FoldersDialog {
+    pub open: RwSignal<bool>,
+    pub rows: RwSignal<Vec<String>>,
+}
+
+impl FoldersDialog {
+    pub(super) fn new() -> Self {
+        Self {
+            open: RwSignal::new(false),
+            rows: RwSignal::new(Vec::new()),
+        }
+    }
+}
+
 /// The value each scope has in the group.
 fn choice_value(scope: KeepingScope) -> &'static str {
     match scope {
@@ -105,8 +123,10 @@ pub(super) fn KeepingSection(
     let stored = StoredValue::new(choice_value(scope).to_string());
     // Written only by the radio and the rollbacks below: any other write stores a scope.
     let selected = RwSignal::new(stored.get_value());
-    let editing = w.dialogs.folders;
-    let rows = w.dialogs.folders_draft;
+    let FoldersDialog {
+        open: editing,
+        rows,
+    } = use_context::<FoldersDialog>().unwrap_or_else(FoldersDialog::new);
 
     {
         let namespace = namespace.clone();
@@ -356,7 +376,7 @@ pub(super) fn download_label(
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, Held, KeepingCommands, KeepingSection, download_label};
+    use super::{Answer, FoldersDialog, Held, KeepingCommands, KeepingSection, download_label};
     use crate::commands::KeepingScope::{self, EntirePackage, Folders, IndividualFiles};
     use crate::commands::{KeepingData, PackageSize};
     use crate::kit::BannerVariant;
@@ -972,28 +992,37 @@ mod tests {
         assert_eq!(RELOADS.get(), 0);
     }
 
+    /// The section as the page draws it, under the page's folders dialog.
+    fn on_page(dialog: FoldersDialog, w: Wiring) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <leptos::context::Provider value=dialog>
+                    <KeepingSection
+                        namespace="team/dataset"
+                        data=a_backlog_in(IndividualFiles)
+                        size=None
+                        w=w
+                        commands=commands(stores_ok, downloads_ok)
+                    />
+                </leptos::context::Provider>
+            }
+        })
+    }
+
     /// A re-read rebuilds the section; the open dialog and its rows survive,
-    /// since they are the page's.
+    /// since the page holds them.
     #[wasm_bindgen_test]
     async fn a_reread_keeps_the_open_dialog_and_its_rows() {
         clear();
-        let w = Wiring::new();
-        let el = pressable(
-            a_backlog_in(IndividualFiles),
-            w,
-            commands(stores_ok, downloads_ok),
-        );
+        let (dialog, w) = (FoldersDialog::new(), Wiring::new());
+        let el = on_page(dialog, w);
         leptos::task::tick().await;
         element_saying(&el, "Folders").click();
         settle().await;
         type_folder(&fields(&open_dialog(&el))[0], "data/raw");
         leptos::task::tick().await;
 
-        let rebuilt = pressable(
-            a_backlog_in(IndividualFiles),
-            w,
-            commands(stores_ok, downloads_ok),
-        );
+        let rebuilt = on_page(dialog, w);
         settle().await;
 
         let typed: Vec<String> = fields(&open_dialog(&rebuilt))

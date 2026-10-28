@@ -205,10 +205,6 @@ pub struct Dialogs {
     /// the draft's signals rather than the signals inline, because `Wiring`
     /// is passed by value to every part of the header.
     pub bucket_draft: StoredValue<BucketDraft>,
-    /// Keeping's folders dialog, and the rows typed into it: here for the
-    /// bucket draft's reason, so a re-read keeps an open dialog and its rows.
-    pub folders: RwSignal<bool>,
-    pub folders_draft: RwSignal<Vec<String>>,
     /// Opened only by the row's `Switch role`, which exists only when the
     /// payload names somewhere to switch to.
     pub role: RwSignal<bool>,
@@ -291,8 +287,6 @@ impl Wiring {
             dialogs: Dialogs {
                 bucket: RwSignal::new(false),
                 bucket_draft: StoredValue::new(BucketDraft::new()),
-                folders: RwSignal::new(false),
-                folders_draft: RwSignal::new(Vec::new()),
                 role: RwSignal::new(false),
                 undo: RwSignal::new(false),
                 remove: RwSignal::new(false),
@@ -1308,9 +1302,10 @@ fn PackageScreen(
             shown.0.set_value(false);
         }
     });
-    // For the header's *Copied*. Not on `Wiring`, which every part of the page
-    // takes by value.
+    // For the header's *Copied* and Keeping's folders dialog. Not on `Wiring`,
+    // which every part of the page takes by value.
     provide_context(header::CopiedMark::new());
+    provide_context(keeping::FoldersDialog::new());
     let reload = page.reload;
     // One read for the whole page. Re-runs when the namespace changes, and
     // whenever `reload` fires — the watcher reporting news about this package,

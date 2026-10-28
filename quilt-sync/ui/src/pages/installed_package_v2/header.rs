@@ -745,9 +745,6 @@ pub fn PageHeader(
         bucket: bucket_open,
         // The bucket dialog's own.
         bucket_draft: _,
-        // Keeping's, in the context pane.
-        folders: _,
-        folders_draft: _,
         role: role_open,
         undo: undo_open,
         remove: remove_open,
