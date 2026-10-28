@@ -255,6 +255,33 @@ mod tests {
 
     use super::*;
 
+    /// Under the most verbose saved level, the crash reporter sends one event per
+    /// `error`, carrying the `warn` and `info` lines before it as breadcrumbs, and
+    /// nothing below `info`.
+    #[test]
+    fn the_crash_sink_sends_errors_with_breadcrumbs_and_nothing_below_info() {
+        let subscriber = tracing_subscriber::registry().with(crash_sink(LogLevel::Trace));
+        let events = sentry::test::with_captured_events(|| {
+            ::tracing::subscriber::with_default(subscriber, || {
+                ::tracing::trace!("a trace line");
+                ::tracing::debug!("a debug line");
+                ::tracing::info!("an info line");
+                ::tracing::warn!("a warn line");
+                ::tracing::error!("an error line");
+            });
+        });
+
+        assert_eq!(events.len(), 1, "one error, one event: {events:?}");
+        let event = &events[0];
+        assert_eq!(event.level, sentry::Level::Error);
+        let breadcrumbs: Vec<_> = event
+            .breadcrumbs
+            .iter()
+            .filter_map(|b| b.message.as_deref())
+            .collect();
+        assert_eq!(breadcrumbs, ["an info line", "a warn line"]);
+    }
+
     /// Both sinks' directives parse, and the app's own crates are held above the
     /// dependency floor in each. A typo here would silently degrade to `warn` and
     /// look like the bug this unit exists to fix.
