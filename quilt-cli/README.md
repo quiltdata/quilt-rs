@@ -95,7 +95,9 @@ Under `--json`, `ignored` holds the `files` and `folders` counts, and with
 
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
-`&path=` parameter in the URI.
+`&path=` parameter in the URI. A path the package already tracks is left as
+it is and listed as `Already installed: "<path>"` (`already_installed` under
+`--json`); the other paths install.
 
 `pull` reports the files it moved, in four groups: downloaded, left on the
 remote, updated, removed. A path you do not track is absent from all four — a

@@ -700,7 +700,9 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     /// Downloads `paths` and starts tracking them. A path whose bytes the
     /// remote no longer holds is skipped, not an error: see
-    /// [`InstallPathsReport::skipped`](flow::InstallPathsReport::skipped).
+    /// [`InstallPathsReport::skipped`](flow::InstallPathsReport::skipped). A
+    /// path the copy already tracks is left as it is: see
+    /// [`InstallPathsReport::already_installed`](flow::InstallPathsReport::already_installed).
     pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
         if paths.is_empty() {
             return Ok(flow::InstallPathsReport::default());
@@ -717,7 +719,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
         let mut manifest = self.manifest_from_lineage(&lineage).await?;
-        let (lineage, skipped) = flow::install_paths(
+        let (lineage, report) = flow::install_paths(
             lineage,
             &mut manifest,
             &self.paths,
@@ -731,7 +733,7 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(flow::InstallPathsReport {
             paths: lineage.paths,
-            skipped,
+            ..report
         })
     }
 

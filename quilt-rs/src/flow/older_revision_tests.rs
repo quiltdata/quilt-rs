@@ -193,6 +193,7 @@ impl Rev1Installed {
             &paths.iter().collect::<Vec<_>>(),
         )
         .await
+        .map(|(lineage, report)| (lineage, report.skipped))
     }
 
     async fn status(&self, lineage: PackageLineage) -> Res<InstalledPackageStatus> {
