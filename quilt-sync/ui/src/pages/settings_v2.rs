@@ -199,8 +199,8 @@ pub fn SettingsHeader(
 
 /// The page's cards, in rows of two on a wide window: Syncing and Accounts,
 /// the two the main page's strip shows, then Storage and App, Publishing and
-/// Troubleshooting, Experimental and About, Ignore rules, and Agent tasks on a
-/// row of its own when it is on. Narrow, the same order in one column.
+/// Troubleshooting, Experimental and About, then Ignore rules, with Agent tasks
+/// beside it when it is on. Narrow, the same order in one column.
 #[component]
 pub fn SettingsLayout(
     header: AnyView,
@@ -621,7 +621,8 @@ pub fn command_args(text: &str) -> Vec<String> {
 }
 
 /// An S3 bucket's name: 3 to 63 lowercase letters, digits, dots and hyphens,
-/// starting and ending with a letter or digit.
+/// starting and ending with a letter or digit, with no two dots in a row, and
+/// not shaped like an IP address.
 fn is_bucket_name(name: &str) -> bool {
     let ends = |b: Option<u8>| b.is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
     (3..=63).contains(&name.len())
@@ -630,6 +631,8 @@ fn is_bucket_name(name: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
         && ends(name.bytes().next())
         && ends(name.bytes().last())
+        && !name.contains("..")
+        && name.parse::<std::net::Ipv4Addr>().is_err()
 }
 
 /// The buckets typed, one per line as `s3://name` or `name`, as stored:
@@ -2162,6 +2165,9 @@ mod tests {
         assert!(task_buckets("s3://quilt-dev/data").is_err());
         assert!(task_buckets("ab").is_err());
         assert!(task_buckets("-quilt").is_err());
+        assert!(task_buckets("quilt..dev").is_err(), "two dots in a row");
+        assert!(task_buckets("192.168.5.4").is_err(), "an IP address");
+        assert!(task_buckets("quilt.dev.2").is_ok());
     }
 
     #[test]

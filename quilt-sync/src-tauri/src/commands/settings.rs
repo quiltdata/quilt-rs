@@ -463,13 +463,25 @@ pub async fn update_task_settings(
     app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
     settings: TaskSettings,
 ) -> Result<(), String> {
-    let settings = checked_task_settings(settings)?;
     let app_handle = app_handle.lock().await;
     let data_dir = app_handle
         .path()
         .app_local_data_dir()
         .map_err(|e| e.to_string())?;
-    settings.save(&data_dir).await.map_err(|e| e.to_string())
+    save_task_settings(&data_dir, settings).await
+}
+
+/// Write `settings`, unless the file there now cannot be read: it may have
+/// been broken by hand since the page read it, and is the user's to fix.
+async fn save_task_settings(
+    data_dir: &std::path::Path,
+    settings: TaskSettings,
+) -> Result<(), String> {
+    let settings = checked_task_settings(settings)?;
+    TaskSettings::read(data_dir)
+        .await
+        .map_err(|e| format!("Can't read task_settings.json: {e}"))?;
+    settings.save(data_dir).await.map_err(|e| e.to_string())
 }
 
 /// Turn off exactly the built-in ignore rules in `off`, for every package.
@@ -846,6 +858,22 @@ mod tests {
         let data = TaskSettingsData::read(dir.path()).await;
         assert!(data.error.is_some());
         assert_eq!(data.settings, TaskSettings::default());
+        Ok(())
+    }
+
+    /// A save writes a missing file, and leaves one it cannot read as it is.
+    #[tokio::test]
+    async fn a_save_never_replaces_a_file_it_cannot_read() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        let settings = tasks(&["quilt-dev"], &[]);
+        assert_eq!(
+            save_task_settings(dir.path(), settings.clone()).await,
+            Ok(())
+        );
+        let path = dir.path().join("task_settings.json");
+        tokio::fs::write(&path, b"{\"agents\": [").await?;
+        assert!(save_task_settings(dir.path(), settings).await.is_err());
+        assert_eq!(tokio::fs::read(&path).await?, b"{\"agents\": [");
         Ok(())
     }
 

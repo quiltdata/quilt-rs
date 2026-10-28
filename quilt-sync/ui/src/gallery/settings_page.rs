@@ -528,7 +528,7 @@ fn whole_page(width: u32, height: u32) -> AnyView {
 
 const NOTE: &str = "The settings page v2. From a 1024px window, two cards to a row: Syncing and \
     Accounts, Storage and App, Publishing and Troubleshooting, Experimental and About, then Ignore \
-    rules alone, and Agent tasks alone while its experiment is on. Narrower, \
+    rules, with Agent tasks beside it while its experiment is on. Narrower, \
     the same order in one column. Toggles, selects and minute fields save as they change and say \
     Saved; Publishing and Agent tasks are read-only, edited in a popup with Save. Routed at /settings in the v2 \
     design.";
