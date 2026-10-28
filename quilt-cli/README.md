@@ -115,10 +115,10 @@ folder, or anywhere under `--all`, are downloaded too. Under `--json` it prints
 `folders` for a folders setting, and `outstanding`, the files still waiting.
 
 `pull` reports the files it moved, in four groups: downloaded, left on the
-remote, updated, removed. A path you do not track and the package does not keep
-is absent from all four — a pull writes nothing for it, so a copy that installed
-no paths and keeps only picked files reports no files at all. The message that
-follows is the newest revision's only: a pull advances to `latest` in one step
+remote, updated, removed. A file the new revision adds that the package's
+setting does not keep is listed as left on the remote. A change to or removal
+of a file you do not track and the setting does not keep is not listed: the pull
+writes nothing for it. The message that follows is the newest revision's only: a pull advances to `latest` in one step
 and may span several revisions.
 When the package is already at `latest`, `pull` prints `Already up to date` and
 exits 0; under `--json` the same shape has `"hash": null` and empty groups.
