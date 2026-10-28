@@ -1,13 +1,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use sentry::integrations::tracing::{BreadcrumbLayer, ErrorLayer};
 use tempfile::TempDir;
+use tracing::{Level, Subscriber};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{
-    EnvFilter,
-    filter::{FilterExt, LevelFilter},
+    EnvFilter, Layer,
+    filter::{FilterExt, LevelFilter, filter_fn},
+    registry::LookupSpan,
 };
 
 use quilt_rs::logging::LOG_ENV;
@@ -148,6 +151,23 @@ pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
     })
 }
 
+/// The crash reporter's layer: `error` events become Sentry events, and `warn`
+/// and `info` events become the breadcrumbs sent with them.
+///
+/// A function rather than a binding, because its type depends on the subscriber
+/// it joins, and the two arms of [`init_tracing`] build different ones.
+fn crash_sink<S>(saved: LogLevel) -> impl Layer<S>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    BreadcrumbLayer::new()
+        .with_filter(filter_fn(|metadata| {
+            matches!(*metadata.level(), Level::WARN | Level::INFO)
+        }))
+        .and_then(ErrorLayer::new().with_filter(LevelFilter::ERROR))
+        .with_filter(filter(saved, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING))
+}
+
 /// Install the subscriber, with a filter per sink.
 ///
 /// **Each layer filters for itself.** A filter attached to the registry instead
@@ -179,10 +199,6 @@ fn init_tracing(
         .build(logs_dir.path())
         .ok();
 
-    // The crash-sink layer is written out in both arms rather than shared. Its type
-    // is parameterised by the subscriber it composes with, so the two arms want
-    // different instantiations — a binding or a closure would fix it to whichever
-    // arm was built first.
     let guard = if let Some(appender) = appender {
         // Non-blocking, so a log line costs the emitting thread a channel send
         // rather than a file write — the appender is otherwise synchronous, and
@@ -198,18 +214,12 @@ fn init_tracing(
 
         tracing_subscriber::registry()
             .with(file)
-            .with(
-                sentry::integrations::tracing::layer()
-                    .with_filter(filter(saved, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
-            )
+            .with(crash_sink(saved))
             .init();
         Some(guard)
     } else {
         tracing_subscriber::registry()
-            .with(
-                sentry::integrations::tracing::layer()
-                    .with_filter(filter(saved, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
-            )
+            .with(crash_sink(saved))
             .init();
         None
     };
