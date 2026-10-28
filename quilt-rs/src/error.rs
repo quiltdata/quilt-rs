@@ -321,9 +321,6 @@ pub enum PackageOpError {
 
     #[error("Pull blocked by conflicting local changes: {0:?}")]
     PullConflict(Vec<PathBuf>),
-
-    #[error("package is already up-to-date")]
-    AlreadyUpToDate,
 }
 
 /// The error type for this library

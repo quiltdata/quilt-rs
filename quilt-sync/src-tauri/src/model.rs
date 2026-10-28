@@ -135,7 +135,7 @@ pub trait QuiltModel {
         package: &Self::Locked,
         host_config: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error> {
+    ) -> Result<quilt::flow::Pulled, Error> {
         package.pull(host_config, scope).await
     }
 
@@ -157,10 +157,7 @@ pub trait QuiltModel {
     }
 
     /// [`Self::package_push`] on the held lock.
-    async fn locked_package_push(
-        &self,
-        package: &Self::Locked,
-    ) -> Result<quilt::PushOutcome, Error> {
+    async fn locked_package_push(&self, package: &Self::Locked) -> Result<quilt::Pushed, Error> {
         package.push().await
     }
 
@@ -416,7 +413,7 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         host_config: Option<HostConfig>,
-    ) -> Result<quilt::PushOutcome, Error> {
+    ) -> Result<quilt::Pushed, Error> {
         Ok(package.push(host_config).await?)
     }
 
@@ -750,7 +747,7 @@ pub trait LockedOps: Send + Sync + Sized {
         &self,
         host_config: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error>;
+    ) -> Result<quilt::flow::Pulled, Error>;
 
     async fn install_paths(
         &self,
@@ -759,7 +756,7 @@ pub trait LockedOps: Send + Sync + Sized {
 
     async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error>;
 
-    async fn push(&self) -> Result<quilt::PushOutcome, Error>;
+    async fn push(&self) -> Result<quilt::Pushed, Error>;
 
     async fn publish(
         &self,
@@ -807,7 +804,7 @@ impl LockedOps for quilt::LockedPackage {
         &self,
         host_config: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error> {
+    ) -> Result<quilt::flow::Pulled, Error> {
         Ok(quilt::LockedPackage::pull(self, host_config, scope).await?)
     }
 
@@ -822,7 +819,7 @@ impl LockedOps for quilt::LockedPackage {
         Ok(quilt::LockedPackage::reset_to_latest(self).await?)
     }
 
-    async fn push(&self) -> Result<quilt::PushOutcome, Error> {
+    async fn push(&self) -> Result<quilt::Pushed, Error> {
         Ok(quilt::LockedPackage::push(self, None).await?)
     }
 
@@ -885,7 +882,7 @@ impl LockedOps for quilt_uri::Namespace {
         &self,
         _: Option<HostConfig>,
         _: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error> {
+    ) -> Result<quilt::flow::Pulled, Error> {
         unreachable!("a mocked model sets its own pull")
     }
 
@@ -897,7 +894,7 @@ impl LockedOps for quilt_uri::Namespace {
         unreachable!("a mocked model sets its own reset")
     }
 
-    async fn push(&self) -> Result<quilt::PushOutcome, Error> {
+    async fn push(&self) -> Result<quilt::Pushed, Error> {
         unreachable!("a mocked model sets its own push")
     }
 

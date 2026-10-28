@@ -11,6 +11,7 @@ use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_uri::Namespace;
 use serde_json::Value;
+use serde_json::json;
 
 use crate::Error;
 use crate::model::QuiltModel;
@@ -21,6 +22,7 @@ use crate::telemetry::prelude::*;
 pub mod acp;
 pub mod agent_exec;
 pub mod agent_process;
+pub mod login_path;
 pub mod settings;
 
 use agent_exec::Claim;
@@ -456,8 +458,9 @@ async fn sweep<M: QuiltModel>(
     if commit.is_some() && status.changes.is_empty() {
         // Publishing would drop the new metadata: push the commit as it is,
         // and fail its claim next tick.
-        let push = model.locked_package_push(locked).await?;
-        note_not_latest(&pkg.namespace, &push);
+        if let quilt::Pushed::Uploaded(push) = model.locked_package_push(locked).await? {
+            note_not_latest(&pkg.namespace, &push);
+        }
         return Ok(());
     }
     let invocation_id = user_meta["agent_exec"]["claim"]["invocation_id"]
@@ -500,6 +503,19 @@ fn outcome_message(document: &str, claim: &Value) -> String {
     )
 }
 
+/// How many entries `changes` adds, modifies and removes.
+fn count_changes(changes: &quilt::lineage::ChangeSet) -> Value {
+    let (mut added, mut modified, mut removed) = (0, 0, 0);
+    for change in changes.values() {
+        match change {
+            quilt::lineage::Change::Added(_) => added += 1,
+            quilt::lineage::Change::Modified(_) => modified += 1,
+            quilt::lineage::Change::Removed(_) => removed += 1,
+        }
+    }
+    json!({ "added": added, "modified": modified, "removed": removed })
+}
+
 /// Publish the tree as a run's last revision. One that changes only the
 /// metadata resets if it isn't `latest`; any other is left Diverged.
 #[allow(clippy::too_many_arguments, reason = "one publish's inputs")]
@@ -509,10 +525,17 @@ async fn publish_outcome<M: QuiltModel>(
     pkg: &quilt::InstalledPackage,
     workflow: WorkflowIntent,
     user_meta: &Value,
-    claim: Value,
-    message: String,
+    mut claim: Value,
+    mut message: String,
     Tree { status, commit }: Tree,
 ) -> Result<(), Error> {
+    // A pending commit makes the walk compare against it, not the claim.
+    if matches!(claim["status"].as_str(), Some("done" | "failed")) && commit.is_none() {
+        claim["changes"] = count_changes(&status.changes);
+        if status.changes.is_empty() {
+            message.push_str(", no changes");
+        }
+    }
     // A sign-in lost mid-turn is `not_started` too, after the agent wrote files;
     // and a commit made by hand during the run would be pushed in its place.
     let metadata_only = matches!(claim["status"].as_str(), Some("not_started" | "unrunnable"))
@@ -686,11 +709,19 @@ async fn recheck_claim<M: QuiltModel>(
         return Ok(Err(acp::RunOutcome::Superseded));
     }
     let locked = model.lock_package(&installed).await?;
-    let pulled = model
+    let pulled = match model
         .locked_package_pull(&locked, None, lineage.sync_scope.clone())
         .await?
-        .manifest_uri
-        .hash;
+    {
+        quilt::flow::Pulled::Applied(report) => report.manifest_uri.hash,
+        // Already at `latest`, so the base is the revision to read.
+        quilt::flow::Pulled::UpToDate => {
+            model
+                .get_installed_package_lineage(&installed)
+                .await?
+                .base_hash
+        }
+    };
     // The pull resolves `latest` again, and may land a revision later still.
     let latest = if pulled == status.latest_hash {
         latest

@@ -244,6 +244,7 @@ mod tests {
             AgentSettings {
                 command: vec!["kiro-cli-chat".to_string()],
                 trust_all: false,
+                env: BTreeMap::new(),
             },
         )])
     }

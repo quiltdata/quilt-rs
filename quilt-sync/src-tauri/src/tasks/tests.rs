@@ -20,6 +20,7 @@ fn settings() -> TaskSettings {
             AgentSettings {
                 command: vec!["kiro-cli-chat".to_string(), "acp".to_string()],
                 trust_all: true,
+                env: BTreeMap::new(),
             },
         )]),
     }
@@ -48,6 +49,7 @@ fn without_claim(meta: &Value) -> Value {
 /// A revision a check published.
 struct Revision {
     meta: Value,
+    message: String,
     /// The invocation IDs this desktop had on disk when it was pushed.
     own_at_push: BTreeSet<String>,
     /// The changed paths it committed.
@@ -91,7 +93,7 @@ fn expect_push_and_reset(
     let pushed = Arc::clone(events);
     model.expect_locked_package_push().returning(move |_| {
         pushed.lock().unwrap().push("push".to_string());
-        Ok(quilt::PushOutcome {
+        Ok(quilt::Pushed::Uploaded(quilt::PushOutcome {
             manifest_uri: quilt_uri::ManifestUri {
                 bucket: "quilt-dev".to_string(),
                 namespace: namespace(),
@@ -99,7 +101,7 @@ fn expect_push_and_reset(
                 origin: Some(fixtures::host()),
             },
             certified_latest,
-        })
+        }))
     });
     let reset = Arc::clone(events);
     model
@@ -317,7 +319,7 @@ impl Fixture {
         let invocations = self.dir.path().join("task_invocations.json");
         model
             .expect_locked_package_publish()
-            .returning(move |_, _, meta, _, _, status| {
+            .returning(move |_, message, meta, _, _, status| {
                 let UserMeta::Set(meta) = meta else {
                     panic!("a task revision sets its metadata");
                 };
@@ -333,6 +335,7 @@ impl Fixture {
                 events.lock().unwrap().push("publish".to_string());
                 published.lock().unwrap().push(Revision {
                     meta,
+                    message,
                     own_at_push,
                     paths: changed_paths(status.as_ref()),
                 });
@@ -593,6 +596,10 @@ async fn our_own_interrupted_claim_is_published_failed_with_what_the_agent_left(
     assert_eq!(claim["status"], "failed");
     assert_eq!(claim["reason"], "interrupted by restart");
     assert_eq!(claim["invocation_id"], "ours");
+    assert_eq!(
+        claim["changes"],
+        json!({ "added": 1, "modified": 0, "removed": 0 })
+    );
     assert_eq!(published[0].paths, BTreeSet::from(["out.md".to_string()]));
     assert!(fixture.runs.lock().unwrap().is_empty(), "no second run");
     Ok(())
@@ -604,7 +611,17 @@ async fn our_own_interrupted_claim_is_published_failed_with_what_the_agent_left(
 async fn the_sweep_publishes_the_outcome_the_run_saved() -> Result<(), Error> {
     let not_started = json!({ "status": "not_started", "invocation_id": "ours", "claimed_at": "t", "reason": "agent not signed in" });
     let done = json!({ "status": "done", "invocation_id": "ours", "claimed_at": "t", "session_id": "s1", "stop_reason": "end_turn" });
-    for (saved, changes) in [(not_started, BTreeMap::new()), (done, written())] {
+    let mut done_with_counts = done.clone();
+    done_with_counts["changes"] = json!({ "added": 1, "modified": 0, "removed": 0 });
+    for (saved, changes, published_claim, message) in [
+        (
+            not_started.clone(),
+            BTreeMap::new(),
+            not_started,
+            "Task TASK.md not_started",
+        ),
+        (done, written(), done_with_counts, "Task TASK.md done"),
+    ] {
         let fixture = Fixture::new();
         settings::remember_invocation(fixture.dir.path(), "ours").await?;
         settings::remember_outcome(fixture.dir.path(), "ours", &saved).await?;
@@ -616,9 +633,10 @@ async fn the_sweep_publishes_the_outcome_the_run_saved() -> Result<(), Error> {
         assert_eq!(published.len(), 1, "one revision, the saved outcome's");
         assert_eq!(
             published[0].meta,
-            agent_exec::with_claim(&ours_claimed(), saved),
+            agent_exec::with_claim(&ours_claimed(), published_claim),
             "the head's metadata, with only the claim moved on"
         );
+        assert_eq!(published[0].message, message);
         assert_eq!(published[0].paths, paths);
     }
     Ok(())
@@ -973,7 +991,7 @@ fn rereading_model(
         .expect_locked_package_pull()
         .returning(move |_, _, _| {
             pulled.lock().unwrap().push("pull".to_string());
-            Ok(quilt::flow::PullReport {
+            Ok(quilt::flow::Pulled::Applied(quilt::flow::PullReport {
                 manifest_uri: quilt_uri::ManifestUri {
                     bucket: "quilt-dev".to_string(),
                     namespace: namespace(),
@@ -985,7 +1003,7 @@ fn rereading_model(
                 updated: Vec::new(),
                 removed: Vec::new(),
                 message: None,
-            })
+            }))
         });
     model
 }
@@ -1230,7 +1248,7 @@ fn finishing_model(
     let events = Arc::clone(&fixture.events);
     model
         .expect_locked_package_publish()
-        .returning(move |_, _, meta, _, _, status| {
+        .returning(move |_, message, meta, _, _, status| {
             let UserMeta::Set(meta) = meta else {
                 panic!("a task revision sets its metadata");
             };
@@ -1238,6 +1256,7 @@ fn finishing_model(
             committed.store(true, std::sync::atomic::Ordering::SeqCst);
             published.lock().unwrap().push(Revision {
                 meta,
+                message,
                 own_at_push: BTreeSet::new(),
                 paths: changed_paths(status.as_ref()),
             });
@@ -1289,11 +1308,119 @@ async fn the_last_revision_publishes_the_agents_work_under_the_same_claim() -> R
         agent_exec::with_claim(
             &edited_head(),
             json!({ "status": "done", "invocation_id": "inv", "claimed_at": "t",
-                    "session_id": "s1", "stop_reason": "end_turn" })
+                    "session_id": "s1", "stop_reason": "end_turn",
+                    "changes": { "added": 1, "modified": 0, "removed": 0 } })
         ),
         "the head's own metadata, with only the claim moved on"
     );
+    assert_eq!(published[0].message, "Task TASK.md done");
     assert_eq!(*paths, BTreeSet::from(["out.md".to_string()]));
+    Ok(())
+}
+
+fn done() -> acp::RunOutcome {
+    acp::RunOutcome::Done {
+        session_id: "s1".to_string(),
+        stop_reason: "end_turn".to_string(),
+    }
+}
+
+/// One file of each kind of change.
+fn each_change() -> BTreeMap<PathBuf, quilt::lineage::Change> {
+    let row = quilt::manifest::ManifestRow::default;
+    BTreeMap::from([
+        (PathBuf::from("a.md"), quilt::lineage::Change::Added(row())),
+        (PathBuf::from("b.md"), quilt::lineage::Change::Added(row())),
+        (
+            PathBuf::from("c.md"),
+            quilt::lineage::Change::Modified(row()),
+        ),
+        (
+            PathBuf::from("d.md"),
+            quilt::lineage::Change::Removed(row()),
+        ),
+    ])
+}
+
+#[tokio::test]
+async fn the_last_revision_counts_what_the_run_changed() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    let model = finishing_model(&fixture, each_change(), true);
+
+    finish(&model, &claimed_run(&fixture.tasks), &done()).await?;
+
+    let published = fixture.published.lock().unwrap();
+    assert_eq!(
+        published[0].meta["agent_exec"]["claim"]["changes"],
+        json!({ "added": 2, "modified": 1, "removed": 1 })
+    );
+    assert_eq!(published[0].message, "Task TASK.md done");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_run_that_changed_nothing_says_so() -> Result<(), Error> {
+    let failed = acp::RunOutcome::Failed {
+        session_id: None,
+        stop_reason: Some("max_tokens".to_string()),
+        reason: None,
+    };
+    for (outcome, message) in [
+        (done(), "Task TASK.md done, no changes"),
+        (failed, "Task TASK.md failed, no changes"),
+    ] {
+        let fixture = Fixture::new();
+        let model = finishing_model(&fixture, BTreeMap::new(), true);
+
+        finish(&model, &claimed_run(&fixture.tasks), &outcome).await?;
+
+        let published = fixture.published.lock().unwrap();
+        let claim = &published[0].meta["agent_exec"]["claim"];
+        assert_eq!(
+            claim["changes"],
+            json!({ "added": 0, "modified": 0, "removed": 0 })
+        );
+        assert_eq!(published[0].message, message);
+    }
+    Ok(())
+}
+
+/// The walk compares against the commit, not the claimed revision.
+#[tokio::test]
+async fn a_run_over_a_commit_made_during_it_counts_no_changes() -> Result<(), Error> {
+    let fixture = Fixture {
+        pending_commit: true,
+        ..Fixture::new()
+    };
+    let model = finishing_model(&fixture, written(), true);
+
+    finish(&model, &claimed_run(&fixture.tasks), &done()).await?;
+
+    let published = fixture.published.lock().unwrap();
+    assert_eq!(published[0].meta["agent_exec"]["claim"]["status"], "done");
+    assert!(
+        published[0].meta["agent_exec"]["claim"]
+            .get("changes")
+            .is_none()
+    );
+    assert_eq!(published[0].message, "Task TASK.md done");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_not_started_counts_no_changes() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    let model = finishing_model(&fixture, BTreeMap::new(), true);
+
+    finish(&model, &claimed_run(&fixture.tasks), &not_started()).await?;
+
+    let published = fixture.published.lock().unwrap();
+    assert!(
+        published[0].meta["agent_exec"]["claim"]
+            .get("changes")
+            .is_none()
+    );
+    assert_eq!(published[0].message, "Task TASK.md not_started");
     Ok(())
 }
 

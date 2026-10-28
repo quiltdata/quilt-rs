@@ -57,6 +57,7 @@ pub use installed_package::InstalledPackage;
 pub use installed_package::LockedPackage;
 pub use installed_package::PublishOutcome;
 pub use installed_package::PushOutcome;
+pub use installed_package::Pushed;
 pub use installed_package::SetRemoteOutcome;
 pub use lineage::DEFAULT_HOME_DIR_NAME;
 pub use local_domain::LocalDomain;

@@ -62,6 +62,7 @@ pub use publish::PublishOutcome;
 pub use publish::publish_package as publish;
 pub use pull::PullReport;
 pub use pull::PullSnapshot;
+pub use pull::Pulled;
 pub use pull::pull_package as pull;
 pub use pull::snapshot_for_pull;
 pub(crate) use pull_outcome::IncomingPaths;
