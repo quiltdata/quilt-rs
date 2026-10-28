@@ -205,6 +205,10 @@ pub struct Dialogs {
     /// the draft's signals rather than the signals inline, because `Wiring`
     /// is passed by value to every part of the header.
     pub bucket_draft: StoredValue<BucketDraft>,
+    /// Keeping's folders dialog, and the rows typed into it: here for the
+    /// bucket draft's reason, so a re-read keeps an open dialog and its rows.
+    pub folders: RwSignal<bool>,
+    pub folders_draft: RwSignal<Vec<String>>,
     /// Opened only by the row's `Switch role`, which exists only when the
     /// payload names somewhere to switch to.
     pub role: RwSignal<bool>,
@@ -287,6 +291,8 @@ impl Wiring {
             dialogs: Dialogs {
                 bucket: RwSignal::new(false),
                 bucket_draft: StoredValue::new(BucketDraft::new()),
+                folders: RwSignal::new(false),
+                folders_draft: RwSignal::new(Vec::new()),
                 role: RwSignal::new(false),
                 undo: RwSignal::new(false),
                 remove: RwSignal::new(false),

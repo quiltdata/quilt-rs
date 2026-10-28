@@ -41,10 +41,14 @@ impl Kept {
     pub fn fetches(&self, path: &str) -> bool {
         match self {
             Self::Package => true,
-            Self::Folders(folders) => folders.iter().any(|folder| {
-                path.strip_prefix(folder.as_str())
-                    .is_some_and(|rest| rest.starts_with('/'))
-            }),
+            // Either separator, as the library reads a path.
+            Self::Folders(folders) => {
+                let path = path.replace('\\', "/");
+                folders.iter().any(|folder| {
+                    path.strip_prefix(folder.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+                })
+            }
         }
     }
 }
@@ -156,6 +160,7 @@ mod tests {
         assert!(!kept.fetches("data/raw2/a.csv"));
         assert!(!kept.fetches("data/raw"));
         assert!(!kept.fetches("notes.txt"));
+        assert!(kept.fetches("data\\raw\\a.csv"), "a Windows path");
         assert!(!Kept::Folders(Vec::new()).fetches("data/raw/a.csv"));
         assert!(Kept::Package.fetches("notes.txt"));
     }

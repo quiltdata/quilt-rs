@@ -105,8 +105,8 @@ pub(super) fn KeepingSection(
     let stored = StoredValue::new(choice_value(scope).to_string());
     // Written only by the radio and the rollbacks below: any other write stores a scope.
     let selected = RwSignal::new(stored.get_value());
-    let editing = RwSignal::new(false);
-    let rows = RwSignal::new(Vec::new());
+    let editing = w.dialogs.folders;
+    let rows = w.dialogs.folders_draft;
 
     {
         let namespace = namespace.clone();
@@ -970,6 +970,37 @@ mod tests {
                 .contains("AccessDenied")
         );
         assert_eq!(RELOADS.get(), 0);
+    }
+
+    /// A re-read rebuilds the section; the open dialog and its rows survive,
+    /// since they are the page's.
+    #[wasm_bindgen_test]
+    async fn a_reread_keeps_the_open_dialog_and_its_rows() {
+        clear();
+        let w = Wiring::new();
+        let el = pressable(
+            a_backlog_in(IndividualFiles),
+            w,
+            commands(stores_ok, downloads_ok),
+        );
+        leptos::task::tick().await;
+        element_saying(&el, "Folders").click();
+        settle().await;
+        type_folder(&fields(&open_dialog(&el))[0], "data/raw");
+        leptos::task::tick().await;
+
+        let rebuilt = pressable(
+            a_backlog_in(IndividualFiles),
+            w,
+            commands(stores_ok, downloads_ok),
+        );
+        settle().await;
+
+        let typed: Vec<String> = fields(&open_dialog(&rebuilt))
+            .iter()
+            .map(web_sys::HtmlInputElement::value)
+            .collect();
+        assert_eq!(typed, folders(&["data/raw"]));
     }
 
     #[wasm_bindgen_test]
