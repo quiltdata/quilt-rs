@@ -511,7 +511,7 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
             None,
         )
         .await?;
-    let hash_before = commit.hash.clone();
+    let hash_before = commit.hash().unwrap().to_string();
 
     // Now set_remote — this should trigger recommit.
     // MockRemote returns HostConfig::default() (SHA256 chunked), same as the

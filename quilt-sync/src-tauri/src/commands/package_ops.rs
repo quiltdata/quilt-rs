@@ -32,14 +32,15 @@ async fn package_commit_command(
     message: &str,
     metadata: &str,
     workflow: WorkflowIntent,
-) -> Result<quilt_uri::Namespace, Error> {
+) -> Result<(quilt_uri::Namespace, quilt::flow::Committed), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     if message.is_empty() {
         return Err(Error::Commit("Message is required".to_string()));
     }
 
-    model::package_commit(m, namespace.clone(), message, metadata, workflow, None).await?;
-    Ok(namespace)
+    let committed =
+        model::package_commit(m, namespace.clone(), message, metadata, workflow, None).await?;
+    Ok((namespace, committed))
 }
 
 #[tauri::command]
@@ -58,7 +59,6 @@ pub async fn package_commit(
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Committing package {namespace}");
-    let msg_ok = format!("Successfully committed {namespace}");
     // Committing is not offline (the workflow gate reads the bucket's config),
     // so a dead session lands here, where the user's typed work is.
     let msg_err = |err: &Error| {
@@ -66,18 +66,26 @@ pub async fn package_commit(
     };
 
     let result = package_commit_command(&m, &namespace, &message, &metadata, workflow).await;
-    if let Ok(ns) = &result {
-        watcher.clear_paused(ns).await;
-        watcher
-            .note_committed(ns, pending_commit(&*m, ns).await)
-            .await;
-    }
-    Notify::new(msg_init)
-        .on_success(
-            &tracing,
-            MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri.as_ref())),
-        )
-        .map(result.map(|_| ()), msg_ok, msg_err)
+    let mut notify = Notify::new(msg_init);
+    let msg_ok = match &result {
+        Ok((ns, quilt::flow::Committed::Recorded(_))) => {
+            watcher.clear_paused(ns).await;
+            watcher
+                .note_committed(ns, pending_commit(&*m, ns).await)
+                .await;
+            notify = notify.on_success(
+                &tracing,
+                MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri.as_ref())),
+            );
+            format!("Successfully committed {namespace}")
+        }
+        // Nothing was committed, so no commit event.
+        Ok((_, quilt::flow::Committed::NothingToCommit)) => {
+            format!("Package {namespace} has nothing to commit")
+        }
+        Err(_) => String::new(),
+    };
+    notify.map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn certify_latest_command(
@@ -348,7 +356,6 @@ pub async fn package_publish(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    let msg_init = format!("Publishing package {namespace}");
     let result = package_publish_command(&*m, &settings, &namespace).await;
     match &result {
         Ok((ns, _)) => {
@@ -357,23 +364,38 @@ pub async fn package_publish(
         }
         Err(_) => note_publish_failed(&*m, &watcher, &namespace).await,
     }
+    report_publish(&tracing, &namespace, uri.as_ref(), result)
+}
 
-    if let Ok((_, outcome)) = &result {
+/// The Publish buttons' answer to a publish: its events and its line.
+fn report_publish(
+    tracing: &crate::telemetry::Telemetry,
+    namespace: &str,
+    uri: Option<&S3PackageUri>,
+    result: Result<(quilt_uri::Namespace, quilt::PublishOutcome), Error>,
+) -> Result<String, String> {
+    let msg_init = format!("Publishing package {namespace}");
+
+    // Nothing to publish sends no events: nothing was committed or pushed.
+    if let Ok((_, outcome)) = &result
+        && outcome.push().is_some()
+    {
         tracing.track(MixpanelEvent::PackagePublished(
-            RemotePackageEvent::for_uri(uri.as_ref()),
+            RemotePackageEvent::for_uri(uri),
         ));
         if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
-            tracing.track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(
-                uri.as_ref(),
-            )));
+            tracing.track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri)));
         }
         tracing.track(MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
-            uri.as_ref(),
+            uri,
         )));
     }
 
     let msg_ok = match &result {
-        Ok((_, outcome)) if outcome.push().certified_latest => {
+        Ok((_, quilt::PublishOutcome::NothingToPublish)) => {
+            format!("Package {namespace} has nothing to publish")
+        }
+        Ok((_, outcome)) if outcome.push().is_some_and(|push| push.certified_latest) => {
             format!("Successfully published package {namespace}")
         }
         Ok(_) => {
@@ -423,7 +445,6 @@ pub async fn package_commit_and_push(
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    let msg_init = format!("Publishing package {namespace}");
     let result =
         package_commit_and_push_command(&m, &namespace, &message, &metadata, workflow).await;
     match &result {
@@ -433,33 +454,7 @@ pub async fn package_commit_and_push(
         }
         Err(_) => note_publish_failed(&*m, &watcher, &namespace).await,
     }
-
-    if let Ok((_, outcome)) = &result {
-        tracing.track(MixpanelEvent::PackagePublished(
-            RemotePackageEvent::for_uri(uri.as_ref()),
-        ));
-        if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
-            tracing.track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(
-                uri.as_ref(),
-            )));
-        }
-        tracing.track(MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
-            uri.as_ref(),
-        )));
-    }
-
-    let msg_ok = match &result {
-        Ok((_, outcome)) if outcome.push().certified_latest => {
-            format!("Successfully published package {namespace}")
-        }
-        Ok(_) => {
-            format!("Published {namespace}, but could not update latest: remote has newer changes")
-        }
-        _ => String::new(),
-    };
-    let msg_err = |err: &Error| write_failure_message("publish package", err);
-
-    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
+    report_publish(&tracing, &namespace, uri.as_ref(), result)
 }
 
 async fn package_pull_command(
@@ -1780,6 +1775,60 @@ mod tests {
         assert_eq!(telemetry.queued_events(), vec!["action_refused".to_owned()]);
     }
 
+    /// The Publish buttons with nothing to publish: they say so and send no
+    /// event, since nothing was committed or pushed.
+    #[test]
+    fn a_publish_with_nothing_to_publish_says_so_and_reports_nothing() {
+        let telemetry = crate::telemetry::Telemetry::default();
+
+        let said = super::report_publish(
+            &telemetry,
+            "acme/demo",
+            None,
+            Ok((
+                ("acme", "demo").into(),
+                quilt::PublishOutcome::NothingToPublish,
+            )),
+        );
+
+        assert_eq!(
+            said,
+            Ok("Package acme/demo has nothing to publish".to_string())
+        );
+        assert_eq!(telemetry.queued_events(), Vec::<String>::new());
+    }
+
+    /// A publish that commits and pushes still reports all three events.
+    #[test]
+    fn a_publish_that_commits_and_pushes_reports_them() {
+        let telemetry = crate::telemetry::Telemetry::default();
+        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+        let outcome = quilt::PublishOutcome::CommittedAndPushed(quilt::PushOutcome {
+            manifest_uri: quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: "h1".to_string(),
+                origin: None,
+            },
+            certified_latest: true,
+        });
+
+        let said = super::report_publish(&telemetry, "acme/demo", None, Ok((namespace, outcome)));
+
+        assert_eq!(
+            said,
+            Ok("Successfully published package acme/demo".to_string())
+        );
+        assert_eq!(
+            telemetry.queued_events(),
+            vec![
+                "package_published".to_owned(),
+                "package_committed".to_owned(),
+                "package_pushed".to_owned()
+            ]
+        );
+    }
+
     /// A model whose push answers `pushed`.
     fn push_model(pushed: quilt::Pushed) -> MockQuiltModel {
         let mut model = installed_model();
@@ -2091,13 +2140,13 @@ mod tests {
 
     fn committed(
         namespace: &quilt_uri::Namespace,
-        commit: &quilt::lineage::CommitState,
+        commit: &quilt::flow::Committed,
     ) -> quilt::PublishOutcome {
         quilt::PublishOutcome::CommittedAndPushed(quilt::PushOutcome {
             manifest_uri: quilt_uri::ManifestUri {
                 bucket: String::new(),
                 namespace: namespace.clone(),
-                hash: commit.hash.clone(),
+                hash: commit.hash().unwrap_or_default().to_string(),
                 origin: None,
             },
             certified_latest: true,

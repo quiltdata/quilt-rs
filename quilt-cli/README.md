@@ -111,6 +111,11 @@ exits 0; under `--json` the same shape has `"hash": null` and empty groups.
 `--json` the same shape has `"hash": null`, `"manifest_uri": null` and
 `"certified_latest": null`.
 
+`commit` with no file changes and the same message and metadata would make the
+same revision again, so it records nothing: it prints `Nothing to commit` and
+exits 0; under `--json` it prints `{"hash": null}`. A new message or new
+metadata is a new revision.
+
 `home` prints the home, the folder where installed packages keep their files.
 It defaults to `~/QuiltSync` on first use. `quilt home <dir>` sets it; a
 relative `<dir>` is taken against the current directory, and a missing folder

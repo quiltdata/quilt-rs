@@ -647,12 +647,23 @@ pub(crate) async fn refresh_then_maybe_sync(
             .await
         };
         return match published {
+            // No new hash and no pending commit: nothing is left to publish,
+            // and nothing to say. The observed state stays.
+            Ok((quilt::PublishOutcome::NothingToPublish, _)) => {
+                info!("autosync: nothing to publish namespace={namespace}");
+                last_change.on_published(namespace).await;
+                Ok(Some(RefreshOutcome::observed(
+                    upstream,
+                    has_changes,
+                    fingerprint,
+                )))
+            }
             Ok((outcome, message)) => {
                 info!("autosync: published namespace={namespace}");
                 last_change.on_published(namespace).await;
                 // The pushed revision is `latest` only when it was certified;
                 // otherwise the next tick reads whatever is, and differs.
-                let push = outcome.push();
+                let push = outcome.push().expect("a publish that did something pushed");
                 let latest = if push.certified_latest {
                     push.manifest_uri.hash.as_str()
                 } else {

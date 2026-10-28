@@ -351,7 +351,7 @@ pub trait QuiltModel {
         metadata: UserMeta,
         workflow: Option<quilt::manifest::Workflow>,
         host_config: Option<HostConfig>,
-    ) -> Result<quilt::lineage::CommitState, Error> {
+    ) -> Result<quilt::flow::Committed, Error> {
         Ok(package
             .commit(message, metadata, workflow, host_config)
             .await?)
