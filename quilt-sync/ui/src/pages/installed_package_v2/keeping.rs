@@ -68,6 +68,9 @@ impl KeepingCommands {
 pub struct FoldersDialog {
     pub open: RwSignal<bool>,
     pub rows: RwSignal<Vec<String>>,
+    /// The package the rows were typed for. Another package's dialog is closed
+    /// on arrival, never saved here.
+    pub namespace: RwSignal<Option<String>>,
 }
 
 impl FoldersDialog {
@@ -75,6 +78,7 @@ impl FoldersDialog {
         Self {
             open: RwSignal::new(false),
             rows: RwSignal::new(Vec::new()),
+            namespace: RwSignal::new(None),
         }
     }
 }
@@ -126,7 +130,20 @@ pub(super) fn KeepingSection(
     let FoldersDialog {
         open: editing,
         rows,
+        namespace: drafted_for,
     } = use_context::<FoldersDialog>().unwrap_or_else(FoldersDialog::new);
+    if editing.get_untracked() && drafted_for.get_untracked().as_deref() != Some(&namespace) {
+        editing.set(false);
+        rows.set(Vec::new());
+    }
+    {
+        let namespace = namespace.clone();
+        Effect::new(move |_| {
+            if editing.get() {
+                drafted_for.set(Some(namespace.clone()));
+            }
+        });
+    }
 
     {
         let namespace = namespace.clone();
@@ -993,12 +1010,12 @@ mod tests {
     }
 
     /// The section as the page draws it, under the page's folders dialog.
-    fn on_page(dialog: FoldersDialog, w: Wiring) -> web_sys::Element {
+    fn on_page(dialog: FoldersDialog, namespace: &'static str, w: Wiring) -> web_sys::Element {
         mount(move || {
             view! {
                 <leptos::context::Provider value=dialog>
                     <KeepingSection
-                        namespace="team/dataset"
+                        namespace=namespace
                         data=a_backlog_in(IndividualFiles)
                         size=None
                         w=w
@@ -1009,20 +1026,40 @@ mod tests {
         })
     }
 
-    /// A re-read rebuilds the section; the open dialog and its rows survive,
-    /// since the page holds them.
+    /// The page is reused for another package: a dialog open on the first is
+    /// closed, not saved to the second.
     #[wasm_bindgen_test]
-    async fn a_reread_keeps_the_open_dialog_and_its_rows() {
+    async fn another_package_closes_the_open_dialog() {
         clear();
         let (dialog, w) = (FoldersDialog::new(), Wiring::new());
-        let el = on_page(dialog, w);
+        let el = on_page(dialog, "team/dataset", w);
         leptos::task::tick().await;
         element_saying(&el, "Folders").click();
         settle().await;
         type_folder(&fields(&open_dialog(&el))[0], "data/raw");
         leptos::task::tick().await;
 
-        let rebuilt = on_page(dialog, w);
+        let other = on_page(dialog, "team/other", w);
+        settle().await;
+
+        assert!(other.query_selector("dialog[open]").unwrap().is_none());
+        assert_eq!(dialog.rows.get_untracked(), Vec::<String>::new());
+    }
+
+    /// A re-read rebuilds the section; the open dialog and its rows survive,
+    /// since the page holds them.
+    #[wasm_bindgen_test]
+    async fn a_reread_keeps_the_open_dialog_and_its_rows() {
+        clear();
+        let (dialog, w) = (FoldersDialog::new(), Wiring::new());
+        let el = on_page(dialog, "team/dataset", w);
+        leptos::task::tick().await;
+        element_saying(&el, "Folders").click();
+        settle().await;
+        type_folder(&fields(&open_dialog(&el))[0], "data/raw");
+        leptos::task::tick().await;
+
+        let rebuilt = on_page(dialog, "team/dataset", w);
         settle().await;
 
         let typed: Vec<String> = fields(&open_dialog(&rebuilt))
