@@ -20,6 +20,7 @@ fn settings() -> TaskSettings {
             AgentSettings {
                 command: vec!["kiro-cli-chat".to_string(), "acp".to_string()],
                 trust_all: true,
+                env: BTreeMap::new(),
             },
         )]),
     }
