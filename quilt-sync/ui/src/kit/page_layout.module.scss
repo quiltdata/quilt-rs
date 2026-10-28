@@ -61,12 +61,15 @@
 
 /* A page that scrolls holds the banner row under the appbar, so a bar shows
  * wherever the reader is in the list. Above the page's bands, which stop under
- * it, and below the appbar, whose activity line hangs over it. A row with no
- * banner in it takes no room. */
+ * it, and below the appbar, whose activity line hangs over it. A tall banner
+ * scrolls inside, as the main page's queue does, so the page stays in view
+ * under it. A row with no banner in it takes no room. */
 .root[data-page-scroll] > .notice {
   position: sticky;
   top: var(--q-appbar-height);
   z-index: 2;
+  max-height: calc(var(--pinned-frame) / 3);
+  overflow-y: auto;
   background: var(--q-bgColor-page);
 }
 

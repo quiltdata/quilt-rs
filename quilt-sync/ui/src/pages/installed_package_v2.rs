@@ -1575,6 +1575,17 @@ fn PackageEventListener(reload: Trigger) -> impl IntoView {
     });
 }
 
+/// Scroll `el` into view if its top has gone above the page frame, and leave
+/// the page where it is otherwise.
+fn reveal(el: &web_sys::Element) {
+    let Some(frame) = el.closest("[data-v2-page]").ok().flatten() else {
+        return;
+    };
+    if el.get_bounding_client_rect().top() < frame.get_bounding_client_rect().top() {
+        el.scroll_into_view_with_bool(true);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4161,6 +4172,47 @@ mod tests {
             "the banner stays under the appbar"
         );
         assert_eq!(header_top(), resting, "and the header under the banner");
+    }
+
+    /// A banner taller than a third of the window scrolls inside, so the page
+    /// still shows under it.
+    #[wasm_bindgen_test]
+    async fn a_tall_banner_scrolls_inside() {
+        let el = scrolling_page_with_banner(
+            1024,
+            200,
+            plain_rows(),
+            view! { <div style="height:1200px"></div> }.into_any(),
+        );
+        sleep_ms(50).await;
+        let frame = frame(&el).get_bounding_client_rect().height();
+        let row = find(&el, &format!(".{}", sheets::layout::notice)).get_bounding_client_rect();
+        assert!(
+            row.height() <= (frame / 3.0).ceil(),
+            "row {} of {frame}",
+            row.height()
+        );
+    }
+
+    /// A pane above the window comes into view under the held header, and
+    /// one already in view leaves the page where it is.
+    #[wasm_bindgen_test]
+    async fn a_pane_scrolled_away_is_brought_back_into_view() {
+        let el = scrolling_page(600, 200, plain_rows());
+        sleep_ms(50).await;
+        let frame = frame(&el);
+        let pane = find(&el, "aside");
+        super::reveal(&pane);
+        assert_eq!(frame.scroll_top(), 0, "in view, the page stays");
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        super::reveal(&pane);
+        sleep_ms(50).await;
+        let header = find(&el, &format!(".{}", style::header)).get_bounding_client_rect();
+        assert!(
+            pane.get_bounding_client_rect().top() >= header.bottom(),
+            "the pane shows below the header"
+        );
     }
 
     /// A pane taller than the room under the header scrolls inside, and the

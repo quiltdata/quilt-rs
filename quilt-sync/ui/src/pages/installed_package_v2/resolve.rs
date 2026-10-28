@@ -192,8 +192,17 @@ pub fn ResolvePane(
     let certify_hint = unique_id("resolve-hint");
     let replace_hint = unique_id("resolve-hint");
 
+    // Narrow, the pane sits above the files, so a reader deep in the list who
+    // opens the mode from the held header would not see it.
+    let pane = NodeRef::<leptos::html::Aside>::new();
+    Effect::new(move || {
+        if let Some(pane) = pane.get() {
+            super::reveal(&pane);
+        }
+    });
+
     view! {
-        <aside aria-label="About this package" class=style::root>
+        <aside aria-label="About this package" class=style::root node_ref=pane>
             <Card label="About this package">
                 // Every way out of the mode replaces its entry, so Back skips it;
                 // checked by `the_back_link_leaves_the_mode_in_place`.
