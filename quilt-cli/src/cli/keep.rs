@@ -125,31 +125,22 @@ pub async fn model(
 }
 
 /// Store `scope`, when given, then download the files it covers that are not
-/// here yet, when `download` asks to.
+/// here yet, when `download` asks to. With no scope, read the current one.
 pub async fn keep(
     package: &quilt_rs::InstalledPackage,
     scope: Option<SyncScope>,
     download: bool,
 ) -> Result<Output, Error> {
-    let changed = scope.is_some();
-    if let Some(scope) = scope {
-        package.set_sync_scope(scope).await?;
-    }
-    let scope = package.lineage().await?.sync_scope;
-    let backlog = package.backlog().await?;
-    let (downloaded, skipped, outstanding) = if changed && download && !backlog.is_empty() {
-        let skipped = package.install_paths(&backlog).await?.skipped;
-        (
-            backlog.len() - skipped.len(),
-            skipped.clone(),
-            skipped.len(),
-        )
-    } else {
-        (0, Vec::new(), backlog.len())
+    let (downloaded, skipped, outstanding) = match scope {
+        Some(scope) => {
+            let report = package.keep(scope, download).await?;
+            (report.downloaded.len(), report.skipped, report.outstanding)
+        }
+        None => (0, Vec::new(), package.backlog().await?.len()),
     };
     Ok(Output {
         namespace: package.namespace.clone(),
-        scope,
+        scope: package.lineage().await?.sync_scope,
         downloaded,
         skipped,
         outstanding,

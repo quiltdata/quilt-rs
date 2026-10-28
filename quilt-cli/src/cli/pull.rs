@@ -110,11 +110,12 @@ async fn pull_package(
     host_config: Option<HostConfig>,
 ) -> Result<quilt_rs::flow::Pulled, Error> {
     match local_domain.get_installed_package(&namespace).await? {
-        // The stored scope, as the desktop app's pulls pass it, so a package
-        // pulls the same files whichever front door pulls it.
+        // The stored scope, as the desktop app's pulls pass it, read under the
+        // pull's lock so a scope changed meanwhile is not applied stale.
         Some(installed_package) => {
+            let locked = installed_package.lock().await?;
             let scope = installed_package.lineage().await?.sync_scope;
-            Ok(installed_package.pull(host_config, scope).await?)
+            Ok(Box::pin(locked.pull(host_config, scope)).await?)
         }
         None => Err(Error::NamespaceNotFound(namespace)),
     }

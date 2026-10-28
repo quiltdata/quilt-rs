@@ -51,7 +51,8 @@ impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output = vec![format!("{}", self.installed_package)];
         let installed: Vec<_> = self.installed().collect();
-        if installed.is_empty() {
+        // A keep result says what it downloaded.
+        if installed.is_empty() && self.keep.is_none() {
             output.push("No paths installed".to_string());
         } else {
             for path in installed {

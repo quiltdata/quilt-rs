@@ -65,6 +65,17 @@ pub enum Pushed {
     Uploaded(PushOutcome),
 }
 
+/// What [`InstalledPackage::keep`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeepReport {
+    /// The backlog files it downloaded, sorted.
+    pub downloaded: Vec<PathBuf>,
+    /// The backlog files whose bytes the remote no longer holds.
+    pub skipped: Vec<PathBuf>,
+    /// The backlog files still not here afterwards.
+    pub outstanding: usize,
+}
+
 /// Result of a publish operation visible to callers outside `quilt-rs`.
 /// Alias of [`flow::PublishOutcome`] parameterized over the public
 /// [`PushOutcome`], so external callers see a non-generic type name.
@@ -1009,6 +1020,33 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(())
     }
 
+    /// Store `scope`, then, when `download` asks, download its
+    /// [`Self::backlog`], all under one hold of the package's lock, so no pull
+    /// lands between reading the backlog and installing it.
+    pub async fn keep(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
+        Box::pin(self.lock().await?.keep(scope, download)).await
+    }
+
+    async fn keep_unlocked(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
+        self.set_sync_scope_unlocked(scope).await?;
+        let backlog = self.backlog().await?;
+        if !download || backlog.is_empty() {
+            return Ok(KeepReport {
+                outstanding: backlog.len(),
+                ..KeepReport::default()
+            });
+        }
+        let skipped = self.install_paths_unlocked(&backlog).await?.skipped;
+        Ok(KeepReport {
+            downloaded: backlog
+                .into_iter()
+                .filter(|path| !skipped.contains(path))
+                .collect(),
+            outstanding: skipped.len(),
+            skipped,
+        })
+    }
+
     /// The current revision's files the stored [`SyncScope`] covers that this
     /// copy neither tracks nor has a file for, sorted: what installing the
     /// backlog fetches. Empty under individual-file scope. Hashes nothing and
@@ -1669,6 +1707,10 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
 
     pub async fn set_sync_scope(&self, scope: SyncScope) -> Res<()> {
         self.package.set_sync_scope_unlocked(scope).await
+    }
+
+    pub async fn keep(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
+        self.package.keep_unlocked(scope, download).await
     }
 
     pub async fn stop_ignoring(
