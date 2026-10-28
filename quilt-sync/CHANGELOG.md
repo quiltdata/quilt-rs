@@ -37,7 +37,7 @@
 - A package can keep chosen folders: every file under them is downloaded, including files added there later. `quilt keep --folder` sets them, and pulls follow them. **New design preview**: *Keeping* has a *Folders* option, listing the kept folders with *Change folders*, which opens a dialog to type them; saving downloads nothing, and *Download N files* fetches the files under them. In the file list, files under kept folders have no checkbox, and *Get latest* says which new files it downloads. The main page counts them in *N to download*. *Download N files* is the section's main button
   - <https://github.com/quiltdata/quilt-rs/pull/1229>
   - <https://github.com/quiltdata/quilt-rs/pull/1245>
-  - PR_WIRING
+  - <https://github.com/quiltdata/quilt-rs/pull/1250>
 
 ### Fixed
 
