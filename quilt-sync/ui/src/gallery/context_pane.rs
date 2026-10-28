@@ -51,6 +51,7 @@ use crate::kit::CatalogLink;
 use crate::kit::Choice;
 use crate::kit::ChoiceGroup;
 use crate::kit::DiffersId;
+use crate::kit::FolderList;
 use crate::kit::LoadFailure;
 use crate::kit::PaneSection;
 use crate::kit::RevisionRow;
@@ -154,7 +155,44 @@ fn scopes() -> Vec<Choice> {
     vec![
         Choice::new("pick", "Files I pick"),
         Choice::new("all", "The whole package"),
+        Choice::new("folders", "Folders"),
     ]
+}
+
+/// What a cell's Keeping has stored under Folders, and a typed folder the
+/// last Save was refused for.
+#[derive(Clone, Copy)]
+struct Kept {
+    folders: &'static [&'static str],
+    refused: Option<&'static str>,
+}
+
+/// The library's refusal, in its words.
+fn refusal(folder: &str) -> String {
+    format!(
+        "Folder {folder:?} is not inside the package: name it from the package root, without \"..\""
+    )
+}
+
+/// No folders stored: the scope is one of the other two, or Folders was just
+/// chosen and nothing saved yet.
+const NO_FOLDERS: Kept = Kept {
+    folders: &[],
+    refused: None,
+};
+
+/// `a`, `a and b`, `a, b and c` — every folder, however many.
+fn listed(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [only] => only.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The library's one refusal a typed folder can earn.
+fn outside(folder: &str) -> bool {
+    folder.split(['/', '\\']).any(|part| part == "..")
 }
 
 /// The trigger owes `aria-expanded` and `aria-controls`; the overlay hands the id
@@ -268,13 +306,19 @@ const UNREAD: Held = Held {
 /// present, and the standing line promises something about files that do not
 /// exist yet. Only whole-package scope may make that promise — under
 /// individual-file scope the next revision can add a file and falsify it.
-fn consequence(scope: RwSignal<String>, held: Held) -> Signal<String> {
+///
+/// Kept folders are named before the count, once saved: a Folders choice with
+/// nothing saved yet still says what the stored scope does.
+fn consequence(scope: RwSignal<String>, held: Held, kept: RwSignal<Vec<String>>) -> Signal<String> {
     Signal::derive(move || {
         let counted = counted(held);
-        if scope.get() == "all" {
-            format!("{counted} — files added later are downloaded too.")
-        } else {
-            format!("{counted}.")
+        let folders = kept.get();
+        match scope.get().as_str() {
+            "all" => format!("{counted} — files added later are downloaded too."),
+            "folders" if !folders.is_empty() => {
+                format!("Files in {} are kept. {counted}.", listed(&folders))
+            }
+            _ => format!("{counted}."),
         }
     })
 }
@@ -301,12 +345,45 @@ fn download_words(held: Held) -> String {
 /// all: a standing `Download all files` with no extent was removed on purpose,
 /// and this appears only where the scope change would otherwise strand files
 /// already listed.
-fn download(scope: RwSignal<String>, held: Held) -> AnyView {
+fn download(scope: RwSignal<String>, held: Held, kept: RwSignal<Vec<String>>) -> AnyView {
     view! {
         {move || {
-            (scope.get() == "all" && held.outstanding > 0)
+            let offered = match scope.get().as_str() {
+                "all" => true,
+                "folders" => kept.with(|kept| !kept.is_empty()),
+                _ => false,
+            };
+            (offered && held.outstanding > 0)
                 .then(|| view! { <Button on_click=|_| ()>{download_words(held)}</Button> })
         }}
+    }
+    .into_any()
+}
+
+/// The folder inputs, under Folders only. Save stores the filled rows, which
+/// the caption then names; a folder with a `..` part is refused, as the
+/// library refuses it.
+fn folder_inputs(
+    scope: RwSignal<String>,
+    kept: RwSignal<Vec<String>>,
+    refused: Option<&'static str>,
+) -> AnyView {
+    let mut typed = kept.get_untracked();
+    typed.extend(refused.map(ToString::to_string));
+    let rows = RwSignal::new(typed);
+    let error = RwSignal::new(refused.map(refusal));
+    let save = Callback::new(move |folders: Vec<String>| {
+        if let Some(folder) = folders.iter().find(|folder| outside(folder)) {
+            error.set(Some(refusal(folder)));
+        } else {
+            error.set(None);
+            kept.set(folders);
+        }
+    });
+    view! {
+        <Show when=move || scope.get() == "folders">
+            <FolderList rows=rows on_save=save error=error />
+        </Show>
     }
     .into_any()
 }
@@ -322,8 +399,16 @@ fn pane(
     body: AnyView,
     scope: RwSignal<String>,
     held: Held,
+    folders: Kept,
     on_page: bool,
 ) -> AnyView {
+    let kept = RwSignal::new(
+        folders
+            .folders
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+    );
     let sections = view! {
         <PaneSection
             label="Bucket and catalog"
@@ -357,11 +442,12 @@ fn pane(
         <PaneSection>
             <ChoiceGroup
                 label="Keeping"
-                caption=consequence(scope, held)
+                caption=consequence(scope, held, kept)
                 options=scopes()
                 selected=scope
             />
-            {download(scope, held)}
+            {folder_inputs(scope, kept, folders.refused)}
+            {download(scope, held, kept)}
         </PaneSection>
     };
 
@@ -474,6 +560,11 @@ const NOTE: &str = "320px holding three blocks: what the page says about the pac
     say downloaded, about files; only the revisions surface's frees is about this disk. A \
     size that cannot be read leaves the count alone. \
     \
+    Folders lists the kept folders as plain inputs, one a row, under the caption. \
+    Saving names them in the caption and downloads nothing: the counted button does. \
+    Folders chosen with nothing saved keeps the stored scope's words, and Save waits for \
+    a folder. The live cells keep two options until the app can store folders. \
+    \
     Flip a radio in a hand-built cell and the caption and the download action \
     answer together; the live cell's answer only once a stored choice is re-read, \
     which the gallery never does. \
@@ -512,7 +603,7 @@ pub fn ContextPaneRegion(
     if resolving {
         resolve(&exit, compared())
     } else {
-        pane(open, revision_list(), scope, on_page(), true)
+        pane(open, revision_list(), scope, on_page(), NO_FOLDERS, true)
     }
 }
 
@@ -583,6 +674,15 @@ pub fn ContextPaneScene() -> impl IntoView {
     let huge_scope = RwSignal::new("pick".to_string());
     let unread_scope = RwSignal::new("all".to_string());
 
+    let one_folder = RwSignal::new(false);
+    let some_folders = RwSignal::new(false);
+    let chosen = RwSignal::new(false);
+    let outside_folder = RwSignal::new(false);
+    let one_scope = RwSignal::new("folders".to_string());
+    let some_scope = RwSignal::new("folders".to_string());
+    let chosen_scope = RwSignal::new("folders".to_string());
+    let outside_scope = RwSignal::new("folders".to_string());
+
     view! {
         <Scene
             title="The context pane"
@@ -603,35 +703,80 @@ pub fn ContextPaneScene() -> impl IntoView {
                 {live(None, None)}
             </Cell>
             <Cell wide=true label="at rest — files I pick, two outstanding">
-                {pane(resting, revision_list(), pick, plate(2), false)}
+                {pane(resting, revision_list(), pick, plate(2), NO_FOLDERS, false)}
             </Cell>
             <Cell
                 wide=true
                 label="the whole package, two files outstanding — the button says the bytes left, \
                        total less downloaded"
             >
-                {pane(outstanding, revision_list(), whole, plate(2), false)}
+                {pane(outstanding, revision_list(), whole, plate(2), NO_FOLDERS, false)}
             </Cell>
             <Cell wide=true label="the whole package, nothing outstanding — no action">
-                {pane(settled, revision_list(), complete, plate(0), false)}
+                {pane(settled, revision_list(), complete, plate(0), NO_FOLDERS, false)}
+            </Cell>
+            <Cell
+                wide=true
+                label="folders — one kept, every file in it here: no action. Edit a row and \
+                       Save, and the caption names what was saved"
+            >
+                {pane(
+                    one_folder,
+                    revision_list(),
+                    one_scope,
+                    plate(0),
+                    Kept { folders: &["data/raw"], refused: None },
+                    false,
+                )}
+            </Cell>
+            <Cell
+                wide=true
+                label="folders — three kept, two files under them to download; saving downloads \
+                       nothing, the button does"
+            >
+                {pane(
+                    some_folders,
+                    revision_list(),
+                    some_scope,
+                    plate(2),
+                    Kept { folders: &["data/raw", "plate", "results"], refused: None },
+                    false,
+                )}
+            </Cell>
+            <Cell
+                wide=true
+                label="folders just chosen, nothing saved — one blank row, Save disabled, and \
+                       the caption still says what the stored scope does"
+            >
+                {pane(chosen, revision_list(), chosen_scope, plate(2), NO_FOLDERS, false)}
+            </Cell>
+            <Cell wide=true label="folders — a folder with .. refused, in the library's words">
+                {pane(
+                    outside_folder,
+                    revision_list(),
+                    outside_scope,
+                    plate(2),
+                    Kept { folders: &["data/raw"], refused: Some("data/../results") },
+                    false,
+                )}
             </Cell>
             <Cell wide=true label="an empty revision — no files, and the count says so">
-                {pane(emptied, revision_list(), empty_scope, EMPTY, false)}
+                {pane(emptied, revision_list(), empty_scope, EMPTY, NO_FOLDERS, false)}
             </Cell>
             <Cell wide=true label="a huge package — 1.2 TB in 140,000 files; the counts grouped">
-                {pane(huge, revision_list(), huge_scope, HUGE, false)}
+                {pane(huge, revision_list(), huge_scope, HUGE, NO_FOLDERS, false)}
             </Cell>
             <Cell
                 wide=true
                 label="a size that cannot be read — the count alone, and the button counts files"
             >
-                {pane(unread, revision_list(), unread_scope, UNREAD, false)}
+                {pane(unread, revision_list(), unread_scope, UNREAD, NO_FOLDERS, false)}
             </Cell>
             <Cell full=true label="click the trigger — the revisions this copy holds">
-                {in_page(pane(listed, revision_list(), listing, plate(2), false))}
+                {in_page(pane(listed, revision_list(), listing, plate(2), NO_FOLDERS, false))}
             </Cell>
             <Cell full=true label="click it — the call has not answered yet">
-                {in_page(pane(waiting_surface, revision_skeleton(), waiting, plate(2), false))}
+                {in_page(pane(waiting_surface, revision_skeleton(), waiting, plate(2), NO_FOLDERS, false))}
             </Cell>
             <Cell full=true label="click it — the call failed">
                 {in_page(
@@ -646,6 +791,7 @@ pub fn ContextPaneScene() -> impl IntoView {
                             .into_any(),
                         broken,
                         plate(2),
+                        NO_FOLDERS,
                         false,
                     ),
                 )}

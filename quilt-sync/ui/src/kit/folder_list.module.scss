@@ -1,0 +1,41 @@
+/*
+ * FolderList. One field a row with its remove button, then Add folder and Save.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-1);
+  align-self: stretch;
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-1);
+}
+
+.actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--q-space-1);
+}
+
+/* `FormControl`'s error, as there is no FormControl here to draw it. */
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 0;
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  color: var(--q-fgColor-danger);
+}
+
+.error svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+}
