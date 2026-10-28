@@ -41,12 +41,20 @@ impl Kept {
     pub fn fetches(&self, path: &str) -> bool {
         match self {
             Self::Package => true,
+            // By component, as the library compares paths, so `data//raw/a.csv`
+            // is under `data/raw` too.
             Self::Folders(folders) => folders.iter().any(|folder| {
-                path.strip_prefix(folder.as_str())
-                    .is_some_and(|rest| rest.starts_with('/'))
+                let mut path = parts(path);
+                parts(folder).all(|part| path.next() == Some(part)) && path.next().is_some()
             }),
         }
     }
+}
+
+/// A path's components, without the empty and `.` ones.
+fn parts(path: &str) -> impl Iterator<Item = &str> {
+    path.split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
 }
 
 /// The pane's selection and what it feeds. The page owns the signals, so a
@@ -156,6 +164,8 @@ mod tests {
         assert!(!kept.fetches("data/raw2/a.csv"));
         assert!(!kept.fetches("data/raw"));
         assert!(!kept.fetches("notes.txt"));
+        assert!(kept.fetches("data//raw/a.csv"));
+        assert!(kept.fetches("data/./raw/a.csv"));
         assert!(!Kept::Folders(Vec::new()).fetches("data/raw/a.csv"));
         assert!(Kept::Package.fetches("notes.txt"));
     }

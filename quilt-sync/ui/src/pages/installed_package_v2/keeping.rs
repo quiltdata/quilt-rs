@@ -68,9 +68,6 @@ impl KeepingCommands {
 pub struct FoldersDialog {
     pub open: RwSignal<bool>,
     pub rows: RwSignal<Vec<String>>,
-    /// The package the rows were typed for. Another package's dialog is closed
-    /// on arrival, never saved here.
-    pub namespace: RwSignal<Option<String>>,
 }
 
 impl FoldersDialog {
@@ -78,8 +75,13 @@ impl FoldersDialog {
         Self {
             open: RwSignal::new(false),
             rows: RwSignal::new(Vec::new()),
-            namespace: RwSignal::new(None),
         }
+    }
+
+    /// Shut, with nothing typed: the page has moved to another package.
+    pub(super) fn close(self) {
+        self.open.set(false);
+        self.rows.set(Vec::new());
     }
 }
 
@@ -130,20 +132,7 @@ pub(super) fn KeepingSection(
     let FoldersDialog {
         open: editing,
         rows,
-        namespace: drafted_for,
     } = use_context::<FoldersDialog>().unwrap_or_else(FoldersDialog::new);
-    if editing.get_untracked() && drafted_for.get_untracked().as_deref() != Some(&namespace) {
-        editing.set(false);
-        rows.set(Vec::new());
-    }
-    {
-        let namespace = namespace.clone();
-        Effect::new(move |_| {
-            if editing.get() {
-                drafted_for.set(Some(namespace.clone()));
-            }
-        });
-    }
 
     {
         let namespace = namespace.clone();
@@ -294,7 +283,7 @@ fn folders_dialog(
                 <FormDialog
                     open=editing
                     title="Folders to keep"
-                    submit=save_folders(namespace.clone(), rows, stored, w, commands)
+                    submit=save_folders(namespace.clone(), rows, w, commands)
                     running=w.busy
                     blocked=Signal::derive(move || rows.with(|rows| filled(rows).is_empty()))
                 >
@@ -310,7 +299,6 @@ fn folders_dialog(
 fn save_folders(
     namespace: String,
     rows: RwSignal<Vec<String>>,
-    stored: StoredValue<String>,
     w: Wiring,
     commands: KeepingCommands,
 ) -> Submit {
@@ -324,7 +312,7 @@ fn save_folders(
                 (commands.store)(ns, KeepingScope::Folders, folders),
             )
             .await?;
-            stored.try_set_value("folders".to_string());
+            // The re-read says what was stored: `.` is the whole package.
             w.reload.notify();
             Ok(())
         }
@@ -977,6 +965,31 @@ mod tests {
         assert!(el.query_selector("dialog[open]").unwrap().is_none());
     }
 
+    /// Saving `.` stores the whole package, which the re-read says; until then
+    /// the radio goes back to what is stored rather than claim Folders.
+    #[wasm_bindgen_test]
+    async fn a_saved_root_leaves_the_radio_on_the_stored_choice() {
+        clear();
+        let el = pressable(
+            a_backlog_in(EntirePackage),
+            Wiring::new(),
+            commands(stores_ok, downloads_ok),
+        );
+        leptos::task::tick().await;
+        element_saying(&el, "Folders").click();
+        settle().await;
+
+        let dialog = open_dialog(&el);
+        type_folder(&fields(&dialog)[0], ".");
+        leptos::task::tick().await;
+        button_saying(&dialog, "Save").click();
+        settle().await;
+
+        assert!(el.query_selector("dialog[open]").unwrap().is_none());
+        assert!(radio(&group(&el), "The whole package").checked());
+        assert_eq!(RELOADS.get(), 1);
+    }
+
     /// The library's refusal stays in the dialog, beside the rows to fix.
     #[wasm_bindgen_test]
     async fn a_refused_save_keeps_the_dialog_open_with_the_reason() {
@@ -1026,10 +1039,9 @@ mod tests {
         })
     }
 
-    /// The page is reused for another package: a dialog open on the first is
-    /// closed, not saved to the second.
+    /// The page moving to another package closes the dialog and drops its rows.
     #[wasm_bindgen_test]
-    async fn another_package_closes_the_open_dialog() {
+    async fn closing_for_another_package_drops_the_draft() {
         clear();
         let (dialog, w) = (FoldersDialog::new(), Wiring::new());
         let el = on_page(dialog, "team/dataset", w);
@@ -1039,11 +1051,12 @@ mod tests {
         type_folder(&fields(&open_dialog(&el))[0], "data/raw");
         leptos::task::tick().await;
 
-        let other = on_page(dialog, "team/other", w);
+        dialog.close();
         settle().await;
 
-        assert!(other.query_selector("dialog[open]").unwrap().is_none());
+        assert!(el.query_selector("dialog[open]").unwrap().is_none());
         assert_eq!(dialog.rows.get_untracked(), Vec::<String>::new());
+        assert!(radio(&group(&el), "Files I pick").checked());
     }
 
     /// A re-read rebuilds the section; the open dialog and its rows survive,

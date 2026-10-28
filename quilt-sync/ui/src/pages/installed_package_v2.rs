@@ -1305,7 +1305,16 @@ fn PackageScreen(
     // For the header's *Copied* and Keeping's folders dialog. Not on `Wiring`,
     // which every part of the page takes by value.
     provide_context(header::CopiedMark::new());
-    provide_context(keeping::FoldersDialog::new());
+    let folders = keeping::FoldersDialog::new();
+    provide_context(folders);
+    // Another package never opens on this one's draft, whatever it draws.
+    Effect::new(move |seen: Option<String>| {
+        let now = ns.get();
+        if seen.is_some_and(|seen| seen != now) {
+            folders.close();
+        }
+        now
+    });
     let reload = page.reload;
     // One read for the whole page. Re-runs when the namespace changes, and
     // whenever `reload` fires — the watcher reporting news about this package,
