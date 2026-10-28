@@ -1,13 +1,16 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use sentry::integrations::tracing::{BreadcrumbLayer, ErrorLayer};
 use tempfile::TempDir;
+use tracing::{Level, Subscriber};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{
-    EnvFilter,
-    filter::{FilterExt, LevelFilter},
+    EnvFilter, Layer,
+    filter::{FilterExt, LevelFilter, filter_fn},
+    registry::LookupSpan,
 };
 
 use quilt_rs::logging::LOG_ENV;
@@ -28,7 +31,7 @@ use crate::telemetry::prelude::*;
 /// diagnostic export, so it can afford detail the other sink cannot.
 const FILE_DIRECTIVES: &str = "quilt_sync=debug,quilt_rs=debug,quilt_uri=debug,warn";
 
-/// What the **crash reporter** receives, as breadcrumbs and structured logs.
+/// What the **crash reporter** receives, as breadcrumbs and error events.
 ///
 /// A level lower than the file's, deliberately: this leaves the machine and is
 /// billed per event, and `debug` is where paths and package names appear. So the
@@ -148,6 +151,23 @@ pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
     })
 }
 
+/// The crash reporter's layer: `error` events become Sentry events, and `warn`
+/// and `info` events become the breadcrumbs sent with them.
+///
+/// A function rather than a binding, because its type depends on the subscriber
+/// it joins, and the two arms of [`init_tracing`] build different ones.
+fn crash_sink<S>(directives: EnvFilter) -> impl Layer<S>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    BreadcrumbLayer::new()
+        .with_filter(filter_fn(|metadata| {
+            matches!(*metadata.level(), Level::WARN | Level::INFO)
+        }))
+        .and_then(ErrorLayer::new().with_filter(LevelFilter::ERROR))
+        .with_filter(directives.and(CRASH_SINK_CEILING))
+}
+
 /// Install the subscriber, with a filter per sink.
 ///
 /// **Each layer filters for itself.** A filter attached to the registry instead
@@ -179,10 +199,6 @@ fn init_tracing(
         .build(logs_dir.path())
         .ok();
 
-    // The crash-sink layer is written out in both arms rather than shared. Its type
-    // is parameterised by the subscriber it composes with, so the two arms want
-    // different instantiations — a binding or a closure would fix it to whichever
-    // arm was built first.
     let guard = if let Some(appender) = appender {
         // Non-blocking, so a log line costs the emitting thread a channel send
         // rather than a file write — the appender is otherwise synchronous, and
@@ -198,18 +214,12 @@ fn init_tracing(
 
         tracing_subscriber::registry()
             .with(file)
-            .with(
-                sentry::integrations::tracing::layer()
-                    .with_filter(filter(saved, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
-            )
+            .with(crash_sink(filter(saved, CRASH_SINK_DIRECTIVES)))
             .init();
         Some(guard)
     } else {
         tracing_subscriber::registry()
-            .with(
-                sentry::integrations::tracing::layer()
-                    .with_filter(filter(saved, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING)),
-            )
+            .with(crash_sink(filter(saved, CRASH_SINK_DIRECTIVES)))
             .init();
         None
     };
@@ -244,6 +254,37 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
+
+    /// Under the most verbose saved level, the crash reporter sends one event per
+    /// `error`, carrying the `warn` and `info` lines before it as breadcrumbs, and
+    /// nothing below `info`.
+    #[test]
+    fn the_crash_sink_sends_errors_with_breadcrumbs_and_nothing_below_info() {
+        let subscriber = tracing_subscriber::registry().with(crash_sink(build_filter(
+            None,
+            LogLevel::Trace,
+            CRASH_SINK_DIRECTIVES,
+        )));
+        let events = sentry::test::with_captured_events(|| {
+            ::tracing::subscriber::with_default(subscriber, || {
+                ::tracing::trace!("a trace line");
+                ::tracing::debug!("a debug line");
+                ::tracing::info!("an info line");
+                ::tracing::warn!("a warn line");
+                ::tracing::error!("an error line");
+            });
+        });
+
+        assert_eq!(events.len(), 1, "one error, one event: {events:?}");
+        let event = &events[0];
+        assert_eq!(event.level, sentry::Level::Error);
+        let breadcrumbs: Vec<_> = event
+            .breadcrumbs
+            .iter()
+            .filter_map(|b| b.message.as_deref())
+            .collect();
+        assert_eq!(breadcrumbs, ["an info line", "a warn line"]);
+    }
 
     /// Both sinks' directives parse, and the app's own crates are held above the
     /// dependency floor in each. A typo here would silently degrade to `warn` and
