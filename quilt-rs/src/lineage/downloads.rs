@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -44,12 +45,14 @@ impl DownloadSize {
 
 impl DownloadCounts {
     /// Counts `rows`, the logical keys of the current revision's rows with the
-    /// sizes the rows record.
+    /// sizes the rows record. `on_disk` holds the untracked paths that have a
+    /// file in the working folder: see [`Self::in_backlog`].
     #[must_use]
     pub fn count<'a>(
         lineage: &PackageLineage,
         rows: impl IntoIterator<Item = (&'a PathBuf, u64)>,
         changes: &ChangeSet,
+        on_disk: &BTreeSet<PathBuf>,
     ) -> Self {
         let mut listed = 0;
         let mut outstanding = 0;
@@ -57,7 +60,7 @@ impl DownloadCounts {
         let mut size = Some(DownloadSize::default());
         for (key, bytes) in rows {
             let missing = Self::is_outstanding(lineage, changes, key);
-            let wanted = missing && lineage.sync_scope.covers_untracked(key);
+            let wanted = Self::in_backlog(lineage, changes, on_disk, key);
             listed += 1;
             outstanding += usize::from(missing);
             backlog += usize::from(wanted);
@@ -92,12 +95,20 @@ impl DownloadCounts {
         !lineage.paths.contains_key(key) && !changes.contains_key(key)
     }
 
-    /// Whether the revision's file at `key` is outstanding and the scope
-    /// covers it: what downloading the backlog fetches. Never true under
-    /// individual-file scope, where nothing waits for a download.
+    /// Whether the revision's file at `key` is outstanding, the scope covers
+    /// it, and no file is at its path (`on_disk`), which installing it would
+    /// refuse to overwrite: what downloading the backlog fetches. Never true
+    /// under individual-file scope, where nothing waits for a download.
     #[must_use]
-    pub fn in_backlog(lineage: &PackageLineage, changes: &ChangeSet, key: &Path) -> bool {
-        Self::is_outstanding(lineage, changes, key) && lineage.sync_scope.covers_untracked(key)
+    pub fn in_backlog(
+        lineage: &PackageLineage,
+        changes: &ChangeSet,
+        on_disk: &BTreeSet<PathBuf>,
+        key: &Path,
+    ) -> bool {
+        Self::is_outstanding(lineage, changes, key)
+            && lineage.sync_scope.covers_untracked(key)
+            && !on_disk.contains(key)
     }
 
     /// The listed files that are not outstanding.
@@ -140,6 +151,7 @@ mod tests {
             lineage,
             rows.iter().map(|(key, size)| (key, *size)),
             changes,
+            &BTreeSet::new(),
         )
     }
 
@@ -215,6 +227,40 @@ mod tests {
         );
     }
 
+    /// An untracked file already in the working folder, here with the
+    /// revision's content so the status reports no change, is not in the
+    /// backlog: installing it would refuse to overwrite it.
+    #[test]
+    fn a_file_already_on_disk_is_not_in_the_backlog() {
+        let lineage = tracking(&[], SyncScope::folders(["data"]).unwrap());
+        let on_disk = BTreeSet::from([PathBuf::from("data/here.csv")]);
+        let changes = ChangeSet::new();
+
+        let counts = DownloadCounts::count(
+            &lineage,
+            rows(&["data/here.csv", "data/new.csv"])
+                .iter()
+                .map(|(key, size)| (key, *size)),
+            &changes,
+            &on_disk,
+        );
+
+        assert_eq!(counts.backlog, 1);
+        assert_eq!(counts.size.map(|size| size.backlog), Some(7));
+        assert!(!DownloadCounts::in_backlog(
+            &lineage,
+            &changes,
+            &on_disk,
+            Path::new("data/here.csv")
+        ));
+        assert!(DownloadCounts::in_backlog(
+            &lineage,
+            &changes,
+            &on_disk,
+            Path::new("data/new.csv")
+        ));
+    }
+
     #[test]
     fn picked_files_have_no_backlog() {
         let lineage = tracking(&["a.csv"], SyncScope::IndividualFiles);
@@ -226,6 +272,7 @@ mod tests {
         assert!(!DownloadCounts::in_backlog(
             &lineage,
             &changes,
+            &BTreeSet::new(),
             Path::new("b.csv")
         ));
     }

@@ -411,13 +411,14 @@ fn epoch_millis(at: DateTime<Utc>) -> f64 {
 /// and in the backlog when the scope also covers it —
 /// v1's `remote` rows (`package_data.rs:195-206`). `changes` is `None` when
 /// the status could not be read: then only tracking decides, and the engine
-/// still refuses to overwrite a local file.
+/// still refuses to overwrite a local file. A path in `on_disk` already has
+/// a file here, so it stays out of the backlog.
 ///
 /// Counted by [`quilt::lineage::DownloadCounts::count`], as the main page's
 /// rows are, so the two pages give one number and one size.
 fn keeping_data(
     lineage: &quilt::lineage::PackageLineage,
-    sizes: &BTreeMap<PathBuf, u64>,
+    (sizes, on_disk): &(BTreeMap<PathBuf, u64>, BTreeSet<PathBuf>),
     changes: Option<&quilt::lineage::ChangeSet>,
 ) -> (KeepingData, Option<PackageSize>) {
     let no_changes = quilt::lineage::ChangeSet::new();
@@ -426,6 +427,7 @@ fn keeping_data(
         lineage,
         sizes.iter().map(|(key, size)| (key, *size)),
         changes,
+        on_disk,
     );
     let keeping = KeepingData {
         scope: (&counts.scope).into(),
@@ -434,7 +436,9 @@ fn keeping_data(
         outstanding: counts.outstanding,
         remote_only: sizes
             .keys()
-            .filter(|key| quilt::lineage::DownloadCounts::in_backlog(lineage, changes, key))
+            .filter(|key| {
+                quilt::lineage::DownloadCounts::in_backlog(lineage, changes, on_disk, key)
+            })
             .map(|key| key.display().to_string())
             .collect(),
         deleted_here: counts.deleted_here,
@@ -1090,7 +1094,7 @@ mod tests {
             .times(1)
             .returning(|_, lineage| {
                 assert_eq!(lineage.current_hash(), Some("abcdef"));
-                Ok(sizes(&["a.csv", "b.csv", "c.csv"]))
+                Ok((sizes(&["a.csv", "b.csv", "c.csv"]), BTreeSet::new()))
             });
         // `return_once`, not `returning`: `Error` is not `Clone`. `.times(1)`
         // makes "exactly one status call" an assertion — without it a caller
@@ -1128,7 +1132,7 @@ mod tests {
             .returning(|_| Ok(1));
         model
             .expect_get_installed_package_sizes()
-            .returning(|_, _| Ok(sizes(&["a.csv"])));
+            .returning(|_, _| Ok((sizes(&["a.csv"]), BTreeSet::new())));
         model
             .expect_get_installed_package_records()
             .returning(|_| Ok(records(&["a.csv"])));
@@ -1318,6 +1322,15 @@ mod tests {
     /// The listed paths, each 7 bytes, as `records` gives them.
     fn sizes(paths: &[&str]) -> BTreeMap<PathBuf, u64> {
         paths.iter().map(|path| (PathBuf::from(path), 7)).collect()
+    }
+
+    /// [`super::keeping_data`] with no untracked file on disk.
+    fn keeping_data(
+        lineage: &quilt::lineage::PackageLineage,
+        sizes: &BTreeMap<PathBuf, u64>,
+        changes: Option<&quilt::lineage::ChangeSet>,
+    ) -> (KeepingData, Option<PackageSize>) {
+        super::keeping_data(lineage, &(sizes.clone(), BTreeSet::new()), changes)
     }
 
     /// A whole-package lineage, so every outstanding file is in the backlog.
@@ -1528,6 +1541,24 @@ mod tests {
         assert_eq!(size.map(|size| size.backlog), Some(0));
     }
 
+    /// An untracked file already here under a kept folder, with the revision's
+    /// content so the status reports no change, is left out of the backlog, its
+    /// count and its bytes: *Download N files* would refuse to overwrite it.
+    #[test]
+    fn a_file_already_here_is_not_in_the_backlog() {
+        let mut lineage = lineage_tracking(&[]);
+        lineage.sync_scope = quilt::lineage::SyncScope::folders(["data"]).unwrap();
+        let listing = (
+            sizes(&["data/here.csv", "data/new.csv"]),
+            BTreeSet::from([PathBuf::from("data/here.csv")]),
+        );
+
+        let (keeping, size) = super::keeping_data(&lineage, &listing, None);
+
+        assert_eq!(keeping.remote_only, vec!["data/new.csv"]);
+        assert_eq!(size.map(|size| size.backlog), Some(7));
+    }
+
     /// A folders scope names its folders, and its backlog is the outstanding
     /// files under them.
     #[test]
@@ -1651,6 +1682,7 @@ mod tests {
                 &lineage,
                 listed.iter().map(|(key, size)| (key, *size)),
                 &changes,
+                &BTreeSet::new(),
             ),
         );
 
@@ -1931,7 +1963,7 @@ mod tests {
         m.expect_get_installed_package_revision_count()
             .returning(|_| Ok(1));
         m.expect_get_installed_package_sizes()
-            .returning(|_, _| Ok(sizes(&["a.csv"])));
+            .returning(|_, _| Ok((sizes(&["a.csv"]), BTreeSet::new())));
         match status {
             Some(status) => {
                 m.expect_get_installed_package_status()

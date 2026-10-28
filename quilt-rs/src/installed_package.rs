@@ -570,10 +570,14 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         host_config_opt: Option<HostConfig>,
     ) -> Res<(InstalledPackageStatus, lineage::DownloadCounts)> {
         let (lineage, manifest, status) = self.status_with_manifest(host_config_opt).await?;
+        let on_disk = self
+            .untracked_on_disk(&self.package_home().await?, &lineage, &manifest)
+            .await;
         let counts = lineage::DownloadCounts::count(
             &lineage,
             manifest.rows.iter().map(|row| (&row.logical_key, row.size)),
             &status.changes,
+            &on_disk,
         );
         Ok((status, counts))
     }
@@ -1084,17 +1088,40 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         lineage: &lineage::PackageLineage,
     ) -> Res<Vec<PathBuf>> {
         let manifest = self.manifest_from_lineage(lineage).await?;
+        let on_disk = self
+            .untracked_on_disk(package_home, lineage, &manifest)
+            .await;
         let no_changes = lineage::ChangeSet::new();
-        let mut backlog = Vec::new();
-        for key in manifest.rows.iter().map(|row| &row.logical_key) {
-            if lineage::DownloadCounts::in_backlog(lineage, &no_changes, key)
-                && !self.storage.exists(package_home.join(key)).await
-            {
-                backlog.push(key.clone());
-            }
-        }
+        let mut backlog: Vec<PathBuf> = manifest
+            .rows
+            .iter()
+            .map(|row| &row.logical_key)
+            .filter(|key| lineage::DownloadCounts::in_backlog(lineage, &no_changes, &on_disk, key))
+            .cloned()
+            .collect();
         backlog.sort();
         Ok(backlog)
+    }
+
+    /// The paths of `manifest` the scope covers that this copy does not track
+    /// but that have a file in the working folder: the files the backlog
+    /// leaves out, since installing them would refuse to overwrite them.
+    pub async fn untracked_on_disk(
+        &self,
+        package_home: &Path,
+        lineage: &lineage::PackageLineage,
+        manifest: &Manifest,
+    ) -> BTreeSet<PathBuf> {
+        let mut on_disk = BTreeSet::new();
+        for key in manifest.rows.iter().map(|row| &row.logical_key) {
+            if !lineage.paths.contains_key(key)
+                && lineage.sync_scope.covers_untracked(key)
+                && self.storage.exists(package_home.join(key)).await
+            {
+                on_disk.insert(key.clone());
+            }
+        }
+        on_disk
     }
 
     /// `scope` comes from the caller, not from the package's stored
