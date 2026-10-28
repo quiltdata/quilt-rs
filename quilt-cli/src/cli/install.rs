@@ -546,6 +546,56 @@ mod tests {
         Ok(())
     }
 
+    /// Install `pkg` keeping the folder `one`, spelled `./one/`.
+    async fn install_keeping_one(download: bool) -> Result<(Output, tempfile::TempDir), Error> {
+        let (m, temp_dir) = create_model_in_temp_dir().await?;
+        let output = model(
+            m.get_local_domain(),
+            Input {
+                namespace: None,
+                paths: None,
+                uri: pkg::URI.to_string(),
+                keep: Some(SyncScope::folders(["./one/"])?),
+                download,
+            },
+        )
+        .await?;
+        Ok((output, temp_dir))
+    }
+
+    /// The package's one file under `one` is downloaded; `timestamp.txt`,
+    /// outside it, is not.
+    #[test(tokio::test)]
+    async fn live_install_keeping_a_folder_downloads_its_files() -> Result<(), Error> {
+        let (output, _temp_dir) = install_keeping_one(true).await?;
+
+        let lineage = output.installed_package.lineage().await?;
+        assert_eq!(
+            lineage.sync_scope,
+            SyncScope::Folders(vec!["one".to_string()])
+        );
+        assert_eq!(
+            lineage.paths.into_keys().collect::<Vec<_>>(),
+            vec![PathBuf::from(pkg::README_LK)]
+        );
+        assert_eq!(output.to_json()["keep"]["outstanding"], 0);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn live_install_keeping_a_folder_without_download_fetches_nothing() -> Result<(), Error> {
+        let (output, _temp_dir) = install_keeping_one(false).await?;
+
+        let lineage = output.installed_package.lineage().await?;
+        assert_eq!(
+            lineage.sync_scope,
+            SyncScope::Folders(vec!["one".to_string()])
+        );
+        assert_eq!(lineage.paths, quilt_rs::lineage::LineagePaths::new());
+        assert_eq!(output.to_json()["keep"]["outstanding"], 1);
+        Ok(())
+    }
+
     /// Checked before anything is installed.
     #[test(tokio::test)]
     async fn no_download_refuses_a_path_in_the_uri() -> Result<(), Error> {
