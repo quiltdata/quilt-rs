@@ -146,7 +146,8 @@ impl SyncScope {
                 .split('/')
                 .filter(|part| !part.is_empty() && *part != ".")
                 .collect();
-            if parts.contains(&"..") {
+            // A `..` is refused whichever separator spells it.
+            if folder.as_ref().split(['/', '\\']).any(|part| part == "..") {
                 return Err(LineageError::FolderOutsidePackage(folder.as_ref().to_string()).into());
             }
             if parts.is_empty() {
@@ -439,7 +440,7 @@ mod tests {
 
     #[test]
     fn a_folder_reaching_outside_the_package_is_refused() {
-        for folder in ["data/../results", "..", "../data"] {
+        for folder in ["data/../results", "..", "../data", "data\\..\\results"] {
             assert!(
                 matches!(
                     SyncScope::folders(["data", folder]),

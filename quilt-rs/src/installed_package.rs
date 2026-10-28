@@ -65,9 +65,12 @@ pub enum Pushed {
     Uploaded(PushOutcome),
 }
 
-/// What [`InstalledPackage::keep`] did.
+/// What [`InstalledPackage::keep`] did, or what [`InstalledPackage::kept`]
+/// read.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KeepReport {
+    /// The scope the package keeps.
+    pub scope: SyncScope,
     /// The backlog files it downloaded, sorted.
     pub downloaded: Vec<PathBuf>,
     /// The backlog files whose bytes the remote no longer holds.
@@ -1031,15 +1034,14 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
 
     async fn keep_unlocked(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
         self.set_sync_scope_unlocked(scope).await?;
-        let backlog = self.backlog().await?;
-        if !download || backlog.is_empty() {
-            return Ok(KeepReport {
-                outstanding: backlog.len(),
-                ..KeepReport::default()
-            });
+        let kept = self.kept_unlocked().await?;
+        if !download || kept.outstanding == 0 {
+            return Ok(kept);
         }
+        let backlog = self.backlog().await?;
         let report = self.install_paths_unlocked(&backlog).await?;
         Ok(KeepReport {
+            scope: kept.scope,
             downloaded: backlog
                 .into_iter()
                 .filter(|path| {
@@ -1051,17 +1053,41 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         })
     }
 
+    /// The stored [`SyncScope`] and how many files its [`Self::backlog`] holds,
+    /// read together under the package's lock.
+    pub async fn kept(&self) -> Res<KeepReport> {
+        Box::pin(self.lock().await?.kept()).await
+    }
+
+    async fn kept_unlocked(&self) -> Res<KeepReport> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let outstanding = self.backlog_of(&package_home, &lineage).await?.len();
+        Ok(KeepReport {
+            scope: lineage.sync_scope,
+            outstanding,
+            ..KeepReport::default()
+        })
+    }
+
     /// The current revision's files the stored [`SyncScope`] covers that this
     /// copy neither tracks nor has a file for, sorted: what installing the
     /// backlog fetches. Empty under individual-file scope. Hashes nothing and
     /// reads nothing from the remote.
     pub async fn backlog(&self) -> Res<Vec<PathBuf>> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
-        let manifest = self.manifest_from_lineage(&lineage).await?;
+        self.backlog_of(&package_home, &lineage).await
+    }
+
+    async fn backlog_of(
+        &self,
+        package_home: &Path,
+        lineage: &lineage::PackageLineage,
+    ) -> Res<Vec<PathBuf>> {
+        let manifest = self.manifest_from_lineage(lineage).await?;
         let no_changes = lineage::ChangeSet::new();
         let mut backlog = Vec::new();
         for key in manifest.rows.iter().map(|row| &row.logical_key) {
-            if lineage::DownloadCounts::in_backlog(&lineage, &no_changes, key)
+            if lineage::DownloadCounts::in_backlog(lineage, &no_changes, key)
                 && !self.storage.exists(package_home.join(key)).await
             {
                 backlog.push(key.clone());
@@ -1715,6 +1741,10 @@ impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
 
     pub async fn keep(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
         self.package.keep_unlocked(scope, download).await
+    }
+
+    pub async fn kept(&self) -> Res<KeepReport> {
+        self.package.kept_unlocked().await
     }
 
     pub async fn stop_ignoring(

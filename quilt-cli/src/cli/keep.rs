@@ -135,19 +135,16 @@ pub async fn keep(
     scope: Option<SyncScope>,
     download: bool,
 ) -> Result<Output, Error> {
-    let (downloaded, skipped, outstanding) = match scope {
-        Some(scope) => {
-            let report = package.keep(scope, download).await?;
-            (report.downloaded.len(), report.skipped, report.outstanding)
-        }
-        None => (0, Vec::new(), package.backlog().await?.len()),
+    let report = match scope {
+        Some(scope) => package.keep(scope, download).await?,
+        None => package.kept().await?,
     };
     Ok(Output {
         namespace: package.namespace.clone(),
-        scope: package.lineage().await?.sync_scope,
-        downloaded,
-        skipped,
-        outstanding,
+        scope: report.scope,
+        downloaded: report.downloaded.len(),
+        skipped: report.skipped,
+        outstanding: report.outstanding,
     })
 }
 
