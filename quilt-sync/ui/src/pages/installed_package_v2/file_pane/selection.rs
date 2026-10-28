@@ -8,6 +8,7 @@
 //! (`quiltsync-keep-file-selection#d-derive-by-intersection`).
 
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use leptos::prelude::*;
 
@@ -41,20 +42,16 @@ impl Kept {
     pub fn fetches(&self, path: &str) -> bool {
         match self {
             Self::Package => true,
-            // By component, as the library compares paths, so `data//raw/a.csv`
-            // is under `data/raw` too.
-            Self::Folders(folders) => folders.iter().any(|folder| {
-                let mut path = parts(path);
-                parts(folder).all(|part| path.next() == Some(part)) && path.next().is_some()
-            }),
+            // The library's own test, so a path is kept here exactly when a pull
+            // fetches it.
+            Self::Folders(folders) => {
+                let path = Path::new(path);
+                folders
+                    .iter()
+                    .any(|folder| path.starts_with(folder) && path != Path::new(folder))
+            }
         }
     }
-}
-
-/// A path's components, without the empty and `.` ones.
-fn parts(path: &str) -> impl Iterator<Item = &str> {
-    path.split('/')
-        .filter(|part| !part.is_empty() && *part != ".")
 }
 
 /// The pane's selection and what it feeds. The page owns the signals, so a
@@ -166,6 +163,7 @@ mod tests {
         assert!(!kept.fetches("notes.txt"));
         assert!(kept.fetches("data//raw/a.csv"));
         assert!(kept.fetches("data/./raw/a.csv"));
+        assert!(!kept.fetches("./data/raw/a.csv"), "as the library reads it");
         assert!(!Kept::Folders(Vec::new()).fetches("data/raw/a.csv"));
         assert!(Kept::Package.fetches("notes.txt"));
     }
