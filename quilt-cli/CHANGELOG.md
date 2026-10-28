@@ -19,24 +19,24 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.39.0-dev]
+## [v0.39.0] - 2026-10-28
 
 ### Added
 
-- `quilt keep --files | --all | --folder <dir>` sets which of a package's files this copy keeps, and downloads the files it covers; `--no-download` only saves the setting, and no flag prints it; a folder with a `..` part is refused (<https://github.com/quiltdata/quilt-rs/pull/1229>)
-- `quilt install --keep-all` and `--keep-folder <dir>` set the same at install (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `quilt keep` sets which files a package keeps: the files you pick (`--files`), all of them (`--all`) or the files under a folder (`--folder <dir>`), and downloads them. `--no-download` only saves the setting; with no flag it prints it. `quilt install --keep-all` and `--keep-folder <dir>` set it at install (<https://github.com/quiltdata/quilt-rs/pull/1229>)
 
 ### Changed
 
-- `quilt pull` follows the package's setting, so a package that keeps every file, or a folder, also gets the files a new revision adds there (<https://github.com/quiltdata/quilt-rs/pull/1229>)
-- `quilt pull` on an up-to-date package prints `Already up to date` and exits 0, instead of failing. `--json` keeps the pull's shape with `"hash": null` (<https://github.com/quiltdata/quilt-rs/pull/1227>)
-- `quilt push` with no commit to push prints `Nothing to push` and exits 0, instead of failing. `--json` keeps the push's shape with `"hash": null` (<https://github.com/quiltdata/quilt-rs/pull/1230>)
-- `quilt install -p` skips tracked paths and installs the rest, instead of failing the whole call. It lists the tracked ones as `Already installed: "<path>"` and leaves their files as they are; `--json` adds `already_installed` (<https://github.com/quiltdata/quilt-rs/pull/1239>)
-- `quilt commit` with no file changes and the same message and metadata prints `Nothing to commit` and exits 0, instead of recording the same revision again, which `quilt push` then published a second time. `--json` prints `{"hash": null}` (<https://github.com/quiltdata/quilt-rs/pull/1242>)
+- `quilt pull` follows that setting, so a package that keeps all files or a folder also gets the files a new revision adds there (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `quilt pull`, `quilt push` and `quilt commit` succeed when there is nothing to do and print `Already up to date`, `Nothing to push` or `Nothing to commit`. Before, pull and push failed, and commit recorded the same revision again. With `--json`, `hash` is `null`
+  - <https://github.com/quiltdata/quilt-rs/pull/1227>
+  - <https://github.com/quiltdata/quilt-rs/pull/1230>
+  - <https://github.com/quiltdata/quilt-rs/pull/1242>
+- `quilt install -p` installs the paths not yet tracked and lists the others as `Already installed`, instead of failing. `--json` adds `already_installed` (<https://github.com/quiltdata/quilt-rs/pull/1239>)
 
 ### quilt-rs
 
-- Updated [from v0.49.0 to v0.50.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.49.0 to v0.50.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...quilt-rs/v0.50.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.38.0] - 2026-10-26
 
