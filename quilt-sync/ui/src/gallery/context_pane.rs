@@ -52,10 +52,13 @@ use crate::kit::Choice;
 use crate::kit::ChoiceGroup;
 use crate::kit::DiffersId;
 use crate::kit::FolderList;
+use crate::kit::FormDialog;
 use crate::kit::LoadFailure;
 use crate::kit::PaneSection;
 use crate::kit::RevisionRow;
 use crate::kit::SkeletonBox;
+use crate::kit::Submit;
+use crate::kit::folder_list::filled;
 use quilt_sync_ui::util::Held;
 use quilt_sync_ui::util::counted;
 use quilt_sync_ui::util::format_size;
@@ -159,35 +162,25 @@ fn scopes() -> Vec<Choice> {
     ]
 }
 
-/// What a cell's Keeping has stored under Folders, and a typed folder the
-/// last Save was refused for.
+/// What a cell's Keeping has stored under Folders, and a folder its dialog
+/// opens with as if typed, for the refusal.
 #[derive(Clone, Copy)]
 struct Kept {
     folders: &'static [&'static str],
-    refused: Option<&'static str>,
+    typed: Option<&'static str>,
 }
+
+/// No folders stored: the scope is one of the other two.
+const NO_FOLDERS: Kept = Kept {
+    folders: &[],
+    typed: None,
+};
 
 /// The library's refusal, in its words.
 fn refusal(folder: &str) -> String {
     format!(
         "Folder {folder:?} is not inside the package: name it from the package root, without \"..\""
     )
-}
-
-/// No folders stored: the scope is one of the other two, or Folders was just
-/// chosen and nothing saved yet.
-const NO_FOLDERS: Kept = Kept {
-    folders: &[],
-    refused: None,
-};
-
-/// `a`, `a and b`, `a, b and c` — every folder, however many.
-fn listed(names: &[String]) -> String {
-    match names {
-        [] => String::new(),
-        [only] => only.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
-    }
 }
 
 /// The library's one refusal a typed folder can earn.
@@ -305,18 +298,15 @@ const UNREAD: Held = Held {
 /// Two clauses from v1's own band, kept apart on purpose: the count reports the
 /// present, and the standing line promises something about files that do not
 /// exist yet. Only whole-package scope may make that promise — under
-/// individual-file scope the next revision can add a file and falsify it.
-///
-/// Reads the stored scope, not the radio: a Folders choice with nothing saved
-/// yet still says what the stored scope does. Kept folders are named before
-/// the count.
-fn consequence(scope: RwSignal<String>, held: Held, kept: RwSignal<Vec<String>>) -> Signal<String> {
+/// individual-file scope the next revision can add a file and falsify it. Kept
+/// folders are listed above it, so the caption does not name them again.
+fn consequence(scope: RwSignal<String>, held: Held) -> Signal<String> {
     Signal::derive(move || {
         let counted = counted(held);
-        match scope.get().as_str() {
-            "all" => format!("{counted} — files added later are downloaded too."),
-            "folders" => format!("Files in {} are kept. {counted}.", listed(&kept.get())),
-            _ => format!("{counted}."),
+        if scope.get() == "all" {
+            format!("{counted} — files added later are downloaded too.")
+        } else {
+            format!("{counted}.")
         }
     })
 }
@@ -353,32 +343,61 @@ fn download(scope: RwSignal<String>, held: Held) -> AnyView {
     .into_any()
 }
 
-/// The folder inputs, under Folders only. Save stores the filled rows, which
-/// the caption then names; a folder with a `..` part is refused, as the
-/// library refuses it.
-fn folder_inputs(
+/// The kept folders, read-only with *Change folders*, and the dialog that
+/// changes them. Choosing Folders with nothing saved opens the dialog, and
+/// closing it unsaved returns the radio to the stored choice. Save stores the
+/// filled rows and downloads nothing; a folder with a `..` part is refused in
+/// the dialog, as the library refuses it.
+fn folders_block(
     scope: RwSignal<String>,
     stored: RwSignal<String>,
     kept: RwSignal<Vec<String>>,
-    refused: Option<&'static str>,
+    typed: Option<&'static str>,
 ) -> AnyView {
-    let mut typed = kept.get_untracked();
-    typed.extend(refused.map(ToString::to_string));
-    let rows = RwSignal::new(typed);
-    let error = RwSignal::new(refused.map(refusal));
-    let save = Callback::new(move |folders: Vec<String>| {
-        if let Some(folder) = folders.iter().find(|folder| outside(folder)) {
-            error.set(Some(refusal(folder)));
-        } else {
-            error.set(None);
-            kept.set(folders);
-            stored.set("folders".to_string());
+    let open = RwSignal::new(false);
+    let rows = RwSignal::new(Vec::new());
+    let start = move || {
+        let mut fill = kept.get_untracked();
+        fill.extend(typed.map(ToString::to_string));
+        rows.set(fill);
+        open.set(true);
+    };
+    Effect::new(move |_| {
+        if scope.get() == "folders" && stored.get_untracked() != "folders" {
+            start();
         }
     });
+    Effect::new(move |_| {
+        if !open.get() && stored.get_untracked() != "folders" && scope.get_untracked() == "folders"
+        {
+            scope.set(stored.get_untracked());
+        }
+    });
+    let save = Submit::new("Save", move || async move {
+        let folders = filled(&rows.get_untracked());
+        if let Some(folder) = folders.iter().find(|folder| outside(folder)) {
+            return Err(refusal(folder));
+        }
+        kept.set(folders);
+        stored.set("folders".to_string());
+        Ok(())
+    });
     view! {
-        <Show when=move || scope.get() == "folders">
-            <FolderList rows=rows on_save=save error=error />
+        <Show when=move || stored.get() == "folders">
+            <ul style="margin:0; padding:0; list-style:none; font-size:var(--q-text-body); \
+                       line-height:var(--q-line-body)">
+                {move || kept.get().into_iter().map(|folder| view! { <li>{folder}</li> }).collect_view()}
+            </ul>
+            <Button on_click=move |_| start()>"Change folders"</Button>
         </Show>
+        <FormDialog
+            open=open
+            title="Folders to keep"
+            submit=save
+            blocked=Signal::derive(move || rows.with(|rows| filled(rows).is_empty()))
+        >
+            <FolderList rows=rows />
+        </FormDialog>
     }
     .into_any()
 }
@@ -398,14 +417,8 @@ fn pane(
     on_page: bool,
 ) -> AnyView {
     // What the backend would hold. The other two options store on choosing;
-    // Folders stores on Save, so a Folders cell with nothing saved holds `pick`.
-    let stored = RwSignal::new(
-        if folders.folders.is_empty() && scope.get_untracked() == "folders" {
-            "pick".to_string()
-        } else {
-            scope.get_untracked()
-        },
-    );
+    // Folders stores on Save.
+    let stored = RwSignal::new(scope.get_untracked());
     Effect::new(move |_| {
         let chosen = scope.get();
         if chosen != "folders" {
@@ -452,11 +465,11 @@ fn pane(
         <PaneSection>
             <ChoiceGroup
                 label="Keeping"
-                caption=consequence(stored, held, kept)
+                caption=consequence(stored, held)
                 options=scopes()
                 selected=scope
             />
-            {folder_inputs(scope, stored, kept, folders.refused)}
+            {folders_block(scope, stored, kept, folders.typed)}
             {download(stored, held)}
         </PaneSection>
     };
@@ -570,10 +583,11 @@ const NOTE: &str = "320px holding three blocks: what the page says about the pac
     say downloaded, about files; only the revisions surface's frees is about this disk. A \
     size that cannot be read leaves the count alone. \
     \
-    Folders lists the kept folders as plain inputs, one a row, under the caption. \
-    Saving names them in the caption and downloads nothing: the counted button does. \
-    Folders chosen with nothing saved keeps the stored scope's words, and Save waits for \
-    a folder. The live cells keep two options until the app can store folders. \
+    Folders lists the kept folders read-only, with Change folders. The folders are typed \
+    in a dialog, one plain path a row; choosing Folders with nothing saved opens it, and \
+    Cancel puts the radio back. Saving downloads nothing: the counted button does. The \
+    caption is the count alone, as the list already names the folders. The live cells \
+    keep two options until the app can store folders. \
     \
     Flip a radio in a hand-built cell and the caption and the download action \
     answer together; the live cell's answer only once a stored choice is re-read, \
@@ -690,7 +704,7 @@ pub fn ContextPaneScene() -> impl IntoView {
     let outside_folder = RwSignal::new(false);
     let one_scope = RwSignal::new("folders".to_string());
     let some_scope = RwSignal::new("folders".to_string());
-    let chosen_scope = RwSignal::new("folders".to_string());
+    let chosen_scope = RwSignal::new("pick".to_string());
     let outside_scope = RwSignal::new("folders".to_string());
 
     view! {
@@ -727,15 +741,15 @@ pub fn ContextPaneScene() -> impl IntoView {
             </Cell>
             <Cell
                 wide=true
-                label="folders — one kept, every file in it here: no action. Edit a row and \
-                       Save, and the caption names what was saved"
+                label="folders — one kept, every file in it here: no action. Change folders \
+                       opens the dialog"
             >
                 {pane(
                     one_folder,
                     revision_list(),
                     one_scope,
                     plate(0),
-                    Kept { folders: &["data/raw"], refused: None },
+                    Kept { folders: &["data/raw"], typed: None },
                     false,
                 )}
             </Cell>
@@ -749,24 +763,28 @@ pub fn ContextPaneScene() -> impl IntoView {
                     revision_list(),
                     some_scope,
                     plate(2),
-                    Kept { folders: &["data/raw", "plate", "results"], refused: None },
+                    Kept { folders: &["data/raw", "plate", "results"], typed: None },
                     false,
                 )}
             </Cell>
             <Cell
                 wide=true
-                label="folders just chosen, nothing saved — one blank row, Save disabled, and \
-                       the caption still says what the stored scope does"
+                label="files I pick — choose Folders: the dialog opens with one blank row and \
+                       Save disabled; Cancel puts the radio back"
             >
                 {pane(chosen, revision_list(), chosen_scope, plate(2), NO_FOLDERS, false)}
             </Cell>
-            <Cell wide=true label="folders — a folder with .. refused, in the library's words">
+            <Cell
+                wide=true
+                label="folders — Change folders, then Save: a folder with .. is refused in the \
+                       dialog, in the library's words"
+            >
                 {pane(
                     outside_folder,
                     revision_list(),
                     outside_scope,
                     plate(2),
-                    Kept { folders: &["data/raw"], refused: Some("data/../results") },
+                    Kept { folders: &["data/raw"], typed: Some("data/../results") },
                     false,
                 )}
             </Cell>

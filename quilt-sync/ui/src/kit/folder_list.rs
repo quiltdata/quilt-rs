@@ -1,22 +1,26 @@
-//! A list of folder paths typed one a row, with a Save.
+//! Folder paths typed one a row, for a [`FormDialog`](super::FormDialog).
 //!
 //! Plain paths, never patterns: a folder keeps everything under it. The rows
 //! hold what was typed, blank ones included; only [`filled`] rows are saved,
-//! because a blank folder means the package root to the library.
+//! because a blank folder means the package root to the library. The dialog
+//! owns Save, Cancel and a refusal.
 //!
 //! Each field is named by `aria-label`, not a [`FormControl`](super::FormControl):
-//! the list sits under its group's label, and a stacked label on every row
+//! the dialog's title says what the rows are, and a stacked label on every row
 //! would say "Folder" over and over.
 
 use leptos::prelude::*;
 
 use super::icons;
-use super::state_label::StateTone;
 use super::{Button, IconButton, IconButtonVariant};
 
 stylance::import_crate_style!(style, "src/kit/folder_list.module.scss");
 // The field is `TextInput`'s, drawn alike.
-stylance::import_crate_style!(field, "src/kit/text_input.module.scss");
+stylance::import_crate_style!(
+    #[allow(dead_code, reason = "only the field's resting class is wanted")]
+    field,
+    "src/kit/text_input.module.scss"
+);
 
 /// The rows worth saving: those with something in them, in order.
 #[must_use]
@@ -31,23 +35,13 @@ pub fn filled(rows: &[String]) -> Vec<String> {
 pub fn FolderList(
     /// The rows as typed. At least one row is always drawn.
     rows: RwSignal<Vec<String>>,
-    /// Gets the [`filled`] rows. Never called with none, nor while disabled.
-    on_save: Callback<Vec<String>>,
-    /// Why the last save was refused, under the rows.
-    #[prop(optional, into)]
-    error: MaybeProp<String>,
-    #[prop(optional, into)] disabled: MaybeProp<bool>,
-    /// The save is running: Save spins and the rows are sealed.
-    #[prop(optional, into)]
-    saving: MaybeProp<bool>,
 ) -> impl IntoView {
-    if rows.with_untracked(Vec::is_empty) {
-        rows.set(vec![String::new()]);
-    }
-    let sealed =
-        Signal::derive(move || disabled.get().unwrap_or(false) || saving.get().unwrap_or(false));
-    let empty = Signal::derive(move || rows.with(|rows| filled(rows).is_empty()));
-    let invalid = Signal::derive(move || error.get().is_some());
+    // Whenever the caller empties the rows, as a dialog refilled on opening does.
+    Effect::new(move |_| {
+        if rows.with(Vec::is_empty) {
+            rows.set(vec![String::new()]);
+        }
+    });
 
     let row = move |i: usize| {
         let value = move || rows.with(|rows| rows.get(i).cloned().unwrap_or_default());
@@ -65,18 +59,10 @@ pub fn FolderList(
             <div class=style::row>
                 <input
                     type="text"
-                    class=move || {
-                        if invalid.get() {
-                            format!("{} {}", field::root, field::invalid)
-                        } else {
-                            field::root.to_string()
-                        }
-                    }
+                    class=field::root
                     aria-label=format!("Folder {}", i + 1)
-                    aria-invalid=move || invalid.get().then_some("true")
                     placeholder="data/raw"
                     prop:value=value
-                    prop:disabled=move || sealed.get()
                     on:input=move |ev| {
                         let typed = event_target_value(&ev);
                         rows.update(|rows| {
@@ -91,7 +77,6 @@ pub fn FolderList(
                     aria_label=format!("Remove folder {}", i + 1)
                     on_click=remove
                     variant=IconButtonVariant::Invisible
-                    disabled=sealed
                 />
             </div>
         }
@@ -100,25 +85,9 @@ pub fn FolderList(
     view! {
         <div class=style::root>
             <For each=move || 0..rows.with(Vec::len) key=|i| *i children=row />
-            <Show when=move || error.get().is_some()>
-                <p class=style::error>
-                    {StateTone::Danger.glyph()}
-                    <span>{move || error.get().unwrap_or_default()}</span>
-                </p>
-            </Show>
-            <div class=style::actions>
-                <Button
-                    on_click=move |_| rows.update(|rows| rows.push(String::new()))
-                    disabled=sealed
-                >
+            <div>
+                <Button on_click=move |_| rows.update(|rows| rows.push(String::new()))>
                     "Add folder"
-                </Button>
-                <Button
-                    on_click=move |_| on_save.run(rows.with_untracked(|rows| filled(rows)))
-                    disabled=Signal::derive(move || disabled.get().unwrap_or(false) || empty.get())
-                    loading=saving
-                >
-                    "Save"
                 </Button>
             </div>
         </div>
@@ -146,66 +115,57 @@ mod tests {
         assert_eq!(filled(&rows(&["", " "])), Vec::<String>::new());
     }
 
-    fn button(el: &web_sys::Element, words: &str) -> web_sys::HtmlButtonElement {
-        let buttons = el.query_selector_all("button").unwrap();
-        (0..buttons.length())
-            .filter_map(|i| buttons.item(i))
-            .find(|b| b.text_content().unwrap_or_default().contains(words))
-            .expect("the button")
-            .dyn_into()
+    fn click(el: &web_sys::Element, selector: &str) {
+        el.query_selector(selector)
             .unwrap()
+            .expect("the button")
+            .dyn_into::<web_sys::HtmlElement>()
+            .unwrap()
+            .click();
     }
 
-    /// Nothing filled in has nothing to save: Save would store no folders,
-    /// which the library reads as files picked by hand.
     #[wasm_bindgen_test]
-    fn save_waits_for_a_folder() {
+    async fn no_rows_draw_one_to_type_in() {
         let list = RwSignal::new(Vec::new());
-        let el = mount(move || {
-            view! { <FolderList rows=list on_save=Callback::new(|_| ()) /> }
-        });
-        assert_eq!(el.query_selector_all("input").unwrap().length(), 1);
-        assert!(button(&el, "Save").disabled());
-    }
-
-    #[wasm_bindgen_test]
-    async fn save_sends_the_filled_rows() {
-        let list = RwSignal::new(rows(&["data/raw", ""]));
-        let saved = RwSignal::new(None);
-        let el = mount(move || {
-            view! {
-                <FolderList
-                    rows=list
-                    on_save=Callback::new(move |folders| saved.set(Some(folders)))
-                />
-            }
-        });
-        button(&el, "Save").click();
+        let el = mount(move || view! { <FolderList rows=list /> });
         leptos::task::tick().await;
-        assert_eq!(saved.get_untracked(), Some(rows(&["data/raw"])));
+        assert_eq!(el.query_selector_all("input").unwrap().length(), 1);
     }
 
     #[wasm_bindgen_test]
-    fn a_disabled_list_does_not_save() {
+    async fn rows_emptied_later_draw_one_to_type_in() {
         let list = RwSignal::new(rows(&["data/raw"]));
-        let el = mount(move || {
-            view! { <FolderList rows=list on_save=Callback::new(|_| ()) disabled=true /> }
-        });
-        assert!(button(&el, "Save").disabled());
+        let el = mount(move || view! { <FolderList rows=list /> });
+        list.set(Vec::new());
+        leptos::task::tick().await;
+        assert_eq!(el.query_selector_all("input").unwrap().length(), 1);
+    }
+
+    #[wasm_bindgen_test]
+    async fn typing_and_adding_reach_the_rows() {
+        let list = RwSignal::new(rows(&["data/raw"]));
+        let el = mount(move || view! { <FolderList rows=list /> });
+        click(&el, "div > div:last-child > button");
+        leptos::task::tick().await;
+        let second: web_sys::HtmlInputElement = el
+            .query_selector("[aria-label='Folder 2']")
+            .unwrap()
+            .expect("a second row")
+            .dyn_into()
+            .unwrap();
+        second.set_value("results");
+        second
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        leptos::task::tick().await;
+        assert_eq!(list.get_untracked(), rows(&["data/raw", "results"]));
     }
 
     #[wasm_bindgen_test]
     async fn the_last_row_is_cleared_not_removed() {
         let list = RwSignal::new(rows(&["data/raw"]));
-        let el = mount(move || {
-            view! { <FolderList rows=list on_save=Callback::new(|_| ()) /> }
-        });
-        el.query_selector("[aria-label='Remove folder 1']")
-            .unwrap()
-            .expect("the remove button")
-            .dyn_into::<web_sys::HtmlElement>()
-            .unwrap()
-            .click();
+        let el = mount(move || view! { <FolderList rows=list /> });
+        click(&el, "[aria-label='Remove folder 1']");
         leptos::task::tick().await;
         assert_eq!(list.get_untracked(), rows(&[""]));
         assert_eq!(el.query_selector_all("input").unwrap().length(), 1);
