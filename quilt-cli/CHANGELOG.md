@@ -19,6 +19,18 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.39.0-dev]
+
+### Changed
+
+- `quilt pull` on an up-to-date package prints `Already up to date` and exits 0, instead of failing. `--json` keeps the pull's shape with `"hash": null` (<https://github.com/quiltdata/quilt-rs/pull/1227>)
+- `quilt push` with no commit to push prints `Nothing to push` and exits 0, instead of failing. `--json` keeps the push's shape with `"hash": null` (<https://github.com/quiltdata/quilt-rs/pull/1230>)
+- `quilt install -p` installs the paths not yet tracked when some already are, instead of failing the whole call. It lists the tracked ones as `Already installed: "<path>"` and leaves their files as they are; `--json` adds `already_installed`
+
+### quilt-rs
+
+- Updated [from v0.49.0 to v0.50.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.38.0] - 2026-10-26
 
 ### Changed

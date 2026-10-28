@@ -28,8 +28,20 @@
 ### Changed
 
 - Group headings on the main page stand out from the package and file rows below them (<https://github.com/quiltdata/quilt-rs/pull/1220>)
+- **New design preview**: the main page scrolls as one page, so the wheel moves the package or file list from anywhere in the window. The bar, *Autosync*, *Accounts*, *Needs your attention* and the list's toolbar stay in place above it. A long *Needs your attention* scrolls in its own box, up to a third of the window. Group headings stay under the toolbar while their rows scroll. A long activity line in the bar shows over the page instead of pushing it down (<https://github.com/quiltdata/quilt-rs/pull/1223>)
 - **New design preview**: the package page shows *Bucket and catalog* for every package, with one button that opens the bucket dialog: *Choose* for a package with no bucket yet, *Change* otherwise. The header no longer offers *Choose S3 bucket* or *Change bucket*. Long bucket and catalog names fit on one line. *Revisions you have* is now *History*, at the top of *Revision*. The pane is wider, so more of the revision message shows, and while loading it outlines all three sections (<https://github.com/quiltdata/quilt-rs/pull/1221>)
 - The main page's attention queue is a status line with its rows below, not a card; when nothing needs you it reads *All packages are up to date* (<https://github.com/quiltdata/quilt-rs/pull/1222>)
+- Under the hood, an agent task's last revision says how many files the run added, changed and removed, and its message ends with *no changes* when there were none (<https://github.com/quiltdata/quilt-rs/pull/1224>)
+- Under the hood, an agent task runs with the PATH of the user's login shell, not launchd's bare one, so the agent finds the user's tools instead of searching the home folder for them and setting off macOS privacy prompts; an agent's `env` in `task_settings.json` sets variables over it (<https://github.com/quiltdata/quilt-rs/pull/1236>)
+
+### Fixed
+
+- *Pull* on a package another pull has just brought up to date says it is already up to date instead of failing (<https://github.com/quiltdata/quilt-rs/pull/1227>)
+- *Push* on a package another push has just published says there is nothing to push instead of failing (<https://github.com/quiltdata/quilt-rs/pull/1230>)
+
+### quilt-rs
+
+- Updated [from v0.49.0 to v0.50.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.25.0] - 2026-10-26
 

@@ -34,6 +34,11 @@ pub struct AgentSettings {
     /// Approve every permission request the agent makes.
     #[serde(default)]
     pub trust_all: bool,
+    /// Variables set for the agent, over `QuiltSync`'s environment and the login
+    /// shell's PATH. Values are taken as written: a `PATH` here replaces the
+    /// login shell's, and `$PATH` in it is not expanded.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
 }
 
 impl TaskSettings {
@@ -203,7 +208,8 @@ mod tests {
     async fn the_proposals_file_turns_tasks_on() -> Result<(), Error> {
         let settings = load(
             r#"{"version":1,"blessed_buckets":["s3://quilt-dev"],
-                "agents":{"kiro":{"command":["/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-chat","acp","--agent-engine=v3"],"trust_all":true},
+                "agents":{"kiro":{"command":["/Applications/Kiro CLI.app/Contents/MacOS/kiro-cli-chat","acp","--agent-engine=v3"],"trust_all":true,
+                                  "env":{"DENO_DIR":"/tmp/deno"}},
                           "other":{"command":["other-agent"]}}}"#,
         )
         .await?
@@ -213,10 +219,10 @@ mod tests {
         let kiro = &settings.agents["kiro"];
         assert_eq!(kiro.command[1..], ["acp", "--agent-engine=v3"]);
         assert!(kiro.trust_all);
-        assert!(
-            !settings.agents["other"].trust_all,
-            "trust_all is off unless set"
-        );
+        assert_eq!(kiro.env["DENO_DIR"], "/tmp/deno");
+        let other = &settings.agents["other"];
+        assert!(!other.trust_all, "trust_all is off unless set");
+        assert!(other.env.is_empty(), "env is empty unless set");
         Ok(())
     }
 

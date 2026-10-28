@@ -249,9 +249,9 @@ async fn note_publish_failed(m: &impl model::QuiltModel, watcher: &Watcher, name
 }
 
 async fn package_push_command(
-    m: &model::Model,
+    m: &impl model::QuiltModel,
     namespace: &str,
-) -> Result<(quilt_uri::Namespace, quilt::PushOutcome), Error> {
+) -> Result<(quilt_uri::Namespace, quilt::Pushed), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let outcome = model::package_push(m, &namespace, None).await?;
     Ok((namespace, outcome))
@@ -265,19 +265,40 @@ pub async fn package_push(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    push_and_report(&*m, &tracing, &watcher, &namespace, uri.as_ref()).await
+}
+
+/// The Push button's whole answer: the push, its event and its line.
+async fn push_and_report(
+    m: &impl model::QuiltModel,
+    tracing: &crate::telemetry::Telemetry,
+    watcher: &Watcher,
+    namespace: &str,
+    uri: Option<&S3PackageUri>,
+) -> Result<String, String> {
     let msg_init = format!("Pushing package {namespace}");
 
-    let result = package_push_command(&m, &namespace).await;
+    let result = package_push_command(m, namespace).await;
     // The time stays: edits made after the commit are still to publish, and
     // the next walk deletes it if none are.
     if let Ok((ns, _)) = &result {
         watcher.clear_paused(ns).await;
     }
+    let mut notify = Notify::new(msg_init);
+    // Another push got there first: nothing left, so no push event. A
+    // failure keeps the event, which is what reports a refusal.
+    if !matches!(result, Ok((_, quilt::Pushed::NothingToPush))) {
+        notify = notify.on_success(
+            tracing,
+            MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(uri)),
+        );
+    }
     // TODO: push-not-certified should be surfaced as a warning, not a success.
     // Currently both outcomes go through the success path because converting to
     // Err skips on_done()/refetch and leaves the UI stale.
     let msg_ok = match &result {
-        Ok((_, outcome)) if outcome.certified_latest => {
+        Ok((_, quilt::Pushed::NothingToPush)) => format!("Package {namespace} has nothing to push"),
+        Ok((_, quilt::Pushed::Uploaded(outcome))) if outcome.certified_latest => {
             format!("Successfully pushed package {namespace}")
         }
         Ok(_) => {
@@ -287,12 +308,7 @@ pub async fn package_push(
     };
     let msg_err = |err: &Error| write_failure_message("push package", err);
 
-    Notify::new(msg_init)
-        .on_success(
-            &tracing,
-            MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(uri.as_ref())),
-        )
-        .map(result.map(|_| ()), msg_ok, msg_err)
+    notify.map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 async fn package_publish_command(
@@ -450,7 +466,7 @@ async fn package_pull_command(
     m: &impl model::QuiltModel,
     watcher: &Watcher,
     namespace: &str,
-) -> Result<(quilt_uri::Namespace, quilt::flow::PullReport), Error> {
+) -> Result<(quilt_uri::Namespace, quilt::flow::Pulled), Error> {
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
     let installed = installed_package(m, &namespace).await?;
     // Lock before raising the flag. While another writer (the `quilt` CLI, a
@@ -468,7 +484,7 @@ async fn package_pull_command(
             .await
     };
     match pulled {
-        Ok(report) => Ok((namespace, report)),
+        Ok(pulled) => Ok((namespace, pulled)),
         Err(err) => {
             pause_on_conflict(watcher, &namespace, &lineage, &err).await;
             Err(err)
@@ -537,39 +553,59 @@ pub async fn package_pull(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    pull_and_report(&*m, &tracing, &watcher, &toasts, &namespace, uri.as_ref()).await
+}
+
+/// The Pull button's whole answer: the pull, its toast, its event and its line.
+async fn pull_and_report(
+    m: &impl model::QuiltModel,
+    tracing: &crate::telemetry::Telemetry,
+    watcher: &Watcher,
+    toasts: &ToastCenter,
+    namespace: &str,
+    uri: Option<&S3PackageUri>,
+) -> Result<String, String> {
     let msg_init = format!("Pulling package {namespace}");
     let msg_err = |err: &Error| format!("Failed to pull package: {err}");
 
-    let result = package_pull_command(&*m, &watcher, &namespace).await;
-    let mut reported = false;
-    if let Ok((ns, report)) = &result {
-        watcher.clear_paused(ns).await;
-        // The same report the tick posts, from the same wording. A manual pull
-        // brings files too, and "Successfully pulled" says nothing about which —
-        // which is the whole of what this feature adds.
-        if let Some(toast) = pull_toast::report_toast(ns, report) {
-            toasts
-                .post(crate::toast::ToastDraft {
-                    kind: toast.kind,
-                    title: Some(toast.title),
-                    body: toast.body,
-                    groups: toast.groups,
-                    timeout_ms: None,
-                })
-                .await;
-            reported = true;
-        }
+    let result = package_pull_command(m, watcher, namespace).await;
+    let mut notify = Notify::new(msg_init);
+    // Another pull got there first: nothing arrived, so no pull event. A
+    // failure keeps the event, which is what reports a refusal.
+    if !matches!(result, Ok((_, quilt::flow::Pulled::UpToDate))) {
+        notify = notify.on_success(
+            tracing,
+            MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri)),
+        );
     }
-    Notify::new(msg_init)
-        .on_success(
-            &tracing,
-            MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri.as_ref())),
-        )
-        .map(
-            result.map(|_| ()),
-            pull_success_message(&namespace, reported),
-            msg_err,
-        )
+    let mut msg_ok = String::new();
+    if let Ok((ns, pulled)) = &result {
+        watcher.clear_paused(ns).await;
+        msg_ok = match pulled {
+            quilt::flow::Pulled::UpToDate => format!("Package {namespace} is already up to date"),
+            quilt::flow::Pulled::Applied(report) => {
+                // The same report the tick posts, from the same wording. A
+                // manual pull brings files too, and "Successfully pulled" says
+                // nothing about which — which is the whole of what this
+                // feature adds.
+                let toast = pull_toast::report_toast(ns, report);
+                let reported = toast.is_some();
+                if let Some(toast) = toast {
+                    toasts
+                        .post(crate::toast::ToastDraft {
+                            kind: toast.kind,
+                            title: Some(toast.title),
+                            body: toast.body,
+                            groups: toast.groups,
+                            timeout_ms: None,
+                        })
+                        .await;
+                }
+                pull_success_message(namespace, reported)
+            }
+        };
+    }
+    notify.map(result.map(|_| ()), msg_ok, msg_err)
 }
 
 /// The page's own confirmation of a pull — empty when the toast has already
@@ -1543,7 +1579,7 @@ mod tests {
             .times(1)
             .returning(move |_, _, _| {
                 assert!(aggregator.apply_in_progress(), "up while pulling");
-                Ok(quilt::flow::PullReport {
+                Ok(quilt::flow::Pulled::Applied(quilt::flow::PullReport {
                     manifest_uri: quilt_uri::ManifestUri {
                         bucket: "bucket".to_string(),
                         namespace: ("acme", "demo").into(),
@@ -1555,7 +1591,7 @@ mod tests {
                     updated: Vec::new(),
                     removed: Vec::new(),
                     message: None,
-                })
+                }))
             });
 
         super::package_pull_command(&model, &watcher, "acme/demo")
@@ -1687,6 +1723,111 @@ mod tests {
 
         assert_eq!(watcher.paused_reason(&ns).await, None);
         assert!(reporter.paused.lock().unwrap().is_empty());
+    }
+
+    struct ToastCollector(Arc<std::sync::Mutex<Vec<crate::toast::Toast>>>);
+
+    impl crate::toast::ToastEmitter for ToastCollector {
+        fn emit(&self, toast: &crate::toast::Toast) {
+            self.0.lock().unwrap().push(toast.clone());
+        }
+    }
+
+    /// Another pull got there first: the button says so, with no toast and
+    /// no pull event.
+    #[tokio::test]
+    async fn a_pull_that_finds_nothing_to_do_says_so_and_reports_nothing() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::telemetry::Telemetry::default();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let toasts = super::ToastCenter::new(Box::new(ToastCollector(Arc::clone(&seen))));
+        let mut model = installed_model();
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
+        model
+            .expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        model
+            .expect_locked_package_pull()
+            .times(1)
+            .returning(|_, _, _| Ok(quilt::flow::Pulled::UpToDate));
+
+        let said =
+            super::pull_and_report(&model, &telemetry, &watcher, &toasts, "acme/demo", None).await;
+
+        assert_eq!(
+            said,
+            Ok("Package acme/demo is already up to date".to_string())
+        );
+        assert_eq!(seen.lock().unwrap().len(), 0, "no toast");
+        assert_eq!(telemetry.queued_events(), Vec::<String>::new());
+    }
+
+    /// A refused pull still reports the refusal, though an up-to-date one
+    /// reports no event.
+    #[tokio::test]
+    async fn a_refused_pull_reports_the_refusal() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::telemetry::Telemetry::default();
+        let toasts = super::ToastCenter::new(Box::new(ToastCollector(Arc::default())));
+        let model = failing_pull_model(pull_conflict_error);
+
+        super::pull_and_report(&model, &telemetry, &watcher, &toasts, "acme/demo", None)
+            .await
+            .expect_err("a conflict refuses the pull");
+
+        assert_eq!(telemetry.queued_events(), vec!["action_refused".to_owned()]);
+    }
+
+    /// A model whose push answers `pushed`.
+    fn push_model(pushed: quilt::Pushed) -> MockQuiltModel {
+        let mut model = installed_model();
+        model
+            .expect_package_push()
+            .times(1)
+            .returning(move |_, _| Ok(pushed.clone()));
+        model
+    }
+
+    /// Another push got there first: the button says so, with no push event.
+    #[tokio::test]
+    async fn a_push_with_nothing_to_push_says_so_and_reports_nothing() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::telemetry::Telemetry::default();
+        let model = push_model(quilt::Pushed::NothingToPush);
+
+        let said = super::push_and_report(&model, &telemetry, &watcher, "acme/demo", None).await;
+
+        assert_eq!(
+            said,
+            Ok("Package acme/demo has nothing to push".to_string())
+        );
+        assert_eq!(telemetry.queued_events(), Vec::<String>::new());
+    }
+
+    /// A push that uploads a revision still reports it.
+    #[tokio::test]
+    async fn a_push_that_uploads_reports_the_push() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::telemetry::Telemetry::default();
+        let model = push_model(quilt::Pushed::Uploaded(quilt::PushOutcome {
+            manifest_uri: quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            },
+            certified_latest: true,
+        }));
+
+        let said = super::push_and_report(&model, &telemetry, &watcher, "acme/demo", None).await;
+
+        assert_eq!(
+            said,
+            Ok("Successfully pushed package acme/demo".to_string())
+        );
+        assert_eq!(telemetry.queued_events(), vec!["package_pushed".to_owned()]);
     }
 
     /// A model whose dry run, on the held lock, answers `verdict`, for a

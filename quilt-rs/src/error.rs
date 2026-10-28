@@ -143,9 +143,6 @@ pub enum InstallPathError {
     #[error("Failed to install path: {}", .0.display())]
     Install(PathBuf),
 
-    #[error("Some paths are already installed")]
-    AlreadyInstalled,
-
     /// The path has no row in the revision being installed. Reachable when a
     /// download waited out a pull that moved the package to a revision
     /// without it.
@@ -321,9 +318,6 @@ pub enum PackageOpError {
 
     #[error("Pull blocked by conflicting local changes: {0:?}")]
     PullConflict(Vec<PathBuf>),
-
-    #[error("package is already up-to-date")]
-    AlreadyUpToDate,
 }
 
 /// The error type for this library

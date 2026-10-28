@@ -95,13 +95,21 @@ Under `--json`, `ignored` holds the `files` and `folders` counts, and with
 
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
-`&path=` parameter in the URI.
+`&path=` parameter in the URI. A path the package already tracks is left as
+it is and listed as `Already installed: "<path>"` (`already_installed` under
+`--json`); the other paths install.
 
 `pull` reports the files it moved, in four groups: downloaded, left on the
 remote, updated, removed. A path you do not track is absent from all four — a
 pull writes nothing for it, so a copy that installed no paths reports no files
 at all. The message that follows is the newest revision's only: a pull advances
 to `latest` in one step and may span several revisions.
+When the package is already at `latest`, `pull` prints `Already up to date` and
+exits 0; under `--json` the same shape has `"hash": null` and empty groups.
+
+`push` with no commit to push prints `Nothing to push` and exits 0; under
+`--json` the same shape has `"hash": null`, `"manifest_uri": null` and
+`"certified_latest": null`.
 
 `home` prints the home, the folder where installed packages keep their files.
 It defaults to `~/QuiltSync` on first use. `quilt home <dir>` sets it; a

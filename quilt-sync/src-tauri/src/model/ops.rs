@@ -197,7 +197,7 @@ pub async fn package_push(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
     host_config: Option<HostConfig>,
-) -> Result<quilt::PushOutcome, Error> {
+) -> Result<quilt::Pushed, Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?

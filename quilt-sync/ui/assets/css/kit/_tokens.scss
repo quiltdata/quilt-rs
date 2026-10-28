@@ -553,6 +553,10 @@
   --q-control-height-lg: var(--q-space-10);
   --q-control-height-sm: var(--q-space-6);
 
+  /* The appbar's height: one row of controls and its padding. Fixed, so the
+   * sticky parts under it can take it as their offset without measuring. */
+  --q-appbar-height: calc(var(--q-control-height) + 2 * var(--q-space-2));
+
   /* One line of the attention queue: its status line, the placeholder for it, and
    * the first line of every row under it. A control plus a hair of air. */
   --q-queue-line-height: calc(var(--q-control-height) + var(--q-space-1));
