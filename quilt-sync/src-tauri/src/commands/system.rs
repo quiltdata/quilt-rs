@@ -636,6 +636,13 @@ pub async fn report_ui_panic(s: &Services, message: String) -> Result<(), String
 
 /// A timing run's results from the page (see `WEB-MVP.md`): appended to
 /// `bench-report.txt` in the data folder.
+/// Save a fresh browser token in the data folder. It takes effect at the next
+/// start: the running server keeps the token it started with, and tabs opened
+/// with the old link stop reconnecting after that start.
+pub async fn reset_web_token(_s: &Services) -> Result<(), String> {
+    crate::engine_lock::reset_web_token().map_err(|err| err.to_string())
+}
+
 pub async fn bench_report(s: &Services, text: String) -> Result<(), String> {
     use tokio::io::AsyncWriteExt;
     println!("{text}");

@@ -4,11 +4,16 @@
 //! `{"id", "cmd", "args"}`; replies are `{"id", "ok"}` or `{"id", "err"}`; events
 //! are `{"event", "payload"}` and the server broadcasts all of them, so listeners
 //! are only a registry here.
+//!
+//! After the socket drops, it reconnects with the same token, which survives a
+//! restart of the engine, and the listening pages read again. When the engine
+//! refuses the token (it was reset), it stops trying and says so in a banner.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
+use leptos::prelude::{ArcRwSignal, Get, Update};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
@@ -18,6 +23,9 @@ use web_sys::{MessageEvent, WebSocket};
 const TOKEN_KEY: &str = "quiltsync-token";
 
 const MAX_BACKOFF_MS: i32 = 10_000;
+
+/// Why every request fails once the engine refused the token.
+const REFUSED: &str = "QuiltSync was restarted with a new link. Open the link it printed.";
 
 pub(super) type Callback = Rc<RefCell<dyn FnMut(&serde_json::Value)>>;
 type Hydrate = Rc<dyn Fn()>;
@@ -40,10 +48,22 @@ struct State {
     listeners: BTreeMap<u64, Listener>,
     next_listener: u64,
     retries: u32,
+    /// Whether a socket has opened before, so the next open is a reconnect.
+    opened_once: bool,
+    /// The engine refused the token: no more sockets.
+    refused: bool,
 }
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::default();
+    /// Bumped on every reconnect, for reads that re-run then.
+    static RECONNECTS: ArcRwSignal<u32> = ArcRwSignal::new(0);
+}
+
+/// How many times the socket reconnected. A tracked read: a resource or an
+/// effect that calls it runs again after each reconnect.
+pub(super) fn reconnects() -> u32 {
+    RECONNECTS.with(Get::get)
 }
 
 /// The session token from `?t=` on this page, or the one saved from an earlier
@@ -77,7 +97,11 @@ fn js_err(err: &JsValue) -> String {
 
 /// Open the shared socket unless one exists (open or still connecting).
 fn connect() -> Result<(), String> {
-    if STATE.with_borrow(|s| s.socket.is_some()) {
+    let (exists, refused) = STATE.with_borrow(|s| (s.socket.is_some(), s.refused));
+    if refused {
+        return Err(REFUSED.to_string());
+    }
+    if exists {
         return Ok(());
     }
     let token = token().ok_or("No QuiltSync session token")?;
@@ -109,24 +133,30 @@ fn connect() -> Result<(), String> {
 }
 
 fn on_open() {
-    let hydrates: Vec<Hydrate> = STATE.with_borrow_mut(|s| {
+    let (reconnect, hydrates): (bool, Vec<Hydrate>) = STATE.with_borrow_mut(|s| {
         s.open = true;
         s.retries = 0;
+        let reconnect = std::mem::replace(&mut s.opened_once, true);
         let queue = std::mem::take(&mut s.queue);
         if let Some(socket) = &s.socket {
             for message in queue {
                 let _ = socket.send_with_str(&message);
             }
         }
-        s.listeners
+        let hydrates = s
+            .listeners
             .values()
             .filter_map(|l| l.hydrate.clone())
-            .collect()
+            .collect();
+        (reconnect, hydrates)
     });
     // Every open, the first and each reconnect: events sent while the socket
     // was down were missed, so the listening pages read their state again.
     for hydrate in hydrates {
         hydrate();
+    }
+    if reconnect {
+        RECONNECTS.with(|n| n.update(|n| *n += 1));
     }
 }
 
@@ -174,7 +204,8 @@ fn on_message(event: MessageEvent) {
 }
 
 fn on_close() {
-    let (pending, delay) = STATE.with_borrow_mut(|s| {
+    let (pending, delay, was_open) = STATE.with_borrow_mut(|s| {
+        let was_open = s.open;
         s.open = false;
         s.socket = None;
         s.queue.clear();
@@ -182,12 +213,28 @@ fn on_close() {
             .saturating_mul(1 << s.retries.min(5))
             .min(MAX_BACKOFF_MS);
         s.retries += 1;
-        (std::mem::take(&mut s.pending), delay)
+        (std::mem::take(&mut s.pending), delay, was_open)
     });
     let closed = JsValue::from_str("Lost the connection to QuiltSync");
     for (_, (_, reject)) in pending {
         let _ = reject.call1(&JsValue::NULL, &closed);
     }
+    if was_open {
+        retry_after(delay);
+        return;
+    }
+    // A socket that never opened: the engine is down, or it refused the token.
+    // The browser hides the upgrade's status, so ask over plain HTTP.
+    wasm_bindgen_futures::spawn_local(async move {
+        if token_refused().await {
+            refuse();
+        } else {
+            retry_after(delay);
+        }
+    });
+}
+
+fn retry_after(delay: i32) {
     let retry = Closure::once_into_js(|| {
         let _ = connect();
     });
@@ -195,6 +242,49 @@ fn on_close() {
         let _ = window
             .set_timeout_with_callback_and_timeout_and_arguments_0(retry.unchecked_ref(), delay);
     }
+}
+
+/// Whether the engine answers 401 to this page's token. An engine that does
+/// not answer at all is down, not refusing.
+async fn token_refused() -> bool {
+    let (Some(window), Some(token)) = (web_sys::window(), token()) else {
+        return false;
+    };
+    let url = format!("/ws?t={}", urlencoding::encode(&token));
+    let Ok(response) = JsFuture::from(window.fetch_with_str(&url)).await else {
+        return false;
+    };
+    response
+        .dyn_into::<web_sys::Response>()
+        .is_ok_and(|r| r.status() == 401)
+}
+
+/// Stop reconnecting, fail what is queued, and show one banner.
+fn refuse() {
+    let pending = STATE.with_borrow_mut(|s| {
+        s.refused = true;
+        s.queue.clear();
+        std::mem::take(&mut s.pending)
+    });
+    let refused = JsValue::from_str(REFUSED);
+    for (_, (_, reject)) in pending {
+        let _ = reject.call1(&JsValue::NULL, &refused);
+    }
+    web_sys::console::error_1(&format!("ws: the engine refused the token. {REFUSED}").into());
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let (Ok(banner), Some(body)) = (document.create_element("div"), document.body()) else {
+        return;
+    };
+    let _ = banner.set_attribute("role", "alert");
+    let _ = banner.set_attribute(
+        "style",
+        "position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:12px 16px;\
+         background:#b3261e;color:#fff;font:600 14px/1.4 system-ui,sans-serif;text-align:center",
+    );
+    banner.set_text_content(Some(REFUSED));
+    let _ = body.append_child(&banner);
 }
 
 /// Send one command and resolve with its `ok` value as JSON text.

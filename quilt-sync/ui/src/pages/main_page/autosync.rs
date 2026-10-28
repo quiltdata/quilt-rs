@@ -333,6 +333,7 @@ where
     LocalResource::new(move || {
         reload.track();
         refresh.track();
+        crate::tauri::reconnects();
         fetch()
     })
 }

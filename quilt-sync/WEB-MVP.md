@@ -20,11 +20,13 @@ machine that doesn't have the source tree.
 
 ```sh
 cargo run -p quilt-sync -- --headless \
-  [--bind 127.0.0.1] [--port 7878] [--data-dir <path>]
+  [--bind 127.0.0.1] [--port 7878] [--data-dir <path>] [--reset-token]
 ```
 
 It prints `QuiltSync headless: http://localhost:7878/?t=<token>`. Open that
-URL; the UI keeps the token for the session. Ctrl-C stops it.
+URL; the UI keeps the token for the session. Ctrl-C stops it. Started again on
+the same data folder and port, it prints the same link, and an open tab
+reconnects by itself (see [Restarts](#restarts)).
 
 - `--bind <ip>`: the address to listen on, `127.0.0.1` by default. With
   `0.0.0.0` the server warns that everything, the token included, travels as
@@ -35,6 +37,34 @@ URL; the UI keeps the token for the session. Ctrl-C stops it.
   (`~/Library/Application Support/com.quiltdata.quilt-sync` on macOS). The
   environment variable `QUILTSYNC_DATA_DIR` sets it too, in both modes
   (`--data-dir` wins). Use a temp folder for tests and experiments.
+- `--reset-token`: make a new token before starting, so every link handed
+  out before stops working.
+
+## Restarts
+
+The token lives in `<data dir>/web-token` (mode 0600, written to a temp file
+and renamed), made on the first start and reused after that by the headless
+run and the desktop app alike. Only the engine that holds the engine lock
+reads or makes it; a desktop app that failed to take the lock uses a fresh
+token for that run.
+
+- **Ports.** Headless keeps `7878` unless `--port` says otherwise. The
+  desktop app remembers its last port in `<data dir>/web-port`, tries it
+  first, falls back to a random port when it is taken, and saves the new one.
+- **Reconnects.** When the socket drops, the page retries with the same token
+  (back-off from 0.5 s up to 10 s). On reopen it re-runs every listener's
+  `on_registered` read and bumps `tauri::reconnects()`, a tracked counter the
+  main page's reads and the v2 page scaffold (`PageHandle::read`) follow, so
+  they read again without a page reload.
+- **A reset token.** A socket that closes before opening makes the page ask
+  `GET /ws?t=<token>` over plain HTTP, since the browser hides the upgrade's
+  status. A 401 means the token was reset: the page stops retrying, fails its
+  requests, logs a console error and shows one banner, "QuiltSync was
+  restarted with a new link. Open the link it printed."
+- **Resetting.** `--reset-token` (headless), or the shared command
+  `reset_web_token`, which writes a new token to `web-token`. It takes effect
+  at the next start: the running server keeps the token it started with.
+  There is no UI for it.
 
 ## One engine per data folder
 
@@ -54,7 +84,7 @@ trusts it only while the lock is held by someone else.
   single-instance plugin.
 - The desktop app takes the lock before it starts its services.
   `engine_lock::publish(url, token)` writes `engine.json` once a server is
-  up; only the headless run calls it so far.
+  up.
 
 ## Host check
 
@@ -65,11 +95,12 @@ and the headless run says so.
 
 ## The desktop app
 
-The desktop app starts the server at launch, on a random local port with a
-fresh token, and its window loads `http://127.0.0.1:<port>/?t=<token>`: the
-window is a page of the server and talks to the backend over the same
-WebSocket as a browser, not over Tauri IPC. The window keeps the label
-`main`; it is built in `setup` (`main.rs`), not in `tauri.conf.json`.
+The desktop app starts the server at launch, on its last port (or a random
+one) with the saved token (see [Restarts](#restarts)), and its window loads
+`http://127.0.0.1:<port>/?t=<token>`: the window is a page of the server and
+talks to the backend over the same WebSocket as a browser, not over Tauri
+IPC. The window keeps the label `main`; it is built in `setup` (`main.rs`),
+not in `tauri.conf.json`.
 
 - **WebSocket mode** is chosen by the token alone (`tauri::is_web_mode` in the
   UI): a page with a token uses the socket even when Tauri injects
@@ -143,13 +174,19 @@ The recipe builds the debug binary and the UI, installs the pinned
 own `quilt-sync --headless --port 0` on a fresh temp folder (data folder, home
 folder and `HOME`), sets the home with the `setup` command over the WebSocket
 (quicker than the folder browser), and stops it with Ctrl-C at
-the end. A debug build sends no telemetry. To run the suite without the
+the end. `quiltsync.restart()` stops it and starts it again on the same data
+folder and port (with `--reset-token` when asked); `restart.spec.ts` uses it
+to check that an open page reconnects and re-reads, and that a reset token
+shows the banner. A debug build sends no telemetry. To run the suite without the
 recipe, build first, then `npx playwright test` in `quilt-sync/e2e`;
 `QUILTSYNC_BIN` points it at another binary. It is not part of `just ci`.
 
 ## Known limits
 
-- Plain HTTP only, one token per run, no expiry, no rate limit.
+- Plain HTTP only, one token per data folder until reset, no expiry, no rate
+  limit.
+- Only the main page and the v2 pages read again after a reconnect; the v1
+  pages pick up only what their `on_registered` reads cover.
 - Desktop-only commands (OAuth login, the folder picker, the clipboard,
   installing an update, confirming a quit) answer
   `not available in the browser`; the UI uses its own folder browser for

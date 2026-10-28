@@ -218,6 +218,7 @@ commands! {
         quit_prompt_shown(generation: u64) -> ();
         quit_cancel() -> ();
         bench_report(text: String) -> ();
+        reset_web_token() -> ();
     }
     desktop_plain {
         login_oauth(host: String, back: Option<String>) -> String;
@@ -342,7 +343,7 @@ mod tests {
     /// a window.
     #[test]
     fn every_command_has_an_arm() {
-        assert_eq!(SHARED.len() + DESKTOP_ONLY.len(), 87);
+        assert_eq!(SHARED.len() + DESKTOP_ONLY.len(), 88);
         for name in SHARED {
             let Err(Value::String(err)) = parse(name, Value::String("not args".into())) else {
                 panic!("{name}: arguments of the wrong shape were accepted");

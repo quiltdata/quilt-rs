@@ -22,6 +22,13 @@ pub fn is_web_mode() -> bool {
     ws::token().is_some()
 }
 
+/// How many times the WebSocket reconnected, as a tracked read: a read that
+/// calls it runs again after the engine comes back, since what changed while
+/// the page was cut off reached it as no event. Always 0 outside web mode.
+pub fn reconnects() -> u32 {
+    ws::reconnects()
+}
+
 /// What the backend answers a desktop-only command when it is not the
 /// desktop app.
 pub const NOT_IN_BROWSER: &str = "not available in the browser";

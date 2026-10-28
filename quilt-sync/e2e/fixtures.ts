@@ -24,11 +24,16 @@ export interface QuiltSync {
   url(path: string): string;
   /** Run a backend command over the WebSocket, as the UI does. */
   call<T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T>;
+  /**
+   * Stop the engine with Ctrl-C and start it again on the same data folder
+   * and port, with `--reset-token` when asked. `token` follows the new run.
+   */
+  restart(options?: { resetToken?: boolean }): Promise<void>;
 }
 
 /** Start `quilt-sync --headless` and wait for the line with its address. */
-async function start(dataDir: string, fakeHome: string, log: string[]) {
-  const child = spawn(BINARY, ["--headless", "--port", "0", "--data-dir", dataDir], {
+async function start(dataDir: string, fakeHome: string, log: string[], extra: string[] = ["--port", "0"]) {
+  const child = spawn(BINARY, ["--headless", "--data-dir", dataDir, ...extra], {
     env: {
       ...process.env,
       // Nothing the backend reads from the user's home (AWS profiles, ignore
@@ -102,19 +107,24 @@ export const test = base.extend<{ quiltsync: QuiltSync }>({
     // reports resolved paths.
     const root = await realpath(await mkdtemp(join(tmpdir(), "quiltsync-e2e-")));
     const log: string[] = [];
-    const { child, address } = await start(join(root, "data"), join(root, "user"), log);
+    let { child, address } = await start(join(root, "data"), join(root, "user"), log);
     const origin = address.origin;
-    const token = address.searchParams.get("t")!;
     const quiltsync: QuiltSync = {
       origin,
-      token,
+      token: address.searchParams.get("t")!,
       home: join(root, "home"),
       url(path) {
         const url = new URL(path, origin);
-        url.searchParams.set("t", token);
+        url.searchParams.set("t", quiltsync.token);
         return url.toString();
       },
-      call: (cmd, args = {}) => call(origin, token, cmd, args),
+      call: (cmd, args = {}) => call(origin, quiltsync.token, cmd, args),
+      async restart({ resetToken = false } = {}) {
+        await stop(child);
+        const extra = ["--port", address.port, ...(resetToken ? ["--reset-token"] : [])];
+        ({ child, address } = await start(join(root, "data"), join(root, "user"), log, extra));
+        quiltsync.token = address.searchParams.get("t")!;
+      },
     };
     try {
       // The Setup page asks for this folder with a native picker.

@@ -58,6 +58,7 @@ struct Headless {
     bind: std::net::IpAddr,
     port: u16,
     data_dir: Option<std::path::PathBuf>,
+    reset_token: bool,
 }
 
 /// `QUILTSYNC_DATA_DIR`, which replaces the data folder in both modes.
@@ -67,7 +68,8 @@ fn data_dir_from_env() -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
 }
 
-/// `--headless [--bind <ip>] [--port <n>] [--data-dir <path>]`, or `None`
+/// `--headless [--bind <ip>] [--port <n>] [--data-dir <path>] [--reset-token]`,
+/// or `None`
 /// for the desktop app.
 fn parse_headless() -> Option<Headless> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -88,6 +90,7 @@ fn parse_headless() -> Option<Headless> {
         bind,
         port,
         data_dir,
+        reset_token: args.iter().any(|a| a == "--reset-token"),
     })
 }
 
@@ -116,6 +119,12 @@ fn run_headless(opts: &Headless) {
             std::process::exit(1);
         }
     }
+    if opts.reset_token
+        && let Err(err) = engine_lock::reset_web_token()
+    {
+        eprintln!("failed to make a new token: {err}");
+        std::process::exit(1);
+    }
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -125,7 +134,7 @@ fn run_headless(opts: &Headless) {
         let services = services::Services::init(data_dir, version)
             .await
             .expect("failed to start the services");
-        let token = server::new_token();
+        let token = engine_lock::web_token();
         let addr = server::serve(
             Arc::clone(&services),
             std::net::SocketAddr::new(opts.bind, opts.port),
@@ -244,6 +253,29 @@ fn main_window(app: &tauri::App, url: &str, ipc: bool) -> Result {
     Ok(())
 }
 
+/// Start the desktop app's server with the saved token, on its last port
+/// when that is free, so a browser tab opened on an earlier run reconnects.
+fn serve_desktop(services: &Arc<services::Services>) -> Result<(std::net::SocketAddr, String)> {
+    let token = engine_lock::web_token();
+    let serve_on = |port: u16| {
+        tauri::async_runtime::block_on(server::serve(
+            Arc::clone(services),
+            std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+            token.clone(),
+        ))
+    };
+    let addr = match engine_lock::saved_port().map(serve_on) {
+        Some(Ok(addr)) => addr,
+        Some(Err(err)) => {
+            info!("the last port is taken ({err}); picking another");
+            serve_on(0)?
+        }
+        None => serve_on(0)?,
+    };
+    engine_lock::save_port(addr.port());
+    Ok((addr, token))
+}
+
 fn main() {
     env::init();
 
@@ -299,12 +331,7 @@ fn main() {
 
             // The window is a page of the UI server, talking to the backend
             // over the same WebSocket a browser uses.
-            let token = server::new_token();
-            let addr = tauri::async_runtime::block_on(server::serve(
-                Arc::clone(&services),
-                std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
-                token.clone(),
-            ))?;
+            let (addr, token) = serve_desktop(&services)?;
             let url = format!("http://127.0.0.1:{}/?t={token}", addr.port());
             app.manage(tray::WebUiUrl(url.clone()));
             engine_lock::publish(&format!("http://127.0.0.1:{}", addr.port()), &token);

@@ -9,6 +9,10 @@
 //! While holding the lock, an engine that serves a browser writes
 //! `<data dir>/engine.json` with its address. A second start reads that file,
 //! and trusts it only while the lock is still held by someone else.
+//!
+//! The engine that holds the lock also keeps the browser's token in
+//! `<data dir>/web-token`, so a tab opened on an earlier run reconnects after a
+//! restart, and the desktop app's last port in `<data dir>/web-port`.
 
 use std::fs;
 use std::io;
@@ -24,6 +28,8 @@ use crate::telemetry::prelude::*;
 
 const LOCK_FILE: &str = "engine.lock";
 const INFO_FILE: &str = "engine.json";
+const TOKEN_FILE: &str = "web-token";
+const PORT_FILE: &str = "web-port";
 
 /// What a running engine publishes in `engine.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,17 +131,77 @@ impl EngineLock {
             token: token.to_owned(),
             version: env!("CARGO_PKG_VERSION").to_owned(),
         };
-        let tmp = self.data_dir.join(format!("{INFO_FILE}.tmp"));
-        let mut options = fs::OpenOptions::new();
-        options.create(true).truncate(true).write(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let mut file = options.open(&tmp)?;
-        file.write_all(serde_json::to_string_pretty(&info)?.as_bytes())?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(tmp, self.data_dir.join(INFO_FILE))
+        write_private(
+            &self.data_dir.join(INFO_FILE),
+            serde_json::to_string_pretty(&info)?.as_bytes(),
+        )
     }
+
+    /// The token in `web-token`, made and saved first when there is none.
+    ///
+    /// # Errors
+    ///
+    /// When the file cannot be read or written.
+    pub fn web_token(&self) -> io::Result<String> {
+        match fs::read_to_string(self.data_dir.join(TOKEN_FILE)) {
+            Ok(text) if is_token(text.trim()) => Ok(text.trim().to_owned()),
+            Ok(_) => self.new_web_token(),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => self.new_web_token(),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Replace `web-token` with a fresh token and return it.
+    ///
+    /// # Errors
+    ///
+    /// When the file cannot be written.
+    pub fn new_web_token(&self) -> io::Result<String> {
+        let token = crate::server::new_token();
+        write_private(&self.data_dir.join(TOKEN_FILE), token.as_bytes())?;
+        Ok(token)
+    }
+
+    /// The port saved in `web-port`, if any.
+    #[must_use]
+    pub fn saved_port(&self) -> Option<u16> {
+        fs::read_to_string(self.data_dir.join(PORT_FILE))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+            .filter(|port| *port != 0)
+    }
+
+    /// Save `port` in `web-port`.
+    ///
+    /// # Errors
+    ///
+    /// When the file cannot be written.
+    pub fn save_port(&self, port: u16) -> io::Result<()> {
+        write_private(&self.data_dir.join(PORT_FILE), port.to_string().as_bytes())
+    }
+}
+
+/// A token as [`crate::server::new_token`] makes it: hex digits only.
+fn is_token(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Write `path` whole (owner-only on Unix): a temp file, then a rename.
+fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    let mut options = fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&tmp)?;
+    file.write_all(contents)?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(tmp, path)
 }
 
 /// The lock this process holds, kept until exit.
@@ -153,6 +219,47 @@ pub fn publish(url: &str, token: &str) {
         && let Err(err) = lock.write_info(url, token)
     {
         warn!("failed to write engine.json: {err}");
+    }
+}
+
+/// The browser's token: the saved one when this process holds the engine
+/// lock, otherwise (or when the file fails) a fresh one for this run only.
+#[must_use]
+pub fn web_token() -> String {
+    if let Some(lock) = HELD.lock().expect("engine lock").as_ref() {
+        match lock.web_token() {
+            Ok(token) => return token,
+            Err(err) => warn!("failed to read or write {TOKEN_FILE}: {err}"),
+        }
+    }
+    crate::server::new_token()
+}
+
+/// Save a fresh token for the next start. The running server keeps its own.
+///
+/// # Errors
+///
+/// When this process holds no engine lock or the file cannot be written.
+pub fn reset_web_token() -> io::Result<()> {
+    let held = HELD.lock().expect("engine lock");
+    let lock = held
+        .as_ref()
+        .ok_or_else(|| io::Error::other("this process is not the engine for its data folder"))?;
+    lock.new_web_token().map(drop)
+}
+
+/// The desktop app's last port, when this process holds the engine lock.
+#[must_use]
+pub fn saved_port() -> Option<u16> {
+    HELD.lock().expect("engine lock").as_ref()?.saved_port()
+}
+
+/// Remember `port` for the desktop app's next start.
+pub fn save_port(port: u16) {
+    if let Some(lock) = HELD.lock().expect("engine lock").as_ref()
+        && let Err(err) = lock.save_port(port)
+    {
+        warn!("failed to write {PORT_FILE}: {err}");
     }
 }
 
@@ -218,5 +325,52 @@ mod tests {
         assert!(dir.path().join(LOCK_FILE).exists());
         // The stale address is gone, so nobody trusts it.
         assert!(!dir.path().join(INFO_FILE).exists());
+    }
+
+    #[test]
+    fn the_token_and_the_port_survive_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let Acquired::Held(lock) = acquire(dir.path()).unwrap() else {
+            panic!("a fresh folder was locked");
+        };
+        let token = lock.web_token().unwrap();
+        assert!(is_token(&token));
+        assert_eq!(lock.web_token().unwrap(), token);
+        assert_eq!(lock.saved_port(), None);
+        lock.save_port(51234).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(dir.path().join(TOKEN_FILE))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        drop(lock);
+
+        let Acquired::Held(lock) = acquire(dir.path()).unwrap() else {
+            panic!("the folder was still locked");
+        };
+        assert_eq!(lock.web_token().unwrap(), token);
+        assert_eq!(lock.saved_port(), Some(51234));
+        let fresh = lock.new_web_token().unwrap();
+        assert_ne!(fresh, token);
+        assert_eq!(lock.web_token().unwrap(), fresh);
+    }
+
+    #[test]
+    fn a_damaged_token_file_is_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(TOKEN_FILE), "not a token\n").unwrap();
+        let Acquired::Held(lock) = acquire(dir.path()).unwrap() else {
+            panic!("a fresh folder was locked");
+        };
+        let token = lock.web_token().unwrap();
+        assert!(is_token(&token));
+        assert_eq!(
+            fs::read_to_string(dir.path().join(TOKEN_FILE)).unwrap(),
+            token
+        );
     }
 }
