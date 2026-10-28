@@ -35,7 +35,8 @@ pub struct AgentSettings {
     #[serde(default)]
     pub trust_all: bool,
     /// Variables set for the agent, over `QuiltSync`'s environment and the login
-    /// shell's PATH.
+    /// shell's PATH. Values are taken as written: a `PATH` here replaces the
+    /// login shell's, and `$PATH` in it is not expanded.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
 }

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
@@ -65,14 +66,7 @@ pub async fn run(
             reason: "the agent's command is empty".to_string(),
         };
     };
-    let mut command = tokio::process::Command::new(program);
-    // Set before the agent's own `env`, which may override it. On Unix a bare
-    // `program` is looked up on the PATH set here.
-    if let Some(path) = login_path().await {
-        command.env("PATH", path);
-    }
-    let spawned = command
-        .envs(&agent.env)
+    let spawned = command(program, &agent.env, login_path().await)
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::piped())
@@ -100,6 +94,21 @@ pub async fn run(
     let outcome = converse(transport, cwd, agent.trust_all, recheck).await;
     let _ = child.kill().await;
     outcome
+}
+
+/// `program` with `path` as its PATH, then `env` over that. On Unix a bare
+/// `program` is looked up on the PATH it ends up with.
+fn command(
+    program: &str,
+    env: &BTreeMap<String, String>,
+    path: Option<&str>,
+) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(program);
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    command.envs(env);
+    command
 }
 
 async fn converse(
@@ -287,8 +296,6 @@ fn normalise(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::collections::BTreeMap;
 
     use agent_client_protocol::Channel;
     use agent_client_protocol::schema::v1::InitializeResponse;
@@ -478,34 +485,35 @@ mod tests {
         assert!(reported.is_some_and(|pid| pid > 0), "{reported:?}");
     }
 
+    /// What `$PATH $QUILTSYNC_TEST` reads in an agent started with `env` and
+    /// the login shell's PATH `path`.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    async fn agent_sees(env: &[(&str, &str)], path: Option<&str>) -> String {
+        let env = env
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let output = command("/bin/sh", &env, path)
+            .args(["-c", r#"printf '%s %s' "$PATH" "$QUILTSYNC_TEST""#])
+            .output()
+            .await
+            .expect("sh runs");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[tokio::test]
-    async fn the_agents_env_is_set_over_the_login_path() -> Result<(), std::io::Error> {
-        let cwd = tempfile::TempDir::new()?;
-        let agent = AgentSettings {
-            command: vec![
-                "/bin/sh".to_string(),
-                "-c".to_string(),
-                r#"printf '%s %s' "$PATH" "$QUILTSYNC_TEST" > seen"#.to_string(),
-            ],
-            trust_all: false,
-            env: BTreeMap::from([
-                ("PATH".to_string(), "/agent/bin".to_string()),
-                ("QUILTSYNC_TEST".to_string(), "set".to_string()),
-            ]),
-        };
-
-        run(
-            &agent,
-            cwd.path(),
-            async |_| {},
-            async || Ok("TASK.md".to_string()),
-        )
-        .await;
-
-        let seen = tokio::fs::read_to_string(cwd.path().join("seen")).await?;
-        assert_eq!(seen, "/agent/bin set");
-        Ok(())
+    async fn the_agent_gets_the_login_path_and_its_env_over_it() {
+        assert_eq!(
+            agent_sees(&[("QUILTSYNC_TEST", "set")], Some("/login/bin")).await,
+            "/login/bin set"
+        );
+        assert_eq!(
+            agent_sees(&[("PATH", "/agent/bin")], Some("/login/bin")).await,
+            "/agent/bin "
+        );
+        let own = std::env::var("PATH").unwrap_or_default();
+        assert_eq!(agent_sees(&[], None).await, format!("{own} "));
     }
 
     /// An in-process agent: it opens session `s1` and, prompted, asks to write
