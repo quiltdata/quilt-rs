@@ -27,6 +27,8 @@ pub struct Output {
     /// Requested paths not installed because the remote no longer holds their
     /// bytes (an unversioned bucket, overwritten since).
     skipped: Vec<std::path::PathBuf>,
+    /// Requested paths the copy already tracked, left as they are.
+    already_installed: Vec<std::path::PathBuf>,
     /// What `--keep-all` or `--keep-folder` set and downloaded.
     keep: Option<keep::Output>,
 }
@@ -39,11 +41,12 @@ impl Output {
 }
 
 impl Output {
-    /// The requested paths that were installed: every one but the skipped.
+    /// The requested paths that were installed now: every one but the
+    /// skipped and the already installed.
     fn installed(&self) -> impl Iterator<Item = &PathBuf> {
         self.paths
             .iter()
-            .filter(|path| !self.skipped.contains(path))
+            .filter(|path| !self.skipped.contains(path) && !self.already_installed.contains(path))
     }
 }
 
@@ -58,6 +61,9 @@ impl std::fmt::Display for Output {
             for path in installed {
                 output.push(format!("Path: \"{}\"", path.display()));
             }
+        }
+        for path in &self.already_installed {
+            output.push(format!("Already installed: \"{}\"", path.display()));
         }
         for path in &self.skipped {
             output.push(format!(
@@ -80,13 +86,18 @@ impl Render for Output {
                 .installed()
                 // Unlike every other payload's keys, these are the caller's
                 // own `&path=` and `--path` values echoed back, less the
-                // skipped ones — never matched against the manifest. A non-UTF-8 argument
+                // skipped and already installed ones — never matched against the manifest. A non-UTF-8 argument
                 // renders lossily here; it also matches no manifest key, so
                 // it installs nothing.
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
             "skipped": self
                 .skipped
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+            "already_installed": self
+                .already_installed
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
@@ -112,13 +123,6 @@ async fn install_package(
     let manifest_uri =
         quilt_rs::io::manifest::resolve_manifest_uri(remote, uri.catalog.as_ref(), uri).await?;
     Ok(local_domain.install_package(&manifest_uri).await?)
-}
-
-async fn install_paths(
-    installed_package: &quilt_rs::InstalledPackage,
-    paths: &[PathBuf],
-) -> Result<Vec<PathBuf>, Error> {
-    Ok(installed_package.install_paths(paths).await?.skipped)
 }
 
 fn get_entries(
@@ -157,11 +161,7 @@ pub async fn model(
     }
     let installed_package = install_package(local_domain, &uri, namespace).await?;
 
-    let skipped = if paths.is_empty() {
-        Vec::new()
-    } else {
-        install_paths(&installed_package, &paths).await?
-    };
+    let report = installed_package.install_paths(&paths).await?;
 
     let keep = match keep {
         Some(scope) => Some(keep::keep(&installed_package, Some(scope), download).await?),
@@ -171,7 +171,8 @@ pub async fn model(
     Ok(Output {
         installed_package,
         paths,
-        skipped,
+        skipped: report.skipped,
+        already_installed: report.already_installed,
         keep,
     })
 }
@@ -441,13 +442,72 @@ mod tests {
                 std::path::PathBuf::from("data/two.csv"),
             ],
             skipped: vec![std::path::PathBuf::from("data/two.csv")],
+            already_installed: Vec::new(),
             keep: None,
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/pkg","paths":["data/one.csv"],"skipped":["data/two.csv"],"keep":null}"#
+            r#"{"namespace":"test/pkg","paths":["data/one.csv"],"skipped":["data/two.csv"],"already_installed":[],"keep":null}"#
         );
+        Ok(())
+    }
+
+    /// A tracked path keeps its local edit and is reported as already
+    /// installed; the other requested path installs.
+    #[test(tokio::test)]
+    async fn live_tracked_path_is_already_installed_and_the_rest_install() -> Result<(), Error> {
+        let (m, temp_dir) = create_model_in_temp_dir().await?;
+        let working_dir = temp_dir.path().join(pkg::NAMESPACE_STR);
+        let readme = PathBuf::from(pkg::README_LK);
+        let timestamp = PathBuf::from(pkg::TIMESTAMP_LK);
+
+        model(
+            m.get_local_domain(),
+            Input {
+                namespace: None,
+                paths: Some(vec![readme.clone()]),
+                uri: pkg::URI.to_string(),
+                keep: None,
+                download: true,
+            },
+        )
+        .await?;
+        tokio::fs::write(working_dir.join(&readme), b"users edit").await?;
+
+        let output = model(
+            m.get_local_domain(),
+            Input {
+                namespace: None,
+                paths: Some(vec![readme.clone(), timestamp.clone()]),
+                uri: pkg::URI.to_string(),
+                keep: None,
+                download: true,
+            },
+        )
+        .await?;
+
+        assert_eq!(
+            output.to_json()["paths"],
+            serde_json::json!([pkg::TIMESTAMP_LK])
+        );
+        assert_eq!(
+            output.to_json()["already_installed"],
+            serde_json::json!([pkg::README_LK])
+        );
+        assert!(
+            format!("{output}").ends_with(&format!(
+                "Path: \"{}\"\nAlready installed: \"{}\"",
+                pkg::TIMESTAMP_LK,
+                pkg::README_LK
+            )),
+            "{output}"
+        );
+        assert_eq!(
+            tokio::fs::read(working_dir.join(&readme)).await?,
+            b"users edit"
+        );
+        assert!(working_dir.join(&timestamp).exists());
         Ok(())
     }
 
@@ -471,12 +531,14 @@ mod tests {
             installed_package: created.installed_package,
             paths: vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")],
             skipped: vec![PathBuf::from("b.txt")],
+            already_installed: vec![PathBuf::from("c.txt")],
             keep: None,
         };
 
         assert!(
             format!("{output}").ends_with(concat!(
                 "\nPath: \"a.txt\"",
+                "\nAlready installed: \"c.txt\"",
                 "\nSkipped: \"b.txt\" (no longer on the remote)"
             )),
             "{output}"
@@ -525,12 +587,13 @@ mod tests {
             installed_package: created.installed_package,
             paths: Vec::new(),
             skipped: Vec::new(),
+            already_installed: Vec::new(),
             keep: None,
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/bare","paths":[],"skipped":[],"keep":null}"#
+            r#"{"namespace":"test/bare","paths":[],"skipped":[],"already_installed":[],"keep":null}"#
         );
         Ok(())
     }

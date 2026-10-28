@@ -1,6 +1,4 @@
 use std::collections::BTreeMap;
-use std::collections::HashSet;
-use std::collections::hash_map::RandomState;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -39,6 +37,9 @@ pub struct InstallPathsReport {
     /// bucket whose object a later revision replaced. Empty when every
     /// requested path was installed.
     pub skipped: Vec<PathBuf>,
+    /// Requested paths the copy already tracked, so they were left as they
+    /// are and not written: the working file may hold edits not yet committed.
+    pub already_installed: Vec<PathBuf>,
 }
 
 /// Fetches a row's object into the store, but only if the bytes are the row's.
@@ -283,30 +284,11 @@ pub(crate) enum OnMismatch {
     Skip,
 }
 
-/// Refuses the whole call if any requested path is already installed.
-///
-/// The check reads `lineage.paths`, not the working tree: "already installed"
-/// means this copy tracks the path, and so may hold edits in it that writing
-/// over would destroy with nothing to recover them from.
-fn refuse_already_installed(lineage: &PackageLineage, entries_paths: &[&PathBuf]) -> Res {
-    debug!("🔍 Checking for already installed paths");
-    if !lineage
-        .paths
-        .keys()
-        .collect::<HashSet<&PathBuf, RandomState>>()
-        .is_disjoint(&entries_paths.iter().copied().collect::<HashSet<_>>())
-    {
-        debug!("❌ Found paths that are already installed");
-        return Err(Error::InstallPath(InstallPathError::AlreadyInstalled));
-    }
-    Ok(())
-}
-
 /// Refuses the whole call if any requested path already has a file in the
 /// working folder.
 ///
-/// Complements [`refuse_already_installed`]: a path this copy does not track can
-/// still hold the user's own new file, and that is uncommitted work too.
+/// A path this copy does not track can still hold the user's own new file, and
+/// that is uncommitted work too.
 async fn refuse_existing_working_files(
     storage: &impl Storage,
     working_dir: &Path,
@@ -328,20 +310,21 @@ async fn refuse_existing_working_files(
     Ok(())
 }
 
-/// Installs paths this copy does not already hold, refusing the whole call if
-/// any of them is already installed or already has a file in the working
-/// folder.
+/// Installs paths this copy does not already hold. A path it already tracks is
+/// left as it is and reported in
+/// [`already_installed`](InstallPathsReport::already_installed). The whole call
+/// is refused if an untracked path already has a file in the working folder.
 ///
-/// Returns the new lineage and the paths it **skipped**: rows whose bytes the
-/// remote no longer holds (see [`OnMismatch::Skip`]). A skipped path is neither
-/// placed nor tracked, and nothing of it enters the object store, so asking for
-/// it again fetches afresh.
+/// Returns the new lineage and the report. Its `skipped` paths are rows whose
+/// bytes the remote no longer holds (see [`OnMismatch::Skip`]). A skipped path
+/// is neither placed nor tracked, and nothing of it enters the object store, so
+/// asking for it again fetches afresh.
 ///
 /// This is the verb a user reaches, directly or through
 /// [`InstalledPackage::install_paths`](crate::InstalledPackage::install_paths).
 /// Writing over a path someone is editing loses work that was never committed
-/// and cannot be recovered, so asking for one is refused rather than guessed
-/// at. The reconcile, whose paths are known to carry no local edit, uses
+/// and cannot be recovered, so a tracked path is never written here. The
+/// reconcile, whose paths are known to carry no local edit, uses
 /// [`install_paths_over`] instead — a separate entry point rather than a flag
 /// on this one, so that overwriting is something a caller *chooses by name*
 /// and cannot reach from outside this crate at all.
@@ -355,12 +338,14 @@ pub async fn install_paths(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     entries_paths: &[&PathBuf],
-) -> Res<(PackageLineage, Vec<PathBuf>)> {
-    refuse_already_installed(&lineage, entries_paths)?;
-    refuse_existing_working_files(storage, &working_dir, entries_paths).await?;
+) -> Res<(PackageLineage, InstallPathsReport)> {
+    let (already_installed, untracked): (Vec<&PathBuf>, Vec<&PathBuf>) = entries_paths
+        .iter()
+        .partition(|path| lineage.paths.contains_key(**path));
+    refuse_existing_working_files(storage, &working_dir, &untracked).await?;
     // Checked up front so a refusal fetches nothing, and again at placement
     // (`Protect::Absent`) because a file can appear during the fetch.
-    install_paths_over(
+    let (lineage, skipped) = install_paths_over(
         lineage,
         manifest,
         paths,
@@ -368,11 +353,17 @@ pub async fn install_paths(
         namespace,
         storage,
         remote,
-        entries_paths,
+        &untracked,
         &Protect::Absent,
         OnMismatch::Skip,
     )
-    .await
+    .await?;
+    let report = InstallPathsReport {
+        paths: lineage.paths.clone(),
+        skipped,
+        already_installed: already_installed.into_iter().cloned().collect(),
+    };
+    Ok((lineage, report))
 }
 
 /// Installs paths **over** whatever the working tree already holds for them.
@@ -1007,9 +998,62 @@ mod tests {
         Ok(())
     }
 
-    /// A tracked path may hold edits, so asking for it refuses the whole call.
+    /// A tracked path may hold edits, so it is left as it is and reported,
+    /// and the other requested paths install.
     #[test(tokio::test)]
-    async fn a_tracked_path_is_refused() -> Res {
+    async fn a_tracked_path_is_reported_and_the_rest_install() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
+        let namespace = Namespace::from(("foo", "bar"));
+        let package_home = paths::package_home(&home, &namespace);
+        let storage = MockStorage::default();
+
+        let mut manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let new_path = PathBuf::from("less-then-8mb.txt");
+        let hash: multihash::Multihash<256> =
+            manifest.get_record(&new_path).unwrap().hash.clone().into();
+        storage
+            .write_byte_stream(
+                home.join(domain_paths.object(hash.digest())),
+                ByteStream::default(),
+            )
+            .await?;
+
+        let tracked = PathBuf::from("a/a");
+        let edited_file = package_home.join(&tracked);
+        storage
+            .write_byte_stream(&edited_file, ByteStream::from_static(b"users edit"))
+            .await?;
+        let mut lineage = PackageLineage {
+            remote_uri: Some(ManifestUri::default()),
+            ..PackageLineage::default()
+        };
+        lineage.paths.insert(tracked.clone(), PathState::default());
+
+        let (lineage, report) = install_paths(
+            lineage,
+            &mut manifest,
+            domain_paths,
+            package_home.clone(),
+            namespace,
+            &storage,
+            &MockRemote::default(),
+            &[&tracked, &new_path],
+        )
+        .await?;
+
+        assert_eq!(report.already_installed, vec![tracked.clone()]);
+        assert_eq!(report.skipped, Vec::<PathBuf>::new());
+        assert!(lineage.paths.contains_key(&new_path));
+        assert!(storage.exists(&package_home.join(&new_path)).await);
+        assert_eq!(storage.read_bytes(&edited_file).await?, b"users edit");
+
+        Ok(())
+    }
+
+    /// Every requested path tracked: nothing is fetched and the call succeeds.
+    #[test(tokio::test)]
+    async fn only_tracked_paths_succeed_and_fetch_nothing() -> Res {
         let (domain_paths, _temp_dir) = &DomainPaths::from_temp_dir()?;
         let storage = MockStorage::default();
         let tracked = PathBuf::from("a/a");
@@ -1019,8 +1063,9 @@ mod tests {
         };
         lineage.paths.insert(tracked.clone(), PathState::default());
 
-        let result = install_paths(
-            lineage,
+        // The manifest has no row for the path, so a fetch would fail
+        let (lineage, report) = install_paths(
+            lineage.clone(),
             &mut Manifest::default(),
             domain_paths,
             PathBuf::from("work"),
@@ -1029,12 +1074,11 @@ mod tests {
             &MockRemote::default(),
             &[&tracked],
         )
-        .await;
+        .await?;
 
-        assert!(matches!(
-            result,
-            Err(Error::InstallPath(InstallPathError::AlreadyInstalled))
-        ));
+        assert_eq!(report.already_installed, vec![tracked]);
+        assert_eq!(report.paths, lineage.paths);
+        assert_eq!(lineage.paths.len(), 1);
 
         Ok(())
     }

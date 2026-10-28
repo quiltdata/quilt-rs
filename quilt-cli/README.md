@@ -96,8 +96,11 @@ Under `--json`, `ignored` holds the `files` and `folders` counts, and with
 
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
-`&path=` parameter in the URI, unless `--keep-all` or `--keep-folder` sets what
-the package keeps, as `keep` does.
+`&path=` parameter in the URI. A path the package already tracks is left as
+it is and listed as `Already installed: "<path>"` (`already_installed` under
+`--json`); the other paths install.
+Unless `--no-download` is given, `--keep-all` or `--keep-folder` also downloads
+what the package then keeps, as `keep` does.
 
 `keep` sets which of a package's files this copy keeps: `--files`, the files
 you picked (the default); `--all`, every file in the package; or
