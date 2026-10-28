@@ -19,23 +19,21 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.50.0-dev]
+## [v0.50.0] - 2026-10-28
 
 ### Added
 
-- `SyncScope::Folders` keeps every file under chosen folders, files added there later included; `SyncScope::folders` builds it in one stored form, a list naming the package root is the entire package, and a folder with a `..` part is refused with `LineageError::FolderOutsidePackage` (<https://github.com/quiltdata/quilt-rs/pull/1229>)
-- `InstalledPackage::backlog` lists the current revision's files the stored scope covers that are not here yet, and `DownloadCounts` counts them in `backlog`, leaving out the paths that already have a file here, which `InstalledPackage::untracked_on_disk` lists; `InstalledPackage::keep` stores a scope and downloads that backlog under one package lock, and `InstalledPackage::kept` reads the scope and the backlog's size under it (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `SyncScope::Folders` keeps every file under chosen folders, including files added there later. A folder with a `..` part is refused with `LineageError::FolderOutsidePackage` (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `InstalledPackage::keep` stores what a package keeps and downloads the files it is missing; `InstalledPackage::kept` reads the setting and how much is left to download; `InstalledPackage::backlog` lists those files (<https://github.com/quiltdata/quilt-rs/pull/1229>)
 
 ### Changed
 
-- `SyncScope` is no longer `Copy`, and `covers_untracked` takes the path it asks about (<https://github.com/quiltdata/quilt-rs/pull/1229>)
-- A `sync_scope` value this version does not know reads as individual files, so `data.json` still loads (<https://github.com/quiltdata/quilt-rs/pull/1229>)
-- **Breaking:** `InstalledPackage::pull` returns `flow::Pulled`: `UpToDate` when the remote's `latest` is the revision the package already has, `Applied` with the `PullReport` otherwise. `PackageOpError::AlreadyUpToDate` is removed (<https://github.com/quiltdata/quilt-rs/pull/1227>)
-- A pull with nothing to fetch still saves the `latest` it read (<https://github.com/quiltdata/quilt-rs/pull/1227>)
-- **Breaking:** `InstalledPackage::push` and `LockedPackage::push` return `Pushed`: `NothingToPush` when there is no pending commit, `Uploaded` with the `PushOutcome` otherwise. A push with no pending commit no longer fails with `PackageOpError::Push("No commits to push")` (<https://github.com/quiltdata/quilt-rs/pull/1230>)
-- **Breaking:** `flow::install_paths` and `InstalledPackage::install_paths` leave a path the copy already tracks as it is, report it in the new `InstallPathsReport::already_installed`, and install the rest, instead of refusing the whole call. `InstallPathError::AlreadyInstalled` is removed. `flow::install_paths` returns `(PackageLineage, InstallPathsReport)` (<https://github.com/quiltdata/quilt-rs/pull/1239>)
-- **Breaking:** `InstalledPackage::commit` and `LockedPackage::commit` return `flow::Committed`, and `flow::commit` returns it with the lineage: `NothingToCommit` when the new top hash is the current revision's, so no commit is recorded and the workflow is not checked again; `Recorded` with the `CommitState` otherwise (<https://github.com/quiltdata/quilt-rs/pull/1242>)
-- **Breaking:** `PublishOutcome` gains `NothingToPublish`: a publish with no pending commit and nothing new to commit pushes nothing and writes no tag. `PublishOutcome::push` returns an `Option` (<https://github.com/quiltdata/quilt-rs/pull/1242>)
+- **Breaking:** pull, push, commit and publish report when there is nothing to do instead of failing. `InstalledPackage::pull` returns `flow::Pulled` (`UpToDate` or `Applied`), `push` returns `Pushed` (`NothingToPush` or `Uploaded`), `commit` returns `flow::Committed` (`NothingToCommit` or `Recorded`), and `PublishOutcome` gains `NothingToPublish`. `PackageOpError::AlreadyUpToDate` is removed
+  - <https://github.com/quiltdata/quilt-rs/pull/1227>
+  - <https://github.com/quiltdata/quilt-rs/pull/1230>
+  - <https://github.com/quiltdata/quilt-rs/pull/1242>
+- **Breaking:** `install_paths` installs the paths not yet tracked and lists the others in `InstallPathsReport::already_installed`, instead of refusing the whole call. `InstallPathError::AlreadyInstalled` is removed, and `flow::install_paths` returns `(PackageLineage, InstallPathsReport)` (<https://github.com/quiltdata/quilt-rs/pull/1239>)
+- **Breaking:** `SyncScope` is no longer `Copy`, and `covers_untracked` takes the path it asks about (<https://github.com/quiltdata/quilt-rs/pull/1229>)
 
 ## [v0.49.0] - 2026-10-26
 

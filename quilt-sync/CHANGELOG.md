@@ -19,32 +19,35 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.25.1-dev]
+## [v0.26.0] - 2026-10-28
 
 ### Added
 
-- **Experimental**: with *Agent tasks* on, the Settings page has an *Agent tasks* card for choosing which buckets can ask this computer to run a task, and which local agents run it, instead of editing `task_settings.json` by hand (<https://github.com/quiltdata/quilt-rs/pull/1225>)
+- **Experimental**: agent tasks can be set up in Settings. With *Agent tasks* on, the Settings page has an *Agent tasks* card for choosing which buckets can ask this computer to run a task and which local agents run it. The revision a task publishes says how many files it added, changed and removed. Agents run with the PATH of your login shell, so they find your tools
+  - <https://github.com/quiltdata/quilt-rs/pull/1224>
+  - <https://github.com/quiltdata/quilt-rs/pull/1225>
+  - <https://github.com/quiltdata/quilt-rs/pull/1236>
 
 ### Changed
 
-- Group headings on the main page stand out from the package and file rows below them (<https://github.com/quiltdata/quilt-rs/pull/1220>)
-- **New design preview**: the main page scrolls as one page, so the wheel moves the package or file list from anywhere in the window. The bar, *Autosync*, *Accounts*, *Needs your attention* and the list's toolbar stay in place above it. A long *Needs your attention* scrolls in its own box, up to a third of the window. Group headings stay under the toolbar while their rows scroll. A long activity line in the bar shows over the page instead of pushing it down (<https://github.com/quiltdata/quilt-rs/pull/1223>)
-- **New design preview**: the package page shows *Bucket and catalog* for every package, with one button that opens the bucket dialog: *Choose* for a package with no bucket yet, *Change* otherwise. The header no longer offers *Choose S3 bucket* or *Change bucket*. Long bucket and catalog names fit on one line. *Revisions you have* is now *History*, at the top of *Revision*. The pane is wider, so more of the revision message shows, and while loading it outlines all three sections (<https://github.com/quiltdata/quilt-rs/pull/1221>)
-- **New design preview**: the package page scrolls as one page, so the wheel moves the file list from anywhere in the window. The bar, the package header and the file search and toolbar stay in place above it, and folder headings stay under the toolbar while their files scroll. *Download* stays at the bottom of the window while files are ticked. In a wide window *Bucket and catalog*, *Revision* and *Keeping* stay beside the files; in a narrow one they sit side by side above the files. The file list has no card, and its checkboxes line up on its left edge, with a folder's expand arrow after its checkbox (<https://github.com/quiltdata/quilt-rs/pull/1228>)
-- The main page's attention queue is a status line with its rows below, not a card; when nothing needs you it reads *All packages are up to date* (<https://github.com/quiltdata/quilt-rs/pull/1222>)
-- Under the hood, an agent task's last revision says how many files the run added, changed and removed, and its message ends with *no changes* when there were none (<https://github.com/quiltdata/quilt-rs/pull/1224>)
-- Under the hood, an agent task runs with the PATH of the user's login shell, not launchd's bare one, so the agent finds the user's tools instead of searching the home folder for them and setting off macOS privacy prompts; an agent's `env` in `task_settings.json` sets variables over it (<https://github.com/quiltdata/quilt-rs/pull/1236>)
-- A package set with `quilt keep --folder` to keep chosen folders pulls the files under them. **New design preview**: *Keeping* names the folders and offers to download their files, and the main page counts them in *N to download* (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- A package set with `quilt keep --folder` keeps the files under its folders, and a pull downloads the new files there. **New design preview**: *Keeping* names the folders and offers to download their files, and the main page counts them in *N to download* (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- **New design preview**: the main page and the package page scroll as one page, so the mouse wheel moves the list from anywhere in the window, while the bar, toolbar and headings stay in place. On the package page, *Download* stays at the bottom while files are ticked, and *Bucket and catalog*, *Revision* and *Keeping* sit beside the files in a wide window and above them in a narrow one
+  - <https://github.com/quiltdata/quilt-rs/pull/1223>
+  - <https://github.com/quiltdata/quilt-rs/pull/1228>
+- **New design preview**: the package page shows *Bucket and catalog* for every package, with one button to choose or change the bucket, which replaces the header's bucket buttons. *Revisions you have* is now *History* (<https://github.com/quiltdata/quilt-rs/pull/1221>)
+- The main page's *Needs your attention* is a status line with rows below it, not a card. When nothing needs you, it reads *All packages are up to date* (<https://github.com/quiltdata/quilt-rs/pull/1222>)
+- Group headings on the main page stand out from the rows below them (<https://github.com/quiltdata/quilt-rs/pull/1220>)
 
 ### Fixed
 
-- *Pull* on a package another pull has just brought up to date says it is already up to date instead of failing (<https://github.com/quiltdata/quilt-rs/pull/1227>)
-- *Push* on a package another push has just published says there is nothing to push instead of failing (<https://github.com/quiltdata/quilt-rs/pull/1230>)
-- *Publish* and *Commit* with no changes and the same message and metadata say there is nothing to publish or commit, instead of publishing the same revision again, which then showed twice in its history (<https://github.com/quiltdata/quilt-rs/pull/1242>)
+- *Pull*, *Push*, *Commit* and *Publish* with nothing to do say so, instead of failing or publishing the same revision twice
+  - <https://github.com/quiltdata/quilt-rs/pull/1227>
+  - <https://github.com/quiltdata/quilt-rs/pull/1230>
+  - <https://github.com/quiltdata/quilt-rs/pull/1242>
 
 ### quilt-rs
 
-- Updated [from v0.49.0 to v0.50.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+- Updated [from v0.49.0 to v0.50.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...quilt-rs/v0.50.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.25.0] - 2026-10-26
 
