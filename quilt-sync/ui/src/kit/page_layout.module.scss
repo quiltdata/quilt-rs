@@ -59,6 +59,24 @@
   flex: none;
 }
 
+/* A page that scrolls holds the banner row under the appbar, so a bar shows
+ * wherever the reader is in the list. Above the page's bands, which stop under
+ * it, and below the appbar, whose activity line hangs over it. A tall banner
+ * scrolls inside, as the main page's queue does, so the page stays in view
+ * under it. A row with no banner in it takes no room. */
+.root[data-page-scroll] > .notice {
+  position: sticky;
+  top: var(--q-appbar-height);
+  z-index: 2;
+  max-height: calc(var(--pinned-frame) / 3);
+  overflow-y: auto;
+  background: var(--q-bgColor-page);
+}
+
+.root[data-page-scroll] > .notice:not(:has(*)) {
+  padding-top: 0;
+}
+
 /* The page column, and the one place the gap between regions is set. Regions carry no
  * outer margin of their own: one of them spacing itself would look right alone and
  * wrong beside the others, and there would be no single place to change the rhythm. */
@@ -78,7 +96,7 @@
  * the regions and over a page's sticky bands. */
 .root > header {
   position: relative;
-  z-index: 2;
+  z-index: 3;
 }
 
 /* A page that scrolls as one. The appbar sticks at the top, and the page's own
@@ -93,4 +111,33 @@
  * with it. */
 .root[data-page-scroll] > .main {
   flex: 1 0 auto;
+}
+
+/* What a page's sticky bands are offset by. Each height is a band's that the
+ * page measures with `publish_height`, and a band the page does not draw
+ * counts as none. The frame height is the window's, or the floor the gallery sets; the
+ * floor is a group heading and about one row, the least of the list that has
+ * to stay in view, above `.main`'s bottom padding. */
+.root[data-page-scroll] {
+  --pinned-frame: var(--q-frame-height, 100vh);
+  /* Where the page's own bands start: under the appbar and the banner row. */
+  --pinned-top: calc(var(--q-appbar-height) + var(--q-banner-height, 0px));
+  --pinned-floor: calc(var(--q-space-8) + var(--q-space-12) + var(--q-space-8));
+  --pinned-strip: var(--q-strip-height, 0px);
+  --pinned-queue: var(--q-queue-height, 0px);
+  --pinned-header: var(--q-header-height, 0px);
+  --pinned-toolbar: var(--q-toolbar-height, 0px);
+  --pinned-footer: var(--q-footer-height, 0px);
+
+  /* Where the bands end: the room a focused row keeps clear of them, and where a
+   * group heading sticks. The frame is the scroller, so the padding is set here,
+   * and a band held at the bottom keeps the same room below. */
+  --pinned-bottom: min(
+    var(--pinned-top) + var(--pinned-strip) + var(--pinned-queue) + var(--pinned-header) +
+      var(--pinned-toolbar),
+    var(--pinned-frame) - var(--pinned-floor)
+  );
+
+  scroll-padding-top: var(--pinned-bottom);
+  scroll-padding-bottom: var(--pinned-footer);
 }

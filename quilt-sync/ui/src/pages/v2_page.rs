@@ -190,6 +190,10 @@ pub fn V2Page<T, B, D, F>(
     /// appbar replaces this history entry. Wins over `actions`.
     #[prop(optional)]
     transit: bool,
+    /// The page scrolls as one, under the parts it holds: `PageLayout`'s
+    /// `page_scroll`.
+    #[prop(optional)]
+    page_scroll: bool,
 ) -> impl IntoView
 where
     T: Clone + PartialEq + Send + Sync + 'static,
@@ -228,6 +232,7 @@ where
                 actions.unwrap_or_else(|| appbar_actions(move || reload.notify(), in_flight.into()))
             }
             replace=transit
+            page_scroll=page_scroll
         >
             {move || match answer.get() {
                 None => skeleton(),

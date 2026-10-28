@@ -361,13 +361,14 @@ fn pane(
         </PaneSection>
     };
 
-    // On the page the width is a class, not an inline style: stacked under 800px
-    // the pane stops sharing a row with anything and takes the column, and a
-    // container query cannot outrank an attribute.
+    // On the page the width is the page's own class, not an inline style: under
+    // 800px the pane stops sharing a row with anything, takes the column and
+    // lays its sections out as three columns, and a container query cannot
+    // outrank an attribute.
     view! {
         <aside
             aria-label="About this package"
-            class=on_page.then_some("g-ip-contextpane")
+            class=on_page.then(crate::pages::context_pane_class)
             style=(!on_page).then_some(PANE)
         >
             <Card>{sections}</Card>
