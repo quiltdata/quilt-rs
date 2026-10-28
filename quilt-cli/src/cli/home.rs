@@ -232,7 +232,7 @@ mod tests {
     async fn sets_an_absolute_home_and_creates_the_folder() -> Result<(), Error> {
         let domain = tempfile::tempdir()?;
         let parent = tempfile::tempdir()?;
-        let new_home = parent.path().join("not/yet/there");
+        let new_home = parent.path().join("not").join("yet").join("there");
 
         let (stdout, _) = run(
             home_args(domain.path(), Some(new_home.clone()), false),
@@ -262,26 +262,28 @@ mod tests {
 
     #[test]
     fn resolve_joins_a_relative_dir_to_the_base() {
-        let base = std::path::Path::new("/work/dir");
+        // `/` on Unix; on Windows it gains the current drive.
+        let root = std::path::absolute("/").unwrap();
+        let base = root.join("work/dir");
         assert_eq!(
-            super::resolve(std::path::Path::new("."), base).unwrap(),
-            PathBuf::from("/work/dir")
+            super::resolve(std::path::Path::new("."), &base).unwrap(),
+            root.join("work/dir")
         );
         assert_eq!(
-            super::resolve(std::path::Path::new("sub/home"), base).unwrap(),
-            PathBuf::from("/work/dir/sub/home")
+            super::resolve(std::path::Path::new("sub/home"), &base).unwrap(),
+            root.join("work/dir/sub/home")
         );
         assert_eq!(
-            super::resolve(std::path::Path::new("/abs/home"), base).unwrap(),
-            PathBuf::from("/abs/home")
+            super::resolve(std::path::Path::new("/abs/home"), &base).unwrap(),
+            root.join("abs/home")
         );
         assert_eq!(
-            super::resolve(std::path::Path::new("../Data"), base).unwrap(),
-            PathBuf::from("/work/Data")
+            super::resolve(std::path::Path::new("../Data"), &base).unwrap(),
+            root.join("work/Data")
         );
         assert_eq!(
-            super::resolve(std::path::Path::new("sub/../home"), base).unwrap(),
-            PathBuf::from("/work/dir/home")
+            super::resolve(std::path::Path::new("sub/../home"), &base).unwrap(),
+            root.join("work/dir/home")
         );
     }
 
