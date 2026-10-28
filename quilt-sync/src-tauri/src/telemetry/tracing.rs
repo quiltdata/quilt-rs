@@ -31,7 +31,7 @@ use crate::telemetry::prelude::*;
 /// diagnostic export, so it can afford detail the other sink cannot.
 const FILE_DIRECTIVES: &str = "quilt_sync=debug,quilt_rs=debug,quilt_uri=debug,warn";
 
-/// What the **crash reporter** receives, as breadcrumbs and structured logs.
+/// What the **crash reporter** receives, as breadcrumbs and error events.
 ///
 /// A level lower than the file's, deliberately: this leaves the machine and is
 /// billed per event, and `debug` is where paths and package names appear. So the
@@ -156,7 +156,7 @@ pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
 ///
 /// A function rather than a binding, because its type depends on the subscriber
 /// it joins, and the two arms of [`init_tracing`] build different ones.
-fn crash_sink<S>(saved: LogLevel) -> impl Layer<S>
+fn crash_sink<S>(directives: EnvFilter) -> impl Layer<S>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
@@ -165,7 +165,7 @@ where
             matches!(*metadata.level(), Level::WARN | Level::INFO)
         }))
         .and_then(ErrorLayer::new().with_filter(LevelFilter::ERROR))
-        .with_filter(filter(saved, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING))
+        .with_filter(directives.and(CRASH_SINK_CEILING))
 }
 
 /// Install the subscriber, with a filter per sink.
@@ -214,12 +214,12 @@ fn init_tracing(
 
         tracing_subscriber::registry()
             .with(file)
-            .with(crash_sink(saved))
+            .with(crash_sink(filter(saved, CRASH_SINK_DIRECTIVES)))
             .init();
         Some(guard)
     } else {
         tracing_subscriber::registry()
-            .with(crash_sink(saved))
+            .with(crash_sink(filter(saved, CRASH_SINK_DIRECTIVES)))
             .init();
         None
     };
@@ -260,7 +260,11 @@ mod tests {
     /// nothing below `info`.
     #[test]
     fn the_crash_sink_sends_errors_with_breadcrumbs_and_nothing_below_info() {
-        let subscriber = tracing_subscriber::registry().with(crash_sink(LogLevel::Trace));
+        let subscriber = tracing_subscriber::registry().with(crash_sink(build_filter(
+            None,
+            LogLevel::Trace,
+            CRASH_SINK_DIRECTIVES,
+        )));
         let events = sentry::test::with_captured_events(|| {
             ::tracing::subscriber::with_default(subscriber, || {
                 ::tracing::trace!("a trace line");
