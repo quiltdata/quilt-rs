@@ -132,8 +132,9 @@ impl SyncScope {
     /// The scope that keeps every file under `folders`, each a path from the
     /// package root.
     ///
-    /// Folders are stored without a leading `./` or `/` or a trailing `/`,
-    /// sorted, with duplicates and folders inside another kept folder dropped.
+    /// A `\` reads as `/`. Folders are stored without a leading `./` or `/`
+    /// or a trailing `/`, sorted, with duplicates and folders inside another
+    /// kept folder dropped.
     /// A list that names the root (`.`, `./`, `/` or an empty string) is the
     /// entire package, and an empty list keeps individual files. A folder
     /// with a `..` part is refused: a folder is a path inside the package.
@@ -141,13 +142,13 @@ impl SyncScope {
         let mut kept: Vec<String> = Vec::new();
         let mut root = false;
         for folder in folders {
+            // Either separator, so a Windows path reads the same.
             let parts: Vec<&str> = folder
                 .as_ref()
-                .split('/')
+                .split(['/', '\\'])
                 .filter(|part| !part.is_empty() && *part != ".")
                 .collect();
-            // A `..` is refused whichever separator spells it.
-            if folder.as_ref().split(['/', '\\']).any(|part| part == "..") {
+            if parts.contains(&"..") {
                 return Err(LineageError::FolderOutsidePackage(folder.as_ref().to_string()).into());
             }
             if parts.is_empty() {
@@ -414,8 +415,19 @@ mod tests {
     #[test]
     fn folders_are_stored_in_one_form() {
         assert_eq!(
-            SyncScope::folders(["./results/", "data/raw", "/data/raw/", "data//raw"]).unwrap(),
+            SyncScope::folders([
+                "./results/",
+                "data/raw",
+                "/data/raw/",
+                "data//raw",
+                ".\\data\\raw\\"
+            ])
+            .unwrap(),
             folders(&["data/raw", "results"])
+        );
+        assert_eq!(
+            SyncScope::folders([".\\data\\"]).unwrap(),
+            folders(&["data"])
         );
     }
 
@@ -429,7 +441,7 @@ mod tests {
 
     #[test]
     fn a_list_naming_the_root_is_the_entire_package() {
-        for root in [".", "./", "/", ""] {
+        for root in [".", "./", "/", "", ".\\"] {
             assert_eq!(
                 SyncScope::folders(["data", root]).unwrap(),
                 SyncScope::EntirePackage,
