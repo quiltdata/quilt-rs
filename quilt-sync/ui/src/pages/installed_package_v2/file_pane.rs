@@ -30,7 +30,9 @@
 //!   it acts on it. Under `Ignored` no heading has one. Over the cap, a
 //!   folder the cut runs through has none either: its files past the cut
 //!   were never loaded.
-//!   Under whole-package Keeping a folder still receiving files shows neither.
+//!   A missing file Keeping fetches by itself — any under `The whole
+//!   package`, one under a kept folder — has no box, so a folder still
+//!   receiving only such files shows neither.
 //! - **A heading counts what it holds of its folder.** `raw/ 54` while the
 //!   view hides none of the folder's files, and `raw/ 3 of 54` once a facet
 //!   or a search hides some. The first number is the rows under the heading,
@@ -46,7 +48,8 @@
 //!   missing one is `EntryRow`'s `Select` shape, and a deleted one is inert.
 //! - **Selection feeds one action.** Select-all, the headings' boxes and the
 //!   footer's `[Download]` read one ticked set the page owns ([`selection`]).
-//!   Under whole-package Keeping none of them is drawn.
+//!   They count only the rows with a box, so under whole-package Keeping
+//!   none of them is drawn.
 //! - **Nothing to download is said, not left blank.** A package with no file
 //!   left to download reads `All 1,090 files downloaded` where select-all
 //!   would be, under either scope, with the Success tone's tick in the box's
@@ -85,7 +88,7 @@ use crate::util::{format_size, thousands, with_deleted_here};
 
 pub(crate) mod selection;
 
-pub use selection::Picking;
+pub use selection::{Kept, Picking};
 
 stylance::import_crate_style!(
     style,
@@ -428,12 +431,17 @@ impl Row {
     fn selectable(&self) -> bool {
         self.place == Place::Missing && !self.ignored
     }
+
+    /// Whether it has a box: selectable, and not fetched by Keeping itself.
+    fn pickable(&self, kept: &Kept) -> bool {
+        self.selectable() && !kept.fetches(&self.path)
+    }
 }
 
 /// The paths a box could tick among `rows`, in path order.
-fn offered(rows: &[Row]) -> Vec<String> {
+fn offered(rows: &[Row], kept: &Kept) -> Vec<String> {
     rows.iter()
-        .filter(|r| r.selectable())
+        .filter(|r| r.pickable(kept))
         .map(|r| r.path.clone())
         .collect()
 }
@@ -589,7 +597,7 @@ fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
                 on_open.run(path.clone());
             })))
         }
-        Place::Missing if r.selectable() && !picking.whole_package => {
+        Place::Missing if picking.kept.with_value(|k| r.pickable(k)) => {
             let ticked = picking.ticked;
             let (is, set) = (r.path.clone(), r.path.clone());
             Some(EntryAction::Select(
@@ -602,8 +610,7 @@ fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
                 .disabled(picking.busy),
             ))
         }
-        // Nothing to open, and nothing to tick: ignored, or the whole package
-        // is kept and the scope fetches it.
+        // Nothing to open, and nothing to tick: ignored, or Keeping fetches it.
         Place::Missing | Place::Deleted | Place::Unknown => None,
     };
     // A file that is here says so, in every scope and state; a row with a
@@ -753,7 +760,7 @@ fn rows_view(
                     .map(|(index, name)| (rows[index].clone(), name))
                     .collect();
                 let pickable: Vec<Row> = members.iter().map(|(r, _)| r.clone()).collect();
-                let pickable = offered(&pickable);
+                let pickable = drawing.picking.kept.with_value(|k| offered(&pickable, k));
                 // The rows' check, summarised over the whole folder as loaded:
                 // drawn only where no box is.
                 let all_here = facet != Facet::Ignored && whole.is_some_and(|f| f.all_here);
@@ -925,11 +932,11 @@ fn facets(counts: &EntryCounts, facet: RwSignal<String>) -> impl IntoView {
     }
 }
 
-/// A heading's box: present when a row under it can be ticked, and never
-/// under whole-package scope. It ticks exactly those rows, so `Mixed` is a fact
-/// about them. `EntryGroup` names it `Select all in {heading}`.
+/// A heading's box: present when a row under it can be ticked. It ticks
+/// exactly those rows, so `Mixed` is a fact about them. `EntryGroup` names it
+/// `Select all in {heading}`.
 fn group_selection(pickable: Vec<String>, picking: Picking) -> Option<GroupSelection> {
-    if picking.whole_package || pickable.is_empty() {
+    if pickable.is_empty() {
         return None;
     }
     let ticked = picking.ticked;
@@ -955,8 +962,8 @@ fn group_selection(pickable: Vec<String>, picking: Picking) -> Option<GroupSelec
 /// downloaded`, under either Keeping scope and whatever the view shows: it is
 /// a fact about the package, counted as the `All` facet counts. Files deleted
 /// here are named after it, `· 1 deleted here`, and take the tick away.
-/// Otherwise it is select-all, absent under whole-package scope and while
-/// nothing on screen can be ticked.
+/// Otherwise it is select-all, absent while nothing on screen can be ticked,
+/// as under whole-package scope.
 fn left_slot(
     picking: Picking,
     shown: Signal<Vec<String>>,
@@ -995,9 +1002,6 @@ fn left_slot(
             </div>
         }
         .into_any();
-    }
-    if picking.whole_package {
-        return ().into_any();
     }
     let ticked = picking.ticked;
     let selected = Signal::derive(move || {
@@ -1046,13 +1050,12 @@ pub fn downloaded_words(files: usize, deleted: usize) -> String {
 /// animating that would move rows under the pointer. Not the gallery's
 /// `g-fp-footer`: that is gallery chrome, which the app does not load.
 fn footer(picking: Picking, rows: StoredValue<Vec<Row>>) -> AnyView {
-    if picking.whole_package {
-        return ().into_any();
-    }
     let ticked = picking.ticked;
     // Every loaded row, not only the shown ones: a search hides a tick, it
     // does not undo it.
-    let chosen = Memo::new(move |_| ticked.with(|t| rows.with_value(|rs| ticked_rows(t, rs))));
+    let chosen = Memo::new(move |_| {
+        ticked.with(|t| rows.with_value(|rs| picking.kept.with_value(|k| ticked_rows(t, rs, k))))
+    });
     view! {
         <Show when=move || chosen.with(|(paths, _)| !paths.is_empty())>
             <FooterBand>
@@ -1081,9 +1084,9 @@ pub(crate) fn FooterBand(children: Children) -> impl IntoView {
 
 /// The ticked paths among the rows on offer, in path order, and their bytes:
 /// one pass over one set, so the count and the bytes cannot describe two.
-fn ticked_rows(ticked: &BTreeSet<String>, rows: &[Row]) -> (Vec<String>, u64) {
+fn ticked_rows(ticked: &BTreeSet<String>, rows: &[Row], kept: &Kept) -> (Vec<String>, u64) {
     rows.iter()
-        .filter(|r| r.selectable() && ticked.contains(&r.path))
+        .filter(|r| r.pickable(kept) && ticked.contains(&r.path))
         .fold((Vec::new(), 0), |(mut paths, bytes), r| {
             paths.push(r.path.clone());
             (paths, bytes.saturating_add(r.bytes))
@@ -1261,7 +1264,8 @@ fn ready(
     let narrowed = Signal::derive(move || {
         !query.with(String::is_empty) || Facet::from_key(&facet.get()) != Facet::All
     });
-    let shown_offered = Signal::derive(move || shown.with(|rs| offered(rs)));
+    let shown_offered =
+        Signal::derive(move || shown.with(|rs| picking.kept.with_value(|k| offered(rs, k))));
     // Each heading's folder over every loaded row: keyed on the grouping
     // alone, so neither the facet nor the search moves it.
     let folders = Memo::new(move |_| {
@@ -2633,12 +2637,12 @@ mod pane_tests {
             .collect();
 
         assert_eq!(
-            ticked_rows(&ticked, &rows),
+            ticked_rows(&ticked, &rows, &Kept::Folders(Vec::new())),
             (vec!["a.csv".to_string(), "d.csv".to_string()], 4_001)
         );
         let huge = [row("a.csv", "remote", u64::MAX), row("d.csv", "remote", 1)];
         assert_eq!(
-            ticked_rows(&ticked, &huge).1,
+            ticked_rows(&ticked, &huge, &Kept::Folders(Vec::new())).1,
             u64::MAX,
             "saturates, never wraps"
         );
@@ -3285,7 +3289,7 @@ mod pane_tests {
     #[wasm_bindgen_test]
     fn whole_package_scope_draws_no_boxes_no_select_all_and_no_footer() {
         let picking = Picking {
-            whole_package: true,
+            kept: StoredValue::new(Kept::Package),
             ..Picking::default()
         };
         picking.ticked.set(["remote-a.csv".to_string()].into());
@@ -3314,6 +3318,56 @@ mod pane_tests {
                 el.inner_html()
             );
         }
+    }
+
+    /// Under kept folders a missing file in one has no box, as under the whole
+    /// package, and one outside keeps its box. Select-all, the headings and
+    /// the footer count only the rows with a box, so a tick left over on a
+    /// kept file counts nowhere.
+    #[wasm_bindgen_test]
+    async fn under_kept_folders_only_files_outside_them_carry_a_box() {
+        let picking = Picking {
+            kept: StoredValue::new(Kept::Folders(vec!["raw".to_string()])),
+            ..Picking::default()
+        };
+        picking
+            .ticked
+            .set(["raw/a.csv".to_string(), "notes.txt".to_string()].into());
+        let el = picking_pane(
+            vec![
+                entry("notes.txt", "remote"),
+                entry("raw/a.csv", "remote"),
+                entry("raw/b.csv", "remote"),
+                entry("raw2/a.csv", "remote"),
+                entry("raw2/b.csv", "remote"),
+            ],
+            picking,
+            Grouping::BaseFolder,
+        );
+        assert_eq!(
+            boxes(&el),
+            5,
+            "three rows, raw2/'s heading and select-all; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            !heading_has_box(&el, "raw/"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(!has_check(&el, "raw/"), "raw/ is still receiving files");
+        assert!(
+            heading_has_box(&el, "raw2/"),
+            "markup was {}",
+            el.inner_html()
+        );
+        element_saying(&el, "1 of 3 selected");
+        button_saying(&el, "Download 1 · 4.1\u{a0}kB");
+
+        element_saying(&el, "1 of 3 selected").click();
+        leptos::task::tick().await;
+        element_saying(&el, "3 of 3 selected");
+        button_saying(&el, "Download 3 · 12.3\u{a0}kB");
     }
 
     /// A heading summarises its rows as select-all summarises the list: under
@@ -3435,7 +3489,7 @@ mod pane_tests {
     #[wasm_bindgen_test]
     fn under_whole_package_a_heading_still_receiving_files_shows_neither() {
         let picking = Picking {
-            whole_package: true,
+            kept: StoredValue::new(Kept::Package),
             ..Picking::default()
         };
         let el = picking_pane(
@@ -3591,9 +3645,9 @@ mod pane_tests {
     /// tone's tick before the words, and every row and heading with its check.
     #[wasm_bindgen_test]
     fn a_package_with_nothing_to_download_says_so_in_either_scope() {
-        for whole_package in [false, true] {
+        for kept in [Kept::Folders(Vec::new()), Kept::Package] {
             let picking = Picking {
-                whole_package,
+                kept: StoredValue::new(kept),
                 ..Picking::default()
             };
             let el = picking_pane(downloaded_package(), picking, Grouping::BaseFolder);
@@ -3644,9 +3698,9 @@ mod pane_tests {
     /// the file is gone from the list, the plain caption and its tick return.
     #[wasm_bindgen_test]
     async fn a_deleted_file_is_named_after_the_caption_in_either_scope() {
-        for whole_package in [false, true] {
+        for kept in [Kept::Folders(Vec::new()), Kept::Package] {
             let picking = Picking {
-                whole_package,
+                kept: StoredValue::new(kept),
                 ..Picking::default()
             };
             let mut entries = downloaded_package();

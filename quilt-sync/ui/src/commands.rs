@@ -47,6 +47,8 @@ pub struct InstalledPackageData {
     pub filter_ignored: bool,
     /// This package's standing sync scope.
     pub syncs_entire_package: bool,
+    /// The scope keeps chosen folders, which neither of this screen's scopes is.
+    pub keeps_folders: bool,
     /// Whether the experiment that offers the scope control is on.
     pub entire_package_sync_enabled: bool,
 }
@@ -649,12 +651,12 @@ pub enum ResolveData {
 
 /// Which files this copy keeps. Mirrors
 /// `src-tauri/src/commands/package_page.rs`; the serde attributes MUST match.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum KeepingScope {
     IndividualFiles,
     EntirePackage,
-    /// Every file under some folders; only the CLI sets it for now.
+    /// Every file under some folders.
     Folders,
 }
 
@@ -1671,20 +1673,27 @@ pub async fn update_design_settings(design: Design) -> Result<(), String> {
     tauri::invoke("update_design_settings", &Args { design }).await
 }
 
-/// Record whether a package keeps its whole contents. Storage only — catching
-/// up on files already listed is a separate `package_install_paths` call.
-pub async fn package_set_sync_scope(namespace: String, entire_package: bool) -> Result<(), String> {
+/// Record which files a package keeps; `folders` is read only for a folders
+/// scope. Storage only — catching up on files already listed is a separate
+/// call.
+pub async fn package_set_sync_scope(
+    namespace: String,
+    scope: KeepingScope,
+    folders: Vec<String>,
+) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         namespace: String,
-        entire_package: bool,
+        scope: KeepingScope,
+        folders: Vec<String>,
     }
     tauri::invoke(
         "package_set_sync_scope",
         &Args {
             namespace,
-            entire_package,
+            scope,
+            folders,
         },
     )
     .await

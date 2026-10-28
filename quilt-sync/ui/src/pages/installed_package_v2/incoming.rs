@@ -88,6 +88,8 @@ use crate::kit::state_label::StateTone;
 use crate::pages::commit_v2::Change;
 use crate::util::thousands;
 
+use super::file_pane::Kept;
+
 stylance::import_crate_style!(style, "src/pages/installed_package_v2/incoming.module.scss");
 
 /// The catalog link's name, as revision rows word theirs.
@@ -221,11 +223,12 @@ const fn ones(n: usize) -> &'static str {
 
 /// What *Get latest* does with the files, heading the popover, naming each
 /// operation for the kinds there are: new and changed files are downloaded or
-/// updated, deleted ones removed, never downloaded. `whole` is the sync
-/// scope: under individual-file sync new files are listed, to download when
-/// wanted, and only the files this copy has are updated. Local changes the
-/// update keeps are named too.
-fn scope_words(check: &PullCheck, whole: bool, k: Kinds) -> Option<String> {
+/// updated, deleted ones removed, never downloaded. `kept` is the sync
+/// scope: new files it does not fetch are listed, to download when wanted,
+/// and then only the files this copy has are updated. With every new file
+/// fetched it reads as the whole package. Local changes the update keeps are
+/// named too.
+fn scope_words(check: &PullCheck, kept: &Kept, k: Kinds) -> Option<String> {
     let PullCheck::Ready(preview) = check else {
         return None;
     };
@@ -237,6 +240,10 @@ fn scope_words(check: &PullCheck, whole: bool, k: Kinds) -> Option<String> {
     if new + changed + deleted == 0 {
         return None;
     }
+    let fetched_new = preview.added.iter().filter(|p| kept.fetches(p)).count();
+    // Kept folders take the whole package's words only when nothing else
+    // comes: a changed file outside them is updated only if it is here.
+    let whole = *kept == Kept::Package || (fetched_new == new && changed + deleted == 0);
     let fate = if whole {
         let fetched = new + changed;
         let download = match (new, changed, deleted) {
@@ -250,6 +257,25 @@ fn scope_words(check: &PullCheck, whole: bool, k: Kinds) -> Option<String> {
             (0, _) => removes(deleted, true).to_string(),
             _ => format!("{download} and {}", removes(deleted, false)),
         }
+    } else if fetched_new > 0 {
+        let mut acts = Vec::new();
+        if changed > 0 {
+            acts.push("updates the files you have");
+        }
+        if deleted > 0 {
+            acts.push(removes(deleted, false));
+        }
+        if fetched_new == new {
+            let download = format!("downloads the new {}", ones(new));
+            acts.push(&download);
+            let (last, rest) = acts.split_last().expect("one act at least");
+            return Some(said(preview, &format!("{} and {last}", rest.join(", "))));
+        }
+        acts.push("downloads the new ones in your kept folders");
+        format!(
+            "{}, and lists the others, to download when you need them",
+            acts.join(", ")
+        )
     } else if changed == 0 && deleted == 0 {
         format!(
             "adds {} to your files, to download when you need {}",
@@ -275,12 +301,16 @@ fn scope_words(check: &PullCheck, whole: bool, k: Kinds) -> Option<String> {
             acts
         }
     };
-    let kept = matches!(preview.outcome, PullOutcome::KeepsLocalChanges { .. });
-    Some(if kept {
+    Some(said(preview, &fate))
+}
+
+/// The sentence around what Get latest does to the files.
+fn said(preview: &PullPreview, fate: &str) -> String {
+    if matches!(preview.outcome, PullOutcome::KeepsLocalChanges { .. }) {
         format!("Get latest {fate}. Your changes stay.")
     } else {
         format!("Get latest {fate}.")
-    })
+    }
 }
 
 /// One file the newer revision brings, as the popover lists it.
@@ -503,13 +533,13 @@ fn conflict_alone(n: usize) -> String {
 /// from before the read; otherwise it says what Get latest does.
 fn first_line(
     check: &PullCheck,
-    whole: bool,
+    kept: &Kept,
     k: Kinds,
     conflicts: Option<&BTreeSet<String>>,
 ) -> Option<String> {
     match conflicts {
         Some(files) => Some(conflict_words(files.len())),
-        None => scope_words(check, whole, k),
+        None => scope_words(check, kept, k),
     }
 }
 
@@ -542,8 +572,8 @@ pub fn IncomingSummary(
     /// has open stays open.
     #[prop(into)]
     check: Signal<Option<PullCheck>>,
-    /// `Keeping → The whole package`.
-    whole: bool,
+    /// What Keeping fetches without a pick.
+    kept: Kept,
     /// The header's conflict state's files, [`conflicting`] of the state the
     /// header shows; `None` when it shows another. Everything the popover
     /// says about a conflict comes from these, never from the answer's
@@ -586,7 +616,7 @@ pub fn IncomingSummary(
         let drawn = check.and_then(|check| {
             summary(
                 &check,
-                whole,
+                &kept,
                 catalog.clone(),
                 on_retry,
                 card,
@@ -601,7 +631,7 @@ pub fn IncomingSummary(
 /// rows name, which the first line carries.
 fn summary(
     check: &PullCheck,
-    whole: bool,
+    kept: &Kept,
     catalog: Option<Catalog>,
     on_retry: Callback<()>,
     card: HoverCard,
@@ -641,7 +671,7 @@ fn summary(
     // latest would, and it is the sentence the file list's `Differs` marks
     // describe.
     let id = conflicts.map(|(_, id)| id);
-    let scope = first_line(check, whole, kinds, files);
+    let scope = first_line(check, kept, kinds, files);
     let links = catalog.zip(preview.latest_hash.clone());
     Some(
         view! {
@@ -969,24 +999,31 @@ mod tests {
             changed,
             deleted,
         };
-        let cases: Vec<(&PullCheck, bool, Kinds, Option<&str>)> = vec![
+        let package = Kept::Package;
+        let picked = Kept::Folders(Vec::new());
+        let cases: Vec<(&PullCheck, &Kept, Kinds, Option<&str>)> = vec![
             (
                 &clean,
-                false,
+                &picked,
                 k(3, 0, 0),
                 Some("Get latest adds them to your files, to download when you need them."),
             ),
-            (&clean, true, k(1, 0, 0), Some("Get latest downloads it.")),
+            (
+                &clean,
+                &package,
+                k(1, 0, 0),
+                Some("Get latest downloads it."),
+            ),
             (
                 &keeps,
-                true,
+                &package,
                 k(2, 0, 0),
                 Some("Get latest downloads them. Your changes stay."),
             ),
-            (&clean, true, k(0, 0, 0), None),
+            (&clean, &package, k(0, 0, 0), None),
             (
                 &clean,
-                false,
+                &picked,
                 k(3, 2, 1),
                 Some(
                     "Get latest updates the files you have and removes the deleted one if you \
@@ -995,19 +1032,19 @@ mod tests {
             ),
             (
                 &clean,
-                false,
+                &picked,
                 k(0, 2, 0),
                 Some("Get latest updates the files you have."),
             ),
             (
                 &clean,
-                false,
+                &picked,
                 k(0, 0, 2),
                 Some("Get latest removes any of them you have."),
             ),
             (
                 &clean,
-                false,
+                &picked,
                 k(0, 2, 1),
                 Some(
                     "Get latest updates the files you have and removes the deleted one if you have it.",
@@ -1015,31 +1052,132 @@ mod tests {
             ),
             (
                 &clean,
-                true,
+                &package,
                 k(3, 2, 1),
                 Some(
                     "Get latest downloads the new and changed ones and removes the deleted one if you have it.",
                 ),
             ),
-            (&clean, true, k(0, 2, 0), Some("Get latest downloads them.")),
             (
                 &clean,
-                true,
+                &package,
+                k(0, 2, 0),
+                Some("Get latest downloads them."),
+            ),
+            (
+                &clean,
+                &package,
                 k(0, 0, 1),
                 Some("Get latest removes it if you have it."),
             ),
             (
                 &clean,
-                true,
+                &package,
                 k(0, 1, 2),
                 Some("Get latest downloads the changed one and removes the deleted ones you have."),
             ),
         ];
-        for (check, whole, kinds, expected) in cases {
+        for (check, kept, kinds, expected) in cases {
             assert_eq!(
-                scope_words(check, whole, kinds).as_deref(),
+                scope_words(check, kept, kinds).as_deref(),
                 expected,
-                "{kinds:?}, whole: {whole}"
+                "{kinds:?}, kept: {kept:?}"
+            );
+        }
+    }
+
+    /// Under kept folders the sentence follows where the new files are: all
+    /// inside reads as the whole package, none inside as picked files, and
+    /// some of each downloads those inside and lists the others.
+    #[test]
+    fn under_kept_folders_the_popover_follows_the_new_files() {
+        let clean = ready(PullOutcome::CleanUpdate, Vec::new());
+        let k = |new, changed, deleted| Kinds {
+            new,
+            changed,
+            deleted,
+        };
+        let raw = Kept::Folders(vec!["raw".to_string()]);
+        let paths = |ps: &[&str]| ps.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let inside = ready(
+            PullOutcome::CleanUpdate,
+            paths(&["raw/a.csv", "raw/x/b.csv"]),
+        );
+        let outside = ready(
+            PullOutcome::CleanUpdate,
+            paths(&["notes.txt", "raw2/a.csv"]),
+        );
+        let mixed = ready(PullOutcome::CleanUpdate, paths(&["notes.txt", "raw/a.csv"]));
+        let mixed_keeps = ready(
+            PullOutcome::KeepsLocalChanges {
+                added: Vec::new(),
+                modified: vec!["a.csv".to_string()],
+                removed: Vec::new(),
+            },
+            paths(&["notes.txt", "raw/a.csv"]),
+        );
+        let cases: Vec<(&PullCheck, &Kept, Kinds, Option<&str>)> = vec![
+            (
+                &inside,
+                &raw,
+                k(2, 0, 0),
+                Some("Get latest downloads them."),
+            ),
+            (
+                &inside,
+                &raw,
+                k(2, 1, 1),
+                Some(
+                    "Get latest updates the files you have, removes the deleted one if you \
+                     have it and downloads the new ones.",
+                ),
+            ),
+            (
+                &outside,
+                &raw,
+                k(2, 0, 0),
+                Some("Get latest adds them to your files, to download when you need them."),
+            ),
+            (
+                &mixed,
+                &raw,
+                k(2, 0, 0),
+                Some(
+                    "Get latest downloads the new ones in your kept folders, and lists the \
+                     others, to download when you need them.",
+                ),
+            ),
+            (
+                &mixed,
+                &raw,
+                k(2, 2, 1),
+                Some(
+                    "Get latest updates the files you have, removes the deleted one if you \
+                     have it, downloads the new ones in your kept folders, and lists the \
+                     others, to download when you need them.",
+                ),
+            ),
+            (
+                &mixed_keeps,
+                &raw,
+                k(2, 0, 0),
+                Some(
+                    "Get latest downloads the new ones in your kept folders, and lists the \
+                     others, to download when you need them. Your changes stay.",
+                ),
+            ),
+            (
+                &clean,
+                &raw,
+                k(0, 2, 0),
+                Some("Get latest updates the files you have."),
+            ),
+        ];
+        for (check, kept, kinds, expected) in cases {
+            assert_eq!(
+                scope_words(check, kept, kinds).as_deref(),
+                expected,
+                "{kinds:?}, kept: {kept:?}"
             );
         }
     }
@@ -1068,27 +1206,27 @@ mod tests {
             "1 of them conflicts with yours. Publish your changes, then resolve it.";
         let says_get_latest = "Get latest downloads them.";
         assert_eq!(
-            first_line(&clean, true, k, Some(&one)).as_deref(),
+            first_line(&clean, &Kept::Package, k, Some(&one)).as_deref(),
             Some(says_conflict),
             "a kept clean answer under a recorded conflict"
         );
         assert_eq!(
-            first_line(&blocked, true, k, Some(&one)).as_deref(),
+            first_line(&blocked, &Kept::Package, k, Some(&one)).as_deref(),
             Some(says_conflict),
             "a fresh verdict, which the header took"
         );
         assert_eq!(
-            first_line(&blocked, true, k, Some(&two)).as_deref(),
+            first_line(&blocked, &Kept::Package, k, Some(&two)).as_deref(),
             Some("2 of them conflict with yours. Publish your changes, then resolve them."),
             "the header's count, listed or not"
         );
         assert_eq!(
-            first_line(&blocked, true, k, None).as_deref(),
+            first_line(&blocked, &Kept::Package, k, None).as_deref(),
             Some(says_get_latest),
             "a kept conflict answer under a read that is only behind"
         );
         assert_eq!(
-            first_line(&clean, true, k, None).as_deref(),
+            first_line(&clean, &Kept::Package, k, None).as_deref(),
             Some(says_get_latest)
         );
         assert!(
@@ -1186,7 +1324,7 @@ mod tests {
         const BANNED: &[&str] = &[
             "commit", "push", "pull", "remote", "behind", "ahead", "diverged", "dirty", "hash",
         ];
-        let added = vec!["a".to_string(), "b".to_string()];
+        let added = vec!["a/x".to_string(), "b".to_string()];
         let checks = [
             PullCheck::Loading,
             PullCheck::Failed,
@@ -1212,7 +1350,11 @@ mod tests {
         }
         for check in &checks {
             all.extend(summary_words(check));
-            for whole in [false, true] {
+            for kept in [
+                Kept::Folders(Vec::new()),
+                Kept::Package,
+                Kept::Folders(vec!["a".to_string()]),
+            ] {
                 for kinds in [
                     Kinds {
                         new: 2,
@@ -1230,7 +1372,7 @@ mod tests {
                         deleted: 2,
                     },
                 ] {
-                    all.extend(scope_words(check, whole, kinds));
+                    all.extend(scope_words(check, &kept, kinds));
                 }
             }
         }
@@ -1302,7 +1444,7 @@ mod tests {
                     <IncomingSummary
                         check=Signal::stored(Some(check))
                         conflicts=Signal::stored(None)
-                        whole=false
+                        kept=Kept::Folders(Vec::new())
                         catalog=Catalog::new(Some(&package), Callback::new(|_: String| ()))
                         on_retry=Callback::new(|()| ())
                     />

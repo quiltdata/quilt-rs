@@ -8,8 +8,10 @@
 //! moves no bytes; the download installs exactly the paths the page read
 //! listed.
 //!
-//! Kept folders, which only the CLI sets for now, select neither option and
-//! the caption names them. Choosing an option replaces them.
+//! Folders lists the kept folders read-only and changes them in a dialog.
+//! Choosing Folders with none stored opens the dialog, and closing it unsaved
+//! returns the radio to the stored choice. Saving stores and downloads nothing;
+//! choosing another option replaces the folders.
 //!
 //! The size joins the count: the count says how much of the package is here,
 //! and the size says it in bytes. A file deleted here counts as downloaded — it
@@ -23,13 +25,17 @@ use leptos::prelude::*;
 
 use super::{Reread, Wiring, run};
 use crate::commands::{self, KeepingScope, PackageSize};
-use crate::kit::{Button, ButtonVariant, Choice, ChoiceGroup, PaneSection};
+use crate::kit::folder_list::filled;
+use crate::kit::{
+    Button, ButtonVariant, Choice, ChoiceGroup, FolderList, FormDialog, PaneSection, Submit,
+};
 use crate::util::{Held, counted, format_size, thousands};
 
 type Answer<T> = Pin<Box<dyn Future<Output = Result<T, String>>>>;
 
-/// Stores a package's scope: `(namespace, entire_package)`.
-pub type ScopeStore = fn(String, bool) -> Answer<()>;
+/// Stores a package's scope: `(namespace, scope, folders)`; the folders are
+/// read only for a folders scope.
+pub type ScopeStore = fn(String, KeepingScope, Vec<String>) -> Answer<()>;
 /// Installs the listed backlog: `(namespace, paths)`, answering the paths it skipped.
 pub type BacklogDownload = fn(String, Vec<String>) -> Answer<Vec<String>>;
 
@@ -45,13 +51,37 @@ impl KeepingCommands {
     /// The app's: `package_set_sync_scope` and `package_download_backlog`.
     pub(super) fn app() -> Self {
         Self {
-            store: |namespace, entire_package| {
-                Box::pin(commands::package_set_sync_scope(namespace, entire_package))
+            store: |namespace, scope, folders| {
+                Box::pin(commands::package_set_sync_scope(namespace, scope, folders))
             },
             download: |namespace, paths| {
                 Box::pin(commands::package_download_backlog(namespace, paths))
             },
         }
+    }
+}
+
+/// The folders dialog's open flag and typed rows. The page provides them, so
+/// a re-read that rebuilds the section keeps both; a section drawn alone has
+/// its own.
+#[derive(Clone, Copy)]
+pub struct FoldersDialog {
+    pub open: RwSignal<bool>,
+    pub rows: RwSignal<Vec<String>>,
+}
+
+impl FoldersDialog {
+    pub(super) fn new() -> Self {
+        Self {
+            open: RwSignal::new(false),
+            rows: RwSignal::new(Vec::new()),
+        }
+    }
+
+    /// Shut, with nothing typed: the page has moved to another package.
+    pub(super) fn close(self) {
+        self.open.set(false);
+        self.rows.set(Vec::new());
     }
 }
 
@@ -61,6 +91,15 @@ fn choice_value(scope: KeepingScope) -> &'static str {
         KeepingScope::IndividualFiles => "pick",
         KeepingScope::EntirePackage => "all",
         KeepingScope::Folders => "folders",
+    }
+}
+
+/// The scope a radio stores.
+fn chosen_scope(value: &str) -> KeepingScope {
+    match value {
+        "all" => KeepingScope::EntirePackage,
+        "folders" => KeepingScope::Folders,
+        _ => KeepingScope::IndividualFiles,
     }
 }
 
@@ -90,6 +129,10 @@ pub(super) fn KeepingSection(
     let stored = StoredValue::new(choice_value(scope).to_string());
     // Written only by the radio and the rollbacks below: any other write stores a scope.
     let selected = RwSignal::new(stored.get_value());
+    let FoldersDialog {
+        open: editing,
+        rows,
+    } = use_context::<FoldersDialog>().unwrap_or_else(FoldersDialog::new);
 
     {
         let namespace = namespace.clone();
@@ -105,9 +148,15 @@ pub(super) fn KeepingSection(
                 selected.set(prior);
                 return;
             }
+            // Folders are stored by the dialog's Save, never by the radio.
+            if want == "folders" {
+                rows.set(Vec::new());
+                editing.set(true);
+                return;
+            }
             let ns = namespace.clone();
             let task = async move {
-                let answer = (commands.store)(ns, want == "all").await;
+                let answer = (commands.store)(ns, chosen_scope(&want), Vec::new()).await;
                 // `try_`: a section rebuilt by a re-read already draws the stored scope.
                 if answer.is_ok() {
                     stored.try_set_value(want);
@@ -127,83 +176,187 @@ pub(super) fn KeepingSection(
         });
     }
 
-    let download = download_label(scope, remote_only.len(), size).map(|label| {
-        let press = move |_| {
-            // The read's list, not what is outstanding by the time of the press.
-            let (ns, paths) = (namespace.clone(), remote_only.clone());
-            let (downloading, outcome) = (w.downloading, w.outcome);
-            let task = async move {
-                let asked = paths.len();
-                downloading.set(true);
-                let answer = (commands.download)(ns.clone(), paths).await;
-                downloading.try_set(false);
-                answer.map(|skipped| {
-                    // The file pane's warning, so both downloads say it alike.
-                    if let Some(said) = super::download_outcome(ns, asked, &skipped) {
-                        outcome.try_set(Some(said));
-                    }
-                    String::new()
-                })
-            };
-            run(
-                w.busy,
-                w.outcome,
-                namespace.clone(),
-                "Could not download the files.",
-                Reread::OnSuccess(w.reload),
-                task,
-            );
-        };
-        view! {
-            <Button
-                variant=ButtonVariant::Primary
-                on_click=press
-                disabled=w.busy
-                loading=w.downloading
-            >
-                {label}
-            </Button>
-        }
-    });
+    let dialog = folders_dialog(
+        namespace.clone(),
+        rows,
+        editing,
+        selected,
+        stored,
+        w,
+        commands,
+    );
+    let download = download_label(scope, remote_only.len(), size)
+        .map(|label| download_button(label, namespace, remote_only, w, commands));
+
+    let kept = (scope == KeepingScope::Folders).then(|| kept_list(folders, rows, editing, w.busy));
 
     view! {
         <PaneSection>
             // Sealed by the page's signal, so a section rebuilt mid-command is drawn sealed.
             <ChoiceGroup
                 label="Keeping"
-                caption=caption(scope, &folders, Held { total, outstanding, deleted_here, size })
+                caption=caption(scope, Held { total, outstanding, deleted_here, size })
                 options=vec![
                     Choice::new("pick", "Files I pick"),
                     Choice::new("all", "The whole package"),
+                    Choice::new("folders", "Folders"),
                 ]
                 selected=selected
                 disabled=w.busy
-            />
+            >
+                {kept}
+            </ChoiceGroup>
             {download}
         </PaneSection>
+        // Beside the section, not in it: the section's children must be `Send`
+        // and the dialog's action is not.
+        {dialog}
+    }
+}
+
+/// *Download N files*: installs the paths the page read listed.
+fn download_button(
+    label: String,
+    namespace: String,
+    remote_only: Vec<String>,
+    w: Wiring,
+    commands: KeepingCommands,
+) -> impl IntoView {
+    let press = move |_| {
+        // The read's list, not what is outstanding by the time of the press.
+        let (ns, paths) = (namespace.clone(), remote_only.clone());
+        let (downloading, outcome) = (w.downloading, w.outcome);
+        let task = async move {
+            let asked = paths.len();
+            downloading.set(true);
+            let answer = (commands.download)(ns.clone(), paths).await;
+            downloading.try_set(false);
+            answer.map(|skipped| {
+                // The file pane's warning, so both downloads say it alike.
+                if let Some(said) = super::download_outcome(ns, asked, &skipped) {
+                    outcome.try_set(Some(said));
+                }
+                String::new()
+            })
+        };
+        run(
+            w.busy,
+            w.outcome,
+            namespace.clone(),
+            "Could not download the files.",
+            Reread::OnSuccess(w.reload),
+            task,
+        );
+    };
+    view! {
+        <Button
+            variant=ButtonVariant::Primary
+            on_click=press
+            disabled=w.busy
+            loading=w.downloading
+        >
+            {label}
+        </Button>
+    }
+}
+
+/// The dialog that types the kept folders. Closed unsaved, it returns the
+/// radio to the stored choice.
+fn folders_dialog(
+    namespace: String,
+    rows: RwSignal<Vec<String>>,
+    editing: RwSignal<bool>,
+    selected: RwSignal<String>,
+    stored: StoredValue<String>,
+    w: Wiring,
+    commands: KeepingCommands,
+) -> impl IntoView {
+    Effect::new(move |_| {
+        if !editing.get() && selected.get_untracked() != stored.get_value() {
+            selected.set(stored.get_value());
+        }
+    });
+    // Drawn only while open, so a closed one leaves nothing in the pane.
+    move || {
+        editing.get().then(|| {
+            view! {
+                <FormDialog
+                    open=editing
+                    title="Folders to keep"
+                    submit=save_folders(namespace.clone(), rows, w, commands)
+                    running=w.busy
+                    blocked=Signal::derive(move || rows.with(|rows| filled(rows).is_empty()))
+                >
+                    <FolderList rows=rows />
+                </FormDialog>
+            }
+        })
+    }
+}
+
+/// The dialog's Save: stores the filled rows as kept folders and re-reads.
+/// A refusal is the dialog's to show, beside the rows to fix.
+fn save_folders(
+    namespace: String,
+    rows: RwSignal<Vec<String>>,
+    w: Wiring,
+    commands: KeepingCommands,
+) -> Submit {
+    Submit::new("Save", move || {
+        let ns = namespace.clone();
+        async move {
+            let folders = filled(&rows.get_untracked());
+            super::holding(
+                w.busy,
+                w.outcome,
+                (commands.store)(ns, KeepingScope::Folders, folders),
+            )
+            .await?;
+            // The re-read says what was stored: `.` is the whole package.
+            w.reload.notify();
+            Ok(())
+        }
+    })
+}
+
+/// The kept folders under their option, and *Change folders*, which opens
+/// the dialog on them.
+fn kept_list(
+    folders: Vec<String>,
+    rows: RwSignal<Vec<String>>,
+    editing: RwSignal<bool>,
+    busy: RwSignal<bool>,
+) -> impl IntoView {
+    let open = {
+        let folders = folders.clone();
+        move |_| {
+            rows.set(folders.clone());
+            editing.set(true);
+        }
+    };
+    view! {
+        // Indented to the options' words, so the list reads as Folders' own.
+        <div style="display:flex; flex-direction:column; align-items:flex-start; \
+                    gap:var(--q-space-2); padding-left:calc(17px + var(--q-space-2))">
+            <ul style="margin:0; padding-left:1.25em; list-style:disc; \
+                       font-size:var(--q-text-body); line-height:var(--q-line-body)">
+                {folders.into_iter().map(|folder| view! { <li>{folder}</li> }).collect_view()}
+            </ul>
+            <Button on_click=open disabled=busy>"Change folders"</Button>
+        </div>
     }
 }
 
 /// What the choice means now: the present count, and — only under the whole
 /// package — the promise about files that do not exist yet. Kept folders are
-/// named before the count.
-pub(super) fn caption(scope: KeepingScope, folders: &[String], held: Held) -> String {
+/// listed above it, so it does not name them.
+pub(super) fn caption(scope: KeepingScope, held: Held) -> String {
     let counted = counted(held);
     match scope {
         KeepingScope::EntirePackage => {
             format!("{counted} — files added later are downloaded too.")
         }
-        KeepingScope::IndividualFiles => format!("{counted}."),
-        KeepingScope::Folders => format!("Files in {} are kept. {counted}.", listed(folders)),
-    }
-}
-
-/// `a`, `a and b`, `a, b and c`.
-fn listed(names: &[String]) -> String {
-    match names {
-        [] => String::new(),
-        [only] => only.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        KeepingScope::IndividualFiles | KeepingScope::Folders => format!("{counted}."),
     }
 }
 
@@ -228,12 +381,12 @@ pub(super) fn download_label(
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, Held, KeepingCommands, KeepingSection, download_label};
+    use super::{Answer, FoldersDialog, Held, KeepingCommands, KeepingSection, download_label};
     use crate::commands::KeepingScope::{self, EntirePackage, Folders, IndividualFiles};
     use crate::commands::{KeepingData, PackageSize};
     use crate::kit::BannerVariant;
     use crate::pages::installed_package_v2::{Outcome, Wiring};
-    use crate::test_support::{element_saying, mount, sleep_ms};
+    use crate::test_support::{button_saying, element_saying, mount, sleep_ms};
     use leptos::prelude::*;
     use std::cell::{Cell, RefCell};
     use wasm_bindgen::JsCast;
@@ -267,32 +420,20 @@ mod tests {
         }
     }
 
-    /// The caption of a scope that keeps no folders.
     fn caption(scope: KeepingScope, held: Held) -> String {
-        super::caption(scope, &[], held)
+        super::caption(scope, held)
     }
 
     fn folders(names: &[&str]) -> Vec<String> {
         names.iter().map(ToString::to_string).collect()
     }
 
+    /// The list above names them, so the caption is the count alone.
     #[test]
-    fn kept_folders_are_named_before_the_count() {
+    fn kept_folders_leave_the_caption_to_the_count() {
         assert_eq!(
-            plain(&super::caption(
-                Folders,
-                &folders(&["data/raw", "results"]),
-                plate(2)
-            )),
-            "Files in data/raw and results are kept. 54 of 56 files · 1.9 MB of 3.4 MB downloaded."
-        );
-        assert_eq!(
-            super::caption(Folders, &folders(&["a", "b", "c"]), unread(0)),
-            "Files in a, b and c are kept. All files are downloaded."
-        );
-        assert_eq!(
-            super::caption(Folders, &folders(&["data"]), unread(0)),
-            "Files in data are kept. All files are downloaded."
+            plain(&caption(Folders, plate(2))),
+            "54 of 56 files · 1.9 MB of 3.4 MB downloaded."
         );
     }
 
@@ -509,7 +650,7 @@ mod tests {
     }
 
     thread_local! {
-        static STORED: RefCell<Vec<(String, bool)>> = const { RefCell::new(Vec::new()) };
+        static STORED: RefCell<Vec<(String, KeepingScope, Vec<String>)>> = const { RefCell::new(Vec::new()) };
         static DOWNLOADED: RefCell<Vec<(String, Vec<String>)>> =
             const { RefCell::new(Vec::new()) };
         static RELOADS: Cell<u32> = const { Cell::new(0) };
@@ -522,7 +663,7 @@ mod tests {
         RELOADS.set(0);
     }
 
-    fn stored() -> Vec<(String, bool)> {
+    fn stored() -> Vec<(String, KeepingScope, Vec<String>)> {
         STORED.with_borrow(Clone::clone)
     }
 
@@ -530,18 +671,18 @@ mod tests {
         DOWNLOADED.with_borrow(Clone::clone)
     }
 
-    fn stores_ok(namespace: String, entire: bool) -> Answer<()> {
-        STORED.with_borrow_mut(|calls| calls.push((namespace, entire)));
+    fn stores_ok(namespace: String, scope: KeepingScope, folders: Vec<String>) -> Answer<()> {
+        STORED.with_borrow_mut(|calls| calls.push((namespace, scope, folders)));
         Box::pin(async { Ok(()) })
     }
 
-    fn refuses_store(namespace: String, entire: bool) -> Answer<()> {
-        STORED.with_borrow_mut(|calls| calls.push((namespace, entire)));
+    fn refuses_store(namespace: String, scope: KeepingScope, folders: Vec<String>) -> Answer<()> {
+        STORED.with_borrow_mut(|calls| calls.push((namespace, scope, folders)));
         Box::pin(async { Err("AccessDenied".into()) })
     }
 
-    fn stores_never(namespace: String, entire: bool) -> Answer<()> {
-        STORED.with_borrow_mut(|calls| calls.push((namespace, entire)));
+    fn stores_never(namespace: String, scope: KeepingScope, folders: Vec<String>) -> Answer<()> {
+        STORED.with_borrow_mut(|calls| calls.push((namespace, scope, folders)));
         Box::pin(std::future::pending())
     }
 
@@ -709,16 +850,256 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn kept_folders_select_neither_option_and_offer_their_backlog() {
+    fn kept_folders_are_listed_under_their_option_with_their_backlog() {
         let el = section(
             data(Folders, 56, &["plate/b.csv", "plate/c.csv"]),
             Wiring::new(),
         );
         let group = group(&el);
-        assert!(!radio(&group, "Files I pick").checked());
-        assert!(!radio(&group, "The whole package").checked());
-        element_saying(&el, "Files in plate and qc are kept. 54 of 56 downloaded.");
+        assert!(radio(&group, "Folders").checked());
+        let listed: Vec<String> = (0..group.query_selector_all("li").unwrap().length())
+            .map(|i| {
+                group
+                    .query_selector_all("li")
+                    .unwrap()
+                    .item(i)
+                    .unwrap()
+                    .text_content()
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(listed, folders(&["plate", "qc"]));
+        button_saying(&el, "Change folders");
+        element_saying(&el, "54 of 56 downloaded.");
         download_button(&el);
+    }
+
+    fn open_dialog(el: &web_sys::Element) -> web_sys::Element {
+        el.query_selector("dialog[open]")
+            .unwrap()
+            .unwrap_or_else(|| panic!("an open dialog; markup was {}", el.inner_html()))
+    }
+
+    fn fields(dialog: &web_sys::Element) -> Vec<web_sys::HtmlInputElement> {
+        let all = dialog.query_selector_all("input[type=text]").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().unchecked_into())
+            .collect()
+    }
+
+    fn type_folder(field: &web_sys::HtmlInputElement, folder: &str) {
+        field.set_value(folder);
+        field
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+    }
+
+    /// Folders are stored by Save: the radio only opens the dialog, with one
+    /// blank row and nothing to save yet.
+    #[wasm_bindgen_test]
+    async fn choosing_folders_opens_the_dialog_and_stores_nothing() {
+        clear();
+        let el = pressable(
+            a_backlog_in(IndividualFiles),
+            Wiring::new(),
+            commands(stores_ok, downloads_ok),
+        );
+        leptos::task::tick().await;
+
+        element_saying(&el, "Folders").click();
+        settle().await;
+
+        let dialog = open_dialog(&el);
+        assert_eq!(fields(&dialog).len(), 1);
+        assert_eq!(fields(&dialog)[0].value(), "");
+        assert!(button_saying(&dialog, "Save").disabled());
+        assert_eq!(stored(), Vec::new());
+    }
+
+    #[wasm_bindgen_test]
+    async fn cancel_returns_the_radio_to_the_stored_choice() {
+        clear();
+        let el = pressable(
+            a_backlog_in(IndividualFiles),
+            Wiring::new(),
+            commands(stores_ok, downloads_ok),
+        );
+        leptos::task::tick().await;
+        element_saying(&el, "Folders").click();
+        settle().await;
+
+        button_saying(&open_dialog(&el), "Cancel").click();
+        settle().await;
+
+        assert!(el.query_selector("dialog[open]").unwrap().is_none());
+        assert!(radio(&group(&el), "Files I pick").checked());
+        assert!(!radio(&group(&el), "Folders").checked());
+        assert_eq!(stored(), Vec::new());
+    }
+
+    #[wasm_bindgen_test]
+    async fn save_stores_the_filled_folders_and_rereads() {
+        clear();
+        let el = pressable(
+            a_backlog_in(IndividualFiles),
+            Wiring::new(),
+            commands(stores_ok, downloads_ok),
+        );
+        leptos::task::tick().await;
+        element_saying(&el, "Folders").click();
+        settle().await;
+
+        let dialog = open_dialog(&el);
+        type_folder(&fields(&dialog)[0], "data/raw");
+        button_saying(&dialog, "Add folder").click();
+        leptos::task::tick().await;
+        button_saying(&dialog, "Save").click();
+        settle().await;
+
+        assert_eq!(
+            stored(),
+            vec![("team/dataset".to_string(), Folders, folders(&["data/raw"]))],
+            "the blank row is dropped"
+        );
+        assert_eq!(RELOADS.get(), 1);
+        assert!(el.query_selector("dialog[open]").unwrap().is_none());
+    }
+
+    /// Saving `.` stores the whole package, which the re-read says; until then
+    /// the radio goes back to what is stored rather than claim Folders.
+    #[wasm_bindgen_test]
+    async fn a_saved_root_leaves_the_radio_on_the_stored_choice() {
+        clear();
+        let el = pressable(
+            a_backlog_in(EntirePackage),
+            Wiring::new(),
+            commands(stores_ok, downloads_ok),
+        );
+        leptos::task::tick().await;
+        element_saying(&el, "Folders").click();
+        settle().await;
+
+        let dialog = open_dialog(&el);
+        type_folder(&fields(&dialog)[0], ".");
+        leptos::task::tick().await;
+        button_saying(&dialog, "Save").click();
+        settle().await;
+
+        assert!(el.query_selector("dialog[open]").unwrap().is_none());
+        assert!(radio(&group(&el), "The whole package").checked());
+        assert_eq!(RELOADS.get(), 1);
+    }
+
+    /// The library's refusal stays in the dialog, beside the rows to fix.
+    #[wasm_bindgen_test]
+    async fn a_refused_save_keeps_the_dialog_open_with_the_reason() {
+        clear();
+        let el = pressable(
+            a_backlog_in(IndividualFiles),
+            Wiring::new(),
+            commands(refuses_store, downloads_ok),
+        );
+        leptos::task::tick().await;
+        element_saying(&el, "Folders").click();
+        settle().await;
+
+        let dialog = open_dialog(&el);
+        type_folder(&fields(&dialog)[0], "data/../x");
+        leptos::task::tick().await;
+        button_saying(&dialog, "Save").click();
+        settle().await;
+
+        let alert = open_dialog(&el)
+            .query_selector("[role=alert]")
+            .unwrap()
+            .expect("the refusal, in the dialog");
+        assert!(
+            alert
+                .text_content()
+                .unwrap_or_default()
+                .contains("AccessDenied")
+        );
+        assert_eq!(RELOADS.get(), 0);
+    }
+
+    /// The section as the page draws it, under the page's folders dialog.
+    fn on_page(dialog: FoldersDialog, namespace: &'static str, w: Wiring) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <leptos::context::Provider value=dialog>
+                    <KeepingSection
+                        namespace=namespace
+                        data=a_backlog_in(IndividualFiles)
+                        size=None
+                        w=w
+                        commands=commands(stores_ok, downloads_ok)
+                    />
+                </leptos::context::Provider>
+            }
+        })
+    }
+
+    /// The page moving to another package closes the dialog and drops its rows.
+    #[wasm_bindgen_test]
+    async fn closing_for_another_package_drops_the_draft() {
+        clear();
+        let (dialog, w) = (FoldersDialog::new(), Wiring::new());
+        let el = on_page(dialog, "team/dataset", w);
+        leptos::task::tick().await;
+        element_saying(&el, "Folders").click();
+        settle().await;
+        type_folder(&fields(&open_dialog(&el))[0], "data/raw");
+        leptos::task::tick().await;
+
+        dialog.close();
+        settle().await;
+
+        assert!(el.query_selector("dialog[open]").unwrap().is_none());
+        assert_eq!(dialog.rows.get_untracked(), Vec::<String>::new());
+        assert!(radio(&group(&el), "Files I pick").checked());
+    }
+
+    /// A re-read rebuilds the section; the open dialog and its rows survive,
+    /// since the page holds them.
+    #[wasm_bindgen_test]
+    async fn a_reread_keeps_the_open_dialog_and_its_rows() {
+        clear();
+        let (dialog, w) = (FoldersDialog::new(), Wiring::new());
+        let el = on_page(dialog, "team/dataset", w);
+        leptos::task::tick().await;
+        element_saying(&el, "Folders").click();
+        settle().await;
+        type_folder(&fields(&open_dialog(&el))[0], "data/raw");
+        leptos::task::tick().await;
+
+        let rebuilt = on_page(dialog, "team/dataset", w);
+        settle().await;
+
+        let typed: Vec<String> = fields(&open_dialog(&rebuilt))
+            .iter()
+            .map(web_sys::HtmlInputElement::value)
+            .collect();
+        assert_eq!(typed, folders(&["data/raw"]));
+    }
+
+    #[wasm_bindgen_test]
+    async fn change_folders_opens_the_dialog_with_the_kept_ones() {
+        clear();
+        let el = pressable(
+            a_backlog_in(Folders),
+            Wiring::new(),
+            commands(stores_ok, downloads_ok),
+        );
+        leptos::task::tick().await;
+
+        button_saying(&el, "Change folders").click();
+        settle().await;
+
+        let kept: Vec<String> = fields(&open_dialog(&el))
+            .iter()
+            .map(web_sys::HtmlInputElement::value)
+            .collect();
+        assert_eq!(kept, folders(&["plate", "qc"]));
     }
 
     #[wasm_bindgen_test]
@@ -734,7 +1115,10 @@ mod tests {
         element_saying(&el, "Files I pick").click();
         settle().await;
 
-        assert_eq!(stored(), vec![("team/dataset".to_string(), false)]);
+        assert_eq!(
+            stored(),
+            vec![("team/dataset".to_string(), IndividualFiles, Vec::new())]
+        );
     }
 
     #[wasm_bindgen_test]
@@ -807,7 +1191,10 @@ mod tests {
         element_saying(&el, "The whole package").click();
         settle().await;
 
-        assert_eq!(stored(), vec![("team/dataset".to_string(), true)]);
+        assert_eq!(
+            stored(),
+            vec![("team/dataset".to_string(), EntirePackage, Vec::new())]
+        );
         assert_eq!(RELOADS.get(), 1, "a stored scope re-reads");
         // The caption is the payload's, so it waits for the re-read.
         element_saying(&el, "54 of 56 downloaded.");
@@ -835,8 +1222,8 @@ mod tests {
         assert_eq!(
             stored(),
             vec![
-                ("team/dataset".to_string(), true),
-                ("team/dataset".to_string(), false),
+                ("team/dataset".to_string(), EntirePackage, Vec::new()),
+                ("team/dataset".to_string(), IndividualFiles, Vec::new()),
             ]
         );
         assert_eq!(RELOADS.get(), 2, "each stored scope re-reads");
