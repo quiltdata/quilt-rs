@@ -36,6 +36,7 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1228>
 - **New design preview**: the package page shows *Bucket and catalog* for every package, with one button to choose or change the bucket, which replaces the header's bucket buttons. *Revisions you have* is now *History* (<https://github.com/quiltdata/quilt-rs/pull/1221>)
 - The main page's *Needs your attention* is a status line with rows below it, not a card. When nothing needs you, it reads *All packages are up to date* (<https://github.com/quiltdata/quilt-rs/pull/1222>)
+- *No accounts yet*, on the main page and in Settings, says how to sign in: choose *Open in QuiltSync* on a package in the catalog (<https://github.com/quiltdata/quilt-rs/pull/1248>)
 - Group headings on the main page stand out from the rows below them (<https://github.com/quiltdata/quilt-rs/pull/1220>)
 
 ### Fixed
