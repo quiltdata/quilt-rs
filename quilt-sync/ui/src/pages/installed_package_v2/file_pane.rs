@@ -2962,6 +2962,73 @@ mod pane_tests {
         stylance::import_crate_style!(pub row, "src/kit/entry_row.module.scss");
         stylance::import_crate_style!(pub group, "src/kit/entry_group.module.scss");
         stylance::import_crate_style!(pub check, "src/kit/checkbox.module.scss");
+        stylance::import_crate_style!(pub toolbar, "src/kit/list_toolbar.module.scss");
+    }
+
+    /// The cap's notice sits right under the toolbar, whose bottom padding is
+    /// the room above it, and keeps as much again below.
+    #[wasm_bindgen_test]
+    async fn the_cap_notice_has_one_gap_above_and_below() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("file_pane.module.scss"),
+            &[("band", style::band), ("cap", style::cap)],
+        );
+        load_module_style(
+            include_str!("../../kit/list_toolbar.module.scss"),
+            &[("root", sheets::toolbar::root)],
+        );
+        let el = mount(|| {
+            view! {
+                <div style="width:660px; --q-space-2:8px; --q-space-3:12px">
+                    <FilePane
+                        listing=Signal::stored(Listing::Ready(list(
+                            vec![entry("a.csv", "pristine")],
+                            4_312,
+                            true,
+                        )))
+                        grouping=RwSignal::new(Grouping::None.label().to_string())
+                        collapsed=RwSignal::new(BTreeSet::new())
+                        search=RwSignal::new(String::new())
+                        facet=RwSignal::new(Facet::All.key().to_string())
+                        on_open=Callback::new(|_: String| ())
+                        on_retry=Callback::new(|()| ())
+                        picking=Picking::default()
+                    />
+                </div>
+            }
+        });
+        leptos::task::tick().await;
+        let rect = |selector: String| {
+            el.query_selector(&selector)
+                .unwrap()
+                .expect("present")
+                .get_bounding_client_rect()
+        };
+        let toolbar = rect(format!(".{}", sheets::toolbar::root));
+        let cap = rect(format!(".{}", style::cap));
+        assert!(
+            (cap.top() - toolbar.bottom()).abs() < 0.5,
+            "no room past the toolbar's own: {} under {}",
+            cap.top(),
+            toolbar.bottom()
+        );
+        let text = el
+            .query_selector(&format!(".{}", style::cap))
+            .unwrap()
+            .expect("the notice")
+            .unchecked_into::<web_sys::HtmlElement>();
+        assert_eq!(
+            web_sys::window()
+                .unwrap()
+                .get_computed_style(&text)
+                .unwrap()
+                .unwrap()
+                .get_property_value("padding-bottom")
+                .unwrap(),
+            "8px",
+            "and as much below"
+        );
     }
 
     /// Select-all's box, a heading's and a row's share one x, the list's left

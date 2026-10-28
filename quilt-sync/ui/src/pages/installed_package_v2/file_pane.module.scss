@@ -53,9 +53,11 @@
   isolation: isolate;
 }
 
+/* Under the toolbar in the band. The toolbar's bottom padding is the room
+ * above it, so it takes back the band's gap, and keeps as much below. */
 .cap {
-  margin: 0;
-  padding: var(--q-space-2) var(--q-space-3);
+  margin: calc(-1 * var(--q-space-2)) 0 0;
+  padding: 0 var(--q-space-3) var(--q-space-2);
   color: var(--q-fgColor-muted);
   font-size: var(--q-text-body);
 }
