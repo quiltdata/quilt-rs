@@ -58,32 +58,42 @@ pub async fn package_commit(
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    let msg_init = format!("Committing package {namespace}");
+    let result = package_commit_command(&m, &namespace, &message, &metadata, workflow).await;
+    if let Ok((ns, quilt::flow::Committed::Recorded(_))) = &result {
+        watcher.clear_paused(ns).await;
+        watcher
+            .note_committed(ns, pending_commit(&*m, ns).await)
+            .await;
+    }
+    report_commit(&tracing, &namespace, uri.as_ref(), result.map(|(_, c)| c))
+}
+
+/// The Commit button's answer to a commit: its event and its line.
+fn report_commit(
+    tracing: &crate::telemetry::Telemetry,
+    namespace: &str,
+    uri: Option<&S3PackageUri>,
+    result: Result<quilt::flow::Committed, Error>,
+) -> Result<String, String> {
+    let mut notify = Notify::new(format!("Committing package {namespace}"));
+    // Nothing committed, so no commit event. A failure keeps the event, which
+    // is what reports a refusal.
+    if !matches!(result, Ok(quilt::flow::Committed::NothingToCommit)) {
+        notify = notify.on_success(
+            tracing,
+            MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri)),
+        );
+    }
+    let msg_ok = match &result {
+        Ok(quilt::flow::Committed::NothingToCommit) => {
+            format!("Package {namespace} has nothing to commit")
+        }
+        _ => format!("Successfully committed {namespace}"),
+    };
     // Committing is not offline (the workflow gate reads the bucket's config),
     // so a dead session lands here, where the user's typed work is.
     let msg_err = |err: &Error| {
         auth_failure_message(err).unwrap_or_else(|| format!("Failed to commit: {err}"))
-    };
-
-    let result = package_commit_command(&m, &namespace, &message, &metadata, workflow).await;
-    let mut notify = Notify::new(msg_init);
-    let msg_ok = match &result {
-        Ok((ns, quilt::flow::Committed::Recorded(_))) => {
-            watcher.clear_paused(ns).await;
-            watcher
-                .note_committed(ns, pending_commit(&*m, ns).await)
-                .await;
-            notify = notify.on_success(
-                &tracing,
-                MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri.as_ref())),
-            );
-            format!("Successfully committed {namespace}")
-        }
-        // Nothing was committed, so no commit event.
-        Ok((_, quilt::flow::Committed::NothingToCommit)) => {
-            format!("Package {namespace} has nothing to commit")
-        }
-        Err(_) => String::new(),
     };
     notify.map(result.map(|_| ()), msg_ok, msg_err)
 }
@@ -1771,6 +1781,64 @@ mod tests {
         super::pull_and_report(&model, &telemetry, &watcher, &toasts, "acme/demo", None)
             .await
             .expect_err("a conflict refuses the pull");
+
+        assert_eq!(telemetry.queued_events(), vec!["action_refused".to_owned()]);
+    }
+
+    /// The Commit button with nothing to commit says so and sends no event.
+    #[test]
+    fn a_commit_with_nothing_to_commit_says_so_and_reports_nothing() {
+        let telemetry = crate::telemetry::Telemetry::default();
+
+        let said = super::report_commit(
+            &telemetry,
+            "acme/demo",
+            None,
+            Ok(quilt::flow::Committed::NothingToCommit),
+        );
+
+        assert_eq!(
+            said,
+            Ok("Package acme/demo has nothing to commit".to_string())
+        );
+        assert_eq!(telemetry.queued_events(), Vec::<String>::new());
+    }
+
+    /// A commit that records a revision reports it.
+    #[test]
+    fn a_commit_that_records_reports_it() {
+        let telemetry = crate::telemetry::Telemetry::default();
+
+        let said = super::report_commit(
+            &telemetry,
+            "acme/demo",
+            None,
+            Ok(quilt::flow::Committed::Recorded(
+                quilt::lineage::CommitState::default(),
+            )),
+        );
+
+        assert_eq!(said, Ok("Successfully committed acme/demo".to_string()));
+        assert_eq!(
+            telemetry.queued_events(),
+            vec!["package_committed".to_owned()]
+        );
+    }
+
+    /// A refused commit still reports the refusal.
+    #[test]
+    fn a_refused_commit_reports_the_refusal() {
+        let telemetry = crate::telemetry::Telemetry::default();
+
+        super::report_commit(
+            &telemetry,
+            "acme/demo",
+            None,
+            Err(Error::Quilt(quilt::Error::Login(
+                quilt::LoginError::NoSession(None),
+            ))),
+        )
+        .expect_err("a dead session refuses the commit");
 
         assert_eq!(telemetry.queued_events(), vec!["action_refused".to_owned()]);
     }
