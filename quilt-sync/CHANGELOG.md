@@ -33,6 +33,7 @@
 ### Fixed
 
 - *Pull* on a package another pull has just brought up to date says it is already up to date instead of failing (<https://github.com/quiltdata/quilt-rs/pull/1227>)
+- *Push* on a package another push has just published says there is nothing to push instead of failing (<https://github.com/quiltdata/quilt-rs/pull/1230>)
 
 ### quilt-rs
 

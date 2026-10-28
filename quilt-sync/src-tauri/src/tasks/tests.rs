@@ -93,7 +93,7 @@ fn expect_push_and_reset(
     let pushed = Arc::clone(events);
     model.expect_locked_package_push().returning(move |_| {
         pushed.lock().unwrap().push("push".to_string());
-        Ok(quilt::PushOutcome {
+        Ok(quilt::Pushed::Uploaded(quilt::PushOutcome {
             manifest_uri: quilt_uri::ManifestUri {
                 bucket: "quilt-dev".to_string(),
                 namespace: namespace(),
@@ -101,7 +101,7 @@ fn expect_push_and_reset(
                 origin: Some(fixtures::host()),
             },
             certified_latest,
-        })
+        }))
     });
     let reset = Arc::clone(events);
     model

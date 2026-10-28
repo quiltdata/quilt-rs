@@ -341,6 +341,90 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
     Ok(())
 }
 
+/// A package with no pending commit, its remote set or not.
+async fn package_without_commit(
+    remote: serde_json::Value,
+) -> Res<(
+    InstalledPackage<LocalStorage, MockRemote>,
+    Vec<tempfile::TempDir>,
+)> {
+    let (home, temp_dir1) = Home::from_temp_dir()?;
+    let (paths, temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let namespace: Namespace = ("test", "nothing_to_push").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    let lineage_json = serde_json::json!({
+        "packages": {
+            "test/nothing_to_push": {
+                "commit": null,
+                "remote": remote,
+                "base_hash": "BASE_HASH",
+                "latest_hash": "BASE_HASH",
+                "paths": {}
+            }
+        },
+        "home": home.as_ref(),
+    });
+    storage
+        .write_byte_stream(
+            &paths.lineage(),
+            lineage_json.to_string().into_bytes().into(),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(MockRemote::default()),
+        storage,
+        namespace,
+        state_store: None,
+    };
+    Ok((package, vec![temp_dir1, temp_dir2]))
+}
+
+/// With no pending commit there is nothing to push: the push succeeds with
+/// `Pushed::NothingToPush` and writes nothing, here or on the remote.
+#[test(tokio::test)]
+async fn test_push_without_commit_has_nothing_to_push() -> Res {
+    let (package, _temp_dirs) = package_without_commit(serde_json::json!({
+        "bucket": "bkt",
+        "namespace": "test/nothing_to_push",
+        "hash": "BASE_HASH",
+    }))
+    .await?;
+    let lineage_before = package.lineage().await?;
+
+    let pushed = package.push(None).await?;
+
+    assert_eq!(pushed, Pushed::NothingToPush);
+    assert_eq!(package.lineage().await?, lineage_before);
+    let latest_tag = S3Uri::try_from("s3://bkt/.quilt/named_packages/test/nothing_to_push/latest")?;
+    assert!(!package.remote.exists(None, &latest_tag).await?);
+
+    Ok(())
+}
+
+/// A package with no remote still fails to push, commit or not: that is a
+/// setup problem, not nothing to do.
+#[test(tokio::test)]
+async fn test_push_without_remote_fails() -> Res {
+    let (package, _temp_dirs) = package_without_commit(serde_json::Value::Null).await?;
+
+    let err = package.push(None).await.unwrap_err();
+
+    assert!(
+        err.to_string().contains("No remote configured"),
+        "got: {err}"
+    );
+
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn test_manifest_recovery_from_corruption() -> Res {
     let (home, _temp_dir1) = Home::from_temp_dir()?;

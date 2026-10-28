@@ -170,11 +170,15 @@ mod tests {
             hash: "abc123".to_string(),
         };
         let push_out = push::Output {
-            hash: "abc123".to_string(),
-            manifest_uri: manifest_uri.clone(),
-            certified_latest: true,
+            outcome: Some(quilt_rs::PushOutcome {
+                manifest_uri: manifest_uri.clone(),
+                certified_latest: true,
+            }),
         };
         assert!(push_out.to_json().is_object());
+
+        let nothing_to_push_out = push::Output { outcome: None };
+        assert!(nothing_to_push_out.to_json().is_object());
 
         let pull_out = pull::Output {
             report: Some(quilt_rs::flow::PullReport {
