@@ -51,7 +51,8 @@ pub fn RecentFilesRegion(
     /// namespace — what a row's Copy action addresses.
     ///
     /// A package with no bucket has no such address, so it is absent here and
-    /// its rows offer neither Copy URI nor Open in catalog. The feed's own
+    /// its rows offer neither Copy URI nor Open in catalog. One with no
+    /// catalog host offers Copy URI alone. The feed's own
     /// payload carries no bucket, which is why this comes from the caller
     /// rather than from `files`.
     #[prop(optional)]
@@ -68,7 +69,7 @@ pub fn RecentFilesRegion(
 
     if files.is_empty() {
         return view! {
-            <Card label="Recent files">
+            <Card label="Recent files" bare=true>
                 <Blankslate
                     heading="No files yet"
                     description="Files appear here once you install a package or publish a change."
@@ -130,7 +131,7 @@ pub fn RecentFilesRegion(
         // One tooltip for every row's cut path or package tag. Around the card,
         // not inside it: the card spaces its body's children itself.
         <NameTooltip>
-        <Card label="Recent files">
+        <Card label="Recent files" bare=true>
             {move || match shape.get() {
                 FeedShape::NoMatch => {
                     // Its own closure: the words carry the query, so they follow
@@ -251,10 +252,11 @@ fn held_address(address: Option<&S3PackageUri>, published: Option<&str>) -> Opti
 
 /// The items a row's `[⋯]` offers: open and reveal; then the catalog and the
 /// copy, which name the published revision the package holds. Both need a
-/// catalog host, that revision, and a package with no changed files: this page
+/// bucket, that revision, and a package with no changed files: this page
 /// cannot tell which file changed, and the revision would not hold a changed
-/// one as it is here. No *Ignore*: it edits the package's `.quiltignore` under
-/// the package page's lock, which this page does not hold.
+/// one as it is here. The catalog also needs a catalog host; without one the
+/// copy names the bucket alone. No *Ignore*: it edits the package's
+/// `.quiltignore` under the package page's lock, which this page does not hold.
 fn row_commands(
     path: &str,
     address: Option<&S3PackageUri>,
@@ -266,8 +268,10 @@ fn row_commands(
         RowCommand::Open(path.clone()),
         RowCommand::Reveal(path.clone()),
     ];
-    if address.is_some_and(|a| a.catalog.is_some()) && published && unchanged {
-        commands.push(RowCommand::OpenInCatalog(path.clone()));
+    if let Some(address) = address.filter(|a| !a.bucket.is_empty() && published && unchanged) {
+        if address.catalog.is_some() {
+            commands.push(RowCommand::OpenInCatalog(path.clone()));
+        }
         commands.push(RowCommand::CopyUri(path));
     }
     commands
@@ -545,11 +549,42 @@ mod tests {
     }
 
     #[test]
-    fn a_bucket_with_no_catalog_host_offers_only_the_local_file() {
+    fn a_bucket_with_no_catalog_host_offers_the_address_alone() {
         let bucket_only = crate::util::package_uri("team-bucket", &ns("user/alpha"), None);
         assert_eq!(
             menu("one.csv", Some(&bucket_only), true, true),
-            ["Open file", "Reveal in folder"]
+            ["Open file", "Reveal in folder", "| Copy URI"]
+        );
+        assert_eq!(
+            menu("one.csv", Some(&bucket_only), false, true),
+            ["Open file", "Reveal in folder"],
+            "an unpublished revision"
+        );
+        assert_eq!(
+            menu("one.csv", Some(&bucket_only), true, false),
+            ["Open file", "Reveal in folder"],
+            "local changes"
+        );
+    }
+
+    /// Without a catalog host, the copied address names the bucket and the
+    /// held revision, and no catalog.
+    #[wasm_bindgen_test]
+    async fn without_a_catalog_the_copy_names_the_bucket() {
+        let bucket_only = crate::util::package_uri("team-bucket", &ns("user/alpha"), None);
+        let held = held_address(Some(&bucket_only), Some("abc123")).expect("an address");
+        let (copied, _) = crate::pages::row_menu::clipped(
+            &RowCommand::CopyUri("one.csv".to_string()),
+            "user/alpha",
+            Some(&held),
+            local_path,
+        )
+        .await
+        .unwrap()
+        .expect("an address");
+        assert_eq!(
+            copied,
+            "quilt+s3://team-bucket#package=user/alpha@abc123&path=one.csv"
         );
     }
 
@@ -697,11 +732,11 @@ mod tests {
         stylance::import_crate_style!(pub card, "src/kit/card.module.scss");
     }
 
-    /// The card is the list region's scroller with the tooltip's wrapper
-    /// around it: a long feed scrolls inside the card, under a toolbar that
-    /// keeps its place, rather than growing the page.
+    /// The feed has no scroller of its own: a long feed grows the region, and
+    /// the page scrolls it, so the wheel moves the list from anywhere on the
+    /// window.
     #[wasm_bindgen_test]
-    async fn a_long_feed_scrolls_inside_its_card() {
+    async fn a_long_feed_scrolls_the_page_not_its_card() {
         use crate::test_support::load_module_style;
         load_module_style(
             include_str!("../main_page.module.scss"),
@@ -709,7 +744,11 @@ mod tests {
         );
         load_module_style(
             include_str!("../../kit/card.module.scss"),
-            &[("root", sheets::card::root), ("body", sheets::card::body)],
+            &[
+                ("root", sheets::card::root),
+                ("body", sheets::card::body),
+                ("bare", sheets::card::bare),
+            ],
         );
         let files: Vec<_> = (0..60)
             .map(|i| file(&format!("data/{i}.csv"), "user/alpha", f64::from(i)))
@@ -717,9 +756,9 @@ mod tests {
         let el = mount(move || {
             view! {
                 <leptos_router::components::Router>
-                    <div style="height:300px; display:flex; flex-direction:column">
+                    <div data-page style="height:300px; overflow-y:auto">
                         <div class=sheets::page::list_region>
-                            <div style="height:32px; flex:none">"Toolbar"</div>
+                            <div style="height:32px">"Toolbar"</div>
                             <RecentFilesRegion
                                 files=files.clone()
                                 query=Signal::stored(String::new())
@@ -736,14 +775,19 @@ mod tests {
             .unwrap()
             .expect("the card")
             .unchecked_into();
-        assert!(
-            card.client_height() <= 300,
-            "the card grew to {}px instead of scrolling",
-            card.client_height()
+        assert_eq!(
+            card.scroll_height(),
+            card.client_height(),
+            "the card scrolls nothing itself"
         );
+        let page: web_sys::HtmlElement = el
+            .query_selector("[data-page]")
+            .unwrap()
+            .expect("the page")
+            .unchecked_into();
         assert!(
-            card.scroll_height() > card.client_height(),
-            "the rows scroll"
+            page.scroll_height() > page.client_height(),
+            "the page scrolls the rows"
         );
     }
 

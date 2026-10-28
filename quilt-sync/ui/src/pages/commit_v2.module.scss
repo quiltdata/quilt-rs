@@ -1,10 +1,12 @@
 /* Tighter than `PageLayout`'s gap: these read as one form. It fills the page,
  * so the file list can take what is left and scroll inside it. `min-height: 0`
  * lets it be shorter than its content; when the list's floor does not fit,
- * `PageLayout` scrolls the whole page instead. */
+ * `PageLayout` scrolls the whole page instead. A container, as the package
+ * page is, so the header's location group collapses to icons with it. */
 .column {
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
   gap: var(--q-space-4);
   flex: 1 1 auto;
   min-height: 0;

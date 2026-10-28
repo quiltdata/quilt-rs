@@ -169,6 +169,7 @@ impl Services {
             Arc::clone(&telemetry),
         ));
         let (watcher, tray_status) = Watcher::spawn(
+            data_dir.clone(),
             Arc::clone(&model),
             Arc::clone(&roles),
             autosync_settings.clone(),

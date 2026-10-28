@@ -101,7 +101,7 @@ pub fn SetupCardSkeleton() -> impl IntoView {
     }
 }
 
-/// What `/setup` renders when *New design preview* is on.
+/// What `/setup` renders in the v2 design.
 #[component]
 pub fn SetupV2() -> impl IntoView {
     view! { <SetupScreen read=read_setup /> }

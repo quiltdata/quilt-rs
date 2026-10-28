@@ -269,7 +269,7 @@ fn differing(opened: RwSignal<String>) -> AnyView {
                 full=true
                 label="resolve mode, flat list — selectable, openable and deleted, each marked and not"
             >
-                <div style="width:100%; --q-entry-gutter: 0">
+                <div style="width:100%; --q-entry-gutter: 0px">
                     <Provider value=DiffersId("resolve-differing-entry-row")>
                         {shapes(opened)}
                         {differs_caption(3)}

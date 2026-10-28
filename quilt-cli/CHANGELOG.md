@@ -19,6 +19,50 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.39.0] - 2026-10-28
+
+### Added
+
+- `quilt keep` sets which files a package keeps: the files you pick (`--files`), all of them (`--all`) or the files under a folder (`--folder <dir>`), and downloads them. `--no-download` only saves the setting; with no flag it prints it. `quilt install --keep-all` and `--keep-folder <dir>` set it at install (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+
+### Changed
+
+- `quilt pull` follows that setting, so a package that keeps all files or a folder also gets the files a new revision adds there (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `quilt pull`, `quilt push` and `quilt commit` succeed when there is nothing to do and print `Already up to date`, `Nothing to push` or `Nothing to commit`. Before, pull and push failed, and commit recorded the same revision again. With `--json`, `hash` is `null`
+  - <https://github.com/quiltdata/quilt-rs/pull/1227>
+  - <https://github.com/quiltdata/quilt-rs/pull/1230>
+  - <https://github.com/quiltdata/quilt-rs/pull/1242>
+- `quilt install -p` installs the paths not yet tracked and lists the others as `Already installed`, instead of failing. `--json` adds `already_installed` (<https://github.com/quiltdata/quilt-rs/pull/1239>)
+
+### quilt-rs
+
+- Updated [from v0.49.0 to v0.50.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...quilt-rs/v0.50.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.38.0] - 2026-10-26
+
+### Changed
+
+- `quilt push --bucket <b>` works without `--host`, so a local-only package can be pushed to a bucket with no catalog, on the AWS credentials on this computer (<https://github.com/quiltdata/quilt-rs/pull/1209>)
+- `quilt list --fetch` shows the status of a package whose bucket has no catalog. When the AWS credentials on this computer are missing or refused, the row says so and suggests updating `~/.aws` or running `aws sso login`, and `--json` adds `"credentials_unusable": true`
+  - <https://github.com/quiltdata/quilt-rs/pull/1193>
+  - <https://github.com/quiltdata/quilt-rs/pull/1210>
+- `quilt log` and `quilt remove-revisions` know which revisions of a package with no catalog are published, so old ones can be removed (<https://github.com/quiltdata/quilt-rs/pull/1212>)
+
+### quilt-rs
+
+- Updated [from v0.48.0 to v0.49.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.48.0...quilt-rs/v0.49.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.37.3] - 2026-10-23
+
+### Fixed
+
+- On Unix, saved logins are readable by your user alone (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- The CLI and QuiltSync no longer lose a login when both refresh it at once (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+### quilt-rs
+
+- Updated [from v0.47.0 to v0.48.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.47.0...quilt-rs/v0.48.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.37.2] - 2026-10-22
 
 ### quilt-rs

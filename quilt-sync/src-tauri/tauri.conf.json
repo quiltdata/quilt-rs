@@ -25,7 +25,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["quilt+s3", "quilt+file", "quilt"]
+        "schemes": ["quilt+s3", "quilt"]
       }
     },
     "updater": {

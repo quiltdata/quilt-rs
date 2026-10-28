@@ -121,6 +121,10 @@ pub(crate) struct WatcherInner {
     pub paused: RwLock<BTreeMap<Namespace, PausedReason>>,
     pub backoff: RwLock<BTreeMap<Namespace, BackoffState>>,
     pub login_blocked: RwLock<BTreeMap<Namespace, Option<Host>>>,
+    /// Held while a pass checks a package's catalog and records its refusal
+    /// or retry backoff, and while [`Watcher::forget_catalog`] clears what the old catalog left.
+    /// A refusal from the old catalog is then either cleared or never recorded.
+    pub refusals: tokio::sync::Mutex<()>,
     pub reporter: Arc<dyn StatusReporter>,
     pub aggregator: Arc<SyncTrayAggregator>,
     pub clocks: Clocks,
@@ -128,6 +132,7 @@ pub(crate) struct WatcherInner {
     /// The folder watcher's walks, which the tick reuses for the packages it
     /// vouches for.
     pub walks: watched::WatchedWalks,
+    pub tasks: crate::tasks::Tasks,
 }
 
 impl WatcherInner {
@@ -215,6 +220,7 @@ impl Watcher {
     /// `RoleCache` would keep naming the role the user switched away from,
     /// since `switch_role` invalidates only the shared one.
     pub fn spawn(
+        data_dir: std::path::PathBuf,
         model: Arc<Model>,
         roles: Arc<RoleCache>,
         settings: SharedAutosyncSettings,
@@ -224,17 +230,29 @@ impl Watcher {
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
+        let run_model = Arc::clone(&model);
+        let tasks = crate::tasks::Tasks::new(
+            data_dir,
+            Arc::new(move |run| {
+                let run_model = Arc::clone(&run_model);
+                crate::events::spawn(async move {
+                    Box::pin(crate::tasks::execute(&*run_model, run)).await;
+                });
+            }),
+        );
         let inner = Arc::new(WatcherInner {
             settings,
             publish_settings,
             paused: RwLock::new(BTreeMap::new()),
             backoff: RwLock::new(BTreeMap::new()),
             login_blocked: RwLock::new(BTreeMap::new()),
+            refusals: tokio::sync::Mutex::default(),
             reporter,
             aggregator,
             clocks: Clocks::default(),
             walks: crate::autopull::watched::WatchedWalks::default(),
             last_change,
+            tasks,
         });
         // Its own task: a package whose catalog is slow to answer its host
         // config must not hold back the loop.
@@ -291,7 +309,7 @@ impl Watcher {
     /// ([`Self::clear_paused`] after a manual push / pull / commit / publish /
     /// reset, [`Self::clear_all_paused`] when autosync is switched on) clears
     /// this one too.
-    pub async fn pause(&self, namespace: &Namespace, origin: &Host, reason: PausedReason) {
+    pub async fn pause(&self, namespace: &Namespace, origin: Option<&Host>, reason: PausedReason) {
         tick::pause(&self.inner, namespace, origin, reason).await;
     }
 
@@ -303,6 +321,16 @@ impl Watcher {
         self.inner.login_blocked.write().await.remove(namespace);
         self.inner.aggregator.note_cleared(namespace);
         self.inner.reschedule_publish();
+    }
+
+    /// Forget what the package's old catalog left — its pause, sign-in block
+    /// and retry backoff — once its catalog has been saved. Under
+    /// [`WatcherInner::refusals`], so a pass that read the old catalog cannot
+    /// record its refusal after this.
+    pub async fn forget_catalog(&self, namespace: &Namespace) {
+        let _gate = self.inner.refusals.lock().await;
+        self.inner.backoff.write().await.remove(namespace);
+        self.clear_paused(namespace).await;
     }
 
     /// Take back a [`PausedReason::PullConflict`] the pull dry run no longer
@@ -513,6 +541,7 @@ impl Watcher {
                 paused: RwLock::new(BTreeMap::new()),
                 backoff: RwLock::new(BTreeMap::new()),
                 login_blocked: RwLock::new(BTreeMap::new()),
+                refusals: tokio::sync::Mutex::default(),
                 reporter,
                 aggregator,
                 clocks: Clocks::default(),
@@ -520,6 +549,7 @@ impl Watcher {
                 last_change: last_change::LastChange::new(
                     crate::quilt::state_store::PackageStateStore::in_memory(),
                 ),
+                tasks: crate::tasks::Tasks::default(),
             }),
         }
     }
@@ -717,6 +747,7 @@ pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: Arc::new(reporter::LogReporter),
         aggregator: Arc::new(status::SyncTrayAggregator::new(tx)),
         clocks: Clocks::default(),
@@ -724,6 +755,7 @@ pub(crate) fn inner_for_tests(settings: AutosyncSettings) -> WatcherInner {
         last_change: last_change::LastChange::new(
             crate::quilt::state_store::PackageStateStore::in_memory(),
         ),
+        tasks: crate::tasks::Tasks::default(),
     }
 }
 
@@ -813,6 +845,62 @@ mod tests {
         assert_eq!(watcher.paused_count().await, 2);
         watcher.clear_paused(&ns_a).await;
         assert_eq!(watcher.paused_count().await, 1);
+    }
+
+    /// A catalog change forgets what the old catalog left: the pause, the
+    /// sign-in block and the retry backoff.
+    #[tokio::test]
+    async fn forget_catalog_clears_pause_sign_in_and_backoff() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "demo").into();
+        let inner = watcher.inner_for_test();
+        watcher
+            .pause_for_test(ns.clone(), PausedReason::PendingChanges)
+            .await;
+        inner
+            .login_blocked
+            .write()
+            .await
+            .insert(ns.clone(), Some(quilt_uri::fixtures::host()));
+        inner.backoff.write().await.insert(
+            ns.clone(),
+            tick::BackoffState {
+                next_attempt: std::time::Instant::now() + Duration::from_secs(60),
+                consecutive_failures: 3,
+                error: "Sign in to quilt.test".to_string(),
+            },
+        );
+
+        watcher.forget_catalog(&ns).await;
+
+        assert_eq!(watcher.paused_count().await, 0);
+        assert!(inner.login_blocked.read().await.is_empty());
+        assert!(inner.backoff.read().await.is_empty());
+    }
+
+    /// A pass holding the lock to record the old catalog's refusal finishes
+    /// first, and the catalog change then clears it: the refusal cannot land
+    /// after the clear.
+    #[tokio::test]
+    async fn forget_catalog_waits_for_a_refusal_being_recorded() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let ns: Namespace = ("acme", "demo").into();
+        let gate = watcher.inner_for_test().refusals.lock().await;
+        let mut forget = std::pin::pin!(watcher.forget_catalog(&ns));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut forget)
+                .await
+                .is_err(),
+            "waits for the pass"
+        );
+
+        watcher
+            .pause_for_test(ns.clone(), PausedReason::PendingChanges)
+            .await;
+        drop(gate);
+        forget.await;
+
+        assert_eq!(watcher.paused_count().await, 0);
     }
 
     #[tokio::test]

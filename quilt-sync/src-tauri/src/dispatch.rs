@@ -166,12 +166,13 @@ commands! {
         package_push(namespace: String, uri: Option<S3PackageUri>) -> String;
         package_publish(namespace: String, uri: Option<S3PackageUri>) -> String;
         package_commit_and_push(namespace: String, message: String, metadata: String, workflow: WorkflowIntent, uri: Option<S3PackageUri>) -> String;
-        package_set_sync_scope(namespace: String, entire_package: bool) -> ();
+        package_set_sync_scope(namespace: String, scope: crate::commands::KeepingScope, folders: Vec<String>) -> ();
         package_pull(namespace: String, uri: Option<S3PackageUri>) -> String;
         package_pull_outcome(namespace: String) -> quilt::flow::PullPreview;
         package_uninstall(namespace: String, uri: Option<S3PackageUri>, prune: bool) -> String;
         undo_commit(namespace: String) -> String;
         set_remote(namespace: String, origin: String, bucket: String, workflow: WorkflowIntent) -> SetRemoteResponse;
+        change_catalog(namespace: String, origin: String) -> String;
         package_create(namespace: String, source: Option<String>, message: Option<String>) -> String;
         package_install_paths(uri: String, paths: Vec<String>) -> String;
         add_to_quiltignore(namespace: String, pattern: String, uri: Option<S3PackageUri>) -> String;
@@ -194,7 +195,9 @@ commands! {
         get_autopull_activity() -> Option<crate::autopull::activity::AutopullActivity>;
         update_fswatcher_settings(enabled: bool) -> ();
         update_log_settings(level: LogLevel) -> ();
-        update_experimental_settings(entire_package_sync: Option<bool>, main_page_v2: Option<bool>) -> ();
+        update_experimental_settings(entire_package_sync: Option<bool>, agent_tasks: Option<bool>) -> ();
+        update_task_settings(settings: crate::tasks::settings::TaskSettings) -> ();
+        update_design_settings(design: crate::design_settings::Design) -> ();
         debug_dot_quilt() -> String;
         debug_logs() -> String;
         open_home_dir() -> String;
@@ -339,7 +342,7 @@ mod tests {
     /// a window.
     #[test]
     fn every_command_has_an_arm() {
-        assert_eq!(SHARED.len() + DESKTOP_ONLY.len(), 84);
+        assert_eq!(SHARED.len() + DESKTOP_ONLY.len(), 87);
         for name in SHARED {
             let Err(Value::String(err)) = parse(name, Value::String("not args".into())) else {
                 panic!("{name}: arguments of the wrong shape were accepted");
@@ -362,13 +365,13 @@ mod tests {
     #[test]
     fn arguments_are_read_by_their_camel_case_names() {
         let call = parse(
-            "package_set_sync_scope",
-            serde_json::json!({"namespace": "a/b", "entirePackage": true}),
+            "update_experimental_settings",
+            serde_json::json!({"entirePackageSync": true}),
         );
         assert!(matches!(
             call,
-            Ok(Call::package_set_sync_scope {
-                entire_package: true,
+            Ok(Call::update_experimental_settings {
+                entire_package_sync: Some(true),
                 ..
             })
         ));

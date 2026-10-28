@@ -5,40 +5,89 @@
  *
  * No gap here: `ListToolbar`'s own `padding-bottom` is the internal spacing, and
  * having it in one place is what keeps the toolbar sitting on its list in every
- * arm of the read. */
+ * arm of the read.
+ *
+ * The pair is also what keeps the toolbar in place: a sticky box stays only
+ * inside its parent, and here that parent runs to the end of the list. */
 .list_region {
   display: flex;
   flex-direction: column;
-  /* Region 4 takes whatever height the regions above it leave, and its list
-   * scrolls inside — so the strip and the queue stay on screen with a long
-   * roster instead of being pushed off the top. */
-  flex: 1 1 auto;
-  min-height: 0;
+}
 
-  /* A floor, so the list is still a list when the window is at its shortest.
-   * At the 560px window floor the regions above spend roughly 400px between
-   * them, which leaves about this much; below that `PageLayout`'s own
-   * `overflow-y` takes over and the whole page scrolls, which is worse than
-   * scrolling the list but much better than a list two rows tall. */
-  min-height: 160px;
+/* A group heading stays under the bands while its rows scroll, so the bucket or
+ * package being read stays named. The headings share one parent, so the next one
+ * stops over the last. */
+[data-page-scroll] .list_region [data-group-heading] {
+  position: sticky;
+  top: var(--pinned-bottom);
+  z-index: 1;
+}
 
-  /* The card is the scroller: the toolbar above it keeps its own height, and the
-   * rows move under it. Its flex behaviour belongs to this column rather than to
-   * `Card`: a card that sized itself would be the parent's layout living in the
-   * child.
-   *
-   * `:last-child` is safe because this region has exactly two element children in
-   * every arm of the read, toolbar then card, which
-   * `the_toolbar_and_its_list_share_one_parent` pins.
-   *
-   * Recent files' card sits inside its `NameTooltip`, whose wrapper draws no box
-   * and so takes none of this; the card is that wrapper's first child, and its
-   * surface the last. */
-  > :last-child,
-  > [data-name-tooltip] > :first-child {
-    min-height: 0;
-    overflow-y: auto;
-  }
+/* The rows hold positioned parts with a `z-index` of their own, such as a split
+ * button. Isolated, they stack inside their list and cannot rise over a heading. */
+[data-page-scroll] .list_region [data-group-heading] + * {
+  isolation: isolate;
+}
+
+/* The parts above the list stay in place while its rows scroll the page under
+ * them. Each is its own sticky band, since no one box holds them all: the
+ * strip is built outside the package read, and the queue, the toolbar and the
+ * rows inside it. A band's `top` is the appbar's fixed height plus the banner
+ * row and the bands above it, which `publish_height` measures and writes on
+ * the frame, where the `--pinned-*` values are made of them.
+ *
+ * Each band reaches up over the gap above it and paints it with the page's
+ * background, so rows never show through a gap, and a band sits at the same
+ * place stuck or not. */
+[data-page-scroll] .strip,
+[data-page-scroll] .queue,
+[data-page-scroll] .toolbar {
+  position: sticky;
+  z-index: 1;
+  background: var(--q-bgColor-page);
+}
+
+/* Each band stops high enough to leave the floor in view under the toolbar.
+ * When the bands are taller than the window, as with many hosts in Accounts,
+ * they stack upwards from there instead, and the top of the stack goes under
+ * the appbar rather than the list out of sight. */
+
+/* Its gap is `.main`'s top padding. */
+[data-page-scroll] .strip {
+  top: min(
+    var(--pinned-top),
+    var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar) - var(--pinned-queue) -
+      var(--pinned-strip)
+  );
+  margin-top: calc(-1 * var(--q-space-5));
+  padding-top: var(--q-space-5);
+}
+
+/* Its gap, and the toolbar's, is `.main`'s gap between regions. */
+[data-page-scroll] .queue {
+  top: min(
+    var(--pinned-top) + var(--pinned-strip),
+    var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar) - var(--pinned-queue)
+  );
+  margin-top: calc(-1 * var(--q-space-6));
+  padding-top: var(--q-space-6);
+}
+
+[data-page-scroll] .toolbar {
+  top: min(
+    var(--pinned-top) + var(--pinned-strip) + var(--pinned-queue),
+    var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar)
+  );
+  margin-top: calc(-1 * var(--q-space-6));
+  padding-top: var(--q-space-6);
+}
+
+/* A long queue scrolls inside, so the bands together stay shorter than the
+ * window. A third of the frame, which the gallery sets to the window floor.
+ * At either end the wheel moves on to the page. */
+.queue_scroll {
+  max-height: calc(var(--q-frame-height, 100vh) / 3);
+  overflow-y: auto;
 }
 
 /* A run of rows under one heading: a list for a screen reader, and on screen the
@@ -59,8 +108,7 @@
   border-top: 1px solid var(--q-borderColor-muted);
 }
 
-/* A list with no dividing rule: the queue, whose items are decisions rather than
- * rows of data, and the packages an expanded cause reveals. */
+/* A list with no dividing rule: the packages an expanded cause reveals. */
 .list {
   list-style: none;
   margin: 0;

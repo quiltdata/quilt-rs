@@ -117,6 +117,11 @@ fn login_episode(
     }
 }
 
+/// Why a package with no catalog cannot sync: there is no deployment to sign in
+/// to, only `~/.aws` to fix or `aws sso login` to run.
+const AMBIENT_CREDENTIALS_UNUSABLE: &str =
+    "AWS credentials on this computer aren't usable — update ~/.aws or run aws sso login";
+
 #[derive(Debug)]
 pub(crate) enum WatchError {
     Conflict(PausedReason),
@@ -161,9 +166,6 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
                 Err(WatchError::Conflict(PausedReason::Other(msg.clone())))
             }
         }
-        // A pull that raced another pull and found nothing to do. Benign:
-        // the namespace is already at `latest`, so keep syncing quietly.
-        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::AlreadyUpToDate)) => Ok(()),
         Error::Quilt(quilt::Error::PackageOp(
             quilt::PackageOpError::Push(msg)
             | quilt::PackageOpError::Commit(msg)
@@ -523,7 +525,15 @@ pub(crate) async fn refresh_then_maybe_sync(
                     model.locked_package_pull(&locked, None, scope).await
                 };
                 return match applied {
-                    Ok(report) => {
+                    // A pull that raced another pull and found nothing to do.
+                    // The namespace is already at `latest`, so keep syncing
+                    // quietly.
+                    Ok(quilt::flow::Pulled::UpToDate) => Ok(Some(RefreshOutcome::observed(
+                        upstream,
+                        has_changes,
+                        fingerprint,
+                    ))),
+                    Ok(quilt::flow::Pulled::Applied(report)) => {
                         info!("autosync: pulled namespace={namespace}");
                         if kept_changes {
                             match model.locked_package_status(&locked, None).await {
@@ -621,20 +631,39 @@ pub(crate) async fn refresh_then_maybe_sync(
         // `publish_locked_with_settings` is the manual one-click Publish
         // command's path too, so a change to publish settings (new
         // placeholder, new field) applies identically regardless of who
-        // triggered the publish. It publishes on the held lock and reuses
-        // `status`, walked under it.
+        // triggered the publish; only autosync keeps the head's task. It
+        // publishes on the held lock and reuses `status`, walked under it.
         let published = {
             // The activity line spans the transfer and nothing else: the check never shows.
             let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);
-            model::publish_locked_with_settings(model, &locked, &installed, publish, status).await
+            model::publish_locked_with_settings(
+                model,
+                &locked,
+                &installed,
+                publish,
+                status,
+                model::HeadTask::Keep,
+            )
+            .await
         };
         return match published {
+            // No new hash and no pending commit: nothing is left to publish,
+            // and nothing to say. The observed state stays.
+            Ok((quilt::PublishOutcome::NothingToPublish, _)) => {
+                info!("autosync: nothing to publish namespace={namespace}");
+                last_change.on_published(namespace).await;
+                Ok(Some(RefreshOutcome::observed(
+                    upstream,
+                    has_changes,
+                    fingerprint,
+                )))
+            }
             Ok((outcome, message)) => {
                 info!("autosync: published namespace={namespace}");
                 last_change.on_published(namespace).await;
                 // The pushed revision is `latest` only when it was certified;
                 // otherwise the next tick reads whatever is, and differs.
-                let push = outcome.push();
+                let push = outcome.push().expect("a publish that did something pushed");
                 let latest = if push.certified_latest {
                     push.manifest_uri.hash.as_str()
                 } else {
@@ -804,10 +833,16 @@ pub(crate) async fn run_once(
         wait,
         pull_enabled,
         push_enabled,
+        tasks: inner.tasks.settings().await,
     };
     let now = Instant::now();
     for pkg in packages {
-        sync_package(model, roles, inner, &pkg, &run, now).await;
+        let pass = sync_package(model, roles, inner, &pkg, &run, now).await;
+        if let Some(tasks) = run.tasks.as_ref()
+            && matches!(pass, Pass::Done | Pass::LeftToTasks)
+        {
+            crate::tasks::check(model, &inner.tasks, tasks, &pkg).await;
+        }
     }
     inner.reschedule_publish();
 
@@ -820,16 +855,21 @@ pub(crate) struct PassSettings {
     pub wait: Duration,
     pub pull_enabled: bool,
     pub push_enabled: bool,
+    /// `None` while tasks are off.
+    pub tasks: Option<crate::tasks::settings::TaskSettings>,
 }
 
 /// What [`sync_package`] did with a package.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Pass {
-    /// It can't be synced now: no remote, no catalog origin, paused, in
-    /// backoff, or its lineage could not be read.
+    /// It can't be synced now: no remote, no bucket, paused, in backoff, held
+    /// by a task run, or its lineage could not be read.
     Skipped,
     /// Another writer holds it.
     Busy,
+    /// Its head is this desktop's own task claim with no run alive, which only
+    /// the task check may publish.
+    LeftToTasks,
     /// It was observed, and pulled, published, deferred or paused.
     Done,
 }
@@ -847,7 +887,12 @@ pub(crate) async fn sync_package(
 ) -> Pass {
     let namespace = pkg.namespace.clone();
 
-    // Skip Local / misconfigured packages without a network round-trip.
+    // A run's last revision must follow its claim with nothing between.
+    if inner.tasks.holds(&namespace) {
+        return Pass::Skipped;
+    }
+
+    // Skip Local packages without a network round-trip.
     let lineage = match model.get_installed_package_lineage(pkg).await {
         Ok(l) => l,
         Err(err) => {
@@ -858,21 +903,23 @@ pub(crate) async fn sync_package(
     let Some(remote) = lineage.remote_uri.as_ref() else {
         return Pass::Skipped;
     };
-    // The origin is what makes every outcome below attributable: the loop
-    // declines to work on a package without one, so `report_*` can require a
-    // host rather than accept an absent one.
-    let Some(origin) = remote.origin.as_ref() else {
-        return Pass::Skipped;
-    };
     if remote.bucket.is_empty() {
         return Pass::Skipped;
     }
+    // `None` for a package with no catalog, which syncs on this computer's AWS
+    // credentials.
+    let origin = remote.origin.as_ref();
 
     if inner.paused.read().await.contains_key(&namespace) {
         return Pass::Skipped;
     }
     if !is_backoff_due(&*inner.backoff.read().await, &namespace, now) {
         return Pass::Skipped;
+    }
+    if let Some(tasks) = run.tasks.as_ref()
+        && inner.tasks.awaits_sweep(model, tasks, pkg).await
+    {
+        return Pass::LeftToTasks;
     }
 
     let result = refresh_then_maybe_sync(
@@ -885,7 +932,7 @@ pub(crate) async fn sync_package(
         run.wait,
         run.pull_enabled,
         run.push_enabled,
-        lineage.sync_scope,
+        lineage.sync_scope.clone(),
         &inner.aggregator,
     )
     .await;
@@ -944,9 +991,17 @@ pub(crate) async fn sync_package(
                 .note_status(&namespace, outcome.has_changes);
         }
         Err(WatchError::LoginRequired(host)) => {
-            // Backoff until the user re-auths; the Ok arm clears it.
+            // A refusal the old catalog gave is not this package's any more;
+            // the next pass asks the new one. See `WatcherInner::refusals`.
+            let _gate = inner.refusals.lock().await;
+            if catalog_changed(model, pkg, origin).await {
+                inner.reporter.report_autosync_changed();
+                return Pass::Done;
+            }
+            // Backoff until the user re-auths; the Ok arm clears it. With no
+            // host the failing call ran on this computer's AWS credentials.
             let error = host.as_ref().map_or_else(
-                || "Sign-in required".to_string(),
+                || AMBIENT_CREDENTIALS_UNUSABLE.to_string(),
                 |host| format!("Sign in to {host}"),
             );
             bump_backoff(&mut *inner.backoff.write().await, &namespace, now, error);
@@ -969,10 +1024,21 @@ pub(crate) async fn sync_package(
             // the lookup is cached per host and the namespace is about
             // to be paused, so a denied host costs at most one `/me`
             // per role switch — not one per tick.
-            let reason = name_denied_role(model, roles, Some(origin), reason).await;
+            let reason = name_denied_role(model, roles, origin, reason).await;
+            let _gate = inner.refusals.lock().await;
+            if catalog_changed(model, pkg, origin).await {
+                inner.reporter.report_autosync_changed();
+                return Pass::Done;
+            }
             pause(inner, &namespace, origin, reason).await;
         }
         Err(WatchError::Transient(err)) => {
+            // Its retry delay was the old catalog's, if the catalog changed.
+            let _gate = inner.refusals.lock().await;
+            if catalog_changed(model, pkg, origin).await {
+                inner.reporter.report_autosync_changed();
+                return Pass::Done;
+            }
             bump_backoff(
                 &mut *inner.backoff.write().await,
                 &namespace,
@@ -989,20 +1055,32 @@ pub(crate) async fn sync_package(
     Pass::Done
 }
 
+/// Whether the package's catalog is no longer `origin`, the one this pass
+/// read at its start. A lineage that cannot be read now changed nothing.
+async fn catalog_changed(
+    model: &impl QuiltModel,
+    pkg: &quilt::InstalledPackage,
+    origin: Option<&Host>,
+) -> bool {
+    model
+        .get_installed_package_lineage(pkg)
+        .await
+        .ok()
+        .and_then(|lineage| lineage.remote_uri)
+        .is_some_and(|remote| remote.origin.as_ref() != origin)
+}
+
 /// Pause `namespace` for `reason` and announce it: the paused map the tick
 /// skips on and the pages read, the `autosync-paused` event, a heuristic
 /// status event, and the tray.
 ///
 /// The one place a pause is recorded, whether the tick hit the refusal or a
 /// hand-pressed pull did (see [`Watcher::pause`](crate::autopull::Watcher::pause)).
-/// `origin` is required for the same reason [`StatusReporter::report_paused`]
-/// requires it: a pause is always attributed to the package's own deployment.
-///
-/// [`StatusReporter::report_paused`]: crate::autopull::reporter::StatusReporter::report_paused
+/// `origin` is the package's catalog, `None` for a package with no catalog.
 pub(crate) async fn pause(
     inner: &WatcherInner,
     namespace: &Namespace,
-    origin: &Host,
+    origin: Option<&Host>,
     reason: PausedReason,
 ) {
     inner

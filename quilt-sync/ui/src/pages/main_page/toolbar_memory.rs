@@ -6,6 +6,7 @@
 //! packages.
 
 use super::GROUP_BUCKET;
+use super::GROUP_CATALOG;
 use super::GROUP_NONE;
 use super::GROUP_PACKAGE;
 use super::GROUP_PREFIX;
@@ -23,6 +24,7 @@ pub(super) const PACKAGES_GROUP: Choice = Choice {
     key: "quilt-sync.main-page.group-packages",
     options: &[
         ("bucket", GROUP_BUCKET),
+        ("catalog", GROUP_CATALOG),
         ("prefix", GROUP_PREFIX),
         ("none", GROUP_NONE),
     ],

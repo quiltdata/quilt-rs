@@ -15,7 +15,7 @@ on:
     paths-ignore:
       - "**/*.md"
 
-# Read-only: the token is passed to third-party setup actions.
+# Read-only: third-party actions run with this token.
 permissions:
   contents: read
 
@@ -36,13 +36,12 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust-dev
         with:
-          github-token: ${{ github.token }}
           targets: wasm32-unknown-unknown
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '26'
           cache: 'npm'
           cache-dependency-path: 'quilt-sync/ui/package-lock.json'
 
@@ -67,14 +66,29 @@ jobs:
         with:
           tool: wasm-bindgen-cli@${{ steps.wasm-bindgen-version.outputs.version }}
 
-      # The runner's default budget is 20s for the whole run, browser start and
-      # wasm load included, and the suite's own time is about 18s: at that edge
-      # it is killed (SIGKILL, no failing test) partway through. Room to grow.
+      # `WASM_BINDGEN_TEST_TIMEOUT` limits only the wait for the tests to
+      # finish; browser start and page load have their own limits. Past it the
+      # runner fails with "Failed to detect test as having been run" and names
+      # no test. It is a hang guard, set well above the suite's time.
+      #
+      # The suite's time is watched against a smaller budget instead: over it,
+      # the step warns but stays green, so growth shows long before the
+      # timeout. `pipefail` keeps a test failure failing the step.
       - name: Test
-        run: cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
+        shell: bash
+        run: |
+          set -eo pipefail
+          cargo test -p quilt-sync-ui --target wasm32-unknown-unknown 2>&1 \
+            | tee "$RUNNER_TEMP/wasm-test.log"
+          secs=$(grep -oE 'finished in [0-9.]+s' "$RUNNER_TEMP/wasm-test.log" \
+            | grep -oE '[0-9.]+' | sort -n | tail -1 || true)
+          if [ -n "$secs" ] && awk -v s="$secs" -v b="$BUDGET_SECS" 'BEGIN { exit !(s > b) }'; then
+            echo "::warning title=Wasm test suite time::The wasm tests took ${secs}s, over the ${BUDGET_SECS}s budget (timeout ${WASM_BINDGEN_TEST_TIMEOUT}s). Speed up or split the suite."
+          fi
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
-          WASM_BINDGEN_TEST_TIMEOUT: "60"
+          WASM_BINDGEN_TEST_TIMEOUT: "180"
+          BUDGET_SECS: "75"
 
       # This crate has tests for two targets, and neither harness runs the
       # other's: `wasm-bindgen-test-runner` runs only `#[wasm_bindgen_test]`, and

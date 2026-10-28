@@ -47,9 +47,19 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
+use crate::io::manifest::bytestream_to_string;
 use crate::io::remote::RemoteObjectStream;
+use quilt_uri::Tag;
+use quilt_uri::paths::tag_key;
 
 mod response_timeout;
+
+/// A key under `prefix` names a revision when it is a timestamp: not
+/// `latest`, which only names one of them, as the registry lists them.
+fn is_revision_pointer(key: &str, prefix: &str) -> bool {
+    key.strip_prefix(prefix)
+        .is_some_and(|name| matches!(name.parse(), Ok(Tag::Timestamp(_))))
+}
 
 /// S3's HEAD-bucket endpoint returns `x-amz-bucket-region` for any bucket
 /// that exists and is addressable, regardless of permissions. A missing
@@ -66,6 +76,16 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
         .ok_or_else(|| RemoteCatalogError::BucketUnreachable(bucket.to_string()))?;
     Ok(region.to_str()?.into())
 }
+
+/// Error codes for keys AWS refused: unknown, expired or not matching their
+/// secret. Read off S3's answer, and off STS's inside a credential provider.
+const CREDENTIAL_REJECTED: [&str; 5] = [
+    "InvalidAccessKeyId",
+    "ExpiredToken",
+    "InvalidToken",
+    "InvalidClientTokenId",
+    "SignatureDoesNotMatch",
+];
 
 /// Map an AWS error onto a typed kind.
 ///
@@ -102,7 +122,7 @@ pub(super) fn classify_s3_error(
     fallback: fn(String) -> S3ErrorKind,
 ) -> S3ErrorKind {
     match code {
-        Some("InvalidAccessKeyId" | "ExpiredToken" | "InvalidToken" | "InvalidClientTokenId") => {
+        Some(code) if CREDENTIAL_REJECTED.contains(&code) => {
             S3ErrorKind::InvalidCredentials(described.to_string())
         }
         // Only codes meaning a missing *object* belong here. `push` reads
@@ -138,10 +158,69 @@ where
         );
         return login;
     }
+    if host.is_none() && ambient_credentials_failed(&err) {
+        warn!(
+            "❌ The AWS credentials on this computer are not usable: {}",
+            describe_sdk_error(err)
+        );
+        return Error::Login(LoginError::NoSession(None));
+    }
     Error::S3(S3Error {
         host: host.cloned(),
         kind: classify_sdk_error(err, fallback),
     })
+}
+
+/// What `aws-config` says when an SSO profile with an `sso-session` has no
+/// cached token, or one that expired and cannot be refreshed: `aws sso login`
+/// is the remedy.
+const SSO_TOKEN_UNUSABLE: [&str; 2] = [
+    "failed to load the cached SSO token",
+    "the SSO token has expired",
+];
+
+/// The SDK's default chain (`~/.aws`, env vars, SSO, instance metadata)
+/// found no credentials, or a profile it cannot use. Not a provider that timed
+/// out or failed, such as SSO or assume-role offline: that may work next time.
+/// The SDK wraps it as a dispatch failure, so, like [`recover_absent_session`],
+/// this walks `source()`.
+fn ambient_credentials_failed(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(err);
+    let mut loading_credentials = false;
+    while let Some(e) = current {
+        // Not the first `CredentialsError` alone: a role profile whose source
+        // has no credentials wraps "not loaded" in a provider error.
+        if matches!(
+            e.downcast_ref::<CredentialsError>(),
+            Some(
+                CredentialsError::CredentialsNotLoaded(_)
+                    | CredentialsError::InvalidConfiguration(_)
+            )
+        ) {
+            return true;
+        }
+        // An SSO profile with no usable sign-in. The SDK's error types for it
+        // are private, so its words are matched; a test pins them.
+        let words = e.to_string();
+        if SSO_TOKEN_UNUSABLE.iter().any(|w| words.contains(w)) {
+            return true;
+        }
+        loading_credentials |= e.is::<CredentialsError>();
+        // While loading credentials: a file that is not there (a legacy SSO
+        // profile's cached token), the SSO portal refusing the sign-in, or STS
+        // refusing an assume-role profile's source keys.
+        if loading_credentials
+            && (e
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+                || words.contains("UnauthorizedException")
+                || CREDENTIAL_REJECTED.iter().any(|code| words.contains(code)))
+        {
+            return true;
+        }
+        current = e.source();
+    }
+    false
 }
 
 /// Classify an `SdkError` straight off an AWS call.
@@ -181,7 +260,7 @@ async fn get_object_stream(
             kind: S3ErrorKind::NotFound(s3_uri.to_string()),
         }),
         // The host separates a deployment session, whose remedy is signing in,
-        // from ambient `~/.aws` credentials, whose remedy is the file. A `None`
+        // from ambient `~/.aws` credentials, whose remedy is `~/.aws` or `aws sso login`. A `None`
         // here is read downstream as the latter.
         _ => s3_error_or_session_loss(err, host, S3ErrorKind::Raw),
     })?;
@@ -496,6 +575,26 @@ impl RemoteS3 {
     /// holds only public HEAD-bucket region lookups — no credentials — so
     /// it never goes stale on logout.
     pub fn clear_client_cache(&self, host: Option<&Host>) {
+        match host {
+            Some(host) => self.retain_clients(|creds_ref| creds_ref.host.as_ref() != Some(host)),
+            None => self.retain_clients(|_| false),
+        }
+    }
+
+    /// After the AWS credentials on this computer were missing or refused,
+    /// drop the clients that use them. A client reads `~/.aws` once and keeps
+    /// the keys it was given, so only a new one sees a fixed file.
+    ///
+    /// A denial with no host counts too: a HEAD has no body, so bad keys there
+    /// are a bare 403, and a rebuilt client is cheap.
+    fn forget_ambient_clients_on(&self, err: Error) -> Error {
+        if err.is_ambient_session_absent() || (err.is_access_denied() && err.s3_host().is_none()) {
+            self.retain_clients(|creds_ref| creds_ref.host.is_some());
+        }
+        err
+    }
+
+    fn retain_clients(&self, keep: impl Fn(&CredsRef) -> bool) {
         // On a poisoned lock, recover the guard and clear anyway: dropping
         // stale clients on logout is the safe outcome, never leaving
         // credentials cached.
@@ -504,16 +603,55 @@ impl RemoteS3 {
             Err(poisoned) => poisoned.into_inner(),
         };
         self.client_cache_generation.fetch_add(1, Ordering::SeqCst);
-        match host {
-            Some(host) => map.retain(|creds_ref, _| creds_ref.host.as_ref() != Some(host)),
-            None => map.clear(),
-        }
+        map.retain(|creds_ref, _| keep(creds_ref));
         // Keep the per-principal construction locks for the lifetime of this
         // shared cache. Removing one during invalidation would let a request
         // already holding the old lock race a later miss holding a newly
         // created lock; the pre-invalidation request could then overwrite the
         // fresh client. The key space is bounded by the hosts and regions used
         // by this RemoteS3 instance.
+    }
+
+    /// [`Remote::published_revisions`] with no catalog: the timestamped
+    /// pointers under `.quilt/named_packages/<namespace>/`, listed page by
+    /// page on this computer's AWS credentials, then each one read. A pointer
+    /// gone before it is read is no longer a revision.
+    async fn bucket_revisions(&self, bucket: &str, namespace: &Namespace) -> Res<Vec<String>> {
+        let client = self.get_client_for_bucket(None, bucket).await?;
+        let prefix = tag_key(namespace, "");
+        let mut pages = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(&prefix)
+            .delimiter("/")
+            .into_paginator()
+            .send();
+        let mut pointers = Vec::new();
+        while let Some(page) = pages.next().await {
+            let page =
+                page.map_err(|err| s3_error_or_session_loss(err, None, S3ErrorKind::ListObjects))?;
+            pointers.extend(
+                page.contents()
+                    .iter()
+                    .filter_map(|object| object.key())
+                    .filter(|key| is_revision_pointer(key, &prefix))
+                    .map(|key| S3Uri {
+                        bucket: bucket.to_string(),
+                        key: key.to_string(),
+                        version: None,
+                    }),
+            );
+        }
+
+        let mut hashes = Vec::new();
+        for pointer in pointers {
+            match get_object_stream(&client, &pointer, None).await {
+                Ok(stream) => hashes.push(bytestream_to_string(stream.body).await?),
+                Err(e) if e.is_not_found() => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(hashes)
     }
 
     async fn get_client_for_bucket(
@@ -562,7 +700,11 @@ impl Remote for RemoteS3 {
             // Anything else stays a plain existence failure.
             Err(err) => {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
-                Err(s3_error_or_session_loss(err, host, S3ErrorKind::Exists))
+                Err(self.forget_ambient_clients_on(s3_error_or_session_loss(
+                    err,
+                    host,
+                    S3ErrorKind::Exists,
+                )))
             }
         }
     }
@@ -577,7 +719,10 @@ impl Remote for RemoteS3 {
             host, s3_uri
         );
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-        match get_object_stream(&client, s3_uri, host).await {
+        match get_object_stream(&client, s3_uri, host)
+            .await
+            .map_err(|e| self.forget_ambient_clients_on(e))
+        {
             Ok(stream) => {
                 debug!("✔️ Created stream for object {}", s3_uri);
                 Ok(stream)
@@ -627,7 +772,13 @@ impl Remote for RemoteS3 {
             .await
             // A denial is typed distinctly so the push path can say "this role
             // cannot write here"; anything else stays a plain put failure.
-            .map_err(|err| s3_error_or_session_loss(err, host, S3ErrorKind::PutObject))?;
+            .map_err(|err| {
+                self.forget_ambient_clients_on(s3_error_or_session_loss(
+                    err,
+                    host,
+                    S3ErrorKind::PutObject,
+                ))
+            })?;
 
         Ok(())
     }
@@ -646,7 +797,11 @@ impl Remote for RemoteS3 {
             }),
             // Same reasoning as [`Remote::exists`]: only a genuine denial
             // changes the kind, everything else stays a resolve failure.
-            Err(err) => Err(s3_error_or_session_loss(err, host, S3ErrorKind::ResolveUrl)),
+            Err(err) => Err(self.forget_ambient_clients_on(s3_error_or_session_loss(
+                err,
+                host,
+                S3ErrorKind::ResolveUrl,
+            ))),
         }
     }
 
@@ -675,6 +830,7 @@ impl Remote for RemoteS3 {
         } else {
             put_and_request_checksum(client, source_path, dest_uri, host_config).await
         }
+        .map_err(|e| self.forget_ambient_clients_on(e))
     }
 
     async fn host_config(&self, host: Option<&Host>) -> Res<HostConfig> {
@@ -688,13 +844,21 @@ impl Remote for RemoteS3 {
 
     async fn published_revisions(
         &self,
-        host: &Host,
+        host: Option<&Host>,
         bucket: &str,
         namespace: &Namespace,
     ) -> Res<Vec<String>> {
-        self.auth
-            .package_revisions(&self.http, host, bucket, namespace)
-            .await
+        match host {
+            Some(host) => {
+                self.auth
+                    .package_revisions(&self.http, host, bucket, namespace)
+                    .await
+            }
+            None => self
+                .bucket_revisions(bucket, namespace)
+                .await
+                .map_err(|e| self.forget_ambient_clients_on(e)),
+        }
     }
 
     fn clear_client_cache(&self, host: Option<&Host>) {
@@ -762,6 +926,46 @@ mod tests {
         assert_eq!(object_hash.to_string(), LESS_THAN_8MB_HASH_B64);
 
         Ok(())
+    }
+
+    /// With no catalog, the fixture package's revisions come from its
+    /// pointers in the bucket: the old revision and the latest one.
+    #[test(tokio::test)]
+    async fn live_bucket_revisions() -> Res<()> {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+
+        let hashes = remote
+            .published_revisions(None, "data-yaml-spec-tests", &("scale", "10u").into())
+            .await?;
+
+        for hash in [
+            "f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef",
+            "ae239090f2a01de382e8af719fe4a451ef1d1fa4a3ef7b21c6b36513d42c6630",
+        ] {
+            assert!(hashes.iter().any(|h| h == hash), "{hash} in {hashes:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn only_timestamp_pointers_are_revisions() {
+        let prefix = ".quilt/named_packages/team/data/";
+        assert!(is_revision_pointer(
+            ".quilt/named_packages/team/data/1758500000",
+            prefix
+        ));
+        assert!(!is_revision_pointer(
+            ".quilt/named_packages/team/data/latest",
+            prefix
+        ));
+        assert!(!is_revision_pointer(
+            ".quilt/named_packages/team/data/notes.txt",
+            prefix
+        ));
+        assert!(!is_revision_pointer(
+            ".quilt/named_packages/team/other/1758500000",
+            prefix
+        ));
     }
 
     #[test(tokio::test)]
@@ -923,6 +1127,8 @@ mod tests {
             "InvalidAccessKeyId",
             "InvalidToken",
             "InvalidClientTokenId",
+            // A wrong secret key: the request was not signed by the key it names.
+            "SignatureDoesNotMatch",
         ] {
             let err = classify_s3_error(
                 Some(code),
@@ -1402,6 +1608,69 @@ mod tests {
         assert!(remote.s3.read().unwrap().is_empty());
     }
 
+    /// A host-less call that found the AWS credentials on this computer
+    /// unusable drops the host-less clients, so a fixed `~/.aws` is read by
+    /// the next call. Deployment clients and other failures keep the cache.
+    #[test]
+    fn an_ambient_credentials_failure_drops_the_host_less_clients() {
+        let host = fixtures::host();
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let fill = || {
+            let mut map = remote.s3.write().unwrap();
+            for host in [Some(host.clone()), None] {
+                map.insert(
+                    CredsRef {
+                        region: Region::new("us-east-1"),
+                        host,
+                    },
+                    dummy_client("us-east-1"),
+                );
+            }
+        };
+        let hosts = || {
+            let map = remote.s3.read().unwrap();
+            let mut hosts: Vec<_> = map.keys().map(|k| k.host.clone()).collect();
+            hosts.sort_by_key(|h| h.as_ref().map(ToString::to_string));
+            hosts
+        };
+
+        fill();
+        let failed = Error::S3(S3Error::new(S3ErrorKind::GetObject("boom".to_string())));
+        remote.forget_ambient_clients_on(failed);
+        assert_eq!(
+            hosts(),
+            vec![None, Some(host.clone())],
+            "an outage keeps them"
+        );
+
+        let refused = Error::S3(S3Error::new(S3ErrorKind::InvalidCredentials(
+            "refused".to_string(),
+        )));
+        remote.forget_ambient_clients_on(refused);
+        assert_eq!(hosts(), vec![Some(host.clone())]);
+
+        // A HEAD has no body, so bad keys there are a bare 403: a denial that
+        // cannot be told from a missing permission.
+        fill();
+        remote.forget_ambient_clients_on(Error::S3(S3Error::new(S3ErrorKind::AccessDenied(
+            "HTTP 403".to_string(),
+        ))));
+        assert_eq!(hosts(), vec![Some(host.clone())]);
+        // A deployment's denial is about its role, not keys on this computer.
+        let denied = Error::S3(S3Error {
+            host: Some(host.clone()),
+            kind: S3ErrorKind::AccessDenied("HTTP 403".to_string()),
+        });
+        fill();
+        assert!(remote.forget_ambient_clients_on(denied).is_access_denied());
+        assert_eq!(hosts(), vec![None, Some(host.clone())]);
+
+        fill();
+        let missing = Error::Login(LoginError::NoSession(None));
+        remote.forget_ambient_clients_on(missing);
+        assert_eq!(hosts(), vec![Some(host.clone())]);
+    }
+
     /// Every `InstalledPackage` a domain hands out must reach *the* caches,
     /// not a copy of them. A per-package copy starts empty, discards whatever
     /// it builds, and — the part that matters beyond wasted work — puts the
@@ -1494,7 +1763,7 @@ mod tests {
         let _: RoleInfo = remote.switch_role(host, "ReadOnly").await?;
         let _: Vec<String> = remote.readable_buckets(host).await?;
         let _: Vec<String> = remote
-            .published_revisions(host, "bucket", &("team", "dataset").into())
+            .published_revisions(Some(host), "bucket", &("team", "dataset").into())
             .await?;
         Ok(())
     }
@@ -1724,6 +1993,183 @@ mod tests {
             ),
             "the call-site helper classified a signed-out session as an S3 error"
         );
+        Ok(())
+    }
+
+    #[derive(Debug)]
+    struct Failing(fn() -> CredentialsError);
+    impl ProvideCredentials for Failing {
+        fn provide_credentials<'a>(&'a self) -> future::ProvideCredentials<'a>
+        where
+            Self: 'a,
+        {
+            future::ProvideCredentials::ready(Err((self.0)()))
+        }
+    }
+
+    /// A call whose credential provider fails with `error`, as classified for
+    /// `host`.
+    async fn classified(error: fn() -> CredentialsError, host: Option<&Host>) -> Error {
+        let config = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Failing(error))
+            .load()
+            .await;
+        let err = aws_sdk_s3::Client::new(&config)
+            .head_object()
+            .bucket("bucket")
+            .key("key")
+            .send()
+            .await
+            .expect_err("no credentials, so no request");
+        s3_error_or_session_loss(err, host, S3ErrorKind::Exists)
+    }
+
+    fn host_less_absent(err: &Error) -> bool {
+        matches!(err, Error::Login(LoginError::NoSession(None)))
+    }
+
+    /// The machine's own credential chain finding nothing is a host-less
+    /// absent session, not an outage: without this, a status read on a bare
+    /// bucket swallows it and answers "unreachable" from the last-known tip.
+    #[test(tokio::test)]
+    async fn an_empty_ambient_chain_is_a_host_less_absent_session() {
+        let not_loaded = || CredentialsError::not_loaded("no credentials found in chain");
+        assert!(
+            host_less_absent(&classified(not_loaded, None).await),
+            "an empty ambient chain was classified as storage trouble"
+        );
+        // A deployment's provider reports its own `NoSession`; a bare
+        // credentials error there stays what it was.
+        assert!(
+            matches!(
+                classified(not_loaded, Some(&fixtures::host())).await,
+                Error::S3(_)
+            ),
+            "a deployment's credentials error was retyped as host-less"
+        );
+        // A broken profile is as unusable as a missing one.
+        assert!(host_less_absent(
+            &classified(
+                || CredentialsError::invalid_configuration("bad profile"),
+                None
+            )
+            .await
+        ));
+        // A role profile whose source has none wraps "not loaded".
+        assert!(host_less_absent(
+            &classified(
+                || {
+                    CredentialsError::provider_error(CredentialsError::not_loaded(
+                        "no source credentials",
+                    ))
+                },
+                None
+            )
+            .await
+        ));
+    }
+
+    /// A provider's own call refused: the SSO portal refusing the sign-in (a
+    /// legacy profile's expired token, which the SDK does not check itself),
+    /// or STS refusing an assume-role profile's source keys. A provider that
+    /// timed out or failed (SSO or assume-role, offline) may work next time:
+    /// an outage, so the read falls back to the tip.
+    #[test(tokio::test)]
+    async fn a_refused_provider_call_is_unusable_and_a_failed_one_an_outage() {
+        let refused: [fn() -> CredentialsError; 3] = [
+            || {
+                CredentialsError::provider_error(std::io::Error::other(
+                    "UnauthorizedException: Session token not found or invalid",
+                ))
+            },
+            || {
+                CredentialsError::provider_error(std::io::Error::other(
+                    "InvalidClientTokenId: The security token included in the request is invalid",
+                ))
+            },
+            || {
+                CredentialsError::provider_error(std::io::Error::other(
+                    "ExpiredToken: The security token included in the request is expired",
+                ))
+            },
+        ];
+        for error in refused {
+            let err = classified(error, None).await;
+            assert!(host_less_absent(&err), "{err}");
+        }
+
+        let transient: [fn() -> CredentialsError; 2] = [
+            || CredentialsError::provider_timed_out(std::time::Duration::from_secs(5)),
+            || CredentialsError::provider_error("sso portal unreachable"),
+        ];
+        for error in transient {
+            assert!(
+                matches!(classified(error, None).await, Error::S3(_)),
+                "a transient provider failure was read as unusable credentials"
+            );
+        }
+    }
+
+    /// An SSO profile with no cached token, or an expired one, is unusable
+    /// until `aws sso login`. Through the real default chain, on a fake home,
+    /// so an SDK that rewords these errors fails here.
+    #[test(tokio::test)]
+    async fn an_sso_profile_without_a_usable_token_is_a_host_less_absent_session() -> Res<()> {
+        use aws_types::os_shim_internal::Env;
+        use aws_types::os_shim_internal::Fs;
+
+        const CONFIG: &str = "[profile default]
+sso_session = dev
+sso_account_id = 123456789012
+sso_role_name = Reader
+
+[sso-session dev]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+";
+        // `sha1("dev")`: the cache file the SDK reads for this session.
+        const CACHE: &str = "/home/me/.aws/sso/cache/34c6fceca75e456f25e7e99531e2425c6c1de443.json";
+        const EXPIRED: &str = r#"{"accessToken": "token", "expiresAt": "2020-01-01T00:00:00Z", "region": "us-east-1", "startUrl": "https://example.awsapps.com/start"}"#;
+
+        // A legacy profile names the start URL itself, with no `sso-session`.
+        const LEGACY: &str = "[profile default]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+sso_account_id = 123456789012
+sso_role_name = Reader
+";
+        for files in [
+            vec![("/home/me/.aws/config", CONFIG)],
+            vec![("/home/me/.aws/config", CONFIG), (CACHE, EXPIRED)],
+            vec![("/home/me/.aws/config", LEGACY)],
+        ] {
+            let config = aws_config::defaults(BehaviorVersion::latest())
+                .region(Region::new("us-east-1"))
+                .env(Env::from_slice(&[
+                    ("HOME", "/home/me"),
+                    ("AWS_EC2_METADATA_DISABLED", "true"),
+                ]))
+                .fs(Fs::from_slice(&files))
+                .load()
+                .await;
+            let err = aws_sdk_s3::Client::new(&config)
+                .head_object()
+                .bucket("bucket")
+                .key("key")
+                .send()
+                .await
+                .expect_err("no usable SSO token, so no request");
+            let described = aws_smithy_types::error::display::DisplayErrorContext(&err).to_string();
+            assert!(
+                matches!(
+                    s3_error_or_session_loss(err, None, S3ErrorKind::Exists),
+                    Error::Login(LoginError::NoSession(None))
+                ),
+                "{} file(s): {described}",
+                files.len()
+            );
+        }
         Ok(())
     }
 

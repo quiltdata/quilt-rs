@@ -9,6 +9,7 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Story;
 use crate::gallery::queue::row;
+use crate::kit::AttentionQueue;
 use crate::kit::Card;
 use crate::kit::GroupHeading;
 use crate::kit::HostRow;
@@ -21,6 +22,7 @@ use crate::kit::SkeletonBox;
 use crate::kit::StateTone;
 use crate::kit::ToggleRow;
 use crate::kit::ToggleRowSkeleton;
+use crate::kit::ZeroLineSkeleton;
 
 const HOUR: f64 = 3_600_000.0;
 
@@ -115,21 +117,19 @@ fn Rows() -> impl IntoView {
                 </Card>
             </Cell>
             <Cell wide=true label="queue — three unknown rows above one real one">
-                <Card title="Needs your attention">
-                    <div>
-                        <div class="g-rows" aria-busy="true">
-                            <QueueRowSkeleton />
-                            <QueueRowSkeleton />
-                            <QueueRowSkeleton />
-                        </div>
+                <AttentionQueue text="1 package needs your attention">
+                    <li aria-busy="true"><QueueRowSkeleton /></li>
+                    <li aria-busy="true"><QueueRowSkeleton /></li>
+                    <li aria-busy="true"><QueueRowSkeleton /></li>
+                    <li>
                         {row(
                             "org/dataset-c",
                             &PackageState::PullConflict {
                                 files: vec!["a.csv".to_string(), "b.csv".to_string()],
                             },
                         )}
-                    </div>
-                </Card>
+                    </li>
+                </AttentionQueue>
             </Cell>
             <Cell wide=true label="autosync — a skeleton toggle above a real one">
                 <Card title="Autosync">
@@ -157,12 +157,7 @@ fn Rows() -> impl IntoView {
                 </Card>
             </Cell>
             <Cell wide=true label="the whole region unknown — what the first paint shows">
-                <Card title="Needs your attention">
-                    <div class="g-rows" aria-busy="true">
-                        <QueueRowSkeleton />
-                        <QueueRowSkeleton />
-                    </div>
-                </Card>
+                <ZeroLineSkeleton />
             </Cell>
         </Story>
     }

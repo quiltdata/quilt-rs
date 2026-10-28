@@ -111,10 +111,12 @@ async fn make_inner_for_run_once(reporter: Arc<RecordingReporter>) -> WatcherInn
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter,
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: quiet_clock().await,
     }
 }
@@ -140,10 +142,12 @@ async fn make_inner_with_flags(
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter,
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: quiet_clock().await,
     }
 }
@@ -187,7 +191,10 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
         // anything.
         let hosts = reporter.hosts.lock().unwrap();
         assert_eq!(hosts.len(), 1);
-        assert_eq!(hosts[0].to_string(), "quilt.test");
+        assert_eq!(
+            hosts[0].as_ref().map(ToString::to_string).as_deref(),
+            Some("quilt.test")
+        );
     }
     {
         let statuses = reporter.statuses.lock().unwrap();
@@ -201,6 +208,117 @@ async fn run_once_publishes_on_changes() -> Result<(), Error> {
         );
     }
     assert!(inner.paused.read().await.is_empty());
+    Ok(())
+}
+
+/// A publish with nothing to publish is a quiet no-op: no publish report,
+/// no pause, and the observed state stays.
+#[tokio::test]
+async fn run_once_with_nothing_to_publish_is_quiet() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("file.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+
+    let (mut model, _) =
+        fixture_with_lineage_and_status(lineage, quiet_status(UpstreamState::UpToDate, changes));
+    model
+        .expect_locked_package_publish()
+        .times(1)
+        .returning(|_, _, _, _, _, _| Ok(quilt::PublishOutcome::NothingToPublish));
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = make_inner_for_run_once(reporter.clone()).await;
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(reporter.published.lock().unwrap().is_empty());
+    assert!(reporter.paused.lock().unwrap().is_empty());
+    {
+        let statuses = reporter.statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].1.status, "up_to_date");
+        assert!(statuses[0].1.has_changes);
+    }
+    assert!(inner.paused.read().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn autosync_default_metadata_keeps_the_heads_agent_exec() -> Result<(), Error> {
+    let task = serde_json::json!({ "document": "TASK.md", "claim": { "status": "unclaimed" } });
+    for (head, default, expected) in [
+        (
+            serde_json::json!({ "title": "t", "agent_exec": task }),
+            serde_json::json!({ "source": "desktop" }),
+            serde_json::json!({ "source": "desktop", "agent_exec": task }),
+        ),
+        (
+            serde_json::json!({ "title": "t" }),
+            serde_json::json!({ "source": "desktop", "agent_exec": task }),
+            serde_json::json!({ "source": "desktop" }),
+        ),
+        (
+            serde_json::json!({ "agent_exec": task }),
+            serde_json::json!({ "agent_exec": { "document": "OTHER.md" } }),
+            serde_json::json!({ "agent_exec": task }),
+        ),
+        (
+            serde_json::json!({ "agent_exec": task }),
+            serde_json::json!("desktop"),
+            serde_json::json!({ "agent_exec": task }),
+        ),
+    ] {
+        let ns: Namespace = ("acme", "demo").into();
+        let changes = BTreeMap::from([(
+            std::path::PathBuf::from("file.txt"),
+            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+        )]);
+        let lineage =
+            quilt::lineage::PackageLineage::from_remote(remote_for(&ns), "h0".to_string());
+        let (mut model, _) = fixture_with_lineage_and_status(
+            lineage,
+            quiet_status(UpstreamState::UpToDate, changes),
+        );
+        model
+            .expect_get_installed_package_manifest()
+            .returning(move |_, _| {
+                Ok(quilt::manifest::Manifest {
+                    header: quilt::manifest::ManifestHeader {
+                        user_meta: Some(head.clone()),
+                        ..quilt::manifest::ManifestHeader::default()
+                    },
+                    rows: Vec::new(),
+                })
+            });
+        let published = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recording = Arc::clone(&published);
+        model
+            .expect_locked_package_publish()
+            .returning(move |_, _, meta, _, _, _| {
+                recording.lock().unwrap().push(meta);
+                Ok(quilt::PublishOutcome::CommittedAndPushed(
+                    fake_push_outcome(&ns),
+                ))
+            });
+        let inner = WatcherInner {
+            publish_settings: Arc::new(RwLock::new(PublishSettings {
+                default_metadata: Some(default.to_string()),
+                ..PublishSettings::default()
+            })),
+            ..make_inner_for_run_once(Arc::new(RecordingReporter::default())).await
+        };
+
+        run_once(&model, &RoleCache::default(), &inner).await?;
+
+        let published = published.lock().unwrap();
+        assert!(
+            matches!(published.as_slice(), [quilt::flow::UserMeta::Set(meta)] if *meta == expected),
+            "expected {expected}, got {published:?}"
+        );
+    }
     Ok(())
 }
 
@@ -957,10 +1075,12 @@ async fn publish_quiet_window_reads_idle_timeout_not_pull_cadence() -> Result<()
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: LastChange::changed_for_test(&ns, Duration::from_secs(30)).await,
     };
 
@@ -1222,10 +1342,12 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator,
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: quiet_clock().await,
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1264,12 +1386,14 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         .expect_locked_package_pull()
         .times(1)
         .returning(|_, _, _| {
-            Ok(pulled(quilt_uri::ManifestUri {
-                bucket: "bucket".to_string(),
-                namespace: ("acme", "demo").into(),
-                hash: "h1".to_string(),
-                origin: None,
-            }))
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
         });
     let reporter = Arc::new(RecordingReporter::default());
     let (tx, rx) = tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
@@ -1280,10 +1404,12 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator,
         clocks: Clocks::default(),
         walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
         last_change: quiet_clock().await,
     };
     run_once(&model, &RoleCache::default(), &inner).await?;

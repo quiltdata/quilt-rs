@@ -23,6 +23,7 @@ use crate::kit::SegmentedControl;
 use crate::kit::Select;
 use crate::kit::StateTone;
 use quilt_sync_ui::commands::PackageSize;
+use quilt_sync_ui::pages::ToolbarBand;
 use quilt_sync_ui::pages::list_region_class;
 use quilt_sync_ui::pages::rows_class;
 use quilt_sync_ui::util::Held;
@@ -204,6 +205,7 @@ fn TooltipStory() -> impl IntoView {
             size: Some(PackageSize {
                 total: bytes,
                 downloaded,
+                backlog: bytes - downloaded,
             }),
         })
     };
@@ -518,6 +520,17 @@ fn header(title: String, count: usize, bucket_axis: bool) -> AnyView {
     }
 }
 
+/// The catalog host each scene bucket's packages point at, as the Catalog axis
+/// heads them. `s3://org-archive` has none, so its packages group under
+/// `No catalog`, before every host.
+fn catalog(bucket: &str) -> &'static str {
+    match bucket {
+        "s3://my-bucket" => "catalog.example.com",
+        "s3://team-bucket" => "team.example.com",
+        _ => "No catalog",
+    }
+}
+
 /// The namespace's owner segment, with its slash — `user/package-a` groups under
 /// `user/`. The split is `quilt_uri::Namespace`'s; the slash is this heading's.
 fn prefix(namespace: &'static str) -> String {
@@ -589,41 +602,44 @@ pub fn PackagesRegion(
     let sort = RwSignal::new("Changed".to_string());
 
     view! {
-        // The page's region 4: the toolbar, then the card that scrolls under it,
-        // laid out by the page's own class. The toolbar sits on the card, not in
-        // it. No title on the card: the SegmentedControl names the view, and a
-        // card headed `Packages` above a Packages / Recent files switch says it
-        // twice.
+        // The page's region 4: the toolbar in its band, then the list that
+        // scrolls the page under it, laid out by the page's own classes. The
+        // list is a bare card, as on the page. No title on it: the
+        // SegmentedControl names the view, and a card headed `Packages` above a
+        // Packages / Recent files switch says it twice.
         <div class=list_region_class()>
-            <ListToolbar>
-                <SegmentedControl
-                    aria_label="List view"
-                    name=view_name
-                    options=vec!["Packages".into(), "Recent files".into()]
-                    selected=view_mode
-                />
-                <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
-                <Select
-                    naming=Naming::Prefix("Group".to_string())
-                    options=vec![
-                        "Bucket".to_string(),
-                        "Prefix".to_string(),
-                        "None".to_string(),
-                    ]
-                    selected=group
-                />
-                <Select
-                    naming=Naming::Prefix("Sort".to_string())
-                    options=vec!["Changed".to_string(), "Name".to_string()]
-                    selected=sort
-                />
-                // Default, as the page draws it: the accent is the fresh
-                // install's Blankslate action, not a toolbar's.
-                <Button on_click=|_| ()>"Create package"</Button>
-            </ListToolbar>
+            <ToolbarBand>
+                <ListToolbar>
+                    <SegmentedControl
+                        aria_label="List view"
+                        name=view_name
+                        options=vec!["Packages".into(), "Recent files".into()]
+                        selected=view_mode
+                    />
+                    <SearchInput value=query aria_label="Search packages" placeholder="Search…" />
+                    <Select
+                        naming=Naming::Prefix("Group".to_string())
+                        options=vec![
+                            "Bucket".to_string(),
+                            "Catalog".to_string(),
+                            "Prefix".to_string(),
+                            "None".to_string(),
+                        ]
+                        selected=group
+                    />
+                    <Select
+                        naming=Naming::Prefix("Sort".to_string())
+                        options=vec!["Changed".to_string(), "Name".to_string()]
+                        selected=sort
+                    />
+                    // Default, as the page draws it: the accent is the fresh
+                    // install's Blankslate action, not a toolbar's.
+                    <Button on_click=|_| ()>"Create package"</Button>
+                </ListToolbar>
+            </ToolbarBand>
             // Headings and lists are the card's direct children, as on the page:
             // `Card` rules between them, and the list rules between its rows.
-            <Card label="Packages">
+            <Card label="Packages" bare=true>
                 {move || {
                     let rows = fixtures();
                     let axis = group.get();
@@ -631,12 +647,15 @@ pub fn PackagesRegion(
                         return list(rows, provisional, downloads);
                     }
                     let bucket_axis = axis == "Bucket";
-                    // One path for both axes, differing only in the key. Grouping by
+                    // One path for every axis, differing only in the key. Grouping by
                     // prefix used to fall through to the flat list, which read as
                     // "sorted by prefix" — the same rows in the same order with no
                     // headers at all.
-                    let key = move |entry: &Fixture| {
-                        if bucket_axis { entry.0.to_string() } else { prefix(entry.1) }
+                    let catalog_axis = axis == "Catalog";
+                    let key = move |entry: &Fixture| match axis.as_str() {
+                        "Bucket" => entry.0.to_string(),
+                        "Catalog" => catalog(entry.0).to_string(),
+                        _ => prefix(entry.1),
                     };
                     // First-appearance order, not sorted: the fixture order is the
                     // page's sort order, and re-sorting the groups here would hide
@@ -647,6 +666,13 @@ pub fn PackagesRegion(
                         if !order.contains(&k) {
                             order.push(k);
                         }
+                    }
+                    // As on the page, the packages without a catalog come before every host.
+                    if catalog_axis
+                        && let Some(at) = order.iter().position(|k| k == "No catalog")
+                    {
+                        let first = order.remove(at);
+                        order.insert(0, first);
                     }
                     order
                         .into_iter()
@@ -693,8 +719,9 @@ pub fn PackagesScene() -> impl IntoView {
                   Latest. The open question is here — does a column of Latest read as a calm \
                   list, or as a wall of green that spends the signal the tone was bought \
                   for? Switch the theme; light and dark disagree about this more than about \
-                  anything else in the kit. All three Group options are live: switch between \
-                  Bucket and Prefix and watch `user/shared-archive` move."
+                  anything else in the kit. Every Group option is live: switch between Bucket \
+                  and Prefix and watch `user/shared-archive` move, or to Catalog to see \
+                  the packages without a catalog grouped first."
         >
             <PackagesRegion view_name="packages-view" />
         </Scene>

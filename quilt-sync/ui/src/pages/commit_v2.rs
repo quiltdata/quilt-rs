@@ -118,19 +118,21 @@ fn primary_face(primary: Primary, w: PrimaryWiring) -> AnyView {
     }
 }
 
-/// The header's `[⋯]`: the package page's bucket item, then Remove below a
-/// rule. Of the package page's other items, *Create new revision* is this
-/// page, and undoing a revision belongs on the package page, where the files
-/// it restores are in view.
+/// The header's `[⋯]`: the package page's bucket item while there is one,
+/// then Remove below a rule. Of the package page's other items, *Create new
+/// revision* is this page, and undoing a revision belongs on the package page,
+/// where the files it restores are in view.
 #[must_use]
 pub fn header_menu(remote_locked: bool, busy: bool) -> Vec<MenuItem> {
-    vec![
-        remote_item(remote_locked, busy),
-        MenuItem {
-            separated: true,
+    let bucket = remote_item(remote_locked, busy);
+    let separated = bucket.is_some();
+    bucket
+        .into_iter()
+        .chain([MenuItem {
+            separated,
             ..remove_item(busy)
-        },
-    ]
+        }])
+        .collect()
 }
 
 /// The page's header. No state label: it would be about the package, not the
@@ -141,9 +143,10 @@ pub fn CommitHeader(
     #[prop(into)] package_href: String,
     primary: Primary,
     w: PrimaryWiring,
-    on_open_folder: Callback<()>,
-    /// The package has been pushed, so `[⋯]` offers *Show remote* in place
-    /// of *Change bucket*.
+    /// The package header's location group, which the page wires and the
+    /// gallery draws inert.
+    location: AnyView,
+    /// The package has been pushed, so `[⋯]` drops *Change bucket*.
     remote_locked: bool,
     /// The command chosen in `[⋯]`.
     on_menu: Callback<MenuCommand>,
@@ -202,9 +205,7 @@ pub fn CommitHeader(
             title="New revision"
             actions=view! {
                 {face}
-                <Button disabled=w.running on_click=move |_| on_open_folder.run(())>
-                    "Open folder"
-                </Button>
+                {location}
                 <ActionMenu aria_label="More actions for this package" actions=menu />
             }
                 .into_any()
@@ -1012,6 +1013,7 @@ mod layout_tests {
                 ("body", card::body),
                 ("flush", card::flush),
                 ("fill", card::fill),
+                ("bare", card::bare),
             ],
         );
         load_module_style(
@@ -1356,8 +1358,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// Before the first publish the bucket can change; after, it can only be
-    /// shown. Remove follows below a rule, and both wait for the page's lock.
+    /// Before the first publish the bucket can change, and Remove follows
+    /// below a rule; both wait for the page's lock. After, Remove is alone.
     #[test]
     fn the_header_menu_offers_the_bucket_then_remove() {
         let words = |items: Vec<MenuItem>| -> Vec<(String, bool, bool)> {
@@ -1376,9 +1378,13 @@ pub(crate) mod tests {
             words(header_menu(false, false)),
             menu("Change bucket", false)
         );
-        assert_eq!(words(header_menu(true, false)), menu("Show remote", false));
+        assert_eq!(
+            words(header_menu(true, false)),
+            [("Remove".to_string(), false, false)],
+            "once published the bucket is fixed, and the package page shows it"
+        );
         assert_eq!(words(header_menu(false, true)), menu("Change bucket", true));
-        let items = header_menu(true, false);
+        let items = header_menu(false, false);
         assert_eq!(items[0].command, MenuCommand::Remote);
         assert_eq!(items[1].command, MenuCommand::Remove);
         assert_eq!(items[1].tone, crate::kit::ActionTone::Danger);

@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use quilt_uri::Namespace;
 
 use super::GROUP_BUCKET;
+use super::GROUP_CATALOG;
 #[cfg(test)]
 use super::GROUP_NONE;
 use super::GROUP_PREFIX;
@@ -35,7 +36,8 @@ pub struct ListRowData {
     /// axis (§3.1), because local packages are the ones missing a bucket and
     /// burying them hides what most needs setup.
     pub bucket: Option<String>,
-    /// The catalog the package points at, for the row's tooltip.
+    /// The catalog the package points at, for the row's tooltip and the
+    /// catalog axis.
     pub host: Option<String>,
 }
 
@@ -83,76 +85,57 @@ pub struct PackageGroup {
     pub rows: Vec<ListRowData>,
 }
 
-/// The heading for the bucket axis's local packages: the ones with no bucket,
-/// sorted first because they are the ones that most need setup.
-///
-/// Never a real bucket's own key: S3 bucket names admit no spaces and no
-/// uppercase letters, so this literal — capital `L`, a space, lower-case
-/// `only` — is unspellable as a bucket and cannot collide with one.
+/// The heading for the packages with no remote, on the bucket and catalog axes.
 const LOCAL_ONLY: &str = "Local only";
 
-/// §3.1's two axes, each already in the order the list draws them.
+/// The heading for the packages with a bucket and no catalog host, on the
+/// catalog axis. Neutral words: such a package is supported, not misconfigured.
+/// Before every host on that axis, since adding a catalog is what a reader most
+/// likely came to do there.
+const NO_CATALOG: &str = "No catalog";
+
+/// A row's group on the axis: its rank, then its heading. Groups are ordered
+/// by rank first, so the fixed headings land where §3.1 puts them whatever
+/// their letters, and by heading within a rank.
 ///
-/// Bucket: `Local only` first, then `s3://` buckets alphabetically. The
-/// payload's `bucket` field is bare (`src-tauri/src/commands/main_page.rs:541`,
-/// built as `lineage.remote_uri.as_ref().map(|uri| uri.bucket.clone())`), so the
-/// scheme is added only for the heading, never upstream.
+/// Bucket: `Local only` first, because local packages are the ones missing a
+/// bucket and burying them hides what most needs setup; then `s3://` buckets.
+/// The payload's `bucket` field is bare, so the scheme is added only here.
 ///
-/// Grouped and ordered on that bare key (lower-cased, for `Local only`'s own
-/// entry), not on the formatted heading text: every heading this axis can draw
-/// starts with either `Local only`'s capital `L` or `s3://`'s lower-case `s`,
-/// and a capital sorts before any lower-case letter in byte order regardless
-/// of what follows it — so ordering by heading text would hand `Local only`
-/// first place on its own, making the reorder below dead code no fixture could
-/// ever exercise. Ordering on the bare, lower-cased key instead is what keeps
-/// it load-bearing: `"local only"` falls alphabetically between real bucket
-/// names such as `"apple"` and `"zebra"`, exactly where an implementation that
-/// forgot the local-first rule would leave it.
+/// Catalog: `Local only`, then `No catalog`, then each catalog host as the
+/// row's tooltip names it. `Local only` leads as it does on the bucket axis.
 ///
-/// Prefix: the namespace up to the first `/`, alphabetically; a namespace with
-/// no `/` is its own prefix. Neither axis re-orders rows WITHIN a group — that
-/// is `sort_within`'s job, and the caller applies it per group.
+/// Prefix: the namespace up to the first `/`; a namespace with no `/` is its
+/// own prefix.
+fn group_key(row: &ListRowData, group_by: &str) -> (u8, String) {
+    match (group_by, &row.bucket, &row.host) {
+        (GROUP_BUCKET | GROUP_CATALOG, None, _) => (0, LOCAL_ONLY.to_string()),
+        (GROUP_BUCKET, Some(bucket), _) => (1, format!("s3://{bucket}")),
+        (GROUP_CATALOG, Some(_), None) => (1, NO_CATALOG.to_string()),
+        (GROUP_CATALOG, Some(_), Some(host)) => (2, host.clone()),
+        _ => (0, row.namespace.prefix().to_string()),
+    }
+}
+
+/// §3.1's axes, each already in the order the list draws them (see
+/// `group_key`). No axis re-orders rows WITHIN a group — that is
+/// `sort_within`'s job, and the caller applies it per group.
 pub fn group_packages(rows: Vec<ListRowData>, group_by: &str) -> Vec<PackageGroup> {
-    if group_by != GROUP_BUCKET && group_by != GROUP_PREFIX {
+    if ![GROUP_BUCKET, GROUP_CATALOG, GROUP_PREFIX].contains(&group_by) {
         return vec![PackageGroup { title: None, rows }];
     }
-    let local_key = LOCAL_ONLY.to_lowercase();
-    let mut by_key: BTreeMap<String, Vec<ListRowData>> = BTreeMap::new();
+    let mut by_key: BTreeMap<(u8, String), Vec<ListRowData>> = BTreeMap::new();
     for row in rows {
-        let key = if group_by == GROUP_BUCKET {
-            row.bucket.clone().unwrap_or_else(|| local_key.clone())
-        } else {
-            row.namespace.prefix().to_string()
-        };
-        by_key.entry(key).or_default().push(row);
+        by_key
+            .entry(group_key(&row, group_by))
+            .or_default()
+            .push(row);
     }
-    // `BTreeMap` has already ordered the keys alphabetically, which is what the
-    // prefix axis wants outright. The bucket axis wants one exception: `Local
-    // only`'s bare key sorts on its own alphabetic merits — this moves it to
-    // the front regardless of where that landed it.
-    let mut ordered: Vec<(String, Vec<ListRowData>)> = by_key.into_iter().collect();
-    if group_by == GROUP_BUCKET
-        && let Some(at) = ordered.iter().position(|(key, _)| key == &local_key)
-    {
-        let local = ordered.remove(at);
-        ordered.insert(0, local);
-    }
-    ordered
+    by_key
         .into_iter()
-        .map(|(key, rows)| {
-            let title = if group_by == GROUP_BUCKET {
-                if key == local_key {
-                    LOCAL_ONLY.to_string()
-                } else {
-                    format!("s3://{key}")
-                }
-            } else {
-                key
-            };
-            PackageGroup {
-                title: Some(title),
-                rows,
-            }
+        .map(|((_, title), rows)| PackageGroup {
+            title: Some(title),
+            rows,
         })
         .collect()
 }
@@ -168,6 +151,17 @@ mod tests {
             bucket: bucket.map(str::to_string),
             host: None,
         }
+    }
+
+    fn remote(namespace: &str, changed_at: Option<f64>, host: Option<&str>) -> ListRowData {
+        ListRowData {
+            host: host.map(str::to_string),
+            ..row(namespace, changed_at, Some("bucket"))
+        }
+    }
+
+    fn titles(groups: &[PackageGroup]) -> Vec<Option<&str>> {
+        groups.iter().map(|g| g.title.as_deref()).collect()
     }
 
     #[test]
@@ -323,5 +317,78 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].title, None, "no heading for the ungrouped list");
         assert_eq!(groups[0].rows.len(), 2);
+    }
+
+    #[test]
+    fn the_catalog_axis_lists_local_only_then_no_catalog_then_hosts() {
+        // The packages with no bucket at all, then the ones with a bucket and
+        // no catalog, then hosts alphabetically. The given order is none of
+        // these.
+        let rows = vec![
+            remote("user/z", None, Some("zebra.quilt.test")),
+            row("user/l", None, None),
+            remote("user/n", None, None),
+            remote("user/a", None, Some("apple.quilt.test")),
+            remote("user/a2", None, Some("apple.quilt.test")),
+        ];
+
+        let groups = group_packages(rows, GROUP_CATALOG);
+
+        assert_eq!(
+            titles(&groups),
+            vec![
+                Some("Local only"),
+                Some("No catalog"),
+                Some("apple.quilt.test"),
+                Some("zebra.quilt.test"),
+            ]
+        );
+        assert_eq!(groups[2].rows.len(), 2, "both apple packages in one group");
+    }
+
+    #[test]
+    fn a_host_that_sorts_before_the_fixed_titles_still_comes_after_them() {
+        // "Local only" and "No catalog" lead whatever a host is called, not
+        // where their own letters would put them. A digit sorts before a
+        // capital, so this host would come first on letters alone.
+        let rows = vec![
+            remote("user/a", None, Some("0.quilt.test")),
+            row("user/l", None, None),
+            remote("user/n", None, None),
+        ];
+
+        let groups = group_packages(rows, GROUP_CATALOG);
+
+        assert_eq!(
+            titles(&groups),
+            vec![Some("Local only"), Some("No catalog"), Some("0.quilt.test")]
+        );
+    }
+
+    #[test]
+    fn the_catalog_axis_leaves_sorting_to_sort_within() {
+        let rows = vec![
+            remote("user/old", Some(1_000.0), Some("quilt.test")),
+            remote("user/new", Some(9_000.0), Some("quilt.test")),
+            remote("user/Beta", Some(5_000.0), None),
+            remote("user/alpha", Some(2_000.0), None),
+        ];
+
+        let mut groups = group_packages(rows, GROUP_CATALOG);
+        for group in &mut groups {
+            sort_within(&mut group.rows, SORT_CHANGED);
+        }
+
+        let names: Vec<Vec<String>> = groups
+            .iter()
+            .map(|g| g.rows.iter().map(|r| r.namespace.to_string()).collect())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                vec!["user/Beta", "user/alpha"],
+                vec!["user/new", "user/old"],
+            ]
+        );
     }
 }

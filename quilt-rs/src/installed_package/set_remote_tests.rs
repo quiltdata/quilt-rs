@@ -186,7 +186,7 @@ impl Remote for BadBucketRemote {
     }
     async fn published_revisions(
         &self,
-        _host: &Host,
+        _host: Option<&Host>,
         _bucket: &str,
         _namespace: &Namespace,
     ) -> Res<Vec<String>> {
@@ -511,7 +511,7 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
             None,
         )
         .await?;
-    let hash_before = commit.hash.clone();
+    let hash_before = commit.hash().unwrap().to_string();
 
     // Now set_remote — this should trigger recommit.
     // MockRemote returns HostConfig::default() (SHA256 chunked), same as the
@@ -1279,6 +1279,49 @@ async fn test_set_remote_stamps_no_workflow() -> Res {
         workflow.id.is_none(),
         "NoWorkflow must not resolve any workflow id"
     );
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_set_remote_without_host_recommits_with_bucket_workflow() -> Res {
+    // A bucket with no catalog still re-commits: the workflow comes from the
+    // bucket's config, as with a catalog.
+    let (package, _temp_dir1, _temp_dir2) =
+        package_with_config("nohost", FOO_CONFIG, b"{}").await?;
+    let hash_before = package
+        .lineage()
+        .await?
+        .commit
+        .expect("commit should exist")
+        .hash;
+
+    package
+        .set_remote(
+            "my-bucket".to_string(),
+            None,
+            WorkflowIntent::Named("foo".to_string()),
+        )
+        .await?;
+
+    let lineage = package.lineage().await?;
+    let remote_uri = lineage
+        .remote_uri
+        .as_ref()
+        .expect("remote_uri should be set");
+    assert_eq!(remote_uri.bucket, "my-bucket");
+    assert_eq!(remote_uri.origin, None);
+    let new_commit = lineage.commit.as_ref().expect("commit should exist");
+    assert_eq!(new_commit.prev_hashes.first(), Some(&hash_before));
+    let manifest_path = package
+        .paths
+        .installed_manifest(&package.namespace, &new_commit.hash);
+    let manifest = Manifest::from_path(&package.storage, &manifest_path).await?;
+    let workflow = manifest
+        .header
+        .workflow
+        .expect("recommit should stamp the named workflow");
+    assert_eq!(workflow.id.expect("workflow id should be set").id, "foo");
 
     Ok(())
 }

@@ -135,7 +135,7 @@ pub trait QuiltModel {
         package: &Self::Locked,
         host_config: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error> {
+    ) -> Result<quilt::flow::Pulled, Error> {
         package.pull(host_config, scope).await
     }
 
@@ -154,6 +154,11 @@ pub trait QuiltModel {
         package: &Self::Locked,
     ) -> Result<quilt_uri::ManifestUri, Error> {
         package.reset_to_latest().await
+    }
+
+    /// [`Self::package_push`] on the held lock.
+    async fn locked_package_push(&self, package: &Self::Locked) -> Result<quilt::Pushed, Error> {
+        package.push().await
     }
 
     /// [`Self::package_publish`] on the held lock. `status` is one walked on
@@ -258,18 +263,32 @@ pub trait QuiltModel {
     /// its row records — the same snapshot the rest of the page read uses, so
     /// a pull landing mid-read cannot pair one revision's keys with another's
     /// tracked paths. The sizes are the manifest's, not a stat of the files.
+    /// Beside them, the untracked paths the scope covers that already have a
+    /// file here ([`quilt::InstalledPackage::untracked_on_disk`]).
     async fn get_installed_package_sizes(
         &self,
         package: &quilt::InstalledPackage,
         lineage: &quilt::lineage::PackageLineage,
-    ) -> Result<BTreeMap<PathBuf, u64>, Error> {
-        Ok(package
-            .manifest_from_lineage(lineage)
-            .await?
+    ) -> Result<(BTreeMap<PathBuf, u64>, BTreeSet<PathBuf>), Error> {
+        let manifest = package.manifest_from_lineage(lineage).await?;
+        let on_disk = package
+            .untracked_on_disk(&package.package_home().await?, lineage, &manifest)
+            .await;
+        let sizes = manifest
             .rows
             .into_iter()
             .map(|row| (row.logical_key, row.size))
-            .collect())
+            .collect();
+        Ok((sizes, on_disk))
+    }
+
+    /// The manifest `lineage` selects, header and rows.
+    async fn get_installed_package_manifest(
+        &self,
+        package: &quilt::InstalledPackage,
+        lineage: &quilt::lineage::PackageLineage,
+    ) -> Result<quilt::manifest::Manifest, Error> {
+        Ok(package.manifest_from_lineage(lineage).await?)
     }
 
     /// This copy's revision against the published `latest`, read fresh.
@@ -337,7 +356,7 @@ pub trait QuiltModel {
         metadata: UserMeta,
         workflow: Option<quilt::manifest::Workflow>,
         host_config: Option<HostConfig>,
-    ) -> Result<quilt::lineage::CommitState, Error> {
+    ) -> Result<quilt::flow::Committed, Error> {
         Ok(package
             .commit(message, metadata, workflow, host_config)
             .await?)
@@ -399,7 +418,7 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         host_config: Option<HostConfig>,
-    ) -> Result<quilt::PushOutcome, Error> {
+    ) -> Result<quilt::Pushed, Error> {
         Ok(package.push(host_config).await?)
     }
 
@@ -492,14 +511,24 @@ pub trait QuiltModel {
     async fn set_remote(
         &self,
         package: &quilt::InstalledPackage,
-        origin: quilt_uri::Host,
+        origin: Option<quilt_uri::Host>,
         bucket: String,
         workflow: WorkflowIntent,
     ) -> Result<Option<String>, Error> {
         Ok(package
-            .set_remote(bucket, Some(origin), workflow)
+            .set_remote(bucket, origin, workflow)
             .await?
             .resolution_warning)
+    }
+
+    /// Replace only the catalog of the package's remote, keeping its bucket,
+    /// remote hash and commits.
+    async fn change_catalog(
+        &self,
+        package: &quilt::InstalledPackage,
+        origin: Option<quilt_uri::Host>,
+    ) -> Result<quilt_uri::ManifestUri, Error> {
+        Ok(package.change_catalog(origin).await?)
     }
 
     async fn package_create(
@@ -723,7 +752,7 @@ pub trait LockedOps: Send + Sync + Sized {
         &self,
         host_config: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error>;
+    ) -> Result<quilt::flow::Pulled, Error>;
 
     async fn install_paths(
         &self,
@@ -731,6 +760,8 @@ pub trait LockedOps: Send + Sync + Sized {
     ) -> Result<quilt::flow::InstallPathsReport, Error>;
 
     async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error>;
+
+    async fn push(&self) -> Result<quilt::Pushed, Error>;
 
     async fn publish(
         &self,
@@ -778,7 +809,7 @@ impl LockedOps for quilt::LockedPackage {
         &self,
         host_config: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error> {
+    ) -> Result<quilt::flow::Pulled, Error> {
         Ok(quilt::LockedPackage::pull(self, host_config, scope).await?)
     }
 
@@ -791,6 +822,10 @@ impl LockedOps for quilt::LockedPackage {
 
     async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error> {
         Ok(quilt::LockedPackage::reset_to_latest(self).await?)
+    }
+
+    async fn push(&self) -> Result<quilt::Pushed, Error> {
+        Ok(quilt::LockedPackage::push(self, None).await?)
     }
 
     async fn publish(
@@ -852,7 +887,7 @@ impl LockedOps for quilt_uri::Namespace {
         &self,
         _: Option<HostConfig>,
         _: SyncScope,
-    ) -> Result<quilt::flow::PullReport, Error> {
+    ) -> Result<quilt::flow::Pulled, Error> {
         unreachable!("a mocked model sets its own pull")
     }
 
@@ -862,6 +897,10 @@ impl LockedOps for quilt_uri::Namespace {
 
     async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error> {
         unreachable!("a mocked model sets its own reset")
+    }
+
+    async fn push(&self) -> Result<quilt::Pushed, Error> {
+        unreachable!("a mocked model sets its own push")
     }
 
     async fn publish(

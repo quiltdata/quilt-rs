@@ -143,9 +143,6 @@ pub enum InstallPathError {
     #[error("Failed to install path: {}", .0.display())]
     Install(PathBuf),
 
-    #[error("Some paths are already installed")]
-    AlreadyInstalled,
-
     /// The path has no row in the revision being installed. Reachable when a
     /// download waited out a pull that moved the package to a revision
     /// without it.
@@ -227,6 +224,12 @@ pub enum LineageError {
         home.display()
     )]
     HomeInUse { home: PathBuf, installed: usize },
+
+    /// A folder to keep reaches outside the package through `..`.
+    #[error(
+        "Folder {0:?} is not inside the package: name it from the package root, without \"..\""
+    )]
+    FolderOutsidePackage(String),
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -321,9 +324,6 @@ pub enum PackageOpError {
 
     #[error("Pull blocked by conflicting local changes: {0:?}")]
     PullConflict(Vec<PathBuf>),
-
-    #[error("package is already up-to-date")]
-    AlreadyUpToDate,
 }
 
 /// The error type for this library
@@ -495,6 +495,18 @@ impl Error {
         self.is_invalid_credentials() || matches!(self, Error::Login(LoginError::NoSession(_)))
     }
 
+    /// No usable session and no deployment to sign in to: the AWS credentials
+    /// on this computer, used for a bucket with no catalog, were missing or
+    /// refused. The remedy is `~/.aws` or `aws sso login`, not a sign-in.
+    #[must_use]
+    pub fn is_ambient_session_absent(&self) -> bool {
+        match self {
+            Error::Login(LoginError::NoSession(host)) => host.is_none(),
+            Error::S3(s3) => s3.is_invalid_credentials() && s3.host.is_none(),
+            _ => false,
+        }
+    }
+
     /// The deployment this request was for, if any.
     ///
     /// `None` for a bare S3 bucket reached with ambient credentials, and for
@@ -542,4 +554,33 @@ impl From<StripPrefixError> for Error {
 fn kept_by_busy(busy: Option<&Namespace>) -> String {
     busy.map(|namespace| format!("; {namespace} is busy, so the rest were kept too"))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use quilt_uri::fixtures;
+
+    #[test]
+    fn an_ambient_session_is_absent_only_without_a_host() {
+        let invalid = |host| {
+            Error::S3(S3Error {
+                host,
+                kind: S3ErrorKind::InvalidCredentials("refused".to_string()),
+            })
+        };
+        assert!(Error::Login(LoginError::NoSession(None)).is_ambient_session_absent());
+        assert!(invalid(None).is_ambient_session_absent());
+
+        assert!(
+            !Error::Login(LoginError::NoSession(Some(fixtures::host())))
+                .is_ambient_session_absent()
+        );
+        assert!(!invalid(Some(fixtures::host())).is_ambient_session_absent());
+        assert!(
+            !Error::S3(S3Error::new(S3ErrorKind::AccessDenied("no".to_string())))
+                .is_ambient_session_absent()
+        );
+    }
 }

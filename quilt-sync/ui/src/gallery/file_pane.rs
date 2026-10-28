@@ -8,18 +8,18 @@
 //! as one region, whether the states the page can reach are all drawable, and
 //! what the pane does when it has nothing to draw.
 //!
-//! The pane is the page's growing half — the context pane is fixed at 280 and
+//! The pane is the page's growing half — the context pane is fixed at 320 and
 //! this takes the rest — so the cells are `full` and the list is framed at the
-//! **700px the pane gets at a 1024 window**, which is the width every claim
+//! **660px the pane gets at a 1024 window**, which is the width every claim
 //! about this region is made at.
 //!
-//! # The list is a flush `Card`, and the footer is its last child
+//! # The list is a bare `Card`, and the footer is its last child
 //!
-//! Verdict 17: only the list and its footer are boxed, and the search row and
-//! the toolbar sit bare above them, because they act on the list rather than
-//! belonging to it. The rows carry their own padding, so the `Card` is `flush` —
-//! the headings stick to its top edge on a scroll and the footer's hairline
-//! reaches both borders, neither of which a padded card can do.
+//! The search row and the toolbar sit above the list, because they act on it
+//! rather than belonging to it. On the page the rows scroll the page under
+//! them, so the list has no box: the `Card` is `bare`, and its rows sit on the
+//! page with their hairlines. The box column is the list's left edge. In a
+//! cell, the list's own scroll stands in for the window's.
 //!
 //! `Card`'s own rule — *a hairline between any two children* — is what draws
 //! that footer border, so the footer is composed here and is not a component.
@@ -45,10 +45,11 @@
 //! # What the render settled, none of it reasoned first
 //!
 //! - **The footer's arithmetic is exact.** 313px of list at rest, 264 with the
-//!   footer, and the footer measures 49 — so the card is 315 either way and the
-//!   pane does not change height when the first row is ticked. §9's number is
+//!   footer, and the footer measures 49 — so the list and its footer are 313
+//!   either way and the pane does not change height when the first row is
+//!   ticked. §9's number is
 //!   the selecting state, as §5 worked out on paper and this confirms.
-//! - **End-truncation destroys a path.** Under `Group: None` at 700px, five
+//! - **End-truncation destroys a path.** Under `Group: None` at 660px, five
 //!   consecutive rows read
 //!   `investigations/2026-09-15-installed-package-page/design-0…` and three of
 //!   them are indistinguishable: the ellipsis eats the leaf, which is the only
@@ -56,17 +57,18 @@
 //!   this is the argument for settling it — the end of a path is what a reader
 //!   needs and the start is what they can infer.
 //! - **The third toolbar row belongs to the minimum window, and only to it.**
-//!   The toolbar's content is 716px against the pane's 700, and the pane is the
-//!   window less 324 — `page_layout`'s 32, the context pane's 280 and the gap.
+//!   The toolbar's content is 716px against the pane's 660, and the pane is the
+//!   window less 364 — `page_layout`'s 32, the context pane's 320 and the gap.
 //!   So it wraps at a **1024** window, the app's `minWidth` when this was
 //!   measured (now 640, where the pane stacks under the context pane), and stops
-//!   wrapping at **1040**: sixteen pixels of window buy the row back. Accepted
+//!   wrapping at **1080**: 56 pixels of window buy the row back. At the
+//!   default 1280 the pane is 916 and the toolbar is one line. Accepted
 //!   on 2026-09-18 for that reason — the cost lands on the narrowest window
 //!   rather than on the shipping one.
 //! - **`Group: None` also changes how many rows the toolbar takes.** `Group:
-//!   Base folder` is 166px and `Group: None` about 130, which is more than the
-//!   16 the toolbar is short by — so the controls fit one line under `None` and
-//!   wrap under the default. The wrap is not a property of the width alone.
+//!   Base folder` is 166px and `Group: None` about 130, so from a 1044 window
+//!   to 1080 the controls fit one line under `None` and wrap under the
+//!   default. The wrap is not a property of the width alone.
 //! - **A group of one is mostly heading.** The `Ignored` facet draws three
 //!   `.DS_Store` rows under two headings holding one file each, so half the view
 //!   is headings and all three rows have the same name. §6's *suppress the
@@ -131,6 +133,7 @@ use crate::kit::SelectAll;
 use crate::kit::SkeletonBox;
 use crate::kit::state_label::StateTone;
 use crate::pages::downloaded_words;
+use crate::pages::{FileToolbarBand, file_footer_class, file_list_class, file_pane_class};
 use quilt_sync_ui::util::format_size;
 use quilt_sync_ui::util::thousands;
 
@@ -144,24 +147,34 @@ pub const MARKED: &[&str] = &[
 ];
 
 /// The pane at a 1024 window: 1024 less `page_layout`'s 32 of padding, less the
-/// context pane's fixed 280 and the gap between them. Every measurement this
-/// scene reports is at this width.
-const PANE: &str = "width:700px; max-width:100%; gap:var(--q-space-2)";
+/// context pane's fixed 320 and the gap between them. Every measurement this
+/// scene reports is at this width. A cell lays its body out as a row, so the
+/// pane's own `flex: 1` would take the cell's width instead.
+const PANE: &str = "width:660px; max-width:100%; flex:none";
 
 /// The list's viewport with nothing ticked, and with a footer under it. §9's
 /// number is the second one, and it quotes it as the page's capacity — which is
 /// the selecting state, not the resting one.
-const LIST_RESTING: &str = "max-height:313px";
-const LIST_WITH_FOOTER: &str = "max-height:264px";
+const LIST_RESTING: &str = "max-height:313px; overflow-y:auto; ";
+const LIST_WITH_FOOTER: &str = "max-height:264px; overflow-y:auto; ";
 /// The cap notice is 36px, and at the height floor the pane cannot grow by it —
 /// so it comes out of the list rather than out of the page.
-const LIST_UNDER_NOTICE: &str = "max-height:277px";
+const LIST_UNDER_NOTICE: &str = "max-height:277px; overflow-y:auto; ";
 
-/// On the page, where the height is the window's to give, the pane's own
-/// geometry moves to a class — `g-ip-filepane` — because the narrow arrangement
-/// has to raise its `min-height` and an inline style cannot be overridden by a
-/// container query.
-const LIST_FILLING: &str = "flex:1; min-height:0";
+/// The toolbar's left slot, as the page's `.selectall` lays it out: a row's
+/// `space-3` in, so select-all's box shares the rows' x.
+const SLOT: &str = "display:flex; align-items:center; gap:var(--q-space-2); \
+                    padding-left:var(--q-space-3)";
+
+/// The rows' disclosure gutter before the caption's words, as `EntryRow` keeps
+/// it: none in a list with no headings, which gives back the gap after it.
+fn gutter(flat: bool) -> &'static str {
+    if flat {
+        "flex:0 0 0px; margin-left:calc(-1 * var(--q-space-2))"
+    } else {
+        "flex:0 0 16px"
+    }
+}
 
 // ── the package ─────────────────────────────────────────────
 
@@ -608,7 +621,7 @@ enum Framing {
     /// A gallery cell, where the list is capped at §5's own numbers because
     /// those numbers are what the cell is about.
     Cell,
-    /// The page, where the list takes what the window left and scrolls.
+    /// The page, where the rows scroll the page under the search and toolbar.
     Page,
 }
 
@@ -849,33 +862,31 @@ fn pane(p: Pane) -> AnyView {
 
     view! {
         <div
-            class=if fill { "g-stack g-ip-filepane" } else { "g-stack" }
+            class=file_pane_class()
             style=if fill { "" } else { PANE }
         >
-            // Bare, both rows: verdict 17, they act on the list rather than
-            // belonging to it. Search takes the pane's full width; the toolbar's
-            // content is inset to the rows' checkbox column.
-            // A row of its own, and the `display:flex` is load-bearing rather
-            // than decorative: `SearchInput` carries `flex: 1 1 auto` so it
-            // takes the free space in a toolbar — and dropped straight into
-            // this column that grew it *vertically*, to 162px, because in a
-            // column the main axis is the one it was asked to fill. The same
-            // mistake `Card` already has written up: a parent's layout living
-            // in a child, invisible until the parent is a column with height to
-            // give away. A row is what the component assumes, so a row is what
-            // it gets.
-            <div style="display:flex">
-                <SearchInput
-                    value=query_sig
-                    aria_label="Search files"
-                    placeholder="Search files…"
-                />
-            </div>
-            // The toolbar and the box as one child of the column, as on the page:
-            // `ListToolbar` carries its own space-2 below it, so as siblings the
-            // column's gap doubled it and the toolbar sat further from its list
-            // than from the search.
-            <div class="g-stack" style=if fill { LIST_FILLING } else { "" }>
+            // The page's own band: the search and the toolbar, held under the
+            // header on the page, and an ordinary column in a cell.
+            <FileToolbarBand>
+                // Bare, both rows: verdict 17, they act on the list rather than
+                // belonging to it. Search takes the pane's full width; the toolbar's
+                // content is inset to the rows' checkbox column.
+                // A row of its own, and the `display:flex` is load-bearing rather
+                // than decorative: `SearchInput` carries `flex: 1 1 auto` so it
+                // takes the free space in a toolbar — and dropped straight into
+                // this column that grew it *vertically*, to 162px, because in a
+                // column the main axis is the one it was asked to fill. The same
+                // mistake `Card` already has written up: a parent's layout living
+                // in a child, invisible until the parent is a column with height to
+                // give away. A row is what the component assumes, so a row is what
+                // it gets.
+                <div style="display:flex">
+                    <SearchInput
+                        value=query_sig
+                        aria_label="Search files"
+                        placeholder="Search files…"
+                    />
+                </div>
                 {match body {
                     Body::Loading => {
                         view! {
@@ -898,8 +909,7 @@ fn pane(p: Pane) -> AnyView {
                                     <SkeletonBox width="166px" height="32px" />
                                     <SkeletonBox width="396px" height="32px" />
                                 </div>
-                                <div style="display:flex; gap:var(--q-space-2)">
-                                    <span style="flex:0 0 28px" />
+                                <div style="display:flex; padding-left:var(--q-space-3)">
                                     <SkeletonBox width="102px" height="20px" />
                                 </div>
                             </div>
@@ -909,52 +919,58 @@ fn pane(p: Pane) -> AnyView {
                     _ => {
                         view! {
                             <ListToolbar reverse_when_stacked=true>
-                                // Select-all sits in the rows' checkbox column, the
-                                // list box's space-3 plus the 16px gutter in from
-                                // the pane's edge. With nothing left to download
-                                // the slot says so instead, its words in the rows'
-                                // name column: the box's 17px stays empty.
+                                // Select-all sits in the rows' checkbox column, a
+                                // row's space-3 in from the pane's edge. With
+                                // nothing left to download the slot says so
+                                // instead, its words in the rows' name column
+                                // after the box's 17px and the gutter.
                                 {downloaded
                                     .map(|(n, deleted)| {
                                         view! {
-                                            <span style="flex:0 0 28px" />
-                                            // The column's summary, as the page draws
-                                            // it: the Success tone's own tick. The
-                                            // rows' check is muted bookkeeping; this is
-                                            // a statement. A file deleted here is not
-                                            // on disk, so the hole stays empty.
-                                            <span class="g-fp-done">
-                                                {(deleted == 0)
-                                                    .then(|| StateTone::Success.glyph())}
-                                            </span>
-                                            <span style="font-size:var(--q-text-body); \
-                                                         color:var(--q-fgColor-muted)">
-                                                {downloaded_words(n, deleted)}
-                                            </span>
+                                            <div style=SLOT>
+                                                // The column's summary, as the page
+                                                // draws it: the Success tone's own
+                                                // tick. The rows' check is muted
+                                                // bookkeeping; this is a statement. A
+                                                // file deleted here is not on disk, so
+                                                // the hole stays empty.
+                                                <span class="g-fp-done">
+                                                    {(deleted == 0)
+                                                        .then(|| StateTone::Success.glyph())}
+                                                </span>
+                                                <span style=move || {
+                                                    gutter(group_sig.get() == "None")
+                                                } />
+                                                <span style="font-size:var(--q-text-body); \
+                                                             color:var(--q-fgColor-muted)">
+                                                    {downloaded_words(n, deleted)}
+                                                </span>
+                                            </div>
                                         }
                                     })}
                                 <Show when=move || {
                                     downloaded.is_none() && boxes && (offered.get() > 0)
                                 }>
-                                    <span style="flex:0 0 28px" />
-                                    <SelectAll
-                                        selected=shown_ticked
-                                        total=offered
-                                        narrowed=narrowed
-                                        on_toggle=move |next| {
-                                            let indices = shown.get();
-                                            all.with_value(|rs| {
-                                                picks
-                                                    .update(|p| {
-                                                        for i in indices {
-                                                            if let Some(slot) = rs[i].pick {
-                                                                p[slot] = next;
+                                    <div style=SLOT>
+                                        <SelectAll
+                                            selected=shown_ticked
+                                            total=offered
+                                            narrowed=narrowed
+                                            on_toggle=move |next| {
+                                                let indices = shown.get();
+                                                all.with_value(|rs| {
+                                                    picks
+                                                        .update(|p| {
+                                                            for i in indices {
+                                                                if let Some(slot) = rs[i].pick {
+                                                                    p[slot] = next;
+                                                                }
                                                             }
-                                                        }
-                                                    });
-                                            });
-                                        }
-                                    />
+                                                        });
+                                                });
+                                            }
+                                        />
+                                    </div>
                                 </Show>
                                 <div style="margin-left:auto; display:flex; gap:var(--q-space-2); \
                                             flex-wrap:wrap-reverse; justify-content:flex-end">
@@ -975,114 +991,116 @@ fn pane(p: Pane) -> AnyView {
                             .into_any()
                     }
                 }}
-                // The box. `flush`, because the rows carry their own padding: the
-                // headings stick to its top edge and the footer's hairline — which
-                // is `Card`'s own rule about two children — reaches both borders.
-                <Card flush=true label="Files" fill=fill>
-                    {match body {
-                        Body::Failed => {
-                            view! {
-                                <LoadFailure
-                                    centred=true
-                                    words="Could not read this package's files."
-                                    on_retry=Callback::new(|()| ())
-                                />
-                            }
-                                .into_any()
+            </FileToolbarBand>
+            // Bare, as on the page: the rows sit on the page, and `Card`
+            // rules between the notice, the rows and the footer.
+            <Card bare=true fill=fill label="Files">
+                {match body {
+                    Body::Failed => {
+                        view! {
+                            <LoadFailure
+                                centred=true
+                                words="Could not read this package's files."
+                                on_retry=Callback::new(|()| ())
+                            />
                         }
-                        Body::Loading => {
-                            view! {
-                                // The box reserves the resting list's height too. A
-                                // skeleton that stands 117px shorter than the rows
-                                // it becomes moves the whole page under the reader
-                                // at the moment the data lands.
-                                <div style=format!(
-                                    "{LIST_RESTING}; height:313px; overflow:hidden; \
-                                     padding:var(--q-space-2) var(--q-space-3); \
-                                     display:flex; flex-direction:column; \
-                                     gap:var(--q-space-3)",
-                                )>
-                                    {(0..8)
-                                        .map(|i| {
-                                            view! {
-                                                <SkeletonBox width=if i % 3 == 0 {
-                                                    "48%"
-                                                } else if i % 3 == 1 {
-                                                    "62%"
-                                                } else {
-                                                    "55%"
-                                                } />
-                                            }
-                                        })
-                                        .collect_view()}
-                                </div>
-                            }
-                                .into_any()
-                        }
-                        _ => {
-                            view! {
-                                {match body {
-                                    Body::Capped(total) => Some(total),
-                                    _ => None,
-                                }
-                                    .map(|total| {
+                            .into_any()
+                    }
+                    Body::Loading => {
+                        view! {
+                            // The box reserves the resting list's height too. A
+                            // skeleton that stands 117px shorter than the rows
+                            // it becomes moves the whole page under the reader
+                            // at the moment the data lands.
+                            <div style=format!(
+                                "{LIST_RESTING}; height:313px; overflow:hidden; \
+                                 padding:var(--q-space-2) var(--q-space-3); \
+                                 display:flex; flex-direction:column; \
+                                 gap:var(--q-space-3)",
+                            )>
+                                {(0..8)
+                                    .map(|i| {
                                         view! {
-                                            // The first 1,000 by path: the page read
-                                            // sorts before it caps and sends the
-                                            // total (quilt-rs#992).
-                                            <p style="margin:0; padding:var(--q-space-2) \
-                                                      var(--q-space-3); \
-                                                      color:var(--q-fgColor-muted); \
-                                                      font-size:var(--q-text-body)">
-                                                {format!(
-                                                    "This package has {} files. This list covers the first {} by path.",
-                                                    thousands(total),
-                                                    thousands(LOADED),
-                                                )}
-                                            </p>
-                                        }
-                                    })}
-                                <div
-                                    style=move || {
-                                        format!(
-                                            "{}; overflow-y:auto; --q-entry-gutter:{}",
-                                            if fill {
-                                                LIST_FILLING
+                                            <SkeletonBox width=if i % 3 == 0 {
+                                                "48%"
+                                            } else if i % 3 == 1 {
+                                                "62%"
                                             } else {
-                                                match (footer_shown.get(), body) {
-                                                    (true, _) => LIST_WITH_FOOTER,
-                                                    (false, Body::Capped(_)) => LIST_UNDER_NOTICE,
-                                                    (false, _) => LIST_RESTING,
-                                                }
-                                            },
-                                            if group_sig.get() == "None" { "0" } else { "16px" },
-                                        )
-                                    }
-                                >
-                                    {list}
-                                </div>
-                            }
-                                .into_any()
+                                                "55%"
+                                            } />
+                                        }
+                                    })
+                                    .collect_view()}
+                            </div>
                         }
-                    }}
-                    <Show when=move || footer_shown.get()>
-                        // Spacer and a Button, and `Card` draws the hairline above
-                        // them. It slides 4px and fades in, copying the Banner's
-                        // carve-out from the never-move-geometry rule, and has no
-                        // exit animation: unticking the last row makes the list grow
-                        // back, and animating that would move rows under the pointer.
-                        <div class="g-fp-footer">
-                            <Button
-                                variant=ButtonVariant::Primary
-                                loading=running
-                                on_click=move |_| ()
+                            .into_any()
+                    }
+                    _ => {
+                        view! {
+                            {match body {
+                                Body::Capped(total) => Some(total),
+                                _ => None,
+                            }
+                                .map(|total| {
+                                    view! {
+                                        // The first 1,000 by path: the page read
+                                        // sorts before it caps and sends the
+                                        // total (quilt-rs#992).
+                                        <p style="margin:0; padding:var(--q-space-2) \
+                                                  var(--q-space-3); \
+                                                  color:var(--q-fgColor-muted); \
+                                                  font-size:var(--q-text-body)">
+                                            {format!(
+                                                "This package has {} files. This list covers the first {} by path.",
+                                                thousands(total),
+                                                thousands(LOADED),
+                                            )}
+                                        </p>
+                                    }
+                                })}
+                            // On the page the rows scroll the page; in a
+                            // cell their box stands in for the window.
+                            <div
+                                class=file_list_class()
+                                style=move || {
+                                    format!(
+                                        "{}--q-entry-gutter:{}",
+                                        if fill {
+                                            ""
+                                        } else {
+                                            match (footer_shown.get(), body) {
+                                                (true, _) => LIST_WITH_FOOTER,
+                                                (false, Body::Capped(_)) => LIST_UNDER_NOTICE,
+                                                (false, _) => LIST_RESTING,
+                                            }
+                                        },
+                                        if group_sig.get() == "None" { "0px" } else { "16px" },
+                                    )
+                                }
                             >
-                                {move || footer_words(chosen.get())}
-                            </Button>
-                        </div>
-                    </Show>
-                </Card>
-            </div>
+                                {list}
+                            </div>
+                        }
+                            .into_any()
+                    }
+                }}
+                <Show when=move || footer_shown.get()>
+                    // Spacer and a Button, and `Card` draws the hairline above
+                    // them. It slides 4px and fades in, copying the Banner's
+                    // carve-out from the never-move-geometry rule, and has no
+                    // exit animation: unticking the last row makes the list grow
+                    // back, and animating that would move rows under the pointer.
+                    <div class=file_footer_class()>
+                        <Button
+                            variant=ButtonVariant::Primary
+                            loading=running
+                            on_click=move |_| ()
+                        >
+                            {move || footer_words(chosen.get())}
+                        </Button>
+                    </div>
+                </Show>
+            </Card>
             {stop_keeping(confirm)}
         </div>
     }
@@ -1503,8 +1521,8 @@ fn heavy_selection() -> Vec<File> {
     files
 }
 
-const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it. Tick a \
-    row: the footer arrives and the list goes 313px to 264, measured — the card stays 315 \
+const NOTE: &str = "The page's growing half, at the 660px a 1024 window gives it. Tick a \
+    row: the footer arrives and the list goes 313px to 264, measured — the two stay 313 \
     either way, so the pane never changes height. Type in the search or pick a facet: \
     select-all states its own extent, and under `Changed` it goes, having nothing to tick. \
     The marked rows draw ahead of their data. Unresolved and visible: under `Group: None` \
@@ -1519,9 +1537,9 @@ const NOTE: &str = "The page's growing half, at the 700px a 1024 window gives it
 
 /// The region itself, for the whole-page scene.
 ///
-/// `fill` is the difference between the two places it is drawn: the cells below
-/// cap the list at §5's own numbers because those numbers are what they are
-/// about, and the page hands it whatever height the window left.
+/// The framing is the difference between the two places it is drawn: the
+/// cells below cap the list at §5's own numbers because those numbers are what
+/// they are about, and on the page the rows scroll the page.
 #[component]
 pub fn FilePaneRegion(
     /// The radio group's name, unique per cell on the page.

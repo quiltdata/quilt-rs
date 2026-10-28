@@ -39,6 +39,7 @@ cargo install quilt-cli
 | `create`    | Create a new local-only package                  |
 | `home`      | Print or set the folder packages keep files in   |
 | `install`   | Install a remote package locally                 |
+| `keep`      | Show or set which of a package's files are kept  |
 | `status`    | Show working-directory changes                   |
 | `commit`    | Commit a new package revision                    |
 | `undo-commit` | Undo the newest commit, before the first push  |
@@ -95,13 +96,41 @@ Under `--json`, `ignored` holds the `files` and `folders` counts, and with
 
 `install` fetches the package manifest and starts tracking it; files are
 downloaded only for the paths you name with `--path` (repeatable) or a
-`&path=` parameter in the URI.
+`&path=` parameter in the URI. A path the package already tracks is left as
+it is and listed as `Already installed: "<path>"` (`already_installed` under
+`--json`); the other paths install.
+Unless `--no-download` is given, `--keep-all` or `--keep-folder` also downloads
+what the package then keeps, as `keep` does.
+
+`keep` sets which of a package's files this copy keeps: `--files`, the files
+you picked (the default); `--all`, every file in the package; or
+`--folder <dir>` (repeatable), every file under those folders. A folder is a
+path from the package root, need not exist yet, and covers only the paths under
+it, so `data/raw` does not cover `data/raw2`; `--folder ./` is `--all`. It then
+downloads the files the setting covers that are not here yet; `--no-download`
+only saves the setting and says how many files wait. With no flag it prints the
+setting. Every `pull` follows it, so files a new revision adds under a kept
+folder, or anywhere under `--all`, are downloaded too. Under `--json` it prints
+`namespace`, `scope` (`individual_files`, `entire_package` or `folders`),
+`folders` for a folders setting, and `outstanding`, the files still waiting.
 
 `pull` reports the files it moved, in four groups: downloaded, left on the
-remote, updated, removed. A path you do not track is absent from all four — a
-pull writes nothing for it, so a copy that installed no paths reports no files
-at all. The message that follows is the newest revision's only: a pull advances
-to `latest` in one step and may span several revisions.
+remote, updated, removed. A file the new revision adds that the package's
+setting does not keep is listed as left on the remote. A change to or removal
+of a file you do not track and the setting does not keep is not listed: the pull
+writes nothing for it. The message that follows is the newest revision's only:
+a pull advances to `latest` in one step and may span several revisions.
+When the package is already at `latest`, `pull` prints `Already up to date` and
+exits 0; under `--json` the same shape has `"hash": null` and empty groups.
+
+`push` with no commit to push prints `Nothing to push` and exits 0; under
+`--json` the same shape has `"hash": null`, `"manifest_uri": null` and
+`"certified_latest": null`.
+
+`commit` with no file changes and the same message and metadata would make the
+same revision again, so it records nothing: it prints `Nothing to commit` and
+exits 0; under `--json` it prints `{"hash": null}`. A new message or new
+metadata is a new revision.
 
 `home` prints the home, the folder where installed packages keep their files.
 It defaults to `~/QuiltSync` on first use. `quilt home <dir>` sets it; a
@@ -253,4 +282,6 @@ quilt list
 Add `--source <dir>` to `create` to populate the package from an existing
 directory instead of starting empty. The package stays local-only — usable
 with `status`, `commit`, and `uninstall` — until you `push` a revision to a
-remote (the first push requires `--bucket` and `--host`).
+remote (the first push requires `--bucket`, and `--host` when the bucket has
+a Quilt stack; without one, the push uses the AWS credentials on this
+computer).

@@ -29,7 +29,7 @@ After submit -> **Installed Packages List**
 
 ### Setup (v2)
 
-With *New design preview* on, `/setup` renders this page instead: one card
+In the v2 design, `/setup` renders this page instead: one card
 with the same explanation, the directory field (chosen with **Browse**, not
 typed) and **Save**. A failed pick or save says so in the band under the
 appbar.
@@ -75,7 +75,7 @@ After login -> redirect to `back` URL (the page user came from)
 
 ### Login (v2)
 
-With *New design preview* on, `/login` renders this page instead: one card
+In the v2 design, `/login` renders this page instead: one card
 titled with the host. **Log in with browser** first; then the catalog's
 address with **Open browser**, the **Code** field and **Submit code and Log
 in**, which waits for a code. A failure says so in the band under the
@@ -100,8 +100,8 @@ appbar; opening the browser sign-in says to continue there.
 
 ### Main Page
 
-The main screen when Settings → Experimental → **New design preview** is on. Off
-by default; `/` renders this or the Installed Packages List below according to
+The main screen, unless Settings → Experimental → **New design** is off.
+`/` renders this or the Installed Packages List below according to
 the effective design generation, and both stay reachable at `/main` and
 `/installed-packages-list`.
 
@@ -119,13 +119,15 @@ needs a decision, and says so in one line instead.
 |  +--------------------+  |   Signed out    [Sign in]   | |
 |                          +-----------------------------+ |
 +---------------------------------------------------------+
-|  Needs your attention (4)                               |
-|  +---------------------------------------------------+  |
-|  | • Signed out from demo.quiltdata.com — 2 packages  |  |
-|  |                                        [Sign in]   |  |
-|  | ! user/pkg-a  has a newer revision     Get latest →|  |
-|  | • user/pkg-b  has 2 changed files         Publish →|  |
-|  +---------------------------------------------------+  |
+|  ▲ 4 packages need your attention                       |
+|  ------------------------------------------------------ |
+|  > Signed out from demo.quiltdata.com — 2 packages      |
+|                                              [Sign in]  |
+|  ------------------------------------------------------ |
+|    user/pkg-a  has a newer revision        Get latest → |
+|  ------------------------------------------------------ |
+|    user/pkg-b  has 2 changed files            Publish → |
+|  ------------------------------------------------------ |
 +--[toolbar]----------------------------------------------+
 | [Packages|Recent files]  [Search…] [Group:Bucket]        |
 |                          [Sort:Changed] [Create package] |
@@ -141,12 +143,13 @@ needs a decision, and says so in one line instead.
   each switchable on its own, and when the next check is due.
 - **Accounts card** — every catalog your packages point at plus every host you
   have signed into, with the role each is using.
-- **Attention queue** — one row per package needing a decision, beside the one
-  thing to do about it. Where a whole catalog or bucket is the cause, it is
-  said once with a count rather than repeated per package. When nothing needs
-  you: `Everything is Latest — N packages`. Until every package's check has
-  answered, a placeholder holds that line's place, so a healthy load does not
-  move the list.
+- **Attention queue** — a status line, `N packages need your attention`, then
+  one row per package needing a decision, beside the one thing to do about it.
+  Where a whole catalog or bucket is the cause, it is said once with a count
+  rather than repeated per package. When nothing needs you, the line alone:
+  `All packages are up to date`. Until every package's check has answered, a
+  placeholder holds that line's place, so a healthy load does not move the
+  list.
 - **List** — your packages with each one's state and when it last changed,
   searchable, groupable by Bucket / Prefix / None and sortable by Changed /
   Name; or switched to a feed of recently changed files.
@@ -159,8 +162,8 @@ its tooltip; the pointer passes through it to the rows below. It gives:
 
 - the package's full name, which the row may cut short;
 - *Host: open.quiltdata.com*, left out for a package with no catalog;
-- what it keeps: *Every file in the package is kept* or *Only the files you
-  picked are kept*;
+- what it keeps: *Every file in the package is kept*, *Only the files you
+  picked are kept*, or *Files in 2 folders are kept*;
 - how much is downloaded, in Keeping's words on the package page, as in *"12 of
   340 files · 1.9 MB of 3.4 MB downloaded."*
 
@@ -169,8 +172,8 @@ fails.
 
 ### Installed Packages List
 
-Lists all locally installed packages. The main screen unless Settings →
-Experimental → **New design preview** is on, in which case that page takes `/`
+Lists all locally installed packages. The main screen only when Settings →
+Experimental → **New design** is off; otherwise the Main Page takes `/`
 and this one stays at `/installed-packages-list`.
 
 ```text
@@ -252,7 +255,7 @@ without a page reload. Status changes propagate via
 Shows contents of a single installed package: file entries
 with checkboxes, status indicator, and a toolbar.
 
-This is the page when Settings → Experimental → **New design preview** is off.
+This is the page when Settings → Experimental → **New design** is off.
 On, `/installed-package` renders the redesigned package page instead, with a
 header, a context pane and a file pane; it has no address of its own.
 
@@ -265,6 +268,16 @@ the current revision is here, in files and in bytes:
 - *"This revision has no files."* for an empty revision.
 - Under *The whole package* the caption adds *"— files added later are
   downloaded too."*, and *Download 2 files · 1.5 MB* fetches the backlog.
+- Under *Folders* the kept folders are listed with *Change folders*, which
+  opens a dialog of folder paths, one a row, with *Add folder*, *Cancel* and
+  *Save*. A folder keeps every file under it, including files added there
+  later; `data/raw` keeps `data/raw/x/a.csv` and not `data/raw2/a.csv`.
+  Choosing *Folders* with none kept opens the dialog, and *Cancel* returns to
+  the previous option. *Save* downloads nothing: *Download N files* fetches
+  the files under the kept folders. A folder with `..` is refused in the
+  dialog. Choosing another option replaces the folders. The CLI sets the same
+  folders with `quilt keep --folder`. In the file list, files under the kept
+  folders have no checkbox, and *Get latest* downloads the new ones there.
 
 The sizes are the manifest rows' sizes summed, not disk usage. Only the files
 the current revision lists are counted: a new file is not counted until it is
@@ -333,6 +346,10 @@ the ticked files' bytes the same way, *Download 3 · 114.1 kB*.
     already have, and one a teammate added is listed but not fetched
   - *Sync entire package* — a pull fetches the added ones too, on this package,
     from now on (the autopull tick included)
+
+  A package that keeps chosen folders, set on the redesigned page or with
+  `quilt keep --folder`, selects neither option, and picking one replaces the
+  folders. Its file list keeps a checkbox on every file.
 
   Picking either **stores the choice and downloads nothing**. The band renders
   whether or not anything is pending: once a package has caught up it is the
@@ -431,7 +448,7 @@ After either action -> **Installed Package**
 
 ### Commit (v2)
 
-With *New design preview* on, `/commit` renders this page instead, from the
+In the v2 design, `/commit` renders this page instead, from the
 same read and through the same commands. The header and any banner span the
 page. From about a 1024px window, the form is on the left and the changed
 files on the right; narrower, it is one column with the files last.
@@ -734,7 +751,7 @@ nothing is being written, which is the common case.
 ### Settings
 
 Application settings and diagnostics. This is the page when Settings →
-Experimental → **New design preview** is off.
+Experimental → **New design** is off.
 
 ```text
 +--[appbar]----------------------------------------------+
@@ -775,8 +792,8 @@ Experimental → **New design preview** is off.
 |  hint: adds a per-package option to sync everything in  |
 |        a package, instead of picking files.             |
 |                                                         |
-|  New design preview            [ ]                      |
-|  hint: the redesigned QuiltSync, wherever it is ready.  |
+|  New design                    [ ]                      |
+|  hint: the redesigned QuiltSync.                        |
 |                                                         |
 |  Account                                                |
 |  -------                                                |
@@ -796,7 +813,7 @@ Experimental → **New design preview** is off.
 
 ### Settings (v2)
 
-With *New design preview* on, `/settings` renders this page instead. One
+In the v2 design, `/settings` renders this page instead. One
 column of cards, most used first. No Refresh or Settings in the appbar.
 
 ```text
@@ -826,7 +843,7 @@ column of cards, most used first. No Refresh or Settings in the appbar.
 |  Where packages live  /home/user/QuiltSync      [Open]  |
 |  App storage          [Check size]     [Free up space]  |
 | Experimental                                            |
-|  [x] New design preview                                 |
+|  [x] New design                                         |
 | Help                                                    |
 |  Report a problem              [Report a problem...]    |
 |  Log level  [Default v]                                 |
@@ -860,7 +877,7 @@ column of cards, most used first. No Refresh or Settings in the appbar.
   list of what is sent, **Send to Quilt** (collects the logs, sends them
   with your text) and **Email instead** (collects the logs, opens your mail
   app with the text and the zip's path).
-- Turning *New design preview* off saves, then goes to `/`.
+- Turning *New design* off saves, then goes to `/`.
 
 ---
 
@@ -887,14 +904,14 @@ auth-related).
 
 ### Error (v2)
 
-With *New design preview* on, `/error` renders the same title, message and
+In the v2 design, `/error` renders the same title, message and
 buttons centred in the v2 frame; **Login** shows only when there is a host.
 *Open .quilt directory* reports in the band under the appbar. An unknown
 address draws the same shape with *Page not found* and **Go home**.
 
 ### Opening a Quilt link (v2)
 
-`/remote-package` runs the link as it opens. With *New design preview* on it
+`/remote-package` runs the link as it opens. In the v2 design it
 shows a spinner in the v2 frame, with **Refresh** disabled, then replaces
 itself with the package page. A failure draws the error buttons (Reload page,
 Open .quilt directory, Go home) in the same frame; Reload page runs the link

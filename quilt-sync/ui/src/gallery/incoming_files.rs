@@ -39,8 +39,10 @@ use crate::kit::PackageState;
 use crate::kit::PageLayout;
 use crate::pages::Catalog;
 use crate::pages::IncomingSummary;
+use crate::pages::Kept;
 use crate::pages::conflicting;
 use crate::pages::header_state;
+use crate::pages::{PackageHeaderBand, package_page_class, package_shell_class};
 
 /// The id of the conflict sentence the marked rows' `Differs` points at.
 const DIFFERS: &str = "incoming-differing";
@@ -150,27 +152,34 @@ fn page(p: Page) -> AnyView {
 
     view! {
         <div id=name class="g-window" style="width:1024px; --q-frame-height:560px; max-width:100%">
-            <PageLayout heading="QuiltSync" banner=().into_any() actions=appbar_actions()>
+            <PageLayout
+                heading="QuiltSync"
+                banner=().into_any()
+                actions=appbar_actions()
+                page_scroll=true
+            >
                 // The conflict cell's rows carry the `Differs` mark, which
                 // the popover's sentence describes.
                 <Provider value=DiffersId(DIFFERS)>
-                    <div class="g-ip-page">
-                        <PackageHeaderRegion
-                            state=state
-                            publish_choice=publish_choice
-                            summary=view! {
-                                <IncomingSummary
-                                    check=Signal::stored(Some(check))
-                                    conflicts=Signal::stored(conflict_files)
-                                    whole=whole
-                                    catalog=catalog()
-                                    on_retry=Callback::new(|()| ())
-                                    opened=opened
-                                />
-                            }
-                                .into_any()
-                        />
-                        <div class="g-ip-shell">
+                    <div class=package_page_class()>
+                        <PackageHeaderBand>
+                            <PackageHeaderRegion
+                                state=state
+                                publish_choice=publish_choice
+                                summary=view! {
+                                    <IncomingSummary
+                                        check=Signal::stored(Some(check))
+                                        conflicts=Signal::stored(conflict_files)
+                                        kept=if whole { Kept::Package } else { Kept::Folders(Vec::new()) }
+                                        catalog=catalog()
+                                        on_retry=Callback::new(|()| ())
+                                        opened=opened
+                                    />
+                                }
+                                    .into_any()
+                            />
+                        </PackageHeaderBand>
+                        <div class=package_shell_class()>
                             <ContextPaneRegion
                                 resolving=false
                                 scope=scope

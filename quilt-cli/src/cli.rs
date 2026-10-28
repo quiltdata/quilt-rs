@@ -24,6 +24,7 @@ mod gc;
 mod history;
 mod home;
 mod install;
+mod keep;
 mod list;
 mod login;
 mod model;
@@ -440,6 +441,7 @@ enum Commands {
         overwrite: bool,
     },
     /// Install package locally
+    #[command(group(clap::ArgGroup::new("keep").args(["keep_all", "keep_folder"])))]
     Install {
         /// Source URI for the package.
         /// Ex. `quilt+s3://bucket#package=foo/bar`
@@ -452,6 +454,41 @@ enum Commands {
         /// You can provide multiple paths.
         #[arg(short, long)]
         path: Option<Vec<PathBuf>>,
+        /// Keep every file in the package, as `quilt keep --all`, and download them
+        #[arg(long)]
+        keep_all: bool,
+        /// Keep every file under this folder, as `quilt keep --folder`, and
+        /// download them. Repeat for more folders
+        #[arg(long, value_name = "DIR")]
+        keep_folder: Vec<String>,
+        /// With --keep-all or --keep-folder, save the setting without
+        /// downloading anything
+        #[arg(long, requires = "keep")]
+        no_download: bool,
+    },
+    /// Show or set which of a package's files this copy keeps
+    ///
+    /// With no flag, prints the current setting. A setting then downloads the
+    /// files it covers that are not here yet; `--no-download` only saves it.
+    /// Every `quilt pull` follows the setting, as `QuiltSync`'s pulls do.
+    #[command(group(clap::ArgGroup::new("scope").args(["files", "all", "folder"])))]
+    Keep {
+        #[command(flatten)]
+        pkg: PackageRef,
+        /// Keep only the files you picked, as `install --path` does
+        #[arg(long)]
+        files: bool,
+        /// Keep every file in the package, including files added later
+        #[arg(long)]
+        all: bool,
+        /// Keep every file under this folder, including files added later.
+        /// A path from the package root; it need not exist yet. Repeat for
+        /// more folders
+        #[arg(long, value_name = "DIR")]
+        folder: Vec<String>,
+        /// Save the setting without downloading anything
+        #[arg(long, requires = "scope")]
+        no_download: bool,
     },
     /// Authenticate against a Quilt stack
     Login {
@@ -493,28 +530,28 @@ enum Commands {
         pkg: PackageRef,
     },
     /// Push
-    #[command(group(clap::ArgGroup::new("push_host").args(["host", "origin"])))]
     Push {
         #[command(flatten)]
         pkg: PackageRef,
         /// S3 bucket (required for first push of local-only packages)
-        #[arg(short, long, requires = "push_host")]
+        #[arg(short, long)]
         bucket: Option<String>,
-        /// Quilt stack to push to (required for first push of local-only packages).
+        /// Quilt stack of the bucket, for a first push (requires --bucket).
+        /// Omit to push on this computer's AWS credentials, with no catalog.
         /// Ex. open.quiltdata.com
         #[arg(long, requires = "bucket")]
         host: Option<Host>,
         /// Deprecated: use --host
         #[arg(short, long, requires = "bucket", conflicts_with = "host")]
         origin: Option<Host>,
-        /// Workflow ID for the first push (requires --bucket/--host).
+        /// Workflow ID for the first push (requires --bucket).
         /// Ex. `"my_workflow"`
         /// Omit to use the bucket's default workflow.
         /// Meaningful only on a first push: a subsequent push uploads an
         /// already-created commit whose workflow was chosen at commit time.
         #[arg(short, long)]
         workflow: Option<String>,
-        /// First push with no workflow (explicit opt-out; requires --bucket/--host)
+        /// First push with no workflow (explicit opt-out; requires --bucket)
         #[arg(long, conflicts_with = "workflow")]
         no_workflow: bool,
     },
@@ -711,15 +748,37 @@ pub async fn init(args: Args) -> Result<Std, Error> {
             namespace,
             path,
             uri,
+            keep_all,
+            keep_folder,
+            no_download,
         } => {
             let args = install::Input {
                 namespace: parse_optional_namespace(namespace)?,
                 paths: path,
                 uri,
+                keep: keep::scope_from(false, keep_all, keep_folder)?,
+                download: !no_download,
             };
 
             log::debug!("Installing {args:?}");
             Ok(install::command(m, args).await)
+        }
+        Commands::Keep {
+            pkg,
+            files,
+            all,
+            folder,
+            no_download,
+        } => {
+            let namespace = pkg.resolve(&m).await?;
+            let args = keep::Input {
+                namespace,
+                scope: keep::scope_from(files, all, folder)?,
+                download: !no_download,
+            };
+
+            log::debug!("Keep {args:?}");
+            Ok(keep::command(m, args).await)
         }
         Commands::Login { code, host } => {
             if let Some(code) = code {
@@ -856,6 +915,9 @@ Then run:
     #[error("Package {0} not found")]
     NamespaceNotFound(Namespace),
 
+    #[error("--no-download downloads nothing, so it cannot install --path or a &path= in the URI")]
+    NoDownloadWithPath,
+
     #[error(
         "Could not infer a namespace from the current directory. Pass --namespace or run inside <home>/<prefix>/<name>"
     )]
@@ -868,7 +930,7 @@ Then run:
     WorkflowEmpty,
 
     #[error(
-        "--workflow/--no-workflow apply only to a first push; pass --bucket and --host to set the remote, or omit them (the workflow was chosen at commit time)"
+        "--workflow/--no-workflow apply only to a first push; pass --bucket to set the remote, or omit them (the workflow was chosen at commit time)"
     )]
     WorkflowRequiresBucket,
 
@@ -917,12 +979,16 @@ impl Error {
                 quilt_rs::Error::Uri(_) => "invalid_uri",
                 quilt_rs::Error::Auth(..) => "auth",
                 quilt_rs::Error::Login(_) => "login",
+                quilt_rs::Error::Lineage(quilt_rs::LineageError::FolderOutsidePackage(_)) => {
+                    "folder_outside_package"
+                }
                 quilt_rs::Error::Lineage(_) => "lineage",
                 quilt_rs::Error::WorkflowValidation(_) => "workflow_validation",
                 _ => "quilt_error",
             },
             Error::LoginRequired(_) => "login_required",
             Error::NamespaceNotFound(_) => "namespace_not_found",
+            Error::NoDownloadWithPath => "no_download_with_path",
             Error::NamespaceRequired => "namespace_required",
             Error::CommitMetaInvalid(_) => "commit_meta_invalid",
             Error::WorkflowEmpty => "workflow_empty",
@@ -1151,6 +1217,33 @@ mod tests {
         Ok(())
     }
 
+    /// A first push may name a bucket without a catalog, and the push then
+    /// sets the remote with no host.
+    #[test]
+    fn push_bucket_without_host_is_parsed() -> Result<(), Error> {
+        let args = Args::try_parse_from([
+            "quilt",
+            "push",
+            "--namespace",
+            "foo/bar",
+            "--bucket",
+            "some-bucket",
+        ])
+        .unwrap();
+        let Commands::Push {
+            bucket,
+            host,
+            origin,
+            ..
+        } = args.command
+        else {
+            panic!("expected the push command");
+        };
+        assert_eq!(bucket.as_deref(), Some("some-bucket"));
+        assert!(push_host(host, origin, &mut Vec::new())?.is_none());
+        Ok(())
+    }
+
     /// The deprecated `--origin` and `-o` still name the stack, with a warning.
     #[test]
     fn push_origin_flag_still_works_and_warns() -> Result<(), Error> {
@@ -1199,12 +1292,10 @@ mod tests {
         assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
-    /// A bucket needs a stack and a stack needs a bucket, whichever spelling
-    /// names the stack.
+    /// A stack needs a bucket, whichever spelling names the stack.
     #[test]
-    fn push_bucket_and_host_require_each_other() {
+    fn push_host_requires_bucket() {
         for argv in [
-            &["quilt", "push", "--bucket", "some-bucket"][..],
             &["quilt", "push", "--host", "quilt.test"][..],
             &["quilt", "push", "--origin", "quilt.test"][..],
         ] {
@@ -1312,6 +1403,54 @@ mod tests {
     }
 
     /// `--count` is optional, and refuses 0 as an argument error.
+    #[test]
+    fn keep_takes_one_scope_and_no_download_needs_one() {
+        let parse = |args: &[&str]| Args::try_parse_from([&["quilt", "keep"], args].concat());
+        assert!(matches!(
+            parse(&[]).expect("parses").command,
+            Commands::Keep { files: false, all: false, ref folder, no_download: false, .. }
+                if folder.is_empty()
+        ));
+        assert!(matches!(
+            parse(&["--folder", "a", "--folder", "b/"]).expect("parses").command,
+            Commands::Keep { ref folder, .. } if folder == &["a", "b/"]
+        ));
+        assert!(matches!(
+            parse(&["--all", "--no-download"]).expect("parses").command,
+            Commands::Keep {
+                all: true,
+                no_download: true,
+                ..
+            }
+        ));
+        assert!(parse(&["--all", "--files"]).is_err());
+        assert!(parse(&["--all", "--folder", "a"]).is_err());
+        assert!(parse(&["--no-download"]).is_err());
+    }
+
+    #[test]
+    fn install_takes_one_keep_flag_and_no_download_needs_one() {
+        let parse = |args: &[&str]| {
+            Args::try_parse_from([&["quilt", "install", "quilt+s3://b#package=a/b"], args].concat())
+        };
+        assert!(matches!(
+            parse(&["--keep-folder", "a", "--keep-folder", "b"]).expect("parses").command,
+            Commands::Install { ref keep_folder, keep_all: false, .. } if keep_folder == &["a", "b"]
+        ));
+        assert!(matches!(
+            parse(&["--keep-all", "--no-download"])
+                .expect("parses")
+                .command,
+            Commands::Install {
+                keep_all: true,
+                no_download: true,
+                ..
+            }
+        ));
+        assert!(parse(&["--keep-all", "--keep-folder", "a"]).is_err());
+        assert!(parse(&["--no-download"]).is_err());
+    }
+
     #[test]
     fn remove_revisions_count_is_optional_and_at_least_one() {
         let all = Args::try_parse_from(["quilt", "remove-revisions", "-n", "a/b"]).expect("parses");
@@ -1950,6 +2089,9 @@ mod tests {
                 namespace: Some(Namespace::from(pkg::NAMESPACE).to_string()),
                 uri: pkg::URI.to_string(),
                 path: None,
+                keep_all: false,
+                keep_folder: Vec::new(),
+                no_download: false,
             },
         };
         let mut output = Vec::new();
@@ -1991,15 +2133,12 @@ mod tests {
             },
         };
 
-        // Test init with valid arguments
+        // The installed revision's own message: the same hash, so nothing to commit
         let mut output = Vec::new();
         let result = init(commit_args).await?;
         print(result, Format::Text, &mut output, &mut Vec::new())?;
         let output_str = String::from_utf8(output).unwrap();
-        assert_eq!(
-            output_str,
-            "New commit \"095017e53f4c8e0a07c82e562d088aa0e0f7a9ecaf2dce74a7607fac9085e98f\" created\n".to_string()
-        );
+        assert_eq!(output_str, "Nothing to commit\n".to_string());
 
         Ok(())
     }
@@ -2177,6 +2316,48 @@ mod tests {
                 pkg::LATEST_TOP_HASH
             )
         );
+
+        Ok(())
+    }
+
+    /// A second pull finds nothing new and still succeeds: text says so, and
+    /// the JSON keeps the pull shape with no `hash`.
+    #[test(tokio::test)]
+    async fn live_pull_twice_succeeds() -> Result<(), Error> {
+        use crate::cli::fixtures::packages::outdated as pkg;
+
+        let (_, _, temp_dir) = install_package_into_temp_dir(pkg::URI).await?;
+        let pull_args = |json| Args {
+            domain: Some(temp_dir.path().to_path_buf()),
+            home: Some(temp_dir.path().to_path_buf()),
+            verbose: false,
+            log: None,
+            format: None,
+            json,
+            command: Commands::Pull {
+                pkg: PackageRef {
+                    namespace: Some(pkg::NAMESPACE_STR.to_string()),
+                },
+            },
+        };
+
+        let mut stderr = Vec::new();
+        let result = init(pull_args(false)).await?;
+        print(result, Format::Text, &mut Vec::new(), &mut stderr)?;
+        assert_eq!(String::from_utf8_lossy(&stderr), "");
+
+        let mut output = Vec::new();
+        let result = init(pull_args(false)).await?;
+        print(result, Format::Text, &mut output, &mut stderr)?;
+        assert_eq!(String::from_utf8(output).unwrap(), "Already up to date\n");
+        assert_eq!(String::from_utf8_lossy(&stderr), "");
+
+        let mut output = Vec::new();
+        let result = init(pull_args(true)).await?;
+        print(result, Format::Json, &mut output, &mut stderr)?;
+        let json: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(json["hash"], serde_json::Value::Null);
+        assert_eq!(String::from_utf8_lossy(&stderr), "");
 
         Ok(())
     }
@@ -3063,6 +3244,9 @@ mod tests {
                 namespace: None,
                 uri: pkg::URI.to_string(),
                 path: None,
+                keep_all: false,
+                keep_folder: Vec::new(),
+                no_download: false,
             },
         };
 

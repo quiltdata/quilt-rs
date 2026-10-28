@@ -258,11 +258,8 @@ fn account_hosts(rows: &[Row], auth_hosts: &[String]) -> Vec<String> {
 ///
 /// Resolution happens exactly once, upstream of every payload (§1): both
 /// phases, the package page and `quilt list --fetch` hand `quilt-rs`'s
-/// `UpstreamState` to the one [`PackageState::resolve`], and a remote with no
-/// catalog host is caught by the one
-/// [`PackageLineage::misconfigured_remote`](quilt::lineage::PackageLineage::misconfigured_remote)
-/// before it. Two places deciding what is true is the 2026-07-11 bug. This
-/// mapping only renames.
+/// `UpstreamState` to the one [`PackageState::resolve`]. Two places deciding
+/// what is true is the 2026-07-11 bug. This mapping only renames.
 ///
 /// `PendingChanges` can only reach rank 7 of §5's precedence lattice; the
 /// app-only states above it are added by the callers.
@@ -631,11 +628,8 @@ async fn load_main_page_package(
         .as_ref()
         .and_then(|uri| uri.catalog.as_ref())
         .map(ToString::to_string);
-    let state = if lineage.misconfigured_remote() {
-        PackageStateDto::Unknown
-    } else if let Some(files) = conflict_files(paused_reasons.get(&namespace)) {
-        // Rank 2, below the arm above: a remote with no catalog host is a package
-        // the tick never touched, so a conflict pause cannot be describing it.
+    let state = if let Some(files) = conflict_files(paused_reasons.get(&namespace)) {
+        // Rank 2: a conflict pause outranks what the tree says.
         PackageStateDto::PullConflict { files }
     } else if unexplained_pause(paused_reasons.get(&namespace)) {
         // §5's row 3, below the conflict above, which names its files and is the
@@ -827,10 +821,14 @@ pub struct MainPagePackageRefresh {
 #[serde(rename_all = "camelCase")]
 pub struct MainPageDownloads {
     pub scope: KeepingScope,
+    /// How many folders a folders scope keeps; 0 for any other scope.
+    pub folders: usize,
     /// The files the current revision lists.
     pub total: usize,
-    /// The listed files still to download, as Keeping counts them.
+    /// The listed files not downloaded here, as Keeping counts them.
     pub outstanding: usize,
+    /// The outstanding files the scope covers: Keeping's `Download N files`.
+    pub backlog: usize,
     /// Every deletion the status reports.
     pub deleted_here: usize,
     /// `None` when the rows' sizes do not add up in a `u64`.
@@ -840,9 +838,11 @@ pub struct MainPageDownloads {
 impl From<quilt::lineage::DownloadCounts> for MainPageDownloads {
     fn from(counts: quilt::lineage::DownloadCounts) -> Self {
         Self {
-            scope: counts.scope.into(),
+            scope: (&counts.scope).into(),
+            folders: super::package_page::kept_folders(&counts.scope).len(),
             total: counts.listed,
             outstanding: counts.outstanding,
+            backlog: counts.backlog,
             deleted_here: counts.deleted_here,
             size: counts.size.map(PackageSize::from),
         }
@@ -880,19 +880,6 @@ pub(super) async fn refresh_main_page_package_from_model(
         .remote_uri
         .as_ref()
         .and_then(|uri| uri.origin.clone());
-
-    // A remote with a bucket but no catalog host: nowhere to vend credentials
-    // from, so the status call cannot succeed and its answer would not be
-    // actionable if it did. The SAME predicate the light phase uses, so the two
-    // phases cannot disagree about this shape.
-    if lineage.misconfigured_remote() {
-        return Ok(MainPagePackageRefresh {
-            state: PackageStateDto::Unknown,
-            role_switch_host: None,
-            downloads: None,
-            changed_files: None,
-        });
-    }
 
     // No remote at all: `PackageState::resolve` ignores the file count for `Local`, so the
     // status call would be a local hash walk whose answer nothing reads. A remote
@@ -2654,10 +2641,12 @@ mod tests {
             scope: quilt::lineage::SyncScope::EntirePackage,
             listed: 5,
             outstanding: 2,
+            backlog: 2,
             deleted_here: 1,
             size: Some(quilt::lineage::DownloadSize {
                 listed: 3_400_000,
                 outstanding: 1_500_000,
+                backlog: 1_500_000,
             }),
         };
         let m =
@@ -2667,12 +2656,15 @@ mod tests {
             refresh(&m, &RoleCache::default()).await.downloads,
             Some(MainPageDownloads {
                 scope: KeepingScope::EntirePackage,
+                folders: 0,
                 total: 5,
                 outstanding: 2,
+                backlog: 2,
                 deleted_here: 1,
                 size: Some(PackageSize {
                     total: 3_400_000,
                     downloaded: 1_900_000,
+                    backlog: 1_500_000,
                 }),
             })
         );
@@ -2685,19 +2677,22 @@ mod tests {
             role_switch_host: None,
             downloads: Some(MainPageDownloads {
                 scope: KeepingScope::IndividualFiles,
+                folders: 0,
                 total: 340,
                 outstanding: 328,
+                backlog: 0,
                 deleted_here: 1,
                 size: Some(PackageSize {
                     total: 3_400_000,
                     downloaded: 1_900_000,
+                    backlog: 0,
                 }),
             }),
             changed_files: Some(0),
         };
         assert_eq!(
             serde_json::to_string(&refreshed).unwrap(),
-            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000}},"changedFiles":0}"#,
+            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","folders":0,"total":340,"outstanding":328,"backlog":0,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000,"backlog":0}},"changedFiles":0}"#,
         );
     }
 
@@ -2900,12 +2895,17 @@ mod tests {
         assert_eq!(refreshed.downloads, None);
     }
 
-    #[tokio::test]
-    async fn a_remote_with_no_catalog_host_never_reaches_the_network() {
-        // No expectation for `get_installed_package_status_with_downloads`: mockall panics if it is
-        // called. There is nowhere to vend credentials from, so the call cannot
-        // succeed — and the hash comparison behind it answers a question the app
-        // cannot act on.
+    /// The heavy phase with a remote that has a bucket and no catalog host,
+    /// read on the machine's own AWS credentials.
+    fn catalog_less_model(
+        status: Result<
+            (
+                quilt::lineage::InstalledPackageStatus,
+                quilt::lineage::DownloadCounts,
+            ),
+            Error,
+        >,
+    ) -> crate::model::MockQuiltModel {
         let mut model = crate::model::mocks::create();
         model
             .expect_get_installed_package()
@@ -2918,10 +2918,33 @@ mod tests {
                     "abcdef".to_string(),
                 ))
             });
+        model
+            .expect_get_installed_package_status_with_downloads()
+            .times(1)
+            .return_once(move |_, _| status);
+        model
+    }
+
+    #[tokio::test]
+    async fn a_remote_with_no_catalog_host_resolves_to_a_real_state() {
+        let model = catalog_less_model(Ok((
+            status_with(UpstreamState::Behind, 0),
+            quilt::lineage::DownloadCounts::default(),
+        )));
 
         let refreshed = refresh(&model, &RoleCache::default()).await;
-        assert_eq!(refreshed.state, PackageStateDto::Unknown);
-        assert_eq!(refreshed.downloads, None);
+        assert_eq!(refreshed.state, PackageStateDto::Behind);
+        assert_eq!(refreshed.changed_files, Some(0));
+    }
+
+    #[tokio::test]
+    async fn unusable_ambient_credentials_are_a_host_less_session_state() {
+        let model = catalog_less_model(Err(Error::from(quilt::Error::Login(
+            quilt::LoginError::NoSession(None),
+        ))));
+
+        let refreshed = refresh(&model, &RoleCache::default()).await;
+        assert_eq!(refreshed.state, PackageStateDto::NoSession { host: None });
     }
 
     #[tokio::test]

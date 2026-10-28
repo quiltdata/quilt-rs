@@ -54,13 +54,13 @@ pub fn CardStories() -> impl IntoView {
                         <ToggleRow label="Get new revisions" sublabel="Every 30s" checked=a />
                     </Card>
                 </Cell>
-                <Cell wide=true label="with a count — the queue's header">
-                    <Card title="Needs your attention" count=19>
+                <Cell wide=true label="with a count">
+                    <Card title="Accounts" count=19>
                         <ToggleRow label="Get new revisions" sublabel="Every 30s" checked=a />
                     </Card>
                 </Cell>
                 <Cell wide=true label="count of one">
-                    <Card title="Needs your attention" count=1>
+                    <Card title="Accounts" count=1>
                         <ToggleRow label="Get new revisions" sublabel="Every 30s" checked=a />
                     </Card>
                 </Cell>

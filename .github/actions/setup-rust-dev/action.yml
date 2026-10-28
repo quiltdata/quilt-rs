@@ -5,24 +5,22 @@ inputs:
     description: "Additional targets to install"
     required: false
     default: ""
-  github-token:
-    description: >-
-      Token for cargo-binstall's GitHub API lookups. Pass a read-only token;
-      without one, shared runner IPs can hit the rate limit and hang the step.
-    required: false
-    default: ""
 
 runs:
   using: "composite"
   steps:
     - name: Setup Rust
       uses: moonrepo/setup-rust@v1
-      # cargo-binstall (used to install cargo-cache) reads GITHUB_TOKEN.
-      # Opt-in, so release jobs never hand their write token to this action.
-      env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
       with:
-        cache-base: main
-        cache-target: debug
+        # Its cache is one per OS, shared by every job. rust-cache below keeps one per job.
+        cache: false
         inherit-toolchain: true
         targets: ${{ inputs.targets }}
+
+    - name: Cache Rust build
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        # The job id is in the key already, but `quality` is a job in two workflows.
+        key: ${{ github.workflow }}-debug
+        # Pull requests restore main's caches and never write their own.
+        save-if: ${{ github.ref == 'refs/heads/main' }}

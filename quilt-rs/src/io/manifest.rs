@@ -13,6 +13,7 @@ use url::Url;
 use crate::Error;
 use crate::Res;
 use crate::error::ManifestError;
+use crate::io::remote::HostChecksums;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
@@ -24,6 +25,8 @@ use crate::manifest::TopHasher;
 use crate::manifest::Workflow;
 #[cfg(test)]
 use crate::manifest::WorkflowId;
+use crate::object_hash::MULTIHASH_CRC64_NVME;
+use crate::object_hash::MULTIHASH_SHA256_CHUNKED;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
 use quilt_uri::ObjectUri;
@@ -36,7 +39,7 @@ use quilt_uri::Tag;
 use quilt_uri::TagUri;
 use quilt_uri::UriError;
 
-async fn bytestream_to_string(bytestream: ByteStream) -> Res<String> {
+pub(crate) async fn bytestream_to_string(bytestream: ByteStream) -> Res<String> {
     let mut reader = bytestream.into_async_read();
     let mut contents = Vec::new();
     reader.read_to_end(&mut contents).await?;
@@ -87,11 +90,11 @@ pub async fn upload_manifest(
 /// `ManifestRow` has a time field), so `.quilt/named_packages/<ns>/<epoch>` is
 /// the registry's revision history.
 ///
-/// It is **write-only from this client**: reading those times back means
-/// enumerating the tag objects, and [`Remote`] has no list operation. So
-/// nothing here can answer "when was revision X published" or "what revisions
-/// exist". The value written is the *local* `CommitState::timestamp` — when
-/// the commit was made on the pushing machine, not when the upload completed.
+/// This client reads back which revisions have one
+/// ([`Remote::published_revisions`]), never the times. So nothing here can
+/// answer "when was revision X published". The value written is the *local*
+/// `CommitState::timestamp` — when the commit was made on the pushing machine,
+/// not when the upload completed.
 pub async fn tag_timestamp(
     remote: &impl Remote,
     manifest_uri: &ManifestUri,
@@ -220,8 +223,9 @@ pub async fn upload_row(
     let object_uri = ObjectUri::new(package_handle, row.logical_key.clone());
     log::info!("Uploading to S3: {object_uri}");
 
+    let host_config = committed_checksums(host_config, &row);
     let (remote_url, hash) = remote
-        .upload_file(host_config, &file_path, &object_uri.into(), row.size)
+        .upload_file(&host_config, &file_path, &object_uri.into(), row.size)
         .await?;
 
     // Update the manifest with the sha2-256-chunked checksum
@@ -232,6 +236,22 @@ pub async fn upload_row(
         hash,
         ..row
     })
+}
+
+/// The host's config, with the checksum type the row was committed with, so
+/// the uploaded row keeps the commit's hash. They differ when the remote's
+/// catalog changed after the commit; S3 takes either type for any bucket. A
+/// legacy SHA-256 row is uploaded with the host's type, as before.
+fn committed_checksums(host_config: &HostConfig, row: &ManifestRow) -> HostConfig {
+    let checksums = match row.hash.algorithm() {
+        MULTIHASH_CRC64_NVME => HostChecksums::Crc64,
+        MULTIHASH_SHA256_CHUNKED => HostChecksums::Sha256Chunked,
+        _ => host_config.checksums.clone(),
+    };
+    HostConfig {
+        checksums,
+        ..host_config.clone()
+    }
 }
 
 pub type StreamRowsChunk = Vec<Res<ManifestRow>>;
@@ -328,6 +348,43 @@ mod tests {
             .await?;
         let top_hash = resolve_top_hash(&remote, None, &uri).await?;
         assert_eq!(top_hash, "abcdef".to_string(),);
+        Ok(())
+    }
+
+    /// A row is uploaded with the checksum type it was committed with, even
+    /// when the host now asks for another, as after its catalog changed. Its
+    /// hash, and so the pushed manifest's, stays the commit's.
+    #[test(tokio::test)]
+    async fn upload_row_keeps_the_committed_checksum_type() -> Res {
+        let remote = MockRemote::default();
+        let path = std::path::Path::new("/data.csv");
+        remote
+            .storage
+            .write_byte_stream(path, ByteStream::from_static(b"a,b\n1,2\n"))
+            .await?;
+        let committed = crate::checksum::calculate_hash(
+            &remote.storage,
+            path,
+            std::path::Path::new("data.csv"),
+            &HostConfig::default(),
+        )
+        .await?;
+        let handle = S3PackageHandle::from(&ManifestUri {
+            bucket: "bkt".to_string(),
+            namespace: ("test", "survey").into(),
+            hash: String::new(),
+            origin: None,
+        });
+
+        let uploaded = upload_row(
+            &remote,
+            &HostConfig::default_crc64(),
+            handle,
+            committed.clone(),
+        )
+        .await?;
+
+        assert_eq!(uploaded.hash, committed.hash);
         Ok(())
     }
 

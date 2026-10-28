@@ -7,15 +7,12 @@ const NAMESPACE = "e2e/first";
 
 /** Create a package through the main page's dialog, as a user would. */
 async function createPackage(page: Page, namespace: string) {
-  await page.getByRole("button", { name: "Create local package" }).click();
-  await page.getByPlaceholder("owner/package-name").fill(namespace);
-  await page.getByRole("button", { name: "Create", exact: true }).click();
-  // The result shows in a bar over the page until a click anywhere dismisses it.
-  const notice = page.getByText(`Successfully created package ${namespace}`);
-  await expect(notice).toBeVisible();
-  const { width, height } = page.viewportSize()!;
-  await page.mouse.click(width - 5, height - 5);
-  await expect(notice).toBeHidden();
+  await page.getByRole("button", { name: "Create package" }).first().click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByPlaceholder("owner/package-name").fill(namespace);
+  await dialog.getByRole("button", { name: "Create", exact: true }).click();
+  // The dialog closes on success, and the list reads the new package.
+  await expect(dialog).toBeHidden();
 }
 
 /**
@@ -33,29 +30,35 @@ async function writeUntilListed(quiltsync: QuiltSync, namespace: string, name: s
   await expect(async () => {
     await writeFile(join(folder, name), `round ${++round}\n`);
     for (const page of pages) {
-      await expect(page.getByTestId("entry-name").filter({ hasText: name })).toBeVisible({ timeout: 4_000 });
+      await expect(fileRow(page, name)).toBeVisible({ timeout: 4_000 });
     }
   }).toPass({ timeout: 30_000 });
   test.info().annotations.push({ type: "writes", description: `${name}: ${round}` });
   for (const page of pages) expect(await page.evaluate(() => (window as any).e2eMark)).toBe(true);
 }
 
-/** The package page's breadcrumb ends with the namespace. */
-function packageCrumb(page: Page, namespace: string) {
-  return page.getByRole("navigation").getByText(namespace, { exact: true });
+/** The package page's header names the package. */
+function packageHeading(page: Page, namespace: string) {
+  return page.getByRole("heading", { name: namespace, exact: true });
+}
+
+/** A file's row in the package page's Files section. */
+function fileRow(page: Page, name: string) {
+  return page.getByRole("region", { name: "Files" }).getByText(name, { exact: true });
 }
 
 test("the main page renders after setup", async ({ page, quiltsync }) => {
   await page.goto(quiltsync.url("/"));
-  await expect(page.getByRole("heading", { name: "You don't have any packages" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Create local package" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No packages yet" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create package" }).first()).toBeVisible();
 });
 
 test("a file written into a package folder appears on its page", async ({ page, quiltsync }) => {
   await page.goto(quiltsync.url("/"));
   await createPackage(page, NAMESPACE);
-  await page.getByRole("link", { name: NAMESPACE }).click();
-  await expect(packageCrumb(page, NAMESPACE)).toBeVisible();
+  // The attention queue links the new package too; open it from the list.
+  await page.getByRole("region", { name: "Packages" }).getByRole("link", { name: NAMESPACE }).click();
+  await expect(packageHeading(page, NAMESPACE)).toBeVisible();
 
   // No reload: the watcher's event reaches the page over the socket.
   await writeUntilListed(quiltsync, NAMESPACE, "hello.txt", [page]);
@@ -63,14 +66,14 @@ test("a file written into a package folder appears on its page", async ({ page, 
 
 test("two pages on one package both see a new file", async ({ browser, quiltsync }) => {
   await quiltsync.call("package_create", { namespace: NAMESPACE, source: null, message: null });
-  const packagePage = quiltsync.url(`/installed-package?namespace=${encodeURIComponent(NAMESPACE)}&filter=unmodified`);
+  const packagePage = quiltsync.url(`/installed-package?namespace=${encodeURIComponent(NAMESPACE)}`);
 
   // Two contexts: two separate browser sessions, each with its own socket.
   const pages = await Promise.all(
     [0, 1].map(async () => {
       const page = await (await browser.newContext()).newPage();
       await page.goto(packagePage);
-      await expect(packageCrumb(page, NAMESPACE)).toBeVisible();
+      await expect(packageHeading(page, NAMESPACE)).toBeVisible();
       return page;
     }),
   );

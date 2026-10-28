@@ -19,11 +19,93 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.23.3-dev]
+## [v0.26.0] - 2026-10-28
+
+### Added
+
+- A package can keep chosen folders: QuiltSync downloads every file under them, including files added there later. `quilt keep --folder` sets them too. **New design preview**: *Keeping* has a *Folders* option, with *Change folders* to edit the list, and *Download N files* fetches the files still missing. The main page counts them in *N to download*
+  - <https://github.com/quiltdata/quilt-rs/pull/1229>
+  - <https://github.com/quiltdata/quilt-rs/pull/1245>
+  - <https://github.com/quiltdata/quilt-rs/pull/1250>
+- **Experimental**: agent tasks can be set up in Settings. With *Agent tasks* on, the Settings page has an *Agent tasks* card for choosing which buckets can ask this computer to run a task and which local agents run it. The revision a task publishes says how many files it added, changed and removed. Agents run with the PATH of your login shell, so they find your tools
+  - <https://github.com/quiltdata/quilt-rs/pull/1224>
+  - <https://github.com/quiltdata/quilt-rs/pull/1225>
+  - <https://github.com/quiltdata/quilt-rs/pull/1236>
 
 ### Changed
 
-- **New design preview**: copying a file's URI or path on the package page marks that file's row for a moment, so the page no longer moves down. The header's copy button shows a check instead of a tooltip, and the close button of a message bar sits at its right edge (<https://github.com/quiltdata/quilt-rs/pull/1182>)
+- **New design preview**: the main page and the package page scroll as one page, so the mouse wheel moves the list from anywhere in the window, while the bar, toolbar and headings stay in place. On the package page, *Download* stays at the bottom while files are ticked, and *Bucket and catalog*, *Revision* and *Keeping* sit beside the files in a wide window and above them in a narrow one
+  - <https://github.com/quiltdata/quilt-rs/pull/1223>
+  - <https://github.com/quiltdata/quilt-rs/pull/1228>
+- **New design preview**: the package page shows *Bucket and catalog* for every package, with one button to choose or change the bucket, which replaces the header's bucket buttons. *Revisions you have* is now *History* (<https://github.com/quiltdata/quilt-rs/pull/1221>)
+- The main page's *Needs your attention* is a status line with rows below it, not a card. When nothing needs you, it reads *All packages are up to date* (<https://github.com/quiltdata/quilt-rs/pull/1222>)
+- *No accounts yet*, on the main page and in Settings, says how to sign in: choose *Open in QuiltSync* on a package in the catalog (<https://github.com/quiltdata/quilt-rs/pull/1248>)
+- Group headings on the main page stand out from the rows below them (<https://github.com/quiltdata/quilt-rs/pull/1220>)
+
+### Fixed
+
+- *Pull*, *Push*, *Commit* and *Publish* with nothing to do say so, instead of failing or publishing the same revision twice
+  - <https://github.com/quiltdata/quilt-rs/pull/1227>
+  - <https://github.com/quiltdata/quilt-rs/pull/1230>
+  - <https://github.com/quiltdata/quilt-rs/pull/1242>
+
+### quilt-rs
+
+- Updated [from v0.49.0 to v0.50.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...quilt-rs/v0.50.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.25.0] - 2026-10-26
+
+### Added
+
+- A package can use a bucket with no catalog, on the AWS credentials on this computer: it shows its status, publishes from the commit page, syncs with autosync, copies its URI and marks its published revisions. A local-only package can be published to such a bucket, since the *Host* field is optional. When the credentials are missing or refused, QuiltSync says so and suggests updating `~/.aws` or running `aws sso login`
+  - <https://github.com/quiltdata/quilt-rs/pull/1193>
+  - <https://github.com/quiltdata/quilt-rs/pull/1203>
+  - <https://github.com/quiltdata/quilt-rs/pull/1207>
+  - <https://github.com/quiltdata/quilt-rs/pull/1208>
+  - <https://github.com/quiltdata/quilt-rs/pull/1209>
+  - <https://github.com/quiltdata/quilt-rs/pull/1210>
+  - <https://github.com/quiltdata/quilt-rs/pull/1212>
+- A published package's catalog can be added, changed or removed, keeping its revisions: from the *Bucket and catalog* section of the package page, or from the popup on the classic page
+  - <https://github.com/quiltdata/quilt-rs/pull/1211>
+  - <https://github.com/quiltdata/quilt-rs/pull/1213>
+  - <https://github.com/quiltdata/quilt-rs/pull/1215>
+- The main page can group packages by catalog
+  - <https://github.com/quiltdata/quilt-rs/pull/1214>
+  - <https://github.com/quiltdata/quilt-rs/pull/1217>
+
+### Changed
+
+- Under the hood, QuiltSync can run the task a package revision asks for with a local agent and publish the result as the next revision
+  - <https://github.com/quiltdata/quilt-rs/pull/1195>
+  - <https://github.com/quiltdata/quilt-rs/pull/1198>
+  - <https://github.com/quiltdata/quilt-rs/pull/1199>
+  - <https://github.com/quiltdata/quilt-rs/pull/1201>
+  - <https://github.com/quiltdata/quilt-rs/pull/1204>
+  - <https://github.com/quiltdata/quilt-rs/pull/1206>
+
+### Removed
+
+- QuiltSync no longer claims `quilt+file://` links, which it never handled (<https://github.com/quiltdata/quilt-rs/pull/1216>)
+
+### quilt-rs
+
+- Updated [from v0.48.0 to v0.49.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.48.0...quilt-rs/v0.49.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.24.0] - 2026-10-23
+
+### Changed
+
+- QuiltSync opens in the new design. To go back to the classic one, turn off **New design** in Settings (<https://github.com/quiltdata/quilt-rs/pull/1189>)
+- The revision page's header has the package page's *Open folder*, *Open in catalog* and *Copy Quilt URI* buttons (<https://github.com/quiltdata/quilt-rs/pull/1187>)
+- Copying a file's URI or path on the package page marks that file's row for a moment, so the page no longer jumps (<https://github.com/quiltdata/quilt-rs/pull/1182>)
+
+### Fixed
+
+- Logging out waits for a token refresh already under way, here or in the CLI, so the refresh cannot sign you back in (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+### quilt-rs
+
+- Updated [from v0.47.0 to v0.48.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.47.0...quilt-rs/v0.48.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.23.2] - 2026-10-22
 
@@ -37,10 +119,6 @@
 
 - **New design preview**: the package page's header has *Open in catalog* and a button that copies the package's Quilt URI next to *Open folder* (<https://github.com/quiltdata/quilt-rs/pull/1171>)
 - **New design preview**: *Copy URI* and *Open in catalog* on a file point at the revision you have (<https://github.com/quiltdata/quilt-rs/pull/1175>)
-
-### Fixed
-
-- Logging out waits for a token refresh already under way, here or in the CLI, so the refresh cannot sign you back in (<https://github.com/quiltdata/quilt-rs/pull/1177>)
 
 ### quilt-rs
 

@@ -1,4 +1,4 @@
-//! The v2 main page. Behind `ExperimentalSettings.main_page_v2`.
+//! The v2 main page, drawn in the v2 design.
 //!
 //! Three regions: the state strip — Autosync beside Accounts — the attention
 //! queue, and the list. The list region is two views of one roster, Packages and
@@ -78,6 +78,7 @@ use crate::kit::Select;
 use crate::kit::Site;
 use crate::kit::TwoColumns;
 use crate::kit::ZeroLineSkeleton;
+use crate::kit::publish_height;
 use crate::kit::render;
 
 /// The fixed sentence shown when the fetch fails. The backend's error text is
@@ -110,6 +111,7 @@ const FILES_VIEW: &str = "Recent files";
 /// signal holding `Bucket` would render the feed's select blank the moment the
 /// reader switched to it, since `Bucket` is not one of its options.
 const GROUP_BUCKET: &str = "Bucket";
+const GROUP_CATALOG: &str = "Catalog";
 const GROUP_PREFIX: &str = "Prefix";
 const GROUP_NONE: &str = "None";
 const GROUP_PACKAGE: &str = "Package";
@@ -457,8 +459,8 @@ pub fn rows_class() -> &'static str {
     style::rows
 }
 
-/// The class a list with no dividing rule carries — the queue's items, and the
-/// packages an expanded cause reveals.
+/// The class a list with no dividing rule carries — the packages an expanded
+/// cause reveals.
 pub(super) fn list_class() -> &'static str {
     style::list
 }
@@ -466,16 +468,44 @@ pub(super) fn list_class() -> &'static str {
 /// The state strip: Autosync beside Accounts, or stacked when the window is
 /// too narrow for both. The cards share one height, so the strip has one
 /// bottom edge even when Accounts has a single host.
+///
+/// The first of the page's sticky bands, under the appbar.
 #[component]
 pub fn StateStrip(children: Children) -> impl IntoView {
+    let band = NodeRef::new();
+    publish_height(band, "--q-strip-height");
     view! {
-        <TwoColumns min_column=300 tight=true>
-            {children()}
-        </TwoColumns>
+        <div class=style::strip node_ref=band>
+            <TwoColumns min_column=300 tight=true>
+                {children()}
+            </TwoColumns>
+        </div>
     }
 }
 
-/// Region 4: the list toolbar, then the card that scrolls under it.
+/// The queue's sticky band, under the strip. Drawn only around something: a
+/// queue with nothing to say leaves no band, and no height for the bands below.
+#[component]
+pub fn QueueBand(children: Children) -> impl IntoView {
+    let band = NodeRef::new();
+    publish_height(band, "--q-queue-height");
+    view! {
+        <div class=style::queue node_ref=band>
+            <div class=style::queue_scroll>{children()}</div>
+        </div>
+    }
+}
+
+/// The list toolbar's sticky band, under the queue: the last of the parts that
+/// stay while the rows scroll.
+#[component]
+pub fn ToolbarBand(children: Children) -> impl IntoView {
+    let band = NodeRef::new();
+    publish_height(band, "--q-toolbar-height");
+    view! { <div class=style::toolbar node_ref=band>{children()}</div> }
+}
+
+/// Region 4: the list toolbar, then the list that scrolls the page under it.
 pub fn list_region_class() -> &'static str {
     style::list_region
 }
@@ -693,14 +723,16 @@ fn regions_skeleton(toolbar: AnyView, inert: bool) -> AnyView {
         // renders SOMETHING once it knows, even when that is the one-line
         // all-clear, so the shift came entirely from rendering nothing while it
         // did not. `QueueRegion` holds it on until the heavy phase answers.
-        <ZeroLineSkeleton />
+        <QueueBand>
+            <ZeroLineSkeleton />
+        </QueueBand>
         // The toolbar, from the same helper the resolved arm calls: it is on
         // screen with the appbar and the strip, and is never itself a skeleton.
         // The skeletons below it are the packages view's, because that is the
         // view the page opens on (R4).
         <div class=style::list_region inert=inert>
             {toolbar}
-            <Card label="Packages" busy=true>
+            <Card label="Packages" bare=true busy=true>
                 <PackageRowSkeleton />
                 <PackageRowSkeleton />
                 <PackageRowSkeleton />
@@ -733,7 +765,7 @@ fn regions_skeleton(toolbar: AnyView, inert: bool) -> AnyView {
 #[component]
 pub fn MainPageSkeleton(actions: AnyView) -> impl IntoView {
     view! {
-        <PageLayout heading="QuiltSync" actions=actions>
+        <PageLayout heading="QuiltSync" actions=actions page_scroll=true>
             <StateStrip>
                 {autosync::autosync_skeleton()}
                 {accounts::accounts_skeleton()}
@@ -763,59 +795,61 @@ fn list_toolbar(controls: ListControls) -> AnyView {
     } = controls;
     let on_packages = move || view_selected.get() == PACKAGES_VIEW;
     view! {
-        <ListToolbar>
-            <SegmentedControl
-                aria_label="List view"
-                name="main-page-view"
-                options=vec![PACKAGES_VIEW.into(), FILES_VIEW.into()]
-                selected=view_selected
-            />
-            // Two selects, not one with reactive options: `Select`'s `options` is
-            // built once, and a shared `selected` holding a value the other axis
-            // does not offer renders the control blank. The `SearchInput` is split
-            // the same way, one instance per view guard, both bound to the same
-            // `query` signal: its `aria_label` is a plain `String` (kit, read-only),
-            // so it cannot say "packages" on one view and "files" on the other
-            // without two instances.
-            {move || {
-                on_packages()
-                    .then(|| {
-                        view! {
-                            <SearchInput
-                                value=query
-                                aria_label="Search packages"
-                                placeholder="Search…"
-                            />
-                            <Select
-                                naming=Naming::Prefix("Group".to_string())
-                                options=PACKAGES_GROUP.labels()
-                                selected=group_packages_by
-                            />
-                            <Select
-                                naming=Naming::Prefix("Sort".to_string())
-                                options=PACKAGES_SORT.labels()
-                                selected=sort_by
-                            />
-                            <Button on_click=move |_| create_open.set(true)>
-                                "Create package"
-                            </Button>
-                        }
-                    })
-            }}
-            {move || {
-                (!on_packages())
-                    .then(|| {
-                        view! {
-                            <SearchInput value=query aria_label="Search files" placeholder="Search…" />
-                            <Select
-                                naming=Naming::Prefix("Group".to_string())
-                                options=FILES_GROUP.labels()
-                                selected=group_files_by
-                            />
-                        }
-                    })
-            }}
-        </ListToolbar>
+        <ToolbarBand>
+            <ListToolbar>
+                <SegmentedControl
+                    aria_label="List view"
+                    name="main-page-view"
+                    options=vec![PACKAGES_VIEW.into(), FILES_VIEW.into()]
+                    selected=view_selected
+                />
+                // Two selects, not one with reactive options: `Select`'s `options` is
+                // built once, and a shared `selected` holding a value the other axis
+                // does not offer renders the control blank. The `SearchInput` is split
+                // the same way, one instance per view guard, both bound to the same
+                // `query` signal: its `aria_label` is a plain `String` (kit, read-only),
+                // so it cannot say "packages" on one view and "files" on the other
+                // without two instances.
+                {move || {
+                    on_packages()
+                        .then(|| {
+                            view! {
+                                <SearchInput
+                                    value=query
+                                    aria_label="Search packages"
+                                    placeholder="Search…"
+                                />
+                                <Select
+                                    naming=Naming::Prefix("Group".to_string())
+                                    options=PACKAGES_GROUP.labels()
+                                    selected=group_packages_by
+                                />
+                                <Select
+                                    naming=Naming::Prefix("Sort".to_string())
+                                    options=PACKAGES_SORT.labels()
+                                    selected=sort_by
+                                />
+                                <Button on_click=move |_| create_open.set(true)>
+                                    "Create package"
+                                </Button>
+                            }
+                        })
+                }}
+                {move || {
+                    (!on_packages())
+                        .then(|| {
+                            view! {
+                                <SearchInput value=query aria_label="Search files" placeholder="Search…" />
+                                <Select
+                                    naming=Naming::Prefix("Group".to_string())
+                                    options=FILES_GROUP.labels()
+                                    selected=group_files_by
+                                />
+                            }
+                        })
+                }}
+            </ListToolbar>
+        </ToolbarBand>
     }
     .into_any()
 }
@@ -853,7 +887,7 @@ fn files_view(
         // previous body to keep, so it behaves like a `Suspense`.
         <Transition fallback=|| {
             view! {
-                <Card label="Recent files" busy=true>
+                <Card label="Recent files" bare=true busy=true>
                     <FileRowSkeleton />
                     <FileRowSkeleton />
                     <FileRowSkeleton />
@@ -1211,7 +1245,7 @@ fn MainPageRegions(
                         // The queue reads what the heavy phase confirmed, not the
                         // light phase's guess. The light phase never looks at the
                         // working tree, so a package with local edits would sit
-                        // under "Everything is Latest". Reactive, so a row
+                        // under "All packages are up to date". Reactive, so a row
                         // settling re-renders the queue and nothing else: the list
                         // below reads its own per-row signals.
                         let unchecked_light = light.clone();
@@ -1302,7 +1336,7 @@ fn MainPageRegions(
                                         }
                                     });
                                     view! {
-                                        <Card label="Packages">
+                                        <Card label="Packages" bare=true>
                                             // A heading and its rows are flat siblings
                                             // here, never wrapped in a `div` per group
                                             // — `Card`'s own `.body > * + *` rule
@@ -1466,6 +1500,7 @@ pub fn MainPage() -> impl IntoView {
     view! {
         <PageLayout
             heading="QuiltSync"
+            page_scroll=true
             actions=appbar_actions(move || reload.notify(), Signal::derive(move || outstanding.get() > 0))
         >
             <PackageStatusListener reload=reload />
@@ -1660,7 +1695,7 @@ mod tests {
         // a `StoredValue`, which is not reactive, so with `get_untracked()` a
         // `Signal::derive` over it would have no dependencies. The queue reads
         // that derivation, so it would stay on the light phase's states and could
-        // show "Everything is Latest" above a package with local changes.
+        // show "All packages are up to date" above a package with local changes.
         let light = vec![pkg("user/plate-07", PackageState::Latest)];
         let store = PackageStore::seed(&light);
         let settled = Signal::derive(move || store.settled(&light));
@@ -1719,8 +1754,10 @@ mod tests {
     fn picked(total: usize, outstanding: usize) -> crate::commands::MainPageDownloadsData {
         crate::commands::MainPageDownloadsData {
             scope: crate::commands::KeepingScope::IndividualFiles,
+            folders: 0,
             total,
             outstanding,
+            backlog: 0,
             deleted_here: 0,
             size: None,
         }
@@ -1763,6 +1800,7 @@ mod tests {
                     size: Some(crate::commands::PackageSize {
                         total: 3_400_000,
                         downloaded: 1_900_000,
+                        backlog: 0,
                     }),
                     ..picked(340, 328)
                 }),
@@ -1931,7 +1969,7 @@ mod tests {
     }
 
     /// Two packages on one host, one of them stuck behind a signed-out session.
-    /// The queue therefore has something to say — `Needs your attention` — which
+    /// The queue therefore has something to say — `1 package needs your attention` — which
     /// is the case the ordering test must be able to fail on: a queue that renders
     /// nothing would leave the assertion with nothing to find between the strip
     /// and the list.
@@ -2737,6 +2775,64 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
+    async fn the_catalog_group_survives_a_remount() {
+        crate::test_support::unmount_earlier();
+        forget_toolbar();
+        let el = remount_regions();
+        sleep_ms(50).await;
+        select_option(&group_select(&el), GROUP_CATALOG);
+        sleep_ms(20).await;
+
+        let el = remount_regions();
+        sleep_ms(50).await;
+
+        assert_eq!(group_select(&el).value(), GROUP_CATALOG);
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_catalog_group_heads_local_only_then_no_catalog_then_each_host() {
+        let package = |name: &str, bucket: Option<&str>, host: Option<&str>| MainPagePackageData {
+            namespace: ns(name),
+            state: PackageState::Latest,
+            changed_at: None,
+            bucket: bucket.map(str::to_string),
+            host: host.map(str::to_string),
+            provisional: false,
+            role_switch_host: None,
+        };
+        let payload = MainPagePackagesData {
+            packages: vec![
+                package("user/local", None, None),
+                package("user/bare", Some("bare-bucket"), None),
+                package("user/z", Some("b"), Some("zebra.quilt.test")),
+                package("user/a", Some("b"), Some("apple.quilt.test")),
+            ],
+        };
+        let el = mount_regions(Ok(payload), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        select_option(&group_select(&el), GROUP_CATALOG);
+        sleep_ms(20).await;
+
+        // `h3` is `GroupHeading`'s; a row's tooltip has a title span too.
+        let spans = el.query_selector_all("h3 > span[class*=title]").unwrap();
+        let titles: Vec<String> = (0..spans.length())
+            .filter_map(|i| spans.item(i)?.text_content())
+            .collect();
+        assert_eq!(
+            titles,
+            vec![
+                "Local only",
+                "No catalog",
+                "apple.quilt.test",
+                "zebra.quilt.test"
+            ]
+        );
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
     async fn the_search_box_always_opens_empty() {
         let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
         sleep_ms(50).await;
@@ -3129,19 +3225,18 @@ mod tests {
 
     /// The queue card's own text, or `None` when the region drew nothing.
     ///
-    /// Scoped to the card rather than taken from the whole page because the list
-    /// row below says some of the same words — `render(&state, Site::ListRow)`
-    /// gives `1 file changed` too — so an unscoped `contains` would pass on a
-    /// queue that never heard about the settle. Found by its title rather than by
-    /// a class: `stylance` emits `Card`'s own identifiers, which are `root`,
-    /// `title` and `body` for every card on the page.
+    /// Scoped to the queue's section rather than taken from the whole page because
+    /// the list row below says some of the same words — `render(&state,
+    /// Site::ListRow)` gives `1 file changed` too — so an unscoped `contains` would
+    /// pass on a queue that never heard about the settle. Found by its status line's
+    /// words rather than by a class, which `stylance` hashes.
     fn queue_text(el: &web_sys::Element) -> Option<String> {
         let sections = el.query_selector_all("section").unwrap();
         (0..sections.length())
             .filter_map(|i| sections.item(i))
             .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
             .filter_map(|section| section.text_content())
-            .find(|text| text.contains("Needs your attention"))
+            .find(|text| text.contains("your attention"))
     }
 
     /// The strip element itself, so a test can ask what is inside it rather than
@@ -3183,8 +3278,8 @@ mod tests {
         let html = el.inner_html();
         let strip = html.find("Accounts").expect("strip");
         let queue = html
-            .find("Everything is Latest")
-            .or_else(|| html.find("Needs your attention"))
+            .find("All packages are up to date")
+            .or_else(|| html.find("your attention"))
             .expect("queue");
         let list = html.find("Packages").expect("list");
         assert!(
@@ -3202,7 +3297,7 @@ mod tests {
             "the strip is what was found: {strip}"
         );
         assert!(
-            !strip.contains("Needs your attention"),
+            !strip.contains("your attention"),
             "the queue is a region of the page, not a card in the strip: {strip}"
         );
     }
@@ -3251,7 +3346,7 @@ mod tests {
     async fn the_queue_names_a_package_the_heavy_phase_found_changes_in() {
         // End to end at the page level. The light phase cannot see the working
         // tree, so only the heavy phase's answer can put this package in the
-        // queue. Without it the queue says "Everything is Latest" above a package
+        // queue. Without it the queue says "All packages are up to date" above a package
         // with uncommitted changes.
         //
         // No state here is a shared cause, so every row that reaches the queue is
@@ -3275,7 +3370,11 @@ mod tests {
         // takes its `packages.is_empty()` early return. Silence for that reason,
         // not for R3's in-flight guard, which `queue.rs`'s own tests pin: by now
         // every one of those failed calls has decremented the counter.
-        assert!(!el.text_content().unwrap().contains("Everything is Latest"));
+        assert!(
+            !el.text_content()
+                .unwrap()
+                .contains("All packages are up to date")
+        );
 
         settle(
             seeded_store(slot),
@@ -3293,7 +3392,7 @@ mod tests {
         assert!(queue.contains("Publish"), "beside its action: {queue}");
         let text = el.text_content().unwrap();
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("All packages are up to date"),
             "and no longer claims otherwise: {text}"
         );
     }
@@ -3332,7 +3431,7 @@ mod tests {
         leptos::task::tick().await;
         let text = el.text_content().unwrap();
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("All packages are up to date"),
             "R3: an answer is still outstanding, so the all-clear is not a fact yet: {text}"
         );
 
@@ -3340,7 +3439,7 @@ mod tests {
         leptos::task::tick().await;
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Everything is Latest — 2 packages"),
+            text.contains("All packages are up to date"),
             "and it says so the moment the last answer lands: {text}"
         );
     }
@@ -3377,7 +3476,7 @@ mod tests {
         assert!(
             el.text_content()
                 .unwrap()
-                .contains("Everything is Latest — 2 packages"),
+                .contains("All packages are up to date"),
             "got: {}",
             el.text_content().unwrap()
         );
@@ -3404,7 +3503,7 @@ mod tests {
         // failed row stays provisional so R2 drops it from `settled` — so a page
         // that could not read three of its forty-three packages arrives at
         // "nothing is outstanding, nothing needs attention" and would announce
-        // "Everything is Latest — 40 packages" over three rows still drawn dashed
+        // "All packages are up to date" over three rows still drawn dashed
         // in the list below. An unreachable host is the ordinary way to get there:
         // `refresh_main_page_package` propagates a failure it cannot word as a
         // state rather than degrading it, precisely so the row stays dashed.
@@ -3434,7 +3533,7 @@ mod tests {
 
         let text = el.text_content().unwrap();
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("All packages are up to date"),
             "one package could not be read, so the page has not earned this: {text}"
         );
 
@@ -3444,7 +3543,7 @@ mod tests {
         leptos::task::tick().await;
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Everything is Latest — 2 packages"),
+            text.contains("All packages are up to date"),
             "every package accounted for, and the count matches the list: {text}"
         );
     }
@@ -3496,7 +3595,7 @@ mod tests {
             "the list row says it in the kit's words: {text}"
         );
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("All packages are up to date"),
             "and the page does not claim an all-clear over it: {text}"
         );
     }
@@ -3531,7 +3630,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_failed_packages_read_leaves_no_queue_to_claim_all_is_well() {
-        // A failed read is not an empty one: `Everything is Latest — 0 packages`
+        // A failed read is not an empty one: `All packages are up to date`
         // over a fetch that never answered is a manufactured all-clear. The strip
         // is unaffected, because it is outside that boundary.
         let el = mount_regions(
@@ -3547,7 +3646,7 @@ mod tests {
             "the raw backend error must not reach the page: {text}"
         );
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("All packages are up to date"),
             "nothing answered; the page cannot say everything is fine: {text}"
         );
         assert!(
@@ -3655,6 +3754,237 @@ mod tests {
         );
     }
 
+    #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
+    mod frame_sheet {
+        stylance::import_crate_style!(pub layout, "src/kit/page_layout.module.scss");
+    }
+
+    /// The parts above the list stay where they are while the rows scroll the
+    /// page, each band directly under the one above it.
+    #[wasm_bindgen_test]
+    async fn the_bands_stay_stacked_while_the_rows_scroll_the_page() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("../kit/page_layout.module.scss"),
+            &[
+                ("root", frame_sheet::layout::root),
+                ("main", frame_sheet::layout::main),
+            ],
+        );
+        load_module_style(
+            include_str!("main_page.module.scss"),
+            &[
+                ("list_region", style::list_region),
+                ("strip", style::strip),
+                ("queue", style::queue),
+                ("queue_scroll", style::queue_scroll),
+                ("toolbar", style::toolbar),
+            ],
+        );
+        let el = mount(|| {
+            view! {
+                <div style="--q-frame-height:560px; --q-appbar-height:48px; --q-space-5:20px; \
+                            --q-space-6:24px; --q-space-8:32px; --q-space-12:48px">
+                    <PageLayout heading="QuiltSync" page_scroll=true>
+                        <StateStrip>
+                            <div style="height:100px"></div>
+                        </StateStrip>
+                        <QueueBand>
+                            <div style="height:50px"></div>
+                        </QueueBand>
+                        <div class=style::list_region>
+                            <ToolbarBand>
+                                <div style="height:30px"></div>
+                            </ToolbarBand>
+                            <ul>
+                                {(0..60).map(|_| view! { <li style="height:40px"></li> }).collect_view()}
+                            </ul>
+                        </div>
+                    </PageLayout>
+                </div>
+            }
+        });
+        sleep_ms(50).await;
+        let find = |class: &str| -> web_sys::Element {
+            el.query_selector(&format!(".{class}"))
+                .unwrap()
+                .expect(class)
+        };
+        let frame = find(frame_sheet::layout::root);
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        assert_eq!(frame.scroll_top(), 1000, "the frame scrolls the page");
+        let top = |class: &str| find(class).get_bounding_client_rect().top();
+        let bottom = |class: &str| find(class).get_bounding_client_rect().bottom();
+        let origin = frame.get_bounding_client_rect().top();
+        assert_eq!(
+            top(style::strip) - origin,
+            48.0,
+            "the strip stays under the appbar"
+        );
+        assert_eq!(
+            top(style::queue),
+            bottom(style::strip),
+            "the queue under the strip"
+        );
+        assert_eq!(
+            top(style::toolbar),
+            bottom(style::queue),
+            "the toolbar under the queue"
+        );
+    }
+
+    /// A stuck group heading sits under the toolbar and above the rows that
+    /// scroll under it, even a row's part with a `z-index` of its own.
+    #[wasm_bindgen_test]
+    async fn a_stuck_group_heading_draws_over_its_rows() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("../kit/page_layout.module.scss"),
+            &[
+                ("root", frame_sheet::layout::root),
+                ("main", frame_sheet::layout::main),
+            ],
+        );
+        load_module_style(
+            include_str!("main_page.module.scss"),
+            &[
+                ("list_region", style::list_region),
+                ("toolbar", style::toolbar),
+            ],
+        );
+        let el = mount(|| {
+            view! {
+                <div style="position:fixed; top:0; left:0; width:800px; z-index:10; \
+                            --q-frame-height:560px; --q-appbar-height:48px; --q-space-5:20px; \
+                            --q-space-6:24px; --q-space-8:32px; --q-space-12:48px">
+                    <PageLayout heading="QuiltSync" page_scroll=true>
+                        <div class=style::list_region>
+                            <ToolbarBand>
+                                <div style="height:30px"></div>
+                            </ToolbarBand>
+                            <h3 data-group-heading style="height:30px; margin:0; background:white">"s3://bucket"</h3>
+                            <ul>
+                                {(0..60)
+                                    .map(|_| {
+                                        view! {
+                                            <li style="height:40px">
+                                                <button style="position:relative; z-index:2; \
+                                                               width:100%; height:100%">
+                                                    "row"
+                                                </button>
+                                            </li>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </ul>
+                        </div>
+                    </PageLayout>
+                </div>
+            }
+        });
+        sleep_ms(50).await;
+        let frame = el
+            .query_selector(&format!(".{}", frame_sheet::layout::root))
+            .unwrap()
+            .expect("the frame");
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        let heading = el.query_selector("h3").unwrap().expect("the heading");
+        let toolbar = el
+            .query_selector(&format!(".{}", style::toolbar))
+            .unwrap()
+            .expect("the toolbar");
+        let rect = heading.get_bounding_client_rect();
+        assert_eq!(
+            rect.top(),
+            toolbar.get_bounding_client_rect().bottom(),
+            "the heading sticks under the toolbar"
+        );
+        #[allow(clippy::cast_possible_truncation, reason = "a point on screen")]
+        let hit = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .element_from_point(
+                (rect.left() + rect.right()) as f32 / 2.0,
+                (rect.top() + rect.bottom()) as f32 / 2.0,
+            )
+            .expect("something is drawn there");
+        assert!(
+            heading.contains(Some(&hit)),
+            "the heading, not a row, is on top"
+        );
+    }
+
+    /// Bands taller than the window stack upwards from the floor, so the list
+    /// keeps a row in view and no band covers another.
+    #[wasm_bindgen_test]
+    async fn bands_taller_than_the_window_leave_the_list_in_view() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("../kit/page_layout.module.scss"),
+            &[
+                ("root", frame_sheet::layout::root),
+                ("main", frame_sheet::layout::main),
+            ],
+        );
+        load_module_style(
+            include_str!("main_page.module.scss"),
+            &[
+                ("list_region", style::list_region),
+                ("strip", style::strip),
+                ("queue", style::queue),
+                ("queue_scroll", style::queue_scroll),
+                ("toolbar", style::toolbar),
+            ],
+        );
+        let el = mount(|| {
+            view! {
+                <div style="--q-frame-height:560px; --q-appbar-height:48px; --q-space-5:20px; \
+                            --q-space-6:24px; --q-space-8:32px; --q-space-12:48px">
+                    <PageLayout heading="QuiltSync" page_scroll=true>
+                        <StateStrip>
+                            <div style="height:400px"></div>
+                        </StateStrip>
+                        <QueueBand>
+                            <div style="height:50px"></div>
+                        </QueueBand>
+                        <div class=style::list_region>
+                            <ToolbarBand>
+                                <div style="height:30px"></div>
+                            </ToolbarBand>
+                            <ul>
+                                {(0..60)
+                                    .map(|_| view! { <li style="height:40px"></li> })
+                                    .collect_view()}
+                            </ul>
+                        </div>
+                    </PageLayout>
+                </div>
+            }
+        });
+        sleep_ms(50).await;
+        let find = |class: &str| -> web_sys::Element {
+            el.query_selector(&format!(".{class}"))
+                .unwrap()
+                .expect(class)
+        };
+        let frame = find(frame_sheet::layout::root);
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        let top = |class: &str| find(class).get_bounding_client_rect().top();
+        let bottom = |class: &str| find(class).get_bounding_client_rect().bottom();
+        let origin = frame.get_bounding_client_rect().top();
+        assert_eq!(
+            bottom(style::toolbar) - origin,
+            448.0,
+            "the toolbar stops a heading and a row above the page's bottom padding"
+        );
+        assert_eq!(top(style::toolbar), bottom(style::queue));
+        assert_eq!(top(style::queue), bottom(style::strip));
+    }
+
     #[wasm_bindgen_test]
     async fn the_toolbar_and_its_list_share_one_parent() {
         // `PageLayout`'s column sets the gap between regions, so the toolbar and
@@ -3696,10 +4026,8 @@ mod tests {
                 .is_some(),
             "and so is the list it names"
         );
-        // The region's stylesheet makes its LAST child the scroller, so the count
-        // is load-bearing: a third child here would either take the overflow
-        // itself or leave the card unscrollable, and neither shows up in a test
-        // that only asks whether the two halves are present.
+        // The toolbar sticks only inside this region, so the list it stays over
+        // has to be its sibling here, and nothing else sits between them.
         assert_eq!(
             region.query_selector_all(":scope > *").unwrap().length(),
             2,
@@ -4027,7 +4355,9 @@ mod tests {
         settle_all(seeded_store(slot), &payload);
         leptos::task::tick().await;
         assert!(
-            el.text_content().unwrap().contains("Everything is Latest"),
+            el.text_content()
+                .unwrap()
+                .contains("All packages are up to date"),
             "the queue speaks before the switch: {}",
             el.text_content().unwrap()
         );
@@ -4045,7 +4375,7 @@ mod tests {
 
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Everything is Latest — 2 packages"),
+            text.contains("All packages are up to date"),
             "and it is still on the page after a Refresh taken on the feed: {text}"
         );
         assert!(
@@ -4078,7 +4408,7 @@ mod tests {
 
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("Everything is Latest — 2 packages"),
+            text.contains("All packages are up to date"),
             "the queue arrives even though the list never drew a row: {text}"
         );
     }

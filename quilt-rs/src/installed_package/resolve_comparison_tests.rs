@@ -155,17 +155,17 @@ async fn the_comparison_reads_the_published_latest_and_the_registry() -> Res {
     Ok(())
 }
 
-/// `local-1` is listed, so asking would subtract it: two unpublished means
-/// nothing was asked.
+/// With no catalog the bucket's pointers list `local-1`, as the registry
+/// would, so it is subtracted.
 #[test(tokio::test)]
-async fn without_a_catalog_host_the_registry_is_not_asked() -> Res {
+async fn without_a_catalog_host_the_bucket_is_listed() -> Res {
     let (package, _dirs) = diverged_over(published_remote().await?, REMOTE_WITHOUT_CATALOG).await?;
 
     let lineage = package.lineage().await?;
     let comparison = package.resolve_comparison(&lineage).await?;
 
     assert_eq!(comparison.published_message.as_deref(), Some("Sent"));
-    assert_eq!(comparison.unpublished, 2);
+    assert_eq!(comparison.unpublished, 1);
     Ok(())
 }
 

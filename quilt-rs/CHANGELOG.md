@@ -19,14 +19,47 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.47.0] - 2026-10-22
+## [v0.50.0] - 2026-10-28
 
 ### Added
 
-- `InstalledPackage::status_with_downloads` returns the status and a `lineage::DownloadCounts`: how many of the current revision's files, and how many bytes, are still to download
-  - <https://github.com/quiltdata/quilt-rs/pull/1172>
-  - <https://github.com/quiltdata/quilt-rs/pull/1178>
-- `auth::lock_host` takes a host's auth lock, `DomainPaths::auth_lock`, which every token refresh holds; anything that removes the host's auth directory should hold it too (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- `SyncScope::Folders` keeps every file under chosen folders, including files added there later. A folder with a `..` part is refused with `LineageError::FolderOutsidePackage` (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `InstalledPackage::keep` stores what a package keeps and downloads the files it is missing; `InstalledPackage::kept` reads the setting and how much is left to download; `InstalledPackage::backlog` lists those files (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+
+### Changed
+
+- **Breaking:** pull, push, commit and publish report when there is nothing to do instead of failing. `InstalledPackage::pull` returns `flow::Pulled` (`UpToDate` or `Applied`), `push` returns `Pushed` (`NothingToPush` or `Uploaded`), `commit` returns `flow::Committed` (`NothingToCommit` or `Recorded`), and `PublishOutcome` gains `NothingToPublish`, so `PublishOutcome::push` returns an `Option`. `PackageOpError::AlreadyUpToDate` is removed
+  - <https://github.com/quiltdata/quilt-rs/pull/1227>
+  - <https://github.com/quiltdata/quilt-rs/pull/1230>
+  - <https://github.com/quiltdata/quilt-rs/pull/1242>
+- **Breaking:** `install_paths` installs the paths not yet tracked and lists the others in `InstallPathsReport::already_installed`, instead of refusing the whole call. `InstallPathError::AlreadyInstalled` is removed, and `flow::install_paths` returns `(PackageLineage, InstallPathsReport)` (<https://github.com/quiltdata/quilt-rs/pull/1239>)
+- **Breaking:** `SyncScope` is no longer `Copy`, and `covers_untracked` takes the path it asks about (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+
+## [v0.49.0] - 2026-10-26
+
+### Added
+
+- `InstalledPackage::change_catalog` adds, changes or removes the catalog of a package's remote, keeping its bucket, remote hash and commits, also once the package is published (<https://github.com/quiltdata/quilt-rs/pull/1211>)
+- `Error::is_ambient_session_absent` says the AWS credentials on this computer, used for a bucket with no catalog, were missing or refused (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+
+### Changed
+
+- **Breaking:** `InstalledPackage::state` reads a remote with no catalog on the AWS credentials on this computer instead of answering `Unknown`. `PackageLineage::misconfigured_remote` is removed (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+- **Breaking:** `Remote::published_revisions` takes `Option<&Host>`. With no catalog it lists the package's revisions from the bucket, so `InstalledPackage::revision_history` and `remove_revisions` know which revisions are published (<https://github.com/quiltdata/quilt-rs/pull/1212>)
+- With no catalog, AWS credentials that are missing or unusable, including an expired SSO sign-in, are `LoginError::NoSession(None)` (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+
+### Fixed
+
+- `InstalledPackage::set_remote` with no host stamps the chosen or the bucket's default workflow on a pending commit instead of dropping it (<https://github.com/quiltdata/quilt-rs/pull/1209>)
+- After the AWS credentials on this computer were missing or refused, the next call reads `~/.aws` again
+  - <https://github.com/quiltdata/quilt-rs/pull/1193>
+  - <https://github.com/quiltdata/quilt-rs/pull/1202>
+
+## [v0.48.0] - 2026-10-23
+
+### Added
+
+- `auth::lock_host` takes a host's auth lock (`DomainPaths::auth_lock`), which every token refresh holds. Hold it too when removing the host's auth directory (<https://github.com/quiltdata/quilt-rs/pull/1177>)
 
 ### Changed
 
@@ -34,9 +67,17 @@
 
 ### Fixed
 
-- On Unix the auth store is readable by its owner alone: `.auth/` and each host's directory are 0700, and `tokens.json`, `credentials.json` and `client.json` 0600 from the moment they are created. A store an earlier version left open is closed at its next write (<https://github.com/quiltdata/quilt-rs/pull/1177>)
-- Two processes refreshing one host's tokens, such as the CLI and QuiltSync, take turns on a lock at `.auth/.locks/<host>`, and the second uses the tokens the first rotated rather than lose the login (<https://github.com/quiltdata/quilt-rs/pull/1177>)
-- Waiters given up on while another process holds a lock no longer park a blocking thread each, which could starve the process's file I/O (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- On Unix the auth store is readable by its owner alone: directories are 0700 and token files 0600. A store an earlier version left open is closed at its next write (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- Two processes refreshing one host's tokens, such as the CLI and QuiltSync, take turns on a lock, so neither loses the login (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- Callers that stop waiting for a lock held by another process no longer use up blocking threads (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+## [v0.47.0] - 2026-10-22
+
+### Added
+
+- `InstalledPackage::status_with_downloads` returns the status and a `lineage::DownloadCounts`: how many of the current revision's files, and how many bytes, are still to download
+  - <https://github.com/quiltdata/quilt-rs/pull/1172>
+  - <https://github.com/quiltdata/quilt-rs/pull/1178>
 
 ### quilt-uri
 

@@ -35,15 +35,11 @@ pub struct ExperimentalSettings {
     /// the user made in order to undo a setting that only ever hid a control.
     #[serde(default)]
     pub entire_package_sync: bool,
-
-    /// Whether `/` opens the v2 main page — an attention queue over two views —
-    /// instead of the v1 installed-packages list.
-    ///
-    /// A gate on which PAGE renders, not on any behaviour: both read the same
-    /// data and neither writes anything the other cannot see, so switching back
-    /// discards nothing.
+    /// Whether the v2 Settings page shows the Agent tasks card. Only the card:
+    /// the task runner reads `task_settings.json` whatever this says, and
+    /// turning it off leaves that file as it is.
     #[serde(default)]
-    pub main_page_v2: bool,
+    pub agent_tasks: bool,
 }
 
 impl ExperimentalSettings {
@@ -56,12 +52,12 @@ impl ExperimentalSettings {
     /// A caller that knows about one experiment must not reset another it has
     /// never heard of — which is what a whole-struct write does the moment a
     /// second flag exists.
-    pub fn patch(&mut self, entire_package_sync: Option<bool>, main_page_v2: Option<bool>) {
+    pub fn patch(&mut self, entire_package_sync: Option<bool>, agent_tasks: Option<bool>) {
         if let Some(value) = entire_package_sync {
             self.entire_package_sync = value;
         }
-        if let Some(value) = main_page_v2 {
-            self.main_page_v2 = value;
+        if let Some(value) = agent_tasks {
+            self.agent_tasks = value;
         }
     }
 
@@ -105,7 +101,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let settings = ExperimentalSettings {
             entire_package_sync: true,
-            ..Default::default()
+            agent_tasks: true,
         };
         settings.save(dir.path()).await?;
         assert_eq!(ExperimentalSettings::load(dir.path()).await?, settings);
@@ -142,17 +138,14 @@ mod tests {
     fn patch_leaves_untouched_flags_alone() {
         let mut s = ExperimentalSettings {
             entire_package_sync: true,
-            main_page_v2: false,
+            agent_tasks: false,
         };
-
-        // A caller that only knows about the main-page experiment.
         s.patch(None, Some(true));
-
-        assert!(s.main_page_v2, "the flag it sent should be applied");
         assert!(
             s.entire_package_sync,
             "a flag the caller never mentioned must not be reset"
         );
+        assert!(s.agent_tasks);
     }
 
     /// A retired experiment leaves its key in files written before it went.
@@ -173,31 +166,16 @@ mod tests {
             loaded,
             ExperimentalSettings {
                 entire_package_sync: true,
-                main_page_v2: true,
+                agent_tasks: false,
             }
         );
 
         loaded.save(dir.path()).await?;
         let written = tokio::fs::read_to_string(&path).await?;
         assert!(
-            !written.contains("package_page_v2"),
-            "the retired key is gone after a save: {written}"
+            !written.contains("page_v2"),
+            "the retired keys are gone after a save: {written}"
         );
         Ok(())
-    }
-
-    #[tokio::test]
-    async fn main_page_v2_defaults_off_and_survives_a_round_trip() {
-        let dir = TempDir::new().unwrap();
-
-        let loaded = ExperimentalSettings::load(dir.path()).await.unwrap();
-        assert!(!loaded.main_page_v2, "experiments default to off");
-
-        let mut s = loaded;
-        s.patch(None, Some(true));
-        s.save(dir.path()).await.unwrap();
-
-        let reloaded = ExperimentalSettings::load(dir.path()).await.unwrap();
-        assert!(reloaded.main_page_v2);
     }
 }

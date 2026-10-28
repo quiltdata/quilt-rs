@@ -21,7 +21,7 @@
 //! # Published is a glyph, not a word
 //!
 //! A list of revisions is a column where most rows say the same thing, and a
-//! word repeated four times down a 280px pane is four times the width for one
+//! word repeated four times down a 320px pane is four times the width for one
 //! bit. So the fact is a cloud, and the row that has not left this machine wears
 //! the slashed one — a pair, rather than a glyph and its absence, because
 //! nothing distinguishes an absent glyph from a component that was not told.

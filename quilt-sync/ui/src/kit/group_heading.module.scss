@@ -1,5 +1,8 @@
 /*
- * Group header. A quiet divider that names a run of rows and counts them.
+ * Group header. A tinted band that names a run of rows and counts them, with a
+ * muted title, so it reads as a label over the rows rather than as one more row.
+ * The title keeps its case: a bucket name is lowercase, and upper-casing it
+ * would show a name that isn't the real one.
  *
  * The annotation slot is what lets a list explain itself without repeating an
  * action on every row: on the bucket axis a shared cause annotates its group
@@ -13,24 +16,31 @@
   align-items: baseline;
   gap: var(--q-space-2);
   margin: 0;
-  padding: var(--q-space-2) 2px 3px;
-  border-bottom: 1px solid var(--q-borderColor-muted);
+  padding: var(--q-space-1) var(--q-space-2);
+  background: var(--q-bgColor-muted);
   font-size: var(--q-text-body);
   font-weight: 400;
 }
 
+/* Space above every group but the first. The headings sit beside their lists in
+ * one container, so the first heading is its first child. */
+.root:not(:first-child) {
+  margin-top: var(--q-space-4);
+}
+
 .title {
   font-weight: 600;
+  color: var(--q-fgColor-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /* Attention tone, because an annotation only ever exists to say something is
- * wrong with the whole group. A header is not hoverable, which is what makes
- * `fg` rather than `onMuted` safe here — see the tone block in `_tokens`. */
+ * wrong with the whole group. `onMuted`, because it sits on the band: step 11
+ * fails AA on a muted fill — see the tone block in `_tokens`. */
 .annotation {
-  color: var(--q-fgColor-attention);
+  color: var(--q-fgColor-attention-onMuted);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

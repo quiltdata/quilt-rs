@@ -9,12 +9,13 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 use quilt_uri::Namespace;
 
+use super::super::main_page::QueueBand;
 use super::super::main_page::list_class;
 use crate::commands::MainPagePackageData;
 use crate::commands::PausedPackageData;
 use crate::commands::PausedReasonData;
+use crate::kit::AttentionQueue;
 use crate::kit::Button;
-use crate::kit::Card;
 use crate::kit::CauseRow;
 use crate::kit::PackageAction;
 use crate::kit::PackageState;
@@ -92,6 +93,9 @@ pub enum CauseAction {
     /// them, and [`cause_trailing`] is handed them beside the action. The host
     /// is not carried either — it is already in the cause's `text`.
     TryAgain,
+    /// No control: the remedy is the AWS credentials on this computer, which
+    /// the app does not edit. The trailing slot says so.
+    UpdateAwsCredentials,
 }
 
 /// The queue, derived. Section 4.3: it has no payload — given the resolved
@@ -110,6 +114,7 @@ pub fn derive_queue(
     // sign-in expired are two causes, even on one host.
     let mut session_groups: HashMap<(&str, &str), Vec<&MainPagePackageData>> = HashMap::new();
     let mut role_denied_groups: HashMap<&str, Vec<&MainPagePackageData>> = HashMap::new();
+    let mut ambient_session: Vec<&MainPagePackageData> = Vec::new();
     let mut rows: Vec<&MainPagePackageData> = Vec::new();
 
     // Two passes rather than one: a package's membership of a shared cause is
@@ -118,9 +123,16 @@ pub fn derive_queue(
         // R3: a dead session is the row's own state, resolved by the backend
         // from the error the status call raised — the same classification the
         // package page's header uses. One [Sign in] per host, worded as that
-        // page words it. A session state with no host (a bare bucket on ambient
-        // AWS credentials) has nowhere to sign in to, so it stays its own row,
-        // which `render` draws without a button.
+        // page words it. A session state with no host (a bucket with no catalog,
+        // on the AWS credentials on this computer) has nowhere to sign in to;
+        // those share one cause that names the file instead.
+        if matches!(
+            package.state,
+            PackageState::NoSession { host: None } | PackageState::SignInExpired { host: None }
+        ) {
+            ambient_session.push(package);
+            continue;
+        }
         let session = match &package.state {
             PackageState::NoSession { host: Some(host) } => Some(("Signed out from", host)),
             PackageState::SignInExpired { host: Some(host) } => Some(("Sign-in expired on", host)),
@@ -138,7 +150,10 @@ pub fn derive_queue(
         // readable and unreadable buckets. A denial with no bucket to name
         // becomes its own row instead (ruling 3): a cause keyed on a bucket
         // cannot name one that is absent.
+        // With no host the identity is this computer's AWS one, which a role
+        // switch in Accounts cannot change: such a denial stays a row too.
         if matches!(package.state, PackageState::RoleDenied { .. })
+            && package.host.is_some()
             && let Some(bucket) = package.bucket.as_deref()
         {
             role_denied_groups.entry(bucket).or_default().push(package);
@@ -191,6 +206,43 @@ pub fn derive_queue(
         ));
     }
 
+    ranked_causes.extend(ambient_session_cause(&ambient_session));
+    ranked_causes.extend(unchecked_causes(unchecked));
+
+    ranked_causes.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let causes = ranked_causes.into_iter().map(|(_, _, item)| item);
+
+    rows.sort_by_key(|p| precedence(&p.state));
+    let rows = rows.into_iter().map(|p| QueueItem::Package {
+        namespace: p.namespace.clone(),
+        state: p.state.clone(),
+    });
+
+    causes.chain(rows).collect()
+}
+
+/// The one cause for every package whose AWS credentials on this computer
+/// were missing or refused, ranked beside the signed-out causes: the same
+/// failure, with no host. `None` when there are none.
+fn ambient_session_cause(members: &[&MainPagePackageData]) -> Option<(u8, String, QueueItem)> {
+    if members.is_empty() {
+        return None;
+    }
+    let text = "AWS credentials on this computer aren't usable".to_string();
+    Some((
+        4,
+        text.clone(),
+        QueueItem::Cause {
+            text,
+            action: CauseAction::UpdateAwsCredentials,
+            members: members.iter().map(|p| p.namespace.clone()).collect(),
+        },
+    ))
+}
+
+/// The causes for packages whose heavy-phase check failed, one per host.
+fn unchecked_causes(unchecked: &[MainPagePackageData]) -> Vec<(u8, String, QueueItem)> {
+    let mut causes = Vec::new();
     // Host-grouped, so the sentence and its remedy share a scope, exactly as the
     // signed-out cause does. A package with no host to name is skipped rather than
     // given a row: "unchecked" is not a state, so `QueueItem::Package` has nothing
@@ -211,7 +263,7 @@ pub fn derive_queue(
         // state it manufactured. Not `changes` either — on this page that word
         // means local file changes.
         let text = format!("Couldn't check for new revisions on {host}");
-        ranked_causes.push((
+        causes.push((
             // After signed-out, which is the *attributable* half of error: an
             // unattributable failure is weaker information, so the page says what
             // it knows before what it could not determine.
@@ -224,17 +276,7 @@ pub fn derive_queue(
             },
         ));
     }
-
-    ranked_causes.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-    let causes = ranked_causes.into_iter().map(|(_, _, item)| item);
-
-    rows.sort_by_key(|p| precedence(&p.state));
-    let rows = rows.into_iter().map(|p| QueueItem::Package {
-        namespace: p.namespace.clone(),
-        state: p.state.clone(),
-    });
-
-    causes.chain(rows).collect()
+    causes
 }
 
 /// Ruling 5's cause text. Every word for the denial itself comes from
@@ -258,11 +300,10 @@ fn role_denied_text(state: &PackageState, host: Option<&str>, bucket: &str) -> S
 /// error above diverged above behind above "has changes" above no-remote
 /// above unpublished. `Unknown` takes the "error" rank — of which a dead
 /// session is the attributable half, so what reaches this function as
-/// `Unknown` is a remote with no catalog host, or a state this build could not
-/// read.
+/// `Unknown` is a state that could not be read.
 /// `RoleDenied` sorts last only to keep this match total: R2 groups every
 /// denial by bucket, so a `RoleDenied` package never reaches `rows` unless
-/// its bucket is absent, and a denial is not unimportant.
+/// its bucket or host is absent, and a denial is not unimportant.
 fn precedence(state: &PackageState) -> u8 {
     match state {
         PackageState::PullConflict { .. } => 0,
@@ -271,10 +312,8 @@ fn precedence(state: &PackageState) -> u8 {
         // disk; a stopped sync is a fact, where `Unknown` is the absence of one.
         PackageState::Paused => 1,
         // The attributable half of that same error rank, named rather than
-        // inferred. A session state with a host reaches the queue as a member
-        // of its host's `CauseAction::SignIn` group and never as a row of its
-        // own; these arms are for one with no host, and they put it where the
-        // group would have sat rather than at the foot of the lattice.
+        // inferred. A session state reaches the queue as a member of a cause and
+        // never as a row of its own; these arms only keep the match total.
         PackageState::Unknown
         | PackageState::NoSession { .. }
         | PackageState::SignInExpired { .. } => 2,
@@ -365,7 +404,6 @@ fn package_row(
         <QueueRow
             namespace=namespace.to_string()
             state=rendered.words
-            tone=rendered.tone
             remedy=remedy
             detail=detail
         />
@@ -388,13 +426,13 @@ pub fn pause_messages(paused: &[PausedPackageData]) -> HashMap<Namespace, String
         .collect()
 }
 
-/// `Everything is Latest — 43 packages`. One string, because the singular case
+/// The status line above the queue's rows. One string, because the singular case
 /// is not a plural rule `ZeroLine` can apply.
-fn zero_line_text(total: usize) -> String {
-    if total == 1 {
-        "Everything is Latest — 1 package".to_string()
+fn attention_line_text(count: usize) -> String {
+    if count == 1 {
+        "1 package needs your attention".to_string()
     } else {
-        format!("Everything is Latest — {total} packages")
+        format!("{count} packages need your attention")
     }
 }
 
@@ -464,6 +502,9 @@ fn cause_trailing(
             .into_any()
         }
         CauseAction::SwitchRole => view! { "Change your role in Accounts, above." }.into_any(),
+        CauseAction::UpdateAwsCredentials => {
+            view! { "Update ~/.aws or run aws sso login, then refresh." }.into_any()
+        }
         CauseAction::TryAgain => {
             let members = members.to_vec();
             view! {
@@ -535,8 +576,8 @@ pub fn QueueRegion(
     let items = Signal::derive(move || derive_queue(&packages.get(), &unchecked.get()));
 
     // Derived from the rows rendered, never written by hand — a `Cause`'s count
-    // is its members, a `Package` is one of itself. A signal, so the card can
-    // take a new count without being rebuilt.
+    // is its members, a `Package` is one of itself. A signal, so the status line
+    // can take a new count without the rows being rebuilt.
     let count = Signal::derive(move || {
         items.with(|items| {
             items
@@ -556,8 +597,8 @@ pub fn QueueRegion(
             return Shape::Pending;
         }
         if packages.with(Vec::is_empty) && unchecked.with(Vec::is_empty) {
-            // A fresh install: "Everything is Latest — 0 packages" would be a
-            // non-sequitur, and the list's blankslate speaks for it. `unchecked`
+            // A fresh install: "All packages are up to date" over no packages would
+            // be a non-sequitur, and the list's blankslate speaks for it. `unchecked`
             // keeps the all-failed case, whose settled list is empty too, out.
             return Shape::Nothing;
         }
@@ -575,12 +616,22 @@ pub fn QueueRegion(
 
     move || match shape.get() {
         Shape::Nothing | Shape::Silent => ().into_any(),
-        Shape::Pending => view! { <ZeroLineSkeleton /> }.into_any(),
-        // Acceptance criterion 8, unchanged. The count is the light total,
-        // not `packages.len()`: the sentence speaks for every package the
-        // list draws. `shape`'s guard makes the two equal wherever this line is
-        // reached, and naming the one the sentence means keeps it that way.
-        Shape::Zero => view! { <ZeroLine text=zero_line_text(total.get()) /> }.into_any(),
+        // The band goes with the shape: `Nothing` and `Silent` draw none, so
+        // the bands below move up into the place a queue would take.
+        Shape::Pending => view! {
+            <QueueBand>
+                <ZeroLineSkeleton />
+            </QueueBand>
+        }
+        .into_any(),
+        // Acceptance criterion 8. The sentence speaks for every package the list
+        // draws, which `shape`'s guard checks against the light total.
+        Shape::Zero => view! {
+            <QueueBand>
+                <ZeroLine text="All packages are up to date" />
+            </QueueBand>
+        }
+        .into_any(),
         // `view!` moves its children into closures of their own, so a handle
         // captured by this closure cannot merely be borrowed out of it and leave
         // it `FnMut`. `owner` is cloned here and nowhere else; `navigate` is
@@ -589,11 +640,8 @@ pub fn QueueRegion(
             let navigate = navigate.clone();
             let owner = owner.clone();
             view! {
-            // One wrapper child, so `Card`'s between-children hairline does not
-            // fire: a queue is a list of decisions, and dividing every row would
-            // make it read as a table. A `ul`, because it is also a list of them.
-            <Card title="Needs your attention" count=count>
-                <ul class=list_class() role="list">
+            <QueueBand>
+                <AttentionQueue text=move || attention_line_text(count.get())>
                     // Keyed, not `Vec`'s positional diff. `derive_queue` sorts
                     // by precedence, so one package settling into a higher rank
                     // inserts at the top and shifts every row below it — and an
@@ -624,8 +672,8 @@ pub fn QueueRegion(
                             }
                         }
                     />
-                    </ul>
-                </Card>
+                </AttentionQueue>
+            </QueueBand>
             }
             .into_any()
         }
@@ -649,9 +697,9 @@ enum Shape {
     Pending,
     /// No region: every call answered, some package still unread.
     Silent,
-    /// One line, no card.
+    /// The all-clear line alone.
     Zero,
-    /// The card and its rows.
+    /// The attention line and its rows.
     Queue,
 }
 
@@ -824,28 +872,59 @@ mod tests {
     }
 
     #[test]
-    fn a_session_failure_with_no_host_is_its_own_row() {
-        // A bare bucket on ambient AWS credentials: no deployment to sign in to,
-        // so no cause can offer [Sign in] for it. It stays a row, which `render`
-        // draws without a button, as the package page's header does.
-        let state = PackageState::NoSession { host: None };
-        let items = derive_queue(&[pkg("a/one", state.clone(), None)], &[]);
-
-        assert_eq!(
-            items,
-            vec![QueueItem::Package {
-                namespace: ns("a/one"),
-                state: state.clone(),
-            }]
+    fn session_failures_with_no_host_share_one_cause_with_no_button() {
+        // A bucket with no catalog, read on the AWS credentials on this
+        // computer: when those are missing or refused, every such package fails
+        // for the same reason, so the queue states it once. There is no
+        // deployment to sign in to, so the cause names the file instead.
+        let items = derive_queue(
+            &[
+                pkg("a/one", PackageState::NoSession { host: None }, None),
+                pkg("a/two", PackageState::SignInExpired { host: None }, None),
+                signed_out("b/three", "quilt.test"),
+            ],
+            &[],
         );
-        assert_eq!(render(&state, Site::QueueRow).action, None);
+
+        let causes: Vec<_> = items
+            .iter()
+            .filter_map(|i| match i {
+                QueueItem::Cause {
+                    text,
+                    action,
+                    members,
+                } => Some((text.as_str(), action, members.len())),
+                QueueItem::Package { .. } => None,
+            })
+            .collect();
+        assert_eq!(
+            causes,
+            vec![
+                (
+                    "AWS credentials on this computer aren't usable",
+                    &CauseAction::UpdateAwsCredentials,
+                    2
+                ),
+                (
+                    "Signed out from quilt.test",
+                    &CauseAction::SignIn {
+                        host: "quilt.test".to_string()
+                    },
+                    1
+                ),
+            ],
+        );
+        assert!(
+            items.iter().all(|i| matches!(i, QueueItem::Cause { .. })),
+            "no host-less package is left as a row of its own: {items:?}"
+        );
     }
 
     #[test]
     fn an_unknown_package_is_not_signed_out() {
         // R3's other half, and the one that would tell a signed-in user to sign in.
-        // Unknown is a remote with no catalog host, or serde's catch-all, so it
-        // means "we could not tell" — never a session the backend classified.
+        // Unknown is a state that could not be read, or serde's catch-all, so
+        // it means "we could not tell" — never a session the backend classified.
         let items = derive_queue(
             &[pkg("a/one", PackageState::Unknown, Some("quilt.test"))],
             &[],
@@ -859,6 +938,26 @@ mod tests {
             1,
             "it is still a row — we could not tell, and that is worth saying"
         );
+    }
+
+    #[test]
+    fn a_denial_with_no_host_is_its_own_row_with_no_role_to_switch() {
+        // A bucket with no catalog is read on the AWS identity of this
+        // computer. Accounts cannot change that identity, so the denial is not
+        // grouped under a cause that points there.
+        let state = PackageState::RoleDenied { role: None };
+        let mut package = pkg("a/one", state.clone(), None);
+        package.bucket = Some("bare-bucket".to_string());
+        let items = derive_queue(&[package], &[]);
+
+        assert_eq!(
+            items,
+            vec![QueueItem::Package {
+                namespace: ns("a/one"),
+                state: state.clone(),
+            }]
+        );
+        assert_eq!(render(&state, Site::QueueRow).action, None);
     }
 
     #[test]
@@ -1201,53 +1300,57 @@ mod tests {
         // the package list below the fold to announce that nothing is wrong.
         let el = mount_region(Signal::stored(all_latest(43)), Signal::stored(false));
         let text = el.text_content().unwrap();
-        assert!(text.contains("Everything is Latest"), "got: {text}");
+        assert_eq!(text, "All packages are up to date");
         assert!(
-            text.contains("43 packages"),
-            "the count is derived from the rows: {text}"
-        );
-        assert!(
-            !text.contains("Needs your attention"),
-            "a bare ZeroLine, not a Card wrapping it — a heading above a line \
-             that says nothing is wrong would be a falsehood in its own chrome: {text}"
+            el.query_selector("section, h2, ul").unwrap().is_none(),
+            "a bare line, not a region with a heading and an empty list"
         );
         assert_eq!(el.query_selector_all("button").unwrap().length(), 0);
     }
 
     #[wasm_bindgen_test]
-    fn a_healthy_queue_of_a_different_size_states_its_own_count() {
-        // A second N, never 43 again: a hard-coded "43 packages" string would
-        // pass the test above and only fail here, where the fixture's count
-        // actually varies.
-        let el = mount_region(Signal::stored(all_latest(7)), Signal::stored(false));
+    fn a_queue_of_one_package_is_singular() {
+        // `attention_line_text`'s `count == 1` branch is real code, not a case
+        // ever proven by the plural fixtures — deleting it and always taking
+        // the plural arm must fail exactly here.
+        let el = mount_region(Signal::stored(one_behind()), Signal::stored(false));
+        let text = el.text_content().unwrap();
         assert!(
-            el.text_content().unwrap().contains("7 packages"),
-            "got: {}",
-            el.text_content().unwrap()
+            text.contains("1 package needs your attention"),
+            "got: {text}"
         );
     }
 
+    /// A `section` with no accessible name is not a region at all, so the
+    /// status line names it, and the rows are a list.
     #[wasm_bindgen_test]
-    fn a_healthy_queue_of_one_is_singular() {
-        // `zero_line_text`'s `total == 1` branch is real code, not a case ever
-        // proven by the plural fixtures above — deleting it and always taking
-        // the plural arm must fail exactly here.
-        let el = mount_region(Signal::stored(all_latest(1)), Signal::stored(false));
-        let text = el.text_content().unwrap();
-        assert!(text.contains("1 package"), "got: {text}");
+    fn the_status_line_names_the_queue_and_its_rows() {
+        let el = mount_region(Signal::stored(two_signed_out()), Signal::stored(false));
+        let section = el.query_selector("section").unwrap().expect("a region");
+        let id = section.get_attribute("aria-labelledby").expect("named");
+        let heading = el
+            .query_selector(&format!("#{id}"))
+            .unwrap()
+            .expect("the line it points at");
+        assert_eq!(heading.tag_name(), "H2");
+        assert_eq!(
+            heading.text_content().as_deref(),
+            Some("2 packages need your attention")
+        );
         assert!(
-            !text.contains("1 packages"),
-            "singular, not the plural branch: {text}"
+            section
+                .query_selector(":scope > ul[role=list] > li")
+                .unwrap()
+                .is_some(),
+            "the rows follow the line, as list items"
         );
     }
 
     #[wasm_bindgen_test]
     fn no_packages_at_all_renders_nothing() {
-        // Finding 1: a fresh install has no packages, so "Everything is
-        // Latest — 0 packages" above an empty Packages card is a
-        // non-sequitur that invents copy for a case the zero line was never
-        // meant to speak for. Render nothing — the empty-install story
-        // belongs to the list's own blankslate.
+        // A fresh install has no packages, so "All packages are up to date"
+        // above an empty Packages card is a non-sequitur. Render nothing — the
+        // empty-install story belongs to the list's own blankslate.
         let el = mount_region(Signal::stored(vec![]), Signal::stored(false));
         assert_eq!(
             el.text_content().unwrap().trim(),
@@ -1329,7 +1432,7 @@ mod tests {
         );
         assert!(placeholder(&el).is_none(), "silent, and not waiting");
         assert!(
-            !el.text_content().unwrap().contains("Everything is Latest"),
+            !el.text_content().unwrap().contains("up to date"),
             "and still no all-clear"
         );
     }
@@ -1356,9 +1459,11 @@ mod tests {
         )]);
         leptos::task::tick().await;
 
-        assert!(placeholder(&el).is_none(), "the card, not the placeholder");
+        assert!(placeholder(&el).is_none(), "the queue, not the placeholder");
         assert!(
-            el.text_content().unwrap().contains("Needs your attention"),
+            el.text_content()
+                .unwrap()
+                .contains("1 package needs your attention"),
             "got: {}",
             el.text_content().unwrap()
         );
@@ -1381,7 +1486,7 @@ mod tests {
         assert!(text.contains("changed in both places"), "got: {text}");
         assert!(text.contains("Resolve"), "got: {text}");
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("up to date"),
             "known rows, but still no all-clear: {text}"
         );
     }
@@ -1397,7 +1502,7 @@ mod tests {
             )]),
             in_flight.into(),
         );
-        assert!(!el.text_content().unwrap().contains("Everything is Latest"));
+        assert!(!el.text_content().unwrap().contains("up to date"));
         assert!(
             placeholder(&el).is_some(),
             "the line is held while it waits"
@@ -1414,16 +1519,15 @@ mod tests {
         assert!(
             el.text_content()
                 .unwrap()
-                .contains("Everything is Latest — 1 package"),
+                .contains("All packages are up to date"),
             "got: {}",
             el.text_content().unwrap()
         );
     }
 
     #[wasm_bindgen_test]
-    fn the_cards_count_is_every_package_not_every_row() {
-        // M6: `Card.count`'s own doc reads as "how many rows the card
-        // holds", which is the natural mistake here — the queue's count is
+    fn the_status_lines_count_is_every_package_not_every_row() {
+        // The natural mistake is to count the rows drawn — the queue's count is
         // every package represented, not every row drawn. A cause of 2
         // collapses to one row but must still count as 2, so a payload with
         // one cause AND one package row pins the count as their SUM, not
@@ -1438,12 +1542,9 @@ mod tests {
         );
         let text = el.text_content().unwrap();
         assert!(
-            text.contains("(3)"),
-            "2 grouped into one cause + 1 own row = 3 packages: {text}"
-        );
-        assert!(
-            !text.contains("(2)"),
-            "not the row count (one cause row + one package row): {text}"
+            text.contains("3 packages need your attention"),
+            "2 grouped into one cause + 1 own row = 3 packages, not the row count \
+             (one cause row + one package row): {text}"
         );
     }
 
@@ -1961,7 +2062,7 @@ mod tests {
     fn the_region_speaks_when_every_check_failed() {
         // The case this cause exists for. With every call failed the settled list
         // is empty too, so the region used to return nothing TWICE over and was
-        // absent — no card, no heading, no zero line — over a page of rows the
+        // absent — no status line and no rows — over a page of rows the
         // app could not read.
         let el = mount_region_unchecked(
             Signal::stored(Vec::new()),
@@ -1975,7 +2076,7 @@ mod tests {
             "the region must speak rather than vanish; got {text:?}"
         );
         assert!(
-            !text.contains("Everything is Latest"),
+            !text.contains("up to date"),
             "and must not post an all-clear over packages it could not read"
         );
     }

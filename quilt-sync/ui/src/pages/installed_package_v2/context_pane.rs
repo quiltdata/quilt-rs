@@ -1,6 +1,6 @@
 //! The first complete slice of the package context pane.
 //!
-//! One current revision, the bucket it belongs to, the revisions this copy
+//! The bucket and its catalog, one current revision, the revisions this copy
 //! holds, loaded when their popover opens, and what this copy keeps. This is
 //! the pane's ordinary mode; the page swaps it whole for `resolve.rs`'s
 //! `ResolvePane` while the resolve mode is open.
@@ -16,7 +16,8 @@ use super::old_revisions::{self, RemoveRevisionsFn, Remover};
 use super::revision_history::{History, Key, Shown};
 use crate::commands;
 use crate::kit::{
-    Align, AnchoredOverlay, Button, Card, LoadFailure, PaneSection, RevisionRow, SkeletonBox,
+    Align, AnchoredOverlay, Button, ButtonVariant, Card, LoadFailure, PaneSection, RevisionRow,
+    SkeletonBox, SkeletonText,
 };
 
 stylance::import_crate_style!(
@@ -40,7 +41,8 @@ pub(super) fn fetch_revision_history(
 /// surface does not resize under the cursor when the rows land.
 const BAR_WIDTHS: [&str; 4] = ["200px", "228px", "164px", "188px"];
 
-/// The current revision and package bucket, and the revisions this copy holds.
+/// The package's bucket and catalog, the current revision, and the revisions
+/// this copy holds.
 #[component]
 pub fn CurrentRevisionPane(
     data: commands::PackageContextData,
@@ -57,12 +59,14 @@ pub fn CurrentRevisionPane(
     /// Removes old revisions from the popover. `None` offers no removal.
     #[prop(optional)]
     remove: Option<RemoveRevisionsFn>,
+    /// The bucket's catalog host. `None` is a bucket reached on this
+    /// computer's AWS credentials.
+    #[prop(default = None)]
+    catalog: Option<String>,
 ) -> impl IntoView {
     let (keeping, size) = (data.keeping, data.size);
-    let bucket = data.bucket.filter(|bucket| !bucket.is_empty()).map_or_else(
-        || "No S3 bucket".to_string(),
-        |bucket| format!("s3://{bucket}"),
-    );
+    let bucket = data.bucket.filter(|bucket| !bucket.is_empty());
+    let bucket_section = bucket_section(bucket, catalog, w);
     let count = data.revision_count;
 
     let open = RwSignal::new(false);
@@ -111,7 +115,7 @@ pub fn CurrentRevisionPane(
                 aria_expanded=open
                 aria_controls=surface_id
             >
-                {format!("Revisions you have ({count})")}
+                {format!("History ({count})")}
             </Button>
         }
         .into_any()
@@ -129,28 +133,33 @@ pub fn CurrentRevisionPane(
             // The card is visually titleless, but its hidden h2 keeps the
             // PaneSection's h3 in a complete heading hierarchy.
             <Card label="About this package">
-                <PaneSection label="Revision">
+                {bucket_section}
+                <PaneSection
+                    label="Revision"
+                    action=view! {
+                        <AnchoredOverlay
+                            trigger=trigger
+                            open=open
+                            aria_label="History"
+                            align=Align::End
+                            contained=true
+                        >
+                            // The live region is the caller's (`kit/load_failure.rs`).
+                            <div
+                                class=style::live
+                                aria-live="polite"
+                                aria-busy=move || if loading() { "true" } else { "false" }
+                            >
+                                {body}
+                            </div>
+                        </AnchoredOverlay>
+                    }
+                        .into_any()
+                >
                     <RevisionRow
                         message=data.revision.message.unwrap_or_default()
                         at=data.revision.obtained_at
                     />
-                    <span class=style::bucket>{bucket}</span>
-                    <AnchoredOverlay
-                        trigger=trigger
-                        open=open
-                        aria_label="Revisions you have"
-                        align=Align::End
-                        contained=true
-                    >
-                        // The live region is the caller's (`kit/load_failure.rs`).
-                        <div
-                            class=style::live
-                            aria-live="polite"
-                            aria-busy=move || if loading() { "true" } else { "false" }
-                        >
-                            {body}
-                        </div>
-                    </AnchoredOverlay>
                 </PaneSection>
                 <KeepingSection
                     namespace=namespace.get_value()
@@ -163,6 +172,61 @@ pub fn CurrentRevisionPane(
             // Beside the popover, not in it: see `old_revisions`.
             {remover.map(old_revisions::dialog)}
         </aside>
+    }
+}
+
+/// The pane's column, for the gallery's drawn pane: see
+/// [`package_page_class`](super::package_page_class).
+pub fn context_pane_class() -> &'static str {
+    style::root
+}
+
+/// The package's bucket and its catalog, each named or *Not set*, and the
+/// section's one action, which opens the header's bucket dialog.
+fn bucket_section(
+    bucket: Option<String>,
+    catalog: Option<String>,
+    w: Wiring,
+) -> impl IntoView + use<> {
+    let (action, variant) = if bucket.is_some() {
+        ("Change", ButtonVariant::Default)
+    } else {
+        ("Choose", ButtonVariant::Primary)
+    };
+    let open = w.dialogs.bucket;
+    view! {
+        <PaneSection
+            label="Bucket and catalog"
+            action=view! {
+                <Button on_click=move |_| open.set(true) variant=variant disabled=w.busy>
+                    {action}
+                </Button>
+            }
+                .into_any()
+        >
+            <dl class=style::facts>
+                <dt class=style::muted>"Bucket"</dt>
+                {fact(bucket.map(|bucket| format!("s3://{bucket}")))}
+                <dt class=style::muted>"Catalog"</dt>
+                {fact(catalog)}
+            </dl>
+        </PaneSection>
+    }
+}
+
+/// One value on one line, cut with an ellipsis and whole in its tooltip.
+fn fact(value: Option<String>) -> impl IntoView + use<> {
+    match value {
+        Some(value) => {
+            let title = value.clone();
+            view! {
+                <dd class=style::value title=title>
+                    {value}
+                </dd>
+            }
+            .into_any()
+        }
+        None => view! { <dd class=style::muted>"Not set"</dd> }.into_any(),
     }
 }
 
@@ -193,16 +257,40 @@ fn surface_body(
     }
 }
 
-/// The pane's loading geometry, occupying the same card and section structure.
+/// The pane's loading geometry: the same three sections, each heading and
+/// label in place, with bars for what the payload fills in.
 #[component]
 pub fn CurrentRevisionPaneSkeleton() -> impl IntoView {
+    let button = |width: &str| {
+        view! { <SkeletonBox width=width height="var(--q-control-height)" /> }.into_any()
+    };
     view! {
         <aside aria-label="About this package" class=style::root>
             <Card label="About this package" busy=Signal::stored(true)>
-                <PaneSection label="Revision">
-                    <SkeletonBox width="80%" />
-                    <SkeletonBox width="42%" />
-                    <SkeletonBox width="68%" />
+                <PaneSection label="Bucket and catalog" action=button("72px")>
+                    <dl class=style::facts>
+                        <dt class=style::muted>"Bucket"</dt>
+                        <dd class=style::value>
+                            <SkeletonText width="70%" />
+                        </dd>
+                        <dt class=style::muted>"Catalog"</dt>
+                        <dd class=style::value>
+                            <SkeletonText width="55%" />
+                        </dd>
+                    </dl>
+                </PaneSection>
+                <PaneSection label="Revision" action=button("96px")>
+                    <div class=style::lines>
+                        <SkeletonText width="80%" />
+                        <SkeletonText width="42%" />
+                    </div>
+                </PaneSection>
+                <PaneSection label="Keeping">
+                    <div class=style::lines>
+                        <SkeletonText width="45%" />
+                        <SkeletonText width="55%" />
+                        <SkeletonText width="85%" />
+                    </div>
                 </PaneSection>
             </Card>
         </aside>
@@ -245,7 +333,9 @@ mod tests {
             revision_count,
             keeping: commands::KeepingData {
                 scope: commands::KeepingScope::IndividualFiles,
+                folders: Vec::new(),
                 total: 1,
+                outstanding: 0,
                 remote_only: Vec::new(),
                 deleted_here: 0,
             },
@@ -320,7 +410,11 @@ mod tests {
         })
     }
 
-    fn stores_ok(_: String, _: bool) -> Pin<Box<dyn Future<Output = Result<(), String>>>> {
+    fn stores_ok(
+        _: String,
+        _: crate::commands::KeepingScope,
+        _: Vec<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>>>> {
         Box::pin(async { Ok(()) })
     }
 
@@ -846,20 +940,198 @@ mod tests {
             "the trigger is the section's one control; markup was {}",
             revision.inner_html()
         );
+        let history = buttons.item(0).unwrap();
         assert_eq!(
-            buttons
-                .item(0)
-                .unwrap()
-                .text_content()
-                .unwrap_or_default()
-                .trim(),
-            "Revisions you have (4)"
+            history.text_content().unwrap_or_default().trim(),
+            "History (4)"
+        );
+        let heading_row = revision
+            .query_selector("h3")
+            .unwrap()
+            .and_then(|h| h.parent_element())
+            .unwrap();
+        assert!(
+            heading_row != revision && heading_row.contains(Some(&history)),
+            "at the heading's end; markup was {}",
+            revision.inner_html()
         );
         assert!(
             revision.query_selector("a, input").unwrap().is_none(),
             "no link or input while closed; markup was {}",
             revision.inner_html()
         );
+    }
+
+    /// The pane over a package in `bucket`, with `catalog` or none, and the
+    /// dialog flag its action sets.
+    fn pane_in_bucket(
+        bucket: Option<&'static str>,
+        catalog: Option<&'static str>,
+    ) -> (web_sys::Element, Wiring) {
+        let w = Wiring::new();
+        let el = mount(move || {
+            view! {
+                <CurrentRevisionPane
+                    data=data(Some("Initial upload"), bucket, 1)
+                    namespace="team/dataset"
+                    fetch=never
+                    open_catalog=ignore()
+                    w=w
+                    commands=idle_commands()
+                    catalog=catalog.map(ToString::to_string)
+                />
+            }
+        });
+        (el, w)
+    }
+
+    /// The pane's section headings, in order.
+    fn headings(el: &web_sys::Element) -> Vec<String> {
+        let all = el.query_selector_all("h3").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().text_content().unwrap_or_default())
+            .collect()
+    }
+
+    fn bucket_section(el: &web_sys::Element) -> web_sys::Element {
+        let all = el.query_selector_all("h3").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .find(|h| h.text_content().as_deref() == Some("Bucket and catalog"))
+            .and_then(|h| h.closest("section").unwrap())
+            .unwrap_or_else(|| {
+                panic!(
+                    "a Bucket and catalog section; markup was {}",
+                    el.inner_html()
+                )
+            })
+    }
+
+    /// What the section says beside `label`: the term's description.
+    fn said_for(section: &web_sys::Element, label: &str) -> String {
+        let term = element_saying(section, label);
+        assert_eq!(term.tag_name(), "DT", "{label} is a term");
+        term.next_element_sibling()
+            .expect("its description")
+            .text_content()
+            .unwrap_or_default()
+    }
+
+    /// The section's one button, beside its heading.
+    fn section_action(section: &web_sys::Element) -> web_sys::HtmlButtonElement {
+        let buttons = section.query_selector_all("button").unwrap();
+        assert_eq!(
+            buttons.length(),
+            1,
+            "one action for the section; markup was {}",
+            section.inner_html()
+        );
+        let button: web_sys::HtmlButtonElement = buttons.item(0).unwrap().unchecked_into();
+        let heading_row = button.parent_element().unwrap();
+        assert!(
+            heading_row.query_selector("h3").unwrap().is_some(),
+            "beside the heading; markup was {}",
+            section.inner_html()
+        );
+        button
+    }
+
+    /// A bucket with no catalog: the catalog is *Not set*, and the section's
+    /// *Change* opens the bucket dialog. The address is here, not in *Revision*.
+    #[wasm_bindgen_test]
+    async fn a_bucket_without_a_catalog_says_not_set() {
+        let (el, w) = pane_in_bucket(Some("quilt-lab-plates"), None);
+        let section = bucket_section(&el);
+        assert!(said_for(&section, "Bucket").contains("s3://quilt-lab-plates"));
+        assert_eq!(said_for(&section, "Catalog"), "Not set");
+        assert_eq!(
+            headings(&el)[..2],
+            ["Bucket and catalog", "Revision"],
+            "above Revision"
+        );
+        let revision = element_saying(&el, "Revision")
+            .closest("section")
+            .unwrap()
+            .unwrap();
+        assert!(
+            !revision
+                .text_content()
+                .unwrap_or_default()
+                .contains("s3://"),
+            "the address is the Bucket and catalog section's alone"
+        );
+
+        let button = section_action(&section);
+        assert_eq!(button.text_content().unwrap_or_default().trim(), "Change");
+        assert!(!w.dialogs.bucket.get_untracked());
+        button.click();
+        leptos::task::tick().await;
+        assert!(w.dialogs.bucket.get_untracked(), "the dialog opens");
+    }
+
+    /// With a catalog, the section names its host, whole in the tooltip.
+    #[wasm_bindgen_test]
+    async fn a_bucket_with_a_catalog_offers_to_change_it() {
+        let (el, w) = pane_in_bucket(Some("quilt-lab-plates"), Some("quilt.test"));
+        let section = bucket_section(&el);
+        assert!(said_for(&section, "Bucket").contains("s3://quilt-lab-plates"));
+        assert_eq!(said_for(&section, "Catalog"), "quilt.test");
+        let host = element_saying(&section, "Catalog")
+            .next_element_sibling()
+            .unwrap();
+        assert_eq!(host.get_attribute("title").as_deref(), Some("quilt.test"));
+
+        let button = section_action(&section);
+        assert_eq!(button.text_content().unwrap_or_default().trim(), "Change");
+        button.click();
+        leptos::task::tick().await;
+        assert!(w.dialogs.bucket.get_untracked());
+    }
+
+    /// The action waits its turn behind the page's command lock.
+    #[wasm_bindgen_test]
+    async fn the_bucket_action_waits_for_the_lock() {
+        for bucket in [Some("quilt-lab-plates"), None] {
+            let (el, w) = pane_in_bucket(bucket, None);
+            w.busy.set(true);
+            leptos::task::tick().await;
+            assert!(section_action(&bucket_section(&el)).disabled());
+        }
+    }
+
+    /// A package with no bucket has the same section, both facts *Not set*,
+    /// and its action is the primary *Choose*, into the same dialog.
+    #[wasm_bindgen_test]
+    async fn a_local_package_chooses_its_bucket_in_the_section() {
+        let (el, w) = pane_in_bucket(None, None);
+        let section = bucket_section(&el);
+        assert_eq!(said_for(&section, "Bucket"), "Not set");
+        assert_eq!(said_for(&section, "Catalog"), "Not set");
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("No S3 bucket"),
+            "Revision no longer says it; markup was {}",
+            el.inner_html()
+        );
+
+        let button = section_action(&section);
+        assert_eq!(button.text_content().unwrap_or_default().trim(), "Choose");
+        let primary = crate::test_support::mount(|| {
+            view! {
+                <Button on_click=|_| () variant=ButtonVariant::Primary>
+                    "x"
+                </Button>
+            }
+        })
+        .query_selector("button")
+        .unwrap()
+        .unwrap()
+        .class_name();
+        assert_eq!(button.class_name(), primary, "drawn as the primary");
+        button.click();
+        leptos::task::tick().await;
+        assert!(w.dialogs.bucket.get_untracked(), "the dialog opens");
     }
 
     #[wasm_bindgen_test]
@@ -878,7 +1150,6 @@ mod tests {
                 }
             });
             element_saying(&el, "No message");
-            element_saying(&el, "No S3 bucket");
         }
     }
 
@@ -888,7 +1159,7 @@ mod tests {
         let button = trigger(&el);
         assert_eq!(
             button.text_content().unwrap_or_default().trim(),
-            "Revisions you have (4)"
+            "History (4)"
         );
         assert_eq!(
             button.get_attribute("aria-expanded").as_deref(),
@@ -896,7 +1167,7 @@ mod tests {
         );
         assert_eq!(
             surface(&el).get_attribute("aria-label").as_deref(),
-            Some("Revisions you have")
+            Some("History")
         );
     }
 
@@ -1023,16 +1294,160 @@ mod tests {
         );
     }
 
+    /// The skeleton draws the loaded pane's three sections, each with bars.
     #[wasm_bindgen_test]
-    fn the_skeleton_marks_the_composing_region_busy() {
+    fn the_skeleton_draws_every_section_and_marks_the_region_busy() {
         let el = mount(|| view! { <CurrentRevisionPaneSkeleton /> });
         let card = el
             .query_selector("aside > section")
             .unwrap()
             .expect("the composing card");
         assert_eq!(card.get_attribute("aria-busy").as_deref(), Some("true"));
+        assert_eq!(headings(&el), ["Bucket and catalog", "Revision", "Keeping"]);
+    }
 
-        let bars = el.query_selector_all("[aria-hidden='true']").unwrap();
-        assert_eq!(bars.length(), 3);
+    #[expect(dead_code, reason = "only the classes these tests need are loaded")]
+    mod sheets {
+        stylance::import_crate_style!(pub pane, "src/kit/pane_section.module.scss");
+        stylance::import_crate_style!(pub bar, "src/kit/skeleton_box.module.scss");
+        stylance::import_crate_style!(pub page, "src/pages/installed_package_v2.module.scss");
+    }
+
+    /// The sheets the pane is drawn with, and the page's, whose column is the
+    /// container the pane's narrow layout asks about.
+    fn load_pane_sheets() {
+        use sheets::{bar, page, pane};
+        crate::test_support::load_module_style(
+            include_str!("../../kit/pane_section.module.scss"),
+            &[
+                ("root", pane::root),
+                ("label", pane::label),
+                ("nested", pane::nested),
+                ("heading", pane::heading),
+            ],
+        );
+        crate::test_support::load_module_style(
+            include_str!("../../kit/skeleton_box.module.scss"),
+            &[("root", bar::root), ("text", bar::text)],
+        );
+        crate::test_support::load_module_style(
+            include_str!("context_pane.module.scss"),
+            &[
+                ("root", style::root),
+                ("muted", style::muted),
+                ("facts", style::facts),
+                ("value", style::value),
+                ("lines", style::lines),
+            ],
+        );
+        crate::test_support::load_module_style(
+            include_str!("../installed_package_v2.module.scss"),
+            &[("page", page::page)],
+        );
+    }
+
+    /// Under the page's stylesheets every bar has width: a section sizes its
+    /// children to their content, and a bar sized in percent must not
+    /// collapse inside it.
+    #[wasm_bindgen_test]
+    async fn every_skeleton_bar_is_drawn() {
+        load_pane_sheets();
+        let el = mount(|| view! { <CurrentRevisionPaneSkeleton /> });
+        sleep_ms(0).await;
+
+        let sections = el.query_selector_all("aside section section").unwrap();
+        assert_eq!(sections.length(), 3);
+        for i in 0..sections.length() {
+            let section: web_sys::Element = sections.item(i).unwrap().unchecked_into();
+            let bars = section.query_selector_all("[aria-hidden='true']").unwrap();
+            assert!(bars.length() > 0, "bars in section {i}");
+            for j in 0..bars.length() {
+                let bar: web_sys::HtmlElement = bars.item(j).unwrap().unchecked_into();
+                assert!(
+                    bar.offset_width() > 0,
+                    "bar {j} of section {i} has no width; markup was {}",
+                    section.inner_html()
+                );
+            }
+        }
+    }
+
+    /// The skeleton pane in the page's column at `width`, with the tokens the
+    /// sheets read.
+    fn pane_at(width: u32) -> web_sys::Element {
+        load_pane_sheets();
+        mount(move || {
+            view! {
+                <div
+                    class=sheets::page::page
+                    style=format!(
+                        "width:{width}px; --q-space-1:4px; --q-space-2:8px; \
+                         --q-space-3:12px; --q-space-4:16px",
+                    )
+                >
+                    <CurrentRevisionPaneSkeleton />
+                </div>
+            }
+        })
+    }
+
+    fn sections(el: &web_sys::Element) -> Vec<web_sys::DomRect> {
+        let list = el.query_selector_all("aside section section").unwrap();
+        (0..list.length())
+            .map(|i| {
+                list.item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::Element>()
+                    .get_bounding_client_rect()
+            })
+            .collect()
+    }
+
+    /// Narrow, the three sections are three columns, not a stack, so the
+    /// pane is one section tall above the files.
+    #[wasm_bindgen_test]
+    async fn narrow_the_sections_are_three_columns() {
+        let el = pane_at(600);
+        sleep_ms(0).await;
+        let rects = sections(&el);
+        assert_eq!(rects.len(), 3);
+        for pair in rects.windows(2) {
+            assert_eq!(pair[0].top(), pair[1].top(), "one top line");
+            assert!(pair[0].right() <= pair[1].left(), "side by side");
+        }
+    }
+
+    /// Wide, they stack in the pane beside the files.
+    #[wasm_bindgen_test]
+    async fn wide_the_sections_stack() {
+        let el = pane_at(1024);
+        sleep_ms(0).await;
+        let rects = sections(&el);
+        assert_eq!(rects.len(), 3);
+        for pair in rects.windows(2) {
+            assert!(pair[0].bottom() <= pair[1].top(), "one under the other");
+        }
+    }
+
+    /// In a column too narrow for a heading and its action, the action wraps
+    /// under the heading rather than past the column's edge.
+    #[wasm_bindgen_test]
+    async fn a_section_s_action_stays_inside_a_narrow_column() {
+        let el = pane_at(400);
+        sleep_ms(0).await;
+        let list = el.query_selector_all("aside section section").unwrap();
+        for i in 0..list.length() {
+            let section: web_sys::Element = list.item(i).unwrap().unchecked_into();
+            let edge = section.get_bounding_client_rect().right();
+            let parts = section.query_selector_all("h3, h3 ~ *").unwrap();
+            for j in 0..parts.length() {
+                let part: web_sys::Element = parts.item(j).unwrap().unchecked_into();
+                assert!(
+                    part.get_bounding_client_rect().right() <= edge + 0.5,
+                    "section {i} spills past its column; markup was {}",
+                    section.inner_html()
+                );
+            }
+        }
     }
 }
