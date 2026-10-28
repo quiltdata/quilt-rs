@@ -108,6 +108,30 @@ impl ResolveCommands {
     }
 }
 
+/// Whether the resolve pane is up, so only the one the reader opens moves the
+/// page. The page provides it; a pane without it counts as opening.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Shown(pub(super) StoredValue<bool>);
+
+/// The pane's `aside`, scrolled into view when the reader opens the mode.
+/// Narrow, the pane sits above the files, so a reader deep in the list who
+/// opens it from the held header would not see it. Only on opening: a pane
+/// the watcher's news rebuilds leaves the reader where they are.
+fn reveal_on_opening() -> NodeRef<leptos::html::Aside> {
+    let pane = NodeRef::<leptos::html::Aside>::new();
+    let shown = use_context::<Shown>();
+    let opening = shown.is_none_or(|Shown(up)| !up.get_value());
+    if let Some(Shown(up)) = shown {
+        up.set_value(true);
+    }
+    Effect::new(move || {
+        if let Some(pane) = pane.get().filter(|_| opening) {
+            super::reveal(&pane);
+        }
+    });
+    pane
+}
+
 /// The pane's other mode: this copy's revision beside the published one, and
 /// the two choices between them. It swaps the ordinary pane whole.
 #[component]
@@ -192,14 +216,7 @@ pub fn ResolvePane(
     let certify_hint = unique_id("resolve-hint");
     let replace_hint = unique_id("resolve-hint");
 
-    // Narrow, the pane sits above the files, so a reader deep in the list who
-    // opens the mode from the held header would not see it.
-    let pane = NodeRef::<leptos::html::Aside>::new();
-    Effect::new(move || {
-        if let Some(pane) = pane.get() {
-            super::reveal(&pane);
-        }
-    });
+    let pane = reveal_on_opening();
 
     view! {
         <aside aria-label="About this package" class=style::root node_ref=pane>
@@ -345,7 +362,7 @@ fn success(namespace: String, lead: &str) -> Outcome {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, ResolveCommands, ResolvePane, consequence, differs_sentence};
+    use super::{Answer, ResolveCommands, ResolvePane, Shown, consequence, differs_sentence};
     use crate::commands::{CurrentRevisionData, ResolveData};
     use crate::kit::{BannerVariant, DIFFERS_ID};
     use crate::pages::installed_package_v2::{Outcome, Wiring};
@@ -514,6 +531,54 @@ mod tests {
                 />
             }
         })
+    }
+
+    /// Opening the mode brings a pane above the window into view; the same
+    /// pane rebuilt by a re-read leaves the reader where they are.
+    #[wasm_bindgen_test]
+    async fn only_the_pane_the_reader_opens_moves_the_page() {
+        let w = Wiring::default();
+        let shown = Shown::default();
+        let rebuilt = RwSignal::new(0);
+        let el = mount(move || {
+            provide_context(shown);
+            view! {
+                <div data-v2-page style="height:200px; overflow-y:auto">
+                    {move || {
+                        rebuilt.track();
+                        view! {
+                            <ResolvePane
+                                namespace=ns()
+                                uri=None
+                                revision=revision()
+                                resolve=compared(1, 0)
+                                marks=Signal::stored(None)
+                                back_href=BACK
+                                w=w
+                                commands=idle_commands()
+                            />
+                        }
+                    }}
+                    <div style="height:3000px"></div>
+                </div>
+            }
+        });
+        let frame = el.query_selector("[data-v2-page]").unwrap().unwrap();
+        sleep_ms(50).await;
+        frame.set_scroll_top(2000);
+        rebuilt.update(|n| *n += 1);
+        sleep_ms(50).await;
+        assert_eq!(frame.scroll_top(), 2000, "a rebuilt pane stays put");
+        // As the page does when the mode closes.
+        shown.0.set_value(false);
+        rebuilt.update(|n| *n += 1);
+        sleep_ms(50).await;
+        let pane = el.query_selector("aside").unwrap().unwrap();
+        assert!(
+            frame.scroll_top() < 2000
+                && pane.get_bounding_client_rect().top() >= frame.get_bounding_client_rect().top(),
+            "an opened pane comes into view"
+        );
     }
 
     /// The `section` a nested heading names.

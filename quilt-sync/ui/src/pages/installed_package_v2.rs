@@ -1294,6 +1294,14 @@ fn PackageScreen(
     let page = PageHandle::new();
     let w = Wiring::over(page);
     w.follow(ns.into());
+    // Here and not in the pane, which every re-read rebuilds.
+    let shown = resolve::Shown::default();
+    provide_context(shown);
+    Effect::new(move || {
+        if !asked.get() {
+            shown.0.set_value(false);
+        }
+    });
     // For the header's *Copied*. Not on `Wiring`, which every part of the page
     // takes by value.
     provide_context(header::CopiedMark::new());
