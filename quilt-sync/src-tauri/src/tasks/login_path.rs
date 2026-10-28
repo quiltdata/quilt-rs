@@ -20,10 +20,12 @@ mod shell {
     use std::ffi::OsStr;
     use std::ffi::OsString;
     use std::process::Stdio;
+    use std::sync::OnceLock;
     use std::time::Duration;
+    use std::time::Instant;
 
     use tokio::io::AsyncReadExt;
-    use tokio::sync::OnceCell;
+    use tokio::sync::Mutex;
 
     use crate::telemetry::prelude::*;
 
@@ -34,18 +36,43 @@ mod shell {
     /// A slow startup file costs a run this long, at most.
     const TIMEOUT: Duration = Duration::from_secs(5);
 
-    /// The login shell's PATH, kept once found; `None` keeps `QuiltSync`'s own,
-    /// and the next run asks again. A tool installed later shows up after a
-    /// restart.
+    /// The login shell's PATH, kept once found; `None` keeps `QuiltSync`'s own.
+    /// Runs waiting on a lookup that fails share its `None`, so none waits more
+    /// than one timeout; a run that starts later asks again. A tool installed
+    /// later shows up after a restart.
     pub async fn login_path() -> Option<&'static str> {
-        static PATH: OnceCell<String> = OnceCell::const_new();
-        let found = PATH
-            .get_or_try_init(async || from_shell(&shell(), TIMEOUT).await.ok_or(()))
-            .await;
-        if found.is_err() {
-            warn!("tasks: no PATH from the login shell, the agent gets QuiltSync's own");
+        static PATH: OnceLock<String> = OnceLock::new();
+        static FAILED_AT: Mutex<Option<Instant>> = Mutex::const_new(None);
+        shared(&PATH, &FAILED_AT, async || {
+            from_shell(&shell(), TIMEOUT).await
+        })
+        .await
+    }
+
+    /// `path` once `lookup` has found it. One lookup at a time; the callers
+    /// that waited on a failed one get its `None` without looking again.
+    async fn shared<'a>(
+        path: &'a OnceLock<String>,
+        failed_at: &Mutex<Option<Instant>>,
+        lookup: impl AsyncFnOnce() -> Option<String>,
+    ) -> Option<&'a str> {
+        if let Some(path) = path.get() {
+            return Some(path);
         }
-        found.ok().map(String::as_str)
+        let asked = Instant::now();
+        let mut failed_at = failed_at.lock().await;
+        if let Some(path) = path.get() {
+            return Some(path);
+        }
+        if failed_at.is_some_and(|failed| failed > asked) {
+            return None;
+        }
+        let Some(found) = lookup().await else {
+            warn!("tasks: no PATH from the login shell, the agent gets QuiltSync's own");
+            *failed_at = Some(Instant::now());
+            return None;
+        };
+        Some(path.get_or_init(|| found))
     }
 
     fn shell() -> OsString {
@@ -115,6 +142,9 @@ mod shell {
     mod tests {
         use super::*;
 
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::atomic::Ordering;
+
         #[test]
         fn the_path_is_read_from_between_the_markers() {
             assert_eq!(
@@ -127,6 +157,37 @@ mod shell {
             assert_eq!(between_markers("no markers at all"), None);
             assert_eq!(between_markers(&format!("{MARKER}{MARKER}")), None);
             assert_eq!(between_markers(&format!("{MARKER}cut short")), None);
+        }
+
+        /// A lookup that counts itself and takes a moment, giving `found`.
+        async fn lookup(lookups: &AtomicUsize, found: Option<&str>) -> Option<String> {
+            lookups.fetch_add(1, Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            found.map(str::to_string)
+        }
+
+        #[tokio::test]
+        async fn callers_waiting_on_a_lookup_share_it() {
+            let path = OnceLock::new();
+            let failed_at = Mutex::new(None);
+            let lookups = AtomicUsize::new(0);
+
+            let waited = tokio::join!(
+                shared(&path, &failed_at, async || lookup(&lookups, None).await),
+                shared(&path, &failed_at, async || lookup(&lookups, None).await),
+                shared(&path, &failed_at, async || lookup(&lookups, None).await),
+            );
+            assert_eq!(waited, (None, None, None));
+            assert_eq!(lookups.load(Ordering::SeqCst), 1, "one failed lookup");
+
+            let later = shared(&path, &failed_at, async || {
+                lookup(&lookups, Some("/login/bin")).await
+            })
+            .await;
+            assert_eq!(later, Some("/login/bin"), "a later caller looks again");
+            let after = shared(&path, &failed_at, async || lookup(&lookups, None).await).await;
+            assert_eq!(after, Some("/login/bin"));
+            assert_eq!(lookups.load(Ordering::SeqCst), 2, "a found PATH is kept");
         }
 
         #[tokio::test]
