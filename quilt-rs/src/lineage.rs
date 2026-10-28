@@ -515,7 +515,6 @@ mod tests {
         }"#;
         let lineage: PackageLineage = serde_json::from_str(json).unwrap();
         assert_eq!(lineage.sync_scope, SyncScope::IndividualFiles);
-        assert!(!lineage.sync_scope.covers_untracked());
     }
 
     /// And the other direction: an opted-in package round-trips.
@@ -530,7 +529,6 @@ mod tests {
 
         let parsed: PackageLineage = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.sync_scope, SyncScope::EntirePackage);
-        assert!(parsed.sync_scope.covers_untracked());
     }
 
     /// The default scope writes **no key**, so turning the feature on does not
@@ -541,6 +539,22 @@ mod tests {
     fn the_default_scope_writes_no_key() {
         let json = serde_json::to_string(&PackageLineage::default()).unwrap();
         assert!(!json.contains("sync_scope"), "{json}");
+    }
+
+    /// A scope a later version adds, a word or an object, must not stop this
+    /// version loading `data.json`: it reads as individual files.
+    #[test]
+    fn an_unknown_scope_reads_as_individual_files() {
+        let json = br#"{"packages":{
+            "a/word":{"commit":null,"base_hash":"","latest_hash":"","paths":{},"sync_scope":"by_pattern"},
+            "a/object":{"commit":null,"base_hash":"","latest_hash":"","paths":{},"sync_scope":{"by_pattern":["*.csv"]}},
+            "a/whole":{"commit":null,"base_hash":"","latest_hash":"","paths":{},"sync_scope":"entire_package"}
+        },"home":"/home/directory"}"#;
+        let lineage = DomainLineage::from_slice(json).unwrap();
+        let scope = |name| &lineage.packages[&Namespace::from(("a", name))].sync_scope;
+        assert_eq!(scope("word"), &SyncScope::IndividualFiles);
+        assert_eq!(scope("object"), &SyncScope::IndividualFiles);
+        assert_eq!(scope("whole"), &SyncScope::EntirePackage);
     }
 
     #[test(tokio::test)]

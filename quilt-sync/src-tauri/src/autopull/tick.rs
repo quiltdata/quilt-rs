@@ -932,7 +932,7 @@ pub(crate) async fn sync_package(
         run.wait,
         run.pull_enabled,
         run.push_enabled,
-        lineage.sync_scope,
+        lineage.sync_scope.clone(),
         &inner.aggregator,
     )
     .await;

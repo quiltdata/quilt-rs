@@ -102,9 +102,11 @@ pub struct PackageContextData {
 pub struct PackageSize {
     /// Every listed file.
     pub total: u64,
-    /// Every listed file not in the backlog — what `remote_only` leaves out,
-    /// so a file deleted here counts: Download would not fetch it.
+    /// Every listed file not outstanding, so a file deleted here counts:
+    /// Download would not fetch it.
     pub downloaded: u64,
+    /// The backlog's files, the ones `remote_only` lists.
+    pub backlog: u64,
 }
 
 impl From<quilt::lineage::DownloadSize> for PackageSize {
@@ -112,25 +114,37 @@ impl From<quilt::lineage::DownloadSize> for PackageSize {
         Self {
             total: size.listed,
             downloaded: size.downloaded(),
+            backlog: size.backlog,
         }
     }
 }
 
 /// Which files this copy keeps, as the pane says it. Its own wire enum rather
 /// than `SyncScope`, whose serde form is the lineage file's, not this page's.
+/// A folders scope's folders travel beside it, where a page needs them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum KeepingScope {
     IndividualFiles,
     EntirePackage,
+    Folders,
 }
 
-impl From<quilt::lineage::SyncScope> for KeepingScope {
-    fn from(scope: quilt::lineage::SyncScope) -> Self {
+impl From<&quilt::lineage::SyncScope> for KeepingScope {
+    fn from(scope: &quilt::lineage::SyncScope) -> Self {
         match scope {
             quilt::lineage::SyncScope::IndividualFiles => Self::IndividualFiles,
             quilt::lineage::SyncScope::EntirePackage => Self::EntirePackage,
+            quilt::lineage::SyncScope::Folders(_) => Self::Folders,
         }
+    }
+}
+
+/// The folders a folders scope keeps; empty for any other scope.
+pub fn kept_folders(scope: &quilt::lineage::SyncScope) -> &[String] {
+    match scope {
+        quilt::lineage::SyncScope::Folders(folders) => folders,
+        _ => &[],
     }
 }
 
@@ -140,10 +154,15 @@ impl From<quilt::lineage::SyncScope> for KeepingScope {
 pub struct KeepingData {
     /// The package's stored scope — the one both pull paths apply.
     pub scope: KeepingScope,
+    /// The kept folders under folders scope, which the caption names.
+    pub folders: Vec<String>,
     /// Files in the current revision — the caption's M.
     pub total: usize,
-    /// Listed by the current revision and not downloaded here, sorted: the
-    /// backlog, and exactly what `Download N files` installs.
+    /// Listed files not downloaded here, so the caption's M less its N.
+    pub outstanding: usize,
+    /// The outstanding files the scope covers, sorted: the backlog, and
+    /// exactly what `Download N files` installs. Empty under individual-file
+    /// scope.
     pub remote_only: Vec<String>,
     /// Files deleted here: local changes waiting to commit, so not in the
     /// backlog. The caption names them, since they count as downloaded. The
@@ -388,16 +407,18 @@ fn epoch_millis(at: DateTime<Utc>) -> f64 {
 }
 
 /// A listed path is outstanding when this copy neither tracks it nor has a
-/// local change at it ([`quilt::lineage::DownloadCounts::is_outstanding`]) —
+/// local change at it ([`quilt::lineage::DownloadCounts::is_outstanding`]),
+/// and in the backlog when the scope also covers it —
 /// v1's `remote` rows (`package_data.rs:195-206`). `changes` is `None` when
 /// the status could not be read: then only tracking decides, and the engine
-/// still refuses to overwrite a local file.
+/// still refuses to overwrite a local file. A path in `on_disk` already has
+/// a file here, so it stays out of the backlog.
 ///
 /// Counted by [`quilt::lineage::DownloadCounts::count`], as the main page's
 /// rows are, so the two pages give one number and one size.
 fn keeping_data(
     lineage: &quilt::lineage::PackageLineage,
-    sizes: &BTreeMap<PathBuf, u64>,
+    (sizes, on_disk): &(BTreeMap<PathBuf, u64>, BTreeSet<PathBuf>),
     changes: Option<&quilt::lineage::ChangeSet>,
 ) -> (KeepingData, Option<PackageSize>) {
     let no_changes = quilt::lineage::ChangeSet::new();
@@ -406,13 +427,18 @@ fn keeping_data(
         lineage,
         sizes.iter().map(|(key, size)| (key, *size)),
         changes,
+        on_disk,
     );
     let keeping = KeepingData {
-        scope: counts.scope.into(),
+        scope: (&counts.scope).into(),
+        folders: kept_folders(&counts.scope).to_vec(),
         total: counts.listed,
+        outstanding: counts.outstanding,
         remote_only: sizes
             .keys()
-            .filter(|key| quilt::lineage::DownloadCounts::is_outstanding(lineage, changes, key))
+            .filter(|key| {
+                quilt::lineage::DownloadCounts::in_backlog(lineage, changes, on_disk, key)
+            })
             .map(|key| key.display().to_string())
             .collect(),
         deleted_here: counts.deleted_here,
@@ -1068,7 +1094,7 @@ mod tests {
             .times(1)
             .returning(|_, lineage| {
                 assert_eq!(lineage.current_hash(), Some("abcdef"));
-                Ok(sizes(&["a.csv", "b.csv", "c.csv"]))
+                Ok((sizes(&["a.csv", "b.csv", "c.csv"]), BTreeSet::new()))
             });
         // `return_once`, not `returning`: `Error` is not `Clone`. `.times(1)`
         // makes "exactly one status call" an assertion — without it a caller
@@ -1106,7 +1132,7 @@ mod tests {
             .returning(|_| Ok(1));
         model
             .expect_get_installed_package_sizes()
-            .returning(|_, _| Ok(sizes(&["a.csv"])));
+            .returning(|_, _| Ok((sizes(&["a.csv"]), BTreeSet::new())));
         model
             .expect_get_installed_package_records()
             .returning(|_| Ok(records(&["a.csv"])));
@@ -1289,7 +1315,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&context).unwrap(),
-            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000},"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","folders":[],"total":56,"outstanding":2,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000,"backlog":1500000},"resolve":null}"#,
         );
     }
 
@@ -1298,11 +1324,22 @@ mod tests {
         paths.iter().map(|path| (PathBuf::from(path), 7)).collect()
     }
 
+    /// [`super::keeping_data`] with no untracked file on disk.
+    fn keeping_data(
+        lineage: &quilt::lineage::PackageLineage,
+        sizes: &BTreeMap<PathBuf, u64>,
+        changes: Option<&quilt::lineage::ChangeSet>,
+    ) -> (KeepingData, Option<PackageSize>) {
+        super::keeping_data(lineage, &(sizes.clone(), BTreeSet::new()), changes)
+    }
+
+    /// A whole-package lineage, so every outstanding file is in the backlog.
     fn lineage_tracking(paths: &[&str]) -> quilt::lineage::PackageLineage {
         let mut lineage = quilt::lineage::PackageLineage::from_remote(
             make_manifest_uri(NS),
             "abcdef".to_string(),
         );
+        lineage.sync_scope = quilt::lineage::SyncScope::EntirePackage;
         for path in paths {
             lineage
                 .paths
@@ -1412,7 +1449,9 @@ mod tests {
     fn keeping_fixture() -> KeepingData {
         KeepingData {
             scope: KeepingScope::EntirePackage,
+            folders: Vec::new(),
             total: 56,
+            outstanding: 2,
             remote_only: vec!["plate/b.csv".to_string(), "plate/c.csv".to_string()],
             deleted_here: 1,
         }
@@ -1422,6 +1461,7 @@ mod tests {
         PackageSize {
             total: 3_400_000,
             downloaded: 1_900_000,
+            backlog: 1_500_000,
         }
     }
 
@@ -1429,7 +1469,7 @@ mod tests {
     fn keeping_wire_form_is_verbatim() {
         assert_eq!(
             serde_json::to_string(&keeping_fixture()).unwrap(),
-            r#"{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1}"#,
+            r#"{"scope":"entirePackage","folders":[],"total":56,"outstanding":2,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1}"#,
         );
     }
 
@@ -1478,14 +1518,65 @@ mod tests {
         let mut lineage = lineage_tracking(&[]);
         assert_eq!(
             keeping_data(&lineage, &listed, None).0.scope,
-            KeepingScope::IndividualFiles
-        );
-
-        lineage.sync_scope = quilt::lineage::SyncScope::EntirePackage;
-        assert_eq!(
-            keeping_data(&lineage, &listed, None).0.scope,
             KeepingScope::EntirePackage
         );
+
+        lineage.sync_scope = quilt::lineage::SyncScope::IndividualFiles;
+        assert_eq!(
+            keeping_data(&lineage, &listed, None).0.scope,
+            KeepingScope::IndividualFiles
+        );
+    }
+
+    /// Picked files count what is missing, and have nothing to download.
+    #[test]
+    fn picked_files_have_no_backlog() {
+        let mut lineage = lineage_tracking(&["a.csv"]);
+        lineage.sync_scope = quilt::lineage::SyncScope::IndividualFiles;
+
+        let (keeping, size) = keeping_data(&lineage, &sizes(&["a.csv", "b.csv"]), None);
+
+        assert_eq!(keeping.outstanding, 1);
+        assert_eq!(keeping.remote_only, [] as [String; 0]);
+        assert_eq!(size.map(|size| size.backlog), Some(0));
+    }
+
+    /// An untracked file already here under a kept folder, with the revision's
+    /// content so the status reports no change, is left out of the backlog, its
+    /// count and its bytes: *Download N files* would refuse to overwrite it.
+    #[test]
+    fn a_file_already_here_is_not_in_the_backlog() {
+        let mut lineage = lineage_tracking(&[]);
+        lineage.sync_scope = quilt::lineage::SyncScope::folders(["data"]).unwrap();
+        let listing = (
+            sizes(&["data/here.csv", "data/new.csv"]),
+            BTreeSet::from([PathBuf::from("data/here.csv")]),
+        );
+
+        let (keeping, size) = super::keeping_data(&lineage, &listing, None);
+
+        assert_eq!(keeping.remote_only, vec!["data/new.csv"]);
+        assert_eq!(size.map(|size| size.backlog), Some(7));
+    }
+
+    /// A folders scope names its folders, and its backlog is the outstanding
+    /// files under them.
+    #[test]
+    fn kept_folders_bound_the_backlog() {
+        let mut lineage = lineage_tracking(&[]);
+        lineage.sync_scope = quilt::lineage::SyncScope::folders(["data", "results"]).unwrap();
+
+        let (keeping, size) = keeping_data(
+            &lineage,
+            &sizes(&["data/a.csv", "data2/b.csv", "results/c.csv", "top.csv"]),
+            None,
+        );
+
+        assert_eq!(keeping.scope, KeepingScope::Folders);
+        assert_eq!(keeping.folders, vec!["data", "results"]);
+        assert_eq!(keeping.outstanding, 4);
+        assert_eq!(keeping.remote_only, vec!["data/a.csv", "results/c.csv"]);
+        assert_eq!(size.map(|size| size.backlog), Some(14));
     }
 
     fn removed(path: &str) -> quilt::lineage::ChangeSet {
@@ -1524,6 +1615,7 @@ mod tests {
             Some(PackageSize {
                 total: 4_321,
                 downloaded: 21,
+                backlog: 4_300,
             })
         );
     }
@@ -1548,6 +1640,7 @@ mod tests {
             Some(PackageSize {
                 total: 321,
                 downloaded: 21,
+                backlog: 300,
             })
         );
     }
@@ -1589,12 +1682,14 @@ mod tests {
                 &lineage,
                 listed.iter().map(|(key, size)| (key, *size)),
                 &changes,
+                &BTreeSet::new(),
             ),
         );
 
         assert_eq!(row.scope, keeping.scope);
         assert_eq!(row.total, keeping.total);
-        assert_eq!(row.outstanding, keeping.remote_only.len());
+        assert_eq!(row.outstanding, keeping.outstanding);
+        assert_eq!(row.backlog, keeping.remote_only.len());
         assert_eq!(row.deleted_here, keeping.deleted_here);
         assert_eq!(row.size, size);
         assert_eq!(
@@ -1602,6 +1697,7 @@ mod tests {
             Some(PackageSize {
                 total: 4_321,
                 downloaded: 321,
+                backlog: 4_000,
             })
         );
     }
@@ -1616,6 +1712,7 @@ mod tests {
             Some(PackageSize {
                 total: 0,
                 downloaded: 0,
+                backlog: 0,
             })
         );
     }
@@ -1639,7 +1736,7 @@ mod tests {
     fn package_size_wire_form_is_verbatim() {
         assert_eq!(
             serde_json::to_string(&size_fixture()).unwrap(),
-            r#"{"total":3400000,"downloaded":1900000}"#,
+            r#"{"total":3400000,"downloaded":1900000,"backlog":1500000}"#,
         );
     }
 
@@ -1749,7 +1846,8 @@ mod tests {
 
         assert_eq!(keeping.scope, KeepingScope::IndividualFiles);
         assert_eq!(keeping.total, 3);
-        assert_eq!(keeping.remote_only, vec!["a.csv", "b.csv", "c.csv"]);
+        assert_eq!(keeping.outstanding, 3);
+        assert_eq!(keeping.remote_only, [] as [String; 0]);
     }
 
     #[tokio::test]
@@ -1762,7 +1860,7 @@ mod tests {
             .context
             .keeping;
 
-        assert_eq!(keeping.remote_only, vec!["a.csv", "c.csv"]);
+        assert_eq!(keeping.outstanding, 2);
     }
 
     /// From the rows Keeping already read: three of 7 bytes, none here.
@@ -1773,13 +1871,14 @@ mod tests {
 
         let context = page(&RoleCache::default(), Ok(status), None).await.context;
 
-        assert_eq!(context.keeping.remote_only, vec!["a.csv", "c.csv"]);
+        assert_eq!(context.keeping.outstanding, 2);
         assert_eq!(context.keeping.deleted_here, 1);
         assert_eq!(
             context.size,
             Some(PackageSize {
                 total: 21,
                 downloaded: 7,
+                backlog: 0,
             })
         );
     }
@@ -1793,10 +1892,7 @@ mod tests {
             page.header.state,
             PackageStateDto::RoleDenied { role: None }
         );
-        assert_eq!(
-            page.context.keeping.remote_only,
-            vec!["a.csv", "b.csv", "c.csv"]
-        );
+        assert_eq!(page.context.keeping.outstanding, 3);
     }
 
     fn listed(files: FilesData) -> EntryList {
@@ -1867,7 +1963,7 @@ mod tests {
         m.expect_get_installed_package_revision_count()
             .returning(|_| Ok(1));
         m.expect_get_installed_package_sizes()
-            .returning(|_, _| Ok(sizes(&["a.csv"])));
+            .returning(|_, _| Ok((sizes(&["a.csv"]), BTreeSet::new())));
         match status {
             Some(status) => {
                 m.expect_get_installed_package_status()

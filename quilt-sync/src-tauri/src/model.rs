@@ -263,18 +263,23 @@ pub trait QuiltModel {
     /// its row records — the same snapshot the rest of the page read uses, so
     /// a pull landing mid-read cannot pair one revision's keys with another's
     /// tracked paths. The sizes are the manifest's, not a stat of the files.
+    /// Beside them, the untracked paths the scope covers that already have a
+    /// file here ([`quilt::InstalledPackage::untracked_on_disk`]).
     async fn get_installed_package_sizes(
         &self,
         package: &quilt::InstalledPackage,
         lineage: &quilt::lineage::PackageLineage,
-    ) -> Result<BTreeMap<PathBuf, u64>, Error> {
-        Ok(package
-            .manifest_from_lineage(lineage)
-            .await?
+    ) -> Result<(BTreeMap<PathBuf, u64>, BTreeSet<PathBuf>), Error> {
+        let manifest = package.manifest_from_lineage(lineage).await?;
+        let on_disk = package
+            .untracked_on_disk(&package.package_home().await?, lineage, &manifest)
+            .await;
+        let sizes = manifest
             .rows
             .into_iter()
             .map(|row| (row.logical_key, row.size))
-            .collect())
+            .collect();
+        Ok((sizes, on_disk))
     }
 
     /// The manifest `lineage` selects, header and rows.

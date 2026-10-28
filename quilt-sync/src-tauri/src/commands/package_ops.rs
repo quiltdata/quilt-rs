@@ -485,7 +485,7 @@ async fn package_pull_command(
     // interrupt it without asking.
     let pulled = {
         let _applying = watcher.apply_guard(&namespace);
-        m.locked_package_pull(&locked, None, lineage.sync_scope)
+        m.locked_package_pull(&locked, None, lineage.sync_scope.clone())
             .await
     };
     match pulled {
@@ -558,7 +558,15 @@ pub async fn package_pull(
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    pull_and_report(&*m, &tracing, &watcher, &toasts, &namespace, uri.as_ref()).await
+    Box::pin(pull_and_report(
+        &*m,
+        &tracing,
+        &watcher,
+        &toasts,
+        &namespace,
+        uri.as_ref(),
+    ))
+    .await
 }
 
 /// The Pull button's whole answer: the pull, its toast, its event and its line.

@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
+use quilt_rs::lineage::SyncScope;
 use quilt_uri::Namespace;
 
 use crate::cli::Error;
+use crate::cli::keep;
 use crate::cli::model::Commands;
 use crate::cli::output::Render;
 use crate::cli::output::Std;
@@ -12,6 +14,10 @@ pub struct Input {
     pub namespace: Option<Namespace>,
     pub paths: Option<Vec<PathBuf>>,
     pub uri: String,
+    /// The scope to keep, set after the install.
+    pub keep: Option<SyncScope>,
+    /// Whether to download the files `keep` covers.
+    pub download: bool,
 }
 
 #[derive(Debug)]
@@ -23,6 +29,8 @@ pub struct Output {
     skipped: Vec<std::path::PathBuf>,
     /// Requested paths the copy already tracked, left as they are.
     already_installed: Vec<std::path::PathBuf>,
+    /// What `--keep-all` or `--keep-folder` set and downloaded.
+    keep: Option<keep::Output>,
 }
 
 #[cfg(test)]
@@ -46,7 +54,8 @@ impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut output = vec![format!("{}", self.installed_package)];
         let installed: Vec<_> = self.installed().collect();
-        if installed.is_empty() {
+        // A keep result says what it downloaded.
+        if installed.is_empty() && self.keep.is_none() {
             output.push("No paths installed".to_string());
         } else {
             for path in installed {
@@ -61,6 +70,9 @@ impl std::fmt::Display for Output {
                 "Skipped: \"{}\" (no longer on the remote)",
                 path.display()
             ));
+        }
+        if let Some(keep) = &self.keep {
+            output.push(keep.to_string());
         }
         write!(f, "{}", output.join("\n"))
     }
@@ -89,6 +101,7 @@ impl Render for Output {
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
+            "keep": self.keep.as_ref().map(Render::to_json),
         })
     }
 }
@@ -134,22 +147,33 @@ pub async fn model(
         namespace,
         paths,
         uri,
+        keep,
+        download,
     }: Input,
 ) -> Result<Output, Error> {
     let uri: quilt_uri::S3PackageUri = uri.parse()?;
     let path = uri.path.clone();
 
     let namespace = namespace.unwrap_or(uri.namespace.clone());
-    let installed_package = install_package(local_domain, &uri, namespace).await?;
     let paths = get_entries(path, paths);
+    if keep.is_some() && !download && !paths.is_empty() {
+        return Err(Error::NoDownloadWithPath);
+    }
+    let installed_package = install_package(local_domain, &uri, namespace).await?;
 
     let report = installed_package.install_paths(&paths).await?;
+
+    let keep = match keep {
+        Some(scope) => Some(keep::keep(&installed_package, Some(scope), download).await?),
+        None => None,
+    };
 
     Ok(Output {
         installed_package,
         paths,
         skipped: report.skipped,
         already_installed: report.already_installed,
+        keep,
     })
 }
 
@@ -197,6 +221,8 @@ mod tests {
                     namespace: None,
                     paths: Some(vec![timestamp_logical_key.clone()]),
                     uri,
+                    keep: None,
+                    download: true,
                 },
             )
             .await?;
@@ -286,6 +312,8 @@ mod tests {
                     namespace: None,
                     paths: None,
                     uri: pkg::URI.to_string(),
+                    keep: None,
+                    download: true,
                 },
             )
             .await?;
@@ -334,6 +362,8 @@ mod tests {
                 namespace: None,
                 paths: Some(requested.clone()),
                 uri: pkg::R1_URI.to_string(),
+                keep: None,
+                download: true,
             },
         )
         .await?;
@@ -378,6 +408,8 @@ mod tests {
                 namespace: None,
                 paths: Some(vec![PathBuf::from(pkg::REPLACED)]),
                 uri: pkg::R1_URI.to_string(),
+                keep: None,
+                download: true,
             },
         )
         .await?;
@@ -411,11 +443,12 @@ mod tests {
             ],
             skipped: vec![std::path::PathBuf::from("data/two.csv")],
             already_installed: Vec::new(),
+            keep: None,
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/pkg","paths":["data/one.csv"],"skipped":["data/two.csv"],"already_installed":[]}"#
+            r#"{"namespace":"test/pkg","paths":["data/one.csv"],"skipped":["data/two.csv"],"already_installed":[],"keep":null}"#
         );
         Ok(())
     }
@@ -435,6 +468,8 @@ mod tests {
                 namespace: None,
                 paths: Some(vec![readme.clone()]),
                 uri: pkg::URI.to_string(),
+                keep: None,
+                download: true,
             },
         )
         .await?;
@@ -446,6 +481,8 @@ mod tests {
                 namespace: None,
                 paths: Some(vec![readme.clone(), timestamp.clone()]),
                 uri: pkg::URI.to_string(),
+                keep: None,
+                download: true,
             },
         )
         .await?;
@@ -495,6 +532,7 @@ mod tests {
             paths: vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")],
             skipped: vec![PathBuf::from("b.txt")],
             already_installed: vec![PathBuf::from("c.txt")],
+            keep: None,
         };
 
         assert!(
@@ -505,6 +543,78 @@ mod tests {
             )),
             "{output}"
         );
+        Ok(())
+    }
+
+    /// Install `pkg` keeping the folder `one`, spelled `./one/`.
+    async fn install_keeping_one(download: bool) -> Result<(Output, tempfile::TempDir), Error> {
+        let (m, temp_dir) = create_model_in_temp_dir().await?;
+        let output = model(
+            m.get_local_domain(),
+            Input {
+                namespace: None,
+                paths: None,
+                uri: pkg::URI.to_string(),
+                keep: Some(SyncScope::folders(["./one/"])?),
+                download,
+            },
+        )
+        .await?;
+        Ok((output, temp_dir))
+    }
+
+    /// The package's one file under `one` is downloaded; `timestamp.txt`,
+    /// outside it, is not.
+    #[test(tokio::test)]
+    async fn live_install_keeping_a_folder_downloads_its_files() -> Result<(), Error> {
+        let (output, _temp_dir) = install_keeping_one(true).await?;
+
+        let lineage = output.installed_package.lineage().await?;
+        assert_eq!(
+            lineage.sync_scope,
+            SyncScope::Folders(vec!["one".to_string()])
+        );
+        assert_eq!(
+            lineage.paths.into_keys().collect::<Vec<_>>(),
+            vec![PathBuf::from(pkg::README_LK)]
+        );
+        assert_eq!(output.to_json()["keep"]["outstanding"], 0);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn live_install_keeping_a_folder_without_download_fetches_nothing() -> Result<(), Error> {
+        let (output, _temp_dir) = install_keeping_one(false).await?;
+
+        let lineage = output.installed_package.lineage().await?;
+        assert_eq!(
+            lineage.sync_scope,
+            SyncScope::Folders(vec!["one".to_string()])
+        );
+        assert_eq!(lineage.paths, quilt_rs::lineage::LineagePaths::new());
+        assert_eq!(output.to_json()["keep"]["outstanding"], 1);
+        Ok(())
+    }
+
+    /// Checked before anything is installed.
+    #[test(tokio::test)]
+    async fn no_download_refuses_a_path_in_the_uri() -> Result<(), Error> {
+        use crate::cli::model::create_model_in_temp_dir;
+
+        let (m, _temp_dir) = create_model_in_temp_dir().await?;
+        let err = model(
+            m.get_local_domain(),
+            Input {
+                namespace: None,
+                paths: None,
+                uri: "quilt+s3://bucket#package=a/b&path=data.csv".to_string(),
+                keep: Some(SyncScope::EntirePackage),
+                download: false,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, Error::NoDownloadWithPath), "{err}");
         Ok(())
     }
 
@@ -528,11 +638,12 @@ mod tests {
             paths: Vec::new(),
             skipped: Vec::new(),
             already_installed: Vec::new(),
+            keep: None,
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/bare","paths":[],"skipped":[],"already_installed":[]}"#
+            r#"{"namespace":"test/bare","paths":[],"skipped":[],"already_installed":[],"keep":null}"#
         );
         Ok(())
     }

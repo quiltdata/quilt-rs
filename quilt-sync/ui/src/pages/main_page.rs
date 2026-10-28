@@ -1754,8 +1754,10 @@ mod tests {
     fn picked(total: usize, outstanding: usize) -> crate::commands::MainPageDownloadsData {
         crate::commands::MainPageDownloadsData {
             scope: crate::commands::KeepingScope::IndividualFiles,
+            folders: 0,
             total,
             outstanding,
+            backlog: 0,
             deleted_here: 0,
             size: None,
         }
@@ -1798,6 +1800,7 @@ mod tests {
                     size: Some(crate::commands::PackageSize {
                         total: 3_400_000,
                         downloaded: 1_900_000,
+                        backlog: 0,
                     }),
                     ..picked(340, 328)
                 }),

@@ -54,6 +54,7 @@ pub use error::RoleError;
 pub use error::S3Error;
 pub use error::S3ErrorKind;
 pub use installed_package::InstalledPackage;
+pub use installed_package::KeepReport;
 pub use installed_package::LockedPackage;
 pub use installed_package::PublishOutcome;
 pub use installed_package::PushOutcome;

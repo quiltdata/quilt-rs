@@ -333,7 +333,9 @@ mod tests {
             revision_count,
             keeping: commands::KeepingData {
                 scope: commands::KeepingScope::IndividualFiles,
+                folders: Vec::new(),
                 total: 1,
+                outstanding: 0,
                 remote_only: Vec::new(),
                 deleted_here: 0,
             },

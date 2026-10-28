@@ -205,7 +205,7 @@ async fn get_installed_package_data_from_model(
         unmodified_count,
         filter_unmodified: filter.unmodified,
         filter_ignored: filter.ignored,
-        syncs_entire_package: lineage.sync_scope.covers_untracked(),
+        syncs_entire_package: lineage.sync_scope == quilt::lineage::SyncScope::EntirePackage,
         entire_package_sync_enabled: experimental.entire_package_sync,
     })
 }

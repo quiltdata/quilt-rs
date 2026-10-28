@@ -224,6 +224,12 @@ pub enum LineageError {
         home.display()
     )]
     HomeInUse { home: PathBuf, installed: usize },
+
+    /// A folder to keep reaches outside the package through `..`.
+    #[error(
+        "Folder {0:?} is not inside the package: name it from the package root, without \"..\""
+    )]
+    FolderOutsidePackage(String),
 }
 
 #[derive(Error, Debug, PartialEq)]
