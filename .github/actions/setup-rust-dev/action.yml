@@ -20,7 +20,8 @@ runs:
     - name: Cache Rust build
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       with:
-        # The job id is in the key already, but `quality` is a job in two workflows.
+        # rust-cache adds the job id and the runner's OS to the key; the workflow
+        # keeps apart jobs of one id in two workflows.
         key: ${{ github.workflow }}-debug
         # Pull requests restore main's caches and never write their own.
         save-if: ${{ github.ref == 'refs/heads/main' }}

@@ -38,10 +38,12 @@ just -l
 targets. CI checks all three, so a clean `just lint` leaves nothing for it to
 reject. `just fmt` is the half that writes, over the same file set.
 
-`just ci` runs everything the CI workflows check, in one command, for use just
-before you push. It includes the live AWS tests, so it needs AWS credentials;
-without AWS access, run the individual recipes instead (`just lint`, `just test`,
-`just test frontend`).
+Every CI job runs a `just` recipe, so a check fails the same way locally.
+`just ci` runs every job CI runs on Linux, in one command, for use just before
+you push. `just ci-pr` runs only the jobs a pull request needs, by the files
+changed since `origin/main`. Both include the live AWS tests, so they need AWS
+credentials; without AWS access, run the individual recipes instead (`just
+lint`, `just test`, `just test frontend`).
 
 QuiltSync's frontend is a Rust-to-WebAssembly crate built by Trunk, so `just
 gallery` (the component gallery in a browser) and `just app dev` (the desktop
@@ -145,9 +147,10 @@ of anything that weakens security, and review will say so where it is not. But
 a pull request missing any of these will be sent back, so they are the cheap
 ones to check first.
 
-**CI is green.** Which checks run depends on what you touched: the Rust
-workflows ignore markdown-only changes, `test-quilt-rs` also ignores
-`quilt-sync/**`, and the markdown lint fires only on `*.md`. A pull request
+**CI is green.** Which checks run depends on what you touched (`just
+changes`): the Rust jobs skip markdown-only changes, the quilt-rs jobs also
+skip `quilt-sync/**`, the frontend job runs only when the UI or something it
+builds from changes, and the markdown lint runs only on `*.md`. A pull request
 tests on Linux only: the macOS and Windows jobs run on `main` and never appear
 on a pull request at all. So read the check list for what is there, not for
 the absence of red — a check that never ran is not a check that passed. A
