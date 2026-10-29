@@ -25,6 +25,7 @@
 
 - Reset to latest discards a pending local commit even when its base is already latest (<https://github.com/quiltdata/quilt-rs/pull/1197>)
 - On Windows, files in folders get logical keys with `/`, as on other platforms, instead of `\` (<https://github.com/quiltdata/quilt-rs/pull/1253>)
+- Status and `checksum::calculate_hash` rows carry a percent-encoded `file://` URL as their physical key, as every other local key does (<https://github.com/quiltdata/quilt-rs/pull/1255>)
 
 ## [v0.50.0] - 2026-10-28
 

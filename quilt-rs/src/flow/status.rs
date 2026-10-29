@@ -262,7 +262,7 @@ impl<S: Storage + Sync> Hasher<'_, S> {
             .await?;
         Ok(ManifestRow {
             logical_key: logical_key.to_path_buf(),
-            physical_key: format!("file://{}", path.display()),
+            physical_key: crate::paths::file_url(path)?,
             size,
             hash,
             ..ManifestRow::default()
@@ -736,13 +736,44 @@ mod tests {
                 hash: Sha256ChunkedHash::try_from(fixtures::objects::LESS_THAN_8MB_HASH_B64)?
                     .into(),
                 meta: None,
-                physical_key: format!("file://{}", physical_key.display()),
+                physical_key: crate::paths::file_url(&physical_key)?,
             };
             assert!(added_row.matches_content(&reference_row));
             Ok(())
         } else {
             panic!("Expected Change::Added, got {added_file:?}")
         }
+    }
+
+    /// A row's physical key is a proper `file://` URL, as quilt3 writes one
+    /// with `PurePath.as_uri()`: a `#` in the name is encoded, so the key
+    /// reads back to the same file rather than ending at a fragment.
+    #[test(tokio::test)]
+    async fn test_added_file_has_a_file_url_that_reads_back() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("home");
+        let file = working_dir.join("a#1.csv");
+        storage
+            .write_byte_stream(&file, ByteStream::from_static(b"a,b\n"))
+            .await?;
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &domain_paths(&storage),
+            &Manifest::default(),
+            working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        let Some(Change::Added(row)) = status.changes.values().next() else {
+            panic!("expected one added file, got {:?}", status.changes);
+        };
+        let url = url::Url::parse(&row.physical_key)?;
+        assert_eq!(url.fragment(), None, "{}", row.physical_key);
+        assert_eq!(url.to_file_path().ok(), Some(file));
+        Ok(())
     }
 
     /// A logical key separates folders with `/` on every OS, though the walk

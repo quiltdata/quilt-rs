@@ -64,7 +64,7 @@ pub async fn calculate_hash(
 
     Ok(ManifestRow {
         logical_key: logical_key.to_path_buf(),
-        physical_key: format!("file://{}", path.display()),
+        physical_key: crate::paths::file_url(path)?,
         size,
         hash,
         ..ManifestRow::default()
