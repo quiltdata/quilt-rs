@@ -59,6 +59,16 @@ fn ui_dir() -> PathBuf {
     )
 }
 
+/// The UI's file names carry no hash, so a browser must check each one again:
+/// a cached old script under a new `index.html` fails its integrity check.
+async fn no_cache(mut response: axum::response::Response) -> axum::response::Response {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("no-cache"),
+    );
+    response
+}
+
 /// Bind `bind` and serve in a background task on the current runtime.
 /// Returns the bound address (port 0 picks a free one).
 ///
@@ -83,6 +93,7 @@ pub async fn serve(services: Arc<Services>, bind: SocketAddr, token: String) -> 
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .fallback_service(statics)
+        .layer(axum::middleware::map_response(no_cache))
         .with_state(state);
     let app = if addr.ip().is_loopback() {
         let port = addr.port();
