@@ -199,13 +199,40 @@ order the queue.
 
 ## What is in this repo
 
-- **[`quilt-cli/`](quilt-cli/)** — the `quilt` binary
-  ([crates.io](https://crates.io/crates/quilt-cli))
-- **[`quilt-rs/`](quilt-rs/)** — the library it is built on
-  ([crates.io](https://crates.io/crates/quilt-rs))
-- **[`quilt-uri/`](quilt-uri/)** — WASM-safe Quilt+ URI parsing
-  ([crates.io](https://crates.io/crates/quilt-uri))
-- **[`quilt-sync/`](quilt-sync/)** — QuiltSync, the cross-platform desktop app
+One Cargo workspace. The library does the work; the CLI and the desktop app
+are thin front ends over it.
+
+```text
+  quilt-cli              quilt-sync (QuiltSync)
+  the `quilt` binary     Tauri app + Leptos UI, autosync
+         |                    |
+         +---------+----------+
+                   |
+                   v
+               quilt-rs       package format, local store, sync state,
+                   |          auth, S3 and catalog I/O
+                   v
+               quilt-uri      quilt+s3:// and s3:// parsing;
+                              no I/O, builds for WASM
+```
+
+- **[`quilt-rs/`](quilt-rs/)**: the engine. It is an independent Rust
+  implementation of the Quilt package format, and its manifests are
+  byte-identical to quilt3's. It keeps a local store under `.quilt/` and talks
+  to S3 and your Quilt stack directly
+  ([crates.io](https://crates.io/crates/quilt-rs)).
+- **[`quilt-cli/`](quilt-cli/)**: the `quilt` binary, built on the library.
+  It has no config of its own and shares its home folder with QuiltSync
+  ([crates.io](https://crates.io/crates/quilt-cli)).
+- **[`quilt-sync/`](quilt-sync/)**: QuiltSync, the desktop app. It watches
+  your folders, pulls new revisions and publishes your edits. It keeps your
+  local edits when it pulls, and stops to ask when they conflict or the
+  revisions have diverged.
+- **[`quilt-uri/`](quilt-uri/)**: the shared URI types, also used by the UI in
+  the browser ([crates.io](https://crates.io/crates/quilt-uri)).
+
+How a working copy knows where it stands, and why there's no merge:
+[mental model](docs/mental-model.md) and [architecture](docs/architecture.md).
 
 ## Documentation
 
