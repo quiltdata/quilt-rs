@@ -154,10 +154,10 @@ pub(crate) async fn apply_latest_update(
     // stay tracked across the write, which the user-facing verb refuses by
     // design. Safe only because the touch set already excludes every path the
     // user touched — see `pull::touch_set`.
-    // `Refuse`, so nothing is ever skipped: the lineage saved on success names
+    // `Refuse`, so nothing is ever left out: the lineage saved on success names
     // the new base, so a path left out would be recorded at a row its working
     // file does not hold. A refusal comes before any rename, and nothing is saved.
-    let (mut lineage, _skipped) = flow::install_paths_over(
+    let (mut lineage, _) = flow::install_paths_over(
         lineage,
         manifest,
         paths,

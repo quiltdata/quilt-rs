@@ -840,15 +840,25 @@ pub async fn remove_revisions(namespace: String, hashes: Vec<String>) -> Result<
     tauri::invoke("remove_revisions", &Args { namespace, hashes }).await
 }
 
+/// The paths a download left out. Mirrors
+/// `src-tauri/src/commands/package_page.rs` field for field.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NotDownloaded {
+    /// Their bytes are no longer in the bucket at this revision.
+    pub skipped: Vec<String>,
+    /// Their bytes do not match the hash the package records.
+    pub hash_mismatch: Vec<String>,
+}
+
 /// Install these paths of an installed package: Keeping's backlog, and the
 /// file pane's `[Download]`.
 ///
-/// Answers with the paths it skipped because the remote no longer holds their
-/// bytes (an unversioned bucket, overwritten since); empty when all came down.
+/// Answers with the paths it left out; both lists empty when all came down.
 pub async fn package_download_backlog(
     namespace: String,
     paths: Vec<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<NotDownloaded, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {

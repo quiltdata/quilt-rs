@@ -663,7 +663,7 @@ fn live(bucket: Option<&str>, catalog: Option<&str>) -> AnyView {
             w=crate::pages::Wiring::new()
             commands=crate::pages::KeepingCommands {
                 store: |_, _, _| Box::pin(async { Ok(()) }),
-                download: |_, _| Box::pin(async { Ok(Vec::new()) }),
+                download: |_, _| Box::pin(async { Ok(crate::commands::NotDownloaded::default()) }),
             }
             catalog=catalog.map(ToString::to_string)
         />

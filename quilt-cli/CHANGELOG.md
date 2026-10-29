@@ -19,6 +19,22 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.40.0] - 2026-10-29
+
+### Changed
+
+- `quilt install` and `quilt keep` report a file whose bytes do not match the hash the package records as `Hash mismatch` (the package may be corrupt), not as `Skipped`. `quilt install --json` adds `hash_mismatch`
+  - <https://github.com/quiltdata/quilt-rs/issues/1246>
+  - <https://github.com/quiltdata/quilt-rs/pull/1254>
+
+### Fixed
+
+- On Windows, files in folders get logical keys with `/`, not `\` (<https://github.com/quiltdata/quilt-rs/pull/1253>)
+
+### quilt-rs
+
+- Updated [from v0.50.0 to v0.51.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.50.0...quilt-rs/v0.51.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.39.0] - 2026-10-28
 
 ### Added

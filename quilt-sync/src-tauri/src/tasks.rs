@@ -610,7 +610,7 @@ async fn check_out<M: QuiltModel>(
         return Ok(());
     }
     let report = model.locked_package_install_paths(locked, &missing).await?;
-    match report.skipped.first() {
+    match report.skipped.first().or(report.hash_mismatch.first()) {
         None => Ok(()),
         Some(path) => Err(Error::General(format!(
             "{} could not be downloaded",

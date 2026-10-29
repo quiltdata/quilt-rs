@@ -127,6 +127,7 @@ pub mod packages {
     ///
     /// 4 MiB down to 64 KiB, which is plenty of tail and costs the live suite
     /// almost nothing.
+    #[cfg(unix)]
     pub mod shrinking {
         pub const NAMESPACE_STR: &str = "reference/shrinking";
 

@@ -2516,6 +2516,7 @@ mod tests {
     /// map the file, say so, wait to be told, then read the tail and say what it
     /// found. Never exits on its own — the parent decides when it is finished,
     /// so the read happens strictly after the pull has landed.
+    #[cfg(unix)]
     fn mapped_reader_child(path: &str, len: usize) {
         use std::os::unix::io::AsRawFd as _;
 
@@ -2560,6 +2561,11 @@ mod tests {
     /// the same size, a copy would only fault during its own truncate window and
     /// the test would race; a file that ends up shorter leaves the mapped tail
     /// permanently past end-of-file, so the old behaviour fails every time.
+    ///
+    /// Unix only: `SIGBUS` on a truncated mapping and a mapping that outlives
+    /// a rename over its file are POSIX semantics. Windows refuses to truncate
+    /// or replace a mapped file at all, so this failure cannot happen there.
+    #[cfg(unix)]
     #[test(tokio::test)]
     #[allow(
         clippy::zombie_processes,
@@ -3031,6 +3037,9 @@ mod tests {
         Ok(())
     }
 
+    /// Unix only: it denies access with POSIX mode bits, and Windows ignores
+    /// the read-only attribute on directories.
+    #[cfg(unix)]
     #[test(tokio::test)]
     async fn test_list_invalid() -> Result<(), Error> {
         use std::fs::Permissions;

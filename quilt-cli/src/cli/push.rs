@@ -229,21 +229,21 @@ mod tests {
 
         // A brand-new local package: a commit will be stamped below, and only
         // then is the remote attached, mirroring `create → commit → set-remote`.
-        let lineage_json = format!(
-            r#"{{
-                "packages": {{
-                    "reference/push-gate": {{
-                        "commit": null,
-                        "remote": null,
-                        "base_hash": "",
-                        "latest_hash": "",
-                        "paths": {{}}
-                    }}
-                }},
-                "home": "{}"
-            }}"#,
-            home_dir.path().display()
-        );
+        // Built as JSON, not formatted in: a Windows path's backslashes
+        // would be escapes inside a JSON string.
+        let lineage_json = serde_json::json!({
+            "packages": {
+                "reference/push-gate": {
+                    "commit": null,
+                    "remote": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": &home,
+        })
+        .to_string();
         storage
             .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
             .await?;
@@ -453,7 +453,7 @@ mod tests {
     /// 5. Revert e0-0.txt content, commit with different message and meta
     /// 6. Push and verify final expected top hash matches original: 4076eb7774f5159aab212302288a2a2a9e59fab69cf4e41e827072fee80fabb4
     #[test(tokio::test)]
-    async fn live_push_sha256_checksum() -> Result<(), Error> {
+    async fn live_write_push_sha256_checksum() -> Result<(), Error> {
         let namespace: Namespace = ("quilt_rs", "test").into();
         let uri = "quilt+s3://data-yaml-spec-tests#package=quilt_rs/test";
         let host_config = Some(HostConfig::default_sha256_chunked());
@@ -547,7 +547,7 @@ mod tests {
     /// Integration test: create local package → set bucket → push to S3 → verify lineage.
     /// Uses fiskus-us-east-1 with a dedicated namespace (no catalog — local AWS creds).
     #[test(tokio::test)]
-    async fn live_push_local_package_bucket_only() -> Result<(), Error> {
+    async fn live_write_push_local_package_bucket_only() -> Result<(), Error> {
         use crate::cli::create;
         use crate::cli::status;
         use quilt_rs::lineage::UpstreamState;
@@ -655,7 +655,7 @@ mod tests {
     /// 5. Revert 1.txt content, commit with different message and meta
     /// 6. Push and verify final expected top hash matches original: b427c3867bce2445a988f69f43ad3998237d2fedf6f5e678822acd1a1e8f580a
     #[test(tokio::test)]
-    async fn live_push_crc64_checksum() -> Result<(), Error> {
+    async fn live_write_push_crc64_checksum() -> Result<(), Error> {
         let namespace: Namespace = ("crc64", "s3").into();
         let uri = "quilt+s3://fiskus-us-east-1#package=crc64/s3";
         let host_config = Some(HostConfig::default_crc64());

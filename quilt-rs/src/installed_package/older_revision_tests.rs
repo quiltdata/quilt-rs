@@ -400,3 +400,32 @@ async fn installing_another_package_during_a_pull_keeps_the_pull() -> Res {
     );
     Ok(())
 }
+
+/// Keeping the whole package leaves a file out when its pinned version does not
+/// match the hash the package records: it is reported as a hash mismatch, not
+/// downloaded, and still outstanding.
+#[test(tokio::test)]
+async fn keeping_reports_a_wrong_hash_apart_from_the_downloads() -> Res {
+    let t = Rev1Installed::new().await?;
+    t.remote()
+        .put_object(
+            None,
+            &S3Uri::from_str(&format!("s3://{BUCKET}/f/a/changes.txt?versionId=c1"))?,
+            b"not one".to_vec(),
+        )
+        .await?;
+
+    let report = t.package.keep(SyncScope::EntirePackage, true).await?;
+
+    assert_eq!(
+        report,
+        KeepReport {
+            scope: SyncScope::EntirePackage,
+            downloaded: vec![PathBuf::from("same.txt")],
+            skipped: Vec::new(),
+            hash_mismatch: vec![PathBuf::from("changes.txt")],
+            outstanding: 1,
+        }
+    );
+    Ok(())
+}

@@ -423,7 +423,7 @@ mod tests {
     /// remote.
     #[test(tokio::test)]
     async fn test_push_rejected_by_workflow_uploads_nothing() -> Res {
-        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         remote
@@ -473,7 +473,7 @@ mod tests {
     /// placeholder). The point is that the gate did not reject it.
     #[test(tokio::test)]
     async fn test_push_governed_but_valid_passes_the_gate() -> Res {
-        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         // A permissive `gate`: no schema, no required message — the empty
@@ -558,10 +558,18 @@ mod tests {
 
     /// A row whose wire `meta` carries the wrapped `{"user_meta": {...}}`
     /// form, as manifest rows do on the wire.
+    /// The `file://` URL of `path` made absolute, which on Windows adds the
+    /// current drive: a URL without one has no Windows file path.
+    fn local_file_url(path: &str) -> String {
+        url::Url::from_file_path(std::path::absolute(path).expect("absolute"))
+            .expect("absolute")
+            .to_string()
+    }
+
     fn wrapped_meta_row(user_meta: &Value) -> ManifestRow {
         ManifestRow {
             logical_key: PathBuf::from("a.txt"),
-            physical_key: "file:///b/a/r0".to_string(),
+            physical_key: local_file_url("/b/a/r0"),
             meta: Some(json!({ "user_meta": user_meta })),
             ..ManifestRow::default()
         }
@@ -574,7 +582,7 @@ mod tests {
     /// remote.
     #[test(tokio::test)]
     async fn test_push_entries_schema_rejects_wrapped_meta_violating_unwrapped() -> Res {
-        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         seed_entries_schema_gate(&remote).await?;
@@ -618,7 +626,7 @@ mod tests {
     /// test pins the unwrapping.
     #[test(tokio::test)]
     async fn test_push_entries_schema_passes_wrapped_meta_satisfying_unwrapped() -> Res {
-        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         seed_entries_schema_gate(&remote).await?;
@@ -627,7 +635,7 @@ mod tests {
         remote
             .storage
             .write_byte_stream(
-                &PathBuf::from("/b/a/r0"),
+                std::path::absolute("/b/a/r0")?,
                 ByteStream::from_static(file_content),
             )
             .await?;
@@ -680,7 +688,7 @@ mod tests {
     /// (`b.txt` then `a.txt`) and the schema passes only in sorted order.
     #[test(tokio::test)]
     async fn test_push_entries_schema_validates_uploaded_sorted_order() -> Res {
-        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         seed_ordered_entries_schema_gate(&remote).await?;
@@ -690,7 +698,7 @@ mod tests {
             remote
                 .storage
                 .write_byte_stream(
-                    &PathBuf::from(format!("/b/a/{name}")),
+                    std::path::absolute(format!("/b/a/{name}"))?,
                     ByteStream::from_static(file_content),
                 )
                 .await?;
@@ -702,7 +710,7 @@ mod tests {
         manifest
             .insert_record(ManifestRow {
                 logical_key: PathBuf::from("b.txt"),
-                physical_key: "file:///b/a/rb".to_string(),
+                physical_key: local_file_url("/b/a/rb"),
                 size: file_content.len() as u64,
                 ..ManifestRow::default()
             })
@@ -710,7 +718,7 @@ mod tests {
         manifest
             .insert_record(ManifestRow {
                 logical_key: PathBuf::from("a.txt"),
-                physical_key: "file:///b/a/ra".to_string(),
+                physical_key: local_file_url("/b/a/ra"),
                 size: file_content.len() as u64,
                 ..ManifestRow::default()
             })
@@ -768,7 +776,7 @@ mod tests {
     /// config, not bypassed by the header's self-declared (absent) workflow.
     #[test(tokio::test)]
     async fn test_push_header_none_to_required_bucket_is_rejected() -> Res {
-        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         // `is_workflow_required` defaults to true; a `gate` workflow is
@@ -815,7 +823,7 @@ mod tests {
     /// and push hard-errors, uploading nothing.
     #[test(tokio::test)]
     async fn test_push_stamped_id_missing_from_current_config_errors() -> Res {
-        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         // The header's pinned config still knows `gate` (would vacuously pass
@@ -879,7 +887,7 @@ mod tests {
     /// rejected once the config is tightened, with no other change.
     #[test(tokio::test)]
     async fn test_push_revalidates_against_mutated_current_config() -> Res {
-        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
         let config_uri = S3Uri::try_from("s3://b/.quilt/workflows/config.yml")?;
 
         // Under a permissive config, the governed manifest clears the gate and
@@ -961,7 +969,7 @@ mod tests {
     /// manifest, reaching the post-upload hash check.
     #[test(tokio::test)]
     async fn test_push_ungoverned_bucket_passes_the_gate() -> Res {
-        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         // No config seeded for bucket `b`.
@@ -1010,7 +1018,7 @@ mod tests {
             remote_uri: Some(manifest_uri),
             ..PackageLineage::default()
         };
-        let paths = paths::DomainPaths::new(PathBuf::from("/foo"));
+        let paths = paths::DomainPaths::new(std::path::absolute("/foo")?);
         let manifest_key = paths
             .cached_manifests_dir("b")
             .join(fixtures::top_hash::EMPTY_NULL_TOP_HASH);
@@ -1110,7 +1118,7 @@ mod tests {
         let file_content = b"Thu Feb 29 19:07:56 PST 2024\n";
 
         for i in 0..10 {
-            let file_path = PathBuf::from(format!("/b/a/r{i}"));
+            let file_path = std::path::absolute(format!("/b/a/r{i}"))?;
             remote
                 .storage
                 .write_byte_stream(&file_path, ByteStream::from_static(file_content))
@@ -1119,7 +1127,9 @@ mod tests {
             manifest
                 .insert_record(ManifestRow {
                     logical_key: PathBuf::from(format!("e0-{i}.txt")),
-                    physical_key: format!("file://{}", file_path.display()),
+                    physical_key: url::Url::from_file_path(&file_path)
+                        .expect("absolute")
+                        .to_string(),
                     hash: crate::object_hash::Sha256ChunkedHash::try_from(
                         "/UMjH1bsbrMLBKdd9cqGGvtjhWzawhz1BfrxgngUhVI=",
                     )?

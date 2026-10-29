@@ -938,9 +938,9 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1023,9 +1023,9 @@ async fn test_pull_up_to_date_returns_up_to_date_and_writes_latest_hash() -> Res
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1107,9 +1107,9 @@ async fn behind_package(
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1405,9 +1405,9 @@ async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1468,9 +1468,9 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1541,9 +1541,9 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1596,9 +1596,9 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
                         "paths": {{}}
                     }}
                 }},
-                "home": "{}"
+                "home": {}
             }}"#,
-            home.as_ref().display(),
+            serde_json::to_string(&home)?,
         );
         storage
             .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1700,9 +1700,9 @@ async fn state_with(
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1823,9 +1823,9 @@ async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
                         "paths": {{}}
                     }}
                 }},
-                "home": "{}"
+                "home": {}
             }}"#,
-            home.as_ref().display(),
+            serde_json::to_string(&home)?,
         );
         storage
             .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1916,5 +1916,120 @@ async fn test_status_with_downloads_counts_the_current_revision() -> Res {
         }
     );
 
+    Ok(())
+}
+
+/// A file in a folder keeps a `/` key all the way out: in the committed
+/// manifest, in the pushed one, and in the S3 key its object goes to. On
+/// Windows the walk finds `data\raw\a.csv`, so this is where a separator
+/// leak would show. Keys are compared as text: Windows paths treat both
+/// separators as one, so a `PathBuf` comparison would pass either way.
+#[test(tokio::test)]
+async fn test_commit_and_push_key_a_file_in_a_folder_with_slashes() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let namespace: Namespace = ("test", "slash").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    let lineage_json = serde_json::json!({
+        "packages": {
+            "test/slash": {
+                "commit": null,
+                "remote": null,
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {}
+            }
+        },
+        "home": &home,
+    })
+    .to_string();
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(MockRemote::default()),
+        storage,
+        namespace,
+        state_store: None,
+    };
+    // The walk lists folders itself, so on Windows it finds `data\raw\a.csv`.
+    let file = package.package_home().await?.join("data/raw/a.csv");
+    package
+        .storage
+        .write_byte_stream(&file, ByteStream::from_static(b"a,b\n"))
+        .await?;
+
+    package
+        .commit("add".to_string(), UserMeta::Clear, None, None)
+        .await?;
+    let manifest = package.manifest().await?;
+    // The mock remote hashes an upload's source, the committed object, from
+    // its own storage, so the object is copied there.
+    let object = url::Url::parse(&manifest.rows[0].physical_key)?
+        .to_file_path()
+        .expect("a local object");
+    package
+        .remote
+        .storage
+        .write_byte_stream(&object, ByteStream::from_static(b"a,b\n"))
+        .await?;
+    let committed: Vec<String> = manifest
+        .rows
+        .iter()
+        .map(|row| row.logical_key.to_str().expect("UTF-8").to_string())
+        .collect();
+    assert_eq!(committed, ["data/raw/a.csv"]);
+
+    // Created, committed, then given a bucket, as `quilt create`, `commit`
+    // and `set-remote` do it.
+    package
+        .set_remote(
+            "b".to_string(),
+            None,
+            crate::io::remote::WorkflowIntent::BucketDefault,
+        )
+        .await?;
+
+    let Pushed::Uploaded(outcome) = package.push(None).await? else {
+        panic!("expected the commit to be pushed");
+    };
+    let pushed_uri =
+        S3Uri::try_from(format!("s3://b/.quilt/packages/{}", outcome.manifest_uri.hash).as_str())?;
+    let body = package
+        .remote
+        .get_object_stream(None, &pushed_uri)
+        .await?
+        .body
+        .collect()
+        .await?
+        .to_vec();
+    let rows: Vec<(String, String)> = String::from_utf8(body)
+        .expect("UTF-8")
+        .lines()
+        .skip(1)
+        .map(|line| {
+            let row: serde_json::Value = serde_json::from_str(line).expect("a JSON row");
+            (
+                row["logical_key"].as_str().expect("a key").to_string(),
+                row["physical_keys"][0]
+                    .as_str()
+                    .expect("a place")
+                    .to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [(
+            "data/raw/a.csv".to_string(),
+            "s3://b/test/slash/data/raw/a.csv?versionId=version".to_string()
+        )]
+    );
     Ok(())
 }

@@ -2,3 +2,15 @@
 # from a fork gets no secrets from GitHub, so CI selects this profile there.
 [profile.no-aws]
 default-filter = 'not test(/::live_/)'
+
+# Of those, the ones that write to S3 are named `live_write_*`. Some push a
+# fixture package and then restore it, so two at once would see each other's
+# in-between revisions. This group runs them one at a time within a run; CI
+# keeps runs apart with a concurrency group. The other `live_*` tests only
+# read pinned fixtures no writer touches, so they stay parallel.
+[test-groups]
+live-write = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'test(/::live_write_/)'
+test-group = 'live-write'

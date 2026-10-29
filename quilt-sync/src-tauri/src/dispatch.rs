@@ -183,7 +183,7 @@ commands! {
         get_package_page_data(namespace: String) -> PackagePageData;
         get_revision_history(namespace: String) -> RevisionHistoryData;
         remove_revisions(namespace: String, hashes: Vec<String>) -> String;
-        package_download_backlog(namespace: String, paths: Vec<String>) -> Vec<String>;
+        package_download_backlog(namespace: String, paths: Vec<String>) -> crate::commands::NotDownloaded;
         get_settings_data() -> SettingsData;
         set_default_ignore_rules(off: Vec<String>) -> ();
         open_user_ignore_rules() -> ();

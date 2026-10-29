@@ -122,23 +122,37 @@ pub fn group_state(ticked: &BTreeSet<String>, members: &[String]) -> CheckState 
 /// The band's words when the download left files behind: the lead, and the
 /// paths as the detail. `None` when every file came down.
 #[must_use]
-pub fn unavailable(asked: usize, skipped: &[String]) -> Option<(String, String)> {
-    let left = skipped.len();
+pub fn unavailable(
+    asked: usize,
+    skipped: &[String],
+    hash_mismatch: &[String],
+) -> Option<(String, String)> {
+    let left = skipped.len() + hash_mismatch.len();
     if left == 0 {
         return None;
     }
-    let files = if left == 1 {
-        "1 file is"
-    } else {
-        &format!("{left} files are")
-    };
-    Some((
-        format!(
-            "Downloaded {} of {asked}. {files} no longer on the remote at this revision.",
-            asked.saturating_sub(left)
-        ),
-        skipped.join(", "),
-    ))
+    let mut lead = vec![format!(
+        "Downloaded {} of {asked}.",
+        asked.saturating_sub(left)
+    )];
+    match skipped.len() {
+        0 => {}
+        1 => lead.push("1 file is no longer on the remote at this revision.".to_string()),
+        n => lead.push(format!(
+            "{n} files are no longer on the remote at this revision."
+        )),
+    }
+    match hash_mismatch.len() {
+        0 => {}
+        1 => lead.push("1 file doesn't match the hash the package records.".to_string()),
+        n => lead.push(format!(
+            "{n} files don't match the hash the package records."
+        )),
+    }
+    if !hash_mismatch.is_empty() {
+        lead.push("The package may be corrupt.".to_string());
+    }
+    Some((lead.join(" "), [skipped, hash_mismatch].concat().join(", ")))
 }
 
 #[cfg(test)]
@@ -208,7 +222,7 @@ mod tests {
 
     #[test]
     fn a_whole_download_says_nothing() {
-        assert_eq!(unavailable(17, &[]), None);
+        assert_eq!(unavailable(17, &[], &[]), None);
     }
 
     /// The rulings' own example.
@@ -216,7 +230,7 @@ mod tests {
     fn a_download_that_left_files_behind_counts_them_and_names_them() {
         let skipped = paths(&["raw/a.csv", "raw/b.csv", "raw/c.csv"]);
         assert_eq!(
-            unavailable(17, &skipped),
+            unavailable(17, &skipped, &[]),
             Some((
                 "Downloaded 14 of 17. 3 files are no longer on the remote at this revision."
                     .to_string(),
@@ -228,11 +242,41 @@ mod tests {
     #[test]
     fn one_file_left_behind_is_singular() {
         assert_eq!(
-            unavailable(2, &paths(&["raw/a.csv"])).map(|(lead, _)| lead),
+            unavailable(2, &paths(&["raw/a.csv"]), &[]).map(|(lead, _)| lead),
             Some(
                 "Downloaded 1 of 2. 1 file is no longer on the remote at this revision."
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn a_file_whose_hash_does_not_match_says_the_package_may_be_corrupt() {
+        assert_eq!(
+            unavailable(2, &[], &paths(&["raw/a.csv"])),
+            Some((
+                "Downloaded 1 of 2. 1 file doesn't match the hash the package records. \
+                 The package may be corrupt."
+                    .to_string(),
+                "raw/a.csv".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn files_gone_and_files_mismatched_are_both_said_and_all_named() {
+        assert_eq!(
+            unavailable(
+                10,
+                &paths(&["raw/a.csv"]),
+                &paths(&["raw/b.csv", "raw/c.csv"])
+            ),
+            Some((
+                "Downloaded 7 of 10. 1 file is no longer on the remote at this revision. \
+                 2 files don't match the hash the package records. The package may be corrupt."
+                    .to_string(),
+                "raw/a.csv, raw/b.csv, raw/c.csv".to_string()
+            ))
         );
     }
 }

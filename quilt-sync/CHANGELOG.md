@@ -19,6 +19,19 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.26.1] - 2026-10-29
+
+### Fixed
+
+- When a file's bytes do not match the hash the package records, QuiltSync says so and warns that the package may be corrupt, instead of saying the file is gone from the bucket
+  - <https://github.com/quiltdata/quilt-rs/issues/1246>
+  - <https://github.com/quiltdata/quilt-rs/pull/1254>
+- On Windows, files in folders are committed with `/` in their names, not `\` (<https://github.com/quiltdata/quilt-rs/pull/1253>)
+
+### quilt-rs
+
+- Updated [from v0.50.0 to v0.51.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.50.0...quilt-rs/v0.51.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.26.0] - 2026-10-28
 
 ### Added

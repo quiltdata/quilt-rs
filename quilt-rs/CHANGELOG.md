@@ -19,6 +19,20 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.51.0] - 2026-10-29
+
+### Changed
+
+- **Breaking:** a file pinned to an S3 version whose bytes do not match the hash the package records is reported as a hash mismatch, not as gone from the bucket. `InstallPathError` has a new `HashMismatch` variant, and `InstallPathsReport` and `KeepReport` a new `hash_mismatch` field
+  - <https://github.com/quiltdata/quilt-rs/issues/1246>
+  - <https://github.com/quiltdata/quilt-rs/pull/1254>
+
+### Fixed
+
+- Reset to latest discards a pending local commit even when its base is already latest (<https://github.com/quiltdata/quilt-rs/pull/1197>)
+- On Windows, files in folders get logical keys with `/`, not `\` (<https://github.com/quiltdata/quilt-rs/pull/1253>)
+- Status and `checksum::calculate_hash` give local files a percent-encoded `file://` physical key, like every other local key (<https://github.com/quiltdata/quilt-rs/pull/1255>)
+
 ## [v0.50.0] - 2026-10-28
 
 ### Added

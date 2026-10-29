@@ -27,6 +27,9 @@ pub struct Output {
     /// Requested paths not installed because the remote no longer holds their
     /// bytes (an unversioned bucket, overwritten since).
     skipped: Vec<std::path::PathBuf>,
+    /// Requested paths not installed because their bytes do not match the
+    /// hash the package records.
+    hash_mismatch: Vec<std::path::PathBuf>,
     /// Requested paths the copy already tracked, left as they are.
     already_installed: Vec<std::path::PathBuf>,
     /// What `--keep-all` or `--keep-folder` set and downloaded.
@@ -42,11 +45,13 @@ impl Output {
 
 impl Output {
     /// The requested paths that were installed now: every one but the
-    /// skipped and the already installed.
+    /// skipped, the hash-mismatched and the already installed.
     fn installed(&self) -> impl Iterator<Item = &PathBuf> {
-        self.paths
-            .iter()
-            .filter(|path| !self.skipped.contains(path) && !self.already_installed.contains(path))
+        self.paths.iter().filter(|path| {
+            !self.skipped.contains(path)
+                && !self.hash_mismatch.contains(path)
+                && !self.already_installed.contains(path)
+        })
     }
 }
 
@@ -71,6 +76,12 @@ impl std::fmt::Display for Output {
                 path.display()
             ));
         }
+        for path in &self.hash_mismatch {
+            output.push(format!(
+                "Hash mismatch: \"{}\" (the package may be corrupt)",
+                path.display()
+            ));
+        }
         if let Some(keep) = &self.keep {
             output.push(keep.to_string());
         }
@@ -86,13 +97,18 @@ impl Render for Output {
                 .installed()
                 // Unlike every other payload's keys, these are the caller's
                 // own `&path=` and `--path` values echoed back, less the
-                // skipped and already installed ones — never matched against the manifest. A non-UTF-8 argument
+                // ones left out and already installed — never matched against the manifest. A non-UTF-8 argument
                 // renders lossily here; it also matches no manifest key, so
                 // it installs nothing.
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
             "skipped": self
                 .skipped
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+            "hash_mismatch": self
+                .hash_mismatch
                 .iter()
                 .map(|path| path.display().to_string())
                 .collect::<Vec<_>>(),
@@ -172,6 +188,7 @@ pub async fn model(
         installed_package,
         paths,
         skipped: report.skipped,
+        hash_mismatch: report.hash_mismatch,
         already_installed: report.already_installed,
         keep,
     })
@@ -373,6 +390,7 @@ mod tests {
             output.to_json()["skipped"],
             serde_json::json!([pkg::REPLACED])
         );
+        assert_eq!(output.to_json()["hash_mismatch"], serde_json::json!([]));
         assert!(
             format!("{output}").ends_with(&format!(
                 "Skipped: \"{}\" (no longer on the remote)",
@@ -440,15 +458,17 @@ mod tests {
             paths: vec![
                 std::path::PathBuf::from("data/one.csv"),
                 std::path::PathBuf::from("data/two.csv"),
+                std::path::PathBuf::from("data/three.csv"),
             ],
             skipped: vec![std::path::PathBuf::from("data/two.csv")],
+            hash_mismatch: vec![std::path::PathBuf::from("data/three.csv")],
             already_installed: Vec::new(),
             keep: None,
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/pkg","paths":["data/one.csv"],"skipped":["data/two.csv"],"already_installed":[],"keep":null}"#
+            r#"{"namespace":"test/pkg","paths":["data/one.csv"],"skipped":["data/two.csv"],"hash_mismatch":["data/three.csv"],"already_installed":[],"keep":null}"#
         );
         Ok(())
     }
@@ -511,10 +531,10 @@ mod tests {
         Ok(())
     }
 
-    /// A skipped path is listed once, as skipped, never as a `Path:` line: that
-    /// list reads as the files now on disk.
+    /// A skipped or hash-mismatched path is listed once, as such, never as a
+    /// `Path:` line: that list reads as the files now on disk.
     #[test(tokio::test)]
-    async fn text_lists_a_skipped_path_only_as_skipped() -> Result<(), Error> {
+    async fn text_lists_a_path_left_out_only_as_left_out() -> Result<(), Error> {
         use crate::cli::create;
         use crate::cli::model::create_model_in_temp_dir;
 
@@ -529,8 +549,13 @@ mod tests {
 
         let output = Output {
             installed_package: created.installed_package,
-            paths: vec![PathBuf::from("a.txt"), PathBuf::from("b.txt")],
+            paths: vec![
+                PathBuf::from("a.txt"),
+                PathBuf::from("b.txt"),
+                PathBuf::from("d.txt"),
+            ],
             skipped: vec![PathBuf::from("b.txt")],
+            hash_mismatch: vec![PathBuf::from("d.txt")],
             already_installed: vec![PathBuf::from("c.txt")],
             keep: None,
         };
@@ -539,7 +564,8 @@ mod tests {
             format!("{output}").ends_with(concat!(
                 "\nPath: \"a.txt\"",
                 "\nAlready installed: \"c.txt\"",
-                "\nSkipped: \"b.txt\" (no longer on the remote)"
+                "\nSkipped: \"b.txt\" (no longer on the remote)",
+                "\nHash mismatch: \"d.txt\" (the package may be corrupt)"
             )),
             "{output}"
         );
@@ -637,13 +663,14 @@ mod tests {
             installed_package: created.installed_package,
             paths: Vec::new(),
             skipped: Vec::new(),
+            hash_mismatch: Vec::new(),
             already_installed: Vec::new(),
             keep: None,
         };
 
         assert_eq!(
             output.to_json().to_string(),
-            r#"{"namespace":"test/bare","paths":[],"skipped":[],"already_installed":[],"keep":null}"#
+            r#"{"namespace":"test/bare","paths":[],"skipped":[],"hash_mismatch":[],"already_installed":[],"keep":null}"#
         );
         Ok(())
     }

@@ -523,7 +523,7 @@ async fn files_data(
 }
 
 /// Untracked files are not counted: reset's touch set is `lineage.paths`
-/// (`flow/reset_to_latest.rs:56`), and a file it does not track stays.
+/// (`touched` in `flow/reset_to_latest.rs`), and a file it does not track stays.
 fn resolve_data(
     lineage: &quilt::lineage::PackageLineage,
     comparison: quilt::flow::ResolveComparison,
@@ -909,19 +909,29 @@ async fn remove_revisions_from_model(
     m.package_remove_revisions(&installed, &hashes).await
 }
 
+/// The paths a download left out. Mirrored by the UI's `NotDownloaded`.
+#[derive(Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotDownloaded {
+    /// Their bytes are no longer in the bucket at this revision (an
+    /// unversioned bucket, overwritten since).
+    pub skipped: Vec<String>,
+    /// Their bytes do not match the hash the package records.
+    pub hash_mismatch: Vec<String>,
+}
+
 /// Install the backlog the page read listed — Keeping's `Download N files`.
 ///
 /// Namespace-keyed like the rest of this page, and not v1's
 /// `package_install_paths`: that opens the file browser after every install
 /// (the file, or the package folder), which a backlog catch-up must not do.
 ///
-/// Returns the paths it skipped because the remote no longer holds their
-/// bytes (an unversioned bucket, overwritten since). Empty when all installed.
+/// Returns the paths it left out; both lists are empty when all installed.
 pub async fn package_download_backlog(
     s: &Services,
     namespace: String,
     paths: Vec<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<NotDownloaded, String> {
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let watcher = &s.watcher;
@@ -929,30 +939,38 @@ pub async fn package_download_backlog(
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    let result = download_backlog_from_model(m, watcher, &namespace, &paths).await;
-    let skipped: Vec<String> = match &result {
-        Ok(skipped) => skipped.iter().map(|p| p.display().to_string()).collect(),
-        Err(_) => Vec::new(),
+    let (result, left_out) = match download_backlog_from_model(m, watcher, &namespace, &paths).await
+    {
+        Ok(left_out) => (Ok(()), left_out),
+        Err(err) => (Err(err), NotDownloaded::default()),
     };
-    let msg_ok = if skipped.is_empty() {
+    let left = left_out.skipped.len() + left_out.hash_mismatch.len();
+    let mut said = vec![if left == 0 {
         format!("Downloaded {} files", paths.len())
     } else {
-        format!(
-            "Downloaded {} of {} files; skipped {} no longer on the remote",
-            paths.len() - skipped.len(),
-            paths.len(),
-            skipped.len()
-        )
-    };
+        format!("Downloaded {} of {} files", paths.len() - left, paths.len())
+    }];
+    if !left_out.skipped.is_empty() {
+        said.push(format!(
+            "skipped {} no longer on the remote",
+            left_out.skipped.len()
+        ));
+    }
+    if !left_out.hash_mismatch.is_empty() {
+        said.push(format!(
+            "skipped {} whose hash doesn't match the package",
+            left_out.hash_mismatch.len()
+        ));
+    }
     Notify::new(format!("Downloading the backlog of {namespace}"))
         .on_success(
             tracing,
             MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(None)),
         )
-        .map(result, msg_ok, |err| {
+        .map(result, said.join("; "), |err| {
             format!("Failed to download files: {}", err.user_facing())
         })?;
-    Ok(skipped)
+    Ok(left_out)
 }
 
 async fn download_backlog_from_model(
@@ -960,7 +978,7 @@ async fn download_backlog_from_model(
     watcher: &Watcher,
     namespace: &quilt_uri::Namespace,
     paths: &[String],
-) -> Result<Vec<PathBuf>, Error> {
+) -> Result<NotDownloaded, Error> {
     let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
             namespace.to_owned(),
@@ -973,9 +991,12 @@ async fn download_backlog_from_model(
     // A whole-package catch-up, so it raises the in-flight flag a pull does:
     // quitting mid-download would leave files in place that the lineage never records.
     let _applying = watcher.apply_guard(namespace);
-    Ok(m.locked_package_install_paths(&locked, &paths)
-        .await?
-        .skipped)
+    let report = m.locked_package_install_paths(&locked, &paths).await?;
+    let strings = |paths: Vec<PathBuf>| paths.iter().map(|p| p.display().to_string()).collect();
+    Ok(NotDownloaded {
+        skipped: strings(report.skipped),
+        hash_mismatch: strings(report.hash_mismatch),
+    })
 }
 
 #[cfg(test)]
@@ -2608,7 +2629,7 @@ mod tests {
         });
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
 
-        let skipped = download_backlog_from_model(
+        let left_out = download_backlog_from_model(
             &m,
             &test_watcher(),
             &ns,
@@ -2617,7 +2638,48 @@ mod tests {
         .await
         .expect("a partial download is not an error");
 
-        assert_eq!(skipped, vec![PathBuf::from("plate/c.csv")]);
+        assert_eq!(
+            left_out,
+            NotDownloaded {
+                skipped: vec!["plate/c.csv".to_string()],
+                hash_mismatch: Vec::new(),
+            }
+        );
+    }
+
+    /// A file whose bytes do not match the hash the package records is left
+    /// out too, and returned apart from the skipped ones.
+    #[tokio::test]
+    async fn a_download_returns_the_files_whose_hash_does_not_match() {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        m.expect_locked_package_install_paths().returning(|_, _| {
+            Ok(quilt::flow::InstallPathsReport {
+                hash_mismatch: vec![PathBuf::from("plate/c.csv")],
+                ..Default::default()
+            })
+        });
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        let left_out = download_backlog_from_model(
+            &m,
+            &test_watcher(),
+            &ns,
+            &["plate/b.csv".into(), "plate/c.csv".into()],
+        )
+        .await
+        .expect("a partial download is not an error");
+
+        assert_eq!(
+            left_out,
+            NotDownloaded {
+                skipped: Vec::new(),
+                hash_mismatch: vec!["plate/c.csv".to_string()],
+            }
+        );
     }
 
     #[tokio::test]

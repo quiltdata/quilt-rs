@@ -1037,14 +1037,15 @@ async fn package_install_paths_command(
     m: &model::Model,
     uri: &str,
     paths: &[String],
-) -> Result<Vec<PathBuf>, Error> {
+) -> Result<quilt::flow::InstallPathsReport, Error> {
     let uri = quilt_uri::S3PackageUri::try_from(uri)?;
     let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
     model::install_paths_only(m, &uri.namespace, paths).await
 }
 
 /// Returns the notice the page shows. A path the remote no longer holds the
-/// bytes for is skipped and counted in it, not an error for the whole call.
+/// bytes for, or whose bytes do not match the package's hash, is skipped and
+/// counted in it, not an error for the whole call.
 pub async fn package_install_paths(
     s: &Services,
     uri: String,
@@ -1059,17 +1060,36 @@ pub async fn package_install_paths(
 
     let result = package_install_paths_command(m, &uri, &paths).await;
     let msg_ok = match &result {
-        Ok(skipped) if !skipped.is_empty() => format!(
-            "Installed {} of {} paths; skipped {} no longer on the remote: {}",
-            paths.len() - skipped.len(),
-            paths.len(),
-            skipped.len(),
-            skipped
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        Ok(report) if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() => {
+            let listed = |paths: &[PathBuf]| {
+                paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let left = report.skipped.len() + report.hash_mismatch.len();
+            let mut said = vec![format!(
+                "Installed {} of {} paths",
+                paths.len() - left,
+                paths.len()
+            )];
+            if !report.skipped.is_empty() {
+                said.push(format!(
+                    "skipped {} no longer on the remote: {}",
+                    report.skipped.len(),
+                    listed(&report.skipped)
+                ));
+            }
+            if !report.hash_mismatch.is_empty() {
+                said.push(format!(
+                    "skipped {} whose hash doesn't match the package: {}",
+                    report.hash_mismatch.len(),
+                    listed(&report.hash_mismatch)
+                ));
+            }
+            said.join("; ")
+        }
         _ => format!("Successfully installed {} paths", paths.len()),
     };
     Notify::new(msg_init)
@@ -1353,12 +1373,16 @@ pub async fn handle_remote_package(
                 .package_install_paths(&installed_package, std::slice::from_ref(path))
                 .await
                 .map_err(|e| e.to_frontend_string())?;
-            // One path asked for, so skipping it leaves nothing to open.
-            if !report.skipped.is_empty() {
-                return Err(Error::from(quilt::Error::InstallPath(
-                    quilt::InstallPathError::ContentMismatch(path.clone()),
-                ))
-                .to_frontend_string());
+            // One path asked for, so leaving it out leaves nothing to open.
+            let left_out = if !report.hash_mismatch.is_empty() {
+                Some(quilt::InstallPathError::HashMismatch(path.clone()))
+            } else if !report.skipped.is_empty() {
+                Some(quilt::InstallPathError::ContentMismatch(path.clone()))
+            } else {
+                None
+            };
+            if let Some(err) = left_out {
+                return Err(Error::from(quilt::Error::InstallPath(err)).to_frontend_string());
             }
         }
         m.open_in_default_application(&s3_uri.namespace, path)

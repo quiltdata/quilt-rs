@@ -26,6 +26,9 @@ pub struct Output {
     downloaded: usize,
     /// Files it tried to download whose bytes the remote no longer holds.
     skipped: Vec<PathBuf>,
+    /// Files it tried to download whose bytes do not match the hash the
+    /// package records.
+    hash_mismatch: Vec<PathBuf>,
     /// Files the scope covers that are still not here.
     outstanding: usize,
 }
@@ -82,6 +85,13 @@ impl std::fmt::Display for Output {
             write!(
                 f,
                 "\nSkipped: \"{}\" (no longer on the remote)",
+                printable_line(&path.display().to_string())
+            )?;
+        }
+        for path in &self.hash_mismatch {
+            write!(
+                f,
+                "\nHash mismatch: \"{}\" (the package may be corrupt)",
                 printable_line(&path.display().to_string())
             )?;
         }
@@ -144,6 +154,7 @@ pub async fn keep(
         scope: report.scope,
         downloaded: report.downloaded.len(),
         skipped: report.skipped,
+        hash_mismatch: report.hash_mismatch,
         outstanding: report.outstanding,
     })
 }
@@ -165,6 +176,7 @@ mod tests {
             scope,
             downloaded: 0,
             skipped: Vec::new(),
+            hash_mismatch: Vec::new(),
             outstanding,
         }
     }
@@ -207,11 +219,14 @@ mod tests {
             Output {
                 downloaded: 3,
                 skipped: vec![PathBuf::from("data/gone.csv")],
+                hash_mismatch: vec![PathBuf::from("data/bad.csv")],
                 ..output(SyncScope::folders(["data", "results"]).unwrap(), 1)
             }
             .to_string(),
             "team/plates keeps every file in data and results\nDownloaded 3 files\n\
-             Skipped: \"data/gone.csv\" (no longer on the remote)\n1 file not downloaded yet"
+             Skipped: \"data/gone.csv\" (no longer on the remote)\n\
+             Hash mismatch: \"data/bad.csv\" (the package may be corrupt)\n\
+             1 file not downloaded yet"
         );
     }
 

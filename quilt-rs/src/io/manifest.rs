@@ -357,7 +357,7 @@ mod tests {
     #[test(tokio::test)]
     async fn upload_row_keeps_the_committed_checksum_type() -> Res {
         let remote = MockRemote::default();
-        let path = std::path::Path::new("/data.csv");
+        let path = &std::path::absolute("/data.csv")?;
         remote
             .storage
             .write_byte_stream(path, ByteStream::from_static(b"a,b\n1,2\n"))
