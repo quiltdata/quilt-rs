@@ -58,6 +58,9 @@ jobs:
 
       - name: List the jobs to run
         id: changes
+        # An explicit `bash` adds `pipefail`, so a failing `just changes` fails
+        # the step rather than skipping every job.
+        shell: bash
         env:
           EVENT: ${{ github.event_name }}
         run: |
