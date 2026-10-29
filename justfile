@@ -46,7 +46,9 @@ ci-pr base="origin/main":
     #!/usr/bin/env bash
     set -euo pipefail
     just={{ quote(just_executable()) }}
-    eval "$("$just" changes "$(git merge-base {{ quote(base) }} HEAD)")"
+    merge_base=$(git merge-base {{ quote(base) }} HEAD)
+    jobs=$("$just" changes "$merge_base")
+    eval "$jobs"
     if $md; then "$just" lint-md; fi
     if $rs; then
         "$just" deny
@@ -78,8 +80,10 @@ ci-pr base="origin/main":
 changes *args:
     #!/usr/bin/env bash
     set -euo pipefail
+    files=$(git diff --name-only "$@")
     md=false rs=false sync=false ui=false
     while IFS= read -r f; do
+        [ -n "$f" ] || continue
         case "$f" in
             *.md | .rumdl.toml | justfile | .github/workflows/test.yaml) md=true ;;
         esac
@@ -93,7 +97,7 @@ changes *args:
             quilt-sync/ui/* | quilt-uri/* | Cargo.toml | Cargo.lock | rust-toolchain.toml | clippy.toml | .cargo/* | \
                 justfile | test.just | .github/workflows/test.yaml | .github/actions/*) ui=true ;;
         esac
-    done < <(git diff --name-only "$@")
+    done <<< "$files"
     printf '%s\n' "md=$md" "rs=$rs" "sync=$sync" "ui=$ui"
 
 # rumdl needs an explicit file list: pointed at a directory it obeys every
