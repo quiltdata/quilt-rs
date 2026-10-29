@@ -127,6 +127,9 @@ jobs:
     # `workspace` runs these on Ubuntu only, and macOS shares its Unix
     # semantics. Windows differs in paths, locking and open-file deletion,
     # all of which the CLI reaches through quilt-rs storage code.
+    # Only on `main`, scheduled runs included: Windows is the slowest runner
+    # and most pull requests change nothing Windows-specific.
+    if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
     timeout-minutes: 45
     env:
