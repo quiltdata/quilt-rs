@@ -245,7 +245,7 @@ mod tests {
     /// commits nothing, pushes nothing and writes no second tag.
     #[test(tokio::test)]
     async fn test_publish_same_input_twice_publishes_nothing() -> Res {
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let storage = MockStorage::default();
         let remote = MockRemote::default();
         let namespace: Namespace = ("foo", "bar").into();
@@ -319,7 +319,7 @@ mod tests {
             ..PackageLineage::default()
         };
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let storage = MockStorage::default();
         storage
             .write_byte_stream(
@@ -374,9 +374,12 @@ mod tests {
         };
 
         let storage = MockStorage::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         storage
-            .write_byte_stream(PathBuf::from("/working-dir/foo"), ByteStream::default())
+            .write_byte_stream(
+                std::path::absolute("/working-dir/foo")?,
+                ByteStream::default(),
+            )
             .await?;
 
         let status = InstalledPackageStatus {
@@ -399,7 +402,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),
@@ -429,7 +432,10 @@ mod tests {
     ) -> Res<(MockStorage, MockRemote)> {
         let storage = MockStorage::default();
         storage
-            .write_byte_stream(PathBuf::from("/working-dir/foo"), ByteStream::default())
+            .write_byte_stream(
+                std::path::absolute("/working-dir/foo")?,
+                ByteStream::default(),
+            )
             .await?;
 
         let remote = MockRemote::default();
@@ -502,7 +508,7 @@ mod tests {
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let added = row_from_fixture(&manifest_src, "0mb.bin");
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (storage, remote) =
             setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
 
@@ -519,7 +525,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),
@@ -553,12 +559,12 @@ mod tests {
         let storage = MockStorage::default();
         storage
             .write_byte_stream(
-                PathBuf::from("/working-dir/foo"),
+                std::path::absolute("/working-dir/foo")?,
                 ByteStream::from_static(fixtures::objects::less_than_8mb()),
             )
             .await?;
         let remote = MockRemote::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let object_path = paths
             .objects_dir()
             .join(fixtures::objects::LESS_THAN_8MB_HASH_HEX);
@@ -588,7 +594,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),
@@ -620,7 +626,7 @@ mod tests {
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let added = row_from_fixture(&manifest_src, "0mb.bin");
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (storage, remote) =
             setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
 
@@ -665,7 +671,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),
@@ -706,7 +712,7 @@ mod tests {
 
         // Remove has nothing to copy into the object store, but setup still
         // seeds /working-dir/foo so the helper stays uniform across tests.
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (storage, remote) =
             setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
 
@@ -724,7 +730,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),
@@ -755,7 +761,7 @@ mod tests {
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let added = row_from_fixture(&manifest_src, "0mb.bin");
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (storage, remote) =
             setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
 
@@ -772,7 +778,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),

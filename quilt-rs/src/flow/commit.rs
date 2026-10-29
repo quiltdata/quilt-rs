@@ -427,7 +427,7 @@ mod tests {
     /// and must reject *before* any manifest is written — nothing is committed.
     #[test(tokio::test)]
     async fn test_commit_rejected_by_workflow_writes_nothing() -> Res {
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let namespace: Namespace = ("foo", "bar").into();
         let config_uri: S3Uri = "s3://b/.quilt/workflows/config.yml".parse()?;
         let workflow = Workflow {
@@ -524,7 +524,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_commit_empty() -> Res {
         let storage = MockStorage::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
         let (_lineage, commit) = commit_package(
@@ -559,7 +559,7 @@ mod tests {
         passed_meta: UserMeta,
     ) -> Res<String> {
         let storage = MockStorage::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (_lineage, commit) = commit_package(
             PackageLineage::default(),
             &mut manifest_with_meta(initial_meta),
@@ -620,7 +620,7 @@ mod tests {
             serde_json::Value::String("ipsum".to_string()),
         );
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
         let (_lineage, commit) = commit_package(
@@ -683,7 +683,7 @@ mod tests {
             "Initial lineage doesn't have testing path"
         );
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (lineage, commit) = commit_package(
             lineage,
             &mut manifest,
@@ -732,7 +732,10 @@ mod tests {
 
         let storage = MockStorage::default();
         storage
-            .write_byte_stream(PathBuf::from("/working-dir/foo"), ByteStream::default())
+            .write_byte_stream(
+                std::path::absolute("/working-dir/foo")?,
+                ByteStream::default(),
+            )
             .await?;
 
         let status = InstalledPackageStatus {
@@ -752,7 +755,7 @@ mod tests {
             "Initial lineage has path, but shouldn't because we test _new_ file"
         );
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (lineage, commit) = commit_package(
             lineage,
             &mut manifest,
@@ -760,7 +763,7 @@ mod tests {
             &storage,
             &MockRemote::default(),
             None,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
@@ -806,7 +809,7 @@ mod tests {
         let hash = added_file.hash.clone();
 
         let storage = MockStorage::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         storage
             .write_byte_stream(
                 PathBuf::from("one/two two/three three three/READ ME.md"),
@@ -864,7 +867,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_modifying_and_commit() -> Res {
         let storage = MockStorage::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         storage
             .write_byte_stream(
                 PathBuf::from("/working-dir/one/two two/three three three/READ ME.md"),
@@ -918,7 +921,7 @@ mod tests {
             &storage,
             &MockRemote::default(),
             None,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
@@ -961,7 +964,7 @@ mod tests {
         message: &str,
         workflow: Option<Workflow>,
     ) -> Res<(PackageLineage, Committed)> {
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let namespace: Namespace = ("foo", "bar").into();
         let mut manifest =
             Manifest::from_path(storage, &paths.installed_manifest(&namespace, hash)).await?;
@@ -992,7 +995,7 @@ mod tests {
         let (lineage, committed) = commit_package(
             PackageLineage::default(),
             &mut Manifest::default(),
-            &DomainPaths::new(PathBuf::from("/foo")),
+            &DomainPaths::new(std::path::absolute("/foo")?),
             storage,
             remote,
             None,
