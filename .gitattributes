@@ -1,0 +1,3 @@
+# Tests hash and compare fixture files byte for byte, so check them out
+# exactly as committed: no CRLF conversion on Windows.
+**/fixtures/** -text
