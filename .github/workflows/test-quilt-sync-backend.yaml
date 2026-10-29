@@ -45,6 +45,12 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Engine boundary
+        run: just check-engine
+
       - name: Format
         run: cargo fmt --check
         working-directory: ./quilt-sync/src-tauri

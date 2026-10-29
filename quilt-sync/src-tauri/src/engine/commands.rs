@@ -1,0 +1,46 @@
+//! The commands, grouped by domain, as plain functions over
+//! [`Services`](crate::engine::services::Services). Everything is re-exported
+//! at `commands::*`, so the desktop app's Tauri wrappers and other callers keep
+//! the flat `commands::<name>` paths.
+//!
+//! # The `uri` argument some commands take but never use
+//!
+//! A package operation is addressed by its `namespace`; several also accept the
+//! package `uri` the calling surface rendered from, and do nothing with it but
+//! read its catalog into the event's payload for
+//! [telemetry attribution](crate::engine::telemetry::Telemetry::track).
+//! It is passed rather than resolved from local lineage on purpose: the catalog
+//! the user acted on is what the analytics question asks about, and deriving it
+//! here would add I/O and a failure path to every tracked action — including one
+//! that would have to run *before* an uninstall destroys the lineage it reads.
+//! See [`crate::engine::telemetry::event::PackageEvent::for_uri`] and its siblings.
+
+mod auth;
+mod commit_data;
+mod main_page;
+mod package_data;
+mod package_entries;
+mod package_list;
+mod package_ops;
+mod package_page;
+mod quit;
+mod settings;
+mod system;
+mod toast;
+
+pub use auth::*;
+pub use commit_data::*;
+pub use main_page::*;
+pub use package_data::*;
+pub use package_list::*;
+pub use package_ops::*;
+pub use package_page::*;
+pub use quit::*;
+pub use settings::*;
+pub use system::*;
+pub use toast::*;
+
+#[cfg(test)]
+mod role_switch_chain;
+#[cfg(test)]
+mod test_support;

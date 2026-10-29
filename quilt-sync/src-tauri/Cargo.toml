@@ -1,6 +1,6 @@
 [package]
 name = "quilt-sync"
-version = "0.26.1"
+version = "0.26.2-dev"
 authors = ["Quilt Data, Inc."]
 description = "Cross-platform desktop application for editing Quilt data packages"
 documentation = "https://docs.quiltdata.com"
@@ -20,6 +20,7 @@ agent-client-protocol = "3.6.0"
 chrono.workspace = true
 dotenv = "0.15"
 dunce = "1"
+dirs.workspace = true
 futures-util = "0.3.34"
 # Named only to hold quilt-rs's `.quiltignore` matcher in the watched-root map;
 # quilt-rs owns the loading and matching (`quilt::quiltignore`).

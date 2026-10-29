@@ -41,7 +41,25 @@ fmt:
 # ends the run early.
 #
 # Run everything CI checks, live AWS tests included; use before a push
-ci: lint ci-static test::no-aws test::live ci-doctests test::frontend ci-release-build
+ci: lint check-engine ci-static test::no-aws test::live ci-doctests test::frontend ci-release-build
+
+# Fail when QuiltSync's engine names Tauri or reaches outside its folder. The
+# compiler can't enforce this inside one crate; the folder is meant to become
+# a crate of its own by moving it.
+check-engine:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd quilt-sync/src-tauri/src/engine
+    failed=0
+    if grep -rnE '\btauri[_:]' .; then
+        echo "error: the engine names Tauri (above)" >&2
+        failed=1
+    fi
+    if grep -rnoE '(^|[^$[:alnum:]_])crate::[[:alnum:]_]+' . | grep -vE 'crate::engine$'; then
+        echo "error: the engine reaches outside crate::engine (above)" >&2
+        failed=1
+    fi
+    exit "$failed"
 
 # `--all-features` is the cargo-deny action's default
 [private]

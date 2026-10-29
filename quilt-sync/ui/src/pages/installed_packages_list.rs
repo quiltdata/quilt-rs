@@ -421,7 +421,7 @@ fn PackageItem(
     //
     // The producer re-reports constantly and by design: the filesystem
     // watcher's reactor emits on *every* signal, spurious wakes included, and
-    // `TauriEventReporter` forwards each one to the webview (it consults the
+    // `SinkEventReporter` forwards each one to the webview (it consults the
     // observation fingerprint only to decide whether to log, never whether to
     // emit). So a package sitting still still delivers a stream of
     // value-identical events.

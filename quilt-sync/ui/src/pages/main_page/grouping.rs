@@ -268,7 +268,7 @@ mod tests {
         // buckets alphabetically."
         //
         // Bare bucket names, exactly as the payload carries them
-        // (`src-tauri/src/commands/main_page.rs:541`) — never `s3://`-prefixed;
+        // (`src-tauri/src/engine/commands/main_page.rs:541`) — never `s3://`-prefixed;
         // the scheme is the heading's, not the field's. The fixture's given order
         // is neither alphabetical nor local-first, so an implementation that
         // preserved input order, or sorted without the local-first rule, fails.

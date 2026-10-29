@@ -21,7 +21,7 @@ serializable structs -- the frontend owns all rendering.
 | WASM bridge | wasm-bindgen + serde-wasm-bindgen | `ui/src/tauri.rs` |
 | Styles | Plain CSS (global, no scoping) | `ui/assets/css/` |
 | Build tool | Trunk | `ui/Trunk.toml` |
-| IPC | Tauri commands (`#[tauri::command]`) | `src-tauri/src/commands.rs` |
+| IPC | Tauri commands (`#[tauri::command]`) over the engine's plain functions | `src-tauri/src/desktop/commands.rs` |
 
 ## Directory Structure
 
