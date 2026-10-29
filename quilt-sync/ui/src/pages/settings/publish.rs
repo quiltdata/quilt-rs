@@ -10,7 +10,7 @@ use crate::pages::settings_v2::show_global_scope_warning;
 /// Placeholders supported by the Publish message preview.
 ///
 /// Kept in lockstep with `PUBLISH_PLACEHOLDERS` in
-/// `quilt-sync/src-tauri/src/commit_message.rs`. When adding or renaming a
+/// `quilt-sync/src-tauri/src/engine/commit_message.rs`. When adding or renaming a
 /// placeholder, update both sides and the positional values passed to
 /// [`apply_placeholders`] below.
 const PUBLISH_PLACEHOLDERS: &[&str] =

@@ -314,12 +314,12 @@ pub fn SyncingCard(
 // ── Publishing ──
 
 /// Placeholders the message template fills in. In step with
-/// `PUBLISH_PLACEHOLDERS` in `quilt-sync/src-tauri/src/commit_message.rs`.
+/// `PUBLISH_PLACEHOLDERS` in `quilt-sync/src-tauri/src/engine/commit_message.rs`.
 pub const PUBLISH_PLACEHOLDERS: &[&str] =
     &["{date}", "{time}", "{datetime}", "{namespace}", "{changes}"];
 
 /// The template an empty one works as: `render_publish_message` in
-/// `quilt-sync/src-tauri/src/commit_message.rs` returns the changes summary.
+/// `quilt-sync/src-tauri/src/engine/commit_message.rs` returns the changes summary.
 pub const EMPTY_TEMPLATE_MEANS: &str = "{changes}";
 
 pub const PUBLISHING_USE: &str = "Publishing and autosync use these. They also fill in a new \

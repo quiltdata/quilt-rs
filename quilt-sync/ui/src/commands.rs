@@ -557,7 +557,7 @@ pub enum RemoteBanner {
 }
 
 /// The v2 package page's payload. Mirrors
-/// `src-tauri/src/commands/package_page.rs` field for field.
+/// `src-tauri/src/engine/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackagePageData {
@@ -615,7 +615,7 @@ pub struct PackageContextData {
 }
 
 /// The current revision's size, from its manifest rows: logical bytes, not
-/// disk usage. Mirrors `src-tauri/src/commands/package_page.rs`; the serde
+/// disk usage. Mirrors `src-tauri/src/engine/commands/package_page.rs`; the serde
 /// attributes MUST match.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -629,7 +629,7 @@ pub struct PackageSize {
 }
 
 /// What each resolve choice would cost, or why that cannot be read.
-/// Mirrors `src-tauri/src/commands/package_page.rs`; the serde attributes MUST match.
+/// Mirrors `src-tauri/src/engine/commands/package_page.rs`; the serde attributes MUST match.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(
     tag = "kind",
@@ -650,7 +650,7 @@ pub enum ResolveData {
 }
 
 /// Which files this copy keeps. Mirrors
-/// `src-tauri/src/commands/package_page.rs`; the serde attributes MUST match.
+/// `src-tauri/src/engine/commands/package_page.rs`; the serde attributes MUST match.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum KeepingScope {
@@ -661,7 +661,7 @@ pub enum KeepingScope {
 }
 
 /// The Keeping section: the standing rule, and what it has not yet fetched.
-/// Mirrors `src-tauri/src/commands/package_page.rs` field for field.
+/// Mirrors `src-tauri/src/engine/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct KeepingData {
@@ -691,7 +691,7 @@ pub struct CurrentRevisionData {
 }
 
 /// `History`: the rows, and the footer's figure. Mirrors
-/// `src-tauri/src/commands/package_page.rs` field for field.
+/// `src-tauri/src/engine/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RevisionHistoryData {
@@ -702,7 +702,7 @@ pub struct RevisionHistoryData {
 }
 
 /// Why a revision is kept. Mirrors `KeptReason` in
-/// `src-tauri/src/commands/package_page.rs`; the serde attributes MUST match.
+/// `src-tauri/src/engine/commands/package_page.rs`; the serde attributes MUST match.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum KeptReason {
@@ -714,7 +714,7 @@ pub enum KeptReason {
 }
 
 /// One row of `History`. Mirrors
-/// `src-tauri/src/commands/package_page.rs` field for field.
+/// `src-tauri/src/engine/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RevisionHistoryRow {
@@ -806,7 +806,7 @@ pub async fn get_installed_package_data(
 /// Read everything the v2 package page draws, for one package.
 ///
 /// One read for the page rather than one per region — see
-/// `src-tauri/src/commands/package_page.rs`.
+/// `src-tauri/src/engine/commands/package_page.rs`.
 pub async fn get_package_page_data(namespace: String) -> Result<PackagePageData, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -841,7 +841,7 @@ pub async fn remove_revisions(namespace: String, hashes: Vec<String>) -> Result<
 }
 
 /// The paths a download left out. Mirrors
-/// `src-tauri/src/commands/package_page.rs` field for field.
+/// `src-tauri/src/engine/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct NotDownloaded {

@@ -9,7 +9,7 @@
 //! keeps a seventh call site from being the one that forgets.
 //!
 //! [`use_query`] decodes on the way in, once, as does the backend's own parse of a
-//! `back` parameter (`src-tauri/src/routes.rs`), so the encoding is invisible to
+//! `back` parameter (`src-tauri/src/engine/routes.rs`), so the encoding is invisible to
 //! everything downstream.
 
 use quilt_uri::Namespace;
