@@ -334,6 +334,53 @@ mod tests {
         Ok(())
     }
 
+    /// A logical key separates folders with `/` on every OS, though the walk
+    /// finds `\\` on Windows. Compared as text: Windows paths treat both
+    /// separators as one, so a `PathBuf` comparison would pass either way.
+    #[test(tokio::test)]
+    async fn test_create_with_a_folder_uses_slash_keys() -> Res {
+        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+        let storage = MockStorage::default();
+        let namespace: Namespace = ("test", "nested").into();
+
+        let source_dir = storage.temp_dir.as_ref().join("source");
+        storage
+            .write_byte_stream(
+                source_dir.join("data").join("raw").join("a.csv"),
+                ByteStream::from_static(b"a,b\n"),
+            )
+            .await?;
+
+        let (lineage, _) = create_package(
+            lineage,
+            &paths,
+            &storage,
+            namespace.clone(),
+            Some(source_dir),
+            None,
+        )
+        .await?;
+
+        let pkg = lineage.packages.get(&namespace).unwrap();
+        let keys: Vec<&str> = pkg
+            .paths
+            .keys()
+            .map(|key| key.to_str().expect("UTF-8"))
+            .collect();
+        assert_eq!(keys, ["data/raw/a.csv"]);
+        let hash = &pkg.commit.as_ref().unwrap().hash;
+        let manifest =
+            Manifest::from_path(&storage, &paths.installed_manifest(&namespace, hash)).await?;
+        let rows: Vec<&str> = manifest
+            .rows
+            .iter()
+            .map(|row| row.logical_key.to_str().expect("UTF-8"))
+            .collect();
+        assert_eq!(rows, ["data/raw/a.csv"]);
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_create_with_quiltignore() -> Res {
         let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;

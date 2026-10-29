@@ -745,6 +745,43 @@ mod tests {
         }
     }
 
+    /// A logical key separates folders with `/` on every OS, though the walk
+    /// finds `\\` on Windows. Compared as text: Windows paths treat both
+    /// separators as one, so a `PathBuf` comparison would pass either way.
+    #[test(tokio::test)]
+    async fn test_added_file_in_a_folder_has_a_slash_key() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("home");
+        storage
+            .write_byte_stream(
+                working_dir.join("data").join("raw").join("a.csv"),
+                ByteStream::from_static(b"a,b\n"),
+            )
+            .await?;
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &domain_paths(&storage),
+            &Manifest::default(),
+            working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        let keys: Vec<&str> = status
+            .changes
+            .keys()
+            .map(|key| key.to_str().expect("UTF-8"))
+            .collect();
+        assert_eq!(keys, ["data/raw/a.csv"]);
+        let Some(Change::Added(row)) = status.changes.values().next() else {
+            panic!("expected one added file, got {:?}", status.changes);
+        };
+        assert_eq!(row.logical_key.to_str(), Some("data/raw/a.csv"));
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_added_files_crc64() -> Res {
         let lineage = PackageLineage::default();
