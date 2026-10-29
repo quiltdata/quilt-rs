@@ -205,8 +205,8 @@ pub fn use_query() -> leptos::prelude::Memo<Query> {
     Memo::new(move |_| url.with(|url| Query::parse(url.search())))
 }
 
-/// The browser tab's title for a page: the app, then the package, then the
-/// page, e.g. `QuiltSync › org/pkg › Commit`.
+/// The browser tab's title for a page, most specific first, as browsers cut
+/// long titles from the end: `Commit · org/pkg · QuiltSync`.
 #[must_use]
 pub fn page_title(path: &str, query: &Query) -> String {
     let package = match path {
@@ -222,12 +222,11 @@ pub fn page_title(path: &str, query: &Query) -> String {
         "/error" => Some("Error"),
         _ => None,
     };
-    let mut title = String::from("QuiltSync");
-    for part in [package.as_deref(), page].into_iter().flatten() {
-        title.push_str(" › ");
-        title.push_str(part);
-    }
-    title
+    [page, package.as_deref(), Some("QuiltSync")]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// The `org/name` in `quilt+s3://bucket#package=org/name@hash`.
@@ -247,21 +246,21 @@ mod tests {
         assert_eq!(page_title("/", &Query::default()), "QuiltSync");
         assert_eq!(
             page_title("/installed-package", &q("org/pkg")),
-            "QuiltSync › org/pkg"
+            "org/pkg · QuiltSync"
         );
         assert_eq!(
             page_title("/commit", &q("org/pkg")),
-            "QuiltSync › org/pkg › Commit"
+            "Commit · org/pkg · QuiltSync"
         );
         assert_eq!(
             page_title("/settings", &Query::default()),
-            "QuiltSync › Settings"
+            "Settings · QuiltSync"
         );
         let uri = Query(vec![(
             "uri".into(),
             "quilt+s3://bucket#package=org/pkg@abc123".into(),
         )]);
-        assert_eq!(page_title("/remote-package", &uri), "QuiltSync › org/pkg");
+        assert_eq!(page_title("/remote-package", &uri), "org/pkg · QuiltSync");
     }
 
     /// A `back` that is itself an encoded address keeps its encoding.

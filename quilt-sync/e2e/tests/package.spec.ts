@@ -60,7 +60,7 @@ test("a file written into a package folder appears on its page", async ({ page, 
   // The attention queue links the new package too; open it from the list.
   await page.getByRole("region", { name: "Packages" }).getByRole("link", { name: NAMESPACE }).click();
   await expect(packageHeading(page, NAMESPACE)).toBeVisible();
-  await expect(page).toHaveTitle(`QuiltSync › ${NAMESPACE}`);
+  await expect(page).toHaveTitle(`${NAMESPACE} · QuiltSync`);
 
   // No reload: the watcher's event reaches the page over the socket.
   await writeUntilListed(quiltsync, NAMESPACE, "hello.txt", [page]);
