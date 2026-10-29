@@ -47,6 +47,8 @@ pub struct InstalledPackageData {
     pub filter_ignored: bool,
     /// This package's standing sync scope.
     pub syncs_entire_package: bool,
+    /// The scope keeps chosen folders, which neither of this screen's scopes is.
+    pub keeps_folders: bool,
     /// Whether the experiment that offers the scope control is on.
     pub entire_package_sync_enabled: bool,
 }
@@ -173,7 +175,7 @@ pub struct CommitData {
     /// like a denial, but the remedy is a sign-in.
     pub no_session: bool,
     /// The deployment to sign in to, when there is one; `None` for ambient
-    /// AWS credentials, whose remedy is the file.
+    /// AWS credentials, fixed in `~/.aws` or by `aws sso login`.
     pub no_session_host: Option<String>,
     pub entries: Vec<EntryData>,
     pub ignored_count: usize,
@@ -371,6 +373,41 @@ impl Default for FsWatcherSettingsData {
 #[serde(rename_all = "camelCase")]
 pub struct ExperimentalSettingsData {
     pub entire_package_sync: bool,
+    /// Whether the v2 Settings page shows the Agent tasks card.
+    #[serde(default)]
+    pub agent_tasks: bool,
+}
+
+/// `task_settings.json`: which buckets may hand this computer a task, and the
+/// agents it can run. Field names as the file has them.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TaskSettings {
+    #[serde(default)]
+    pub blessed_buckets: Vec<String>,
+    #[serde(default)]
+    pub agents: std::collections::BTreeMap<String, AgentSettings>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AgentSettings {
+    /// The program, then its arguments.
+    pub command: Vec<String>,
+    /// Approve every permission request the agent makes.
+    #[serde(default)]
+    pub trust_all: bool,
+    /// Variables set for the agent. Settings keeps them as they are.
+    #[serde(default)]
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+/// `task_settings.json` as read.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSettingsData {
+    /// Empty when there is no file, or it could not be read.
+    pub settings: TaskSettings,
+    /// Why the file could not be read.
+    pub error: Option<String>,
 }
 
 /// Which design generation the app draws: v2 unless the reader chose the
@@ -435,6 +472,8 @@ pub struct SettingsData {
     pub design: Design,
     #[serde(default)]
     pub ignore_rules: IgnoreRulesData,
+    #[serde(default)]
+    pub tasks: TaskSettingsData,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -583,8 +622,10 @@ pub struct PackageContextData {
 pub struct PackageSize {
     /// Every listed file.
     pub total: u64,
-    /// Every listed file outside the backlog, a file deleted here included.
+    /// Every listed file not outstanding, a file deleted here included.
     pub downloaded: u64,
+    /// The backlog's files: what `Download N files` fetches.
+    pub backlog: u64,
 }
 
 /// What each resolve choice would cost, or why that cannot be read.
@@ -610,11 +651,13 @@ pub enum ResolveData {
 
 /// Which files this copy keeps. Mirrors
 /// `src-tauri/src/commands/package_page.rs`; the serde attributes MUST match.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum KeepingScope {
     IndividualFiles,
     EntirePackage,
+    /// Every file under some folders.
+    Folders,
 }
 
 /// The Keeping section: the standing rule, and what it has not yet fetched.
@@ -623,9 +666,14 @@ pub enum KeepingScope {
 #[serde(rename_all = "camelCase")]
 pub struct KeepingData {
     pub scope: KeepingScope,
+    /// The kept folders under folders scope, which the caption names.
+    pub folders: Vec<String>,
     /// Files in the current revision — the caption's M.
     pub total: usize,
-    /// The backlog, and exactly what `Download N files` installs.
+    /// Listed files not downloaded here, so the caption's M less its N.
+    pub outstanding: usize,
+    /// The backlog, and exactly what `Download N files` installs. Empty under
+    /// individual-file scope.
     pub remote_only: Vec<String>,
     /// Files deleted here, which count as downloaded and the caption names;
     /// 0 when the status could not be read.
@@ -642,7 +690,7 @@ pub struct CurrentRevisionData {
     pub obtained_at: f64,
 }
 
-/// `Revisions you have`: the rows, and the footer's figure. Mirrors
+/// `History`: the rows, and the footer's figure. Mirrors
 /// `src-tauri/src/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -665,7 +713,7 @@ pub enum KeptReason {
     Unpublished,
 }
 
-/// One row of `Revisions you have`. Mirrors
+/// One row of `History`. Mirrors
 /// `src-tauri/src/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -994,10 +1042,14 @@ pub struct MainPagePackageRefreshData {
 #[serde(rename_all = "camelCase")]
 pub struct MainPageDownloadsData {
     pub scope: KeepingScope,
+    /// How many folders a folders scope keeps; 0 for any other scope.
+    pub folders: usize,
     /// The files the current revision lists.
     pub total: usize,
-    /// The listed files still to download.
+    /// The listed files not downloaded here.
     pub outstanding: usize,
+    /// The outstanding files the scope covers, which Keeping downloads.
+    pub backlog: usize,
     /// Every deletion the status reports.
     pub deleted_here: usize,
     /// The listed files' bytes; `None` when they cannot be read.
@@ -1020,7 +1072,11 @@ impl From<MainPageDownloadsData> for crate::kit::RowDownloads {
     fn from(data: MainPageDownloadsData) -> Self {
         match data.scope {
             KeepingScope::EntirePackage => Self::EntirePackage {
-                to_download: data.outstanding,
+                to_download: data.backlog,
+            },
+            KeepingScope::Folders => Self::Folders {
+                folders: data.folders,
+                to_download: data.backlog,
             },
             KeepingScope::IndividualFiles => Self::IndividualFiles {
                 downloaded: data.total.saturating_sub(data.outstanding),
@@ -1579,19 +1635,33 @@ pub async fn update_log_settings(level: String) -> Result<(), String> {
 
 /// Turn an experiment on or off. `None` leaves a flag as it is — a caller that
 /// knows about one experiment must not reset another.
-pub async fn update_experimental_settings(entire_package_sync: Option<bool>) -> Result<(), String> {
+pub async fn update_experimental_settings(
+    entire_package_sync: Option<bool>,
+    agent_tasks: Option<bool>,
+) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         entire_package_sync: Option<bool>,
+        agent_tasks: Option<bool>,
     }
     tauri::invoke(
         "update_experimental_settings",
         &Args {
             entire_package_sync,
+            agent_tasks,
         },
     )
     .await
+}
+
+/// Replace `task_settings.json`.
+pub async fn update_task_settings(settings: TaskSettings) -> Result<(), String> {
+    #[derive(Serialize)]
+    struct Args {
+        settings: TaskSettings,
+    }
+    tauri::invoke("update_task_settings", &Args { settings }).await
 }
 
 /// Choose the design generation. The next page that asks draws it.
@@ -1603,20 +1673,27 @@ pub async fn update_design_settings(design: Design) -> Result<(), String> {
     tauri::invoke("update_design_settings", &Args { design }).await
 }
 
-/// Record whether a package keeps its whole contents. Storage only — catching
-/// up on files already listed is a separate `package_install_paths` call.
-pub async fn package_set_sync_scope(namespace: String, entire_package: bool) -> Result<(), String> {
+/// Record which files a package keeps; `folders` is read only for a folders
+/// scope. Storage only — catching up on files already listed is a separate
+/// call.
+pub async fn package_set_sync_scope(
+    namespace: String,
+    scope: KeepingScope,
+    folders: Vec<String>,
+) -> Result<(), String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         namespace: String,
-        entire_package: bool,
+        scope: KeepingScope,
+        folders: Vec<String>,
     }
     tauri::invoke(
         "package_set_sync_scope",
         &Args {
             namespace,
-            entire_package,
+            scope,
+            folders,
         },
     )
     .await
@@ -1877,16 +1954,29 @@ pub async fn set_remote(
     .await
 }
 
+/// Add, change or remove the catalog of a package's remote; a blank `origin`
+/// removes it. The bucket stays, so this works once the package is published.
+pub async fn change_catalog(namespace: String, origin: String) -> Result<String, String> {
+    #[derive(Serialize)]
+    struct Args {
+        namespace: String,
+        origin: String,
+    }
+    tauri::invoke("change_catalog", &Args { namespace, origin }).await
+}
+
 /// Fetch a bucket's declared workflows before its remote is set, so the
 /// set-remote popup can present the same tri-state control the commit dialog
 /// uses. Mirrors the backend `get_bucket_workflows` command; a fetch failure
 /// maps to [`CommitWorkflows::Unavailable`] rather than an error.
+/// A blank `host` is a bucket with no catalog.
 pub async fn get_bucket_workflows(host: String, bucket: String) -> Result<CommitWorkflows, String> {
     #[derive(Serialize)]
     struct Args {
-        host: String,
+        host: Option<String>,
         bucket: String,
     }
+    let host = Some(host).filter(|host| !host.trim().is_empty());
     tauri::invoke("get_bucket_workflows", &Args { host, bucket }).await
 }
 
@@ -2266,7 +2356,7 @@ mod tests {
     #[test]
     fn current_revision_context_wire_form_is_verbatim() {
         let context = serde_json::from_str::<PackageContextData>(
-            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","total":56,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000},"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","folders":[],"total":56,"outstanding":2,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000,"backlog":1500000},"resolve":null}"#,
         )
         .unwrap();
 
@@ -2280,6 +2370,7 @@ mod tests {
         assert_eq!(context.revision_count, 4);
         assert_eq!(context.keeping.scope, KeepingScope::EntirePackage);
         assert_eq!(context.keeping.total, 56);
+        assert_eq!(context.keeping.outstanding, 2);
         assert_eq!(context.keeping.remote_only, ["plate/b.csv", "plate/c.csv"]);
         assert_eq!(context.keeping.deleted_here, 1);
         assert_eq!(
@@ -2287,6 +2378,7 @@ mod tests {
             Some(PackageSize {
                 total: 3_400_000,
                 downloaded: 1_900_000,
+                backlog: 1_500_000,
             })
         );
         assert_eq!(context.resolve, None);
@@ -2297,7 +2389,7 @@ mod tests {
     #[test]
     fn an_unread_package_size_crosses_as_null() {
         let context = serde_json::from_str::<PackageContextData>(
-            r#"{"revision":{"hash":"abc123","message":null,"obtainedAt":0.0},"bucket":null,"revisionCount":1,"keeping":{"scope":"individualFiles","total":0,"remoteOnly":[],"deletedHere":0},"size":null,"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":null,"obtainedAt":0.0},"bucket":null,"revisionCount":1,"keeping":{"scope":"individualFiles","folders":[],"total":0,"outstanding":0,"remoteOnly":[],"deletedHere":0},"size":null,"resolve":null}"#,
         )
         .unwrap();
 
@@ -2669,35 +2761,46 @@ mod tests {
         assert_eq!(denied.downloads, None);
 
         let counted = serde_json::from_str::<super::MainPagePackageRefreshData>(
-            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","total":340,"outstanding":328,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000}}}"#,
+            r#"{"state":{"kind":"latest"},"roleSwitchHost":null,"downloads":{"scope":"individualFiles","folders":0,"total":340,"outstanding":328,"backlog":0,"deletedHere":1,"size":{"total":3400000,"downloaded":1900000,"backlog":0}}}"#,
         )
         .unwrap();
         assert_eq!(
             counted.downloads,
             Some(super::MainPageDownloadsData {
                 scope: KeepingScope::IndividualFiles,
+                folders: 0,
                 total: 340,
                 outstanding: 328,
+                backlog: 0,
                 deleted_here: 1,
                 size: Some(super::PackageSize {
                     total: 3_400_000,
                     downloaded: 1_900_000,
+                    backlog: 0,
                 }),
             })
         );
 
         let unread = serde_json::from_str::<super::MainPageDownloadsData>(
-            r#"{"scope":"entirePackage","total":2,"outstanding":0,"deletedHere":0,"size":null}"#,
+            r#"{"scope":"entirePackage","folders":0,"total":2,"outstanding":0,"backlog":0,"deletedHere":0,"size":null}"#,
         )
         .unwrap();
         assert_eq!(unread.size, None);
     }
 
+    /// A row whose outstanding files are all in the backlog, unless the scope
+    /// is picked files.
     fn row_downloads(scope: KeepingScope, total: usize, outstanding: usize) -> RowDownloads {
         super::MainPageDownloadsData {
             scope,
+            folders: usize::from(scope == KeepingScope::Folders),
             total,
             outstanding,
+            backlog: if scope == KeepingScope::IndividualFiles {
+                0
+            } else {
+                outstanding
+            },
             deleted_here: 0,
             size: None,
         }
@@ -2713,6 +2816,17 @@ mod tests {
         assert_eq!(
             row_downloads(KeepingScope::EntirePackage, 5, 2),
             RowDownloads::EntirePackage { to_download: 2 }
+        );
+    }
+
+    #[test]
+    fn kept_folders_mark_what_they_have_still_to_download() {
+        assert_eq!(
+            row_downloads(KeepingScope::Folders, 5, 2),
+            RowDownloads::Folders {
+                folders: 1,
+                to_download: 2
+            }
         );
     }
 

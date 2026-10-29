@@ -119,13 +119,15 @@ needs a decision, and says so in one line instead.
 |  +--------------------+  |   Signed out    [Sign in]   | |
 |                          +-----------------------------+ |
 +---------------------------------------------------------+
-|  Needs your attention (4)                               |
-|  +---------------------------------------------------+  |
-|  | • Signed out from demo.quiltdata.com — 2 packages  |  |
-|  |                                        [Sign in]   |  |
-|  | ! user/pkg-a  has a newer revision     Get latest →|  |
-|  | • user/pkg-b  has 2 changed files         Publish →|  |
-|  +---------------------------------------------------+  |
+|  ▲ 4 packages need your attention                       |
+|  ------------------------------------------------------ |
+|  > Signed out from demo.quiltdata.com — 2 packages      |
+|                                              [Sign in]  |
+|  ------------------------------------------------------ |
+|    user/pkg-a  has a newer revision        Get latest → |
+|  ------------------------------------------------------ |
+|    user/pkg-b  has 2 changed files            Publish → |
+|  ------------------------------------------------------ |
 +--[toolbar]----------------------------------------------+
 | [Packages|Recent files]  [Search…] [Group:Bucket]        |
 |                          [Sort:Changed] [Create package] |
@@ -141,12 +143,13 @@ needs a decision, and says so in one line instead.
   each switchable on its own, and when the next check is due.
 - **Accounts card** — every catalog your packages point at plus every host you
   have signed into, with the role each is using.
-- **Attention queue** — one row per package needing a decision, beside the one
-  thing to do about it. Where a whole catalog or bucket is the cause, it is
-  said once with a count rather than repeated per package. When nothing needs
-  you: `Everything is Latest — N packages`. Until every package's check has
-  answered, a placeholder holds that line's place, so a healthy load does not
-  move the list.
+- **Attention queue** — a status line, `N packages need your attention`, then
+  one row per package needing a decision, beside the one thing to do about it.
+  Where a whole catalog or bucket is the cause, it is said once with a count
+  rather than repeated per package. When nothing needs you, the line alone:
+  `All packages are up to date`. Until every package's check has answered, a
+  placeholder holds that line's place, so a healthy load does not move the
+  list.
 - **List** — your packages with each one's state and when it last changed,
   searchable, groupable by Bucket / Prefix / None and sortable by Changed /
   Name; or switched to a feed of recently changed files.
@@ -159,8 +162,8 @@ its tooltip; the pointer passes through it to the rows below. It gives:
 
 - the package's full name, which the row may cut short;
 - *Host: open.quiltdata.com*, left out for a package with no catalog;
-- what it keeps: *Every file in the package is kept* or *Only the files you
-  picked are kept*;
+- what it keeps: *Every file in the package is kept*, *Only the files you
+  picked are kept*, or *Files in 2 folders are kept*;
 - how much is downloaded, in Keeping's words on the package page, as in *"12 of
   340 files · 1.9 MB of 3.4 MB downloaded."*
 
@@ -265,6 +268,16 @@ the current revision is here, in files and in bytes:
 - *"This revision has no files."* for an empty revision.
 - Under *The whole package* the caption adds *"— files added later are
   downloaded too."*, and *Download 2 files · 1.5 MB* fetches the backlog.
+- Under *Folders* the kept folders are listed with *Change folders*, which
+  opens a dialog of folder paths, one a row, with *Add folder*, *Cancel* and
+  *Save*. A folder keeps every file under it, including files added there
+  later; `data/raw` keeps `data/raw/x/a.csv` and not `data/raw2/a.csv`.
+  Choosing *Folders* with none kept opens the dialog, and *Cancel* returns to
+  the previous option. *Save* downloads nothing: *Download N files* fetches
+  the files under the kept folders. A folder with `..` is refused in the
+  dialog. Choosing another option replaces the folders. The CLI sets the same
+  folders with `quilt keep --folder`. In the file list, files under the kept
+  folders have no checkbox, and *Get latest* downloads the new ones there.
 
 The sizes are the manifest rows' sizes summed, not disk usage. Only the files
 the current revision lists are counted: a new file is not counted until it is
@@ -333,6 +346,10 @@ the ticked files' bytes the same way, *Download 3 · 114.1 kB*.
     already have, and one a teammate added is listed but not fetched
   - *Sync entire package* — a pull fetches the added ones too, on this package,
     from now on (the autopull tick included)
+
+  A package that keeps chosen folders, set on the redesigned page or with
+  `quilt keep --folder`, selects neither option, and picking one replaces the
+  folders. Its file list keeps a checkbox on every file.
 
   Picking either **stores the choice and downloads nothing**. The band renders
   whether or not anything is pending: once a package has caught up it is the

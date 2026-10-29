@@ -19,21 +19,47 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.49.0-dev]
+## [v0.50.1-dev]
+
+### Fixed
+
+- Reset to latest discards a pending local commit even when its base is already latest (<https://github.com/quiltdata/quilt-rs/pull/1197>)
+
+## [v0.50.0] - 2026-10-28
 
 ### Added
 
+- `SyncScope::Folders` keeps every file under chosen folders, including files added there later. A folder with a `..` part is refused with `LineageError::FolderOutsidePackage` (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `InstalledPackage::keep` stores what a package keeps and downloads the files it is missing; `InstalledPackage::kept` reads the setting and how much is left to download; `InstalledPackage::backlog` lists those files (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+
+### Changed
+
+- **Breaking:** pull, push, commit and publish report when there is nothing to do instead of failing. `InstalledPackage::pull` returns `flow::Pulled` (`UpToDate` or `Applied`), `push` returns `Pushed` (`NothingToPush` or `Uploaded`), `commit` returns `flow::Committed` (`NothingToCommit` or `Recorded`), and `PublishOutcome` gains `NothingToPublish`, so `PublishOutcome::push` returns an `Option`. `PackageOpError::AlreadyUpToDate` is removed
+  - <https://github.com/quiltdata/quilt-rs/pull/1227>
+  - <https://github.com/quiltdata/quilt-rs/pull/1230>
+  - <https://github.com/quiltdata/quilt-rs/pull/1242>
+- **Breaking:** `install_paths` installs the paths not yet tracked and lists the others in `InstallPathsReport::already_installed`, instead of refusing the whole call. `InstallPathError::AlreadyInstalled` is removed, and `flow::install_paths` returns `(PackageLineage, InstallPathsReport)` (<https://github.com/quiltdata/quilt-rs/pull/1239>)
+- **Breaking:** `SyncScope` is no longer `Copy`, and `covers_untracked` takes the path it asks about (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+
+## [v0.49.0] - 2026-10-26
+
+### Added
+
+- `InstalledPackage::change_catalog` adds, changes or removes the catalog of a package's remote, keeping its bucket, remote hash and commits, also once the package is published (<https://github.com/quiltdata/quilt-rs/pull/1211>)
 - `Error::is_ambient_session_absent` says the AWS credentials on this computer, used for a bucket with no catalog, were missing or refused (<https://github.com/quiltdata/quilt-rs/pull/1193>)
 
 ### Changed
 
-- **Breaking:** `InstalledPackage::state` reads a remote with no catalog on the AWS credentials on this computer, like any other remote, instead of answering `Unknown`. `PackageLineage::misconfigured_remote` is removed (<https://github.com/quiltdata/quilt-rs/pull/1193>)
-- With no catalog, AWS credentials that cannot be found or used, including an SSO profile with no or an expired sign-in, are `LoginError::NoSession(None)`, so a status read reports them instead of answering from the last-known tip. A wrong secret key (`SignatureDoesNotMatch`) is a credential failure, not a denial (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+- **Breaking:** `InstalledPackage::state` reads a remote with no catalog on the AWS credentials on this computer instead of answering `Unknown`. `PackageLineage::misconfigured_remote` is removed (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+- **Breaking:** `Remote::published_revisions` takes `Option<&Host>`. With no catalog it lists the package's revisions from the bucket, so `InstalledPackage::revision_history` and `remove_revisions` know which revisions are published (<https://github.com/quiltdata/quilt-rs/pull/1212>)
+- With no catalog, AWS credentials that are missing or unusable, including an expired SSO sign-in, are `LoginError::NoSession(None)` (<https://github.com/quiltdata/quilt-rs/pull/1193>)
 
 ### Fixed
 
-- After the AWS credentials on this computer were missing or refused, the next call reads `~/.aws` again instead of keeping the first credentials it loaded (<https://github.com/quiltdata/quilt-rs/pull/1193>)
-- `reset_to_latest` discards a pending commit whose base is already `latest`, instead of keeping it as already up to date (<https://github.com/quiltdata/quilt-rs/pull/1197>)
+- `InstalledPackage::set_remote` with no host stamps the chosen or the bucket's default workflow on a pending commit instead of dropping it (<https://github.com/quiltdata/quilt-rs/pull/1209>)
+- After the AWS credentials on this computer were missing or refused, the next call reads `~/.aws` again
+  - <https://github.com/quiltdata/quilt-rs/pull/1193>
+  - <https://github.com/quiltdata/quilt-rs/pull/1202>
 
 ## [v0.48.0] - 2026-10-23
 

@@ -21,6 +21,9 @@ use crate::kit::Select;
 use crate::kit::Submit;
 use crate::kit::TextInput;
 
+/// The bucket dialog's one title, whichever entry opens it.
+const TITLE: &str = "Bucket and catalog";
+
 #[component]
 pub fn FormsStories() -> impl IntoView {
     view! { <Inputs /> <FormControls /> <FormBodies /> <Submitting /> }
@@ -156,18 +159,18 @@ fn FormControls() -> impl IntoView {
 /// The bucket form, in both of its shapes.
 ///
 /// `locked` is not a spare state: a package that has been pushed is pinned to its push
-/// history, so the header's command reads `Show remote` and the same three fields are
-/// shown rather than offered. The v2 header already makes that swap.
+/// history, so its bucket is shown rather than offered, and only the catalog can change.
+/// Its workflows come from the bucket, so there is none to choose.
 #[component]
 pub fn BucketForm(
-    /// Every field disabled — the remote as a fact rather than a choice.
+    /// The bucket disabled and the workflow gone — a published package's shape.
     #[prop(optional)]
     locked: bool,
 ) -> impl IntoView {
     let host = RwSignal::new("open.quiltdata.com".to_string());
-    // Locked means *showing a remote*, so there is one to show. Left empty it drew a grey
-    // placeholder, and a read-only form whose field is a placeholder reads as a value the
-    // reader cannot change rather than as the absence of one.
+    // Locked means a published package, so there is a bucket to show. Left empty it drew a
+    // grey placeholder, and a disabled field whose value is a placeholder reads as a value
+    // the reader cannot change rather than as the absence of one.
     let bucket = RwSignal::new(if locked {
         "quilt-example".to_string()
     } else {
@@ -182,22 +185,11 @@ pub fn BucketForm(
         // this is that place.
         <FormControl
             label="Host"
-            // A caption instructs while the field is a choice and states once it is not.
             // "From your accounts" tells a reader where to get a value they cannot enter.
-            caption=if locked {
-                "Where this package is published."
-            } else {
-                "Where this package is published. From your accounts."
-            }
+            caption="Optional: the bucket's catalog, from your accounts. Without one, this \
+                     computer's AWS credentials are used."
             control=move |id| {
-                view! {
-                    <TextInput
-                        id=id
-                        value=host
-                        placeholder="open.quiltdata.com"
-                        disabled=locked
-                    />
-                }
+                view! { <TextInput id=id value=host placeholder="open.quiltdata.com" /> }
                     .into_any()
             }
         />
@@ -210,7 +202,7 @@ pub fn BucketForm(
             view! {
                 <FormControl
                     label="Bucket"
-                    caption="Fixed by this package's push history."
+                    caption="Fixed once the package is published."
                     control=move |id| {
                         view! { <TextInput id=id value=bucket disabled=true /> }.into_any()
                     }
@@ -231,11 +223,12 @@ pub fn BucketForm(
                 .into_any()
         }}
         // Read from the bucket once it is known, so it is last and its options depend on
-        // the field above it.
+        // the field above it. A published package has its workflows from its bucket.
         //
         // `Naming::FormControl`, so the Select renders no name of its own. It used to be given
         // `label="Workflow"` here as well as by the FormControl, which nested two labels and named
         // the control twice — the kind of thing the ControlId design exists to make unsayable.
+        {(!locked).then(|| view! {
         <FormControl
             label="Workflow"
             caption="Rules the bucket applies when you publish."
@@ -245,12 +238,12 @@ pub fn BucketForm(
                         naming=Naming::FormControl(id)
                         options=vec!["Default".to_string(), "None".to_string()]
                         selected=workflow
-                        disabled=locked
                     />
                 }
                     .into_any()
             }
         />
+        })}
     }
 }
 
@@ -353,13 +346,23 @@ fn Case(
     }
 }
 
-/// The read-only shape: no submit, so no form and one way out.
+/// The published shape: the bucket fixed, the catalog still a choice.
 #[component]
-fn ShowRemoteCase() -> impl IntoView {
+fn PublishedCase() -> impl IntoView {
     let open = RwSignal::new(false);
     view! {
-        <Button on_click=move |_| open.set(true)>"Show remote"</Button>
-        <FormDialog open=open title="Show remote">
+        <Button on_click=move |_| open.set(true)>"Add catalog"</Button>
+        <FormDialog
+            open=open
+            title=TITLE
+            submit=Submit::new(
+                "Save",
+                move || async move {
+                    after_a_beat(700).await;
+                    Ok(())
+                },
+            )
+        >
             <BucketForm locked=true />
         </FormDialog>
     }
@@ -377,17 +380,17 @@ fn Submitting() -> impl IntoView {
                   fields, where v1 put it in the page's slot behind the modal."
         >
             <Cell label="it saves">
-                <Case title="Change bucket" submit_label="Save" />
+                <Case title=TITLE submit_label="Save" />
             </Cell>
             <Cell label="it is refused">
                 <Case
-                    title="Change bucket"
+                    title=TITLE
                     submit_label="Save"
                     rejects="No permission to write to quilt-example."
                 />
             </Cell>
-            <Cell label="nothing to submit — pushed">
-                <ShowRemoteCase />
+            <Cell label="published — the bucket is fixed, the catalog is not">
+                <PublishedCase />
             </Cell>
         </Story>
     }
@@ -468,7 +471,7 @@ pub fn RefusedScene() -> impl IntoView {
             </div>
             <FormDialog
                 open=live
-                title="Change bucket"
+                title=TITLE
                 submit=Submit::new(
                     "Save",
                     || async { Err("No permission to write to quilt-example.".to_string()) },
@@ -489,7 +492,8 @@ pub fn DialogScene() -> impl IntoView {
     view! {
         <Scene
             title="Scene · the three dialogs"
-            note="The two forms and the read-only one, as the page opens them. Tab: focus \
+            note="The two forms, and the bucket form in its published shape, as the page \
+                  opens them. Tab: focus \
                   is trapped, which none of v1's four overlays does. Escape closes, which \
                   none of them handles. The backdrop is the platform's top layer, so there \
                   is no z-index and no ancestor can clip it — and clicking it does not \
@@ -498,13 +502,13 @@ pub fn DialogScene() -> impl IntoView {
         >
             <div class="g-inline">
                 <Button on_click=move |_| bucket_open.set(true)>"Change bucket"</Button>
-                <Button on_click=move |_| show_open.set(true)>"Show remote"</Button>
+                <Button on_click=move |_| show_open.set(true)>"Add catalog"</Button>
                 // Default, as the page's list toolbar draws its opener.
                 <Button on_click=move |_| create_open.set(true)>"Create package"</Button>
             </div>
             <FormDialog
                 open=bucket_open
-                title="Change bucket"
+                title=TITLE
                 submit=Submit::new(
                     "Save",
                     move || async move {
@@ -515,9 +519,19 @@ pub fn DialogScene() -> impl IntoView {
             >
                 <BucketForm />
             </FormDialog>
-            // A pushed package is pinned to its push history: the same fields, shown and
-            // not offered. The header swaps the command's label to match.
-            <FormDialog open=show_open title="Show remote">
+            // A pushed package is pinned to its push history: the bucket is shown and
+            // not offered, and the catalog can still change.
+            <FormDialog
+                open=show_open
+                title=TITLE
+                submit=Submit::new(
+                    "Save",
+                    move || async move {
+                        after_a_beat(700).await;
+                        Ok(())
+                    },
+                )
+            >
                 <BucketForm locked=true />
             </FormDialog>
             <FormDialog

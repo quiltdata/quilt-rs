@@ -9,8 +9,8 @@
 //!
 //! # Explains only
 //!
-//! No button: the header already offers *Choose S3 bucket* for a package with
-//! no remote, and the link's bucket is not taken as the answer — a link to a
+//! No button: the context pane's Bucket and catalog section already offers
+//! *Choose* for a package with no remote, and the link's bucket is not taken as the answer — a link to a
 //! package is not a decision about where this copy publishes.
 //!
 //! # Carried as the mismatch is
@@ -198,7 +198,7 @@ mod tests {
     async fn no_flag_no_band() {
         let el = screen(PLAIN, no_remote).await;
 
-        element_saying(&el, "Revisions you have (1)");
+        element_saying(&el, "History (1)");
         assert!(!says(&el, LINE), "markup was {}", el.inner_html());
     }
 

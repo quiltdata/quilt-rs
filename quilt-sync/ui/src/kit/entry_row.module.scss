@@ -74,11 +74,14 @@
 }
 
 
-/* One value, set by the pane, keeps the select-all box, a group's box and a
- * file's box on one x. The fallback is here so the component is not broken when
- * it is looked at on its own. */
+/* One value, set by the pane, keeps a folder's name and a file's name on one
+ * x after the box column. The fallback is here so the component is not broken
+ * when it is looked at on its own. A list with no headings sets it to `0px`,
+ * and then the margin gives back the gap after it, so the name sits one gap
+ * from the box. */
 .gutter {
   flex: 0 0 var(--q-entry-gutter, 16px);
+  margin-left: min(0px, var(--q-entry-gutter, 16px) - var(--q-space-2));
 }
 
 /* A box-shaped hole. Without it the names of unselectable rows would start a

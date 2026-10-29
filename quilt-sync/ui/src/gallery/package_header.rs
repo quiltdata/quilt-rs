@@ -198,20 +198,26 @@ fn scene_menu() -> Vec<MenuItem> {
 /// Whether the location group has its remote side, decided by the page's own
 /// [`remote_target`] over this state's remote: none without a bucket, and one
 /// with no revision yet when never published.
-fn has_catalog_page(state: &PackageState) -> bool {
-    let payload = commands::PackageHeaderData {
-        uri: (!matches!(state, PackageState::NoRemote))
-            .then(|| scene_payload().uri)
-            .flatten(),
-        remote_locked: !matches!(state, PackageState::Unpublished),
-        ..scene_payload()
-    };
+fn has_remote_side(state: &PackageState) -> bool {
+    let payload = state_payload(state);
     remote_target(
         payload.uri.as_ref(),
         payload.remote_locked,
         payload.newer.as_deref(),
     )
     .is_some()
+}
+
+/// The scene's payload at one state: no remote without a bucket, and not
+/// locked before the first push.
+fn state_payload(state: &PackageState) -> commands::PackageHeaderData {
+    commands::PackageHeaderData {
+        uri: (!matches!(state, PackageState::NoRemote))
+            .then(|| scene_payload().uri)
+            .flatten(),
+        remote_locked: !matches!(state, PackageState::Unpublished),
+        ..scene_payload()
+    }
 }
 
 /// The header at one state.
@@ -295,7 +301,9 @@ fn header(
                         })}
                     {action
                         .filter(|_| !action_open)
-                        .filter(|a| !matches!(a, PackageAction::Publish))
+                        .filter(|a| {
+                            !matches!(a, PackageAction::Publish | PackageAction::ChooseS3Bucket)
+                        })
                         .map(|action| {
                             view! {
                                 <Button variant=ButtonVariant::Primary on_click=|_| ()>
@@ -303,7 +311,7 @@ fn header(
                                 </Button>
                             }
                         })}
-                    {location(has_catalog_page(state), copied)}
+                    {location(has_remote_side(state), copied)}
                     <ActionMenu
                         aria_label="More actions for this package"
                         actions={
@@ -456,12 +464,7 @@ mod tests {
         let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
         assert_eq!(
             labels,
-            vec![
-                "Create new revision",
-                "Change bucket",
-                "Undo last revision",
-                "Remove",
-            ],
+            vec!["Create new revision", "Undo last revision", "Remove",],
         );
 
         let refused: Vec<(&str, &str)> = items

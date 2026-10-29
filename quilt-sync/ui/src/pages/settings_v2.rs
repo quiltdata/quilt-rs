@@ -5,16 +5,19 @@
 //! where each card goes.
 //!
 //! Toggles, selects and minute fields save as they change, and the row says
-//! *Saved* for a moment ([`Saved`]). Publishing alone is edited in a popup
-//! with Save, because its metadata must be valid JSON before anything is
+//! *Saved* for a moment ([`Saved`]). Publishing and Agent tasks are edited in
+//! a popup with Save, because their fields must be valid before anything is
 //! written.
 
 use std::future::Future;
 
 use leptos::prelude::*;
 
+use crate::commands::AgentSettings;
 use crate::commands::LogEnv;
 use crate::commands::PublishSettingsData;
+use crate::commands::TaskSettings;
+use crate::commands::TaskSettingsData;
 use crate::kit::BackLink;
 use crate::kit::Banner;
 use crate::kit::BannerVariant;
@@ -57,6 +60,7 @@ pub enum Saved {
     Watch,
     Tray,
     DesignPreview,
+    AgentTasks,
     LogLevel,
 }
 
@@ -195,8 +199,8 @@ pub fn SettingsHeader(
 
 /// The page's cards, in rows of two on a wide window: Syncing and Accounts,
 /// the two the main page's strip shows, then Storage and App, Publishing and
-/// Troubleshooting, Experimental and About, and Ignore rules. Narrow, the same
-/// order in one column.
+/// Troubleshooting, Experimental and About, then Ignore rules, with Agent tasks
+/// beside it when it is on. Narrow, the same order in one column.
 #[component]
 pub fn SettingsLayout(
     header: AnyView,
@@ -209,6 +213,9 @@ pub fn SettingsLayout(
     experimental: AnyView,
     troubleshooting: AnyView,
     about: AnyView,
+    /// Empty unless its experiment is on.
+    #[prop(optional)]
+    agent_tasks: Option<AnyView>,
 ) -> impl IntoView {
     view! {
         <div class=style::page>
@@ -225,6 +232,7 @@ pub fn SettingsLayout(
                 {about}
                 // Last, so its long list stretches no other card's row.
                 {ignore_rules}
+                {agent_tasks}
             </TwoColumns>
         </div>
     }
@@ -518,6 +526,389 @@ where
     }
 }
 
+// ── Agent tasks ──
+
+pub const AGENT_TASKS_USE: &str = "A new revision in one of these buckets can ask an agent on \
+     this computer to run a task. Changes apply at the next check.";
+
+pub const NO_BUCKETS: &str = "No buckets: tasks are off";
+
+pub const TRUST_ALL: &str = "Approve every request the agent makes";
+
+pub const TRUST_ALL_WARNING: &str = "Off, a request is approved only when every file it names \
+     is in the package's folder; one that names no file, or a file outside the folder, is \
+     refused, and the agent carries on without it. On, every request is approved, commands and \
+     files outside the folder included.";
+
+/// One agent in the popup's draft.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentDraft {
+    pub name: RwSignal<String>,
+    /// One argument per line, the program first.
+    pub command: RwSignal<String>,
+    pub trust_all: RwSignal<bool>,
+    /// The agent as stored. Its command is saved as it is while its text is
+    /// not edited, so an argument the box cannot show, such as an empty one,
+    /// survives; its `env`, which the popup does not show, always is.
+    pub stored: StoredValue<AgentSettings>,
+}
+
+impl AgentDraft {
+    #[must_use]
+    pub fn new(name: &str, agent: &AgentSettings) -> Self {
+        Self {
+            name: RwSignal::new(name.to_string()),
+            command: RwSignal::new(agent.command.join("\n")),
+            trust_all: RwSignal::new(agent.trust_all),
+            stored: StoredValue::new(agent.clone()),
+        }
+    }
+
+    /// Its fields, read where the caller tracks.
+    #[must_use]
+    pub fn fields(self) -> AgentFields {
+        AgentFields {
+            name: self.name.get(),
+            command: self.command.get(),
+            trust_all: self.trust_all.get(),
+            stored: self.stored.get_value(),
+        }
+    }
+
+    /// Every stored agent, as drafts.
+    #[must_use]
+    pub fn all(settings: &TaskSettings) -> Vec<Self> {
+        settings
+            .agents
+            .iter()
+            .map(|(name, agent)| Self::new(name, agent))
+            .collect()
+    }
+}
+
+/// An agent's fields as typed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentFields {
+    pub name: String,
+    /// One argument per line.
+    pub command: String,
+    pub trust_all: bool,
+    /// The agent as stored; empty for a new one.
+    pub stored: AgentSettings,
+}
+
+impl AgentFields {
+    /// The command to save: as stored while its text is unchanged.
+    fn args(&self) -> Vec<String> {
+        let stored = &self.stored.command;
+        if !stored.is_empty() && self.command == stored.join("\n") {
+            stored.clone()
+        } else {
+            command_args(&self.command)
+        }
+    }
+
+    /// What is wrong with the command Save would write, if anything: a
+    /// stored one can start with a blank program.
+    #[must_use]
+    pub fn command_error(&self) -> Option<&'static str> {
+        self.args()
+            .first()
+            .is_none_or(|program| program.trim().is_empty())
+            .then_some("Enter the program to run, then its arguments")
+    }
+}
+
+/// Each draft's fields, read where the caller tracks.
+#[must_use]
+pub fn agent_fields(agents: &[AgentDraft]) -> Vec<AgentFields> {
+    agents.iter().map(|a| a.fields()).collect()
+}
+
+/// A command as typed, one argument per line; blank lines are dropped.
+#[must_use]
+pub fn command_args(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// An S3 bucket's name: 3 to 63 lowercase letters, digits, dots and hyphens,
+/// starting and ending with a letter or digit, with no two dots in a row, and
+/// not shaped like an IP address.
+fn is_bucket_name(name: &str) -> bool {
+    let ends = |b: Option<u8>| b.is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit());
+    (3..=63).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+        && ends(name.bytes().next())
+        && ends(name.bytes().last())
+        && !name.contains("..")
+        && name.parse::<std::net::Ipv4Addr>().is_err()
+}
+
+/// The buckets typed, one per line as `s3://name` or `name`, as stored:
+/// `s3://name`. Or the first line that is not a bucket.
+pub fn task_buckets(text: &str) -> Result<Vec<String>, String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let name = line.strip_prefix("s3://").unwrap_or(line);
+            let name = name.trim_end_matches('/');
+            if is_bucket_name(name) {
+                Ok(format!("s3://{name}"))
+            } else {
+                Err(format!("Not a bucket name: {line}"))
+            }
+        })
+        .collect()
+}
+
+/// What is wrong with the name of the agent `at`, if anything. A name taken
+/// by an earlier agent is wrong on the later one.
+#[must_use]
+pub fn agent_name_error(names: &[String], at: usize) -> Option<&'static str> {
+    let name = names.get(at)?.trim();
+    if name.is_empty() {
+        Some("Enter a name")
+    } else if names[..at].iter().any(|n| n.trim() == name) {
+        Some("Another agent has this name")
+    } else {
+        None
+    }
+}
+
+/// What Save writes, or `None` while a field is wrong.
+#[must_use]
+pub fn task_settings_of(buckets: &str, agents: &[AgentFields]) -> Option<TaskSettings> {
+    let blessed_buckets = task_buckets(buckets).ok()?;
+    let names: Vec<String> = agents.iter().map(|a| a.name.clone()).collect();
+    let mut stored = std::collections::BTreeMap::new();
+    for (at, agent) in agents.iter().enumerate() {
+        if agent_name_error(&names, at).is_some() || agent.command_error().is_some() {
+            return None;
+        }
+        stored.insert(
+            agent.name.trim().to_string(),
+            AgentSettings {
+                command: agent.args(),
+                trust_all: agent.trust_all,
+                env: agent.stored.env.clone(),
+            },
+        );
+    }
+    Some(TaskSettings {
+        blessed_buckets,
+        agents: stored,
+    })
+}
+
+/// What `task_settings.json` holds, read-only, and **Edit…**, which opens
+/// [`AgentTasksDialog`]. A file that could not be read says why, and is not
+/// offered for editing: the user fixes it by hand.
+#[component]
+pub fn AgentTasksCard(
+    #[prop(into)] stored: Signal<TaskSettingsData>,
+    on_edit: Callback<()>,
+) -> impl IntoView {
+    let muted = |words: &'static str| view! { <span class=style::quiet>{words}</span> }.into_any();
+    let buckets = move || {
+        stored.with(|t| match t.settings.blessed_buckets.as_slice() {
+            [] => muted(NO_BUCKETS),
+            buckets => buckets
+                .iter()
+                .map(|b| view! { <span class=style::long>{b.clone()}</span> })
+                .collect_view()
+                .into_any(),
+        })
+    };
+    let agents = move || {
+        stored.with(|t| {
+            if t.settings.agents.is_empty() {
+                return muted("No agents");
+            }
+            let rows = t
+                .settings
+                .agents
+                .iter()
+                .map(|(name, agent)| {
+                    view! {
+                        <li class=style::agent>
+                            <span>{name.clone()}</span>
+                            <span class=style::command>{agent.command.join(" ")}</span>
+                            {agent
+                                .trust_all
+                                .then(|| view! { <span class=style::quiet>"Approves every request"</span> })}
+                        </li>
+                    }
+                })
+                .collect_view();
+            // `list-style: none` drops the list semantics in WebKit, so the
+            // role is explicit.
+            view! { <ul class=style::agents role="list">{rows}</ul> }.into_any()
+        })
+    };
+    let unreadable = move || stored.with(|t| t.error.clone());
+    view! {
+        <div class=style::slot data-agent-tasks>
+        <Card title="Agent tasks">
+            <p class=style::lead>{AGENT_TASKS_USE}</p>
+            {move || match unreadable() {
+                Some(err) => view! {
+                    <p class=style::error>
+                        {StateTone::Danger.glyph()}
+                        <span>{format!("Can't read task_settings.json: {err}")}</span>
+                    </p>
+                }
+                .into_any(),
+                None => view! {
+                    <ValueRow name="Run tasks from" value=view! { {buckets} }.into_any() />
+                    <ValueRow name="Agents" value=view! { {agents} }.into_any() />
+                }
+                .into_any(),
+            }}
+            <div class=style::card_actions>
+                <Button
+                    disabled=Signal::derive(move || unreadable().is_some())
+                    on_click=move |_| on_edit.run(())
+                >
+                    "Edit…"
+                </Button>
+            </div>
+        </Card>
+        </div>
+    }
+}
+
+/// The popup's fields: the buckets, then each agent with its name, command
+/// and trust, *Remove*, and *Add agent*. Apart from the dialog so the gallery
+/// can draw them inline.
+#[component]
+pub fn AgentTasksForm(
+    /// One per line.
+    buckets: RwSignal<String>,
+    agents: RwSignal<Vec<AgentDraft>>,
+) -> impl IntoView {
+    let bucket_error = Signal::derive(move || buckets.with(|text| task_buckets(text).err()));
+    // Drawn again only when an agent is added or removed, so typing keeps
+    // its place.
+    let rows = move || {
+        agents
+            .get()
+            .into_iter()
+            .enumerate()
+            .map(|(at, draft)| {
+                let name_error = Signal::derive(move || {
+                    let names: Vec<String> =
+                        agents.with(|all| all.iter().map(|a| a.name.get()).collect());
+                    agent_name_error(&names, at).map(ToString::to_string)
+                });
+                let command_error =
+                    Signal::derive(move || draft.fields().command_error().map(ToString::to_string));
+                view! {
+                    <fieldset class=style::agent_fields>
+                        <legend class=style::agent_legend>"Agent"</legend>
+                        <FormControl
+                            label="Name"
+                            error=name_error
+                            control=move |id| {
+                                view! {
+                                    <TextInput
+                                        id=id
+                                        value=draft.name
+                                        invalid=Signal::derive(move || name_error.with(Option::is_some))
+                                    />
+                                }
+                                    .into_any()
+                            }
+                        />
+                        <FormControl
+                            label="Command"
+                            caption="One argument per line, the program first."
+                            error=command_error
+                            control=move |id| {
+                                view! { <TextArea id=id value=draft.command rows=3 /> }.into_any()
+                            }
+                        />
+                        <label class=style::rule>
+                            <Checkbox
+                                state=Signal::derive(move || draft.trust_all.get().into())
+                                on_toggle=move |next: bool| draft.trust_all.set(next)
+                            />
+                            <span>{TRUST_ALL}</span>
+                        </label>
+                        <p class=style::quiet>{TRUST_ALL_WARNING}</p>
+                        <div class=style::card_actions>
+                            <Button on_click=move |_| {
+                                agents.update(|all| {
+                                    all.retain(|a| *a != draft);
+                                });
+                            }>"Remove"</Button>
+                        </div>
+                    </fieldset>
+                }
+            })
+            .collect_view()
+    };
+    view! {
+        <FormControl
+            label="Run tasks from"
+            caption="One bucket per line, as s3://name or name. With none, tasks are off."
+            error=bucket_error
+            control=move |id| {
+                view! { <TextArea id=id value=buckets placeholder="s3://my-bucket" /> }.into_any()
+            }
+        />
+        {rows}
+        <div>
+            <Button on_click=move |_| {
+                agents.update(|all| all.push(AgentDraft::new("", &AgentSettings::default())));
+            }>"Add agent"</Button>
+        </div>
+    }
+}
+
+/// *Agent tasks*, as the modal **Edit…** opens: [`AgentTasksForm`], saved by
+/// Save, which is off while a field is wrong. The fields are the caller's
+/// draft; Cancel leaves them, and the caller fills them again on the next
+/// open.
+#[component]
+pub fn AgentTasksDialog<F, Fut>(
+    open: RwSignal<bool>,
+    buckets: RwSignal<String>,
+    agents: RwSignal<Vec<AgentDraft>>,
+    /// Writes the draft. Its `Err` stays in the dialog.
+    save: F,
+    /// The page's lock, which Save holds too.
+    #[prop(optional, into)]
+    running: Signal<bool>,
+) -> impl IntoView
+where
+    F: Fn() -> Fut + 'static,
+    Fut: Future<Output = Result<(), String>> + 'static,
+{
+    let blocked = Signal::derive(move || {
+        let fields = agents.with(|all| agent_fields(all));
+        buckets.with(|text| task_settings_of(text, &fields).is_none())
+    });
+    view! {
+        <FormDialog
+            open=open
+            title="Agent tasks"
+            submit=Submit::new("Save", save)
+            running=running
+            blocked=blocked
+            wide=true
+        >
+            <AgentTasksForm buckets=buckets agents=agents />
+        </FormDialog>
+    }
+}
+
 // ── Ignore rules ──
 
 pub const IGNORE_RULES_USE: &str = "New files that match a built-in rule stay out of every \
@@ -709,8 +1100,8 @@ pub struct AccountHost {
     pub provisional: bool,
 }
 
-pub const NO_ACCOUNTS: &str = "Accounts appear here for each Quilt catalog your packages point \
-     at. Give a package an S3 bucket to connect it to one.";
+pub const NO_ACCOUNTS: &str = "Accounts appear here for each Quilt catalog you sign in to. To \
+     sign in, choose Open in QuiltSync on a package in your catalog.";
 
 /// The sentence in the Sign out confirmation.
 #[must_use]
@@ -1008,12 +1399,16 @@ pub fn StorageCard(
 
 pub const DESIGN_PREVIEW_SUBLABEL: &str = "The redesigned QuiltSync.";
 
+pub const AGENT_TASKS_SUBLABEL: &str = "Shows the Agent tasks card, where you choose which \
+     buckets can ask an agent on this computer to run a task. Turning it off only hides the card.";
+
 /// Opt-ins for what is still being designed. Entire-package sync is not one
 /// of them here: the v2 pages offer it whatever v1's flag says, so a row for
 /// it would change nothing a reader of this page can see.
 #[component]
 pub fn ExperimentalCard(
     design_preview: RwSignal<bool>,
+    agent_tasks: RwSignal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
     #[prop(optional, into)] pending: Signal<Vec<Saved>>,
 ) -> impl IntoView {
@@ -1025,6 +1420,13 @@ pub fn ExperimentalCard(
                 checked=design_preview
                 disabled=saving(pending, Saved::DesignPreview)
                 trailing=saved_note(saved, Saved::DesignPreview)
+            />
+            <ToggleRow
+                label="Agent tasks"
+                sublabel=AGENT_TASKS_SUBLABEL
+                checked=agent_tasks
+                disabled=saving(pending, Saved::AgentTasks)
+                trailing=saved_note(saved, Saved::AgentTasks)
             />
         </Card>
     }
@@ -1756,6 +2158,326 @@ mod tests {
         );
     }
 
+    #[test]
+    fn buckets_are_stored_as_s3_uris() {
+        assert_eq!(
+            task_buckets("s3://quilt-dev\n\n  plate-reads/ \n"),
+            Ok(vec![
+                "s3://quilt-dev".to_string(),
+                "s3://plate-reads".to_string()
+            ])
+        );
+        assert_eq!(task_buckets(""), Ok(Vec::new()));
+        assert_eq!(
+            task_buckets("quilt-dev\nQuilt Dev"),
+            Err("Not a bucket name: Quilt Dev".to_string())
+        );
+        assert!(task_buckets("s3://quilt-dev/data").is_err());
+        assert!(task_buckets("ab").is_err());
+        assert!(task_buckets("-quilt").is_err());
+        assert!(task_buckets("quilt..dev").is_err(), "two dots in a row");
+        assert!(task_buckets("192.168.5.4").is_err(), "an IP address");
+        assert!(task_buckets("quilt.dev.2").is_ok());
+    }
+
+    #[test]
+    fn a_command_is_one_argument_per_line() {
+        assert_eq!(
+            command_args("/Applications/Kiro CLI.app/kiro\n\n acp \n"),
+            vec!["/Applications/Kiro CLI.app/kiro", "acp"]
+        );
+        let typed = |command: &str| AgentFields {
+            command: command.to_string(),
+            ..AgentFields::default()
+        };
+        assert_eq!(
+            typed(" \n").command_error(),
+            Some("Enter the program to run, then its arguments")
+        );
+        assert_eq!(typed("kiro").command_error(), None);
+    }
+
+    /// A stored command whose program is blank cannot be saved as it is,
+    /// and says so under Command; edited, its blank line is dropped.
+    #[test]
+    fn a_stored_blank_program_is_an_error() {
+        for program in ["", "  "] {
+            let stored = vec![program.to_string(), "acp".to_string()];
+            let mut fields = AgentFields {
+                name: "kiro".to_string(),
+                command: stored.join("\n"),
+                stored: AgentSettings {
+                    command: stored,
+                    ..AgentSettings::default()
+                },
+                ..AgentFields::default()
+            };
+            assert_eq!(
+                fields.command_error(),
+                Some("Enter the program to run, then its arguments"),
+                "{program:?}"
+            );
+            assert_eq!(task_settings_of("", std::slice::from_ref(&fields)), None);
+            fields.command = "kiro\nacp".to_string();
+            assert_eq!(fields.command_error(), None);
+        }
+    }
+
+    /// The popup does not show an agent's variables, and a save keeps them,
+    /// whatever else changed.
+    #[test]
+    fn a_save_keeps_each_agents_env() {
+        let env: std::collections::BTreeMap<String, String> =
+            [("DENO_DIR".to_string(), "/tmp/deno".to_string())].into();
+        let fields = AgentFields {
+            name: "kiro".to_string(),
+            command: "kiro\nacp\n--verbose".to_string(),
+            trust_all: true,
+            stored: AgentSettings {
+                command: vec!["kiro".to_string(), "acp".to_string()],
+                trust_all: false,
+                env: env.clone(),
+            },
+        };
+        let saved = task_settings_of("", &[fields]).expect("valid");
+        assert_eq!(saved.agents["kiro"].env, env);
+    }
+
+    #[test]
+    fn an_agent_needs_a_name_of_its_own() {
+        let names = ["kiro".to_string(), " ".to_string(), "kiro ".to_string()];
+        assert_eq!(agent_name_error(&names, 0), None);
+        assert_eq!(agent_name_error(&names, 1), Some("Enter a name"));
+        assert_eq!(
+            agent_name_error(&names, 2),
+            Some("Another agent has this name")
+        );
+    }
+
+    #[test]
+    fn save_writes_only_a_valid_draft() {
+        let agent = |name: &str, command: &str| AgentFields {
+            name: name.to_string(),
+            command: command.to_string(),
+            ..AgentFields::default()
+        };
+        assert_eq!(
+            task_settings_of("quilt-dev", &[agent(" kiro ", "kiro\nacp")]),
+            Some(TaskSettings {
+                blessed_buckets: vec!["s3://quilt-dev".to_string()],
+                agents: [(
+                    "kiro".to_string(),
+                    AgentSettings {
+                        command: vec!["kiro".to_string(), "acp".to_string()],
+                        ..AgentSettings::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            })
+        );
+        assert_eq!(task_settings_of("Quilt Dev", &[]), None);
+        assert_eq!(task_settings_of("", &[agent("kiro", "")]), None);
+        assert_eq!(
+            task_settings_of("", &[agent("kiro", "a"), agent("kiro", "b")]),
+            None
+        );
+    }
+
+    /// A stored command the box cannot show, such as one with an empty
+    /// argument, is saved as it is until its text is edited.
+    #[test]
+    fn an_unedited_command_is_saved_as_stored() {
+        let stored: Vec<String> = ["sh", "-c", "exec agent \"$@\"", "", "--acp"]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let mut fields = AgentFields {
+            name: "wrapped".to_string(),
+            command: stored.join("\n"),
+            trust_all: false,
+            stored: AgentSettings {
+                command: stored.clone(),
+                ..AgentSettings::default()
+            },
+        };
+        let saved = |fields: &AgentFields| {
+            task_settings_of("", std::slice::from_ref(fields))
+                .unwrap()
+                .agents["wrapped"]
+                .command
+                .clone()
+        };
+        assert_eq!(saved(&fields), stored);
+        fields.command.push_str("\n--verbose");
+        assert_eq!(
+            saved(&fields),
+            ["sh", "-c", "exec agent \"$@\"", "--acp", "--verbose"]
+        );
+    }
+
+    /// The grid's styles and the card rows', for a layout test.
+    fn load_layout_styles() {
+        stylance::import_crate_style!(grid, "src/kit/two_columns.module.scss");
+        crate::test_support::load_module_style(
+            include_str!("../kit/two_columns.module.scss"),
+            &[
+                ("grid", grid::grid),
+                ("tight", grid::tight),
+                ("fill", grid::fill),
+            ],
+        );
+        // The rules alone: the file's `//` comments are not CSS.
+        let scss = include_str!("settings_v2.module.scss");
+        let rule = |name: &str| {
+            let start = scss.find(&format!(".{name} {{")).expect("the rule");
+            let end = start + scss[start..].find('}').expect("its end") + 1;
+            scss[start..end].to_string()
+        };
+        let css = [
+            "slot",
+            "row",
+            "row_text",
+            "row_value",
+            "agents",
+            "agent",
+            "command",
+        ]
+        .map(rule)
+        .join("\n");
+        crate::test_support::load_module_style(
+            &css,
+            &[
+                ("slot", style::slot),
+                ("row", style::row),
+                ("row_text", style::row_text),
+                ("row_value", style::row_value),
+                ("agents", style::agents),
+                ("agent", style::agent),
+                ("command", style::command),
+            ],
+        );
+    }
+
+    /// Agent tasks shares Ignore rules' row: wide, it is beside it; narrow,
+    /// it is next in the one column. A long command wraps inside the card.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    #[allow(clippy::float_cmp, reason = "box edges here are whole pixels")]
+    async fn agent_tasks_sits_beside_ignore_rules() {
+        load_layout_styles();
+        let long = TaskSettingsData {
+            settings: TaskSettings {
+                blessed_buckets: Vec::new(),
+                agents: [(
+                    "codex".to_string(),
+                    AgentSettings {
+                        command: vec![
+                            "/Users/a/.nvm/versions/node/v24.12.0/lib/node_modules/\
+                             @agentclientprotocol/codex-acp/dist/index.js"
+                                .to_string(),
+                            // No place a browser breaks on its own.
+                            format!("--key={}", "x".repeat(150)),
+                        ],
+                        ..AgentSettings::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            },
+            error: None,
+        };
+        for width in [1024, 640] {
+            crate::test_support::unmount_earlier();
+            let card =
+                |name: &'static str| view! { <section data-card=name>{name}</section> }.into_any();
+            let stored = long.clone();
+            let el = crate::test_support::mount(move || {
+                view! {
+                    <div style=format!("--q-space-4:16px; width:{width}px")>
+                        <SettingsLayout
+                            header=().into_any()
+                            syncing=card("syncing")
+                            publishing=card("publishing")
+                            ignore_rules=card("ignore")
+                            accounts=card("accounts")
+                            app=card("app")
+                            storage=card("storage")
+                            experimental=card("experimental")
+                            troubleshooting=card("troubleshooting")
+                            about=card("about")
+                            agent_tasks=view! {
+                                <AgentTasksCard stored=stored on_edit=Callback::new(|()| ()) />
+                            }
+                                .into_any()
+                        />
+                    </div>
+                }
+            });
+            crate::test_support::sleep_ms(0).await;
+            let rect = |selector: &str| {
+                el.query_selector(selector)
+                    .unwrap()
+                    .expect(selector)
+                    .get_bounding_client_rect()
+            };
+            let ignore = rect("[data-card=ignore]");
+            let tasks = rect("[data-agent-tasks] > *");
+            if width == 1024 {
+                assert_eq!(tasks.top(), ignore.top(), "{width}: on Ignore rules' row");
+                assert!(tasks.left() > ignore.right(), "{width}: to its right");
+            } else {
+                assert_eq!(tasks.left(), ignore.left(), "{width}: one column");
+                assert!(tasks.top() > ignore.bottom(), "{width}: under it");
+            }
+            let command = el
+                .query_selector("[data-agent-tasks] li > :nth-child(2)")
+                .unwrap()
+                .expect("the command");
+            assert!(
+                command.scroll_width() <= command.client_width(),
+                "{width}: the command wraps inside its box"
+            );
+            assert!(
+                command.get_bounding_client_rect().right() <= tasks.right() + 0.5,
+                "{width}: and the box inside the card"
+            );
+        }
+    }
+
+    /// An agent's legend breaks only part of its fieldset's border.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn the_agent_legend_is_narrow() {
+        crate::test_support::unmount_earlier();
+        let scss = include_str!("settings_v2.module.scss");
+        let start = scss.find(".agent_fields {").expect("the rule");
+        // Without the file's `//` comments, which are not CSS.
+        let css: String = scss[start..]
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // As the app's normalize sets every box.
+        let css = format!("{css}\n[data-legend-test] legend {{ box-sizing: border-box; }}");
+        crate::test_support::load_module_style(
+            &css,
+            &[
+                ("agent_fields", style::agent_fields),
+                ("agent_legend", style::agent_legend),
+            ],
+        );
+        let el = crate::test_support::mount(|| {
+            let agents = RwSignal::new(vec![AgentDraft::new("kiro", &AgentSettings::default())]);
+            view! {
+                <div data-legend-test style="width:600px">
+                    <AgentTasksForm buckets=RwSignal::new(String::new()) agents=agents />
+                </div>
+            }
+        });
+        crate::test_support::sleep_ms(0).await;
+        let legend = el.query_selector("legend").unwrap().expect("the legend");
+        assert_eq!(legend.get_bounding_client_rect().width(), 48.0);
+    }
+
     /// v2 vocabulary: no commit, push, pull or remote in the page's words.
     #[test]
     fn no_fixed_string_uses_a_banned_word() {
@@ -1765,6 +2487,11 @@ mod tests {
             GLOBAL_SCOPE_WARNING,
             TRAY_SUBLABEL,
             DESIGN_PREVIEW_SUBLABEL,
+            AGENT_TASKS_SUBLABEL,
+            AGENT_TASKS_USE,
+            NO_BUCKETS,
+            TRUST_ALL,
+            TRUST_ALL_WARNING,
             TEMPORARY_LOGS,
             EMAIL_INSTEAD,
             REPORT_SENT,

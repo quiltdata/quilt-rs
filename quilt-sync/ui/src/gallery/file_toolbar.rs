@@ -15,24 +15,24 @@
 //! width*, which is only true if the wrap never fires.
 //!
 //! It fires. The three controls and their gaps are **680px** wide, the inset
-//! leaves the toolbar the pane minus 28, and the narrowest pane that holds one
-//! line is therefore **708px**. The pane at 1024 is 700: `1024 − 32` of
+//! leaves the toolbar the pane minus 12, and the narrowest pane that holds one
+//! line is therefore **692px**. The pane at 1024 is 660: `1024 − 32` of
 //! `page_layout`'s own `padding-inline` leaves 992, less the context pane's
-//! fixed 280 and a `space-3` gap. Eight pixels short, and twelve if the shell
-//! takes `space-4` — before any scrollbar.
+//! fixed 320 and a `space-3` gap. 32 pixels short, and 36 if the shell takes
+//! `space-4` — before any scrollbar. At the default 1280 window the pane is
+//! 916, and the toolbar is one line.
 //!
 //! So the toolbar is **three rows at 1024**, not two, and the row it gains is
 //! 40px of the vertical budget that was counted as saved. The first two cells
-//! are the pane at 1024 and the narrow arrangement; the third is 708px, the
-//! width where it just fits, because a claim that turns over eight pixels
-//! should be readable as eight pixels.
+//! are the pane at 1024 and the width where it just fits, 692px; the third is
+//! the narrow arrangement.
 //!
 //! **The facets are what spends it.** Of the 680, the segmented control is 396
 //! — 58% of the toolbar for four options, none of them truncated. Nothing here
 //! is broken; it simply does not fit, and the facets are where the width went.
 //!
-//! The frame is a proxy and not the page: 700px of gallery is not a 1024
-//! viewport with a 280px context pane beside it. It is the same content at the
+//! The frame is a proxy and not the page: 660px of gallery is not a 1024
+//! viewport with a 320px context pane beside it. It is the same content at the
 //! same width, which is what settles whether the controls fit; the pane's own
 //! margins are the shell's to confirm when it is built.
 //!
@@ -44,7 +44,7 @@
 //! recorded no override.
 //!
 //! At this width the rule of thumb turns out to be about width and not taste:
-//! the four segments are 396px, the toolbar needs 708 and has 700, and the same
+//! the four segments are 396px, the toolbar needs 692 and has 660, and the same
 //! four choices in a `Select` would read `Show: Not downloaded 17` in about 190
 //! — which is the row back, with 200px to spare. That is the trade, on screen,
 //! and it is a design decision rather than a defect: all four counts visible at
@@ -83,11 +83,10 @@
 //! # The left inset is part of the measurement
 //!
 //! Select-all sits in the rows' checkbox column, which puts the toolbar's
-//! content 28px in from the pane's edge — the list box's own `space-3` plus the
-//! 16px disclosure gutter. There are no rows here to align to, so the inset
-//! draws nothing; it is here because leaving it out measures a toolbar 28px
-//! wider than the one that ships, and 28px is the whole margin this question is
-//! about. The alignment itself is the file list's section.
+//! content 12px in from the pane's edge — a row's own `space-3`, since the box
+//! column leads every row. There are no rows here to align to, so the inset
+//! draws nothing; it is here because leaving it out measures a toolbar wider
+//! than the one that ships. The alignment itself is the file list's section.
 //!
 //! The search row above keeps the pane's full width — §4 has it alone and full
 //! width, so it starts where the pane starts and not where the boxes do.
@@ -250,12 +249,11 @@ fn toolbar(width: &'static str) -> AnyView {
                     placeholder="Search files…"
                 />
             </div>
-            // 28px: the list box's own `space-3` plus the 16px disclosure
-            // gutter, which is where the rows put their boxes and therefore
-            // where select-all has to start. It draws nothing here and costs
-            // width, which is the point — the toolbar has 28px less than the
-            // pane to fit five controls into.
-            <div style="padding-left:calc(var(--q-space-3) + 16px)">
+            // A row's own `space-3`, which is where the rows put their boxes
+            // and therefore where select-all has to start. It draws nothing
+            // here and costs width, which is the point — the toolbar has that
+            // much less than the pane to fit five controls into.
+            <div style="padding-left:var(--q-space-3)">
             <ListToolbar reverse_when_stacked=true>
                 // A select-all over nothing is a control that cannot act — the
                 // `Changed` facet reaches that, because a file that is here
@@ -288,8 +286,8 @@ fn toolbar(width: &'static str) -> AnyView {
                     // one make a single group across both — the bug the kit
                     // already logged when five facet bars became one.
                     name=match width {
-                        "700px" => "facets-pane",
-                        "708px" => "facets-fits",
+                        "660px" => "facets-pane",
+                        "692px" => "facets-fits",
                         _ => "facets-narrow",
                     }
                     options=options.iter().cloned().map(Segment::new).collect()
@@ -304,8 +302,8 @@ fn toolbar(width: &'static str) -> AnyView {
 }
 
 const NOTE: &str = "The file pane's two control rows — and at 1024 they are three. The \
-                    controls and their gaps are 680px and the pane leaves the toolbar 700, \
-                    so one line needs 708: it wraps by eight pixels, and the row it gains is \
+                    controls and their gaps are 680px and the pane at 1024 is 660, so one \
+                    line needs a 692 pane: it wraps by 32 pixels, and the row it gains is \
                     40px nobody budgeted. The three cells are that width, the width where it \
                     just fits, and the narrow arrangement. The facets are where the width \
                     goes: 396 of the 680, 58% of the toolbar, for four options against \
@@ -317,11 +315,11 @@ const NOTE: &str = "The file pane's two control rows — and at 1024 they are th
 pub fn FileToolbarStories() -> impl IntoView {
     view! {
         <Story title="The list toolbar" note=NOTE>
-            <Cell full=true label="700px — the file pane at 1024. Two lines: it wraps">
-                {toolbar("700px")}
+            <Cell full=true label="660px — the file pane at 1024. Two lines: it wraps">
+                {toolbar("660px")}
             </Cell>
-            <Cell full=true label="708px — the narrowest pane that holds one line">
-                {toolbar("708px")}
+            <Cell full=true label="692px — the narrowest pane that holds one line">
+                {toolbar("692px")}
             </Cell>
             <Cell full=true label="460px — the narrow arrangement, where wrapping is the point">
                 {toolbar("460px")}

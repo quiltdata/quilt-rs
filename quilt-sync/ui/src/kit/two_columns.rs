@@ -219,9 +219,11 @@ mod tests {
         let drawn = boxes(&el);
         let [form, list] = [drawn[0], drawn[1]];
         assert_eq!(form.3, 100.0, "the form keeps its height: {drawn:?}");
+        // Relative, and to the pixel: the views earlier tests left mounted
+        // can put the form at a fractional top.
         assert_eq!(
-            list.1,
-            form.1 + 100.0 + 16.0,
+            (list.1 - form.1).round(),
+            100.0 + 16.0,
             "the list under it: {drawn:?}"
         );
         assert_eq!(

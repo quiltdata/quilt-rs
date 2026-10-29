@@ -1,5 +1,5 @@
 .root {
-  width: 280px;
+  width: 320px;
   flex: none;
 }
 
@@ -11,13 +11,60 @@
   min-height: 0;
 }
 
-.bucket {
+.muted {
   color: var(--q-fgColor-muted);
   font-size: var(--q-text-body);
 }
 
+/* Two named facts: the label column fits its words, the value takes the rest. */
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: var(--q-space-3);
+  row-gap: var(--q-space-1);
+  align-self: stretch;
+  margin: 0;
+
+  dd {
+    margin: 0;
+    min-width: 0;
+  }
+}
+
+/* The skeleton's bars, as wide as the section so a percent width has a base. */
+.lines {
+  align-self: stretch;
+}
+
+.value {
+  font-size: var(--q-text-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Above the files, the pane takes the column, and its three sections are
+ * three columns rather than a stack, so the pane is one section tall before
+ * the first file. Side by side the columns say they are three subjects, so
+ * `PaneSection` draws no rule and no space for one, and the grid's gap holds
+ * them apart.
+ *
+ * Structural selectors rather than `Card`'s hashed class: the shape is
+ * `aside > section (Card) > div (its body) > section (PaneSection)`, the
+ * pane's own markup. */
 @container (max-width: 800px) {
   .root {
     width: 100%;
+    --q-pane-divider: 0 none;
+    --q-pane-divider-above: 0;
+    --q-pane-divider-below: 0;
+  }
+
+  .root > section > div {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: start;
+    gap: var(--q-space-4);
   }
 }

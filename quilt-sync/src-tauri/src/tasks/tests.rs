@@ -20,6 +20,7 @@ fn settings() -> TaskSettings {
             AgentSettings {
                 command: vec!["kiro-cli-chat".to_string(), "acp".to_string()],
                 trust_all: true,
+                env: BTreeMap::new(),
             },
         )]),
     }
@@ -48,6 +49,7 @@ fn without_claim(meta: &Value) -> Value {
 /// A revision a check published.
 struct Revision {
     meta: Value,
+    message: String,
     /// The invocation IDs this desktop had on disk when it was pushed.
     own_at_push: BTreeSet<String>,
     /// The changed paths it committed.
@@ -91,7 +93,7 @@ fn expect_push_and_reset(
     let pushed = Arc::clone(events);
     model.expect_locked_package_push().returning(move |_| {
         pushed.lock().unwrap().push("push".to_string());
-        Ok(quilt::PushOutcome {
+        Ok(quilt::Pushed::Uploaded(quilt::PushOutcome {
             manifest_uri: quilt_uri::ManifestUri {
                 bucket: "quilt-dev".to_string(),
                 namespace: namespace(),
@@ -99,7 +101,7 @@ fn expect_push_and_reset(
                 origin: Some(fixtures::host()),
             },
             certified_latest,
-        })
+        }))
     });
     let reset = Arc::clone(events);
     model
@@ -112,6 +114,36 @@ fn expect_push_and_reset(
                 hash: "h2".to_string(),
                 origin: Some(fixtures::host()),
             })
+        });
+}
+
+/// Record each download in `events`, refusing, as the engine does, to write
+/// over anything already in `home`, and skipping the `gone` paths, whose bytes
+/// the remote no longer holds.
+fn expect_downloads(
+    model: &mut MockQuiltModel,
+    events: &Arc<Mutex<Vec<String>>>,
+    home: PathBuf,
+    gone: &'static [&'static str],
+) {
+    let events = Arc::clone(events);
+    model
+        .expect_locked_package_install_paths()
+        .returning(move |_, paths| {
+            let mut report = quilt::flow::InstallPathsReport::default();
+            for path in paths {
+                events
+                    .lock()
+                    .unwrap()
+                    .push(format!("download {}", path.display()));
+                if std::fs::symlink_metadata(home.join(path)).is_ok() {
+                    return Err(Error::General(format!("{} exists", path.display())));
+                }
+                if gone.iter().any(|gone| path == std::path::Path::new(gone)) {
+                    report.skipped.push(path.clone());
+                }
+            }
+            Ok(report)
         });
 }
 
@@ -155,6 +187,16 @@ struct Fixture {
     pulled_meta: Option<Value>,
     /// What the remote's `latest` carries; the head's metadata unless set.
     latest_meta: Option<Value>,
+    /// What the head a run ends on carries; [`edited_head`] unless set.
+    finished_meta: Option<Value>,
+    /// Walking the tree the run ended on fails, as it does while signed out.
+    walk_fails: bool,
+    /// The paths this copy already tracks.
+    tracked: &'static [&'static str],
+    /// The paths the head lists.
+    rows: &'static [&'static str],
+    /// The paths whose bytes the remote no longer holds.
+    gone: &'static [&'static str],
 }
 
 impl Fixture {
@@ -176,6 +218,11 @@ impl Fixture {
             stacked_commits: false,
             pulled_meta: None,
             latest_meta: None,
+            finished_meta: None,
+            walk_fails: false,
+            tracked: &[],
+            rows: &["TASK.md", "sub/TASK.md"],
+            gone: &[],
         }
     }
 
@@ -188,6 +235,11 @@ impl Fixture {
             origin: Some(fixtures::host()),
         };
         let mut lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
+        for path in self.tracked {
+            lineage
+                .paths
+                .insert(PathBuf::from(path), quilt::lineage::PathState::default());
+        }
         if self.pending_commit {
             let prev_hashes = if self.stacked_commits {
                 vec!["c0".to_string()]
@@ -216,9 +268,9 @@ impl Fixture {
             .collect()
     }
 
-    /// Check a package in a blessed bucket whose head carries `meta` and the
-    /// file `TASK.md`, not yet downloaded, whose tree walks as `status`,
-    /// publishing with `certified_latest`.
+    /// Check a package in a blessed bucket whose head carries `meta` and lists
+    /// the fixture's `rows`, whose tree walks as `status`, publishing with
+    /// `certified_latest`.
     async fn check(
         &self,
         meta: Value,
@@ -244,23 +296,10 @@ impl Fixture {
         expect_push_and_reset(&mut model, &self.events, certified_latest);
         let latest = self.latest_meta.clone().unwrap_or(meta.clone());
         expect_latest(&mut model, latest, &[]);
+        let rows = self.rows;
         model
             .expect_get_installed_package_manifest()
-            .returning(move |_, _| {
-                Ok(quilt::manifest::Manifest {
-                    header: quilt::manifest::ManifestHeader {
-                        user_meta: Some(meta.clone()),
-                        ..quilt::manifest::ManifestHeader::default()
-                    },
-                    rows: ["TASK.md", "sub/TASK.md"]
-                        .into_iter()
-                        .map(|key| quilt::manifest::ManifestRow {
-                            logical_key: PathBuf::from(key),
-                            ..quilt::manifest::ManifestRow::default()
-                        })
-                        .collect(),
-                })
-            });
+            .returning(move |_, _| Ok(manifest(&meta, rows)));
         model
             .expect_try_lock_package()
             .returning(|p| Ok(Some(p.namespace.clone())));
@@ -269,23 +308,7 @@ impl Fixture {
             events.lock().unwrap().push("walk".to_string());
             Ok(status.clone())
         });
-        let events = Arc::clone(&self.events);
-        let home = self.home();
-        model
-            .expect_locked_package_install_paths()
-            .returning(move |_, paths| {
-                for path in paths {
-                    events
-                        .lock()
-                        .unwrap()
-                        .push(format!("download {}", path.display()));
-                    // As the engine does, refuse to write over anything there.
-                    if std::fs::symlink_metadata(home.join(path)).is_ok() {
-                        return Err(Error::General(format!("{} exists", path.display())));
-                    }
-                }
-                Ok(quilt::flow::InstallPathsReport::default())
-            });
+        expect_downloads(&mut model, &self.events, self.home(), self.gone);
         let home = self.home();
         model
             .expect_package_home()
@@ -296,7 +319,7 @@ impl Fixture {
         let invocations = self.dir.path().join("task_invocations.json");
         model
             .expect_locked_package_publish()
-            .returning(move |_, _, meta, _, _, status| {
+            .returning(move |_, message, meta, _, _, status| {
                 let UserMeta::Set(meta) = meta else {
                     panic!("a task revision sets its metadata");
                 };
@@ -312,6 +335,7 @@ impl Fixture {
                 events.lock().unwrap().push("publish".to_string());
                 published.lock().unwrap().push(Revision {
                     meta,
+                    message,
                     own_at_push,
                     paths: changed_paths(status.as_ref()),
                 });
@@ -341,8 +365,13 @@ async fn a_claim_changes_only_the_claim_and_starts_the_run() {
 
     assert_eq!(
         *fixture.events.lock().unwrap(),
-        ["download TASK.md", "walk", "publish"],
-        "the agent finds its document on disk, and the claim publishes a tree that has it"
+        [
+            "download TASK.md",
+            "download sub/TASK.md",
+            "walk",
+            "publish"
+        ],
+        "the agent finds the whole revision on disk, and the claim publishes a tree that has it"
     );
     let published = fixture.published.lock().unwrap();
     assert_eq!(published.len(), 1, "one claim revision");
@@ -375,7 +404,7 @@ async fn a_claim_changes_only_the_claim_and_starts_the_run() {
 
 /// The download refuses to write over a file that is already there.
 #[tokio::test]
-async fn a_document_already_in_the_folder_is_not_downloaded_again() -> Result<(), Error> {
+async fn a_file_already_in_the_folder_is_not_downloaded_again() -> Result<(), Error> {
     let fixture = Fixture::new();
     tokio::fs::create_dir_all(fixture.home()).await?;
     tokio::fs::write(fixture.home().join("TASK.md"), "the task").await?;
@@ -384,8 +413,79 @@ async fn a_document_already_in_the_folder_is_not_downloaded_again() -> Result<()
         .check(unclaimed(), fresh(BTreeMap::new()), true)
         .await;
 
-    assert_eq!(*fixture.events.lock().unwrap(), ["walk", "publish"]);
+    assert_eq!(
+        *fixture.events.lock().unwrap(),
+        ["download sub/TASK.md", "walk", "publish"]
+    );
     assert_eq!(fixture.runs.lock().unwrap().len(), 1, "the run starts");
+    Ok(())
+}
+
+/// Asking for one would fail the whole download: the engine refuses a path it
+/// already tracks.
+#[tokio::test]
+async fn a_path_this_copy_tracks_is_not_downloaded_again() {
+    let fixture = Fixture {
+        tracked: &["TASK.md"],
+        ..Fixture::new()
+    };
+
+    fixture
+        .check(unclaimed(), fresh(BTreeMap::new()), true)
+        .await;
+
+    assert_eq!(
+        *fixture.events.lock().unwrap(),
+        ["download sub/TASK.md", "walk", "publish"]
+    );
+}
+
+/// The download comes before the claim, outside any permission check.
+#[tokio::test]
+async fn a_revision_listing_a_path_outside_the_package_is_not_claimed() {
+    let fixture = Fixture {
+        rows: &["TASK.md", "../outside.csv"],
+        ..Fixture::new()
+    };
+
+    fixture
+        .check(unclaimed(), fresh(BTreeMap::new()), true)
+        .await;
+
+    assert_eq!(
+        *fixture.events.lock().unwrap(),
+        [] as [&str; 0],
+        "nothing downloaded"
+    );
+    assert_eq!(fixture.metas(), [] as [Value; 0], "nothing is claimed");
+}
+
+#[tokio::test]
+async fn a_task_input_whose_bytes_are_gone_stops_the_claim() {
+    let fixture = Fixture {
+        gone: &["sub/TASK.md"],
+        ..Fixture::new()
+    };
+
+    fixture
+        .check(unclaimed(), fresh(BTreeMap::new()), true)
+        .await;
+
+    assert_eq!(fixture.metas(), [] as [Value; 0], "nothing is claimed");
+    assert!(fixture.runs.lock().unwrap().is_empty(), "nothing runs");
+}
+
+#[tokio::test]
+async fn a_task_input_that_cannot_be_downloaded_stops_the_claim() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    tokio::fs::create_dir_all(fixture.home().join("sub/TASK.md")).await?;
+
+    fixture
+        .check(unclaimed(), fresh(BTreeMap::new()), true)
+        .await;
+
+    assert_eq!(fixture.metas(), [] as [Value; 0], "nothing is claimed");
+    assert!(fixture.runs.lock().unwrap().is_empty(), "nothing runs");
     Ok(())
 }
 
@@ -458,7 +558,14 @@ async fn a_claim_that_did_not_become_latest_resets_to_latest_and_starts_no_run()
 
     assert_eq!(
         *fixture.events.lock().unwrap(),
-        ["download TASK.md", "walk", "publish", "walk", "reset"],
+        [
+            "download TASK.md",
+            "download sub/TASK.md",
+            "walk",
+            "publish",
+            "walk",
+            "reset"
+        ],
         "the claim was pushed, then the clean package went back to latest"
     );
     assert!(fixture.runs.lock().unwrap().is_empty(), "nothing runs");
@@ -489,8 +596,115 @@ async fn our_own_interrupted_claim_is_published_failed_with_what_the_agent_left(
     assert_eq!(claim["status"], "failed");
     assert_eq!(claim["reason"], "interrupted by restart");
     assert_eq!(claim["invocation_id"], "ours");
+    assert_eq!(
+        claim["changes"],
+        json!({ "added": 1, "modified": 0, "removed": 0 })
+    );
     assert_eq!(published[0].paths, BTreeSet::from(["out.md".to_string()]));
     assert!(fixture.runs.lock().unwrap().is_empty(), "no second run");
+    Ok(())
+}
+
+/// The run saved its outcome, then its publish never landed, or landed outside
+/// `latest` and was reset onto a `latest` still holding the claim.
+#[tokio::test]
+async fn the_sweep_publishes_the_outcome_the_run_saved() -> Result<(), Error> {
+    let not_started = json!({ "status": "not_started", "invocation_id": "ours", "claimed_at": "t", "reason": "agent not signed in" });
+    let done = json!({ "status": "done", "invocation_id": "ours", "claimed_at": "t", "session_id": "s1", "stop_reason": "end_turn" });
+    let mut done_with_counts = done.clone();
+    done_with_counts["changes"] = json!({ "added": 1, "modified": 0, "removed": 0 });
+    for (saved, changes, published_claim, message) in [
+        (
+            not_started.clone(),
+            BTreeMap::new(),
+            not_started,
+            "Task TASK.md not_started",
+        ),
+        (done, written(), done_with_counts, "Task TASK.md done"),
+    ] {
+        let fixture = Fixture::new();
+        settings::remember_invocation(fixture.dir.path(), "ours").await?;
+        settings::remember_outcome(fixture.dir.path(), "ours", &saved).await?;
+        let paths = changes.keys().map(|p| p.display().to_string()).collect();
+
+        fixture.check(ours_claimed(), fresh(changes), true).await;
+
+        let published = fixture.published.lock().unwrap();
+        assert_eq!(published.len(), 1, "one revision, the saved outcome's");
+        assert_eq!(
+            published[0].meta,
+            agent_exec::with_claim(&ours_claimed(), published_claim),
+            "the head's metadata, with only the claim moved on"
+        );
+        assert_eq!(published[0].message, message);
+        assert_eq!(published[0].paths, paths);
+    }
+    Ok(())
+}
+
+/// The app was killed while the agent ran, and the agent kept running.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn the_sweep_stops_an_agent_left_running_before_it_publishes() -> Result<(), Error> {
+    use std::os::unix::process::ExitStatusExt;
+
+    let fixture = Fixture::new();
+    settings::remember_invocation(fixture.dir.path(), "ours").await?;
+    let mut agent = std::process::Command::new("sleep").arg("60").spawn()?;
+    let spawned = agent_process::Spawned::of(agent.id()).expect("its start time");
+    settings::record_agent(fixture.dir.path(), "ours", Some(spawned)).await?;
+
+    fixture.check(ours_claimed(), fresh(written()), true).await;
+
+    let stopped = agent.try_wait()?.and_then(|status| status.signal());
+    assert_eq!(stopped, Some(libc::SIGTERM), "the agent is stopped");
+    assert_eq!(
+        settings::recorded_agent(fixture.dir.path(), "ours").await?,
+        None,
+        "and its record dropped"
+    );
+    assert_eq!(
+        fixture.metas()[0]["agent_exec"]["claim"]["status"],
+        "failed"
+    );
+    Ok(())
+}
+
+/// A folder in place of the file makes it unreadable.
+#[tokio::test]
+async fn the_sweep_publishes_failed_when_the_saved_outcomes_cannot_be_read() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    settings::remember_invocation(fixture.dir.path(), "ours").await?;
+    tokio::fs::create_dir(fixture.dir.path().join("task_outcomes.json")).await?;
+
+    fixture.check(ours_claimed(), fresh(written()), true).await;
+
+    let published = fixture.metas();
+    assert_eq!(published.len(), 1);
+    assert_eq!(published[0]["agent_exec"]["claim"]["status"], "failed");
+    Ok(())
+}
+
+/// The claim's own commit never left here, and `latest` already carries the
+/// run's outcome.
+#[tokio::test]
+async fn a_saved_outcome_already_in_latest_is_not_published_again() -> Result<(), Error> {
+    let saved = json!({ "status": "not_started", "invocation_id": "ours", "claimed_at": "t" });
+    let fixture = Fixture {
+        pending_commit: true,
+        latest_meta: Some(agent_exec::with_claim(&ours_claimed(), saved.clone())),
+        ..Fixture::new()
+    };
+    settings::remember_invocation(fixture.dir.path(), "ours").await?;
+    settings::remember_outcome(fixture.dir.path(), "ours", &saved).await?;
+    let ahead = quilt::lineage::InstalledPackageStatus {
+        upstream_state: UpstreamState::Ahead,
+        ..fresh(written())
+    };
+
+    fixture.check(ours_claimed(), ahead, true).await;
+
+    assert_eq!(fixture.metas(), [] as [Value; 0]);
     Ok(())
 }
 
@@ -723,7 +937,7 @@ async fn a_task_waits_while_latest_cannot_be_read() {
 
 /// A package whose remote `latest` reads as `latest_hash` (fresh unless
 /// `refreshed` is false), carries `latest_meta` and lists `TASK.md` and
-/// `NEXT.md`, neither on disk. Pulls and downloads go to the fixture's events.
+/// `NEXT.md`. Pulls and downloads go to the fixture's events.
 fn rereading_model(
     fixture: &Fixture,
     latest_hash: &str,
@@ -736,18 +950,7 @@ fn rereading_model(
     model
         .expect_package_home()
         .returning(move |_| Ok(home.clone()));
-    let downloaded = Arc::clone(events);
-    model
-        .expect_locked_package_install_paths()
-        .returning(move |_, paths| {
-            for path in paths {
-                downloaded
-                    .lock()
-                    .unwrap()
-                    .push(format!("download {}", path.display()));
-            }
-            Ok(quilt::flow::InstallPathsReport::default())
-        });
+    expect_downloads(&mut model, events, fixture.home(), fixture.gone);
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
             quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns.clone()),
@@ -788,7 +991,7 @@ fn rereading_model(
         .expect_locked_package_pull()
         .returning(move |_, _, _| {
             pulled.lock().unwrap().push("pull".to_string());
-            Ok(quilt::flow::PullReport {
+            Ok(quilt::flow::Pulled::Applied(quilt::flow::PullReport {
                 manifest_uri: quilt_uri::ManifestUri {
                     bucket: "quilt-dev".to_string(),
                     namespace: namespace(),
@@ -800,7 +1003,7 @@ fn rereading_model(
                 updated: Vec::new(),
                 removed: Vec::new(),
                 message: None,
-            })
+            }))
         });
     model
 }
@@ -848,8 +1051,28 @@ async fn a_later_revision_that_still_holds_the_claim_is_pulled_and_its_task_run(
     );
     assert_eq!(
         *fixture.events.lock().unwrap(),
-        ["pull", "download NEXT.md"]
+        ["pull", "download TASK.md", "download NEXT.md"]
     );
+}
+
+#[tokio::test]
+async fn a_later_revision_whose_inputs_cannot_be_downloaded_fails_the_reread() -> Result<(), Error>
+{
+    let fixture = Fixture::new();
+    tokio::fs::create_dir_all(fixture.home().join("TASK.md")).await?;
+    let mut later = claimed_by_this_run();
+    later["agent_exec"]["document"] = json!("NEXT.md");
+    let model = rereading_model(&fixture, "h2", true, later);
+
+    let reread = recheck_claim(&model, &claimed_run(&fixture.tasks)).await;
+
+    assert!(
+        reread
+            .as_ref()
+            .is_err_and(|err| err.to_string().contains("TASK.md")),
+        "{reread:?}"
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -940,16 +1163,15 @@ fn claimed_run(tasks: &Tasks) -> Run {
         document: "TASK.md".to_string(),
         agent_id: "kiro".to_string(),
         agent: settings().agents["kiro"].clone(),
-        claimed_meta: agent_exec::with_claim(&unclaimed(), claim.claimed()),
         claim,
         claim_hash: "h1".to_string(),
-        workflow: WorkflowIntent::Named("gate".to_string()),
+        data_dir: tasks.data_dir.clone().expect("tasks on"),
         _hold: tasks.hold(&namespace()),
     }
 }
 
-/// A package the run ended on: its head carries the run's claim with an
-/// edited title, its tree walks with `changes`, and its publishes are taken as
+/// A package the run ended on: its head carries the fixture's `finished_meta`
+/// under the workflow `edited`, its tree walks with `changes`, and its publishes are taken as
 /// `latest` or not by `certified_latest`. Publishes go to the fixture's
 /// `published`; publishes and resets to its `events`.
 fn finishing_model(
@@ -969,8 +1191,11 @@ fn finishing_model(
     // The publish commits the tree's changes, so later walks find it clean.
     let committed = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let walked = Arc::clone(&committed);
+    let walk_fails = fixture.walk_fails;
     model.expect_locked_package_status().returning(move |_, _| {
-        if walked.load(std::sync::atomic::Ordering::SeqCst) {
+        if walk_fails {
+            Err(Error::General("signed out".to_string()))
+        } else if walked.load(std::sync::atomic::Ordering::SeqCst) {
             Ok(fresh(BTreeMap::new()))
         } else {
             Ok(fresh(changes.clone()))
@@ -991,13 +1216,13 @@ fn finishing_model(
             }
             Ok(lineage)
         });
+    let head_meta = fixture.finished_meta.clone().unwrap_or_else(edited_head);
     model
         .expect_get_installed_package_manifest()
-        .returning(|_, _| {
+        .returning(move |_, _| {
             Ok(quilt::manifest::Manifest {
                 header: quilt::manifest::ManifestHeader {
-                    user_meta: Some(edited_head()),
-                    // Not the claim's `gate`: the outcome follows the head.
+                    user_meta: Some(head_meta.clone()),
                     workflow: Some(quilt::manifest::Workflow {
                         config: quilt_uri::S3Uri {
                             bucket: "quilt-dev".to_string(),
@@ -1023,7 +1248,7 @@ fn finishing_model(
     let events = Arc::clone(&fixture.events);
     model
         .expect_locked_package_publish()
-        .returning(move |_, _, meta, _, _, status| {
+        .returning(move |_, message, meta, _, _, status| {
             let UserMeta::Set(meta) = meta else {
                 panic!("a task revision sets its metadata");
             };
@@ -1031,6 +1256,7 @@ fn finishing_model(
             committed.store(true, std::sync::atomic::Ordering::SeqCst);
             published.lock().unwrap().push(Revision {
                 meta,
+                message,
                 own_at_push: BTreeSet::new(),
                 paths: changed_paths(status.as_ref()),
             });
@@ -1082,11 +1308,187 @@ async fn the_last_revision_publishes_the_agents_work_under_the_same_claim() -> R
         agent_exec::with_claim(
             &edited_head(),
             json!({ "status": "done", "invocation_id": "inv", "claimed_at": "t",
-                    "session_id": "s1", "stop_reason": "end_turn" })
+                    "session_id": "s1", "stop_reason": "end_turn",
+                    "changes": { "added": 1, "modified": 0, "removed": 0 } })
         ),
         "the head's own metadata, with only the claim moved on"
     );
+    assert_eq!(published[0].message, "Task TASK.md done");
     assert_eq!(*paths, BTreeSet::from(["out.md".to_string()]));
+    Ok(())
+}
+
+fn done() -> acp::RunOutcome {
+    acp::RunOutcome::Done {
+        session_id: "s1".to_string(),
+        stop_reason: "end_turn".to_string(),
+    }
+}
+
+/// One file of each kind of change.
+fn each_change() -> BTreeMap<PathBuf, quilt::lineage::Change> {
+    let row = quilt::manifest::ManifestRow::default;
+    BTreeMap::from([
+        (PathBuf::from("a.md"), quilt::lineage::Change::Added(row())),
+        (PathBuf::from("b.md"), quilt::lineage::Change::Added(row())),
+        (
+            PathBuf::from("c.md"),
+            quilt::lineage::Change::Modified(row()),
+        ),
+        (
+            PathBuf::from("d.md"),
+            quilt::lineage::Change::Removed(row()),
+        ),
+    ])
+}
+
+#[tokio::test]
+async fn the_last_revision_counts_what_the_run_changed() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    let model = finishing_model(&fixture, each_change(), true);
+
+    finish(&model, &claimed_run(&fixture.tasks), &done()).await?;
+
+    let published = fixture.published.lock().unwrap();
+    assert_eq!(
+        published[0].meta["agent_exec"]["claim"]["changes"],
+        json!({ "added": 2, "modified": 1, "removed": 1 })
+    );
+    assert_eq!(published[0].message, "Task TASK.md done");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_run_that_changed_nothing_says_so() -> Result<(), Error> {
+    let failed = acp::RunOutcome::Failed {
+        session_id: None,
+        stop_reason: Some("max_tokens".to_string()),
+        reason: None,
+    };
+    for (outcome, message) in [
+        (done(), "Task TASK.md done, no changes"),
+        (failed, "Task TASK.md failed, no changes"),
+    ] {
+        let fixture = Fixture::new();
+        let model = finishing_model(&fixture, BTreeMap::new(), true);
+
+        finish(&model, &claimed_run(&fixture.tasks), &outcome).await?;
+
+        let published = fixture.published.lock().unwrap();
+        let claim = &published[0].meta["agent_exec"]["claim"];
+        assert_eq!(
+            claim["changes"],
+            json!({ "added": 0, "modified": 0, "removed": 0 })
+        );
+        assert_eq!(published[0].message, message);
+    }
+    Ok(())
+}
+
+/// The walk compares against the commit, not the claimed revision.
+#[tokio::test]
+async fn a_run_over_a_commit_made_during_it_counts_no_changes() -> Result<(), Error> {
+    let fixture = Fixture {
+        pending_commit: true,
+        ..Fixture::new()
+    };
+    let model = finishing_model(&fixture, written(), true);
+
+    finish(&model, &claimed_run(&fixture.tasks), &done()).await?;
+
+    let published = fixture.published.lock().unwrap();
+    assert_eq!(published[0].meta["agent_exec"]["claim"]["status"], "done");
+    assert!(
+        published[0].meta["agent_exec"]["claim"]
+            .get("changes")
+            .is_none()
+    );
+    assert_eq!(published[0].message, "Task TASK.md done");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_not_started_counts_no_changes() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    let model = finishing_model(&fixture, BTreeMap::new(), true);
+
+    finish(&model, &claimed_run(&fixture.tasks), &not_started()).await?;
+
+    let published = fixture.published.lock().unwrap();
+    assert!(
+        published[0].meta["agent_exec"]["claim"]
+            .get("changes")
+            .is_none()
+    );
+    assert_eq!(published[0].message, "Task TASK.md not_started");
+    Ok(())
+}
+
+/// The walk fails, so the outcome is never published.
+#[tokio::test]
+async fn a_run_that_cannot_publish_leaves_its_outcome_saved_for_the_sweep() -> Result<(), Error> {
+    let fixture = Fixture {
+        walk_fails: true,
+        ..Fixture::new()
+    };
+    let model = finishing_model(&fixture, written(), true);
+    let done = acp::RunOutcome::Done {
+        session_id: "s1".to_string(),
+        stop_reason: "end_turn".to_string(),
+    };
+    let run = claimed_run(&fixture.tasks);
+
+    assert!(finish(&model, &run, &done).await.is_err());
+
+    assert_eq!(
+        settings::remembered_outcome(fixture.dir.path(), "inv").await?,
+        run.claim.outcome(&done)
+    );
+    Ok(())
+}
+
+/// A folder in place of the file makes it unwritable.
+#[tokio::test]
+async fn an_outcome_that_cannot_be_saved_is_still_published() -> Result<(), Error> {
+    let fixture = Fixture::new();
+    tokio::fs::create_dir(fixture.dir.path().join("task_outcomes.json")).await?;
+    let model = finishing_model(&fixture, written(), true);
+    let done = acp::RunOutcome::Done {
+        session_id: "s1".to_string(),
+        stop_reason: "end_turn".to_string(),
+    };
+
+    let finished = finish(&model, &claimed_run(&fixture.tasks), &done).await;
+
+    assert!(finished.is_ok(), "{finished:?}");
+    assert_eq!(fixture.metas()[0]["agent_exec"]["claim"]["status"], "done");
+    Ok(())
+}
+
+/// The user pulled a revision where the author cancelled the task.
+#[tokio::test]
+async fn a_head_that_no_longer_holds_the_claim_gets_no_outcome() -> Result<(), Error> {
+    let mut cancelled = edited_head();
+    cancelled["agent_exec"]["claim"] = json!({ "status": "cancelled" });
+    let done = acp::RunOutcome::Done {
+        session_id: "s1".to_string(),
+        stop_reason: "end_turn".to_string(),
+    };
+    // A clean `not_started` would otherwise publish and reset.
+    for (outcome, changes) in [(done, written()), (not_started(), BTreeMap::new())] {
+        let fixture = Fixture {
+            finished_meta: Some(cancelled.clone()),
+            ..Fixture::new()
+        };
+        let model = finishing_model(&fixture, changes, false);
+
+        finish(&model, &claimed_run(&fixture.tasks), &outcome).await?;
+
+        assert!(
+            fixture.events.lock().unwrap().is_empty(),
+            "{outcome:?}: nothing published or reset, the files stay for autosync"
+        );
+    }
     Ok(())
 }
 

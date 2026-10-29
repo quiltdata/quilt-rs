@@ -1,10 +1,10 @@
-//! Remove old revisions from the "Revisions you have" popover — the chosen
+//! Remove old revisions from the "History" popover — the chosen
 //! design, staged with stub data.
 //!
 //! # Where it lives
 //!
-//! In the "Revisions you have" surface the context pane already opens, at the
-//! pane's 280px. The list is the thing a reader is looking at when they wonder
+//! In the "History" surface the context pane already opens, at the
+//! pane's 320px. The list is the thing a reader is looking at when they wonder
 //! why there are six of them, so the removal sits on the rows.
 //!
 //! # Every removal is confirmed by the kit's `ConfirmDialog`
@@ -669,7 +669,7 @@ fn pane(flow: Flow) -> AnyView {
                 aria_expanded=open
                 aria_controls=surface_id
             >
-                {move || format!("Revisions you have ({})", flow.remaining.get().len())}
+                {move || format!("History ({})", flow.remaining.get().len())}
             </Button>
         }
         .into_any()
@@ -684,7 +684,7 @@ fn pane(flow: Flow) -> AnyView {
                         <AnchoredOverlay
                             trigger=trigger
                             open=open
-                            aria_label="Revisions you have"
+                            aria_label="History"
                             align=Align::End
                             contained=true
                         >
@@ -767,7 +767,7 @@ fn confirmation(ask: Ask) -> AnyView {
     .into_any()
 }
 
-const NOTE: &str = "Removal where the list already is: the context pane's \"Revisions you have\" \
+const NOTE: &str = "Removal where the list already is: the context pane's History \
     surface, at the pane's width. A removable row ends in a trash icon and says what removing \
     it frees alone, exactly — 211.9 kB, 1.2 MB, or nothing. \
     Protected rows say why in a muted tag; hover it for the sentence. \

@@ -153,7 +153,8 @@ pub(crate) fn blocked_reason(
     if no_session {
         return Some(match no_session_host.filter(|h| !h.is_empty()) {
             Some(host) => format!("Sign in to {host} to publish."),
-            None => "No usable AWS credentials. Update ~/.aws/credentials to publish.".to_string(),
+            None => "No usable AWS credentials. Update ~/.aws or run aws sso login to publish."
+                .to_string(),
         });
     }
     check.map(str::to_string)
@@ -307,7 +308,7 @@ struct Form {
 
 impl Form {
     fn of(d: &CommitData) -> Self {
-        let has_bucket = d.uri.as_ref().is_some_and(|u| u.catalog.is_some());
+        let has_bucket = crate::util::has_bucket(d.uri.as_ref());
         let previous = PreviousWorkflow::from_stamp(d.workflow.as_ref());
         let view: WorkflowView = build_workflow_view(
             &d.workflows,
@@ -526,7 +527,7 @@ impl HeaderMenu {
                 open=self.bucket
                 namespace=d.namespace.to_string()
                 uri=d.uri.clone()
-                locked=d.remote_locked
+                published=d.remote_locked
                 draft=self.draft
                 busy=busy
                 outcome=outcome
@@ -888,7 +889,7 @@ fn column(
     menu: &HeaderMenu,
     focus: bool,
 ) -> AnyView {
-    let has_bucket = d.uri.as_ref().is_some_and(|u| u.catalog.is_some());
+    let has_bucket = crate::util::has_bucket(d.uri.as_ref());
     let namespace = d.namespace.to_string();
     let uri = d.uri.clone();
 
@@ -1318,12 +1319,38 @@ mod tests {
         })
     }
 
-    /// The package header's group: the remote side only once the package has
-    /// a catalog page, which a bucket never published to does not.
+    fn published_without_catalog(
+        _: String,
+    ) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        Box::pin(async {
+            Ok(CommitData {
+                uri: Some(
+                    quilt_uri::S3PackageUri::try_from(
+                        "quilt+s3://team-bucket#package=org/pkg@abc123",
+                    )
+                    .unwrap(),
+                ),
+                remote_locked: true,
+                newer: Some("abc123".to_string()),
+                ..commit_data()
+            })
+        })
+    }
+
+    /// The package header's group: the remote side only once the package is
+    /// published, which a bucket never published to is not, and the catalog
+    /// page only with a catalog.
     #[wasm_bindgen_test]
     async fn the_header_shows_the_package_location() {
         let unpublished = page_at("/commit?namespace=org%2Fpkg").await;
         assert_eq!(location_names(&unpublished), ["Open folder"]);
+
+        let bucket_only =
+            page_reading("/commit?namespace=org%2Fpkg", published_without_catalog).await;
+        assert_eq!(
+            location_names(&bucket_only),
+            ["Open folder", "Copy Quilt URI"]
+        );
 
         let el = page_reading("/commit?namespace=org%2Fpkg", published).await;
         assert_eq!(
@@ -1332,6 +1359,28 @@ mod tests {
             "markup was {}",
             el.inner_html()
         );
+    }
+
+    /// The header has no catalog command, with a catalog or without.
+    #[wasm_bindgen_test]
+    async fn the_header_offers_no_catalog_command() {
+        let no_command = |el: &web_sys::Element| {
+            let all = el.query_selector_all("button").unwrap();
+            let words: Vec<String> = (0..all.length())
+                .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+                .filter(|b| b.closest("dialog").unwrap().is_none())
+                .map(|b| b.text_content().unwrap_or_default())
+                .collect();
+            assert!(
+                !words
+                    .iter()
+                    .any(|w| w.contains("Add catalog") || w.contains("Change catalog")),
+                "{words:?}"
+            );
+        };
+        no_command(&page_at("/commit?namespace=org%2Fpkg").await);
+        no_command(&page_reading("/commit?namespace=org%2Fpkg", published_without_catalog).await);
+        no_command(&page_reading("/commit?namespace=org%2Fpkg", published).await);
     }
 
     fn signed_out(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
@@ -1658,6 +1707,50 @@ mod tests {
             "markup was {}",
             el.inner_html()
         );
+    }
+
+    fn catalog_less(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        Box::pin(async {
+            Ok(CommitData {
+                uri: Some(
+                    quilt_uri::S3PackageUri::try_from("quilt+s3://team-bucket#package=org/pkg")
+                        .unwrap(),
+                ),
+                ..commit_data()
+            })
+        })
+    }
+
+    fn local_only(_: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
+        Box::pin(async {
+            Ok(CommitData {
+                uri: None,
+                ..commit_data()
+            })
+        })
+    }
+
+    fn primary_face(el: &web_sys::Element) -> String {
+        el.query_selector("[data-primary-action] button")
+            .unwrap()
+            .expect("the primary")
+            .text_content()
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    /// Publish follows the bucket, not the catalog: a package with a bucket
+    /// and no catalog publishes on the computer's AWS credentials, and one
+    /// with no bucket only saves.
+    #[wasm_bindgen_test]
+    async fn a_bucket_without_a_catalog_publishes() {
+        let el = page_reading("/commit?namespace=org%2Fpkg", catalog_less).await;
+        assert_eq!(primary_face(&el), "Publish 1203 files");
+        assert_eq!(location_names(&el), ["Open folder"]);
+
+        let el = page_reading("/commit?namespace=org%2Fpkg", local_only).await;
+        assert_eq!(primary_face(&el), "Save revision");
     }
 
     /// Metadata that is not JSON blocks the primary on any package, governed
@@ -2414,6 +2507,14 @@ mod tests {
             Form::of(&d).missing_settings_workflow.as_deref(),
             Some("wrong-workflow"),
             "with a bucket that has no workflows config, it warns"
+        );
+        d.uri = Some(
+            quilt_uri::S3PackageUri::try_from("quilt+s3://team-bucket#package=org/pkg").unwrap(),
+        );
+        assert_eq!(
+            Form::of(&d).missing_settings_workflow.as_deref(),
+            Some("wrong-workflow"),
+            "a bucket with no catalog warns alike"
         );
         d.uri = None;
         assert_eq!(Form::of(&d).missing_settings_workflow, None);

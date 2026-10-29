@@ -11,6 +11,7 @@ use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::WorkflowIntent;
 use quilt_uri::Namespace;
 use serde_json::Value;
+use serde_json::json;
 
 use crate::Error;
 use crate::model::QuiltModel;
@@ -20,6 +21,8 @@ use crate::telemetry::prelude::*;
 
 pub mod acp;
 pub mod agent_exec;
+pub mod agent_process;
+pub mod login_path;
 pub mod settings;
 
 use agent_exec::Claim;
@@ -104,10 +107,9 @@ pub struct Run {
     pub agent_id: String,
     pub agent: AgentSettings,
     pub claim: Claim,
-    /// The claim revision's metadata, which the last revision starts from.
-    pub claimed_meta: Value,
     pub claim_hash: String,
-    pub workflow: WorkflowIntent,
+    /// Where the run's outcome is saved before it is published.
+    pub data_dir: PathBuf,
     /// Released when the run ends, by being dropped with it.
     _hold: Hold,
 }
@@ -127,6 +129,7 @@ struct Head {
     lineage: quilt::lineage::PackageLineage,
     user_meta: Value,
     workflow: Option<quilt::manifest::Workflow>,
+    rows: Vec<quilt::manifest::ManifestRow>,
     verdict: Verdict,
 }
 
@@ -161,6 +164,7 @@ async fn read_head<M: QuiltModel>(
     Ok(Some(Head {
         user_meta: user_meta.clone(),
         workflow: manifest.header.workflow,
+        rows: manifest.rows,
         lineage,
         verdict,
     }))
@@ -174,9 +178,8 @@ fn sweepable(state: UpstreamState) -> bool {
 impl Tasks {
     /// Whether only the sweep may publish `pkg`: its head is this desktop's own
     /// claim with no run alive, and a fresh read finds its base at `latest` or
-    /// can't read `latest`. Autosync's publish could get there first, or
-    /// replace `agent_exec`. The stored lineage's `latest` is only the last
-    /// push's or pull's.
+    /// can't read `latest`. Autosync's publish could get there first. The
+    /// stored lineage's `latest` is only the last push's or pull's.
     pub async fn awaits_sweep<M: QuiltModel>(
         &self,
         model: &M,
@@ -224,6 +227,7 @@ async fn try_check<M: QuiltModel>(
         lineage,
         user_meta,
         workflow,
+        rows,
         verdict,
     }) = read_head(model, data_dir, settings, pkg).await?
     else {
@@ -237,16 +241,26 @@ async fn try_check<M: QuiltModel>(
     let Some(locked) = model.try_lock_package(pkg).await? else {
         return Ok(());
     };
-    // Before the walk, so the claim publishes a status that includes it.
+    // Before the walk, so the sweep publishes what the agent left when it
+    // stopped.
+    if verdict == Verdict::Interrupted
+        && !stop_leftover_agent(data_dir, user_meta, &pkg.namespace).await
+    {
+        return Ok(());
+    }
+    // Before the walk, so the claim publishes a status that includes them.
     if let Verdict::Claim { document, .. } = &verdict {
-        download(model, pkg, &locked, &lineage, document).await?;
+        check_out(model, pkg, &locked, &lineage, &rows, document).await?;
     }
     let Some(tree) = fresh_at_head(model, pkg, &locked, &lineage).await? else {
         return Ok(());
     };
     let workflow = carried_workflow(workflow.as_ref());
     if verdict == Verdict::Interrupted {
-        return sweep(model, &locked, pkg, workflow, &lineage, user_meta, tree).await;
+        return sweep(
+            model, data_dir, &locked, pkg, workflow, &lineage, user_meta, tree,
+        )
+        .await;
     }
     // A claim or `unrunnable` changes only the metadata. With a pending commit,
     // publishing pushes that commit and drops the new metadata.
@@ -275,17 +289,13 @@ async fn try_check<M: QuiltModel>(
             settings::remember_invocation(data_dir, &claim.invocation_id).await?;
             let claimed_meta = agent_exec::with_claim(user_meta, claim.claimed());
             let message = format!("Task {document} claimed");
-            let outcome = publish(
-                model,
-                &locked,
-                pkg,
-                workflow.clone(),
-                claimed_meta.clone(),
-                message,
-                status,
-            )
-            .await?;
-            let push = outcome.push();
+            let outcome =
+                publish(model, &locked, pkg, workflow, claimed_meta, message, status).await?;
+            // A claim's metadata is new each time, so its publish always pushes.
+            let Some(push) = outcome.push() else {
+                warn!("tasks: {}: the claim published nothing", pkg.namespace);
+                return Ok(());
+            };
             if !push.certified_latest {
                 info!(
                     "tasks: {}: another revision became latest first, not running",
@@ -301,19 +311,55 @@ async fn try_check<M: QuiltModel>(
                 agent: settings.agents[&agent].clone(),
                 agent_id: agent,
                 claim,
-                claimed_meta,
                 claim_hash: push.manifest_uri.hash.clone(),
-                workflow,
+                data_dir: data_dir.to_path_buf(),
                 _hold: hold,
             });
             return Ok(());
         }
     };
     let outcome = publish(model, &locked, pkg, workflow, meta, message, status).await?;
-    if !outcome.push().certified_latest {
+    if outcome.push().is_some_and(|push| !push.certified_latest) {
         reset_if_clean(model, pkg, &locked).await?;
     }
     Ok(())
+}
+
+/// How long an agent gets to exit after SIGTERM before SIGKILL.
+const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Stop an agent that an interrupted claim's run spawned, if it outlived the
+/// run, as it does when the app is killed; whether none is left running. An
+/// unreadable record counts as none, or it would hold the package for good.
+async fn stop_leftover_agent(
+    data_dir: &std::path::Path,
+    user_meta: &Value,
+    namespace: &Namespace,
+) -> bool {
+    let invocation_id = user_meta["agent_exec"]["claim"]["invocation_id"]
+        .as_str()
+        .unwrap_or_default();
+    match settings::recorded_agent(data_dir, invocation_id).await {
+        Ok(Some(agent)) => {
+            info!(
+                "tasks: {namespace}: stopping the agent left running, pid {}",
+                agent.pid
+            );
+            if !agent.stop(STOP_GRACE).await {
+                warn!("tasks: {namespace}: the agent is still running; the sweep waits");
+                return false;
+            }
+            if let Err(err) = settings::record_agent(data_dir, invocation_id, None).await {
+                warn!("tasks: {namespace}: cannot clear the agent's record: {err}");
+            }
+            true
+        }
+        Ok(None) => true,
+        Err(err) => {
+            warn!("tasks: {namespace}: cannot read the agent's record: {err}");
+            true
+        }
+    }
 }
 
 /// After a metadata-only publish that didn't become `latest`: back to `latest`
@@ -376,11 +422,13 @@ async fn fresh_at_head<M: QuiltModel>(
     Ok(fresh.then_some(tree))
 }
 
-/// This desktop's interrupted claim, on a base at `latest`: published `failed`
-/// with whatever the agent left in the tree if `latest` holds that claim too,
-/// else reset as a lost claim.
+/// This desktop's interrupted claim, on a base at `latest`. If `latest` holds
+/// that claim too, the tree is published with the outcome the run saved, or
+/// `failed` if it saved none. Otherwise the claim was lost, and resets.
+#[allow(clippy::too_many_arguments, reason = "one sweep's inputs")]
 async fn sweep<M: QuiltModel>(
     model: &M,
+    data_dir: &std::path::Path,
     locked: &M::Locked,
     pkg: &quilt::InstalledPackage,
     workflow: WorkflowIntent,
@@ -414,56 +462,160 @@ async fn sweep<M: QuiltModel>(
     if commit.is_some() && status.changes.is_empty() {
         // Publishing would drop the new metadata: push the commit as it is,
         // and fail its claim next tick.
-        let push = model.locked_package_push(locked).await?;
-        note_not_latest(&pkg.namespace, &push);
+        if let quilt::Pushed::Uploaded(push) = model.locked_package_push(locked).await? {
+            note_not_latest(&pkg.namespace, &push);
+        }
         return Ok(());
     }
-    let meta = agent_exec::interrupted(user_meta);
-    let message = "Task failed: interrupted by restart".to_string();
-    let outcome = publish(model, locked, pkg, workflow, meta, message, status).await?;
-    note_not_latest(&pkg.namespace, outcome.push());
+    let invocation_id = user_meta["agent_exec"]["claim"]["invocation_id"]
+        .as_str()
+        .unwrap_or_default();
+    // An unreadable file must not hold the package from autosync for good.
+    let saved = settings::remembered_outcome(data_dir, invocation_id)
+        .await
+        .unwrap_or_else(|err| {
+            warn!(
+                "tasks: {}: cannot read the saved outcome: {err}",
+                pkg.namespace
+            );
+            None
+        });
+    let (claim, message) = match saved {
+        Some(claim) => {
+            let document = user_meta["agent_exec"]["document"]
+                .as_str()
+                .unwrap_or_default();
+            let message = outcome_message(document, &claim);
+            (claim, message)
+        }
+        None => (
+            agent_exec::interrupted(user_meta),
+            "Task failed: interrupted by restart".to_string(),
+        ),
+    };
+    let tree = Tree { status, commit };
+    publish_outcome(
+        model, locked, pkg, workflow, user_meta, claim, message, tree,
+    )
+    .await
+}
+
+fn outcome_message(document: &str, claim: &Value) -> String {
+    format!(
+        "Task {document} {}",
+        claim["status"].as_str().unwrap_or_default()
+    )
+}
+
+/// How many entries `changes` adds, modifies and removes.
+fn count_changes(changes: &quilt::lineage::ChangeSet) -> Value {
+    let (mut added, mut modified, mut removed) = (0, 0, 0);
+    for change in changes.values() {
+        match change {
+            quilt::lineage::Change::Added(_) => added += 1,
+            quilt::lineage::Change::Modified(_) => modified += 1,
+            quilt::lineage::Change::Removed(_) => removed += 1,
+        }
+    }
+    json!({ "added": added, "modified": modified, "removed": removed })
+}
+
+/// Publish the tree as a run's last revision. One that changes only the
+/// metadata resets if it isn't `latest`; any other is left Diverged.
+#[allow(clippy::too_many_arguments, reason = "one publish's inputs")]
+async fn publish_outcome<M: QuiltModel>(
+    model: &M,
+    locked: &M::Locked,
+    pkg: &quilt::InstalledPackage,
+    workflow: WorkflowIntent,
+    user_meta: &Value,
+    mut claim: Value,
+    mut message: String,
+    Tree { status, commit }: Tree,
+) -> Result<(), Error> {
+    // A pending commit makes the walk compare against it, not the claim.
+    if matches!(claim["status"].as_str(), Some("done" | "failed")) && commit.is_none() {
+        claim["changes"] = count_changes(&status.changes);
+        if status.changes.is_empty() {
+            message.push_str(", no changes");
+        }
+    }
+    // A sign-in lost mid-turn is `not_started` too, after the agent wrote files;
+    // and a commit made by hand during the run would be pushed in its place.
+    let metadata_only = matches!(claim["status"].as_str(), Some("not_started" | "unrunnable"))
+        && status.changes.is_empty()
+        && commit.is_none();
+    let meta = agent_exec::with_claim(user_meta, claim);
+    let published = publish(model, locked, pkg, workflow, meta, message, status).await?;
+    let Some(push) = published.push() else {
+        return Ok(());
+    };
+    if metadata_only {
+        if !push.certified_latest {
+            reset_if_clean(model, pkg, locked).await?;
+        }
+    } else {
+        note_not_latest(&pkg.namespace, push);
+    }
     Ok(())
 }
 
-/// Put `document` in the package's folder, which a sparse copy may lack. A
-/// regular file already there stays: the walk compares it with the revision.
-/// A symlink on the path stops the claim: the walk skips links, and a linked
-/// folder leads outside the package.
-async fn download<M: QuiltModel>(
+/// Put a revision's `rows` in the package's folder, which a sparse copy may
+/// lack. A regular file already there stays: the walk compares it with the
+/// revision. A symlink on the document's path stops it: the walk skips
+/// links, and a linked folder leads outside the package.
+async fn check_out<M: QuiltModel>(
     model: &M,
     pkg: &quilt::InstalledPackage,
     locked: &M::Locked,
     lineage: &quilt::lineage::PackageLineage,
+    rows: &[quilt::manifest::ManifestRow],
     document: &str,
 ) -> Result<(), Error> {
-    let path = PathBuf::from(document);
-    if lineage.paths.contains_key(&path) {
-        return Ok(());
-    }
     let home = model.package_home(&pkg.namespace).await?;
-    let target = home.join(&path);
-    let mut on_disk = home;
-    for part in path.components() {
-        on_disk.push(part);
-        let Ok(meta) = tokio::fs::symlink_metadata(&on_disk).await else {
-            break;
-        };
-        if meta.is_symlink() {
+    let document = std::path::Path::new(document);
+    if !lineage.paths.contains_key(document) {
+        let mut on_disk = home.clone();
+        for part in document.components() {
+            on_disk.push(part);
+            if tokio::fs::symlink_metadata(&on_disk)
+                .await
+                .is_ok_and(|meta| meta.is_symlink())
+            {
+                return Err(Error::General(format!(
+                    "{} is reached through a symlink",
+                    document.display()
+                )));
+            }
+        }
+    }
+    let mut missing = Vec::new();
+    for row in rows {
+        let path = &row.logical_key;
+        if lineage.paths.contains_key(path) {
+            continue;
+        }
+        if !agent_exec::inside_package(path) {
             return Err(Error::General(format!(
-                "{document} is reached through a symlink"
+                "{} is not a path inside the package",
+                path.display()
             )));
         }
-        if on_disk == target && meta.is_file() {
-            return Ok(());
+        let on_disk = tokio::fs::symlink_metadata(home.join(path)).await;
+        if !on_disk.is_ok_and(|meta| meta.is_file()) {
+            missing.push(path.clone());
         }
     }
-    let report = model.locked_package_install_paths(locked, &[path]).await?;
-    if report.skipped.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::General(format!(
-            "{document} could not be downloaded"
-        )))
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let report = model.locked_package_install_paths(locked, &missing).await?;
+    match report.skipped.first() {
+        None => Ok(()),
+        Some(path) => Err(Error::General(format!(
+            "{} could not be downloaded",
+            path.display()
+        ))),
     }
 }
 
@@ -502,13 +654,25 @@ async fn publish<M: QuiltModel>(
 }
 
 pub async fn execute<M: QuiltModel>(model: &M, run: Run) {
-    let outcome = acp::run(&run.agent, &run.home, async || {
-        recheck_claim(model, &run).await.unwrap_or_else(|err| {
-            Err(acp::RunOutcome::NotStarted {
-                reason: format!("could not re-read the package: {err}"),
+    let record = async |agent| {
+        if let Err(err) =
+            settings::record_agent(&run.data_dir, &run.claim.invocation_id, agent).await
+        {
+            warn!("tasks: {}: cannot record the agent: {err}", run.namespace);
+        }
+    };
+    let outcome = acp::run(
+        &run.agent,
+        &run.home,
+        async |pid| record(agent_process::Spawned::of(pid)).await,
+        async || {
+            recheck_claim(model, &run).await.unwrap_or_else(|err| {
+                Err(acp::RunOutcome::NotStarted {
+                    reason: format!("could not re-read the package: {err}"),
+                })
             })
-        })
-    })
+        },
+    )
     .await;
     info!("tasks: {}: {outcome:?}", run.namespace);
     if let Err(err) = finish(model, &run, &outcome).await {
@@ -517,6 +681,9 @@ pub async fn execute<M: QuiltModel>(model: &M, run: Run) {
             run.namespace
         );
     }
+    // The agent was killed with the run, so nothing is left to stop. After
+    // `finish`, which saves the outcome first.
+    record(None).await;
 }
 
 /// Re-read `latest` before the prompt: the document to prompt, or how the run
@@ -549,11 +716,19 @@ async fn recheck_claim<M: QuiltModel>(
         return Ok(Err(acp::RunOutcome::Superseded));
     }
     let locked = model.lock_package(&installed).await?;
-    let pulled = model
-        .locked_package_pull(&locked, None, lineage.sync_scope)
+    let pulled = match model
+        .locked_package_pull(&locked, None, lineage.sync_scope.clone())
         .await?
-        .manifest_uri
-        .hash;
+    {
+        quilt::flow::Pulled::Applied(report) => report.manifest_uri.hash,
+        // Already at `latest`, so the base is the revision to read.
+        quilt::flow::Pulled::UpToDate => {
+            model
+                .get_installed_package_lineage(&installed)
+                .await?
+                .base_hash
+        }
+    };
     // The pull resolves `latest` again, and may land a revision later still.
     let latest = if pulled == status.latest_hash {
         latest
@@ -566,7 +741,7 @@ async fn recheck_claim<M: QuiltModel>(
     let rechecked = agent_exec::recheck(meta, |path| lists(&latest, path), &run.agent_id);
     if let Ok(document) = &rechecked {
         let pulled = model.get_installed_package_lineage(&installed).await?;
-        download(model, &installed, &locked, &pulled, document).await?;
+        check_out(model, &installed, &locked, &pulled, &latest.rows, document).await?;
     }
     Ok(rechecked)
 }
@@ -603,45 +778,43 @@ async fn finish<M: QuiltModel>(
     run: &Run,
     outcome: &acp::RunOutcome,
 ) -> Result<(), Error> {
+    let claim = run.claim.outcome(outcome);
+    // First, so the sweep has the outcome if anything below fails.
+    if let Some(claim) = &claim
+        && let Err(err) =
+            settings::remember_outcome(&run.data_dir, &run.claim.invocation_id, claim).await
+    {
+        warn!("tasks: {}: cannot save the outcome: {err}", run.namespace);
+    }
     let installed = installed(model, &run.namespace).await?;
     let locked = model.lock_package(&installed).await?;
-    let Some(claim) = run.claim.outcome(outcome) else {
+    let Some(claim) = claim else {
         // The claim lost `latest` before the prompt: nothing to publish.
         return reset_if_clean(model, &installed, &locked).await;
     };
-    let message = format!(
-        "Task {} {}",
-        run.document,
-        claim["status"].as_str().unwrap_or_default()
-    );
-    let (Tree { status, commit }, lineage) = walk(model, &installed, &locked).await?;
-    // A sign-in lost mid-turn is `not_started` too, after the agent wrote files;
-    // and a commit made by hand during the run would be pushed in its place.
-    let metadata_only = matches!(
-        outcome,
-        acp::RunOutcome::NotStarted { .. } | acp::RunOutcome::Unrunnable { .. }
-    ) && status.changes.is_empty()
-        && commit.is_none();
-    // The head the run ended on: the claim, or a later revision carrying it.
+    let (tree, lineage) = walk(model, &installed, &locked).await?;
     let head = model
         .get_installed_package_manifest(&installed, &lineage)
         .await?;
-    let (base, workflow) = match head.header.user_meta {
-        Some(meta) if run.claim.is_held_in(&meta) => {
-            (meta, carried_workflow(head.header.workflow.as_ref()))
-        }
-        _ => (run.claimed_meta.clone(), run.workflow.clone()),
+    // A head that no longer holds the claim, pulled or committed by hand,
+    // wins: the agent's files stay for autosync.
+    let Some(base) = head
+        .header
+        .user_meta
+        .filter(|meta| run.claim.is_held_in(meta))
+    else {
+        info!(
+            "tasks: {}: the head no longer holds the claim; no outcome",
+            run.namespace
+        );
+        return Ok(());
     };
-    let meta = agent_exec::with_claim(&base, claim);
-    let published = publish(model, &locked, &installed, workflow, meta, message, status).await?;
-    if metadata_only {
-        if !published.push().certified_latest {
-            reset_if_clean(model, &installed, &locked).await?;
-        }
-    } else {
-        note_not_latest(&run.namespace, published.push());
-    }
-    Ok(())
+    let workflow = carried_workflow(head.header.workflow.as_ref());
+    let message = outcome_message(&run.document, &claim);
+    publish_outcome(
+        model, &locked, &installed, workflow, &base, claim, message, tree,
+    )
+    .await
 }
 
 #[cfg(test)]

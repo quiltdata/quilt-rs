@@ -63,6 +63,9 @@ pub struct InstalledPackageData {
     /// the whole package. Reported raw — the screen renders the choice, and
     /// `entire_package_sync_enabled` decides whether it may be shown at all.
     pub syncs_entire_package: bool,
+    /// Whether the scope keeps chosen folders, which this screen cannot set:
+    /// neither of its scopes is the standing one.
+    pub keeps_folders: bool,
     /// Whether the experiment that offers the scope control is on. `false`
     /// means the screen renders exactly as it did before the feature existed,
     /// whatever `syncs_entire_package` says.
@@ -205,7 +208,8 @@ async fn get_installed_package_data_from_model(
         unmodified_count,
         filter_unmodified: filter.unmodified,
         filter_ignored: filter.ignored,
-        syncs_entire_package: lineage.sync_scope.covers_untracked(),
+        syncs_entire_package: lineage.sync_scope == quilt::lineage::SyncScope::EntirePackage,
+        keeps_folders: matches!(lineage.sync_scope, quilt::lineage::SyncScope::Folders(_)),
         entire_package_sync_enabled: experimental.entire_package_sync,
     })
 }

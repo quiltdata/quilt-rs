@@ -143,9 +143,6 @@ pub enum InstallPathError {
     #[error("Failed to install path: {}", .0.display())]
     Install(PathBuf),
 
-    #[error("Some paths are already installed")]
-    AlreadyInstalled,
-
     /// The path has no row in the revision being installed. Reachable when a
     /// download waited out a pull that moved the package to a revision
     /// without it.
@@ -227,6 +224,12 @@ pub enum LineageError {
         home.display()
     )]
     HomeInUse { home: PathBuf, installed: usize },
+
+    /// A folder to keep reaches outside the package through `..`.
+    #[error(
+        "Folder {0:?} is not inside the package: name it from the package root, without \"..\""
+    )]
+    FolderOutsidePackage(String),
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -321,9 +324,6 @@ pub enum PackageOpError {
 
     #[error("Pull blocked by conflicting local changes: {0:?}")]
     PullConflict(Vec<PathBuf>),
-
-    #[error("package is already up-to-date")]
-    AlreadyUpToDate,
 }
 
 /// The error type for this library
@@ -497,7 +497,7 @@ impl Error {
 
     /// No usable session and no deployment to sign in to: the AWS credentials
     /// on this computer, used for a bucket with no catalog, were missing or
-    /// refused. The remedy is `~/.aws`, not a sign-in.
+    /// refused. The remedy is `~/.aws` or `aws sso login`, not a sign-in.
     #[must_use]
     pub fn is_ambient_session_absent(&self) -> bool {
         match self {

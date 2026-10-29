@@ -31,7 +31,9 @@
 //!
 //! Measured before the cells drew `PageLayout`'s banner row, which the app
 //! always fills and so always lays out, empty or not. It costs each list here
-//! 16px, which is what the app was already paying.
+//! 16px, which is what the app was already paying. Measured, too, while the
+//! rows scrolled in a box of their own; they now scroll the page, under the
+//! same parts.
 //!
 //! v1 manages about four at the same window. The difference is not layout
 //! cleverness: **the header came in at 60px against the 108 §1 budgeted**,
@@ -40,17 +42,18 @@
 //! 264px and five rows, turns out to describe the resting state rather than the
 //! selecting one, and to be about right for it.
 //!
-//! What is still spent for nothing: `PageLayout`'s `main` ends with
-//! `padding-block-end: space-8`, 32px of empty page under the list at a window
-//! that has none to spare. That is a row.
+//! `PageLayout`'s `main` ends with `padding-block-end: space-8`, which now
+//! shows only at the end of the list.
 //!
-//! # The list is the only region that takes what is left
+//! # The rows scroll the page
 //!
 //! Everything else on this page has a height of its own: the appbar is 48, the
 //! header is its three lines, the search row and the toolbar are what they are.
-//! The list is as long as the package, so it gets the remainder and scrolls
-//! inside it — `Card`'s `fill`, and `FilePaneRegion`'s own `fill`, exist for
-//! exactly this and for nothing else.
+//! The list is as long as the package, so its rows scroll the page, and the
+//! wheel moves them wherever the pointer is. The appbar, the header and the
+//! file pane's search and toolbar stay in place above them, with the page's own
+//! bands and classes; folder headings stick under the toolbar, and the footer
+//! to the window's bottom edge. Wide, the context pane stays beside the rows.
 //!
 //! # One primary per screen
 //!
@@ -87,30 +90,23 @@
 //! the room the shell has, not the window's width, and in a gallery cell those
 //! are different numbers. The real page can keep the same rule.
 //!
-//! Stacked, the pane takes the whole column and its two blocks sit **side by
-//! side** rather than one under the other, with `PaneSection`'s divider turned
-//! from a `border-top` into a `border-left`. It is the same trade the page makes
-//! one level up — horizontal room is what this arrangement has and vertical room
-//! is what it lacks — and it is worth 130px: the pane measures 170px against the
-//! 300 it took stacked in a column, and every pixel of that is a row of the list
-//! under it.
+//! Stacked, the pane takes the whole column and its three sections sit **side
+//! by side** as three columns rather than one under the other, with no divider
+//! between them. It is the same trade the page makes one level up — horizontal
+//! room is what this arrangement has and vertical room is what it lacks — and
+//! it keeps the pane one section tall before the first file. It scrolls away
+//! with the page; only the header and the file pane's search and toolbar stay.
 //!
 //! # At 640, the window's narrowest
 //!
-//! Measured in Chrome at 640x560: stacked, as at 760. Nothing scrolls sideways,
-//! the header stays one line with its location group as icons, so a long
-//! namespace ellipsises beside them, and the file rows cut their names, not the
-//! size column.
+//! Stacked, as at 760. Nothing scrolls sideways, the header stays one line with
+//! its location group as icons, so a long namespace ellipsises beside them, and
+//! the file rows cut their names, not the size column. A section's action that
+//! does not fit beside its label wraps under it.
 //!
-//! | | context pane | list box | page scrolls |
-//! |---|---:|---:|---:|
-//! | nothing ticked | 179px | 159px · four rows | 57px |
-//! | three ticked | 179px | 110px · three rows | 57px |
-//! | resolve mode | 401px | 159px, below the fold | 278px |
-//!
-//! Resolve mode is the costly one: its pane is a column of choices, not two
-//! blocks side by side, so stacked above the files it fills the window and the
-//! marked rows are a scroll away.
+//! Resolve mode is the costly one: its pane is a column of choices, not three
+//! sections side by side, so stacked above the files it fills the window and
+//! the marked rows are a scroll away.
 //!
 //! The context pane comes first in the DOM, so reading and focus order is
 //! context, then files, at every width. Wide, `order` draws the files on the
@@ -129,6 +125,7 @@ use crate::kit::DiffersId;
 use crate::kit::PackageState;
 use crate::kit::PageLayout;
 use crate::kit::icons;
+use crate::pages::{PackageHeaderBand, package_page_class, package_shell_class};
 
 /// The appbar is untouched by this page — §1, no omnibar and no breadcrumb.
 pub(crate) fn appbar_actions() -> AnyView {
@@ -168,19 +165,26 @@ fn page(
         >
             // The banner's row, empty, as the app always fills that slot: without
             // it the page here sat 16px higher than the page the app draws.
-            <PageLayout heading="QuiltSync" banner=().into_any() actions=appbar_actions()>
-                <div class="g-ip-page">
-                    <PackageHeaderRegion
-                        state=state
-                        publish_choice=publish_choice
-                        action_open=resolving
-                    />
+            <PageLayout
+                heading="QuiltSync"
+                banner=().into_any()
+                actions=appbar_actions()
+                page_scroll=true
+            >
+                <div class=package_page_class()>
+                    <PackageHeaderBand>
+                        <PackageHeaderRegion
+                            state=state
+                            publish_choice=publish_choice
+                            action_open=resolving
+                        />
+                    </PackageHeaderBand>
                     // The pane's sentence and the rows it describes, under one id
                     // of their own: the context pane's scene draws the same pane.
                     // Only the resolve frames draw either, one per width, so the
                     // frames of a width can share it.
                     <Provider value=DiffersId(differs)>
-                        <div class="g-ip-shell">
+                        <div class=package_shell_class()>
                             <ContextPaneRegion
                                 resolving=resolving
                                 scope=scope

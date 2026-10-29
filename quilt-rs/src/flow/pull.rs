@@ -62,11 +62,11 @@ pub struct PullSnapshot {
 /// tag move between them.
 ///
 /// Returns the lineage with a refreshed `latest_hash` alongside the snapshot.
+/// The snapshot is `None` when the resolved `latest` already equals
+/// `base_hash`: there is nothing to pull, and no fetch or walk is paid for.
 ///
 /// # Errors
-/// Returns [`PackageOpError::AlreadyUpToDate`] when the resolved `latest`
-/// already equals `base_hash` (no fetch or walk is paid for in that case).
-/// Otherwise propagates tag-resolution, manifest-fetch, and status-walk errors.
+/// Propagates tag-resolution, manifest-fetch, and status-walk errors.
 pub async fn snapshot_for_pull(
     mut lineage: PackageLineage,
     base_manifest: &Manifest,
@@ -75,7 +75,7 @@ pub async fn snapshot_for_pull(
     remote: &impl Remote,
     package_home: impl AsRef<Path>,
     host_config: HostConfig,
-) -> Res<(PackageLineage, PullSnapshot)> {
+) -> Res<(PackageLineage, Option<PullSnapshot>)> {
     // The ONE tag read. Its result both refreshes the lineage and names the
     // manifest to fetch — mirroring `refresh_latest_hash`'s requirement of a
     // remote (`remote()?` errors for a local-only package).
@@ -87,7 +87,7 @@ pub async fn snapshot_for_pull(
     // Short-circuit before paying for the manifest fetch or the walk: if the
     // resolved `latest` is the base we already have, there is nothing to pull.
     if latest.hash == lineage.base_hash {
-        return Err(PackageOpError::AlreadyUpToDate.into());
+        return Ok((lineage, None));
     }
 
     // Fetch + cache + parse the `latest` manifest.
@@ -107,12 +107,21 @@ pub async fn snapshot_for_pull(
 
     Ok((
         lineage,
-        PullSnapshot {
+        Some(PullSnapshot {
             status,
             latest,
             latest_manifest,
-        },
+        }),
     ))
+}
+
+/// What a pull did: nothing, because `latest` is already the base, or a
+/// [`PullReport`] of what it applied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
+pub enum Pulled {
+    UpToDate,
+    Applied(PullReport),
 }
 
 /// What a pull applied, grouped by what happened to *this copy* rather than by
@@ -132,10 +141,10 @@ pub async fn snapshot_for_pull(
 pub struct PullReport {
     /// The revision the pull advanced to.
     pub manifest_uri: ManifestUri,
-    /// Added by the remote and fetched — whole-package scope only, since an
-    /// added path is never already tracked.
+    /// Added by the remote and fetched — whole-package or folders scope only,
+    /// since an added path is never already tracked.
     pub added: Vec<PathBuf>,
-    /// Added by the remote and left on it — individual-file scope only.
+    /// Added by the remote and left on it — any scope but the whole package.
     pub added_not_fetched: Vec<PathBuf>,
     /// A tracked path the remote changed, rewritten from `latest`.
     pub updated: Vec<PathBuf>,
@@ -221,7 +230,8 @@ fn report_of(
 ///
 /// - the scope decides whether a path this copy does not track is in play at
 ///   all — sparse checkout under [`SyncScope::IndividualFiles`], everything the
-///   remote touched under [`SyncScope::EntirePackage`], which is what lets a
+///   remote touched under [`SyncScope::EntirePackage`], and what it touched
+///   under a kept folder under [`SyncScope::Folders`], which is what lets a
 ///   remote *addition* be fetched;
 /// - a path the user changed locally is dropped under **either** scope. The
 ///   classifier has already blocked the pull if that change disagrees with the
@@ -232,11 +242,11 @@ fn touch_set(
     remote_changed: impl IntoIterator<Item = PathBuf>,
     tracked: &LineagePaths,
     locally_changed: &ChangeSet,
-    scope: SyncScope,
+    scope: &SyncScope,
 ) -> Vec<PathBuf> {
     remote_changed
         .into_iter()
-        .filter(|p| scope.covers_untracked() || tracked.contains_key(p))
+        .filter(|p| tracked.contains_key(p) || scope.covers_untracked(p))
         .filter(|p| !locally_changed.contains_key(p))
         .collect()
 }
@@ -251,9 +261,8 @@ fn touch_set(
 /// [`snapshot_for_pull`], which does all network *before* the status walk, so
 /// `snapshot.status` is the freshest possible input to classification.
 ///
-/// `scope` is the caller's, never read from the lineage: this engine also backs
-/// the `quilt` CLI, which passes [`SyncScope::IndividualFiles`] and so keeps
-/// sparse-checkout behaviour whatever a desktop app wrote to `data.json`.
+/// `scope` is the caller's, never read from the lineage, so a caller can still
+/// choose. The `quilt` CLI and the desktop app both pass the stored one.
 #[allow(clippy::too_many_arguments)]
 pub async fn pull_package(
     lineage: PackageLineage,
@@ -265,7 +274,7 @@ pub async fn pull_package(
     snapshot: PullSnapshot,
     namespace: Namespace,
     scope: SyncScope,
-) -> Res<(PackageLineage, PullReport)> {
+) -> Res<(PackageLineage, Pulled)> {
     info!("⏳ Starting pull for package {namespace} (scope={scope:?})");
 
     if lineage.commit.is_some() {
@@ -285,8 +294,8 @@ pub async fn pull_package(
     // It stays as a guard for hand-built snapshots (tests) and any future
     // caller that constructs the snapshot differently.
     if lineage.base_hash == lineage.latest_hash {
-        error!("❌ Package is already up-to-date");
-        return Err(PackageOpError::AlreadyUpToDate.into());
+        info!("✔️ Package is already up to date");
+        return Ok((lineage, Pulled::UpToDate));
     }
 
     // `manifest` is the installed (base) manifest the caller passed in;
@@ -318,7 +327,8 @@ pub async fn pull_package(
     );
     match &outcome {
         PullOutcome::UpToDate => {
-            return Err(PackageOpError::AlreadyUpToDate.into());
+            info!("✔️ Package is already up to date");
+            return Ok((lineage, Pulled::UpToDate));
         }
         PullOutcome::Blocked { conflicts } => {
             error!("❌ Pull blocked by conflicts: {conflicts:?}");
@@ -373,7 +383,7 @@ pub async fn pull_package(
         delta.keys().cloned(),
         &lineage.paths,
         &snapshot.status.changes,
-        scope,
+        &scope,
     );
     // Verify-before-uninstall. For every touched path, confirm the working-tree
     // file still holds the BASE content the classifier assumed — the row in
@@ -454,7 +464,7 @@ pub async fn pull_package(
     );
 
     info!("✔️ Successfully pulled (surgical), outcome={outcome:?}");
-    Ok((lineage, report))
+    Ok((lineage, Pulled::Applied(report)))
 }
 
 #[cfg(test)]
@@ -673,7 +683,7 @@ mod tests {
             remote_delta(&base, &latest).into_keys(),
             &tracked,
             &status.changes,
-            SyncScope::IndividualFiles,
+            &SyncScope::IndividualFiles,
         );
         assert_eq!(
             touched,
@@ -837,8 +847,8 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
         // Identical base (the `manifest` arg) and latest manifests → the
-        // classifier returns `UpToDate`, which pull maps to `AlreadyUpToDate`.
-        let error = pull_package(
+        // classifier returns `UpToDate`, which pull passes on as `Pulled::UpToDate`.
+        let (_, pulled) = pull_package(
             lineage,
             &mut Manifest::default(),
             &DomainPaths::default(),
@@ -849,16 +859,14 @@ mod tests {
             Namespace::default(),
             SyncScope::IndividualFiles,
         )
-        .await;
+        .await
+        .unwrap();
         // Reaches the up-to-date branch (guard relaxed), not "pending changes".
-        assert!(matches!(
-            error.unwrap_err(),
-            crate::Error::PackageOp(PackageOpError::AlreadyUpToDate)
-        ));
+        assert_eq!(pulled, Pulled::UpToDate);
     }
 
     // The ctor short-circuits when the resolved `latest` tag already equals
-    // `base_hash`: it returns `AlreadyUpToDate` WITHOUT fetching the manifest.
+    // `base_hash`: it returns no snapshot WITHOUT fetching the manifest.
     #[test(tokio::test)]
     async fn snapshot_short_circuits_when_latest_equals_base() {
         let storage = MockStorage::default();
@@ -885,7 +893,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = snapshot_for_pull(
+        let (lineage, snapshot) = snapshot_for_pull(
             lineage,
             &Manifest::default(),
             &DomainPaths::default(),
@@ -894,12 +902,11 @@ mod tests {
             PathBuf::default(),
             HostConfig::default(),
         )
-        .await;
+        .await
+        .unwrap();
 
-        assert!(matches!(
-            result.unwrap_err(),
-            crate::Error::PackageOp(PackageOpError::AlreadyUpToDate)
-        ));
+        assert!(snapshot.is_none());
+        assert_eq!(lineage.latest_hash, base);
         // The manifest was never fetched — the short-circuit fired first.
         let manifest_uri = format!("s3://{bucket}/.quilt/packages/{base}");
         assert_eq!(remote.get_object_count(&manifest_uri), 0);
@@ -975,7 +982,7 @@ mod tests {
             latest_hash: "a".to_string(),
             ..PackageLineage::default()
         };
-        let error = pull_package(
+        let (_, pulled) = pull_package(
             lineage,
             &mut Manifest::default(),
             &DomainPaths::default(),
@@ -986,11 +993,9 @@ mod tests {
             Namespace::default(),
             SyncScope::IndividualFiles,
         )
-        .await;
-        assert!(matches!(
-            error.unwrap_err(),
-            crate::Error::PackageOp(PackageOpError::AlreadyUpToDate)
-        ));
+        .await
+        .unwrap();
+        assert_eq!(pulled, Pulled::UpToDate);
     }
 
     // Verify-before-uninstall closes the walk→apply TOCTOU window. The walk saw
@@ -1136,15 +1141,37 @@ mod tests {
                 remote_changed(),
                 &tracked,
                 &none,
-                SyncScope::IndividualFiles
+                &SyncScope::IndividualFiles
             ),
             vec![PathBuf::from("have.csv")],
             "sparse checkout leaves a path it does not track"
         );
         assert_eq!(
-            touch_set(remote_changed(), &tracked, &none, SyncScope::EntirePackage),
+            touch_set(remote_changed(), &tracked, &none, &SyncScope::EntirePackage),
             vec![PathBuf::from("have.csv"), PathBuf::from("added.csv")],
             "whole-package scope takes it"
+        );
+    }
+
+    /// Under folders scope a remote addition is taken when it sits under a kept
+    /// folder, and only on a folder boundary.
+    #[test]
+    fn a_remote_added_path_is_taken_under_a_kept_folder() {
+        let remote_changed = vec![
+            PathBuf::from("have.csv"),
+            PathBuf::from("qc/summary.csv"),
+            PathBuf::from("qc2/notes.txt"),
+        ];
+        let tracked = tracked_map(["have.csv"]);
+
+        assert_eq!(
+            touch_set(
+                remote_changed,
+                &tracked,
+                &ChangeSet::new(),
+                &SyncScope::folders(["qc"]).unwrap()
+            ),
+            vec![PathBuf::from("have.csv"), PathBuf::from("qc/summary.csv")],
         );
     }
 
@@ -1159,11 +1186,11 @@ mod tests {
         let none = ChangeSet::new();
 
         assert_eq!(
-            touch_set(never.clone(), &tracked, &none, SyncScope::IndividualFiles),
+            touch_set(never.clone(), &tracked, &none, &SyncScope::IndividualFiles),
             [] as [PathBuf; 0]
         );
         assert_eq!(
-            touch_set(never.clone(), &tracked, &none, SyncScope::EntirePackage),
+            touch_set(never.clone(), &tracked, &none, &SyncScope::EntirePackage),
             never
         );
     }
@@ -1183,7 +1210,7 @@ mod tests {
 
         for scope in [SyncScope::IndividualFiles, SyncScope::EntirePackage] {
             assert!(
-                touch_set(remote_changed(), &tracked, &mine, scope).is_empty(),
+                touch_set(remote_changed(), &tracked, &mine, &scope).is_empty(),
                 "{scope:?} must not overwrite the user's own change"
             );
         }

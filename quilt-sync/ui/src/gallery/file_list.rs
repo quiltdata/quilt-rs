@@ -7,17 +7,18 @@
 //!
 //! # One gutter, three checkbox columns
 //!
-//! Select-all's box, a group's box and a file's box sit on one x, and none of
-//! the three components chooses it. `--q-entry-gutter` is set once, here, by the
-//! list; each component reads it with its own fallback so it is not broken when
-//! looked at alone. The boxes lining up is the contract — there is nothing else
+//! Select-all's box, a group's box and a file's box sit on one x: the box
+//! column leads all three. After it comes the disclosure column,
+//! `--q-entry-gutter`, set once, here, by the list; each component reads it
+//! with its own fallback so it is not broken when looked at alone. The boxes
+//! lining up, and the names after them, is the contract — there is nothing else
 //! to check, and nothing else would catch a component that stopped reading the
 //! value.
 //!
 //! # The zero-gutter rule is a view, not an edge case
 //!
-//! The list decides whether it rendered any heading and sets the value to `0`
-//! when it did not, because a disclosure column with no disclosure anywhere in
+//! The list decides whether it rendered any heading and sets the value to
+//! `0px` when it did not, because a disclosure column with no disclosure anywhere in
 //! it is an indent nobody asked for. `Group: None` reaches that state from the
 //! toolbar at any moment, so it is a first-class view of the same package rather
 //! than a degenerate one — which is why the second cell is the same fixture and
@@ -286,7 +287,7 @@ fn file_list(grouped: bool, picks: RwSignal<Vec<bool>>, opened: RwSignal<String>
     let style = if grouped {
         "--q-entry-gutter: 16px"
     } else {
-        "--q-entry-gutter: 0"
+        "--q-entry-gutter: 0px"
     };
 
     let flat = StoredValue::new(
@@ -299,13 +300,10 @@ fn file_list(grouped: bool, picks: RwSignal<Vec<bool>>, opened: RwSignal<String>
 
     view! {
         <div class="g-stack" style=style>
-            // Select-all sits in the rows' checkbox column, with the disclosure
-            // gutter to its left — the same two values the rows and the headings
-            // start from, so the third box lands on the one x. Under
-            // `Group: None` the gutter is zero and it moves left with them.
+            // Select-all sits in the rows' checkbox column, which leads the rows
+            // and the headings, so the three boxes land on the one x.
             <div style="display:flex; padding:var(--q-space-1) var(--q-space-3); \
                         gap:var(--q-space-2)">
-                <span style="flex:0 0 var(--q-entry-gutter, 16px)" />
                 <SelectAll
                     selected=ticked
                     total=Signal::derive(|| PICKS)

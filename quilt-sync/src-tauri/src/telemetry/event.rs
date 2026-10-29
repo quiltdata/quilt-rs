@@ -69,32 +69,27 @@ pub struct LoginEvent {
     pub flow: LoginFlow,
 }
 
-/// Something autosync did on its own, against a deployment it is **known** to
-/// have.
+/// Something autosync did on its own, on a package with a remote.
 ///
-/// The host is required here where a manual package operation's is optional, and
-/// the loop is why: it skips any package whose lineage carries no origin before
-/// doing any work, so every outcome it reports is about a package with a remote.
-/// That is the proof a required host needs — the tightening the previous change
-/// left open for the manual paths, available here for free.
+/// The host is the package's catalog, absent for a package with a bucket and no
+/// catalog.
 #[derive(Debug, Clone, Serialize)]
 pub struct AutosyncEvent {
-    pub host: Host,
+    pub host: Option<Host>,
 }
 
-/// Autosync stopping on a package, and the kind of thing that stopped it.
+/// Autosync stopping on a package, and the kind of thing that stopped it. The
+/// host is as in [`AutosyncEvent`].
 #[derive(Debug, Clone, Serialize)]
 pub struct AutosyncPausedEvent {
-    pub host: Host,
+    pub host: Option<Host>,
     pub reason: PausedKind,
 }
 
 /// Autosync stopping because the session expired.
 ///
-/// The one autosync payload whose host is optional, and not for the usual
-/// reason: the refusal itself carries the host only when the failing call knew
-/// which one it was talking to, so an absent host here means the engine could not
-/// name the deployment, not that there wasn't one.
+/// The host is the one the refusal named: absent when the failing call ran on
+/// this computer's AWS credentials, which no catalog vends.
 #[derive(Debug, Clone, Serialize)]
 pub struct AutosyncAuthEvent {
     pub host: Option<Host>,
@@ -296,8 +291,7 @@ impl From<&crate::quilt::Error> for Failure {
                 Self::Refusal(RefusalKind::PullConflict)
             }
 
-            E::PackageOp(PackageOpError::AlreadyUpToDate)
-            | E::InstallPackage(
+            E::InstallPackage(
                 InstallPackageError::AlreadyInstalled(_) | InstallPackageError::NotInstalled(_),
             ) => Self::Refusal(RefusalKind::AlreadySettled),
 
@@ -512,8 +506,8 @@ impl MixpanelEvent {
             | Self::FileUriCopied(e)
             | Self::PackageUriCopied(e) => e.host.as_ref(),
 
-            Self::AutosyncPublished(e) => Some(&e.host),
-            Self::AutosyncPaused(e) => Some(&e.host),
+            Self::AutosyncPublished(e) => e.host.as_ref(),
+            Self::AutosyncPaused(e) => e.host.as_ref(),
             Self::AutosyncLoginRequired(e) => e.host.as_ref(),
 
             Self::RoleSwitched(e) | Self::OAuthLoginInitiated(e) | Self::AuthErased(e) => {

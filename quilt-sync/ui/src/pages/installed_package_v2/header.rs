@@ -116,7 +116,8 @@ const BUSY: &str = "Something else is running";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuCommand {
     NewRevision,
-    /// Change bucket, or Show remote once the package has been pushed.
+    /// Change bucket, before the package has been pushed. Only the commit
+    /// page's menu lists it.
     Remote,
     Undo,
     Remove,
@@ -147,22 +148,18 @@ impl MenuItem {
     }
 }
 
-/// The bucket's item. A pushed package is pinned to its push history, so the
-/// bucket can be shown and not changed. Same command, honest label.
+/// The commit page's bucket item, until the first push. A pushed package is
+/// pinned to its push history, so its bucket is fixed. The package page's menu
+/// has none: its Bucket and catalog section opens the dialog.
 #[must_use]
-pub(crate) fn remote_item(remote_locked: bool, busy: bool) -> MenuItem {
-    MenuItem {
+pub(crate) fn remote_item(remote_locked: bool, busy: bool) -> Option<MenuItem> {
+    (!remote_locked).then(|| MenuItem {
         command: MenuCommand::Remote,
-        label: if remote_locked {
-            "Show remote"
-        } else {
-            "Change bucket"
-        }
-        .to_string(),
+        label: "Change bucket".to_string(),
         tone: ActionTone::Default,
         separated: false,
         disabled: busy.then(|| BUSY.to_string()),
-    }
+    })
 }
 
 /// Remove, which [`RemoveDialog`] confirms.
@@ -197,18 +194,19 @@ fn undo_blocked(data: &commands::PackageHeaderData) -> Option<&'static str> {
 /// Fixed across states on purpose: the menu is where everything that is *not*
 /// the one primary action lives, so it does not change shape as the state does.
 /// What varies is what a command can be offered *for*: an undo needs something
-/// to undo.
+/// to undo. The bucket is not here; the context pane's Bucket and catalog
+/// section offers it.
 pub fn menu_items(data: &commands::PackageHeaderData, busy: bool) -> Vec<MenuItem> {
     let refused = || busy.then(|| BUSY.to_string());
+    let new_revision = MenuItem {
+        command: MenuCommand::NewRevision,
+        label: "Create new revision".to_string(),
+        tone: ActionTone::Default,
+        separated: false,
+        disabled: refused(),
+    };
     vec![
-        MenuItem {
-            command: MenuCommand::NewRevision,
-            label: "Create new revision".to_string(),
-            tone: ActionTone::Default,
-            separated: false,
-            disabled: refused(),
-        },
-        remote_item(data.remote_locked, busy),
+        new_revision,
         MenuItem {
             command: MenuCommand::Undo,
             label: "Undo last revision".to_string(),
@@ -296,7 +294,6 @@ fn primary_action(
     w: Wiring,
     goto: RwSignal<Option<String>>,
     publish_choice: RwSignal<usize>,
-    bucket_open: RwSignal<bool>,
     role_open: RwSignal<bool>,
 ) -> AnyView {
     // The state offers no action for a denial — `kit::render` cannot know
@@ -387,10 +384,9 @@ fn primary_action(
         }
         Some(PackageAction::Resolve) => goto.set(Some(resolve_to.clone())),
         Some(PackageAction::SignIn) => goto.set(sign_in_to.clone()),
-        Some(PackageAction::ChooseS3Bucket) => bucket_open.set(true),
         Some(PackageAction::SwitchRole) => role_open.set(true),
-        // `Publish` returned above.
-        Some(PackageAction::Publish) | None => (),
+        // `Publish` returned above; the header never offers `ChooseS3Bucket`.
+        Some(PackageAction::Publish | PackageAction::ChooseS3Bucket) | None => (),
     };
 
     action.map_or_else(
@@ -475,7 +471,7 @@ fn bucket_dialog(
             open=open
             namespace=data.namespace.to_string()
             uri=data.uri.clone()
-            locked=data.remote_locked
+            published=data.remote_locked
             draft=w.dialogs.bucket_draft.get_value()
             busy=w.busy
             outcome=w.outcome
@@ -566,13 +562,15 @@ pub type CopiedMark = crate::pages::copy_mark::CopyMark<String>;
 /// buttons, so the link and the copy always name the same revision.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteTarget {
-    pub catalog_url: String,
+    /// `None` when the remote names no catalog: the address is copied
+    /// without one, and there is no page to open.
+    pub catalog_url: Option<String>,
     pub address: quilt_uri::S3PackageUri,
 }
 
-/// The package's catalog page and Quilt URI, once there is a catalog page: a
-/// catalog URL can be built and the remote holds a revision. A bucket chosen
-/// but never published has no page yet.
+/// The package's Quilt URI, and its catalog page when the remote names a
+/// catalog, once the remote's bucket holds a revision. A bucket chosen but
+/// never published has neither yet.
 ///
 /// At `latest`, with no hash, when the revision the package holds is the
 /// remote's latest as this read saw it just now (`newer`). Otherwise pinned to
@@ -586,7 +584,7 @@ pub fn remote_target(
     remote_locked: bool,
     newer: Option<&str>,
 ) -> Option<RemoteTarget> {
-    let held = uri.filter(|_| remote_locked)?;
+    let held = uri.filter(|u| remote_locked && util::has_bucket(Some(u)))?;
     let at_latest = matches!(
         &held.revision,
         quilt_uri::RevisionPointer::Hash(hash) if newer == Some(hash.as_str())
@@ -601,12 +599,13 @@ pub fn remote_target(
         held.clone()
     };
     Some(RemoteTarget {
-        catalog_url: util::catalog_url(&address)?,
+        catalog_url: util::catalog_url(&address),
         address,
     })
 }
 
-/// Where the package is: its folder, then its catalog page and its Quilt URI.
+/// Where the package is: its folder, then its catalog page, if any, and its
+/// Quilt URI.
 /// The commit page's header draws it too.
 ///
 /// The remote side is dropped, not disabled, without a [`remote_target`]: there
@@ -639,12 +638,12 @@ pub(crate) fn location(
         .with_disabled(busy.into())
     }];
     if let Some(RemoteTarget {
-        catalog_url: url,
+        catalog_url,
         address,
     }) = target
     {
         let ns = namespace.clone();
-        buttons.push(
+        buttons.extend(catalog_url.map(|url| {
             GroupButton::labelled(
                 icons::link_external,
                 "Open in catalog",
@@ -660,8 +659,8 @@ pub(crate) fn location(
                     );
                 }),
             )
-            .with_disabled(busy.into()),
-        );
+            .with_disabled(busy.into())
+        }));
         buttons.push(
             GroupButton::icon(
                 icons::copy,
@@ -756,7 +755,10 @@ pub fn PageHeader(
     } = dialogs;
     let payload = StoredValue::new(data.clone());
     let rendered = render(&data.state, kit::Site::PageHeader);
-    let action = rendered.action;
+    // The pane's Bucket and catalog section offers the bucket instead.
+    let action = rendered
+        .action
+        .filter(|action| *action != PackageAction::ChooseS3Bucket);
     let namespace = data.namespace.to_string();
     // Seeded from what the reader picked for this package last time, and
     // written back only when they pick: a visit that changes nothing stores
@@ -807,7 +809,6 @@ pub fn PageHeader(
                                     w,
                                     goto,
                                     publish_choice,
-                                    bucket_open,
                                     role_open,
                                 )
                             })
@@ -1531,45 +1532,19 @@ mod tests {
         }
     }
 
-    /// Both entries open the same form — the row offers it because the state
-    /// calls for it, the menu because the reader may choose it.
+    /// The pane's Bucket and catalog section offers the bucket, so a package
+    /// with none has no primary here, and the folder leads the row.
     #[wasm_bindgen_test]
-    async fn choose_s3_bucket_and_change_bucket_open_the_same_dialog() {
-        for state in [kit::PackageState::NoRemote, kit::PackageState::Latest] {
-            let from_row = matches!(state, kit::PackageState::NoRemote);
-            let el = mount_header(data(state));
-            assert!(
-                el.query_selector("dialog[open]").unwrap().is_none(),
-                "closed until asked"
-            );
-
-            if from_row {
-                button(&el, "Choose S3 bucket").click();
-            } else {
-                el.query_selector(TRIGGER)
-                    .unwrap()
-                    .expect("the overflow trigger")
-                    .unchecked_into::<web_sys::HtmlElement>()
-                    .click();
-                leptos::task::tick().await;
-                button(&el, "Change bucket").click();
-            }
-            // The dialog opens from an effect, on the next tick.
-            leptos::task::tick().await;
-
-            let dialog = el
-                .query_selector("dialog[open]")
+    fn no_bucket_offers_no_primary() {
+        let el = mount_header(data(kit::PackageState::NoRemote));
+        assert!(
+            el.query_selector("[data-primary-action]")
                 .unwrap()
-                .unwrap_or_else(|| panic!("the dialog opened; markup was {}", el.inner_html()));
-            assert!(
-                dialog
-                    .text_content()
-                    .unwrap_or_default()
-                    .contains("Change bucket"),
-                "markup was {}",
-                dialog.inner_html()
-            );
-        }
+                .is_none(),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert_eq!(location_names(&el)[0], "Open folder");
     }
 
     /// A single-role reader sees the reason and no button — the payload says so
@@ -2061,13 +2036,32 @@ mod tests {
         }
     }
 
-    /// A package with no catalog, or not yet published, has no catalog page,
-    /// so the remote side is dropped rather than disabled: there is no reason to state and nothing
-    /// the reader could do about it.
+    fn without_catalog(state: kit::PackageState) -> commands::PackageHeaderData {
+        commands::PackageHeaderData {
+            uri: Some(
+                "quilt+s3://team-bucket#package=team/dataset@abc123"
+                    .parse()
+                    .expect("a uri with no catalog"),
+            ),
+            remote_locked: true,
+            ..data(state)
+        }
+    }
+
+    /// A package with no remote, or not yet published, has no address to copy
+    /// and no catalog page, so the remote side is dropped rather than disabled:
+    /// there is no reason to state and nothing the reader could do about it.
+    /// A published package with no catalog has its address but no page.
     #[wasm_bindgen_test]
-    fn the_remote_side_is_there_only_with_a_catalog() {
+    fn the_remote_side_is_there_once_published() {
         let plain = mount_header(data(kit::PackageState::Latest));
         assert_eq!(location_names(&plain), ["Open folder"]);
+
+        let bucket_only = mount_header(without_catalog(kit::PackageState::Latest));
+        assert_eq!(
+            location_names(&bucket_only),
+            ["Open folder", "Copy Quilt URI"]
+        );
 
         let unpublished = mount_header(commands::PackageHeaderData {
             remote_locked: false,
@@ -2086,22 +2080,59 @@ mod tests {
         );
     }
 
-    /// The menu no longer offers the catalog: the row does.
+    /// The row has no catalog command, with a catalog or without, published
+    /// or not. With a catalog the location group still opens its page.
+    #[wasm_bindgen_test]
+    fn the_header_offers_no_catalog_command() {
+        let unpublished = commands::PackageHeaderData {
+            remote_locked: false,
+            ..without_catalog(kit::PackageState::Unpublished)
+        };
+        for d in [
+            with_catalog(kit::PackageState::Latest),
+            without_catalog(kit::PackageState::Latest),
+            unpublished,
+            data(kit::PackageState::NoRemote),
+        ] {
+            let el = mount_header(d);
+            let commands = row_buttons(&el);
+            assert!(
+                !commands
+                    .iter()
+                    .any(|c| c.contains("Add catalog") || c.contains("Change catalog")),
+                "{commands:?}"
+            );
+        }
+    }
+
+    /// The row's buttons by their words, outside the closed dialogs.
+    fn row_buttons(el: &web_sys::Element) -> Vec<String> {
+        let all = el.query_selector_all("button").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .filter(|b| b.closest("dialog").unwrap().is_none())
+            .map(|b| b.text_content().unwrap_or_default())
+            .collect()
+    }
+
+    /// Published or not, the menu offers neither the bucket nor the catalog:
+    /// the context pane's Bucket and catalog section shows both and opens the
+    /// dialog.
     #[test]
-    fn the_menu_does_not_offer_the_catalog() {
-        let labels: Vec<String> = menu_items(&with_catalog(kit::PackageState::Latest), false)
-            .into_iter()
-            .map(|item| item.label)
-            .collect();
-        assert_eq!(
-            labels,
-            [
-                "Create new revision",
-                "Show remote",
-                "Undo last revision",
-                "Remove"
-            ]
-        );
+    fn the_menu_does_not_offer_the_bucket() {
+        for data in [
+            with_catalog(kit::PackageState::Latest),
+            data(kit::PackageState::Latest),
+        ] {
+            let labels: Vec<String> = menu_items(&data, false)
+                .into_iter()
+                .map(|item| item.label)
+                .collect();
+            assert_eq!(
+                labels,
+                ["Create new revision", "Undo last revision", "Remove"]
+            );
+        }
     }
 
     /// The copy touches neither the package nor the lock, so it stays live
@@ -2176,8 +2207,8 @@ mod tests {
             "quilt+s3://team-bucket#package=team/dataset&catalog=quilt.test"
         );
         assert_eq!(
-            target.catalog_url,
-            "https://quilt.test/b/team-bucket/packages/team/dataset/tree/latest"
+            target.catalog_url.as_deref(),
+            Some("https://quilt.test/b/team-bucket/packages/team/dataset/tree/latest")
         );
     }
 
@@ -2190,8 +2221,8 @@ mod tests {
             "quilt+s3://team-bucket#package=team/dataset@abc123&catalog=quilt.test"
         );
         assert_eq!(
-            target.catalog_url,
-            "https://quilt.test/b/team-bucket/packages/team/dataset/tree/abc123"
+            target.catalog_url.as_deref(),
+            Some("https://quilt.test/b/team-bucket/packages/team/dataset/tree/abc123")
         );
     }
 
@@ -2202,6 +2233,20 @@ mod tests {
             remote_target_of(&holding_against(None)),
             remote_target_of(&holding_against(Some("def456")))
         );
+    }
+
+    /// With no catalog, the copy is the bucket's address alone, and there is
+    /// no catalog page.
+    #[test]
+    fn without_a_catalog_the_copy_names_the_bucket() {
+        let mut d = without_catalog(kit::PackageState::Latest);
+        d.newer = Some("abc123".to_string());
+        let target = remote_target_of(&d).unwrap();
+        assert_eq!(
+            target.address.to_copy_string(),
+            "quilt+s3://team-bucket#package=team/dataset"
+        );
+        assert_eq!(target.catalog_url, None);
     }
 
     /// A long hash is copied whole: the shortened form is for reading only.

@@ -110,10 +110,10 @@ fn narrowed_group(open: RwSignal<bool>) -> AnyView {
 /// The degenerate list: no group anywhere, which `Group: None` reaches from the
 /// toolbar at any moment and a flat package reaches by existing. Every row's
 /// disclosure gutter would be an indent with nothing to align to, so the list
-/// sets `--q-entry-gutter` to zero and the names start where the box does.
+/// sets `--q-entry-gutter` to zero and the names follow the box directly.
 fn flat_list(pending: RwSignal<bool>) -> AnyView {
     view! {
-        <div class="g-stack" style="--q-entry-gutter: 0">
+        <div class="g-stack" style="--q-entry-gutter: 0px">
             // The files that are here carry the check, whatever the rest of
             // the list is.
             <EntryRow name="README.md" size="2 KB" have_mark=true />

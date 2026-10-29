@@ -22,7 +22,9 @@ impl Flag {
     /// Save `value` to the setting this row owns, and only that one.
     async fn save(self, value: bool) -> Result<(), String> {
         match self {
-            Self::EntirePackageSync => commands::update_experimental_settings(Some(value)).await,
+            Self::EntirePackageSync => {
+                commands::update_experimental_settings(Some(value), None).await
+            }
             Self::NewDesign => {
                 let design = if value { Design::V2 } else { Design::V1 };
                 commands::update_design_settings(design).await

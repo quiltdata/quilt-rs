@@ -35,8 +35,6 @@ pub async fn reset_to_latest(
     let latest = resolve_tag(remote, origin.as_ref(), remote_uri, Tag::Latest).await?;
     debug!("✔️ Latest hash resolved: {}", latest.hash);
 
-    // A pending commit on a base at `latest` never became `latest`, so
-    // discarding it loses nothing remote.
     if latest.hash == lineage.remote()?.hash && lineage.commit.is_none() {
         info!("✔️ Package is already at latest version");
         return Ok(lineage);
@@ -190,11 +188,7 @@ mod tests {
         Ok(())
     }
 
-    /// Regression: `reset_to_latest` must clear `lineage.commit`. Otherwise
-    /// the lineage stays self-inconsistent (`UpToDate` on hashes, Ahead via
-    /// `current_hash()`), and a later Diverged → merge → "Promote my
-    /// revision" would push and tag the very revision the user just
-    /// discarded. On a base already at `latest`, the commit was never pushed.
+    /// A discarded commit must not survive for a later publish to resurrect.
     #[test(tokio::test)]
     async fn test_reset_clears_pending_commit() -> Res {
         let paths = DomainPaths::default();
@@ -245,6 +239,7 @@ mod tests {
                 Namespace::default(),
             )
             .await?;
+            assert!(resolved_lineage.commit.is_none(), "reset clears the commit");
             assert_eq!(
                 resolved_lineage.current_hash(),
                 Some(test_hash),

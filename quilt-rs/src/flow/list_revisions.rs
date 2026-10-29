@@ -13,8 +13,8 @@
 //! revision was **made** — the manifest format carries neither a timestamp nor
 //! a parent pointer (see
 //! [`tag_timestamp`](crate::io::manifest::tag_timestamp)), and the registry's
-//! own history under `.quilt/named_packages/` cannot be read back because
-//! [`Remote`](crate::io::remote::Remote) has no list operation.
+//! own history under `.quilt/named_packages/` is read back only as hashes
+//! ([`Remote::published_revisions`](crate::io::remote::Remote::published_revisions)).
 
 use chrono::DateTime;
 use chrono::Utc;

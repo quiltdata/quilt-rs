@@ -35,6 +35,11 @@ pub struct ExperimentalSettings {
     /// the user made in order to undo a setting that only ever hid a control.
     #[serde(default)]
     pub entire_package_sync: bool,
+    /// Whether the v2 Settings page shows the Agent tasks card. Only the card:
+    /// the task runner reads `task_settings.json` whatever this says, and
+    /// turning it off leaves that file as it is.
+    #[serde(default)]
+    pub agent_tasks: bool,
 }
 
 impl ExperimentalSettings {
@@ -47,9 +52,12 @@ impl ExperimentalSettings {
     /// A caller that knows about one experiment must not reset another it has
     /// never heard of — which is what a whole-struct write does the moment a
     /// second flag exists.
-    pub fn patch(&mut self, entire_package_sync: Option<bool>) {
+    pub fn patch(&mut self, entire_package_sync: Option<bool>, agent_tasks: Option<bool>) {
         if let Some(value) = entire_package_sync {
             self.entire_package_sync = value;
+        }
+        if let Some(value) = agent_tasks {
+            self.agent_tasks = value;
         }
     }
 
@@ -93,6 +101,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let settings = ExperimentalSettings {
             entire_package_sync: true,
+            agent_tasks: true,
         };
         settings.save(dir.path()).await?;
         assert_eq!(ExperimentalSettings::load(dir.path()).await?, settings);
@@ -129,12 +138,14 @@ mod tests {
     fn patch_leaves_untouched_flags_alone() {
         let mut s = ExperimentalSettings {
             entire_package_sync: true,
+            agent_tasks: false,
         };
-        s.patch(None);
+        s.patch(None, Some(true));
         assert!(
             s.entire_package_sync,
             "a flag the caller never mentioned must not be reset"
         );
+        assert!(s.agent_tasks);
     }
 
     /// A retired experiment leaves its key in files written before it went.
@@ -155,6 +166,7 @@ mod tests {
             loaded,
             ExperimentalSettings {
                 entire_package_sync: true,
+                agent_tasks: false,
             }
         );
 

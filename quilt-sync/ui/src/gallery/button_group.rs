@@ -10,13 +10,15 @@ use crate::kit::icons;
 use crate::pages::copy_mark::CONFIRM_FOR;
 
 /// The package header's group: the local folder, then the remote side when
-/// there is a catalog page. `copied` stands in for the page's clipboard state.
+/// the package is published to a catalog. `copied` stands in for the page's
+/// clipboard state.
 pub fn location(remote: bool, copied: RwSignal<bool>) -> AnyView {
-    group(remote, copied, false)
+    group(remote, true, copied, false)
 }
 
-/// [`location`], with the page's lock held when `busy`.
-fn group(remote: bool, copied: RwSignal<bool>, busy: bool) -> AnyView {
+/// [`location`], with the page's lock held when `busy`. Without a `catalog`
+/// the remote side is the copy alone.
+fn group(remote: bool, catalog: bool, copied: RwSignal<bool>, busy: bool) -> AnyView {
     let busy = Signal::stored(busy);
     let mut buttons = vec![
         GroupButton::labelled(icons::folder, "Open folder", Callback::new(|()| ()))
@@ -24,14 +26,16 @@ fn group(remote: bool, copied: RwSignal<bool>, busy: bool) -> AnyView {
     ];
     if remote {
         let pending: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
-        buttons.push(
-            GroupButton::labelled(
-                icons::link_external,
-                "Open in catalog",
-                Callback::new(|()| ()),
-            )
-            .with_disabled(busy),
-        );
+        if catalog {
+            buttons.push(
+                GroupButton::labelled(
+                    icons::link_external,
+                    "Open in catalog",
+                    Callback::new(|()| ()),
+                )
+                .with_disabled(busy),
+            );
+        }
         buttons.push(
             GroupButton::icon(
                 icons::copy,
@@ -71,8 +75,9 @@ const NOTE: &str = "Joined segments for one subject: here a package's folder on 
                     name moves to a tooltip: hover or Tab to one. The copy segment is always \
                     an icon; click it and the icon turns to a check for a moment, at the same \
                     width, and a screen reader hears Copied. No tooltip opens by itself. Without a \
-                    catalog page the remote side is dropped. While another command runs \
-                    the two opening segments are disabled and the copy is not.";
+                    catalog the remote side is the copy alone; before the package is published \
+                    it is dropped. While another command runs the two opening segments are \
+                    disabled and the copy is not.";
 
 #[component]
 pub fn ButtonGroupStories() -> impl IntoView {
@@ -84,6 +89,9 @@ pub fn ButtonGroupStories() -> impl IntoView {
             <Cell wide=true label="wide, not published yet: no catalog page">
                 {location(false, RwSignal::new(false))}
             </Cell>
+            <Cell wide=true label="wide, published with no catalog: the copy alone">
+                {group(true, false, RwSignal::new(false), false)}
+            </Cell>
             <Cell wide=true label="narrow: icons only, hover each for its name">
                 {narrow(location(true, RwSignal::new(false)))}
             </Cell>
@@ -91,7 +99,7 @@ pub fn ButtonGroupStories() -> impl IntoView {
                 {narrow(location(false, RwSignal::new(false)))}
             </Cell>
             <Cell wide=true label="another command running: only the copy is live">
-                {group(true, RwSignal::new(false), true)}
+                {group(true, true, RwSignal::new(false), true)}
             </Cell>
             <Cell wide=true label="copied: the copy icon is a check">
                 {location(true, RwSignal::new(true))}

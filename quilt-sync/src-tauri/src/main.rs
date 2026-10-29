@@ -4,6 +4,9 @@
 // trips `items_after_statements` on leading `use`s/items in test fns. Enforce
 // the lint in production; allow it only under `cfg(test)`.
 #![cfg_attr(test, allow(clippy::items_after_statements))]
+// A spawned task run's `Send` check nests the ACP client over quilt-rs's
+// package reads, deeper than the default limit of 128.
+#![recursion_limit = "256"]
 
 use std::sync::Arc;
 
@@ -87,12 +90,11 @@ fn main() {
                 Some(telemetry::Buffer::new(&data_dir)),
             );
 
-            // This is for runtime registering
+            // Registers the schemes from tauri.conf.json at runtime. macOS
+            // takes them from the bundle's Info.plist, so this only logs there.
             #[cfg(desktop)]
-            for scheme in ["quilt+s3", "quilt"] {
-                if let Err(err) = app.deep_link().register(scheme) {
-                    error!("Failed to register deep link for {}: {}", scheme, err);
-                }
+            if let Err(err) = app.deep_link().register_all() {
+                error!("Failed to register deep link schemes: {}", err);
             }
 
             let logging = telemetry::Telemetry::init_file_logging(&data_dir)?;
@@ -250,6 +252,7 @@ fn main() {
             commands::open_user_ignore_rules,
             commands::update_log_settings,
             commands::update_experimental_settings,
+            commands::update_task_settings,
             commands::update_design_settings,
             commands::get_main_page_packages,
             commands::get_main_page_recent_files,
@@ -267,6 +270,7 @@ fn main() {
             commands::undo_commit,
             commands::reveal_in_file_browser,
             commands::set_remote,
+            commands::change_catalog,
             commands::package_create,
             commands::setup,
             commands::add_to_quiltignore,

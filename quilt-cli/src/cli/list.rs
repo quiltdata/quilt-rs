@@ -32,7 +32,8 @@ const UNREACHABLE_SUFFIX: &str = " (remote unreachable)";
 
 /// A `--fetch` row whose bucket has no catalog and whose check found the AWS
 /// credentials on this computer missing or refused. Worded as `QuiltSync` words it.
-const CREDENTIALS_UNUSABLE: &str = "AWS credentials on this computer aren't usable — update ~/.aws";
+const CREDENTIALS_UNUSABLE: &str =
+    "AWS credentials on this computer aren't usable — update ~/.aws or run aws sso login";
 
 /// How many packages `--fetch` checks at once. Each check is a remote round
 /// trip plus a working-tree walk, so an unbounded fan-out over a large domain
@@ -843,7 +844,7 @@ mod tests {
             assert_eq!(row.fetched, Some(credentials_unusable()));
             assert_eq!(
                 state(&row),
-                "AWS credentials on this computer aren't usable — update ~/.aws"
+                "AWS credentials on this computer aren't usable — update ~/.aws or run aws sso login"
             );
         }
     }

@@ -75,16 +75,20 @@ fn document(agent_exec: &Value, is_file: impl Fn(&Path) -> bool) -> Result<&str,
     let Some(document) = agent_exec.get("document").and_then(Value::as_str) else {
         return Err("agent_exec.document is missing".to_string());
     };
-    let inside = Path::new(document)
-        .components()
-        .all(|part| matches!(part, std::path::Component::Normal(_)));
-    if !inside {
+    if !inside_package(Path::new(document)) {
         return Err(format!("{document} is not a path inside the package"));
     }
     if !is_file(Path::new(document)) {
         return Err(format!("{document} is not a file in the package"));
     }
     Ok(document)
+}
+
+/// Whether `path` is plain segments, which joined to the package's folder
+/// stay inside it.
+pub fn inside_package(path: &Path) -> bool {
+    path.components()
+        .all(|part| matches!(part, std::path::Component::Normal(_)))
 }
 
 fn agent_id(agent_exec: &Value) -> Result<&str, String> {
@@ -203,7 +207,24 @@ pub fn interrupted(user_meta: &Value) -> Value {
     let mut claim = user_meta["agent_exec"]["claim"].clone();
     claim["status"] = json!("failed");
     claim["reason"] = json!("interrupted by restart");
-    with_claim(user_meta, claim)
+    claim
+}
+
+/// `default` with `head`'s `agent_exec` in place of its own, or with none
+/// where `head` has none. A `default` that is not an object gives way to the
+/// task.
+pub fn keep_head_task(default: Value, head: Option<&Value>) -> Value {
+    let task = head.and_then(|head| head.get("agent_exec"));
+    let mut meta = match default {
+        Value::Object(meta) => meta,
+        default if task.is_none() => return default,
+        _ => serde_json::Map::new(),
+    };
+    match task {
+        Some(task) => meta.insert("agent_exec".to_string(), task.clone()),
+        None => meta.remove("agent_exec"),
+    };
+    Value::Object(meta)
 }
 
 pub fn unrunnable(user_meta: &Value, reason: &str) -> Value {
@@ -223,6 +244,7 @@ mod tests {
             AgentSettings {
                 command: vec!["kiro-cli-chat".to_string()],
                 trust_all: false,
+                env: BTreeMap::new(),
             },
         )])
     }
@@ -408,11 +430,9 @@ mod tests {
             "TASK.md",
             &json!({ "status": "claimed", "invocation_id": "inv", "claimed_at": "t" }),
         );
-        let failed = interrupted(&meta);
         assert_eq!(
-            failed["agent_exec"]["claim"],
+            interrupted(&meta),
             json!({ "status": "failed", "invocation_id": "inv", "claimed_at": "t", "reason": "interrupted by restart" })
         );
-        assert_eq!(failed["other"], "kept");
     }
 }

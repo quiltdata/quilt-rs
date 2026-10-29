@@ -88,7 +88,7 @@ async fn test_spamming_commit_writes() -> Res {
                 None,
             )
             .await?;
-        expected_hashes.insert(i, commit.hash);
+        expected_hashes.insert(i, commit.hash().unwrap().to_string());
     }
 
     // Remove last, cause it's the "current" hash, not a part of `prev_hashes`
@@ -341,6 +341,90 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
     Ok(())
 }
 
+/// A package with no pending commit, its remote set or not.
+async fn package_without_commit(
+    remote: serde_json::Value,
+) -> Res<(
+    InstalledPackage<LocalStorage, MockRemote>,
+    Vec<tempfile::TempDir>,
+)> {
+    let (home, temp_dir1) = Home::from_temp_dir()?;
+    let (paths, temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let namespace: Namespace = ("test", "nothing_to_push").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    let lineage_json = serde_json::json!({
+        "packages": {
+            "test/nothing_to_push": {
+                "commit": null,
+                "remote": remote,
+                "base_hash": "BASE_HASH",
+                "latest_hash": "BASE_HASH",
+                "paths": {}
+            }
+        },
+        "home": home.as_ref(),
+    });
+    storage
+        .write_byte_stream(
+            &paths.lineage(),
+            lineage_json.to_string().into_bytes().into(),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(MockRemote::default()),
+        storage,
+        namespace,
+        state_store: None,
+    };
+    Ok((package, vec![temp_dir1, temp_dir2]))
+}
+
+/// With no pending commit there is nothing to push: the push succeeds with
+/// `Pushed::NothingToPush` and writes nothing, here or on the remote.
+#[test(tokio::test)]
+async fn test_push_without_commit_has_nothing_to_push() -> Res {
+    let (package, _temp_dirs) = package_without_commit(serde_json::json!({
+        "bucket": "bkt",
+        "namespace": "test/nothing_to_push",
+        "hash": "BASE_HASH",
+    }))
+    .await?;
+    let lineage_before = package.lineage().await?;
+
+    let pushed = package.push(None).await?;
+
+    assert_eq!(pushed, Pushed::NothingToPush);
+    assert_eq!(package.lineage().await?, lineage_before);
+    let latest_tag = S3Uri::try_from("s3://bkt/.quilt/named_packages/test/nothing_to_push/latest")?;
+    assert!(!package.remote.exists(None, &latest_tag).await?);
+
+    Ok(())
+}
+
+/// A package with no remote still fails to push, commit or not: that is a
+/// setup problem, not nothing to do.
+#[test(tokio::test)]
+async fn test_push_without_remote_fails() -> Res {
+    let (package, _temp_dirs) = package_without_commit(serde_json::Value::Null).await?;
+
+    let err = package.push(None).await.unwrap_err();
+
+    assert!(
+        err.to_string().contains("No remote configured"),
+        "got: {err}"
+    );
+
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn test_manifest_recovery_from_corruption() -> Res {
     let (home, _temp_dir1) = Home::from_temp_dir()?;
@@ -482,7 +566,7 @@ impl crate::io::remote::Remote for RejectedCredentialRemote {
     }
     fn published_revisions(
         &self,
-        _host: &Host,
+        _host: Option<&Host>,
         _bucket: &str,
         _namespace: &Namespace,
     ) -> impl Future<Output = Res<Vec<String>>> {
@@ -545,7 +629,7 @@ impl crate::io::remote::Remote for LoggedOutRemote {
     }
     fn published_revisions(
         &self,
-        _host: &Host,
+        _host: Option<&Host>,
         _bucket: &str,
         _namespace: &Namespace,
     ) -> impl Future<Output = Res<Vec<String>>> {
@@ -604,7 +688,7 @@ impl crate::io::remote::Remote for DeniedRemote {
     }
     fn published_revisions(
         &self,
-        _host: &Host,
+        _host: Option<&Host>,
         bucket: &str,
         namespace: &Namespace,
     ) -> impl Future<Output = Res<Vec<String>>> {
@@ -817,7 +901,7 @@ async fn test_status_propagates_login_required() -> Res {
 /// prior `status` call would persist the refreshed `latest_hash`, so
 /// disk was reliably fresh when `pull` ran. Without that persist,
 /// the disk-stale `latest_hash` always equalled `base_hash` and
-/// pull short-circuited with "already up-to-date" — both the
+/// pull short-circuited as up to date — both the
 /// autosync watcher's pull branch and the manual Pull button were
 /// affected.
 #[test(tokio::test)]
@@ -893,20 +977,90 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
         state_store: None,
     };
 
-    // Pull will eventually fail downstream — we have not staged the
-    // manifest at `new_hash`, so `cache_remote_manifest` will return a
-    // NotFound — but the *specific* error we are guarding against is
-    // "package is already up-to-date". Any other failure mode proves
-    // the refresh-then-check path ran.
-    let err = package
+    // Pull fails downstream — we have not staged the manifest at
+    // `new_hash`, so `cache_remote_manifest` returns a NotFound. An up-to-date
+    // short-circuit would have returned `Ok`, so the error proves the
+    // refresh-then-check path ran.
+    package
         .pull(None, SyncScope::IndividualFiles)
         .await
         .expect_err("pull should fail downstream on the missing NEW_HASH manifest");
-    let msg = err.to_string();
-    assert!(
-        !msg.contains("already up-to-date"),
-        "pull must refresh latest_hash before the up-to-date guard; got: {msg}"
+
+    Ok(())
+}
+
+/// A pull whose remote `latest` is the base it already has succeeds with
+/// `Pulled::UpToDate`, and still writes the `latest_hash` the tag read
+/// refreshed — here a stale tip the tag has since moved back from.
+#[test(tokio::test)]
+async fn test_pull_up_to_date_returns_up_to_date_and_writes_latest_hash() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "pull_up_to_date").into();
+    let bucket = "bkt";
+    let base_hash = "BASE_HASH";
+    let stale_hash = "STALE_HASH";
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/pull_up_to_date": {{
+                    "commit": null,
+                    "remote": {{
+                        "bucket": "{bucket}",
+                        "namespace": "test/pull_up_to_date",
+                        "hash": "{base_hash}",
+                        "catalog": "quilt.test"
+                    }},
+                    "base_hash": "{base_hash}",
+                    "latest_hash": "{stale_hash}",
+                    "paths": {{}}
+                }}
+            }},
+            "home": "{}"
+        }}"#,
+        home.as_ref().display(),
     );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+    storage
+        .write_byte_stream(
+            paths.installed_manifest(&namespace, base_hash),
+            ByteStream::from_static(br#"{"version": "v0"}"#),
+        )
+        .await?;
+    remote
+        .put_object(
+            None,
+            &S3Uri::try_from(
+                format!("s3://{bucket}/.quilt/named_packages/test/pull_up_to_date/latest").as_str(),
+            )?,
+            base_hash.as_bytes().to_vec(),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(remote),
+        storage,
+        namespace,
+        state_store: None,
+    };
+
+    let pulled = package.pull(None, SyncScope::IndividualFiles).await?;
+    assert_eq!(pulled, crate::flow::Pulled::UpToDate);
+
+    let lineage = package.lineage().await?;
+    assert_eq!(lineage.latest_hash, base_hash);
 
     Ok(())
 }
@@ -1752,10 +1906,12 @@ async fn test_status_with_downloads_counts_the_current_revision() -> Res {
             scope: SyncScope::IndividualFiles,
             listed: 1,
             outstanding: 1,
+            backlog: 0,
             deleted_here: 0,
             size: Some(crate::lineage::DownloadSize {
                 listed: 0,
                 outstanding: 0,
+                backlog: 0,
             }),
         }
     );

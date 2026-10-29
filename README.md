@@ -100,6 +100,10 @@ quilt login --host quilt.example.com
 quilt push -n lab/assays --bucket lab-data --host quilt.example.com
 ```
 
+A bucket with no stack works too: leave out `--host`, skip `quilt login`, and
+the push uses the AWS credentials on this computer (`~/.aws`, environment
+variables or SSO).
+
 Collaborators log in to the same stack, then install. Their working copies use
 `~/QuiltSync` unless they choose a different directory first with
 `quilt home <dir>`.
@@ -114,7 +118,9 @@ quilt install --path plate1.csv \
 ```
 
 From then on, `quilt pull -n lab/assays` updates the files they installed to
-each new revision. To inspect a remote package without installing anything,
+each new revision. To keep the whole package, or every file under some folders,
+including files added later, run `quilt keep -n lab/assays --all` or
+`--folder <dir>`. To inspect a remote package without installing anything,
 `quilt browse <PKG_URI>` prints its manifest.
 
 ## Or skip the terminal: QuiltSync

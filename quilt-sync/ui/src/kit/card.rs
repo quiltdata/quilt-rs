@@ -1,16 +1,15 @@
 //! Bordered surface for a titled list of related rows.
 //!
-//! The page's four regions are all one of these: the two state-strip blocks, the
-//! attention queue, and the list. That is what makes the page read as a page rather
-//! than as two widgets followed by loose text — and it is not only cosmetic, since the
-//! rows were designed against a card's `--q-bgColor-default`, where their hairlines and
-//! hover tint were measured.
+//! The state strip's two blocks and the package list are each one of these. The
+//! attention queue is not: it is a status line over its rows, on the page itself.
 
 use leptos::prelude::*;
 
 stylance::import_crate_style!(style, "src/kit/card.module.scss");
 
 #[component]
+// Each bool is its own optional prop, set by name at the call site.
+#[allow(clippy::fn_params_excessive_bools)]
 pub fn Card(
     /// Optional, because the list card has none: its `SegmentedControl` names the view, and a
     /// card titled `Packages` above a Packages / Recent files switch says it twice.
@@ -40,8 +39,7 @@ pub fn Card(
     #[prop(optional, into)]
     busy: Signal<bool>,
     /// Rows. The card draws a hairline between any two of them, so children need not
-    /// know they are in a list — pass a single wrapper element to opt out, as the queue
-    /// does, where dividers would make a list of decisions read as a table.
+    /// know they are in a list — pass a single wrapper element to opt out.
     /// The children reach the border, with no padding between. For a card whose
     /// children are **rows that carry their own padding** — the installed
     /// package's file list, whose group headings stick to the top edge on a
@@ -61,6 +59,11 @@ pub fn Card(
     /// the page taller instead of scrolling.
     #[prop(optional)]
     fill: bool,
+    /// No border, padding or background: the rows sit on the page itself. For
+    /// a list whose rows scroll the page under sticky parts above it, where a
+    /// card's top edge would scroll away with the first row.
+    #[prop(optional)]
+    bare: bool,
     children: Children,
 ) -> impl IntoView {
     let heading_id = super::unique_id("card-title");
@@ -77,6 +80,7 @@ pub fn Card(
         Some(style::root),
         flush.then_some(style::flush),
         fill.then_some(style::fill),
+        bare.then_some(style::bare),
     ]
     .into_iter()
     .flatten()
@@ -103,7 +107,7 @@ pub fn Card(
                                     .get()
                                     .map(|count| {
                                         view! {
-                                            // Read aloud, `Needs your attention` and
+                                            // Read aloud, `Accounts` and
                                             // `(19)` abut without it.
                                             <span data-sr-only>", "</span>
                                             <span class=style::count>{format!("({count})")}</span>
@@ -165,7 +169,7 @@ mod tests {
     /// Read aloud, the title and the count abut without a separator between them.
     #[wasm_bindgen_test]
     fn the_count_is_separated_from_the_title() {
-        let el = mount(|| view! { <Card title="Needs your attention" count=19>"rows"</Card> });
+        let el = mount(|| view! { <Card title="Accounts" count=19>"rows"</Card> });
         let text = el
             .query_selector("h2")
             .unwrap()
@@ -173,7 +177,7 @@ mod tests {
             .text_content()
             .unwrap();
         assert!(
-            !text.contains("attention("),
+            !text.contains("Accounts("),
             "the count runs into the title: {text}"
         );
         assert!(text.contains("(19)"), "{text}");

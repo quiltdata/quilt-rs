@@ -247,7 +247,7 @@ fn remote_state_banner(
         // A bucket with no catalog, read on this computer's AWS credentials.
         // `error` covers any failure, so this suggests rather than diagnoses.
         (
-            "Unable to check remote status — check the AWS credentials in ~/.aws".to_string(),
+            "Unable to check remote status — check the AWS credentials in ~/.aws or run aws sso login".to_string(),
             false,
         )
     })
@@ -416,7 +416,7 @@ mod tests {
         assert_eq!(
             remote_state_banner("error", false, None),
             Some((
-                "Unable to check remote status — check the AWS credentials in ~/.aws".to_string(),
+                "Unable to check remote status — check the AWS credentials in ~/.aws or run aws sso login".to_string(),
                 false
             ))
         );

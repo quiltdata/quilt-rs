@@ -37,7 +37,7 @@ pub async fn package_commit(
     metadata: &str,
     workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
-) -> Result<(), Error> {
+) -> Result<quilt::flow::Committed, Error> {
     debug!(
         "Committing the package.\nNamespace:\n{},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
         namespace, message, metadata, workflow
@@ -58,8 +58,7 @@ pub async fn package_commit(
             workflow,
             host_config,
         )
-        .await?;
-    Ok(())
+        .await
 }
 
 /// Installs `paths`, then shows them in the file browser. Returns the paths it
@@ -197,7 +196,7 @@ pub async fn package_push(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
     host_config: Option<HostConfig>,
-) -> Result<quilt::PushOutcome, Error> {
+) -> Result<quilt::Pushed, Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?
@@ -234,6 +233,16 @@ pub fn publish_inputs(
     (message, metadata, workflow)
 }
 
+/// What default metadata does to the head's `agent_exec` task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeadTask {
+    /// Replaced with the rest, as the settings write it: the user's Publish.
+    Replace,
+    /// Kept as the head has it, present or not: autosync's, which neither
+    /// drops a task nor makes one.
+    Keep,
+}
+
 /// Publish with what `settings` say, on the lock held since `status` was
 /// walked, so the message names the changes the revision commits and the
 /// publish reuses that walk. Both publish paths, the manual one-click Publish
@@ -245,13 +254,26 @@ pub async fn publish_locked_with_settings<M: QuiltModel>(
     installed: &quilt::InstalledPackage,
     settings: &PublishSettings,
     status: quilt::lineage::InstalledPackageStatus,
+    task: HeadTask,
 ) -> Result<(quilt::PublishOutcome, String), Error> {
     let (message, metadata, workflow) = publish_inputs(&installed.namespace, settings, &status);
     debug!(
         "Publishing the package.\nNamespace: {},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
         installed.namespace, message, metadata, workflow
     );
-    let metadata = parse_metadata(&metadata)?;
+    let metadata = match parse_metadata(&metadata)? {
+        UserMeta::Set(default) if task == HeadTask::Keep => {
+            let lineage = model.get_installed_package_lineage(installed).await?;
+            let head = model
+                .get_installed_package_manifest(installed, &lineage)
+                .await?;
+            UserMeta::Set(crate::tasks::agent_exec::keep_head_task(
+                default,
+                head.header.user_meta.as_ref(),
+            ))
+        }
+        metadata => metadata,
+    };
     let workflow = model.resolve_workflow(installed, workflow).await?;
     let outcome = model
         .locked_package_publish(
@@ -304,7 +326,7 @@ pub async fn package_publish(
 pub async fn set_remote(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
-    origin: quilt_uri::Host,
+    origin: Option<quilt_uri::Host>,
     bucket: String,
     workflow: WorkflowIntent,
 ) -> Result<Option<String>, Error> {
@@ -315,6 +337,19 @@ pub async fn set_remote(
     model
         .set_remote(&installed_package, origin, bucket, workflow)
         .await
+}
+
+/// Add, change or remove the catalog of the package's remote.
+pub async fn change_catalog(
+    model: &impl QuiltModel,
+    namespace: &quilt_uri::Namespace,
+    origin: Option<quilt_uri::Host>,
+) -> Result<quilt_uri::ManifestUri, Error> {
+    let installed_package = model
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
+    model.change_catalog(&installed_package, origin).await
 }
 
 pub async fn package_create(
@@ -480,7 +515,15 @@ mod tests {
             .create_installed_package(("acme", "demo").into());
         let locked = installed.namespace.clone();
         let status = quilt::lineage::InstalledPackageStatus::default();
-        publish_locked_with_settings(model, &locked, &installed, settings, status).await?;
+        publish_locked_with_settings(
+            model,
+            &locked,
+            &installed,
+            settings,
+            status,
+            HeadTask::Replace,
+        )
+        .await?;
         Ok(())
     }
 
@@ -581,7 +624,7 @@ mod tests {
             )
             .returning(|_, _, _, _| Ok(None));
 
-        let origin = fixtures::host();
+        let origin = Some(fixtures::host());
         set_remote(&model, &namespace, origin, "my-bucket".to_string(), intent).await?;
         Ok(())
     }
