@@ -29,6 +29,7 @@ This project uses `just` as a task runner for common development tasks.
 cargo install just
 cargo install cargo-nextest --locked   # the test runner CI uses
 cargo install rumdl                    # the markdown linter CI uses
+# and jq, which `just test os-check` reads nextest's test list with
 
 just -l
 ```
@@ -126,20 +127,23 @@ alongside the others, and fails only when two runs happen to meet.
 
 ### Tests of code that differs by OS
 
-CI runs the whole suite on Linux for every pull request, but on macOS and
-Windows only on `main`. On a pull request those two run the `os-sensitive`
-nextest profile (`.config/nextest.toml`): the tests of code that behaves
+CI runs the whole suite on Linux for every pull request. On `main` it also
+runs it on Windows, and QuiltSync's on macOS too; quilt-rs and the CLI never run
+it whole on macOS. On a pull request, macOS and Windows run the `os-sensitive`
+nextest profile (`.config/nextest.toml`) instead: the tests of code that behaves
 differently by OS — paths and separators, file stamps, locking, permissions,
 deleting open files, spawning processes, where settings live. It has no
 `live_*` tests, so a fork gets it too. `just test os` runs it locally.
 
-The profile selects tests by module. A file that branches on the OS outside
-its tests — `cfg(windows)`, `cfg(unix)`, `cfg(target_os = …)`, or `cfg!` of
+The profile selects tests by module. A file that branches on the OS —
+`cfg(windows)`, `cfg(unix)`, `cfg(target_os = …)`, or `cfg!` of
 them — needs a test named after its module in the profile, or CI fails;
 `just test os-check` runs the same check. Add the module to the profile, or,
 when no test can reach the branch, list the file in
-`.config/os-sensitive-exceptions` with the reason. Code that differs by OS
-without a `cfg`, such as a path built with `/`, escapes the check: add its
+`.config/os-sensitive-exceptions` with the reason. The check reads the test
+list of the host it runs on, Linux in CI, so it proves that the profile names
+the module, not that macOS and Windows build a test there. Code that differs by
+OS without a `cfg`, such as a path built with `/`, escapes the check: add its
 module to the profile yourself.
 
 ## Filing an issue
@@ -167,7 +171,7 @@ ones to check first.
 workflows ignore markdown-only changes, `test-quilt-rs` also ignores
 `quilt-sync/**`, and the markdown lint fires only on `*.md`. On a pull
 request, macOS and Windows run only the tests of code that differs by OS (see
-"Tests of code that differs by OS" above); the rest runs there on `main`. So
+"Tests of code that differs by OS" above). So
 read the check list for what is there, not for the absence of red — a
 check that never ran is not a check that passed. A fork gets the same set as a
 branch here, minus the `live_*` tests, which are skipped rather than failed

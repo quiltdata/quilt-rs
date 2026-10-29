@@ -1,33 +1,39 @@
 #!/usr/bin/env bash
-# Fails when a source file branches on the OS outside its tests, yet the
-# `os-sensitive` nextest profile selects none of its module's tests. Pull
-# requests run only that profile on macOS and Windows, so such a branch would
-# first be tested there on `main`.
+# Fails when a source file branches on the OS, yet the `os-sensitive` nextest
+# profile selects none of its module's tests. Pull requests run only that
+# profile on macOS and Windows, so such a branch would first be tested there
+# on `main`.
 #
 # A file's tests are the ones named after its module path: `src/io/lock.rs`
-# needs a selected test named `io::lock::…`. Its own code is the part above
-# its inline `mod tests {`; files named `tests.rs` or `*_tests.rs` are all test.
-# A file with a reason to stay out is listed in `os-sensitive-exceptions`.
+# needs a selected test named `io::lock::…`, and `lib.rs` or `main.rs` one
+# named `tests::…`. Files named `tests.rs` or `*_tests.rs` are skipped. A file
+# with a reason to stay out is listed in `os-sensitive-exceptions`.
+#
+# The check reads the list nextest gives on the host it runs on, so it proves
+# that the profile names the module, not that each OS builds a test there.
 #
 # Arguments go to `cargo nextest list` and, with the directory it is run from,
 # pick the crates to check.
 set -euo pipefail
+
+if ! command -v jq >/dev/null; then
+    echo "check-os-sensitive.sh needs jq: https://jqlang.org/download/" >&2
+    exit 1
+fi
 
 list=$(cargo nextest list --profile os-sensitive --message-format json "$@")
 cd "$(git rev-parse --show-toplevel)"
 exceptions=.config/os-sensitive-exceptions
 root=$PWD
 
-# The crates in scope, by directory, and the tests selected in each.
-dirs=$(jq -r '."rust-suites"[].cwd' <<<"$list" | sort -u)
+# The tests selected in each crate in scope, by its directory.
 selected=$(jq -r '."rust-suites"[] | .cwd as $cwd | .testcases
     | to_entries[] | select(.value."filter-match".status == "matches")
     | "\($cwd)\t\(.key)"' <<<"$list")
 
 # A `cfg` can span lines, so it is read on until its parentheses close.
 branches_on_os() {
-    awk '/^[[:space:]]*mod [a-z_]*tests[[:space:]]*\{/ { exit }
-         cfg != "" || /cfg!?\(/ {
+    awk 'cfg != "" || /cfg!?\(/ {
              cfg = cfg $0
              if (gsub(/\(/, "(", cfg) <= gsub(/\)/, ")", cfg)) {
                  if (cfg ~ /cfg!?\(.*(windows|unix|target_os)/) found = 1
@@ -47,10 +53,10 @@ has_selected_test() {
 }
 
 failed=0
-for dir in $dirs; do
+while IFS= read -r dir; do
     rel=${dir#"$root"/}
-    for file in $(git ls-files "$rel/src/*.rs"); do
-        case $file in */tests.rs | *_tests.rs) continue ;; esac
+    while IFS= read -r file; do
+        case "$file" in */tests.rs | *_tests.rs) continue ;; esac
         if ! branches_on_os "$file"; then
             if excepted "$file"; then
                 echo "$file is in $exceptions but no longer branches on the OS"
@@ -63,13 +69,13 @@ for dir in $dirs; do
         module=${module%.rs}
         module=${module%/mod}
         module=${module//\//::}
-        case $module in lib | main) module= ;; *) module="$module::" ;; esac
-        if ! has_selected_test "$dir" "$module"; then
+        case "$module" in lib | main) module=tests ;; esac
+        if ! has_selected_test "$dir" "$module::"; then
             echo "$file branches on the OS, but the os-sensitive profile selects none of its tests"
             failed=1
         fi
-    done
-done
+    done < <(git ls-files "$rel/src/*.rs")
+done < <(jq -r '."rust-suites"[].cwd' <<<"$list" | sort -u)
 
 if [ "$failed" = 1 ]; then
     echo

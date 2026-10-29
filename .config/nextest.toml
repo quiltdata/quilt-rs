@@ -17,8 +17,9 @@ test-group = 'live-write'
 
 # The tests of code that behaves differently by OS: paths and separators, file
 # stamps, locking, permissions, deleting open files, spawning processes, and
-# where settings live. Pull requests run them on macOS and Windows, which test
-# the whole suite only on `main`. No `live_*` tests, so a fork gets them too.
+# where settings live. Pull requests run only these on macOS and Windows. On
+# `main`, Windows runs the whole suite, and macOS QuiltSync's alone. No
+# `live_*` tests, so a fork gets them too.
 # `check-os-sensitive.sh` fails when a file that branches on the OS has no
 # test here.
 [profile.os-sensitive]
