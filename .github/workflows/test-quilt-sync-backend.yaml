@@ -96,12 +96,19 @@ jobs:
         uses: ./.github/actions/setup-rust-minimal
         with:
           targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          components: clippy
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
-      # Two steps, for the reason given in test-quilt-rs.yaml.
+      # The only lint of code built for this OS alone; see test-quilt-rs.yaml.
+      - name: Lint
+        run: cargo clippy --all-targets --all-features -- --deny warnings
+        working-directory: ./quilt-sync/src-tauri
+
+      # Runs after a lint failure too, so one run lists both.
       - name: Test
+        if: ${{ !cancelled() }}
         run: cargo nextest run --profile no-aws
         working-directory: ./quilt-sync/src-tauri
         env:

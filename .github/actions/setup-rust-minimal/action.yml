@@ -13,6 +13,10 @@ inputs:
     description: "Additional targets to install"
     required: false
     default: ""
+  components:
+    description: "Additional components to install, such as clippy"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -23,6 +27,7 @@ runs:
         # Its cache is one per OS, shared by every job. rust-cache below keeps one per job.
         cache: false
         targets: ${{ inputs.targets }}
+        components: ${{ inputs.components }}
 
     - name: Cache Rust build
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3

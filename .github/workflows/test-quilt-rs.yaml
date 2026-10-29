@@ -120,15 +120,23 @@ jobs:
 
       - name: Setup Rust for testing
         uses: ./.github/actions/setup-rust-minimal
+        with:
+          components: clippy
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
-      # `--no-fail-fast`, and the live step runs after a failure too: one
-      # run should list every failure, not just the first. Bash on Windows,
-      # because PowerShell reads `$SCOPE` as its own variable, not the
-      # environment's.
+      # The only lint of code built for this OS alone. Linux cannot lint it
+      # for the other target: aws-lc-rs compiles C for the target it builds.
+      - name: Lint
+        shell: bash
+        run: cargo clippy $SCOPE --all-features -- --deny warnings
+
+      # `--no-fail-fast`, and every step runs after a failure: one run should
+      # list every failure, not just the first. Bash on Windows, because
+      # PowerShell reads `$SCOPE` as its own variable, not the environment's.
       - name: Test
+        if: ${{ !cancelled() }}
         shell: bash
         run: cargo nextest run --profile no-aws --no-fail-fast $SCOPE
         env:
