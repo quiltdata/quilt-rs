@@ -191,6 +191,9 @@ mod tests {
 
     // Verify it throws correct error when no permissions
     // Permissions denied, because we try to create a file in the OS root directory
+    // Unix only: a Windows runner's user may write to the drive root, so the
+    // install would succeed there and leave folders behind.
+    #[cfg(unix)]
     #[test(tokio::test)]
     async fn test_installing_when_no_permissions() -> Res {
         let manifest_uri = ManifestUri {
