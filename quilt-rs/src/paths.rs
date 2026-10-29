@@ -68,6 +68,21 @@ pub(crate) const OBJECTS_DIR: &str = "objects";
 pub use quilt_uri::paths::get_manifest_key;
 pub use quilt_uri::paths::tag_key;
 
+/// The logical key of the file or folder at `relative`, a path under a
+/// package home: its parts joined with `/` on every OS, as quilt3 keys
+/// them. On Windows the path itself separates them with `\\`.
+#[must_use]
+pub(crate) fn logical_key(relative: &Path) -> PathBuf {
+    let mut key = std::ffi::OsString::new();
+    for (n, component) in relative.components().enumerate() {
+        if n > 0 {
+            key.push("/");
+        }
+        key.push(component.as_os_str());
+    }
+    PathBuf::from(key)
+}
+
 /// Path to the package home directory within the home directory
 #[must_use]
 pub fn package_home(home: &Home, namespace: &Namespace) -> PathBuf {

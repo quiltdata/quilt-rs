@@ -94,14 +94,14 @@ async fn walk_source_dir(
             let file_type = dir_entry.file_type().await?;
 
             if file_type.is_dir() {
-                let rel = file_path.strip_prefix(source)?;
-                if let Some(by) = rules.dir_ignored_by(rel, false) {
-                    left_out.dirs.push((rel.to_path_buf(), by));
+                let rel = crate::paths::logical_key(file_path.strip_prefix(source)?);
+                if let Some(by) = rules.dir_ignored_by(&rel, false) {
+                    left_out.dirs.push((rel, by));
                     continue;
                 }
                 queue.push_back(file_path);
             } else if file_type.is_file() {
-                let relative = file_path.strip_prefix(source)?.to_path_buf();
+                let relative = crate::paths::logical_key(file_path.strip_prefix(source)?);
                 if let Some(by) = rules.file_ignored_by(&relative, false) {
                     left_out.files.push((relative, by));
                     continue;
@@ -331,6 +331,53 @@ mod tests {
         assert_eq!(pkg.paths.len(), 2);
         assert!(pkg.paths.contains_key(&PathBuf::from("file1.txt")));
         assert!(pkg.paths.contains_key(&PathBuf::from("file2.txt")));
+        Ok(())
+    }
+
+    /// A logical key separates folders with `/` on every OS, though the walk
+    /// finds `\\` on Windows. Compared as text: Windows paths treat both
+    /// separators as one, so a `PathBuf` comparison would pass either way.
+    #[test(tokio::test)]
+    async fn test_create_with_a_folder_uses_slash_keys() -> Res {
+        let (lineage, _temp_dir) = DomainLineage::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+        let storage = MockStorage::default();
+        let namespace: Namespace = ("test", "nested").into();
+
+        let source_dir = storage.temp_dir.as_ref().join("source");
+        storage
+            .write_byte_stream(
+                source_dir.join("data").join("raw").join("a.csv"),
+                ByteStream::from_static(b"a,b\n"),
+            )
+            .await?;
+
+        let (lineage, _) = create_package(
+            lineage,
+            &paths,
+            &storage,
+            namespace.clone(),
+            Some(source_dir),
+            None,
+        )
+        .await?;
+
+        let pkg = lineage.packages.get(&namespace).unwrap();
+        let keys: Vec<&str> = pkg
+            .paths
+            .keys()
+            .map(|key| key.to_str().expect("UTF-8"))
+            .collect();
+        assert_eq!(keys, ["data/raw/a.csv"]);
+        let hash = &pkg.commit.as_ref().unwrap().hash;
+        let manifest =
+            Manifest::from_path(&storage, &paths.installed_manifest(&namespace, hash)).await?;
+        let rows: Vec<&str> = manifest
+            .rows
+            .iter()
+            .map(|row| row.logical_key.to_str().expect("UTF-8"))
+            .collect();
+        assert_eq!(rows, ["data/raw/a.csv"]);
         Ok(())
     }
 
