@@ -83,6 +83,22 @@ pub(crate) fn logical_key(relative: &Path) -> PathBuf {
     PathBuf::from(key)
 }
 
+/// The `file://` URL of `path`, made absolute first: percent-encoded, with
+/// `/` separators and, on Windows, the drive (`file:///C:/...`), as quilt3
+/// writes one with `PurePath.as_uri()`.
+pub(crate) fn file_url(path: &Path) -> Res<String> {
+    let absolute = std::path::absolute(path)?;
+    url::Url::from_file_path(&absolute)
+        .map(|url| url.to_string())
+        .map_err(|()| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{} has no file URL", absolute.display()),
+            )
+            .into()
+        })
+}
+
 /// Path to the package home directory within the home directory
 #[must_use]
 pub fn package_home(home: &Home, namespace: &Namespace) -> PathBuf {
