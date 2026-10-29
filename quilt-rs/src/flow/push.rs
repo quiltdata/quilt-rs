@@ -558,10 +558,18 @@ mod tests {
 
     /// A row whose wire `meta` carries the wrapped `{"user_meta": {...}}`
     /// form, as manifest rows do on the wire.
+    /// The `file://` URL of `path` made absolute, which on Windows adds the
+    /// current drive: a URL without one has no Windows file path.
+    fn local_file_url(path: &str) -> String {
+        url::Url::from_file_path(std::path::absolute(path).expect("absolute"))
+            .expect("absolute")
+            .to_string()
+    }
+
     fn wrapped_meta_row(user_meta: &Value) -> ManifestRow {
         ManifestRow {
             logical_key: PathBuf::from("a.txt"),
-            physical_key: "file:///b/a/r0".to_string(),
+            physical_key: local_file_url("/b/a/r0"),
             meta: Some(json!({ "user_meta": user_meta })),
             ..ManifestRow::default()
         }
@@ -627,7 +635,7 @@ mod tests {
         remote
             .storage
             .write_byte_stream(
-                &PathBuf::from("/b/a/r0"),
+                std::path::absolute("/b/a/r0")?,
                 ByteStream::from_static(file_content),
             )
             .await?;
@@ -690,7 +698,7 @@ mod tests {
             remote
                 .storage
                 .write_byte_stream(
-                    &PathBuf::from(format!("/b/a/{name}")),
+                    std::path::absolute(format!("/b/a/{name}"))?,
                     ByteStream::from_static(file_content),
                 )
                 .await?;
@@ -702,7 +710,7 @@ mod tests {
         manifest
             .insert_record(ManifestRow {
                 logical_key: PathBuf::from("b.txt"),
-                physical_key: "file:///b/a/rb".to_string(),
+                physical_key: local_file_url("/b/a/rb"),
                 size: file_content.len() as u64,
                 ..ManifestRow::default()
             })
@@ -710,7 +718,7 @@ mod tests {
         manifest
             .insert_record(ManifestRow {
                 logical_key: PathBuf::from("a.txt"),
-                physical_key: "file:///b/a/ra".to_string(),
+                physical_key: local_file_url("/b/a/ra"),
                 size: file_content.len() as u64,
                 ..ManifestRow::default()
             })
