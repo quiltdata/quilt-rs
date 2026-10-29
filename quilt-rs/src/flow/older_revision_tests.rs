@@ -97,7 +97,11 @@ struct Rev1Installed {
 
 impl Rev1Installed {
     async fn new(versioned: bool) -> Res<Self> {
-        let v = |version| versioned.then_some(version);
+        Self::with_versions(versioned.then_some("v1"), versioned.then_some("v2")).await
+    }
+
+    /// Revision 1's keys pinned to `v1`, and revision 2's `changes.txt` to `v2`.
+    async fn with_versions(v1: Option<&str>, v2: Option<&str>) -> Res<Self> {
         let host_config = HostConfig::default();
         let scratch = tempfile::TempDir::new()?;
         let remote = MockRemote::default();
@@ -108,7 +112,7 @@ impl Rev1Installed {
             scratch.path(),
             &host_config,
             "same.txt",
-            v("v1"),
+            v1,
             b"same",
         )
         .await?;
@@ -117,7 +121,7 @@ impl Rev1Installed {
             scratch.path(),
             &host_config,
             "changes.txt",
-            v("v1"),
+            v1,
             b"one",
         )
         .await?;
@@ -126,7 +130,7 @@ impl Rev1Installed {
             scratch.path(),
             &host_config,
             "changes.txt",
-            v("v2"),
+            v2,
             b"two",
         )
         .await?;
@@ -385,5 +389,19 @@ async fn the_reconcile_refuses_a_versioned_row_whose_hash_is_wrong() -> Res {
         ),
         "{result:?}"
     );
+    Ok(())
+}
+
+/// While versioning is suspended S3 writes the version `null`, and a later put
+/// overwrites that same version, so a row pinned to it can be replaced like a
+/// bare key: skipped, not a wrong hash.
+#[test(tokio::test)]
+async fn a_row_pinned_to_the_null_version_skips_the_replaced_row() -> Res {
+    let package = Rev1Installed::with_versions(Some("null"), Some("null")).await?;
+
+    let (_, report) = package.download_all().await?;
+
+    assert_eq!(report.skipped, vec![PathBuf::from("changes.txt")]);
+    assert_eq!(report.hash_mismatch, Vec::<PathBuf>::new());
     Ok(())
 }

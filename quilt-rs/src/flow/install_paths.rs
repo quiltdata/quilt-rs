@@ -47,8 +47,9 @@ pub struct InstallPathsReport {
 
 /// Why fetched bytes were not stored: they do not hash to the row.
 enum Mismatch {
-    /// The `physical_key` has no `versionId`, so a later revision may have
-    /// replaced the object it names.
+    /// The `physical_key` has no `versionId`, or the `null` one S3 writes while
+    /// versioning is suspended, so a later revision may have replaced the
+    /// object it names.
     Replaced,
     /// The `physical_key` names an exact version, whose bytes cannot have
     /// changed, so the hash the row records is wrong.
@@ -95,9 +96,9 @@ async fn cache_immutable_object(
             serde_json::to_string(&computed.hash).unwrap_or_default(),
         );
         storage.remove_file(&fetched).await?;
-        return Ok(Some(match uri.version {
-            Some(_) => Mismatch::WrongHash,
-            None => Mismatch::Replaced,
+        return Ok(Some(match uri.version.as_deref() {
+            Some(version) if version != "null" => Mismatch::WrongHash,
+            _ => Mismatch::Replaced,
         }));
     }
     storage.rename(&fetched, object_dest).await?;
