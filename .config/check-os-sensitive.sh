@@ -14,6 +14,8 @@
 #
 # Arguments go to `cargo nextest list` and, with the directory it is run from,
 # pick the crates to check.
+#
+# Runs on Linux and macOS; it compares Unix paths.
 set -euo pipefail
 
 if ! command -v jq >/dev/null; then
@@ -74,7 +76,7 @@ while IFS= read -r dir; do
             echo "$file branches on the OS, but the os-sensitive profile selects none of its tests"
             failed=1
         fi
-    done < <(git ls-files "$rel/src/*.rs")
+    done < <(git ls-files --cached --others --exclude-standard "$rel/src/*.rs")
 done < <(jq -r '."rust-suites"[].cwd' <<<"$list" | sort -u)
 
 if [ "$failed" = 1 ]; then
