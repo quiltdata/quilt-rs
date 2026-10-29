@@ -450,6 +450,7 @@ pub async fn get_settings_data(s: &Services) -> Result<SettingsData, String> {
 /// Replace `task_settings.json`. The task runner reads it again on its next
 /// check, so this needs no restart.
 pub async fn update_task_settings(s: &Services, settings: TaskSettings) -> Result<(), String> {
+    let _writing = s.settings_writes.lock().await;
     save_task_settings(&s.data_dir, settings).await
 }
 
@@ -535,6 +536,7 @@ pub async fn update_publish_settings(
     default_workflow: String,
     default_metadata: String,
 ) -> Result<(), String> {
+    let _writing = s.settings_writes.lock().await;
     let publish = &s.publish_settings;
     // Validate metadata is parseable JSON (or empty/whitespace = no metadata).
     // `opt_from_string` below trims whitespace-only input down to `None`, so
@@ -567,6 +569,7 @@ pub async fn update_autosync_settings(
     s: &Services,
     settings: AutosyncSettingsData,
 ) -> Result<(), String> {
+    let _writing = s.settings_writes.lock().await;
     let autosync_settings = &s.autosync_settings;
     let watcher = &s.watcher;
     validate_autosync_settings_data(&settings)?;
@@ -630,6 +633,7 @@ async fn write_autosync_patch(
     watcher: &Watcher,
     patch: &AutosyncPatch,
 ) -> Result<(), String> {
+    let _writing = s.settings_writes.lock().await;
     let data_dir = s.data_dir.clone();
 
     let clear = {
@@ -675,6 +679,7 @@ pub async fn get_autopull_activity(
 }
 
 pub async fn update_fswatcher_settings(s: &Services, enabled: bool) -> Result<(), String> {
+    let _writing = s.settings_writes.lock().await;
     let fswatcher_settings = &s.fswatcher_settings;
     let data_dir = s.data_dir.clone();
 
@@ -695,6 +700,7 @@ pub async fn update_fswatcher_settings(s: &Services, enabled: bool) -> Result<()
 /// Save the log level. Logging reads it once at startup, so it applies after a
 /// restart.
 pub async fn update_log_settings(s: &Services, level: LogLevel) -> Result<(), String> {
+    let _writing = s.settings_writes.lock().await;
     let data_dir = s.data_dir.clone();
     LogSettings { level }
         .save(&data_dir)
@@ -713,6 +719,7 @@ pub async fn update_experimental_settings(
     entire_package_sync: Option<bool>,
     agent_tasks: Option<bool>,
 ) -> Result<(), String> {
+    let _writing = s.settings_writes.lock().await;
     let experimental = &s.experimental_settings;
     let data_dir = s.data_dir.clone();
 
@@ -726,6 +733,7 @@ pub async fn update_experimental_settings(
 
 /// Choose the design generation. The next page that asks draws it.
 pub async fn update_design_settings(s: &Services, design: Design) -> Result<(), String> {
+    let _writing = s.settings_writes.lock().await;
     DesignSettings { design }
         .save(&s.data_dir)
         .await

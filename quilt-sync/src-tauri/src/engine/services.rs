@@ -52,6 +52,8 @@ pub struct Services {
     pub fswatcher_settings: SharedFsWatcherSettings,
     pub watcher: Watcher,
     pub quit_gate: QuitGate,
+    /// Held by every settings write, so two saves of one file never overlap.
+    pub settings_writes: tokio::sync::Mutex<()>,
     pub events: EventSink,
     /// The tray icon's state; a desktop tray clones it.
     pub tray_status: watch::Receiver<SyncTrayStatus>,
@@ -164,6 +166,7 @@ impl Services {
             fswatcher_settings,
             watcher,
             quit_gate: QuitGate::default(),
+            settings_writes: tokio::sync::Mutex::new(()),
             events,
             tray_status,
         }))
