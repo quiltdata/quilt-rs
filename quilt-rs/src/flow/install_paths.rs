@@ -34,16 +34,39 @@ pub struct InstallPathsReport {
     pub paths: LineagePaths,
     /// Requested paths whose bytes the remote no longer holds, so they were
     /// neither placed nor tracked: a bare `physical_key` on an unversioned
-    /// bucket whose object a later revision replaced. Empty when every
-    /// requested path was installed.
+    /// bucket whose object a later revision replaced.
     pub skipped: Vec<PathBuf>,
+    /// Requested paths whose `physical_key` names an exact version whose bytes
+    /// do not hash to the row, so the hash the package records is wrong. Left
+    /// out like [`skipped`](Self::skipped) ones.
+    pub hash_mismatch: Vec<PathBuf>,
     /// Requested paths the copy already tracked, so they were left as they
     /// are and not written: the working file may hold edits not yet committed.
     pub already_installed: Vec<PathBuf>,
 }
 
+/// Why fetched bytes were not stored: they do not hash to the row.
+enum Mismatch {
+    /// The `physical_key` has no `versionId`, so a later revision may have
+    /// replaced the object it names.
+    Replaced,
+    /// The `physical_key` names an exact version, whose bytes cannot have
+    /// changed, so the hash the row records is wrong.
+    WrongHash,
+}
+
+impl Mismatch {
+    /// The error an apply that cannot leave the row out refuses with.
+    fn refusal(&self, path: PathBuf) -> InstallPathError {
+        match self {
+            Mismatch::Replaced => InstallPathError::ContentMismatch(path),
+            Mismatch::WrongHash => InstallPathError::HashMismatch(path),
+        }
+    }
+}
+
 /// Fetches a row's object into the store, but only if the bytes are the row's.
-/// Returns `false`, and leaves the store as it was, when they are not.
+/// Returns the [`Mismatch`], and leaves the store as it was, when they are not.
 ///
 /// The store is content-addressed by the row's hash and trusted on every later
 /// read, so what lands there must be verified first: a `physical_key` without a
@@ -59,24 +82,26 @@ async fn cache_immutable_object(
     object_dest: &PathBuf,
     row: &ManifestRow,
     run_staging: &Path,
-) -> Res<bool> {
+) -> Res<Option<Mismatch>> {
     let uri: S3Uri = row.physical_key.parse()?;
     let stream = remote.get_object_stream(host, &uri).await?;
     let fetched = run_staging.join(uuid::Uuid::new_v4().to_string());
     storage.write_byte_stream(&fetched, stream.body).await?;
-    if refresh_hash(storage, &fetched, row.clone())
-        .await?
-        .is_some()
-    {
+    if let Some(computed) = refresh_hash(storage, &fetched, row.clone()).await? {
         debug!(
-            "❌ Fetched bytes for {} do not match its row",
-            row.logical_key.display()
+            "❌ Fetched bytes for {} do not match its row: expected {}, computed {}",
+            row.logical_key.display(),
+            serde_json::to_string(&row.hash).unwrap_or_default(),
+            serde_json::to_string(&computed.hash).unwrap_or_default(),
         );
         storage.remove_file(&fetched).await?;
-        return Ok(false);
+        return Ok(Some(match uri.version {
+            Some(_) => Mismatch::WrongHash,
+            None => Mismatch::Replaced,
+        }));
     }
     storage.rename(&fetched, object_dest).await?;
-    Ok(true)
+    Ok(None)
 }
 
 /// Copies an object out of the store into this apply's staging directory,
@@ -269,14 +294,16 @@ pub(crate) enum Protect<'a> {
     Absent,
 }
 
-/// What an apply does with a row whose fetched bytes do not hash to it — the
-/// remote no longer holds that revision's content, as an unversioned bucket
-/// allows once a later put replaces the key.
+/// What an apply does with a row whose fetched bytes do not hash to it. On an
+/// unversioned bucket a later put may have replaced the key, so the remote no
+/// longer holds that revision's content; for a key pinned to its version, the
+/// hash the row records is wrong.
 pub(crate) enum OnMismatch {
-    /// Fail the whole apply with [`InstallPathError::ContentMismatch`] and place
-    /// nothing. The reconcile needs this: it applies a whole revision, and the
-    /// lineage it saves on success names the new base, so a path it left out
-    /// would be recorded at a row its working file does not hold.
+    /// Fail the whole apply with [`InstallPathError::ContentMismatch`] or
+    /// [`InstallPathError::HashMismatch`] and place nothing. The reconcile
+    /// needs this: it applies a whole revision, and the lineage it saves on
+    /// success names the new base, so a path it left out would be recorded at
+    /// a row its working file does not hold.
     Refuse,
     /// Leave the row out, install every row that verifies, and report the ones
     /// left out. The user's download: an unversioned bucket should degrade to
@@ -316,9 +343,10 @@ async fn refuse_existing_working_files(
 /// is refused if an untracked path already has a file in the working folder.
 ///
 /// Returns the new lineage and the report. Its `skipped` paths are rows whose
-/// bytes the remote no longer holds (see [`OnMismatch::Skip`]). A skipped path
-/// is neither placed nor tracked, and nothing of it enters the object store, so
-/// asking for it again fetches afresh.
+/// bytes the remote no longer holds, and its `hash_mismatch` paths are rows
+/// whose recorded hash their pinned version does not match (see
+/// [`OnMismatch::Skip`]). Either is neither placed nor tracked, and nothing of
+/// it enters the object store, so asking for it again fetches afresh.
 ///
 /// This is the verb a user reaches, directly or through
 /// [`InstalledPackage::install_paths`](crate::InstalledPackage::install_paths).
@@ -345,7 +373,7 @@ pub async fn install_paths(
     refuse_existing_working_files(storage, &working_dir, &untracked).await?;
     // Checked up front so a refusal fetches nothing, and again at placement
     // (`Protect::Absent`) because a file can appear during the fetch.
-    let (lineage, skipped) = install_paths_over(
+    let (lineage, report) = install_paths_over(
         lineage,
         manifest,
         paths,
@@ -359,14 +387,14 @@ pub async fn install_paths(
     )
     .await?;
     let report = InstallPathsReport {
-        paths: lineage.paths.clone(),
-        skipped,
         already_installed: already_installed.into_iter().cloned().collect(),
+        ..report
     };
     Ok((lineage, report))
 }
 
 /// Installs paths **over** whatever the working tree already holds for them.
+/// Its report never lists `already_installed` paths.
 ///
 /// `pub(crate)` on purpose: the only caller entitled to this is the reconcile
 /// in [`apply_latest_update`](super::apply_update), whose touch set excludes
@@ -405,10 +433,14 @@ pub(crate) async fn install_paths_over(
     entries_paths: &[&PathBuf],
     protect: &Protect<'_>,
     on_mismatch: OnMismatch,
-) -> Res<(PackageLineage, Vec<PathBuf>)> {
+) -> Res<(PackageLineage, InstallPathsReport)> {
     if entries_paths.is_empty() {
         info!("No paths to install");
-        return Ok((lineage, Vec::new()));
+        let report = InstallPathsReport {
+            paths: lineage.paths.clone(),
+            ..InstallPathsReport::default()
+        };
+        return Ok((lineage, report));
     }
 
     let remote_uri = lineage.remote()?.clone();
@@ -432,6 +464,7 @@ pub(crate) async fn install_paths_over(
     //     remote: RemoteManifest
     let mut entries = BTreeMap::new();
     let mut skipped = Vec::new();
+    let mut hash_mismatch = Vec::new();
     // Outside the tree the status walk reads: a staging file beside the working
     // file would be reported as a new file, committed if a commit landed in the
     // window, and left as a permanent stray by a kill. One subdirectory per
@@ -458,7 +491,7 @@ pub(crate) async fn install_paths_over(
 
             if storage.exists(&object_dest).await {
                 debug!("✔️ Object already in cache: {}", object_dest.display());
-            } else if cache_immutable_object(
+            } else if let Some(mismatch) = cache_immutable_object(
                 storage,
                 remote,
                 remote_uri.origin.as_ref(),
@@ -468,19 +501,15 @@ pub(crate) async fn install_paths_over(
             )
             .await?
             {
-                debug!("✔️ Cached object: {}", object_dest.display());
-            } else {
-                match on_mismatch {
-                    OnMismatch::Refuse => {
-                        return Err(Error::InstallPath(InstallPathError::ContentMismatch(
-                            row.logical_key.clone(),
-                        )));
-                    }
-                    OnMismatch::Skip => {
-                        skipped.push(row.logical_key.clone());
-                        continue;
-                    }
+                let path = row.logical_key.clone();
+                match (&on_mismatch, mismatch) {
+                    (OnMismatch::Refuse, m) => return Err(Error::InstallPath(m.refusal(path))),
+                    (OnMismatch::Skip, Mismatch::Replaced) => skipped.push(path),
+                    (OnMismatch::Skip, Mismatch::WrongHash) => hash_mismatch.push(path),
                 }
+                continue;
+            } else {
+                debug!("✔️ Cached object: {}", object_dest.display());
             }
 
             // Diagnostic only: the `file://` URL the row *would* carry if rows were
@@ -537,11 +566,18 @@ pub(crate) async fn install_paths_over(
     build_manifest_from_rows_stream(storage, dest_dir, manifest.header.clone(), stream).await?;
 
     info!(
-        "✔️ Installed {} paths, skipped {}",
-        entries_paths.len() - skipped.len(),
-        skipped.len()
+        "✔️ Installed {} paths, skipped {}, hash mismatch {}",
+        entries_paths.len() - skipped.len() - hash_mismatch.len(),
+        skipped.len(),
+        hash_mismatch.len()
     );
-    Ok((lineage, skipped))
+    let report = InstallPathsReport {
+        paths: lineage.paths.clone(),
+        skipped,
+        hash_mismatch,
+        already_installed: Vec::new(),
+    };
+    Ok((lineage, report))
 }
 
 #[cfg(test)]

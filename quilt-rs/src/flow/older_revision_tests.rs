@@ -13,9 +13,12 @@ use std::str::FromStr;
 use aws_sdk_s3::primitives::ByteStream;
 use test_log::test;
 
+use crate::Error;
+use crate::InstallPathError;
 use crate::Res;
 use crate::checksum::calculate_hash;
 use crate::flow;
+use crate::flow::InstallPathsReport;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
 use crate::io::remote::mocks::MockRemote;
@@ -171,7 +174,7 @@ impl Rev1Installed {
     }
 
     /// Select all + Download.
-    async fn download_all(&self) -> Res<(PackageLineage, Vec<PathBuf>)> {
+    async fn download_all(&self) -> Res<(PackageLineage, InstallPathsReport)> {
         let all = [PathBuf::from("changes.txt"), PathBuf::from("same.txt")];
         self.download(self.lineage.clone(), &all).await
     }
@@ -180,7 +183,7 @@ impl Rev1Installed {
         &self,
         lineage: PackageLineage,
         paths: &[PathBuf],
-    ) -> Res<(PackageLineage, Vec<PathBuf>)> {
+    ) -> Res<(PackageLineage, InstallPathsReport)> {
         let mut manifest = Manifest::from_path(&self.storage, &self.installed_manifest()).await?;
         flow::install_paths(
             lineage,
@@ -193,7 +196,18 @@ impl Rev1Installed {
             &paths.iter().collect::<Vec<_>>(),
         )
         .await
-        .map(|(lineage, report)| (lineage, report.skipped))
+    }
+
+    /// Replaces the bytes at the exact version revision 1's `changes.txt` row
+    /// names, so the row's recorded hash no longer describes them.
+    async fn put_other_bytes_at_changes_v1(&self) -> Res {
+        self.remote
+            .put_object(
+                None,
+                &S3Uri::from_str(&format!("s3://{BUCKET}/f/a/changes.txt?versionId=v1"))?,
+                b"not one".to_vec(),
+            )
+            .await
     }
 
     async fn status(&self, lineage: PackageLineage) -> Res<InstalledPackageStatus> {
@@ -216,8 +230,8 @@ impl Rev1Installed {
 #[test(tokio::test)]
 async fn downloading_an_older_revision_leaves_untouched_files_unchanged() -> Res {
     let package = Rev1Installed::new(true).await?;
-    let (lineage, skipped) = package.download_all().await?;
-    assert!(skipped.is_empty(), "skipped {skipped:?}");
+    let (lineage, report) = package.download_all().await?;
+    assert!(report.skipped.is_empty(), "skipped {:?}", report.skipped);
 
     let on_disk = tokio::fs::read(package.package_home.join("changes.txt")).await?;
     assert_eq!(on_disk, b"one");
@@ -240,9 +254,10 @@ async fn downloading_an_older_revision_leaves_untouched_files_unchanged() -> Res
 async fn an_unversioned_key_skips_the_replaced_row_and_installs_the_rest() -> Res {
     let package = Rev1Installed::new(false).await?;
 
-    let (lineage, skipped) = package.download_all().await?;
+    let (lineage, report) = package.download_all().await?;
 
-    assert_eq!(skipped, vec![PathBuf::from("changes.txt")]);
+    assert_eq!(report.skipped, vec![PathBuf::from("changes.txt")]);
+    assert_eq!(report.hash_mismatch, Vec::<PathBuf>::new());
     assert_eq!(
         tokio::fs::read(package.package_home.join("same.txt")).await?,
         b"same"
@@ -273,11 +288,11 @@ async fn an_unversioned_key_skips_the_replaced_row_and_installs_the_rest() -> Re
 #[test(tokio::test)]
 async fn retrying_a_skipped_path_does_not_take_wrong_bytes_from_the_store() -> Res {
     let package = Rev1Installed::new(false).await?;
-    let (lineage, skipped) = package.download_all().await?;
+    let (lineage, report) = package.download_all().await?;
 
-    let (lineage, skipped) = package.download(lineage, &skipped).await?;
+    let (lineage, report) = package.download(lineage, &report.skipped).await?;
 
-    assert_eq!(skipped, vec![PathBuf::from("changes.txt")]);
+    assert_eq!(report.skipped, vec![PathBuf::from("changes.txt")]);
     assert!(
         !package
             .storage
@@ -297,5 +312,78 @@ async fn retrying_a_skipped_path_does_not_take_wrong_bytes_from_the_store() -> R
         "revision 2's bytes are in the store under revision 1's hash"
     );
     assert!(package.status(lineage).await?.changes.is_empty());
+    Ok(())
+}
+
+/// A key pinned to its version gets exactly the bytes that were pushed, so when
+/// they do not hash to the row, the row's hash is wrong, not the bucket's
+/// content. The row is left out like a skip, but reported apart from one.
+#[test(tokio::test)]
+async fn a_versioned_row_whose_hash_is_wrong_is_reported_as_a_hash_mismatch() -> Res {
+    let package = Rev1Installed::new(true).await?;
+    package.put_other_bytes_at_changes_v1().await?;
+
+    let (lineage, report) = package.download_all().await?;
+
+    assert_eq!(report.hash_mismatch, vec![PathBuf::from("changes.txt")]);
+    assert!(report.skipped.is_empty(), "skipped {:?}", report.skipped);
+    assert_eq!(
+        tokio::fs::read(package.package_home.join("same.txt")).await?,
+        b"same"
+    );
+    assert!(
+        !package
+            .storage
+            .exists(package.package_home.join("changes.txt"))
+            .await
+    );
+    assert_eq!(
+        lineage.paths.keys().collect::<Vec<_>>(),
+        vec![&PathBuf::from("same.txt")]
+    );
+    let manifest = Manifest::from_path(&package.storage, &package.installed_manifest()).await?;
+    let row = manifest
+        .get_record(&PathBuf::from("changes.txt"))
+        .expect("revision 1 has changes.txt");
+    assert!(
+        !package
+            .storage
+            .exists(package.domain_paths.object(row.hash.digest()))
+            .await,
+        "bytes that do not match the row are in the store under its hash"
+    );
+    Ok(())
+}
+
+/// The reconcile cannot leave a row out, so a wrong hash on a versioned row
+/// refuses it, and says the package is at fault rather than the bucket.
+#[test(tokio::test)]
+async fn the_reconcile_refuses_a_versioned_row_whose_hash_is_wrong() -> Res {
+    let package = Rev1Installed::new(true).await?;
+    package.put_other_bytes_at_changes_v1().await?;
+    let mut manifest = Manifest::from_path(&package.storage, &package.installed_manifest()).await?;
+    let changes = PathBuf::from("changes.txt");
+
+    let result = flow::install_paths_over(
+        package.lineage.clone(),
+        &mut manifest,
+        &package.domain_paths,
+        package.package_home.clone(),
+        package.namespace.clone(),
+        &package.storage,
+        &package.remote,
+        &[&changes],
+        &flow::Protect::Nothing,
+        flow::OnMismatch::Refuse,
+    )
+    .await;
+
+    assert!(
+        matches!(
+            &result,
+            Err(Error::InstallPath(InstallPathError::HashMismatch(path))) if path == &changes
+        ),
+        "{result:?}"
+    );
     Ok(())
 }

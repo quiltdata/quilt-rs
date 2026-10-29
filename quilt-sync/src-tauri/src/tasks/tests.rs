@@ -118,13 +118,15 @@ fn expect_push_and_reset(
 }
 
 /// Record each download in `events`, refusing, as the engine does, to write
-/// over anything already in `home`, and skipping the `gone` paths, whose bytes
-/// the remote no longer holds.
+/// over anything already in `home`, and leaving out the `gone` paths, whose
+/// bytes the remote no longer holds, and the `mismatched` ones, whose bytes do
+/// not match the package's hash.
 fn expect_downloads(
     model: &mut MockQuiltModel,
     events: &Arc<Mutex<Vec<String>>>,
     home: PathBuf,
     gone: &'static [&'static str],
+    mismatched: &'static [&'static str],
 ) {
     let events = Arc::clone(events);
     model
@@ -141,6 +143,12 @@ fn expect_downloads(
                 }
                 if gone.iter().any(|gone| path == std::path::Path::new(gone)) {
                     report.skipped.push(path.clone());
+                }
+                if mismatched
+                    .iter()
+                    .any(|bad| path == std::path::Path::new(bad))
+                {
+                    report.hash_mismatch.push(path.clone());
                 }
             }
             Ok(report)
@@ -197,6 +205,8 @@ struct Fixture {
     rows: &'static [&'static str],
     /// The paths whose bytes the remote no longer holds.
     gone: &'static [&'static str],
+    /// The paths whose bytes do not match the package's hash.
+    mismatched: &'static [&'static str],
 }
 
 impl Fixture {
@@ -223,6 +233,7 @@ impl Fixture {
             tracked: &[],
             rows: &["TASK.md", "sub/TASK.md"],
             gone: &[],
+            mismatched: &[],
         }
     }
 
@@ -308,7 +319,13 @@ impl Fixture {
             events.lock().unwrap().push("walk".to_string());
             Ok(status.clone())
         });
-        expect_downloads(&mut model, &self.events, self.home(), self.gone);
+        expect_downloads(
+            &mut model,
+            &self.events,
+            self.home(),
+            self.gone,
+            self.mismatched,
+        );
         let home = self.home();
         model
             .expect_package_home()
@@ -464,6 +481,21 @@ async fn a_revision_listing_a_path_outside_the_package_is_not_claimed() {
 async fn a_task_input_whose_bytes_are_gone_stops_the_claim() {
     let fixture = Fixture {
         gone: &["sub/TASK.md"],
+        ..Fixture::new()
+    };
+
+    fixture
+        .check(unclaimed(), fresh(BTreeMap::new()), true)
+        .await;
+
+    assert_eq!(fixture.metas(), [] as [Value; 0], "nothing is claimed");
+    assert!(fixture.runs.lock().unwrap().is_empty(), "nothing runs");
+}
+
+#[tokio::test]
+async fn a_task_input_whose_hash_does_not_match_stops_the_claim() {
+    let fixture = Fixture {
+        mismatched: &["sub/TASK.md"],
         ..Fixture::new()
     };
 
@@ -950,7 +982,13 @@ fn rereading_model(
     model
         .expect_package_home()
         .returning(move |_| Ok(home.clone()));
-    expect_downloads(&mut model, events, fixture.home(), fixture.gone);
+    expect_downloads(
+        &mut model,
+        events,
+        fixture.home(),
+        fixture.gone,
+        fixture.mismatched,
+    );
     model.expect_get_installed_package().returning(|ns| {
         Ok(Some(
             quilt::LocalDomain::new(PathBuf::new()).create_installed_package(ns.clone()),

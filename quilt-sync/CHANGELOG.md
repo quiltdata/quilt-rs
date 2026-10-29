@@ -19,6 +19,16 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.26.1-dev]
+
+### Fixed
+
+- A download that leaves out a file whose bytes do not match the hash the package records says so and warns that the package may be corrupt, instead of saying the file is no longer there (<https://github.com/quiltdata/quilt-rs/issues/1246>)
+
+### quilt-rs
+
+- Updated [from v0.50.0 to v0.51.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.50.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
 ## [v0.26.0] - 2026-10-28
 
 ### Added

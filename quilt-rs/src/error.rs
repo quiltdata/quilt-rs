@@ -155,10 +155,10 @@ pub enum InstallPathError {
     )]
     LocalFileExists(Vec<PathBuf>),
 
-    /// The remote returned bytes that do not hash to the row being installed.
-    /// The usual cause is a row whose `physical_key` carries no `versionId`:
-    /// it names whatever the object is now, and a later revision has replaced
-    /// it, so this revision's content is no longer on the remote.
+    /// The remote returned bytes that do not hash to a row whose
+    /// `physical_key` carries no `versionId`: it names whatever the object is
+    /// now, and a later revision has replaced it, so this revision's content
+    /// is no longer on the remote.
     ///
     /// Raised only where a partial apply would be wrong, the pull's reconcile.
     /// `install_paths` skips such a row and reports it instead.
@@ -167,6 +167,18 @@ pub enum InstallPathError {
         .0.display()
     )]
     ContentMismatch(PathBuf),
+
+    /// The remote returned bytes that do not hash to a row whose
+    /// `physical_key` carries a `versionId`. That version's bytes cannot have
+    /// changed, so the hash the row records is wrong.
+    ///
+    /// Raised only where a partial apply would be wrong, the pull's reconcile.
+    /// `install_paths` leaves such a row out and reports it instead.
+    #[error(
+        "The package records a hash for {} that its file does not match: the package may be corrupt",
+        .0.display()
+    )]
+    HashMismatch(PathBuf),
 
     #[error("Failed to uninstall path: {}", .0.display())]
     Uninstall(PathBuf),

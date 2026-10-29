@@ -24,7 +24,7 @@ use std::pin::Pin;
 use leptos::prelude::*;
 
 use super::{Reread, Wiring, run};
-use crate::commands::{self, KeepingScope, PackageSize};
+use crate::commands::{self, KeepingScope, NotDownloaded, PackageSize};
 use crate::kit::folder_list::filled;
 use crate::kit::{
     Button, ButtonVariant, Choice, ChoiceGroup, FolderList, FormDialog, PaneSection, Submit,
@@ -36,8 +36,8 @@ type Answer<T> = Pin<Box<dyn Future<Output = Result<T, String>>>>;
 /// Stores a package's scope: `(namespace, scope, folders)`; the folders are
 /// read only for a folders scope.
 pub type ScopeStore = fn(String, KeepingScope, Vec<String>) -> Answer<()>;
-/// Installs the listed backlog: `(namespace, paths)`, answering the paths it skipped.
-pub type BacklogDownload = fn(String, Vec<String>) -> Answer<Vec<String>>;
+/// Installs the listed backlog: `(namespace, paths)`, answering the paths it left out.
+pub type BacklogDownload = fn(String, Vec<String>) -> Answer<NotDownloaded>;
 
 /// Keeping's two commands. Function pointers, so the DOM tests and the
 /// gallery answer without a Tauri host.
@@ -231,9 +231,9 @@ fn download_button(
             downloading.set(true);
             let answer = (commands.download)(ns.clone(), paths).await;
             downloading.try_set(false);
-            answer.map(|skipped| {
+            answer.map(|left_out| {
                 // The file pane's warning, so both downloads say it alike.
-                if let Some(said) = super::download_outcome(ns, asked, &skipped) {
+                if let Some(said) = super::download_outcome(ns, asked, &left_out) {
                     outcome.try_set(Some(said));
                 }
                 String::new()
@@ -383,7 +383,7 @@ pub(super) fn download_label(
 mod tests {
     use super::{Answer, FoldersDialog, Held, KeepingCommands, KeepingSection, download_label};
     use crate::commands::KeepingScope::{self, EntirePackage, Folders, IndividualFiles};
-    use crate::commands::{KeepingData, PackageSize};
+    use crate::commands::{KeepingData, NotDownloaded, PackageSize};
     use crate::kit::BannerVariant;
     use crate::pages::installed_package_v2::{Outcome, Wiring};
     use crate::test_support::{button_saying, element_saying, mount, sleep_ms};
@@ -686,17 +686,17 @@ mod tests {
         Box::pin(std::future::pending())
     }
 
-    fn downloads_ok(namespace: String, paths: Vec<String>) -> Answer<Vec<String>> {
+    fn downloads_ok(namespace: String, paths: Vec<String>) -> Answer<NotDownloaded> {
         DOWNLOADED.with_borrow_mut(|calls| calls.push((namespace, paths)));
-        Box::pin(async { Ok(Vec::new()) })
+        Box::pin(async { Ok(NotDownloaded::default()) })
     }
 
-    fn refuses_download(namespace: String, paths: Vec<String>) -> Answer<Vec<String>> {
+    fn refuses_download(namespace: String, paths: Vec<String>) -> Answer<NotDownloaded> {
         DOWNLOADED.with_borrow_mut(|calls| calls.push((namespace, paths)));
         Box::pin(async { Err("AccessDenied".into()) })
     }
 
-    fn download_never(namespace: String, paths: Vec<String>) -> Answer<Vec<String>> {
+    fn download_never(namespace: String, paths: Vec<String>) -> Answer<NotDownloaded> {
         DOWNLOADED.with_borrow_mut(|calls| calls.push((namespace, paths)));
         Box::pin(std::future::pending())
     }
@@ -1312,9 +1312,50 @@ mod tests {
         assert_eq!(w.outcome.get_untracked(), None, "success says nothing");
     }
 
-    fn downloads_skipping_one(namespace: String, paths: Vec<String>) -> Answer<Vec<String>> {
+    fn downloads_skipping_one(namespace: String, paths: Vec<String>) -> Answer<NotDownloaded> {
         DOWNLOADED.with_borrow_mut(|calls| calls.push((namespace, paths)));
-        Box::pin(async { Ok(vec!["plate/c.csv".to_string()]) })
+        Box::pin(async {
+            Ok(NotDownloaded {
+                skipped: vec!["plate/c.csv".to_string()],
+                hash_mismatch: Vec::new(),
+            })
+        })
+    }
+
+    fn downloads_mismatching_one(namespace: String, paths: Vec<String>) -> Answer<NotDownloaded> {
+        DOWNLOADED.with_borrow_mut(|calls| calls.push((namespace, paths)));
+        Box::pin(async {
+            Ok(NotDownloaded {
+                skipped: Vec::new(),
+                hash_mismatch: vec!["plate/c.csv".to_string()],
+            })
+        })
+    }
+
+    /// A file whose bytes do not match the package's hash gets a warning that
+    /// says the package may be corrupt.
+    #[wasm_bindgen_test]
+    async fn a_download_with_a_hash_mismatch_names_it_on_the_band() {
+        clear();
+        let w = Wiring::new();
+        let el = pressable(
+            a_backlog_in(EntirePackage),
+            w,
+            commands(stores_ok, downloads_mismatching_one),
+        );
+        leptos::task::tick().await;
+
+        download_button(&el).click();
+        settle().await;
+
+        let said = w.outcome.get_untracked().expect("the band warns");
+        assert_eq!(said.variant, BannerVariant::Warning);
+        assert_eq!(
+            said.lead,
+            "Downloaded 1 of 2. 1 file doesn't match the hash the package records. \
+             The package may be corrupt."
+        );
+        assert_eq!(said.detail.as_deref(), Some("plate/c.csv"));
     }
 
     /// A file the remote no longer holds gets the file pane's warning.

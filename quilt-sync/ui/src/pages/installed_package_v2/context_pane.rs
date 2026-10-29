@@ -421,8 +421,8 @@ mod tests {
     fn downloads_ok(
         _: String,
         _: Vec<String>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<String>, String>>>> {
-        Box::pin(async { Ok(Vec::new()) })
+    ) -> Pin<Box<dyn Future<Output = Result<crate::commands::NotDownloaded, String>>>> {
+        Box::pin(async { Ok(crate::commands::NotDownloaded::default()) })
     }
 
     fn idle_commands() -> KeepingCommands {

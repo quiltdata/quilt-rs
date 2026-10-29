@@ -61,13 +61,13 @@ pub async fn package_commit(
         .await
 }
 
-/// Installs `paths`, then shows them in the file browser. Returns the paths it
-/// skipped because the remote no longer holds their bytes.
+/// Installs `paths`, then shows them in the file browser. Returns the report,
+/// whose `skipped` and `hash_mismatch` paths were left out.
 pub async fn install_paths(
     model: &impl QuiltModel,
     installed_package: &quilt::InstalledPackage,
     paths: Vec<PathBuf>,
-) -> Result<Vec<PathBuf>, Error> {
+) -> Result<quilt::flow::InstallPathsReport, Error> {
     if paths.is_empty() {
         return Err(Error::General(
             "Cannot install paths: empty paths vector provided".to_string(),
@@ -76,26 +76,22 @@ pub async fn install_paths(
 
     let namespace = &installed_package.namespace;
 
-    let skipped = model
+    let report = model
         .package_install_paths(installed_package, &paths)
-        .await?
-        .skipped;
+        .await?;
+    let left = report.skipped.len() + report.hash_mismatch.len();
 
-    // Post-installation actions based on number of paths. A skipped file is
+    // Post-installation actions based on number of paths. A file left out is
     // not there to reveal, so the folder opens instead.
-    if paths.len() == 1 && skipped.is_empty() {
+    if paths.len() == 1 && left == 0 {
         let path = &paths[0];
         info!("Installed {:?}", path);
         model.reveal_in_file_browser(namespace, path).await?;
     } else {
-        info!(
-            "Installed {} paths, skipped {}",
-            paths.len() - skipped.len(),
-            skipped.len()
-        );
+        info!("Installed {} paths, left out {left}", paths.len() - left);
         model.open_in_file_browser(namespace).await?;
     }
-    Ok(skipped)
+    Ok(report)
 }
 
 pub async fn install_package_only(
@@ -138,7 +134,7 @@ pub async fn install_paths_only(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
     paths: Vec<PathBuf>,
-) -> Result<Vec<PathBuf>, Error> {
+) -> Result<quilt::flow::InstallPathsReport, Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?

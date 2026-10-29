@@ -75,6 +75,9 @@ pub struct KeepReport {
     pub downloaded: Vec<PathBuf>,
     /// The backlog files whose bytes the remote no longer holds.
     pub skipped: Vec<PathBuf>,
+    /// The backlog files whose pinned version does not match the hash the
+    /// package records.
+    pub hash_mismatch: Vec<PathBuf>,
     /// The backlog files still not here afterwards.
     pub outstanding: usize,
 }
@@ -717,8 +720,10 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     /// Downloads `paths` and starts tracking them. A path whose bytes the
-    /// remote no longer holds is skipped, not an error: see
-    /// [`InstallPathsReport::skipped`](flow::InstallPathsReport::skipped). A
+    /// remote no longer holds, or whose bytes do not match the hash the package
+    /// records, is left out, not an error: see
+    /// [`InstallPathsReport::skipped`](flow::InstallPathsReport::skipped) and
+    /// [`InstallPathsReport::hash_mismatch`](flow::InstallPathsReport::hash_mismatch). A
     /// path the copy already tracks is left as it is: see
     /// [`InstallPathsReport::already_installed`](flow::InstallPathsReport::already_installed).
     pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
@@ -1051,11 +1056,14 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
             downloaded: backlog
                 .into_iter()
                 .filter(|path| {
-                    !report.skipped.contains(path) && !report.already_installed.contains(path)
+                    !report.skipped.contains(path)
+                        && !report.hash_mismatch.contains(path)
+                        && !report.already_installed.contains(path)
                 })
                 .collect(),
-            outstanding: report.skipped.len(),
+            outstanding: report.skipped.len() + report.hash_mismatch.len(),
             skipped: report.skipped,
+            hash_mismatch: report.hash_mismatch,
         })
     }
 
