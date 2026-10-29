@@ -4362,10 +4362,13 @@ mod tests {
         sleep_ms(250).await;
         let frame = frame(&el);
         let footer = find(&el, &format!(".{}", sheets::files::footer));
-        assert_eq!(
-            footer.get_bounding_client_rect().bottom(),
-            frame.get_bounding_client_rect().bottom() - 32.0,
-            "the footer ends where the page's bottom padding starts"
+        // Layout rounds to fractions of a pixel, differently at different
+        // offsets in the shared test document.
+        let footer_bottom = footer.get_bounding_client_rect().bottom();
+        let padding_top = frame.get_bounding_client_rect().bottom() - 32.0;
+        assert!(
+            (footer_bottom - padding_top).abs() < 0.01,
+            "the footer ends where the page's bottom padding starts: {footer_bottom} vs {padding_top}"
         );
     }
 
