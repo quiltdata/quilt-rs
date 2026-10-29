@@ -1,5 +1,4 @@
 use semver::Version;
-use tauri::PackageInfo;
 
 use crate::engine::telemetry::Logging;
 use crate::engine::telemetry::prelude::*;
@@ -15,11 +14,8 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(info: &PackageInfo, logging: Logging) -> Self {
+    pub fn new(version: Version, logging: Logging) -> Self {
         debug!("Logs directory is {}", logging.dir.path().display());
-        App {
-            version: info.version.clone(),
-            logging,
-        }
+        App { version, logging }
     }
 }

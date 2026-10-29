@@ -9,11 +9,9 @@
 use quilt_uri::Namespace;
 use serde::Deserialize;
 use serde::Serialize;
-use tauri::Emitter;
-use tauri::async_runtime;
 use tokio::sync::watch;
 
-use crate::engine::telemetry::prelude::*;
+use crate::engine::events::EventSink;
 
 /// Event the window listens for to follow the activity. Kept in lockstep with
 /// the UI's `listen(...)` call.
@@ -40,14 +38,12 @@ pub enum ActivityOp {
 /// on every change — a set or a clear. A window that mounts later hydrates
 /// with the `get_autopull_activity` command first, then follows this event.
 pub fn spawn_forwarder(
-    app: tauri::AppHandle,
+    events: EventSink,
     mut rx: watch::Receiver<Option<AutopullActivity>>,
-) -> async_runtime::JoinHandle<()> {
-    async_runtime::spawn(async move {
+) -> tokio::task::JoinHandle<()> {
+    crate::engine::events::spawn(async move {
         let emit = |value: Option<AutopullActivity>| {
-            if let Err(err) = app.emit(AUTOPULL_ACTIVITY_EVENT, value) {
-                warn!("activity: failed to emit {AUTOPULL_ACTIVITY_EVENT}: {err}");
-            }
+            events.emit(AUTOPULL_ACTIVITY_EVENT, value);
         };
         emit(rx.borrow_and_update().clone());
         while rx.changed().await.is_ok() {

@@ -204,13 +204,13 @@ pub enum RefusalKind {
 impl From<&crate::engine::error::Error> for Failure {
     fn from(err: &crate::engine::error::Error) -> Self {
         use crate::engine::error::{
-            Error as E, FsOpenError, OAuthUiError, PackageUriError, RouteError, TauriUiError,
+            DesktopError, Error as E, FsOpenError, OAuthUiError, PackageUriError, RouteError,
             TelemetryError,
         };
 
         // Exhaustive, so a new error variant cannot inherit an answer.
         match err {
-            E::TauriUi(TauriUiError::UserCancelled) => Self::Refusal(RefusalKind::Cancelled),
+            E::Desktop(DesktopError::UserCancelled) => Self::Refusal(RefusalKind::Cancelled),
             E::FsOpen(FsOpenError::PathNotFound(_)) => Self::Refusal(RefusalKind::Missing),
             E::Telemetry(TelemetryError::SendTimeout(_)) => Self::Refusal(RefusalKind::Unreachable),
             E::PackageName(_) => Self::Refusal(RefusalKind::InvalidName),
@@ -222,8 +222,8 @@ impl From<&crate::engine::error::Error> for Failure {
             // cannot silently inherit this answer. Each is either the UI handing the
             // backend something it should not have, the OS refusing us, or an opaque
             // string that would need a variant of its own before it could be placed.
-            E::TauriUi(
-                TauriUiError::Tauri(_) | TauriUiError::Window | TauriUiError::Clipboard(_),
+            E::Desktop(
+                DesktopError::Tauri(_) | DesktopError::Window | DesktopError::Clipboard(_),
             )
             | E::FsOpen(FsOpenError::Open(_) | FsOpenError::Zip(_))
             | E::Telemetry(TelemetryError::Mixpanel(_) | TelemetryError::Serialize(_))
@@ -534,7 +534,7 @@ impl MixpanelEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::error::{Error, FsOpenError, TauriUiError};
+    use crate::engine::error::{DesktopError, Error, FsOpenError};
     use crate::engine::quilt;
 
     fn refusal(err: &Error) -> Option<RefusalKind> {
@@ -578,7 +578,7 @@ mod tests {
     #[test]
     fn cancelling_is_a_refusal() {
         assert_eq!(
-            refusal(&Error::TauriUi(TauriUiError::UserCancelled)),
+            refusal(&Error::Desktop(DesktopError::UserCancelled)),
             Some(RefusalKind::Cancelled)
         );
     }

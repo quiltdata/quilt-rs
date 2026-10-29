@@ -385,7 +385,7 @@ async fn a_running_tick_advertises_the_next_tick_not_the_one_it_is_serving() -> 
     // deadline, refetches after `REFETCH_DUE_FLOOR`, reads the same deadline
     // again, and restarts its ring from zero every 10s.
     //
-    // Tested through `run_once` because the spawn loop needs a Tauri runtime and
+    // Tested through `run_once` because the spawn loop never returns and
     // cannot run in a test. The cadence arithmetic is tested by
     // `arming_the_pull_records_a_deadline_one_cadence_out`.
     let model = MockQuiltModel::new();

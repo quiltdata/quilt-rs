@@ -7,7 +7,7 @@
 //! decided.
 //!
 //! Deliberately free of Tauri types: the decision and the pending state are
-//! testable on their own, and the window handling stays in [`crate::desktop::tray`].
+//! testable on their own, and the window handling stays with the desktop tray.
 
 use std::sync::Mutex;
 

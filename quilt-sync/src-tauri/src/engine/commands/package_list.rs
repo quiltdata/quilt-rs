@@ -13,10 +13,10 @@ use quilt_rs::RoleInfo;
 use quilt_uri::Host;
 
 use crate::engine::Error;
-use crate::engine::autopull::Watcher;
 use crate::engine::commands::RoleCache;
 use crate::engine::model;
 use crate::engine::quilt;
+use crate::engine::services::Services;
 
 // ── Installed Packages List data for Leptos UI ──
 
@@ -348,13 +348,13 @@ async fn load_package_item(
     })
 }
 
-#[tauri::command]
 pub async fn get_installed_packages_list_data(
-    m: tauri::State<'_, model::Model>,
-    roles: tauri::State<'_, RoleCache>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
 ) -> Result<InstalledPackagesListData, String> {
+    let m = &*s.model;
+    let roles = &*s.roles;
+    let tracing = &*s.telemetry;
+    let watcher = &s.watcher;
     // Read the watcher's paused map — the single source of truth — the
     // same way `get_autosync_snapshot` does. Only message-bearing pauses
     // (`other`, `pullConflict`, and `roleDenied` when the role could be
@@ -379,7 +379,7 @@ pub async fn get_installed_packages_list_data(
         })
         .collect();
 
-    get_installed_packages_list_data_from_model(&*m, &roles, &tracing, &paused_reasons)
+    get_installed_packages_list_data_from_model(m, roles, tracing, &paused_reasons)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -530,18 +530,18 @@ pub(super) async fn refresh_package_status_from_model(
     ))
 }
 
-#[tauri::command]
 pub async fn refresh_package_status(
-    m: tauri::State<'_, model::Model>,
-    roles: tauri::State<'_, RoleCache>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    s: &Services,
     namespace: String,
 ) -> Result<RefreshedPackageStatus, String> {
+    let m = &*s.model;
+    let roles = &*s.roles;
+    let tracing = &*s.telemetry;
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    refresh_package_status_from_model(&*m, &roles, &tracing, &namespace)
+    refresh_package_status_from_model(m, roles, tracing, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
 }

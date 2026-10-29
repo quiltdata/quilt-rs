@@ -162,7 +162,7 @@ mod tests {
     /// people try to publish.
     #[test]
     fn a_refusal_reports_the_action_it_refused() {
-        use crate::engine::error::{Error, TauriUiError};
+        use crate::engine::error::{DesktopError, Error};
 
         let telemetry = Telemetry::default();
 
@@ -174,7 +174,7 @@ mod tests {
                 ),
             )
             .map(
-                Err::<(), Error>(Error::TauriUi(TauriUiError::UserCancelled)),
+                Err::<(), Error>(Error::Desktop(DesktopError::UserCancelled)),
                 "unused".to_string(),
                 std::string::ToString::to_string,
             );

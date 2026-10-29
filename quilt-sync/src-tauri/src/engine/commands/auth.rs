@@ -6,7 +6,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::Manager;
 use tokio::sync;
 use tokio::sync::OnceCell;
 
@@ -18,13 +17,12 @@ use crate::engine::autopull::Watcher;
 use crate::engine::model;
 use crate::engine::model::QuiltModel;
 use crate::engine::notify::Notify;
-use crate::engine::oauth::OAuthState;
 use crate::engine::quilt;
 use crate::engine::quilt::io::storage::LocalStorage;
 use crate::engine::quilt::paths::DomainPaths;
-use crate::engine::routes;
+use crate::engine::services::Services;
 use crate::engine::telemetry::event::{AuthEvent, LoginEvent, LoginFlow};
-use crate::engine::telemetry::{MixpanelEvent, Telemetry, prelude::*};
+use crate::engine::telemetry::{MixpanelEvent, Telemetry};
 
 // ── Login data for Leptos UI ──
 
@@ -36,7 +34,6 @@ pub struct LoginData {
     pub catalog_url: String,
 }
 
-#[tauri::command]
 pub async fn get_login_data(host: String, back: String) -> Result<LoginData, String> {
     let catalog_url = format!("https://{host}/code");
     Ok(LoginData {
@@ -56,7 +53,6 @@ pub struct LoginErrorData {
     pub login_host: String,
 }
 
-#[tauri::command]
 pub async fn get_login_error_data(
     host: String,
     title: Option<String>,
@@ -131,8 +127,8 @@ async fn erase_auth_dir(data_dir: &Path, host: &str) -> Result<ErasedAuth, Error
 ///
 /// Owns the whole operation the way [`switch_role_command`] owns a switch —
 /// the erase, the caches, and the telemetry — so the outer command is only the
-/// adapter that resolves Tauri state and reports the outcome. Takes the data
-/// directory rather than an `AppHandle` so it can be driven by a test.
+/// adapter that picks the services apart and reports the outcome. Takes the
+/// data directory rather than the services so it can be driven by a test.
 async fn erase_auth_command(
     data_dir: &Path,
     m: &impl QuiltModel,
@@ -168,25 +164,16 @@ async fn erase_auth_command(
     erased.map(|_| ())
 }
 
-#[tauri::command]
-pub async fn erase_auth(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    m: tauri::State<'_, model::Model>,
-    roles: tauri::State<'_, RoleCache>,
-    tracing: tauri::State<'_, Telemetry>,
-    host: String,
-) -> Result<String, String> {
-    // Not held across the erase, which may wait on another process's auth lock.
-    let data_dir = app_handle.lock().await.path().app_local_data_dir();
+pub async fn erase_auth(s: &Services, host: String) -> Result<String, String> {
+    let m = &*s.model;
+    let roles = &*s.roles;
+    let tracing = &*s.telemetry;
 
     let msg_init = format!("Erasing auth for {host}");
     let msg_ok = format!("Successfully erased auth for {host}");
     let msg_err = |err: &Error| format!("Failed to erase auth: {err}");
 
-    let result = match data_dir {
-        Ok(data_dir) => erase_auth_command(&data_dir, &*m, &roles, &tracing, &host).await,
-        Err(err) => Err(Error::from(err)),
-    };
+    let result = erase_auth_command(&s.data_dir, m, roles, tracing, &host).await;
 
     Notify::new(msg_init).map(result, msg_ok, msg_err)
 }
@@ -362,13 +349,10 @@ pub(super) async fn get_roles_command(
     Ok(RolesData::from(info))
 }
 
-#[tauri::command]
-pub async fn get_roles(
-    m: tauri::State<'_, model::Model>,
-    roles: tauri::State<'_, RoleCache>,
-    host: String,
-) -> Result<RolesData, String> {
-    get_roles_command(&*m, &roles, &host)
+pub async fn get_roles(s: &Services, host: String) -> Result<RolesData, String> {
+    let m = &*s.model;
+    let roles = &*s.roles;
+    get_roles_command(m, roles, &host)
         .await
         .map_err(|e| e.to_string())
 }
@@ -410,34 +394,14 @@ pub(super) async fn switch_role_command(
     Ok(RolesData::from(info))
 }
 
-#[tauri::command]
-pub async fn switch_role(
-    m: tauri::State<'_, model::Model>,
-    roles: tauri::State<'_, RoleCache>,
-    watcher: tauri::State<'_, Watcher>,
-    tracing: tauri::State<'_, Telemetry>,
-    host: String,
-    role: String,
-) -> Result<RolesData, String> {
-    switch_role_command(&*m, &roles, &watcher, &tracing, &host, &role)
+pub async fn switch_role(s: &Services, host: String, role: String) -> Result<RolesData, String> {
+    let m = &*s.model;
+    let roles = &*s.roles;
+    let watcher = &s.watcher;
+    let tracing = &*s.telemetry;
+    switch_role_command(m, roles, watcher, tracing, &host, &role)
         .await
         .map_err(|e| e.to_string())
-}
-
-/// Navigate to a page after successful login.
-pub(crate) fn navigate_after_login(
-    app_handle: &tauri::AppHandle,
-    path: routes::Paths,
-) -> Result<(), Error> {
-    debug!("Attempting to redirect after login to: {:?}", path);
-    let win = app_handle
-        .get_webview_window("main")
-        .ok_or(crate::engine::error::TauriUiError::Window)?;
-    let win_url = win.url()?;
-    let redirect_url = routes::from_url(path, win_url);
-    debug!("Redirecting to: {}", redirect_url);
-    win.navigate(redirect_url)?;
-    Ok(())
 }
 
 /// Code-based login for legacy stacks that don't support Connect/OAuth.
@@ -458,19 +422,15 @@ async fn login_command(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn login(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, Telemetry>,
-    host: String,
-    code: String,
-) -> Result<String, String> {
+pub async fn login(s: &Services, host: String, code: String) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
     let msg_init = format!("Login with code for host {host}");
     let msg_ok = format!("Successfully logged in to {host}");
     let msg_err = |err: &Error| format!("Failed to login: {err}");
 
     Notify::new(msg_init).map(
-        login_command(&m, &tracing, &host, code).await,
+        login_command(m, tracing, &host, code).await,
         msg_ok,
         msg_err,
     )
@@ -478,21 +438,21 @@ pub async fn login(
 
 /// Initiate OAuth 2.1 login: register client via DCR if needed,
 /// generate PKCE, store verifier, open browser.
-#[tauri::command]
 pub async fn login_oauth(
-    m: tauri::State<'_, model::Model>,
-    oauth_state: tauri::State<'_, OAuthState>,
-    tracing: tauri::State<'_, Telemetry>,
+    s: &Services,
     host: String,
     back: Option<String>,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let oauth_state = &s.oauth;
+    let tracing = &*s.telemetry;
     // `host` is this command's IPC argument name, so it stays a `String` in the
     // signature; the parsed form takes the name from here down.
     let host_str = host;
     let host = Host::from_str(&host_str).map_err(|e| e.to_string())?;
 
     let redirect_uri = crate::engine::oauth::redirect_uri(&host);
-    let client_id = model::get_or_register_client(&*m, &host, &redirect_uri)
+    let client_id = model::get_or_register_client(m, &host, &redirect_uri)
         .await
         .map_err(|e| e.to_string())?;
 

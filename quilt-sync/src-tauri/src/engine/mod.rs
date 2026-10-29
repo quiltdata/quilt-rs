@@ -1,4 +1,4 @@
-//! Everything QuiltSync does that isn't the desktop window: the model, the
+//! Everything `QuiltSync` does that isn't the desktop window: the model, the
 //! commands, autosync, the file watcher, settings and telemetry.
 //!
 //! Nothing here names Tauri or reaches outside this folder (`just
@@ -12,6 +12,7 @@ pub mod commit_message;
 pub mod design_settings;
 pub mod env;
 pub mod error;
+pub mod events;
 pub mod experimental_settings;
 pub mod fswatcher;
 pub mod log_settings;
@@ -22,6 +23,7 @@ pub mod publish_settings;
 pub mod quilt;
 pub mod quit;
 pub mod routes;
+pub mod services;
 pub mod tasks;
 pub mod telemetry;
 pub mod toast;

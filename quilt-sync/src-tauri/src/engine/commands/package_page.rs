@@ -23,6 +23,7 @@ use crate::engine::model;
 use crate::engine::notify::Notify;
 use crate::engine::quilt;
 use crate::engine::quilt::lineage::UpstreamState;
+use crate::engine::services::Services;
 use crate::engine::telemetry::MixpanelEvent;
 use crate::engine::telemetry::event::RemotePackageEvent;
 use crate::engine::telemetry::prelude::*;
@@ -585,13 +586,13 @@ fn package_context_data(
 /// commands would ask that question twice and could be told two different
 /// answers. One phase, not the main page's light-then-heavy pair — that split
 /// exists because the main page walks every package, and this reads one.
-#[tauri::command]
 pub async fn get_package_page_data(
-    m: tauri::State<'_, model::Model>,
-    roles: tauri::State<'_, RoleCache>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
 ) -> Result<PackagePageData, String> {
+    let m = &*s.model;
+    let roles = &*s.roles;
+    let watcher = &s.watcher;
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
@@ -601,7 +602,7 @@ pub async fn get_package_page_data(
     // says a package stopped syncing.
     let paused = watcher.paused_reason(&namespace).await;
 
-    get_package_page_data_from_model(&*m, &roles, &namespace, paused.as_ref())
+    get_package_page_data_from_model(m, roles, &namespace, paused.as_ref())
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -807,16 +808,16 @@ fn revision_history_rows(
 /// The revisions this copy holds, for the context pane's popover. Lazy: the
 /// page read carries only the count (`revision-list-lazy`). Not under the
 /// page's mutation lock — it is a read (`page-owns-pane-actions`).
-#[tauri::command]
 pub async fn get_revision_history(
-    m: tauri::State<'_, model::Model>,
+    s: &Services,
     namespace: String,
 ) -> Result<RevisionHistoryData, String> {
+    let m = &*s.model;
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    get_revision_history_from_model(&*m, &namespace)
+    get_revision_history_from_model(m, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -862,14 +863,14 @@ async fn get_revision_history_from_model(
 ///
 /// Not under the page's command lock: the package's own lock guards it, and
 /// the rest of the page stays usable meanwhile (`page-lock`).
-#[tauri::command]
 pub async fn remove_revisions(
-    m: tauri::State<'_, model::Model>,
-    toasts: tauri::State<'_, ToastCenter>,
+    s: &Services,
     namespace: String,
     hashes: Vec<String>,
 ) -> Result<String, String> {
-    remove_revisions_command(&*m, &toasts, namespace, hashes).await
+    let m = &*s.model;
+    let toasts = &*s.toasts;
+    remove_revisions_command(m, toasts, namespace, hashes).await
 }
 
 async fn remove_revisions_command(
@@ -926,23 +927,23 @@ pub struct NotDownloaded {
 /// (the file, or the package folder), which a backlog catch-up must not do.
 ///
 /// Returns the paths it left out; both lists are empty when all installed.
-#[tauri::command]
 pub async fn package_download_backlog(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
     paths: Vec<String>,
 ) -> Result<NotDownloaded, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
+    let watcher = &s.watcher;
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    let (result, left_out) =
-        match download_backlog_from_model(&*m, &watcher, &namespace, &paths).await {
-            Ok(left_out) => (Ok(()), left_out),
-            Err(err) => (Err(err), NotDownloaded::default()),
-        };
+    let (result, left_out) = match download_backlog_from_model(m, watcher, &namespace, &paths).await
+    {
+        Ok(left_out) => (Ok(()), left_out),
+        Err(err) => (Err(err), NotDownloaded::default()),
+    };
     let left = left_out.skipped.len() + left_out.hash_mismatch.len();
     let mut said = vec![if left == 0 {
         format!("Downloaded {} files", paths.len())
@@ -963,7 +964,7 @@ pub async fn package_download_backlog(
     }
     Notify::new(format!("Downloading the backlog of {namespace}"))
         .on_success(
-            &tracing,
+            tracing,
             MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(None)),
         )
         .map(result, said.join("; "), |err| {

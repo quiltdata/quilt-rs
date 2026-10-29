@@ -1,6 +1,7 @@
-//! Tauri IPC commands, grouped by domain. Everything is re-exported at
-//! `commands::*` so `main.rs`'s `generate_handler!` list and other callers
-//! keep the flat `commands::<name>` paths.
+//! The commands, grouped by domain, as plain functions over
+//! [`Services`](crate::engine::services::Services). Everything is re-exported
+//! at `commands::*`, so the desktop app's Tauri wrappers and other callers keep
+//! the flat `commands::<name>` paths.
 //!
 //! # The `uri` argument some commands take but never use
 //!

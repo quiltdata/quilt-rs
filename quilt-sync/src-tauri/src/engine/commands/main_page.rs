@@ -9,8 +9,6 @@ use std::time::Duration;
 use chrono::DateTime;
 use chrono::Utc;
 use serde::Serialize;
-use tauri::Manager;
-use tokio::sync;
 use tokio::time::Instant;
 use tokio::time::timeout_at;
 
@@ -21,13 +19,13 @@ use super::package_page::KeepingScope;
 use super::package_page::PackageSize;
 use crate::engine::autopull::PackageAutosync;
 use crate::engine::autopull::PausedReason;
-use crate::engine::autopull::Watcher;
 use crate::engine::autopull::WatcherFacts;
 use crate::engine::commands::RoleCache;
 use crate::engine::error::Error;
 use crate::engine::model;
 use crate::engine::quilt;
 use crate::engine::quilt::lineage::PackageState;
+use crate::engine::services::Services;
 
 /// A package's resolved state, as the UI's `kit::PackageState` expects it.
 ///
@@ -673,13 +671,11 @@ async fn load_main_page_package(
 /// attach the paused reason from the watcher's authoritative map. A failed
 /// package is warned-and-skipped, per `package_list.rs:198-206` — one bad
 /// lineage must not blank the whole list.
-#[tauri::command]
-pub async fn get_main_page_packages(
-    m: tauri::State<'_, model::Model>,
-    roles: tauri::State<'_, RoleCache>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
-) -> Result<MainPagePackages, String> {
+pub async fn get_main_page_packages(s: &Services) -> Result<MainPagePackages, String> {
+    let m = &*s.model;
+    let roles = &*s.roles;
+    let tracing = &*s.telemetry;
+    let watcher = &s.watcher;
     // From the same one read the watcher payload uses. The old route went
     // through `PausedEvent` and `filter_map`ped away every pause with no
     // message — `PendingChanges`, `PendingCommit` and `Diverged` — so three of
@@ -690,7 +686,7 @@ pub async fn get_main_page_packages(
         watcher.main_page_facts().await.paused.into_iter().collect();
 
     let started = std::time::Instant::now();
-    let result = get_main_page_packages_from_model(&*m, &roles, &tracing, &paused_reasons).await;
+    let result = get_main_page_packages_from_model(m, roles, tracing, &paused_reasons).await;
     tracing::debug!(
         elapsed_ms = started.elapsed().as_millis(),
         packages = result.as_ref().map_or(0, |r| r.packages.len()),
@@ -705,21 +701,12 @@ pub async fn get_main_page_packages(
 /// `refresh_main_page_account`, one invocation per row. The roster walk is
 /// [`load_rows`] — the same one `get_main_page_packages` uses — with an empty
 /// paused-reasons map: the Accounts card has no use for package state.
-#[tauri::command]
-pub async fn get_main_page_accounts(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-) -> Result<MainPageAccounts, String> {
-    let data_dir = {
-        let app_handle = app_handle.lock().await;
-        app_handle
-            .path()
-            .app_local_data_dir()
-            .map_err(|e| Error::from(e).to_string())?
-    };
+pub async fn get_main_page_accounts(s: &Services) -> Result<MainPageAccounts, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
+    let data_dir = s.data_dir.clone();
     let auth_hosts = quilt::paths::list_auth_hosts(&data_dir);
-    let rows = load_rows(&*m, &tracing, &HashMap::new())
+    let rows = load_rows(m, tracing, &HashMap::new())
         .await
         .map_err(|e| e.to_string())?;
 
@@ -735,7 +722,7 @@ pub async fn get_main_page_accounts(
 }
 
 /// Fill in one host's role. Extracted from the command so it is testable without
-/// a Tauri `AppHandle`, the same split `refresh_main_page_package` uses.
+/// the services, the same split `refresh_main_page_package` uses.
 async fn refresh_account_for(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
@@ -788,25 +775,15 @@ async fn refresh_account_for(
 }
 
 /// The Accounts card, heavy phase: one host's role, one invocation per row.
-#[tauri::command]
-pub async fn refresh_main_page_account(
-    m: tauri::State<'_, model::Model>,
-    roles: tauri::State<'_, RoleCache>,
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    host: String,
-) -> Result<AccountHost, String> {
-    let data_dir = {
-        let app_handle = app_handle.lock().await;
-        app_handle
-            .path()
-            .app_local_data_dir()
-            .map_err(|e| Error::from(e).to_string())?
-    };
+pub async fn refresh_main_page_account(s: &Services, host: String) -> Result<AccountHost, String> {
+    let m = &*s.model;
+    let roles = &*s.roles;
+    let data_dir = s.data_dir.clone();
     // Re-read rather than trusting the caller: a logout between the two phases
     // must not produce a role query against a host with no session.
     let signed_in = quilt::paths::list_auth_hosts(&data_dir).contains(&host);
 
-    Ok(refresh_account_for(&*m, &roles, &host, signed_in).await)
+    Ok(refresh_account_for(m, roles, &host, signed_in).await)
 }
 
 // ── The heavy phase ──
@@ -988,14 +965,14 @@ pub(super) async fn refresh_main_page_package_from_model(
 /// One package's real state. Called once per row, concurrently — see Ruling R0
 /// in the plan and `RoleCache::get`'s doc comment, which is written for exactly
 /// this caller.
-#[tauri::command]
 pub async fn refresh_main_page_package(
-    m: tauri::State<'_, model::Model>,
-    roles: tauri::State<'_, RoleCache>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
 ) -> Result<MainPagePackageRefresh, String> {
+    let m = &*s.model;
+    let roles = &*s.roles;
+    let tracing = &*s.telemetry;
+    let watcher = &s.watcher;
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
@@ -1005,7 +982,7 @@ pub async fn refresh_main_page_package(
     // between-phases staleness `provisional` already exists to express.
     let paused = watcher.paused_reason(&namespace).await;
 
-    refresh_main_page_package_from_model(&*m, &roles, &tracing, &namespace, paused.as_ref())
+    refresh_main_page_package_from_model(m, roles, tracing, &namespace, paused.as_ref())
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -1163,10 +1140,8 @@ impl From<WatcherFacts> for MainPageWatcher {
 /// The watcher's own payload. A memory read — the settings, the paused map and
 /// the two clocks are all `RwLock`s the watcher already holds — so it has no
 /// skeleton and needs none (§6: chrome is never skeletonised).
-#[tauri::command]
-pub async fn get_main_page_watcher(
-    watcher: tauri::State<'_, Watcher>,
-) -> Result<MainPageWatcher, String> {
+pub async fn get_main_page_watcher(s: &Services) -> Result<MainPageWatcher, String> {
+    let watcher = &s.watcher;
     Ok(MainPageWatcher::from(watcher.main_page_facts().await))
 }
 
@@ -1257,11 +1232,9 @@ fn published_hash(lineage: quilt::lineage::PackageLineage) -> Option<String> {
 
 /// The recent files feed. Single-phase and final on arrival: a path and an
 /// mtime are facts on disk, so there is no heavy phase and no `provisional`.
-#[tauri::command]
-pub async fn get_main_page_recent_files(
-    m: tauri::State<'_, model::Model>,
-) -> Result<MainPageRecentFiles, String> {
-    recent_files(&*m)
+pub async fn get_main_page_recent_files(s: &Services) -> Result<MainPageRecentFiles, String> {
+    let m = &*s.model;
+    recent_files(m)
         .await
         .map(|files| MainPageRecentFiles { files })
         .map_err(|e| e.to_string())

@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::sync::Arc;
 
 use rust_i18n::t;
 use tauri::AppHandle;
@@ -8,13 +9,13 @@ use url::Url;
 
 use crate::engine::Error;
 use crate::engine::Result;
-use crate::engine::commands;
+use crate::engine::error::DesktopError;
 use crate::engine::model;
-use crate::engine::oauth::OAuthState;
 use crate::engine::routes;
+use crate::engine::services::Services;
+use crate::engine::telemetry::MixpanelEvent;
 use crate::engine::telemetry::event::{LoginEvent, LoginFlow};
 use crate::engine::telemetry::prelude::*;
-use crate::engine::telemetry::{MixpanelEvent, Telemetry};
 
 fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
     let uri: quilt_uri::S3PackageUri = uri_str.parse()?;
@@ -31,7 +32,7 @@ fn navigate_to_url(app_handle: &AppHandle, url: Url) -> Result {
             win.set_focus()?;
             Ok(())
         }
-        None => Err(Error::TauriUi(crate::engine::error::TauriUiError::Window)),
+        None => Err(Error::Desktop(DesktopError::Window)),
     }
 }
 
@@ -39,10 +40,23 @@ fn navigate_to_url(app_handle: &AppHandle, url: Url) -> Result {
 fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
     let win = app_handle
         .get_webview_window("main")
-        .ok_or(crate::engine::error::TauriUiError::Window)?;
+        .ok_or(DesktopError::Window)?;
     let current_url = win.url()?;
     let redirect_url = get_remote_package_url(&current_url, uri_str)?;
     navigate_to_url(app_handle, redirect_url)
+}
+
+/// Navigate to a page after successful login.
+fn navigate_after_login(app_handle: &AppHandle, path: routes::Paths) -> Result {
+    debug!("Attempting to redirect after login to: {:?}", path);
+    let win = app_handle
+        .get_webview_window("main")
+        .ok_or(DesktopError::Window)?;
+    let win_url = win.url()?;
+    let redirect_url = routes::from_url(path, win_url);
+    debug!("Redirecting to: {}", redirect_url);
+    win.navigate(redirect_url)?;
+    Ok(())
 }
 
 /// Auth callback parameters parsed from a `quilt://` URL.
@@ -133,8 +147,9 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
     let redirect_path = landing_after_login(auth_params.redirect.as_deref());
 
     tauri::async_runtime::spawn(async move {
-        let oauth_state = handle.state::<OAuthState>();
-        let m = handle.state::<model::Model>();
+        let s = handle.state::<Arc<Services>>();
+        let oauth_state = &s.oauth;
+        let m = &*s.model;
 
         let result = match oauth_state
             .take_params(&host, auth_params.code.clone(), &state)
@@ -142,7 +157,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
         {
             Ok((oauth_params, stored_location)) => {
                 info!("OAuth 2.1 callback for host: {}", host_str);
-                let login_result = model::login_oauth(&*m, &host, oauth_params).await;
+                let login_result = model::login_oauth(m, &host, oauth_params).await;
                 (login_result, stored_location)
             }
             Err(err) => {
@@ -171,14 +186,13 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                             .ok()
                     })
                     .unwrap_or(redirect_path);
-                let telemetry = handle.state::<Telemetry>();
-                telemetry.track(MixpanelEvent::UserLoggedIn(LoginEvent {
+                s.telemetry.track(MixpanelEvent::UserLoggedIn(LoginEvent {
                     // Cloned, not moved: the redirect-failure path below
                     // still needs the host to build its error route.
                     host: host.clone(),
                     flow: LoginFlow::OAuth,
                 }));
-                if let Err(err) = commands::navigate_after_login(&handle, final_path) {
+                if let Err(err) = navigate_after_login(&handle, final_path) {
                     error!("Failed to redirect after login: {}", err);
                     let error_path = routes::Paths::LoginError(
                         host.clone(),
@@ -276,7 +290,7 @@ async fn wait_for_main_window(app_handle: &AppHandle) -> Result<()> {
         tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
     }
 
-    Err(Error::TauriUi(crate::engine::error::TauriUiError::Window))
+    Err(Error::Desktop(DesktopError::Window))
 }
 
 fn handle_deep_link_navigation(app_handle: &AppHandle, urls: &[Url]) {

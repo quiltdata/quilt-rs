@@ -5,10 +5,10 @@ use serde::Serialize;
 
 use quilt_uri::Host;
 use quilt_uri::Namespace;
-use tauri::{Emitter, Manager};
 
 use crate::engine::autopull::PausedReason;
 use crate::engine::autopull::pull_toast::ReportToast;
+use crate::engine::events::EventSink;
 use crate::engine::quilt;
 use crate::engine::telemetry::Telemetry;
 use crate::engine::telemetry::event::{
@@ -302,8 +302,8 @@ pub struct SubscriberErrorEvent {
 
 /// Backend → frontend / log surface for watcher results.
 ///
-/// The trait keeps the watcher portable: production wires a Tauri emitter,
-/// tests and a hypothetical headless daemon wire a logger.
+/// The trait keeps the watcher portable: production wires the event sink,
+/// tests wire a logger.
 pub trait StatusReporter: Send + Sync + 'static {
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent);
     /// `host` is the package's catalog, `None` for a package with a bucket and
@@ -320,7 +320,7 @@ pub trait StatusReporter: Send + Sync + 'static {
         );
     }
     /// Surface a successful autosync publish. Default implementation
-    /// logs only; `TauriEventReporter` also emits `PUBLISHED_EVENT`.
+    /// logs only; `SinkEventReporter` also emits `PUBLISHED_EVENT`.
     fn report_published(&self, namespace: &Namespace, host: Option<&Host>, message: &str) {
         let host = log_host(host);
         info!("autosync: published namespace={namespace} host={host} message={message}");
@@ -334,7 +334,7 @@ pub trait StatusReporter: Send + Sync + 'static {
     /// **Deliberately without a default.** [`TelemetryReporter`] decorates
     /// another reporter and forwards each call explicitly, so a defaulted
     /// method would be answered by the default there and never reach
-    /// [`TauriEventReporter`] — the toast would silently never appear.
+    /// [`SinkEventReporter`] — the toast would silently never appear.
     /// Requiring an implementation makes that a compile error instead.
     fn report_pulled(&self, namespace: &Namespace, toast: ReportToast);
 
@@ -384,7 +384,7 @@ impl StatusReporter for LogReporter {
     }
 }
 
-/// Production reporter: emits typed events on the Tauri event bus and
+/// Production reporter: emits typed events on the engine's event sink and
 /// also logs so file-tail-style debugging still works.
 /// Wraps another reporter and, in passing, tells telemetry what the engine just
 /// did.
@@ -404,24 +404,20 @@ impl StatusReporter for LogReporter {
 /// telemetry is not. That is the right shape regardless: the engine must not wait
 /// on a network call to finish its tick.
 pub struct TelemetryReporter {
-    handle: tauri::AppHandle,
+    telemetry: Arc<Telemetry>,
     inner: Arc<dyn StatusReporter>,
 }
 
 impl TelemetryReporter {
-    pub fn wrapping(inner: Arc<dyn StatusReporter>, handle: tauri::AppHandle) -> Self {
-        Self { handle, inner }
+    pub fn wrapping(inner: Arc<dyn StatusReporter>, telemetry: Arc<Telemetry>) -> Self {
+        Self { telemetry, inner }
     }
 
     /// Hand `event` to telemetry without blocking the caller.
-    ///
-    /// The `Telemetry` lives in Tauri state rather than being held here, so a
-    /// reporter constructed before it is managed still works — the same reason
-    /// [`TauriEventReporter`] holds a handle instead of a window.
     fn emit(&self, event: MixpanelEvent) {
-        let handle = self.handle.clone();
-        tauri::async_runtime::spawn(async move {
-            handle.state::<Telemetry>().track(event);
+        let telemetry = Arc::clone(&self.telemetry);
+        crate::engine::events::spawn(async move {
+            telemetry.track(event);
         });
     }
 }
@@ -457,11 +453,9 @@ impl StatusReporter for TelemetryReporter {
         // filesystem watcher concerns no deployment, so there would be nothing to
         // attribute one to. The message is a constant so the reporter groups it as
         // one issue rather than one per path.
-        let handle = self.handle.clone();
-        tauri::async_runtime::spawn(async move {
-            handle
-                .state::<Telemetry>()
-                .report_anomaly("Autosync filesystem watcher reported an error");
+        let telemetry = Arc::clone(&self.telemetry);
+        crate::engine::events::spawn(async move {
+            telemetry.report_anomaly("Autosync filesystem watcher reported an error");
         });
         self.inner.report_subscriber_error(event);
     }
@@ -485,8 +479,9 @@ impl StatusReporter for TelemetryReporter {
     }
 }
 
-pub struct TauriEventReporter {
-    handle: tauri::AppHandle,
+pub struct SinkEventReporter {
+    events: EventSink,
+    toasts: Arc<ToastCenter>,
     logged: SeenFingerprints,
 }
 
@@ -517,16 +512,17 @@ impl SeenFingerprints {
     }
 }
 
-impl TauriEventReporter {
-    pub fn new(handle: tauri::AppHandle) -> Self {
+impl SinkEventReporter {
+    pub fn new(events: EventSink, toasts: Arc<ToastCenter>) -> Self {
         Self {
-            handle,
+            events,
+            toasts,
             logged: SeenFingerprints::default(),
         }
     }
 }
 
-impl StatusReporter for TauriEventReporter {
+impl StatusReporter for SinkEventReporter {
     fn report_status(&self, namespace: &Namespace, event: PackageStatusEvent) {
         // Only when the observation actually changed. A tick recomputes status
         // several times a second and almost always finds the same thing, so logging
@@ -543,18 +539,14 @@ impl StatusReporter for TauriEventReporter {
                 event.status
             );
         }
-        if let Err(err) = self.handle.emit(STATUS_EVENT, &event) {
-            warn!("autosync: failed to emit {STATUS_EVENT}: {err}");
-        }
+        self.events.emit(STATUS_EVENT, &event);
     }
 
     fn report_paused(&self, namespace: &Namespace, host: Option<&Host>, reason: PausedReason) {
         let host = log_host(host);
         info!("autosync: paused namespace={namespace} host={host} reason={reason:?}");
         let payload = PausedEvent::from_reason(namespace, &reason);
-        if let Err(err) = self.handle.emit(PAUSED_EVENT, &payload) {
-            warn!("autosync: failed to emit {PAUSED_EVENT}: {err}");
-        }
+        self.events.emit(PAUSED_EVENT, &payload);
     }
 
     fn report_login_required(&self, host: Option<&Host>, block: LoginBlock) {
@@ -567,9 +559,7 @@ impl StatusReporter for TauriEventReporter {
         let payload = LoginRequiredEvent {
             host: host.map(ToString::to_string),
         };
-        if let Err(err) = self.handle.emit(LOGIN_REQUIRED_EVENT, &payload) {
-            warn!("autosync: failed to emit {LOGIN_REQUIRED_EVENT}: {err}");
-        }
+        self.events.emit(LOGIN_REQUIRED_EVENT, &payload);
     }
 
     fn report_subscriber_error(&self, event: SubscriberErrorEvent) {
@@ -577,9 +567,7 @@ impl StatusReporter for TauriEventReporter {
             "fswatcher: kind={} namespace={:?} message={}",
             event.kind, event.namespace, event.message
         );
-        if let Err(err) = self.handle.emit(SUBSCRIBER_ERROR_EVENT, &event) {
-            warn!("fswatcher: failed to emit {SUBSCRIBER_ERROR_EVENT}: {err}");
-        }
+        self.events.emit(SUBSCRIBER_ERROR_EVENT, &event);
     }
 
     fn report_pulled(&self, namespace: &Namespace, toast: ReportToast) {
@@ -587,14 +575,13 @@ impl StatusReporter for TauriEventReporter {
             "autosync: pulled namespace={namespace} kind={:?}",
             toast.kind
         );
-        // The centre is Tauri-managed state and posting is async, while every
+        // Posting to the centre is async, while every
         // other method here is a synchronous fire-and-forget emit. Spawning
         // keeps that shape rather than making the whole trait async for one
         // method.
-        let handle = self.handle.clone();
-        tauri::async_runtime::spawn(async move {
-            handle
-                .state::<ToastCenter>()
+        let toasts = Arc::clone(&self.toasts);
+        crate::engine::events::spawn(async move {
+            toasts
                 .post(crate::engine::toast::ToastDraft {
                     kind: toast.kind,
                     title: Some(toast.title),
@@ -613,15 +600,11 @@ impl StatusReporter for TauriEventReporter {
             namespace: namespace.clone(),
             message: message.to_string(),
         };
-        if let Err(err) = self.handle.emit(PUBLISHED_EVENT, &payload) {
-            warn!("autosync: failed to emit {PUBLISHED_EVENT}: {err}");
-        }
+        self.events.emit(PUBLISHED_EVENT, &payload);
     }
 
     fn report_autosync_changed(&self) {
-        if let Err(err) = self.handle.emit(AUTOSYNC_CHANGED_EVENT, ()) {
-            warn!("autosync: failed to emit {AUTOSYNC_CHANGED_EVENT}: {err}");
-        }
+        self.events.emit(AUTOSYNC_CHANGED_EVENT, ());
     }
 }
 

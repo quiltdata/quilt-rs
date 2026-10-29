@@ -8,7 +8,6 @@ use chrono::DateTime;
 use chrono::Utc;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
-use tauri::Manager;
 use tokio::sync::RwLock;
 use tokio::sync::watch;
 
@@ -220,12 +219,13 @@ impl Watcher {
 
     /// Spawn the background tick task and return a handle.
     ///
-    /// The task pulls `Model` from `app_handle.state::<Model>()` each
-    /// iteration rather than holding its own `Arc<Model>` so we don't
-    /// have to refactor every existing Tauri command to switch its
-    /// state type from `Model` to `Arc<Model>`.
+    /// The tasks share the services' `Model` and `RoleCache`: a private
+    /// `RoleCache` would keep naming the role the user switched away from,
+    /// since `switch_role` invalidates only the shared one.
     pub fn spawn(
-        app_handle: tauri::AppHandle,
+        data_dir: std::path::PathBuf,
+        model: Arc<Model>,
+        roles: Arc<RoleCache>,
         settings: SharedAutosyncSettings,
         publish_settings: SharedPublishSettings,
         reporter: Arc<dyn StatusReporter>,
@@ -233,28 +233,16 @@ impl Watcher {
     ) -> (Self, watch::Receiver<SyncTrayStatus>) {
         let (tx, rx) = watch::channel(SyncTrayStatus::default());
         let aggregator = Arc::new(SyncTrayAggregator::new(tx));
-        let tasks = match app_handle.path().app_local_data_dir() {
-            Ok(data_dir) => {
-                let run_handle = app_handle.clone();
-                crate::engine::tasks::Tasks::new(
-                    data_dir,
-                    Arc::new(move |run| {
-                        let run_handle = run_handle.clone();
-                        tauri::async_runtime::spawn(async move {
-                            Box::pin(crate::engine::tasks::execute(
-                                &*run_handle.state::<Model>(),
-                                run,
-                            ))
-                            .await;
-                        });
-                    }),
-                )
-            }
-            Err(err) => {
-                warn!("tasks: no data folder, tasks are off: {err}");
-                crate::engine::tasks::Tasks::default()
-            }
-        };
+        let run_model = Arc::clone(&model);
+        let tasks = crate::engine::tasks::Tasks::new(
+            data_dir,
+            Arc::new(move |run| {
+                let run_model = Arc::clone(&run_model);
+                crate::engine::events::spawn(async move {
+                    Box::pin(crate::engine::tasks::execute(&*run_model, run)).await;
+                });
+            }),
+        );
         let inner = Arc::new(WatcherInner {
             settings,
             publish_settings,
@@ -272,26 +260,23 @@ impl Watcher {
         // Its own task: a package whose catalog is slow to answer its host
         // config must not hold back the loop.
         let walk_inner = Arc::clone(&inner);
-        let walk_handle = app_handle.clone();
-        tauri::async_runtime::spawn(async move {
-            Box::pin(walk_every_package(
-                &*walk_handle.state::<Model>(),
-                &walk_inner,
-            ))
-            .await;
+        let walk_model = Arc::clone(&model);
+        crate::engine::events::spawn(async move {
+            Box::pin(walk_every_package(&*walk_model, &walk_inner)).await;
         });
         let timer_inner = Arc::clone(&inner);
-        let timer_handle = app_handle.clone();
-        tauri::async_runtime::spawn(async move {
+        let timer_model = Arc::clone(&model);
+        let timer_roles = Arc::clone(&roles);
+        crate::engine::events::spawn(async move {
             Box::pin(publish_timer::run(
-                &*timer_handle.state::<Model>(),
-                &timer_handle.state::<RoleCache>(),
+                &*timer_model,
+                &timer_roles,
                 &timer_inner,
             ))
             .await;
         });
         let task_inner = Arc::clone(&inner);
-        tauri::async_runtime::spawn(async move {
+        crate::engine::events::spawn(async move {
             loop {
                 let cadence = pull_cadence(&task_inner.settings.read().await.pull);
                 // This deadline covers the sleep, which is when the Autosync
@@ -301,18 +286,11 @@ impl Watcher {
                 tokio::time::sleep(cadence).await;
                 let _passes = task_inner.clocks.passes.lock().await;
                 task_inner.aggregator.note_tick_started();
-                let model_state = app_handle.state::<Model>();
-                // Same `state::<..>()` route as `Model`, and for the same
-                // reason: the watcher must share the *managed* cache, not a
-                // private one. A private copy would keep naming the role the
-                // user switched away from — `switch_role` invalidates only
-                // the managed instance.
-                let roles_state = app_handle.state::<RoleCache>();
                 // Box the tick future: it is the largest in the app and lives
                 // on the spawn task's stack across every iteration of this
                 // loop, so it exceeds the `large_futures` budget. See
                 // `clippy.toml`.
-                match Box::pin(run_once(&*model_state, &roles_state, &task_inner)).await {
+                match Box::pin(run_once(&*model, &roles, &task_inner)).await {
                     Ok(()) => task_inner.aggregator.note_tick_ended_ok(),
                     Err(err) => {
                         warn!("autosync: tick error: {err}");
@@ -600,12 +578,8 @@ impl Watcher {
 
     /// The shared state, for the file watcher — which observes an edit within
     /// its debounce where this loop can be a whole cadence behind.
-    ///
-    /// Not `inner`: a `tauri::State<Watcher>` has an inherent `inner()` of its
-    /// own, and the call site holds one, so that name resolves to the guard's
-    /// method rather than this.
-    pub(crate) fn shared(&self) -> &WatcherInner {
-        &self.inner
+    pub(crate) fn shared_arc(&self) -> Arc<WatcherInner> {
+        Arc::clone(&self.inner)
     }
 
     #[cfg(test)]
@@ -617,7 +591,7 @@ impl Watcher {
 /// Record when the loop will next tick.
 ///
 /// A free function rather than a line inside `Watcher::spawn` because the spawn
-/// loop needs a Tauri runtime and cannot be driven from a test, and an untested
+/// loop never returns and cannot be driven from a test, and an untested
 /// rule is a rule that survives only as prose.
 pub(crate) async fn arm_next_pull(inner: &WatcherInner, cadence: Duration) {
     *inner.clocks.next_pull_at.write().await = Some(Utc::now() + cadence);

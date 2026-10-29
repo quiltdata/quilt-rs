@@ -5933,6 +5933,7 @@ version = "0.26.1"
 dependencies = [
  "agent-client-protocol",
  "chrono",
+ "dirs",
  "dotenv",
  "dunce",
  "futures-util",

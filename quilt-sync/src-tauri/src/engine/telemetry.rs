@@ -320,7 +320,7 @@ impl Telemetry {
         let refusal_reported = Arc::clone(&self.refusal_reported);
         let buffer = self.buffer.clone();
 
-        tauri::async_runtime::spawn(async move {
+        crate::engine::events::spawn(async move {
             mixpanel::run_sender(analytics, install_id, buffer, queue, move |err| {
                 report_delivery_failure(&faults, &refusal_reported, err);
             })

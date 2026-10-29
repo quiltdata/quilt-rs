@@ -23,6 +23,7 @@ use crate::engine::notify::Notify;
 use crate::engine::publish_settings::SharedPublishSettings;
 use crate::engine::quilt;
 use crate::engine::quilt::lineage::SyncScope;
+use crate::engine::services::Services;
 use crate::engine::telemetry::MixpanelEvent;
 use crate::engine::telemetry::event::{PackageEvent, RemotePackageEvent};
 use crate::engine::toast::ToastCenter;
@@ -44,29 +45,25 @@ async fn package_commit_command(
     Ok((namespace, committed))
 }
 
-#[tauri::command]
-#[allow(
-    clippy::too_many_arguments,
-    reason = "three of these are Tauri state injections a caller never passes; the rest are the revision's own fields plus the telemetry context"
-)]
 pub async fn package_commit(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
     message: String,
     metadata: String,
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    let result = package_commit_command(&m, &namespace, &message, &metadata, workflow).await;
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
+    let watcher = &s.watcher;
+    let result = package_commit_command(m, &namespace, &message, &metadata, workflow).await;
     if let Ok((ns, quilt::flow::Committed::Recorded(_))) = &result {
         watcher.clear_paused(ns).await;
         watcher
-            .note_committed(ns, pending_commit(&*m, ns).await)
+            .note_committed(ns, pending_commit(m, ns).await)
             .await;
     }
-    report_commit(&tracing, &namespace, uri.as_ref(), result.map(|(_, c)| c))
+    report_commit(tracing, &namespace, uri.as_ref(), result.map(|(_, c)| c))
 }
 
 /// The Commit button's answer to a commit: its event and its line.
@@ -120,25 +117,25 @@ async fn certify_and_resume(
     Ok(())
 }
 
-#[tauri::command]
 pub async fn certify_latest(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
+    let watcher = &s.watcher;
     let msg_init = format!("Certifying latest for {namespace}");
     let msg_ok = format!("Successfully certified latest for {namespace}");
     let msg_err = |err: &Error| format!("Failed to certify latest: {err}");
 
     Notify::new(msg_init)
         .on_success(
-            &tracing,
+            tracing,
             MixpanelEvent::LatestCertified(RemotePackageEvent::for_uri(uri.as_ref())),
         )
         .map(
-            certify_and_resume(&*m, &watcher, &namespace).await,
+            certify_and_resume(m, watcher, &namespace).await,
             msg_ok,
             msg_err,
         )
@@ -170,14 +167,14 @@ async fn installed_package(
     })
 }
 
-#[tauri::command]
 pub async fn reset_local(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
+    let watcher = &s.watcher;
     let msg_init = format!("Resetting local for {namespace}");
     let msg_ok = format!("Successfully reset local for {namespace}");
     let msg_err = |err: &Error| format!("Failed to reset local: {err}");
@@ -189,13 +186,13 @@ pub async fn reset_local(
     // page's backlog download, which catches a whole package up. Installing
     // picked paths only adds files, and a commit writes `.quilt` rather than
     // the working tree.
-    let result = reset_local_command(&*m, &watcher, &namespace).await;
+    let result = reset_local_command(m, watcher, &namespace).await;
     if let Ok(ns) = &result {
         watcher.clear_paused(ns).await;
     }
     Notify::new(msg_init)
         .on_success(
-            &tracing,
+            tracing,
             MixpanelEvent::LocalReset(RemotePackageEvent::for_uri(uri.as_ref())),
         )
         .map(result.map(|_| ()), msg_ok, msg_err)
@@ -276,15 +273,19 @@ async fn package_push_command(
     Ok((namespace, outcome))
 }
 
-#[tauri::command]
 pub async fn package_push(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    push_and_report(&*m, &tracing, &watcher, &namespace, uri.as_ref()).await
+    push_and_report(
+        &*s.model,
+        &s.telemetry,
+        &s.watcher,
+        &namespace,
+        uri.as_ref(),
+    )
+    .await
 }
 
 /// The Push button's whole answer: the push, its event and its line.
@@ -358,24 +359,24 @@ async fn package_publish_command(
     Ok((namespace, outcome))
 }
 
-#[tauri::command]
 pub async fn package_publish(
-    m: tauri::State<'_, model::Model>,
-    settings: tauri::State<'_, SharedPublishSettings>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
-    let result = package_publish_command(&*m, &settings, &namespace).await;
+    let m = &*s.model;
+    let settings = &s.publish_settings;
+    let tracing = &*s.telemetry;
+    let watcher = &s.watcher;
+    let result = package_publish_command(m, settings, &namespace).await;
     match &result {
         Ok((ns, _)) => {
             watcher.clear_paused(ns).await;
             watcher.note_published(ns).await;
         }
-        Err(_) => note_publish_failed(&*m, &watcher, &namespace).await,
+        Err(_) => note_publish_failed(m, watcher, &namespace).await,
     }
-    report_publish(&tracing, &namespace, uri.as_ref(), result)
+    report_publish(tracing, &namespace, uri.as_ref(), result)
 }
 
 /// The Publish buttons' answer to a publish: its events and its line.
@@ -441,31 +442,27 @@ async fn package_commit_and_push_command(
     Ok((namespace, outcome))
 }
 
-#[tauri::command]
-#[allow(
-    clippy::too_many_arguments,
-    reason = "three of these are Tauri state injections a caller never passes; the rest are the revision's own fields plus the telemetry context"
-)]
 pub async fn package_commit_and_push(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
     message: String,
     metadata: String,
     workflow: WorkflowIntent,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
+    let watcher = &s.watcher;
     let result =
-        package_commit_and_push_command(&m, &namespace, &message, &metadata, workflow).await;
+        package_commit_and_push_command(m, &namespace, &message, &metadata, workflow).await;
     match &result {
         Ok((ns, _)) => {
             watcher.clear_paused(ns).await;
             watcher.note_published(ns).await;
         }
-        Err(_) => note_publish_failed(&*m, &watcher, &namespace).await,
+        Err(_) => note_publish_failed(m, watcher, &namespace).await,
     }
-    report_publish(&tracing, &namespace, uri.as_ref(), result)
+    report_publish(tracing, &namespace, uri.as_ref(), result)
 }
 
 async fn package_pull_command(
@@ -528,13 +525,13 @@ async fn pause_on_conflict(
 /// files already listed is the caller's separate `package_install_paths` call,
 /// deliberately not folded in here: one of them is a preference and the other
 /// downloads bytes, and a failure to fetch must not silently un-choose the mode.
-#[tauri::command]
 pub async fn package_set_sync_scope(
-    m: tauri::State<'_, model::Model>,
+    s: &Services,
     namespace: String,
     scope: KeepingScope,
     folders: Vec<String>,
 ) -> Result<(), String> {
+    let m = &*s.model;
     let namespace = quilt_uri::Namespace::try_from(namespace.as_str())
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
     let scope = sync_scope(scope, folders)?;
@@ -559,20 +556,16 @@ fn sync_scope(scope: KeepingScope, folders: Vec<String>) -> Result<SyncScope, St
     }
 }
 
-#[tauri::command]
 pub async fn package_pull(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
-    toasts: tauri::State<'_, ToastCenter>,
+    s: &Services,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
     Box::pin(pull_and_report(
-        &*m,
-        &tracing,
-        &watcher,
-        &toasts,
+        &*s.model,
+        &s.telemetry,
+        &s.watcher,
+        &s.toasts,
         &namespace,
         uri.as_ref(),
     ))
@@ -705,13 +698,13 @@ async fn take_back_conflict<M: model::QuiltModel>(
 ///
 /// A verdict that is not a conflict also takes back a recorded pull-conflict
 /// pause, and announces it (see [`Watcher::clear_pull_conflict`]).
-#[tauri::command]
 pub async fn package_pull_outcome(
-    m: tauri::State<'_, model::Model>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
 ) -> Result<quilt::flow::PullPreview, String> {
-    package_pull_outcome_command(&*m, &watcher, &namespace)
+    let m = &*s.model;
+    let watcher = &s.watcher;
+    package_pull_outcome_command(m, watcher, &namespace)
         .await
         .map_err(|e| e.to_string())
 }
@@ -731,29 +724,29 @@ async fn package_uninstall_command(
 /// What the prune freed goes to the toast stack, not the returned line: the
 /// v2 page that confirms it returns to the package list on success, and only
 /// the stack outlives that.
-#[tauri::command]
 pub async fn package_uninstall(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    toasts: tauri::State<'_, ToastCenter>,
+    s: &Services,
     namespace: String,
     uri: Option<S3PackageUri>,
     prune: bool,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
+    let toasts = &*s.toasts;
     let msg_init = format!("Uninstalling package {namespace}");
     let msg_ok = format!("Successfully uninstalled package {namespace}");
     let msg_err = |err: &Error| format!("Failed to uninstall package: {err}");
 
     let (result, toast) = settle_uninstall(
         &namespace,
-        package_uninstall_command(&m, &namespace, prune).await,
+        package_uninstall_command(m, &namespace, prune).await,
     );
     if let Some(toast) = toast {
         toasts.post(toast).await;
     }
     Notify::new(msg_init)
         .on_success(
-            &tracing,
+            tracing,
             MixpanelEvent::PackageUninstalled(PackageEvent::for_uri(uri.as_ref())),
         )
         .map(result, msg_ok, msg_err)
@@ -810,11 +803,8 @@ fn pruned_toast(namespace: &str, pruned: &quilt::flow::Pruned) -> crate::engine:
 /// commit chain back by one. A package with a remote has no chain — pushing
 /// consumes it — so the engine refuses there, which is why the surface
 /// offering this gates on the package having none.
-#[tauri::command]
-pub async fn undo_commit(
-    m: tauri::State<'_, model::Model>,
-    namespace: String,
-) -> Result<String, String> {
+pub async fn undo_commit(s: &Services, namespace: String) -> Result<String, String> {
+    let m = &*s.model;
     let namespace =
         quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?;
     let msg_init = format!("Undoing the last revision of {namespace}");
@@ -822,7 +812,7 @@ pub async fn undo_commit(
     let msg_err = |err: &Error| format!("Failed to undo the last revision: {err}");
 
     Notify::new(msg_init).map(
-        model::package_undo_commit(&*m, &namespace).await,
+        model::package_undo_commit(m, &namespace).await,
         msg_ok,
         msg_err,
     )
@@ -870,22 +860,22 @@ fn set_remote_refusal(bucket: &str, err: &Error) -> String {
     format!("Could not set the remote to {bucket}: {err}")
 }
 
-#[tauri::command]
 pub async fn set_remote(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
     origin: String,
     bucket: String,
     workflow: WorkflowIntent,
 ) -> Result<SetRemoteResponse, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
+    let watcher = &s.watcher;
     // The origin is this command's own argument: the remote being set.
     let origin_host = remote_origin(&origin).ok().flatten();
     // `Notify::new` logs the init line; on success/failure we log explicitly so
     // the success payload can be the typed struct rather than a bare string.
     Notify::new(format!("Setting remote for {namespace}"));
-    match set_remote_command(&*m, &namespace, &origin, &bucket, workflow).await {
+    match set_remote_command(m, &namespace, &origin, &bucket, workflow).await {
         Ok((ns, resolution_warning)) => {
             // Reported here rather than through `Notify::on_success`, because this
             // command returns a typed payload and so does not route its outcome
@@ -922,15 +912,14 @@ async fn change_catalog_command(
 
 /// Add, change or remove the catalog of a package's remote, also once it is
 /// published. A blank catalog removes it. Its bucket, hash and commits stay.
-#[tauri::command]
 pub async fn change_catalog(
-    m: tauri::State<'_, model::Model>,
-    watcher: tauri::State<'_, Watcher>,
+    s: &Services,
     namespace: String,
     origin: String,
 ) -> Result<String, String> {
+    let watcher = &s.watcher;
     Notify::new(format!("Changing the catalog of {namespace}"));
-    match change_catalog_command(&*m, &namespace, &origin).await {
+    match change_catalog_command(&*s.model, &namespace, &origin).await {
         Ok(ns) => {
             // What the old catalog refused is not the new one's.
             watcher.forget_catalog(&ns).await;
@@ -1011,15 +1000,15 @@ fn left_out_toast(
 ///
 /// What the ignore rules left out goes to the toast stack: the v2 dialog
 /// closes on success, and only the stack outlives it.
-#[tauri::command]
 pub async fn package_create(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
-    toasts: tauri::State<'_, ToastCenter>,
+    s: &Services,
     namespace: String,
     source: Option<String>,
     message: Option<String>,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
+    let toasts = &*s.toasts;
     // A package created here has no remote yet, so it belongs to no deployment.
     let msg_init = format!("Creating package {namespace}");
     let msg_ok = format!("Successfully created package {namespace}");
@@ -1030,10 +1019,10 @@ pub async fn package_create(
     let msg_err = |err: &Error| format!("Failed to create package: {}", err.user_facing());
 
     let notify = Notify::new(msg_init).on_success(
-        &tracing,
+        tracing,
         MixpanelEvent::PackageCreated(PackageEvent::hostless()),
     );
-    let result = package_create_command(m.inner(), &namespace, source, message).await;
+    let result = package_create_command(m, &namespace, source, message).await;
     if let Some(toast) = result
         .as_ref()
         .ok()
@@ -1057,19 +1046,19 @@ async fn package_install_paths_command(
 /// Returns the notice the page shows. A path the remote no longer holds the
 /// bytes for, or whose bytes do not match the package's hash, is skipped and
 /// counted in it, not an error for the whole call.
-#[tauri::command]
 pub async fn package_install_paths(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    s: &Services,
     uri: String,
     paths: Vec<String>,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
     // Installing names its package by URI, so the catalog is already in hand.
     let target = S3PackageUri::try_from(uri.as_str()).ok();
     let msg_init = format!("Installing paths from {uri}");
     let msg_err = |err: &Error| format!("Failed to install paths: {}", err.user_facing());
 
-    let result = package_install_paths_command(&m, &uri, &paths).await;
+    let result = package_install_paths_command(m, &uri, &paths).await;
     let msg_ok = match &result {
         Ok(report) if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() => {
             let listed = |paths: &[PathBuf]| {
@@ -1105,7 +1094,7 @@ pub async fn package_install_paths(
     };
     Notify::new(msg_init)
         .on_success(
-            &tracing,
+            tracing,
             MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(target.as_ref())),
         )
         .map(result, msg_ok, msg_err)
@@ -1124,25 +1113,25 @@ async fn add_to_quiltignore_command(
     Ok(())
 }
 
-#[tauri::command]
 pub async fn add_to_quiltignore(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    s: &Services,
     namespace: String,
     pattern: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
     let msg_init = format!("Adding {pattern} to .quiltignore");
     let msg_ok = format!("Added {pattern} to .quiltignore");
     let msg_err = |err: &Error| format!("Failed to update .quiltignore: {err}");
 
     Notify::new(msg_init)
         .on_success(
-            &tracing,
+            tracing,
             MixpanelEvent::QuiltignorePatternAdded(PackageEvent::for_uri(uri.as_ref())),
         )
         .map(
-            add_to_quiltignore_command(&m, &namespace, &pattern).await,
+            add_to_quiltignore_command(m, &namespace, &pattern).await,
             msg_ok,
             msg_err,
         )
@@ -1229,21 +1218,19 @@ async fn stop_ignoring_preview_command(
     })
 }
 
-#[tauri::command]
 pub async fn stop_ignoring_preview(
-    m: tauri::State<'_, model::Model>,
+    s: &Services,
     namespace: String,
     path: String,
     folder: bool,
 ) -> Result<StopIgnoringPreview, String> {
-    Box::pin(stop_ignoring_preview_command(
-        &*m, &namespace, &path, folder,
-    ))
-    .await
-    .map_err(|err| match err {
-        Error::General(msg) => msg,
-        err => format!("Could not count the files to add: {err}"),
-    })
+    let m = &*s.model;
+    Box::pin(stop_ignoring_preview_command(m, &namespace, &path, folder))
+        .await
+        .map_err(|err| match err {
+            Error::General(msg) => msg,
+            err => format!("Could not count the files to add: {err}"),
+        })
 }
 
 async fn stop_ignoring_command(
@@ -1260,22 +1247,22 @@ async fn stop_ignoring_command(
         .await?)
 }
 
-#[tauri::command]
 pub async fn stop_ignoring(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    s: &Services,
     namespace: String,
     path: String,
     folder: bool,
     scope: StopIgnoringScope,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
     let shown = shown_path(&path, folder);
     let notify = Notify::new(format!("Stop ignoring {shown} ({scope:?})")).on_success(
-        &tracing,
+        tracing,
         MixpanelEvent::QuiltignorePatternAdded(PackageEvent::for_uri(uri.as_ref())),
     );
-    let result = stop_ignoring_command(&*m, &namespace, &path, folder, scope).await;
+    let result = stop_ignoring_command(m, &namespace, &path, folder, scope).await;
     let msg_ok = match (&result, scope) {
         (Ok(Some(lines)), _) if lines.is_empty() => format!("{shown} is no longer ignored"),
         (_, StopIgnoringScope::ThisPackage) => format!("Stopped ignoring {shown} in this package"),
@@ -1296,7 +1283,6 @@ pub async fn stop_ignoring(
     notify.map(result, msg_ok, msg_err)
 }
 
-#[tauri::command]
 pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<bool, String> {
     Ok(quilt::junk::pattern_matches(&pattern, &path))
 }
@@ -1352,19 +1338,19 @@ fn banner_for_outcome(
     }
 }
 
-#[tauri::command]
 pub async fn handle_remote_package(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    s: &Services,
     uri: String,
 ) -> Result<RemotePackageResult, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
     let s3_uri: quilt_uri::S3PackageUri = uri
         .parse()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
     let namespace = s3_uri.namespace.clone();
     let _ = &tracing;
 
-    let outcome = model::install_package_only(&*m, &s3_uri)
+    let outcome = model::install_package_only(m, &s3_uri)
         .await
         .map_err(|e| e.to_frontend_string())?;
 
@@ -1414,14 +1400,14 @@ pub async fn handle_remote_package(
 /// installing it. Lazily backs Phase 2 of the version-mismatch banner: the
 /// banner shows immediately with hashes, then the UI calls this to fill in
 /// the requested side's message once it resolves.
-#[tauri::command]
 pub async fn get_revision_message(
-    m: tauri::State<'_, model::Model>,
+    s: &Services,
     bucket: String,
     namespace: String,
     hash: String,
     catalog: Option<String>,
 ) -> Result<Option<String>, String> {
+    let m = &*s.model;
     let namespace = quilt_uri::Namespace::try_from(namespace)
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
     let origin = catalog
@@ -1434,7 +1420,7 @@ pub async fn get_revision_message(
         namespace,
         hash,
     };
-    model::revision_message(&*m, manifest_uri)
+    model::revision_message(m, manifest_uri)
         .await
         .map_err(|e| e.to_frontend_string())
 }

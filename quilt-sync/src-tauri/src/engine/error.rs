@@ -4,16 +4,18 @@ use url::Url;
 
 use crate::engine::quilt;
 
+/// The desktop app's failures, carried as text so the engine needs no Tauri
+/// types.
 #[derive(thiserror::Error, Debug)]
-pub enum TauriUiError {
+pub enum DesktopError {
     #[error("Tauri failed with {0}")]
-    Tauri(#[from] tauri::Error),
+    Tauri(String),
 
     #[error("Window not found")]
     Window,
 
     #[error("Clipboard unavailable: {0}")]
-    Clipboard(#[from] tauri_plugin_clipboard_manager::Error),
+    Clipboard(String),
 
     #[error("User cancelled operation")]
     UserCancelled,
@@ -89,7 +91,7 @@ pub enum PackageUriError {
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    TauriUi(#[from] TauriUiError),
+    Desktop(#[from] DesktopError),
 
     #[error(transparent)]
     Route(#[from] RouteError),
@@ -157,12 +159,6 @@ impl From<String> for Error {
 
 // Compose `?` through focused enums: each external error routes via its
 // owning focused enum into the top-level `Error`.
-impl From<tauri::Error> for Error {
-    fn from(e: tauri::Error) -> Self {
-        Error::TauriUi(TauriUiError::Tauri(e))
-    }
-}
-
 impl From<opener::OpenError> for Error {
     fn from(e: opener::OpenError) -> Self {
         Error::FsOpen(FsOpenError::Open(e))

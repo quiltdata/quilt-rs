@@ -3,7 +3,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use sentry::protocol::Attachment;
-use tauri::Manager;
 
 use crate::engine::app::App;
 use crate::engine::error::Error;
@@ -60,12 +59,12 @@ impl DiagnosticMetadata {
 
 /// Gather diagnostic info from the app state, model, and filesystem.
 pub async fn collect(
-    app_handle: &tauri::AppHandle,
+    local_data_dir: &std::path::Path,
     m: &Model,
     app: &App,
     install_id: Option<&crate::engine::telemetry::InstallId>,
 ) -> Result<DiagnosticInfo, Error> {
-    let local_data_dir = app_handle.path().app_local_data_dir()?;
+    let local_data_dir = local_data_dir.to_path_buf();
     let auth_hosts = quilt::paths::list_auth_hosts(&local_data_dir);
 
     let home_dir = m

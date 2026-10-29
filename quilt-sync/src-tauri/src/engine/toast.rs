@@ -19,7 +19,6 @@ use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
 
 use serde::Serialize;
-use tauri::Emitter;
 use tokio::sync::RwLock;
 
 use crate::engine::telemetry::prelude::*;
@@ -88,30 +87,28 @@ pub enum ToastKind {
     Error,
 }
 
-/// Backend → frontend sink. A trait so the centre stays testable without a
-/// Tauri runtime, the same reason [`StatusReporter`](crate::engine::autopull::StatusReporter)
+/// Backend → frontend sink. A trait so the centre stays testable without an
+/// event sink, the same reason [`StatusReporter`](crate::engine::autopull::StatusReporter)
 /// is one.
 pub trait ToastEmitter: Send + Sync + 'static {
     fn emit(&self, toast: &Toast);
 }
 
-/// Production sink: emits on the Tauri event bus.
-pub struct TauriToastEmitter {
-    handle: tauri::AppHandle,
+/// Production sink: emits on the backend's event bus.
+pub struct SinkToastEmitter {
+    events: crate::engine::events::EventSink,
 }
 
-impl TauriToastEmitter {
+impl SinkToastEmitter {
     #[must_use]
-    pub fn new(handle: tauri::AppHandle) -> Self {
-        Self { handle }
+    pub fn new(events: crate::engine::events::EventSink) -> Self {
+        Self { events }
     }
 }
 
-impl ToastEmitter for TauriToastEmitter {
+impl ToastEmitter for SinkToastEmitter {
     fn emit(&self, toast: &Toast) {
-        if let Err(err) = self.handle.emit(TOAST_EVENT, toast) {
-            warn!("toast: failed to emit {TOAST_EVENT}: {err}");
-        }
+        self.events.emit(TOAST_EVENT, toast);
     }
 }
 

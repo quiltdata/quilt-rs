@@ -330,7 +330,7 @@ fn row<'a>(
 
 /// Fetch the roster the way the Tauri command does, with no pauses to show.
 ///
-/// The empty paused map means the `#[tauri::command]` wrapper's projection of
+/// The empty paused map means the command's projection of
 /// `watcher.snapshot().paused` into `paused_reasons` is **not** exercised
 /// here; these tests enter one level below it.
 async fn roster(model: &MockQuiltModel, roles: &RoleCache) -> Vec<InstalledPackageListItem> {

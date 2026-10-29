@@ -1,4 +1,5 @@
 use std::fmt::Write;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::AppHandle;
@@ -19,12 +20,10 @@ use tokio::sync::watch;
 
 use crate::engine::telemetry::prelude::*;
 
-use crate::engine::autopull::SharedAutosyncSettings;
 use crate::engine::autopull::SyncTrayStatus;
 use crate::engine::autopull::TrayMode;
-use crate::engine::autopull::Watcher;
 use crate::engine::quit::QuitAction;
-use crate::engine::quit::QuitGate;
+use crate::engine::services::Services;
 
 const TRAY_ICON_ASSET: &str = "icons/tray/trayicon.png";
 
@@ -167,15 +166,13 @@ const PROMPT_GRACE: Duration = Duration::from_millis(1500);
 /// Route a quit request through the gate: exit when nothing is being written,
 /// otherwise ask and let the answer decide.
 fn request_quit(app: &AppHandle) {
-    let applying = app
-        .try_state::<Watcher>()
-        .is_some_and(|watcher| watcher.apply_in_progress());
-    let Some(gate) = app.try_state::<QuitGate>() else {
+    let Some(services) = app.try_state::<Arc<Services>>() else {
         // Nothing to ask with. A quit that cannot be questioned proceeds.
         app.exit(0);
         return;
     };
-    match gate.request(applying) {
+    let applying = services.watcher.apply_in_progress();
+    match services.quit_gate.request(applying) {
         QuitAction::Exit => app.exit(0),
         QuitAction::AlreadyPrompting => {}
         QuitAction::Prompt(generation) => prompt_before_quit(app, generation),
@@ -201,8 +198,8 @@ fn prompt_before_quit(app: &AppHandle, generation: u64) {
     async_runtime::spawn(async move {
         tokio::time::sleep(PROMPT_GRACE).await;
         if handle
-            .try_state::<QuitGate>()
-            .is_some_and(|gate| gate.unanswerable(generation))
+            .try_state::<Arc<Services>>()
+            .is_some_and(|services| services.quit_gate.unanswerable(generation))
         {
             warn!("quit prompt never reported itself on screen, quitting");
             handle.exit(0);
@@ -218,8 +215,8 @@ fn install_close_handler(app: &AppHandle) {
     window.on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
             let close_to_tray = {
-                let settings = handle.state::<SharedAutosyncSettings>();
-                let snapshot = async_runtime::block_on(settings.read());
+                let services = handle.state::<Arc<Services>>();
+                let snapshot = async_runtime::block_on(services.autosync_settings.read());
                 snapshot.close_to_tray
             };
             if !close_to_tray {
