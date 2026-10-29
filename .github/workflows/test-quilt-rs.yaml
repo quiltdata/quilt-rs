@@ -67,6 +67,10 @@ jobs:
       - name: Check WASM build (quilt-uri, all features)
         run: cargo check -p quilt-uri --target wasm32-unknown-unknown --all-features
 
+      # Before `Test`, which reuses the test binaries it builds.
+      - name: Check OS-sensitive tests
+        run: .config/check-os-sensitive.sh $SCOPE
+
       # Split in two so a fork pull request is not a different, quieter run of
       # the same step. Everything that needs no credentials runs everywhere;
       # the fixture tests are their own step, skipped where GitHub withholds
@@ -99,15 +103,19 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-  file-stamps:
-    name: File stamps (${{ matrix.platform }})
-    # The file-stamp code is different on each OS, and the full cross-platform
-    # tests run only on `main`. These are the tests that read it.
+  os-sensitive:
+    name: OS-sensitive tests (${{ matrix.platform }})
+    # The tests of code that differs by OS, as the `os-sensitive` profile in
+    # `.config/nextest.toml` selects them. macOS never runs the full suite, and
+    # Windows runs it only on `main`, in `windows`.
     strategy:
       matrix:
         platform: [macos-15, windows-latest]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 30
+    env:
+      # Same crates as `workspace`, for the reason given there.
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -118,8 +126,10 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
+      # Bash, for the reason given in `windows`.
       - name: Test
-        run: cargo nextest run --profile no-aws -p quilt-rs -E 'test(/file_stamp|stat_cache|state_store|flow::status::/)'
+        shell: bash
+        run: cargo nextest run --profile os-sensitive $SCOPE
         env:
           RUST_BACKTRACE: 1
           AWS_EC2_METADATA_DISABLED: true

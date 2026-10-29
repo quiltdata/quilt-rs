@@ -53,6 +53,11 @@ jobs:
         run: cargo clippy --all-targets --all-features -- --deny warnings
         working-directory: ./quilt-sync/src-tauri
 
+      # Before `Test`, which reuses the test binaries it builds.
+      - name: Check OS-sensitive tests
+        run: ../../.config/check-os-sensitive.sh
+        working-directory: ./quilt-sync/src-tauri
+
       # Two steps, for the reason given in test-quilt-rs.yaml.
       - name: Test
         run: cargo nextest run --profile no-aws
@@ -80,9 +85,10 @@ jobs:
 
   cross-platform:
     name: Cross-Platform Tests
-    # Scheduled runs are on `main`, so the canary covers macOS and Windows too.
+    # The full suite on `main`, scheduled runs included, so the canary covers
+    # macOS and Windows too. Elsewhere only the tests of code that differs by
+    # OS, as the `os-sensitive` profile in `.config/nextest.toml` selects them.
     # No Ubuntu here: `quality` already runs the same tests there.
-    if: github.ref == 'refs/heads/main'
     strategy:
       matrix:
         platform: [macos-15, windows-latest]
@@ -102,7 +108,7 @@ jobs:
 
       # Two steps, for the reason given in test-quilt-rs.yaml.
       - name: Test
-        run: cargo nextest run --profile no-aws
+        run: cargo nextest run --profile ${{ github.ref == 'refs/heads/main' && 'no-aws' || 'os-sensitive' }}
         working-directory: ./quilt-sync/src-tauri
         env:
           RUST_BACKTRACE: 1

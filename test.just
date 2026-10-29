@@ -11,6 +11,17 @@ scope := "--workspace --all-targets"
 no-aws *args:
     cargo nextest run --profile no-aws {{ scope }} "$@"
 
+# On macOS and Windows, a pull request's CI runs only this selection
+#
+# Run the tests of code that differs by OS; arguments go to nextest
+[positional-arguments]
+os *args:
+    cargo nextest run --profile os-sensitive {{ scope }} "$@"
+
+# Check that every file branching on the OS has a test in `just test os`
+os-check:
+    .config/check-os-sensitive.sh {{ scope }}
+
 # Run only the live_* fixture tests, which need AWS credentials
 live:
     cargo nextest run {{ scope }} -E 'test(/::live_/)'

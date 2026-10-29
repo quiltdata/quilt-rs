@@ -124,6 +124,24 @@ would see each other's in-between revisions. nextest runs these one at a time
 time holds across every workflow. A writing test without the name runs
 alongside the others, and fails only when two runs happen to meet.
 
+### Tests of code that differs by OS
+
+CI runs the whole suite on Linux for every pull request, but on macOS and
+Windows only on `main`. On a pull request those two run the `os-sensitive`
+nextest profile (`.config/nextest.toml`): the tests of code that behaves
+differently by OS — paths and separators, file stamps, locking, permissions,
+deleting open files, spawning processes, where settings live. It has no
+`live_*` tests, so a fork gets it too. `just test os` runs it locally.
+
+The profile selects tests by module. A file that branches on the OS outside
+its tests — `cfg(windows)`, `cfg(unix)`, `cfg(target_os = …)`, or `cfg!` of
+them — needs a test named after its module in the profile, or CI fails;
+`just test os-check` runs the same check. Add the module to the profile, or,
+when no test can reach the branch, list the file in
+`.config/os-sensitive-exceptions` with the reason. Code that differs by OS
+without a `cfg`, such as a path built with `/`, escapes the check: add its
+module to the profile yourself.
+
 ## Filing an issue
 
 An issue is something someone can pick up and finish, which needs two parts:
@@ -147,9 +165,10 @@ ones to check first.
 
 **CI is green.** Which checks run depends on what you touched: the Rust
 workflows ignore markdown-only changes, `test-quilt-rs` also ignores
-`quilt-sync/**`, and the markdown lint fires only on `*.md`. QuiltSync's
-Cross-Platform Tests job is `main`-only and never appears on a pull request at
-all. So read the check list for what is there, not for the absence of red — a
+`quilt-sync/**`, and the markdown lint fires only on `*.md`. On a pull
+request, macOS and Windows run only the tests of code that differs by OS (see
+"Tests of code that differs by OS" above); the rest runs there on `main`. So
+read the check list for what is there, not for the absence of red — a
 check that never ran is not a check that passed. A fork gets the same set as a
 branch here, minus the `live_*` tests, which are skipped rather than failed
 (see "Tests that need AWS" above).

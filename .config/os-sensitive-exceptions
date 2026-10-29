@@ -1,0 +1,6 @@
+# Files that branch on the OS outside their tests, yet need no test in the
+# `os-sensitive` nextest profile; `check-os-sensitive.sh` reads this. One file
+# per line, then the reason.
+quilt-cli/src/cli/fixtures.rs        test fixtures, built only for tests; a Unix-only one feeds a live test
+quilt-sync/src-tauri/src/tray.rs     the macOS dock icon policy of a live window; no unit test can reach it
+quilt-sync/src-tauri/src/uri.rs      skips a deep-link event handler on Linux; no unit test can reach it

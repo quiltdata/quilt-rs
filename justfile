@@ -10,7 +10,7 @@ mod app "quilt-sync/app.just"
 # The component gallery: `dev`, `build` and `preview`
 mod gallery "quilt-sync/ui/gallery.just"
 
-# The test suites: plain `just test`, `live` and `frontend`
+# The test suites: plain `just test`, `live`, `os` and `frontend`
 mod test "test.just"
 
 # Run test coverage for all packages
@@ -41,7 +41,7 @@ fmt:
 # ends the run early.
 #
 # Run everything CI checks, live AWS tests included; use before a push
-ci: lint ci-static test::no-aws test::live ci-doctests test::frontend ci-release-build
+ci: lint ci-static test::os-check test::no-aws test::live ci-doctests test::frontend ci-release-build
 
 # `--all-features` is the cargo-deny action's default
 [private]
