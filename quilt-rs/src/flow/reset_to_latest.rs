@@ -35,7 +35,7 @@ pub async fn reset_to_latest(
     let latest = resolve_tag(remote, origin.as_ref(), remote_uri, Tag::Latest).await?;
     debug!("✔️ Latest hash resolved: {}", latest.hash);
 
-    if latest.hash == lineage.remote()?.hash {
+    if latest.hash == lineage.remote()?.hash && lineage.commit.is_none() {
         info!("✔️ Package is already at latest version");
         return Ok(lineage);
     }
@@ -188,35 +188,12 @@ mod tests {
         Ok(())
     }
 
-    /// Regression: `reset_to_latest` must clear `lineage.commit`. Otherwise
-    /// the lineage stays self-inconsistent (`UpToDate` on hashes, Ahead via
-    /// `current_hash()`), and a later Diverged → merge → "Promote my
-    /// revision" would push and tag the very revision the user just
-    /// discarded.
+    /// A discarded commit must not survive for a later publish to resurrect.
     #[test(tokio::test)]
     async fn test_reset_clears_pending_commit() -> Res {
-        let manifest_uri = ManifestUri {
-            bucket: "b".to_string(),
-            namespace: ("f", "a").into(),
-            hash: "OUTDATED_HASH".to_string(),
-            origin: None,
-        };
-
         let paths = DomainPaths::default();
         let storage = MockStorage::default();
-        paths
-            .scaffold_for_caching(&storage, &manifest_uri.bucket)
-            .await?;
-
-        let source_lineage = PackageLineage {
-            commit: Some(crate::lineage::CommitState {
-                timestamp: chrono::Utc::now(),
-                hash: "PENDING_LOCAL_COMMIT".to_string(),
-                prev_hashes: Vec::new(),
-            }),
-            remote_uri: Some(manifest_uri),
-            ..PackageLineage::default()
-        };
+        paths.scaffold_for_caching(&storage, "b").await?;
 
         let test_hash: &str = "deadbeef";
         let dummy_manifest = r#"{"version": "v0"}"#;
@@ -236,21 +213,39 @@ mod tests {
             )
             .await?;
 
-        let resolved_lineage = reset_to_latest(
-            source_lineage,
-            &mut Manifest::default(),
-            &paths,
-            &storage,
-            &remote,
-            PathBuf::default(),
-            Namespace::default(),
-        )
-        .await?;
-        assert!(
-            resolved_lineage.commit.is_none(),
-            "reset must discard the pending local commit, got {:?}",
-            resolved_lineage.commit,
-        );
+        for base in ["OUTDATED_HASH", test_hash] {
+            let source_lineage = PackageLineage {
+                commit: Some(crate::lineage::CommitState {
+                    timestamp: chrono::Utc::now(),
+                    hash: "PENDING_LOCAL_COMMIT".to_string(),
+                    prev_hashes: Vec::new(),
+                }),
+                remote_uri: Some(ManifestUri {
+                    bucket: "b".to_string(),
+                    namespace: ("f", "a").into(),
+                    hash: base.to_string(),
+                    origin: None,
+                }),
+                ..PackageLineage::default()
+            };
+
+            let resolved_lineage = reset_to_latest(
+                source_lineage,
+                &mut Manifest::default(),
+                &paths,
+                &storage,
+                &remote,
+                PathBuf::default(),
+                Namespace::default(),
+            )
+            .await?;
+            assert!(resolved_lineage.commit.is_none(), "reset clears the commit");
+            assert_eq!(
+                resolved_lineage.current_hash(),
+                Some(test_hash),
+                "reset from {base} must discard the pending local commit",
+            );
+        }
         Ok(())
     }
 }
