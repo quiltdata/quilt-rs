@@ -24,6 +24,7 @@
 ### Changed
 
 - Under the hood, everything but the window, tray and deep links moves into an engine with no Tauri in it, which the desktop app drives. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1262>)
+- Under the hood, every command is listed once and the window reaches them all through one Tauri command; what only the desktop can do goes through one interface. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1265>)
 
 ## [v0.26.1] - 2026-10-29
 
