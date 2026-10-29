@@ -18,6 +18,11 @@
 # Runs on Linux and macOS; it compares Unix paths.
 set -euo pipefail
 
+case "$(uname -s)" in
+    Linux | Darwin) ;;
+    *) echo "check-os-sensitive.sh runs only on Linux and macOS" >&2; exit 1 ;;
+esac
+
 if ! command -v jq >/dev/null; then
     echo "check-os-sensitive.sh needs jq: https://jqlang.org/download/" >&2
     exit 1
