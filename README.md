@@ -212,7 +212,7 @@ are thin front ends over it.
                quilt-rs       package format, local store, sync state,
                    |          auth, S3 and catalog I/O
                    v
-               quilt-uri      quilt+s3:// and quilt:// parsing;
+               quilt-uri      quilt+s3:// and s3:// parsing;
                               no I/O, builds for WASM
 ```
 
@@ -221,12 +221,13 @@ are thin front ends over it.
   byte-identical to quilt3's. It keeps a local store under `.quilt/` and talks
   to S3 and your Quilt stack directly
   ([crates.io](https://crates.io/crates/quilt-rs)).
-- **[`quilt-cli/`](quilt-cli/)**: the `quilt` binary. Each command is one
-  library call. It has no config of its own and shares its home folder with
-  QuiltSync ([crates.io](https://crates.io/crates/quilt-cli)).
+- **[`quilt-cli/`](quilt-cli/)**: the `quilt` binary, built on the library.
+  It has no config of its own and shares its home folder with QuiltSync
+  ([crates.io](https://crates.io/crates/quilt-cli)).
 - **[`quilt-sync/`](quilt-sync/)**: QuiltSync, the desktop app. It watches
-  your folders, pulls new revisions and publishes your edits. It stops and
-  asks you when local and remote both changed.
+  your folders, pulls new revisions and publishes your edits. It keeps your
+  local edits when it pulls, and stops to ask when they conflict or the
+  revisions have diverged.
 - **[`quilt-uri/`](quilt-uri/)**: the shared URI types, also used by the UI in
   the browser ([crates.io](https://crates.io/crates/quilt-uri)).
 
