@@ -142,9 +142,12 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
-      # `--no-fail-fast`: one Windows run should list every failure, not
-      # just the first.
+      # `--no-fail-fast`, and the live step runs after a failure too: one
+      # Windows run should list every failure, not just the first. Bash,
+      # because PowerShell reads `$SCOPE` as its own variable, not the
+      # environment's.
       - name: Test
+        shell: bash
         run: cargo nextest run --profile no-aws --no-fail-fast $SCOPE
         env:
           RUST_BACKTRACE: 1
@@ -152,7 +155,8 @@ jobs:
 
       - name: Test (live AWS fixtures)
         # Same rule as in `workspace`.
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        shell: bash
         run: cargo nextest run --no-fail-fast $SCOPE -E 'test(/::live_/)'
         env:
           RUST_BACKTRACE: 1
