@@ -99,40 +99,17 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-  file-stamps:
-    name: File stamps (${{ matrix.platform }})
-    # The file-stamp code is different on each OS, and the full cross-platform
-    # tests run only on `main`. These are the tests that read it.
+  cross-platform:
+    name: workspace (${{ matrix.platform }})
+    # The tests of `workspace` on the other OSes. Only on `main`, scheduled
+    # runs included: pull requests test on Linux only, so an OS-specific bug
+    # shows up here, after the merge.
+    if: github.ref == 'refs/heads/main'
     strategy:
+      fail-fast: false
       matrix:
         platform: [macos-15, windows-latest]
     runs-on: ${{ matrix.platform }}
-    timeout-minutes: 30
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-
-      - name: Setup Rust for testing
-        uses: ./.github/actions/setup-rust-minimal
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Test
-        run: cargo nextest run --profile no-aws -p quilt-rs -E 'test(/file_stamp|stat_cache|state_store|flow::status::/)'
-        env:
-          RUST_BACKTRACE: 1
-          AWS_EC2_METADATA_DISABLED: true
-
-  windows:
-    name: workspace (windows-latest)
-    # `workspace` runs these on Ubuntu only, and macOS shares its Unix
-    # semantics. Windows differs in paths, locking and open-file deletion,
-    # all of which the CLI reaches through quilt-rs storage code.
-    # Only on `main`, scheduled runs included: Windows is the slowest runner
-    # and most pull requests change nothing Windows-specific.
-    if: github.ref == 'refs/heads/main'
-    runs-on: windows-latest
     timeout-minutes: 45
     env:
       # Same crates as `workspace`, for the reason given there.
@@ -148,7 +125,7 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       # `--no-fail-fast`, and the live step runs after a failure too: one
-      # Windows run should list every failure, not just the first. Bash,
+      # run should list every failure, not just the first. Bash on Windows,
       # because PowerShell reads `$SCOPE` as its own variable, not the
       # environment's.
       - name: Test
@@ -181,7 +158,8 @@ jobs:
       cancel-in-progress: false
       queue: max
     # Same rule as the live step in `workspace`. Windows on `main` only, as
-    # in `windows`.
+    # in `cross-platform`. No macOS: it shares Linux's Unix semantics, and
+    # every leg here waits for the one before it.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     strategy:
       fail-fast: false
@@ -202,7 +180,7 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
 
-      # Bash, for the reason given in `windows`.
+      # Bash, for the reason given in `cross-platform`.
       - name: Test (live AWS fixture writes)
         shell: bash
         run: cargo nextest run --no-fail-fast $SCOPE -E 'test(/::live_write_/)'
