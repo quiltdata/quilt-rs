@@ -94,14 +94,14 @@ async fn walk_source_dir(
             let file_type = dir_entry.file_type().await?;
 
             if file_type.is_dir() {
-                let rel = file_path.strip_prefix(source)?;
-                if let Some(by) = rules.dir_ignored_by(rel, false) {
-                    left_out.dirs.push((rel.to_path_buf(), by));
+                let rel = crate::paths::logical_key(file_path.strip_prefix(source)?);
+                if let Some(by) = rules.dir_ignored_by(&rel, false) {
+                    left_out.dirs.push((rel, by));
                     continue;
                 }
                 queue.push_back(file_path);
             } else if file_type.is_file() {
-                let relative = file_path.strip_prefix(source)?.to_path_buf();
+                let relative = crate::paths::logical_key(file_path.strip_prefix(source)?);
                 if let Some(by) = rules.file_ignored_by(&relative, false) {
                     left_out.files.push((relative, by));
                     continue;

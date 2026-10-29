@@ -24,6 +24,7 @@
 ### Fixed
 
 - Reset to latest discards a pending local commit even when its base is already latest (<https://github.com/quiltdata/quilt-rs/pull/1197>)
+- On Windows, files in folders get logical keys with `/`, as on other platforms, instead of `\` (<https://github.com/quiltdata/quilt-rs/pull/1253>)
 
 ## [v0.50.0] - 2026-10-28
 

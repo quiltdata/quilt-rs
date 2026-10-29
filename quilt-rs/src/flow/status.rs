@@ -119,7 +119,7 @@ pub(crate) fn walk_package_home(
         };
         for (name, kind, stamp) in entries {
             let file_path = dir.join(name);
-            let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
+            let logical_key = crate::paths::logical_key(file_path.strip_prefix(package_home)?);
             match kind {
                 EntryKind::Dir => {
                     if let Some(ignored_by) =
