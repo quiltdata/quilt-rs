@@ -117,6 +117,13 @@ is not named `live_*` lands in the credential-free step, and fails there on
 every run — including your own pushes, not just fork pull requests. If a test
 you just wrote fails with a credentials error, check its name first.
 
+A `live_*` test that writes to S3 — a push, an upload — is named
+`live_write_*`. Some push a fixture package and then restore it, so two at once
+would see each other's in-between revisions. nextest runs these one at a time
+(`.config/nextest.toml`), and CI runs them in their own job, which one run at a
+time holds across every workflow. A writing test without the name runs
+alongside the others, and fails only when two runs happen to meet.
+
 ## Filing an issue
 
 An issue is something someone can pick up and finish, which needs two parts:

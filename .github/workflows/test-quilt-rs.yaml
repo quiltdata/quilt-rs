@@ -70,7 +70,8 @@ jobs:
       # Split in two so a fork pull request is not a different, quieter run of
       # the same step. Everything that needs no credentials runs everywhere;
       # the fixture tests are their own step, skipped where GitHub withholds
-      # secrets. The two selections partition the suite — neither overlaps.
+      # secrets. With `live-writes`, the selections partition the suite — none
+      # overlaps.
       - name: Test
         run: cargo nextest run --profile no-aws $SCOPE
         env:
@@ -84,7 +85,8 @@ jobs:
         # Secrets reach a pull request only from a branch in this repository —
         # a platform rule, so this is a skip, not a failure.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        run: cargo nextest run $SCOPE -E 'test(/::live_/)'
+        # The tests that write to S3 run in `live-writes`.
+        run: cargo nextest run $SCOPE -E 'test(/::live_/) and not test(/::live_write_/)'
         env:
           RUST_BACKTRACE: 1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -129,11 +131,7 @@ jobs:
     # all of which the CLI reaches through quilt-rs storage code.
     # Only on `main`, scheduled runs included: Windows is the slowest runner
     # and most pull requests change nothing Windows-specific.
-    # After `workspace`, pass or fail: both run the live tests, and some of
-    # those push to a shared fixture package and then restore it, so two at
-    # once would see each other's in-between revisions.
-    needs: workspace
-    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    if: github.ref == 'refs/heads/main'
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -164,7 +162,50 @@ jobs:
         # Same rule as in `workspace`.
         if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         shell: bash
-        run: cargo nextest run --no-fail-fast $SCOPE -E 'test(/::live_/)'
+        # The tests that write to S3 run in `live-writes`.
+        run: cargo nextest run --no-fail-fast $SCOPE -E 'test(/::live_/) and not test(/::live_write_/)'
+        env:
+          RUST_BACKTRACE: 1
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  live-writes:
+    name: live writes (${{ matrix.platform }})
+    # The `live_write_*` tests, which write to S3: some push a shared fixture
+    # package and then restore it, so two at once would see each other's
+    # in-between revisions. The group is shared by every run of every
+    # workflow, so only one of these jobs runs at a time; the queue keeps every
+    # waiting job, where the default would cancel all but the newest.
+    concurrency:
+      group: live-s3-writes
+      cancel-in-progress: false
+      queue: max
+    # Same rule as the live step in `workspace`. Windows on `main` only, as
+    # in `windows`.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ github.ref == 'refs/heads/main' && fromJSON('["ubuntu-24.04", "windows-latest"]') || fromJSON('["ubuntu-24.04"]') }}
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
+    env:
+      # Same crates as `workspace`, for the reason given there.
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust for testing
+        uses: ./.github/actions/setup-rust-minimal
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      # Bash, for the reason given in `windows`.
+      - name: Test (live AWS fixture writes)
+        shell: bash
+        run: cargo nextest run --no-fail-fast $SCOPE -E 'test(/::live_write_/)'
         env:
           RUST_BACKTRACE: 1
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
