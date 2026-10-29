@@ -97,6 +97,14 @@ impl MockRemote {
     }
 }
 
+/// Where the backing storage keeps the object at `uri`.
+///
+/// The URI itself can't be a path on Windows: `s3:` is not a valid folder
+/// name and `?` is not allowed in file names.
+fn storage_path(uri: &str) -> String {
+    uri.strip_prefix("s3://").unwrap_or(uri).replace('?', "#")
+}
+
 #[allow(
     clippy::unused_async_trait_impl,
     reason = "seven of this impl's methods do await; only `host_config` and `verify_bucket` do not. Rewriting just those two would leave one impl split between `async fn` and `fn -> impl Future`, which reads worse than either consistent choice."
@@ -105,7 +113,7 @@ impl Remote for MockRemote {
     async fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<bool> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} exists request");
-        Ok(self.storage.exists(&key).await)
+        Ok(self.storage.exists(storage_path(&key)).await)
     }
 
     async fn get_object_stream(
@@ -128,7 +136,7 @@ impl Remote for MockRemote {
 
         let body = self
             .storage
-            .read_byte_stream(&key)
+            .read_byte_stream(storage_path(&key))
             .await
             .map_err(|err| match err {
                 Error::Fs(FsError::ByteStream(_)) => {
@@ -157,13 +165,15 @@ impl Remote for MockRemote {
         if let Some(gate) = parked {
             gate.hold().await;
         }
-        self.storage.write_byte_stream(key, contents.into()).await
+        self.storage
+            .write_byte_stream(storage_path(&key), contents.into())
+            .await
     }
 
     async fn resolve_url(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> Res<S3Uri> {
         let key = s3_uri.to_string();
         log::debug!("Mocking {key} HEAD request");
-        if self.storage.exists(&key).await {
+        if self.storage.exists(storage_path(&key)).await {
             Ok(s3_uri.clone())
         } else {
             Err(Error::S3(S3Error::new(S3ErrorKind::NotFound(key))))
@@ -213,10 +223,10 @@ impl Remote for MockRemote {
     ) -> Res<Vec<String>> {
         let dir = format!("s3://{bucket}/{}", tag_key(namespace, ""));
         log::debug!("Mocking {dir} revision listing");
-        if !self.storage.exists(&dir).await {
+        if !self.storage.exists(storage_path(&dir)).await {
             return Ok(Vec::new());
         }
-        let mut entries = self.storage.read_dir(&dir).await?;
+        let mut entries = self.storage.read_dir(storage_path(&dir)).await?;
         let mut hashes = Vec::new();
         while let Some(entry) = entries.next_entry().await? {
             if entry.file_name() == "latest" {

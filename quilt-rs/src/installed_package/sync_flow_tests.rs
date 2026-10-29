@@ -938,9 +938,9 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1023,9 +1023,9 @@ async fn test_pull_up_to_date_returns_up_to_date_and_writes_latest_hash() -> Res
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1107,9 +1107,9 @@ async fn behind_package(
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1405,9 +1405,9 @@ async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1468,9 +1468,9 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1541,9 +1541,9 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1596,9 +1596,9 @@ async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
                         "paths": {{}}
                     }}
                 }},
-                "home": "{}"
+                "home": {}
             }}"#,
-            home.as_ref().display(),
+            serde_json::to_string(&home)?,
         );
         storage
             .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1700,9 +1700,9 @@ async fn state_with(
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1823,9 +1823,9 @@ async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
                         "paths": {{}}
                     }}
                 }},
-                "home": "{}"
+                "home": {}
             }}"#,
-            home.as_ref().display(),
+            serde_json::to_string(&home)?,
         );
         storage
             .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())

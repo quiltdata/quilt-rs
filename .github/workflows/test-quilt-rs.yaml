@@ -122,6 +122,54 @@ jobs:
           RUST_BACKTRACE: 1
           AWS_EC2_METADATA_DISABLED: true
 
+  windows:
+    name: workspace (windows-latest)
+    # `workspace` runs these on Ubuntu only, and macOS shares its Unix
+    # semantics. Windows differs in paths, locking and open-file deletion,
+    # all of which the CLI reaches through quilt-rs storage code.
+    # Only on `main`, scheduled runs included: Windows is the slowest runner
+    # and most pull requests change nothing Windows-specific.
+    # After `workspace`, pass or fail: both run the live tests, and some of
+    # those push to a shared fixture package and then restore it, so two at
+    # once would see each other's in-between revisions.
+    needs: workspace
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      # Same crates as `workspace`, for the reason given there.
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust for testing
+        uses: ./.github/actions/setup-rust-minimal
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
+      # `--no-fail-fast`, and the live step runs after a failure too: one
+      # Windows run should list every failure, not just the first. Bash,
+      # because PowerShell reads `$SCOPE` as its own variable, not the
+      # environment's.
+      - name: Test
+        shell: bash
+        run: cargo nextest run --profile no-aws --no-fail-fast $SCOPE
+        env:
+          RUST_BACKTRACE: 1
+          AWS_EC2_METADATA_DISABLED: true
+
+      - name: Test (live AWS fixtures)
+        # Same rule as in `workspace`.
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        shell: bash
+        run: cargo nextest run --no-fail-fast $SCOPE -E 'test(/::live_/)'
+        env:
+          RUST_BACKTRACE: 1
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
   cargo-deny:
     name: cargo-deny
     runs-on: ubuntu-24.04

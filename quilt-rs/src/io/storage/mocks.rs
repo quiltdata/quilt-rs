@@ -40,15 +40,23 @@ pub fn relative_to_temp_dir(
     path: impl AsRef<Path>,
 ) -> impl AsRef<Path> {
     // Re-root `path` under `temp_dir`: strip an existing `temp_dir` prefix
-    // (recursive calls such as `read_dir` arrive already relative to it) or a
-    // leading `/` so we don't double-prefix; a plain relative path is used
-    // as-is (the final `unwrap_or`).
-    let path_to_join = path
-        .as_ref()
-        .strip_prefix(temp_dir.as_ref())
-        .or_else(|_| path.as_ref().strip_prefix("/"))
-        .unwrap_or(path.as_ref());
-    temp_dir.as_ref().join(path_to_join)
+    // (recursive calls such as `read_dir` arrive already relative to it), or
+    // else the root, and on Windows the drive too, so an absolute path never
+    // escapes the temp dir. A plain relative path is used as-is.
+    let path = path.as_ref();
+    match path.strip_prefix(temp_dir.as_ref()) {
+        Ok(relative) => temp_dir.as_ref().join(relative),
+        Err(_) => temp_dir.as_ref().join(
+            path.components()
+                .filter(|component| {
+                    !matches!(
+                        component,
+                        std::path::Component::Prefix(_) | std::path::Component::RootDir
+                    )
+                })
+                .collect::<std::path::PathBuf>(),
+        ),
+    }
 }
 
 async fn create_parent(path: impl AsRef<Path>) -> Res {

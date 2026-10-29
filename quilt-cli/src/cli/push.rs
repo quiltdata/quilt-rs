@@ -229,21 +229,21 @@ mod tests {
 
         // A brand-new local package: a commit will be stamped below, and only
         // then is the remote attached, mirroring `create → commit → set-remote`.
-        let lineage_json = format!(
-            r#"{{
-                "packages": {{
-                    "reference/push-gate": {{
-                        "commit": null,
-                        "remote": null,
-                        "base_hash": "",
-                        "latest_hash": "",
-                        "paths": {{}}
-                    }}
-                }},
-                "home": "{}"
-            }}"#,
-            home_dir.path().display()
-        );
+        // Built as JSON, not formatted in: a Windows path's backslashes
+        // would be escapes inside a JSON string.
+        let lineage_json = serde_json::json!({
+            "packages": {
+                "reference/push-gate": {
+                    "commit": null,
+                    "remote": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": &home,
+        })
+        .to_string();
         storage
             .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
             .await?;
