@@ -74,13 +74,13 @@ ci-pr base="origin/main":
 # only those and `quilt-sync/` skip `rs`: Cargo forbids dependency cycles, so
 # no other crate depends on QuiltSync.
 #
-# Print which CI jobs the changes `git diff <args>` lists need
+# Print which CI jobs the files `git diff <args>` changes need, a rename counting at both ends
 [group('ci')]
 [positional-arguments]
 changes *args:
     #!/usr/bin/env bash
     set -euo pipefail
-    files=$(git diff --name-only "$@")
+    files=$(git diff --name-only --no-renames "$@")
     md=false rs=false sync=false ui=false
     while IFS= read -r f; do
         [ -n "$f" ] || continue
