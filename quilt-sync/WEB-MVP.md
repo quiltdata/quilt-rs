@@ -28,6 +28,10 @@ URL; the UI keeps the token for the session. Ctrl-C stops it. Started again on
 the same data folder and port, it prints the same link, and an open tab
 reconnects by itself (see [Restarts](#restarts)).
 
+`cargo run` serves the UI already in `ui/dist`, so run `trunk build` first. For
+development, `just app headless [args]` builds the UI and rebuilds it on save,
+as `just app dev` does; reload the tab to see a change.
+
 - `--bind <ip>`: the address to listen on, `127.0.0.1` by default. With
   `0.0.0.0` the server warns that everything, the token included, travels as
   plain HTTP. For a remote machine, prefer the default bind and an SSH tunnel:
