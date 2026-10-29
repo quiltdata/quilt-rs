@@ -24,9 +24,16 @@ selected=$(jq -r '."rust-suites"[] | .cwd as $cwd | .testcases
     | to_entries[] | select(.value."filter-match".status == "matches")
     | "\($cwd)\t\(.key)"' <<<"$list")
 
+# A `cfg` can span lines, so it is read on until its parentheses close.
 branches_on_os() {
     awk '/^[[:space:]]*mod [a-z_]*tests[[:space:]]*\{/ { exit }
-         /cfg!?\(.*(windows|unix|target_os)/ { found = 1 }
+         cfg != "" || /cfg!?\(/ {
+             cfg = cfg $0
+             if (gsub(/\(/, "(", cfg) <= gsub(/\)/, ")", cfg)) {
+                 if (cfg ~ /cfg!?\(.*(windows|unix|target_os)/) found = 1
+                 cfg = ""
+             }
+         }
          END { exit !found }' "$1"
 }
 
