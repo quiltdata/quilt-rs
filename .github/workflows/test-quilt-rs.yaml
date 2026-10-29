@@ -129,7 +129,11 @@ jobs:
     # all of which the CLI reaches through quilt-rs storage code.
     # Only on `main`, scheduled runs included: Windows is the slowest runner
     # and most pull requests change nothing Windows-specific.
-    if: github.ref == 'refs/heads/main'
+    # After `workspace`, pass or fail: both run the live tests, and some of
+    # those push to a shared fixture package and then restore it, so two at
+    # once would see each other's in-between revisions.
+    needs: workspace
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:
