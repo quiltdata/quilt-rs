@@ -43,6 +43,7 @@ fn App() -> impl IntoView {
         <pages::FolderBrowser />
         <Router>
             <WebNavigation />
+            <DocumentTitle />
             <Bench />
             <Routes fallback=|| view! { <NotFoundPage read=read_settings /> }>
                 <Route path=path!("/") view=|| view! { <Home /> } />
@@ -59,6 +60,17 @@ fn App() -> impl IntoView {
             </Routes>
         </Router>
     }
+}
+
+/// Keep the browser tab's title on the current package and page.
+#[component]
+fn DocumentTitle() -> impl IntoView {
+    let location = leptos_router::hooks::use_location();
+    Effect::new(move |_| {
+        let path = location.pathname.get();
+        let query = quilt_sync_ui::routes::Query::parse(&location.search.get());
+        document().set_title(&quilt_sync_ui::routes::page_title(&path, &query));
+    });
 }
 
 /// Go where the backend points (after a login, on a deep link), in the window

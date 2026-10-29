@@ -205,9 +205,64 @@ pub fn use_query() -> leptos::prelude::Memo<Query> {
     Memo::new(move |_| url.with(|url| Query::parse(url.search())))
 }
 
+/// The browser tab's title for a page: the app, then the package, then the
+/// page, e.g. `QuiltSync › org/pkg › Commit`.
+#[must_use]
+pub fn page_title(path: &str, query: &Query) -> String {
+    let package = match path {
+        "/remote-package" => query.get("uri").and_then(|uri| package_in_uri(&uri)),
+        _ => query.get("namespace"),
+    };
+    let page = match path {
+        "/commit" => Some("Commit"),
+        "/merge" => Some("Merge"),
+        "/login" => Some("Login"),
+        "/settings" => Some("Settings"),
+        "/setup" => Some("Setup"),
+        "/error" => Some("Error"),
+        _ => None,
+    };
+    let mut title = String::from("QuiltSync");
+    for part in [package.as_deref(), page].into_iter().flatten() {
+        title.push_str(" › ");
+        title.push_str(part);
+    }
+    title
+}
+
+/// The `org/name` in `quilt+s3://bucket#package=org/name@hash`.
+fn package_in_uri(uri: &str) -> Option<String> {
+    let (_, rest) = uri.split_once("package=")?;
+    let end = rest.find(['@', ':', '&']).unwrap_or(rest.len());
+    Some(rest[..end].to_string()).filter(|name| !name.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tab_title_names_the_package_and_the_page() {
+        let q = |s: &str| Query(vec![("namespace".into(), s.into())]);
+        assert_eq!(page_title("/", &Query::default()), "QuiltSync");
+        assert_eq!(
+            page_title("/installed-package", &q("org/pkg")),
+            "QuiltSync › org/pkg"
+        );
+        assert_eq!(
+            page_title("/commit", &q("org/pkg")),
+            "QuiltSync › org/pkg › Commit"
+        );
+        assert_eq!(
+            page_title("/settings", &Query::default()),
+            "QuiltSync › Settings"
+        );
+        let uri = Query(vec![(
+            "uri".into(),
+            "quilt+s3://bucket#package=org/pkg@abc123".into(),
+        )]);
+        assert_eq!(page_title("/remote-package", &uri), "QuiltSync › org/pkg");
+    }
 
     /// A `back` that is itself an encoded address keeps its encoding.
     #[wasm_bindgen_test::wasm_bindgen_test]

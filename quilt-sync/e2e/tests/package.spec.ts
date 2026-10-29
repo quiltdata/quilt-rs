@@ -51,6 +51,7 @@ test("the main page renders after setup", async ({ page, quiltsync }) => {
   await page.goto(quiltsync.url("/"));
   await expect(page.getByRole("heading", { name: "No packages yet" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Create package" }).first()).toBeVisible();
+  await expect(page).toHaveTitle("QuiltSync");
 });
 
 test("a file written into a package folder appears on its page", async ({ page, quiltsync }) => {
@@ -59,6 +60,7 @@ test("a file written into a package folder appears on its page", async ({ page, 
   // The attention queue links the new package too; open it from the list.
   await page.getByRole("region", { name: "Packages" }).getByRole("link", { name: NAMESPACE }).click();
   await expect(packageHeading(page, NAMESPACE)).toBeVisible();
+  await expect(page).toHaveTitle(`QuiltSync › ${NAMESPACE}`);
 
   // No reload: the watcher's event reaches the page over the socket.
   await writeUntilListed(quiltsync, NAMESPACE, "hello.txt", [page]);
