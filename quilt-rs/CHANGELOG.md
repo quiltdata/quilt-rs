@@ -19,18 +19,19 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.51.0-dev]
+## [v0.51.0] - 2026-10-29
 
 ### Changed
 
-- **Breaking:** `InstallPathError` has a new variant, `HashMismatch`, and `InstallPathsReport` and `KeepReport` have a new field, `hash_mismatch` (<https://github.com/quiltdata/quilt-rs/issues/1246>)
+- **Breaking:** a file pinned to an S3 version whose bytes do not match the hash the package records is reported as a hash mismatch, not as gone from the bucket. `InstallPathError` has a new `HashMismatch` variant, and `InstallPathsReport` and `KeepReport` a new `hash_mismatch` field
+  - <https://github.com/quiltdata/quilt-rs/issues/1246>
+  - <https://github.com/quiltdata/quilt-rs/pull/1254>
 
 ### Fixed
 
-- A file whose `physical_key` names an S3 version and whose bytes do not match the hash the package records is reported in `hash_mismatch`, not `skipped`, so it no longer reads as gone from the bucket. The pull's reconcile refuses it with `InstallPathError::HashMismatch`: the package may be corrupt (<https://github.com/quiltdata/quilt-rs/issues/1246>)
 - Reset to latest discards a pending local commit even when its base is already latest (<https://github.com/quiltdata/quilt-rs/pull/1197>)
-- On Windows, files in folders get logical keys with `/`, as on other platforms, instead of `\` (<https://github.com/quiltdata/quilt-rs/pull/1253>)
-- Status and `checksum::calculate_hash` rows carry a percent-encoded `file://` URL as their physical key, as every other local key does (<https://github.com/quiltdata/quilt-rs/pull/1255>)
+- On Windows, files in folders get logical keys with `/`, not `\` (<https://github.com/quiltdata/quilt-rs/pull/1253>)
+- Status and `checksum::calculate_hash` give local files a percent-encoded `file://` physical key, like every other local key (<https://github.com/quiltdata/quilt-rs/pull/1255>)
 
 ## [v0.50.0] - 2026-10-28
 
