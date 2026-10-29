@@ -1,0 +1,2904 @@
+//! Package lifecycle commands: commit, push, publish, pull, create,
+//! uninstall, remote configuration, and quiltignore edits.
+
+use std::path::PathBuf;
+use std::str::FromStr;
+
+use serde::Deserialize;
+use serde::Serialize;
+
+use quilt_rs::io::remote::WorkflowIntent;
+
+use quilt_uri::{Host, S3PackageUri};
+
+use crate::engine::Error;
+use crate::engine::autopull::PausedReason;
+use crate::engine::autopull::Watcher;
+use crate::engine::autopull::last_change::PendingCommit;
+use crate::engine::autopull::pull_toast;
+use crate::engine::commands::package_page::KeepingScope;
+use crate::engine::model;
+use crate::engine::model::QuiltModel;
+use crate::engine::notify::Notify;
+use crate::engine::publish_settings::SharedPublishSettings;
+use crate::engine::quilt;
+use crate::engine::quilt::lineage::SyncScope;
+use crate::engine::telemetry::MixpanelEvent;
+use crate::engine::telemetry::event::{PackageEvent, RemotePackageEvent};
+use crate::engine::toast::ToastCenter;
+
+async fn package_commit_command(
+    m: &model::Model,
+    namespace: &str,
+    message: &str,
+    metadata: &str,
+    workflow: WorkflowIntent,
+) -> Result<(quilt_uri::Namespace, quilt::flow::Committed), Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    if message.is_empty() {
+        return Err(Error::Commit("Message is required".to_string()));
+    }
+
+    let committed =
+        model::package_commit(m, namespace.clone(), message, metadata, workflow, None).await?;
+    Ok((namespace, committed))
+}
+
+#[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "three of these are Tauri state injections a caller never passes; the rest are the revision's own fields plus the telemetry context"
+)]
+pub async fn package_commit(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
+    namespace: String,
+    message: String,
+    metadata: String,
+    workflow: WorkflowIntent,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    let result = package_commit_command(&m, &namespace, &message, &metadata, workflow).await;
+    if let Ok((ns, quilt::flow::Committed::Recorded(_))) = &result {
+        watcher.clear_paused(ns).await;
+        watcher
+            .note_committed(ns, pending_commit(&*m, ns).await)
+            .await;
+    }
+    report_commit(&tracing, &namespace, uri.as_ref(), result.map(|(_, c)| c))
+}
+
+/// The Commit button's answer to a commit: its event and its line.
+fn report_commit(
+    tracing: &crate::engine::telemetry::Telemetry,
+    namespace: &str,
+    uri: Option<&S3PackageUri>,
+    result: Result<quilt::flow::Committed, Error>,
+) -> Result<String, String> {
+    let mut notify = Notify::new(format!("Committing package {namespace}"));
+    // Nothing committed, so no commit event. A failure keeps the event, which
+    // is what reports a refusal.
+    if !matches!(result, Ok(quilt::flow::Committed::NothingToCommit)) {
+        notify = notify.on_success(
+            tracing,
+            MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri)),
+        );
+    }
+    let msg_ok = match &result {
+        Ok(quilt::flow::Committed::NothingToCommit) => {
+            format!("Package {namespace} has nothing to commit")
+        }
+        _ => format!("Successfully committed {namespace}"),
+    };
+    // Committing is not offline (the workflow gate reads the bucket's config),
+    // so a dead session lands here, where the user's typed work is.
+    let msg_err = |err: &Error| {
+        auth_failure_message(err).unwrap_or_else(|| format!("Failed to commit: {err}"))
+    };
+    notify.map(result.map(|_| ()), msg_ok, msg_err)
+}
+
+async fn certify_latest_command(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+) -> Result<quilt_uri::Namespace, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    model::package_revision_certify_latest(m, namespace.clone()).await?;
+    Ok(namespace)
+}
+
+/// Certify, then lift the tick's pause as reset does: the tick pauses every
+/// diverged package, and certifying installs nothing that would clear it.
+async fn certify_and_resume(
+    m: &impl model::QuiltModel,
+    watcher: &Watcher,
+    namespace: &str,
+) -> Result<(), Error> {
+    let ns = certify_latest_command(m, namespace).await?;
+    watcher.clear_paused(&ns).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn certify_latest(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
+    namespace: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    let msg_init = format!("Certifying latest for {namespace}");
+    let msg_ok = format!("Successfully certified latest for {namespace}");
+    let msg_err = |err: &Error| format!("Failed to certify latest: {err}");
+
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::LatestCertified(RemotePackageEvent::for_uri(uri.as_ref())),
+        )
+        .map(
+            certify_and_resume(&*m, &watcher, &namespace).await,
+            msg_ok,
+            msg_err,
+        )
+}
+
+async fn reset_local_command(
+    m: &impl model::QuiltModel,
+    watcher: &Watcher,
+    namespace: &str,
+) -> Result<quilt_uri::Namespace, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let installed = installed_package(m, &namespace).await?;
+    // See `package_pull_command`: the flag goes up once the lock is held.
+    let locked = m.lock_package(&installed).await?;
+    let _applying = watcher.apply_guard(&namespace);
+    m.locked_package_reset_local(&locked).await?;
+    Ok(namespace)
+}
+
+/// The installed package at `namespace`, or `NotInstalled` when it has gone.
+async fn installed_package(
+    m: &impl model::QuiltModel,
+    namespace: &quilt_uri::Namespace,
+) -> Result<quilt::InstalledPackage, Error> {
+    m.get_installed_package(namespace).await?.ok_or_else(|| {
+        Error::from(quilt::InstallPackageError::NotInstalled(
+            namespace.to_owned(),
+        ))
+    })
+}
+
+#[tauri::command]
+pub async fn reset_local(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
+    namespace: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    let msg_init = format!("Resetting local for {namespace}");
+    let msg_ok = format!("Successfully reset local for {namespace}");
+    let msg_err = |err: &Error| format!("Failed to reset local: {err}");
+
+    // Reset re-installs every tracked path, so it is the most destructive
+    // write to interrupt — and it reaches the working tree through the same
+    // primitive a pull does. The boundary is deliberate: this and pull are the
+    // two writes that can leave the tree between revisions, joined by the v2
+    // page's backlog download, which catches a whole package up. Installing
+    // picked paths only adds files, and a commit writes `.quilt` rather than
+    // the working tree.
+    let result = reset_local_command(&*m, &watcher, &namespace).await;
+    if let Ok(ns) = &result {
+        watcher.clear_paused(ns).await;
+    }
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::LocalReset(RemotePackageEvent::for_uri(uri.as_ref())),
+        )
+        .map(result.map(|_| ()), msg_ok, msg_err)
+}
+
+/// The user-visible text for a failed write, given the action that failed
+/// (`"push package"`, `"publish package"`) and the error it failed with.
+///
+/// Write permission is invisible until the write happens: the role-scoped
+/// bucket list is read-presence only and never tells `READ` apart from
+/// `READ_WRITE`, so a role that can read a bucket but not write it looks
+/// perfectly healthy right up to the push. When storage refuses with
+/// `AccessDenied`, name the role as the cause and the remedy — a raw
+/// storage error gives the user nothing to connect the failure back to the
+/// role they picked.
+fn write_failure_message(action: &str, err: &Error) -> String {
+    if err.is_access_denied() {
+        "Current role can't write here — switch role".to_string()
+    } else if let Some(message) = auth_failure_message(err) {
+        message
+    } else {
+        format!("Failed to {action}: {err}")
+    }
+}
+
+/// Remedy sentence for "there is no session to act with", or `None` otherwise.
+///
+/// A toast cannot navigate, so the message carries the remedy itself. Keyed on
+/// whether there is a deployment: one can be signed into; ambient credentials
+/// are fixed in `~/.aws` or by `aws sso login`.
+fn auth_failure_message(err: &Error) -> Option<String> {
+    if !err.is_session_absent() {
+        return None;
+    }
+    let host = match err {
+        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => host.as_ref(),
+        _ => err.s3_host(),
+    };
+    Some(match host {
+        Some(host) => format!("Not signed in to {host} — sign in again"),
+        None => {
+            "AWS credentials on this computer aren't usable — update ~/.aws or run aws sso login"
+                .to_string()
+        }
+    })
+}
+
+/// The commit waiting to be pushed on `namespace`, as the lineage says now.
+async fn pending_commit(
+    m: &impl model::QuiltModel,
+    namespace: &quilt_uri::Namespace,
+) -> PendingCommit {
+    match m.get_installed_package(namespace).await {
+        Ok(Some(package)) => m
+            .get_installed_package_lineage(&package)
+            .await
+            .map_or(PendingCommit::Unknown, |lineage| {
+                PendingCommit::of(&lineage)
+            }),
+        _ => PendingCommit::Unknown,
+    }
+}
+
+/// A publish by hand failed: a commit it left pending is the app's own.
+async fn note_publish_failed(m: &impl model::QuiltModel, watcher: &Watcher, namespace: &str) {
+    if let Ok(namespace) = quilt_uri::Namespace::try_from(namespace) {
+        let commit = pending_commit(m, &namespace).await;
+        watcher.note_publish_failed(&namespace, commit);
+    }
+}
+
+async fn package_push_command(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+) -> Result<(quilt_uri::Namespace, quilt::Pushed), Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let outcome = model::package_push(m, &namespace, None).await?;
+    Ok((namespace, outcome))
+}
+
+#[tauri::command]
+pub async fn package_push(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
+    namespace: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    push_and_report(&*m, &tracing, &watcher, &namespace, uri.as_ref()).await
+}
+
+/// The Push button's whole answer: the push, its event and its line.
+async fn push_and_report(
+    m: &impl model::QuiltModel,
+    tracing: &crate::engine::telemetry::Telemetry,
+    watcher: &Watcher,
+    namespace: &str,
+    uri: Option<&S3PackageUri>,
+) -> Result<String, String> {
+    let msg_init = format!("Pushing package {namespace}");
+
+    let result = package_push_command(m, namespace).await;
+    // The time stays: edits made after the commit are still to publish, and
+    // the next walk deletes it if none are.
+    if let Ok((ns, _)) = &result {
+        watcher.clear_paused(ns).await;
+    }
+    let mut notify = Notify::new(msg_init);
+    // Another push got there first: nothing left, so no push event. A
+    // failure keeps the event, which is what reports a refusal.
+    if !matches!(result, Ok((_, quilt::Pushed::NothingToPush))) {
+        notify = notify.on_success(
+            tracing,
+            MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(uri)),
+        );
+    }
+    // TODO: push-not-certified should be surfaced as a warning, not a success.
+    // Currently both outcomes go through the success path because converting to
+    // Err skips on_done()/refetch and leaves the UI stale.
+    let msg_ok = match &result {
+        Ok((_, quilt::Pushed::NothingToPush)) => format!("Package {namespace} has nothing to push"),
+        Ok((_, quilt::Pushed::Uploaded(outcome))) if outcome.certified_latest => {
+            format!("Successfully pushed package {namespace}")
+        }
+        Ok(_) => {
+            format!("Pushed {namespace}, but could not update latest: remote has newer changes")
+        }
+        _ => String::new(),
+    };
+    let msg_err = |err: &Error| write_failure_message("push package", err);
+
+    notify.map(result.map(|_| ()), msg_ok, msg_err)
+}
+
+async fn package_publish_command(
+    m: &impl model::QuiltModel,
+    settings: &SharedPublishSettings,
+    namespace: &str,
+) -> Result<(quilt_uri::Namespace, quilt::PublishOutcome), Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let installed = installed_package(m, &namespace).await?;
+    // The message names the changes of the status walked under the lock, and
+    // the publish commits that same walk. A download or pull that lands while
+    // Publish waits for the lock is then in both, as the tick does it.
+    let locked = m.lock_package(&installed).await?;
+    let status = m.locked_package_status(&locked, None).await?;
+
+    let settings = settings.read().await.clone();
+    // Box the publish future — the commit+push state machine exceeds the
+    // `large_futures` budget (see `clippy.toml`).
+    let (outcome, _message) = Box::pin(model::publish_locked_with_settings(
+        m,
+        &locked,
+        &installed,
+        &settings,
+        status,
+        model::HeadTask::Replace,
+    ))
+    .await?;
+    Ok((namespace, outcome))
+}
+
+#[tauri::command]
+pub async fn package_publish(
+    m: tauri::State<'_, model::Model>,
+    settings: tauri::State<'_, SharedPublishSettings>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
+    namespace: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    let result = package_publish_command(&*m, &settings, &namespace).await;
+    match &result {
+        Ok((ns, _)) => {
+            watcher.clear_paused(ns).await;
+            watcher.note_published(ns).await;
+        }
+        Err(_) => note_publish_failed(&*m, &watcher, &namespace).await,
+    }
+    report_publish(&tracing, &namespace, uri.as_ref(), result)
+}
+
+/// The Publish buttons' answer to a publish: its events and its line.
+fn report_publish(
+    tracing: &crate::engine::telemetry::Telemetry,
+    namespace: &str,
+    uri: Option<&S3PackageUri>,
+    result: Result<(quilt_uri::Namespace, quilt::PublishOutcome), Error>,
+) -> Result<String, String> {
+    let msg_init = format!("Publishing package {namespace}");
+
+    // Nothing to publish sends no events: nothing was committed or pushed.
+    if let Ok((_, outcome)) = &result
+        && outcome.push().is_some()
+    {
+        tracing.track(MixpanelEvent::PackagePublished(
+            RemotePackageEvent::for_uri(uri),
+        ));
+        if matches!(outcome, quilt::PublishOutcome::CommittedAndPushed(_)) {
+            tracing.track(MixpanelEvent::PackageCommitted(PackageEvent::for_uri(uri)));
+        }
+        tracing.track(MixpanelEvent::PackagePushed(RemotePackageEvent::for_uri(
+            uri,
+        )));
+    }
+
+    let msg_ok = match &result {
+        Ok((_, quilt::PublishOutcome::NothingToPublish)) => {
+            format!("Package {namespace} has nothing to publish")
+        }
+        Ok((_, outcome)) if outcome.push().is_some_and(|push| push.certified_latest) => {
+            format!("Successfully published package {namespace}")
+        }
+        Ok(_) => {
+            format!("Published {namespace}, but could not update latest: remote has newer changes")
+        }
+        _ => String::new(),
+    };
+    // TODO: route `Error` through `to_frontend_string()` so that
+    // `login_required` / `setup_required` publish-time errors can trigger the
+    // `/login` and `/setup` redirects in `ui::error_handler::handle_or_display`
+    // instead of surfacing as a plain toast. This requires `make_action` to
+    // parse the JSON envelope (or the Tauri command to bypass `Notify` for
+    // these variants); both are out of scope here.
+    let msg_err = |err: &Error| write_failure_message("publish package", err);
+
+    Notify::new(msg_init).map(result.map(|_| ()), msg_ok, msg_err)
+}
+
+async fn package_commit_and_push_command(
+    m: &model::Model,
+    namespace: &str,
+    message: &str,
+    metadata: &str,
+    workflow: WorkflowIntent,
+) -> Result<(quilt_uri::Namespace, quilt::PublishOutcome), Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    if message.trim().is_empty() {
+        return Err(Error::Commit("Message is required".to_string()));
+    }
+    let outcome =
+        model::package_publish(m, namespace.clone(), message, metadata, workflow, None).await?;
+    Ok((namespace, outcome))
+}
+
+#[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "three of these are Tauri state injections a caller never passes; the rest are the revision's own fields plus the telemetry context"
+)]
+pub async fn package_commit_and_push(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
+    namespace: String,
+    message: String,
+    metadata: String,
+    workflow: WorkflowIntent,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    let result =
+        package_commit_and_push_command(&m, &namespace, &message, &metadata, workflow).await;
+    match &result {
+        Ok((ns, _)) => {
+            watcher.clear_paused(ns).await;
+            watcher.note_published(ns).await;
+        }
+        Err(_) => note_publish_failed(&*m, &watcher, &namespace).await,
+    }
+    report_publish(&tracing, &namespace, uri.as_ref(), result)
+}
+
+async fn package_pull_command(
+    m: &impl model::QuiltModel,
+    watcher: &Watcher,
+    namespace: &str,
+) -> Result<(quilt_uri::Namespace, quilt::flow::Pulled), Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let installed = installed_package(m, &namespace).await?;
+    // Lock before raising the flag. While another writer (the `quilt` CLI, a
+    // download) holds the package, this pull has written nothing, so quitting
+    // then loses nothing and must not ask.
+    let locked = m.lock_package(&installed).await?;
+    // The scope the package stores, read under the lock.
+    let lineage = m.get_installed_package_lineage(&installed).await?;
+    // A hand-pressed pull writes working files exactly as the tick's does, so
+    // it raises the same in-flight flag — otherwise quitting during one would
+    // interrupt it without asking.
+    let pulled = {
+        let _applying = watcher.apply_guard(&namespace);
+        m.locked_package_pull(&locked, None, lineage.sync_scope.clone())
+            .await
+    };
+    match pulled {
+        Ok(pulled) => Ok((namespace, pulled)),
+        Err(err) => {
+            pause_on_conflict(watcher, &namespace, &lineage, &err).await;
+            Err(err)
+        }
+    }
+}
+
+/// A pull the engine refused for a conflict pauses the package the way the
+/// tick's refusal does, so the header shows the conflict now rather than
+/// offering the same pull until the next tick. Only a conflict: it is the one
+/// refusal with a state of its own that the working tree cannot report.
+async fn pause_on_conflict(
+    watcher: &Watcher,
+    namespace: &quilt_uri::Namespace,
+    lineage: &quilt::lineage::PackageLineage,
+    err: &Error,
+) {
+    let Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(conflicts))) = err
+    else {
+        return;
+    };
+    let origin = lineage
+        .remote_uri
+        .as_ref()
+        .and_then(|remote| remote.origin.as_ref());
+    watcher
+        .pause(namespace, origin, PausedReason::pull_conflict(conflicts))
+        .await;
+}
+
+/// Record which files this package keeps: picked files, the whole package,
+/// or every file under `folders`, which only a folders scope reads.
+///
+/// Storage only — it writes the standing choice and returns. Catching up on
+/// files already listed is the caller's separate `package_install_paths` call,
+/// deliberately not folded in here: one of them is a preference and the other
+/// downloads bytes, and a failure to fetch must not silently un-choose the mode.
+#[tauri::command]
+pub async fn package_set_sync_scope(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+    scope: KeepingScope,
+    folders: Vec<String>,
+) -> Result<(), String> {
+    let namespace = quilt_uri::Namespace::try_from(namespace.as_str())
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+    let scope = sync_scope(scope, folders)?;
+    let installed = m
+        .get_installed_package(&namespace)
+        .await
+        .map_err(|e| e.to_frontend_string())?
+        .ok_or_else(|| format!("Package {namespace} not found"))?;
+    m.package_set_sync_scope(&installed, scope)
+        .await
+        .map_err(|e| e.to_frontend_string())
+}
+
+/// The stored scope a Keeping choice names. Folders go through the library's
+/// rule, so `./data/` is `data`, the root is the whole package, and a `..`
+/// part is refused with nothing stored.
+fn sync_scope(scope: KeepingScope, folders: Vec<String>) -> Result<SyncScope, String> {
+    match scope {
+        KeepingScope::IndividualFiles => Ok(SyncScope::IndividualFiles),
+        KeepingScope::EntirePackage => Ok(SyncScope::EntirePackage),
+        KeepingScope::Folders => SyncScope::folders(folders).map_err(|e| e.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn package_pull(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
+    toasts: tauri::State<'_, ToastCenter>,
+    namespace: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    Box::pin(pull_and_report(
+        &*m,
+        &tracing,
+        &watcher,
+        &toasts,
+        &namespace,
+        uri.as_ref(),
+    ))
+    .await
+}
+
+/// The Pull button's whole answer: the pull, its toast, its event and its line.
+async fn pull_and_report(
+    m: &impl model::QuiltModel,
+    tracing: &crate::engine::telemetry::Telemetry,
+    watcher: &Watcher,
+    toasts: &ToastCenter,
+    namespace: &str,
+    uri: Option<&S3PackageUri>,
+) -> Result<String, String> {
+    let msg_init = format!("Pulling package {namespace}");
+    let msg_err = |err: &Error| format!("Failed to pull package: {err}");
+
+    let result = package_pull_command(m, watcher, namespace).await;
+    let mut notify = Notify::new(msg_init);
+    // Another pull got there first: nothing arrived, so no pull event. A
+    // failure keeps the event, which is what reports a refusal.
+    if !matches!(result, Ok((_, quilt::flow::Pulled::UpToDate))) {
+        notify = notify.on_success(
+            tracing,
+            MixpanelEvent::PackagePulled(RemotePackageEvent::for_uri(uri)),
+        );
+    }
+    let mut msg_ok = String::new();
+    if let Ok((ns, pulled)) = &result {
+        watcher.clear_paused(ns).await;
+        msg_ok = match pulled {
+            quilt::flow::Pulled::UpToDate => format!("Package {namespace} is already up to date"),
+            quilt::flow::Pulled::Applied(report) => {
+                // The same report the tick posts, from the same wording. A
+                // manual pull brings files too, and "Successfully pulled" says
+                // nothing about which — which is the whole of what this
+                // feature adds.
+                let toast = pull_toast::report_toast(ns, report);
+                let reported = toast.is_some();
+                if let Some(toast) = toast {
+                    toasts
+                        .post(crate::engine::toast::ToastDraft {
+                            kind: toast.kind,
+                            title: Some(toast.title),
+                            body: toast.body,
+                            groups: toast.groups,
+                            timeout_ms: None,
+                        })
+                        .await;
+                }
+                pull_success_message(namespace, reported)
+            }
+        };
+    }
+    notify.map(result.map(|_| ()), msg_ok, msg_err)
+}
+
+/// The page's own confirmation of a pull — empty when the toast has already
+/// said it.
+///
+/// The toast names the package and what arrived, so this line would repeat it
+/// from behind the toast layer, where it reads as a backdrop rather than a
+/// message. It speaks only when there was no report to post.
+fn pull_success_message(namespace: &str, reported: bool) -> String {
+    if reported {
+        String::new()
+    } else {
+        format!("Successfully pulled package {namespace}")
+    }
+}
+
+async fn package_pull_outcome_command(
+    m: &impl model::QuiltModel,
+    watcher: &Watcher,
+    namespace: &str,
+) -> Result<quilt::flow::PullPreview, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let installed = installed_package(m, &namespace).await?;
+    // On the lock, as a pull runs: a hand-pressed pull records its conflict
+    // under it (`pause_on_conflict`), so taking a conflict back under it too
+    // cannot undo one recorded after this verdict was reached.
+    let locked = m.lock_package(&installed).await?;
+    let preview = m.locked_package_pull_outcome(&locked).await?;
+    take_back_conflict(m, watcher, &locked, &namespace, &preview.outcome).await;
+    Ok(preview)
+}
+
+/// A recorded conflict the dry run no longer finds is over: the conflicting
+/// edit was undone, or another process advanced the lineage. Left in place, it
+/// would keep the header on the conflict and offer Publish until some other
+/// action cleared it. Only a conflict, and only on a verdict that is not one.
+async fn take_back_conflict<M: model::QuiltModel>(
+    m: &M,
+    watcher: &Watcher,
+    locked: &M::Locked,
+    namespace: &quilt_uri::Namespace,
+    outcome: &quilt::flow::PullOutcome,
+) {
+    if matches!(outcome, quilt::flow::PullOutcome::Blocked { .. }) {
+        return;
+    }
+    if !matches!(
+        watcher.paused_reason(namespace).await,
+        Some(PausedReason::PullConflict(_))
+    ) {
+        return;
+    }
+    // The observation the announcement carries, so a page listing packages
+    // shows the state the package is really in. Without it the clear could
+    // not be announced, and an open page would keep offering Publish for a
+    // conflict already dropped; so the pause stays for the next dry run.
+    let status = match m.locked_package_status(locked, None).await {
+        Ok(status) => status,
+        Err(err) => {
+            tracing::warn!(
+                "pull dry run: could not read {namespace}'s status, keeping its recorded conflict: {err}"
+            );
+            return;
+        }
+    };
+    watcher.clear_pull_conflict(namespace, &status).await;
+}
+
+/// Dry-run classifier for the two-phase Pull affordance: what would
+/// [`package_pull`] do right now? The UI renders the behind-status banner
+/// immediately from local data, then calls this to fill in the Pull button's
+/// enabled state and copy once `latest` is cached. `PullOutcome` derives
+/// `Serialize`, so it crosses the Tauri boundary directly.
+///
+/// A verdict that is not a conflict also takes back a recorded pull-conflict
+/// pause, and announces it (see [`Watcher::clear_pull_conflict`]).
+#[tauri::command]
+pub async fn package_pull_outcome(
+    m: tauri::State<'_, model::Model>,
+    watcher: tauri::State<'_, Watcher>,
+    namespace: String,
+) -> Result<quilt::flow::PullPreview, String> {
+    package_pull_outcome_command(&*m, &watcher, &namespace)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn package_uninstall_command(
+    m: &model::Model,
+    namespace: &str,
+    prune: bool,
+) -> Result<Option<quilt::flow::Pruned>, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    model::package_uninstall(m, namespace, prune).await
+}
+
+/// Remove a package; with `prune`, also delete its downloaded files that no
+/// other package uses.
+///
+/// What the prune freed goes to the toast stack, not the returned line: the
+/// v2 page that confirms it returns to the package list on success, and only
+/// the stack outlives that.
+#[tauri::command]
+pub async fn package_uninstall(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    toasts: tauri::State<'_, ToastCenter>,
+    namespace: String,
+    uri: Option<S3PackageUri>,
+    prune: bool,
+) -> Result<String, String> {
+    let msg_init = format!("Uninstalling package {namespace}");
+    let msg_ok = format!("Successfully uninstalled package {namespace}");
+    let msg_err = |err: &Error| format!("Failed to uninstall package: {err}");
+
+    let (result, toast) = settle_uninstall(
+        &namespace,
+        package_uninstall_command(&m, &namespace, prune).await,
+    );
+    if let Some(toast) = toast {
+        toasts.post(toast).await;
+    }
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackageUninstalled(PackageEvent::for_uri(uri.as_ref())),
+        )
+        .map(result, msg_ok, msg_err)
+}
+
+/// Split an uninstall's answer into the command's result and the toast it
+/// posts.
+///
+/// A prune that fails after the uninstall is not a failed uninstall: the
+/// package is gone, so the command succeeds and the page moves on, and the
+/// toast says what was left behind. Answering an error would leave the v2
+/// page's confirmation open on a package that no longer exists.
+fn settle_uninstall(
+    namespace: &str,
+    result: Result<Option<quilt::flow::Pruned>, Error>,
+) -> (Result<(), Error>, Option<crate::engine::toast::ToastDraft>) {
+    match result {
+        Ok(pruned) => (Ok(()), pruned.map(|p| pruned_toast(namespace, &p))),
+        Err(Error::Quilt(err @ quilt::Error::PruneFailed(..))) => {
+            tracing::warn!("{err}");
+            let toast = crate::engine::toast::ToastDraft {
+                kind: crate::engine::toast::ToastKind::Warning,
+                title: Some(namespace.to_string()),
+                body: format!("{err}."),
+                groups: Vec::new(),
+                timeout_ms: None,
+            };
+            (Ok(()), Some(toast))
+        }
+        Err(err) => (Err(err), None),
+    }
+}
+
+/// The toast saying what removing `namespace` freed, in gc's sentence, or
+/// which busy package kept its files.
+fn pruned_toast(namespace: &str, pruned: &quilt::flow::Pruned) -> crate::engine::toast::ToastDraft {
+    let kind = match pruned {
+        quilt::flow::Pruned::Freed(_) => crate::engine::toast::ToastKind::Success,
+        quilt::flow::Pruned::Busy(_) => crate::engine::toast::ToastKind::Info,
+    };
+    crate::engine::toast::ToastDraft {
+        kind,
+        title: Some(namespace.to_string()),
+        body: format!("Removed. {pruned}."),
+        groups: Vec::new(),
+        timeout_ms: None,
+    }
+}
+
+/// Step the package back to the revision before its newest local commit.
+///
+/// Not `reset_local`, which is this operation's inverse: that one throws local
+/// work away against the *remote's* latest, and this one walks the pending
+/// commit chain back by one. A package with a remote has no chain — pushing
+/// consumes it — so the engine refuses there, which is why the surface
+/// offering this gates on the package having none.
+#[tauri::command]
+pub async fn undo_commit(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+) -> Result<String, String> {
+    let namespace =
+        quilt_uri::Namespace::try_from(namespace.as_str()).map_err(|e| e.to_string())?;
+    let msg_init = format!("Undoing the last revision of {namespace}");
+    let msg_ok = format!("Undid the last revision of {namespace}");
+    let msg_err = |err: &Error| format!("Failed to undo the last revision: {err}");
+
+    Notify::new(msg_init).map(
+        model::package_undo_commit(&*m, &namespace).await,
+        msg_ok,
+        msg_err,
+    )
+}
+
+/// Typed response for the `set_remote` command. `resolution_warning` is
+/// `Some(reason)` when the remote was set but the bucket's default workflow
+/// could not be resolved (best-effort path) — the UI raises a warning notice
+/// rather than a plain success. A typed struct keeps the Tauri boundary
+/// self-describing instead of overloading the success string.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetRemoteResponse {
+    pub message: String,
+    pub resolution_warning: Option<String>,
+}
+
+/// The catalog field is optional: left blank, the remote has no host.
+fn remote_origin(origin: &str) -> Result<Option<Host>, Error> {
+    let origin = origin.trim();
+    if origin.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(Host::from_str(origin)?))
+}
+
+async fn set_remote_command(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+    origin: &str,
+    bucket: &str,
+    workflow: WorkflowIntent,
+) -> Result<(quilt_uri::Namespace, Option<String>), Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let origin = remote_origin(origin)?;
+    let warning = model::set_remote(m, &namespace, origin, bucket.to_string(), workflow).await?;
+    Ok((namespace, warning))
+}
+
+/// What the reader is told when the remote was not set. Names the bucket
+/// because this is drawn inside the dialog, above the field they are about to
+/// edit — a sentence that named nothing would read as a verdict on what they
+/// just typed.
+fn set_remote_refusal(bucket: &str, err: &Error) -> String {
+    format!("Could not set the remote to {bucket}: {err}")
+}
+
+#[tauri::command]
+pub async fn set_remote(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    watcher: tauri::State<'_, Watcher>,
+    namespace: String,
+    origin: String,
+    bucket: String,
+    workflow: WorkflowIntent,
+) -> Result<SetRemoteResponse, String> {
+    // The origin is this command's own argument: the remote being set.
+    let origin_host = remote_origin(&origin).ok().flatten();
+    // `Notify::new` logs the init line; on success/failure we log explicitly so
+    // the success payload can be the typed struct rather than a bare string.
+    Notify::new(format!("Setting remote for {namespace}"));
+    match set_remote_command(&*m, &namespace, &origin, &bucket, workflow).await {
+        Ok((ns, resolution_warning)) => {
+            // Reported here rather than through `Notify::on_success`, because this
+            // command returns a typed payload and so does not route its outcome
+            // through `map`. Same rule, hand-applied: the success arm only.
+            tracing.track(MixpanelEvent::RemoteSet(RemotePackageEvent::for_host(
+                origin_host,
+            )));
+            watcher.clear_paused(&ns).await;
+            let message = format!("Successfully set remote for {namespace}");
+            ::tracing::debug!("{message}");
+            Ok(SetRemoteResponse {
+                message,
+                resolution_warning,
+            })
+        }
+        Err(err) => {
+            let msg = set_remote_refusal(&bucket, &err);
+            ::tracing::error!("{msg}");
+            Err(msg)
+        }
+    }
+}
+
+async fn change_catalog_command(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+    origin: &str,
+) -> Result<quilt_uri::Namespace, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let origin = remote_origin(origin)?;
+    model::change_catalog(m, &namespace, origin).await?;
+    Ok(namespace)
+}
+
+/// Add, change or remove the catalog of a package's remote, also once it is
+/// published. A blank catalog removes it. Its bucket, hash and commits stay.
+#[tauri::command]
+pub async fn change_catalog(
+    m: tauri::State<'_, model::Model>,
+    watcher: tauri::State<'_, Watcher>,
+    namespace: String,
+    origin: String,
+) -> Result<String, String> {
+    Notify::new(format!("Changing the catalog of {namespace}"));
+    match change_catalog_command(&*m, &namespace, &origin).await {
+        Ok(ns) => {
+            // What the old catalog refused is not the new one's.
+            watcher.forget_catalog(&ns).await;
+            let message = format!("Changed the catalog of {namespace}");
+            ::tracing::debug!("{message}");
+            Ok(message)
+        }
+        Err(err) => {
+            let msg = format!("Could not change the catalog: {err}");
+            ::tracing::error!("{msg}");
+            Err(msg)
+        }
+    }
+}
+
+/// A typed name must be one quilt3 accepts: `prefix/name`, each part made of
+/// `_`, `-` and what Python's `str.isalnum()` takes, which is quilt3's `\w`.
+/// Only here, where a reader types it: `Namespace` parses names from remotes
+/// and installs too, and refusing one of those would hide a package the
+/// reader already has.
+fn check_new_name(namespace: &str) -> Result<(), Error> {
+    let part_ok = |part: &str| !part.is_empty() && part.chars().all(name_char);
+    match namespace.split_once('/') {
+        Some((prefix, name)) if part_ok(prefix) && part_ok(name) => Ok(()),
+        _ => Err(Error::PackageName(namespace.to_string())),
+    }
+}
+
+/// Letters and numbers by general category, as Python reads them. Not
+/// `char::is_alphanumeric`: it also takes combining vowel signs, such as
+/// Devanagari's, which Python's `\w` refuses.
+fn name_char(c: char) -> bool {
+    use unicode_general_category::{GeneralCategory as G, get_general_category};
+    c == '_'
+        || c == '-'
+        || matches!(
+            get_general_category(c),
+            G::UppercaseLetter
+                | G::LowercaseLetter
+                | G::TitlecaseLetter
+                | G::ModifierLetter
+                | G::OtherLetter
+                | G::DecimalNumber
+                | G::LetterNumber
+                | G::OtherNumber
+        )
+}
+
+async fn package_create_command(
+    m: &impl QuiltModel,
+    namespace: &str,
+    source: Option<String>,
+    message: Option<String>,
+) -> Result<quilt::flow::LeftOut, Error> {
+    check_new_name(namespace)?;
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let source = source.map(PathBuf::from);
+    let (_, left_out) = model::package_create(m, namespace, source, message).await?;
+    Ok(left_out)
+}
+
+/// The toast saying what the ignore rules kept out of a package created from
+/// a folder; `None` when they kept nothing out.
+fn left_out_toast(
+    namespace: &str,
+    left_out: &quilt::flow::LeftOut,
+) -> Option<crate::engine::toast::ToastDraft> {
+    (!left_out.is_empty()).then(|| crate::engine::toast::ToastDraft {
+        kind: crate::engine::toast::ToastKind::Info,
+        title: Some(namespace.to_string()),
+        body: format!("{left_out}."),
+        groups: Vec::new(),
+        timeout_ms: None,
+    })
+}
+
+/// Create a package, from a folder when `source` is given.
+///
+/// What the ignore rules left out goes to the toast stack: the v2 dialog
+/// closes on success, and only the stack outlives it.
+#[tauri::command]
+pub async fn package_create(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    toasts: tauri::State<'_, ToastCenter>,
+    namespace: String,
+    source: Option<String>,
+    message: Option<String>,
+) -> Result<String, String> {
+    // A package created here has no remote yet, so it belongs to no deployment.
+    let msg_init = format!("Creating package {namespace}");
+    let msg_ok = format!("Successfully created package {namespace}");
+    // `user_facing`, not `{err}`: the message is shown in the open `Create
+    // package` dialog, where a "Quilt error:" prefix adds nothing. The "Failed to
+    // create package:" prefix stays, because the same string is the log line,
+    // where it is the only context.
+    let msg_err = |err: &Error| format!("Failed to create package: {}", err.user_facing());
+
+    let notify = Notify::new(msg_init).on_success(
+        &tracing,
+        MixpanelEvent::PackageCreated(PackageEvent::hostless()),
+    );
+    let result = package_create_command(m.inner(), &namespace, source, message).await;
+    if let Some(toast) = result
+        .as_ref()
+        .ok()
+        .and_then(|left_out| left_out_toast(&namespace, left_out))
+    {
+        toasts.post(toast).await;
+    }
+    notify.map(result, msg_ok, msg_err)
+}
+
+async fn package_install_paths_command(
+    m: &model::Model,
+    uri: &str,
+    paths: &[String],
+) -> Result<quilt::flow::InstallPathsReport, Error> {
+    let uri = quilt_uri::S3PackageUri::try_from(uri)?;
+    let paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    model::install_paths_only(m, &uri.namespace, paths).await
+}
+
+/// Returns the notice the page shows. A path the remote no longer holds the
+/// bytes for, or whose bytes do not match the package's hash, is skipped and
+/// counted in it, not an error for the whole call.
+#[tauri::command]
+pub async fn package_install_paths(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    uri: String,
+    paths: Vec<String>,
+) -> Result<String, String> {
+    // Installing names its package by URI, so the catalog is already in hand.
+    let target = S3PackageUri::try_from(uri.as_str()).ok();
+    let msg_init = format!("Installing paths from {uri}");
+    let msg_err = |err: &Error| format!("Failed to install paths: {}", err.user_facing());
+
+    let result = package_install_paths_command(&m, &uri, &paths).await;
+    let msg_ok = match &result {
+        Ok(report) if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() => {
+            let listed = |paths: &[PathBuf]| {
+                paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let left = report.skipped.len() + report.hash_mismatch.len();
+            let mut said = vec![format!(
+                "Installed {} of {} paths",
+                paths.len() - left,
+                paths.len()
+            )];
+            if !report.skipped.is_empty() {
+                said.push(format!(
+                    "skipped {} no longer on the remote: {}",
+                    report.skipped.len(),
+                    listed(&report.skipped)
+                ));
+            }
+            if !report.hash_mismatch.is_empty() {
+                said.push(format!(
+                    "skipped {} whose hash doesn't match the package: {}",
+                    report.hash_mismatch.len(),
+                    listed(&report.hash_mismatch)
+                ));
+            }
+            said.join("; ")
+        }
+        _ => format!("Successfully installed {} paths", paths.len()),
+    };
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::PackageInstalled(RemotePackageEvent::for_uri(target.as_ref())),
+        )
+        .map(result, msg_ok, msg_err)
+}
+
+async fn add_to_quiltignore_command(
+    m: &model::Model,
+    namespace: &str,
+    pattern: &str,
+) -> Result<(), Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let package_home = m.package_home(&namespace).await?;
+    // Take only the first line to prevent injecting multiple rules
+    let pattern = pattern.lines().next().unwrap_or(pattern);
+    quilt::quiltignore::append_lines(&package_home.join(".quiltignore"), &[pattern.to_string()])?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn add_to_quiltignore(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    namespace: String,
+    pattern: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    let msg_init = format!("Adding {pattern} to .quiltignore");
+    let msg_ok = format!("Added {pattern} to .quiltignore");
+    let msg_err = |err: &Error| format!("Failed to update .quiltignore: {err}");
+
+    Notify::new(msg_init)
+        .on_success(
+            &tracing,
+            MixpanelEvent::QuiltignorePatternAdded(PackageEvent::for_uri(uri.as_ref())),
+        )
+        .map(
+            add_to_quiltignore_command(&m, &namespace, &pattern).await,
+            msg_ok,
+            msg_err,
+        )
+}
+
+/// What *Stop ignoring* writes in one scope, and what the next sync adds.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopePreview {
+    /// The `!` lines, outermost first.
+    pub lines: Vec<String>,
+    pub files: u64,
+    pub bytes: u64,
+}
+
+impl From<quilt::flow::StopIgnoring> for ScopePreview {
+    fn from(s: quilt::flow::StopIgnoring) -> Self {
+        Self {
+            lines: s.lines,
+            files: s.files,
+            bytes: s.bytes,
+        }
+    }
+}
+
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StopIgnoringPreview {
+    pub this_package: ScopePreview,
+    /// `None` when a rule in the package's own `.quiltignore` hides the path,
+    /// which no user-wide line can bring back.
+    pub all_packages: Option<ScopePreview>,
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StopIgnoringScope {
+    ThisPackage,
+    AllPackages,
+}
+
+impl From<StopIgnoringScope> for quilt::quiltignore::Scope {
+    fn from(scope: StopIgnoringScope) -> Self {
+        match scope {
+            StopIgnoringScope::ThisPackage => Self::Package,
+            StopIgnoringScope::AllPackages => Self::AllPackages,
+        }
+    }
+}
+
+/// How the popup names a path: a folder with a trailing `/`.
+fn shown_path(path: &str, folder: bool) -> String {
+    if folder {
+        format!("{path}/")
+    } else {
+        path.to_string()
+    }
+}
+
+async fn stop_ignoring_preview_command(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+    path: &str,
+    folder: bool,
+) -> Result<StopIgnoringPreview, Error> {
+    use quilt::quiltignore::Scope;
+
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let installed = installed_package(m, &namespace).await?;
+    let path = PathBuf::from(path);
+    let (this_package, all_packages) = tokio::join!(
+        installed.preview_stop_ignoring(&path, folder, Scope::Package),
+        installed.preview_stop_ignoring(&path, folder, Scope::AllPackages),
+    );
+    let this_package = this_package?.ok_or_else(|| {
+        Error::General(format!(
+            "This package cannot stop ignoring {}",
+            path.display()
+        ))
+    })?;
+    Ok(StopIgnoringPreview {
+        this_package: this_package.into(),
+        all_packages: all_packages?.map(ScopePreview::from),
+    })
+}
+
+#[tauri::command]
+pub async fn stop_ignoring_preview(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+    path: String,
+    folder: bool,
+) -> Result<StopIgnoringPreview, String> {
+    Box::pin(stop_ignoring_preview_command(
+        &*m, &namespace, &path, folder,
+    ))
+    .await
+    .map_err(|err| match err {
+        Error::General(msg) => msg,
+        err => format!("Could not count the files to add: {err}"),
+    })
+}
+
+async fn stop_ignoring_command(
+    m: &impl model::QuiltModel,
+    namespace: &str,
+    path: &str,
+    folder: bool,
+    scope: StopIgnoringScope,
+) -> Result<Option<Vec<String>>, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    let installed = installed_package(m, &namespace).await?;
+    Ok(installed
+        .stop_ignoring(&PathBuf::from(path), folder, scope.into())
+        .await?)
+}
+
+#[tauri::command]
+pub async fn stop_ignoring(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    namespace: String,
+    path: String,
+    folder: bool,
+    scope: StopIgnoringScope,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    let shown = shown_path(&path, folder);
+    let notify = Notify::new(format!("Stop ignoring {shown} ({scope:?})")).on_success(
+        &tracing,
+        MixpanelEvent::QuiltignorePatternAdded(PackageEvent::for_uri(uri.as_ref())),
+    );
+    let result = stop_ignoring_command(&*m, &namespace, &path, folder, scope).await;
+    let msg_ok = match (&result, scope) {
+        (Ok(Some(lines)), _) if lines.is_empty() => format!("{shown} is no longer ignored"),
+        (_, StopIgnoringScope::ThisPackage) => format!("Stopped ignoring {shown} in this package"),
+        (_, StopIgnoringScope::AllPackages) => format!("Stopped ignoring {shown} in all packages"),
+    };
+    let result = result.and_then(|lines| {
+        lines.map(|_| ()).ok_or_else(|| {
+            Error::General(format!(
+                "A rule in this package's .quiltignore hides {shown}; \
+                 stop ignoring it in this package instead."
+            ))
+        })
+    });
+    let msg_err = |err: &Error| match err {
+        Error::General(msg) => msg.clone(),
+        err => format!("Failed to stop ignoring {shown}: {err}"),
+    };
+    notify.map(result, msg_ok, msg_err)
+}
+
+#[tauri::command]
+pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<bool, String> {
+    Ok(quilt::junk::pattern_matches(&pattern, &path))
+}
+
+// ── Remote package handling for Leptos UI ──
+
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RemoteBanner {
+    /// A different revision than the one requested by the deep link is
+    /// already installed; the working copy was not switched. Carries the
+    /// requested revision's own remote (bucket + origin) so the UI fetches
+    /// its message from where it actually lives, not from the installed
+    /// package's remote.
+    DifferentVersion {
+        requested_hash: String,
+        requested_bucket: String,
+        requested_origin: Option<Host>,
+        installed_hash: String,
+    },
+    /// The package is installed locally without a remote origin.
+    LocalOnly,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePackageResult {
+    pub namespace: quilt_uri::Namespace,
+    /// `None` when the requested revision was installed/opened normally.
+    pub banner: Option<RemoteBanner>,
+}
+
+fn banner_for_outcome(
+    outcome: &model::InstallOutcome,
+    requested: &quilt_uri::S3PackageUri,
+) -> Option<RemoteBanner> {
+    match outcome {
+        model::InstallOutcome::DifferentVersion {
+            requested_hash,
+            installed_hash,
+        } => Some(RemoteBanner::DifferentVersion {
+            requested_hash: requested_hash.clone(),
+            requested_bucket: requested.bucket.clone(),
+            requested_origin: requested.catalog.clone(),
+            installed_hash: installed_hash.clone(),
+        }),
+        model::InstallOutcome::LocalOnly => Some(RemoteBanner::LocalOnly),
+        model::InstallOutcome::Installed => None,
+    }
+}
+
+#[tauri::command]
+pub async fn handle_remote_package(
+    m: tauri::State<'_, model::Model>,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+    uri: String,
+) -> Result<RemotePackageResult, String> {
+    let s3_uri: quilt_uri::S3PackageUri = uri
+        .parse()
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+    let namespace = s3_uri.namespace.clone();
+    let _ = &tracing;
+
+    let outcome = model::install_package_only(&*m, &s3_uri)
+        .await
+        .map_err(|e| e.to_frontend_string())?;
+
+    // Preserve the Installed side effect: if the URI names a path, install
+    // it and open it in the default application.
+    if let model::InstallOutcome::Installed = outcome
+        && let Some(ref path) = s3_uri.path
+    {
+        let installed_package = m
+            .get_installed_package(&s3_uri.namespace)
+            .await
+            .map_err(|e| e.to_frontend_string())?
+            .ok_or_else(|| format!("Package {namespace} is not installed"))?;
+        if !m
+            .is_path_installed(&installed_package, path)
+            .await
+            .map_err(|e| e.to_frontend_string())?
+        {
+            let report = m
+                .package_install_paths(&installed_package, std::slice::from_ref(path))
+                .await
+                .map_err(|e| e.to_frontend_string())?;
+            // One path asked for, so leaving it out leaves nothing to open.
+            let left_out = if !report.hash_mismatch.is_empty() {
+                Some(quilt::InstallPathError::HashMismatch(path.clone()))
+            } else if !report.skipped.is_empty() {
+                Some(quilt::InstallPathError::ContentMismatch(path.clone()))
+            } else {
+                None
+            };
+            if let Some(err) = left_out {
+                return Err(Error::from(quilt::Error::InstallPath(err)).to_frontend_string());
+            }
+        }
+        m.open_in_default_application(&s3_uri.namespace, path)
+            .await
+            .map_err(|e| e.to_frontend_string())?;
+    }
+
+    Ok(RemotePackageResult {
+        namespace,
+        banner: banner_for_outcome(&outcome, &s3_uri),
+    })
+}
+
+/// Fetch a requested revision's manifest commit message by top-hash, without
+/// installing it. Lazily backs Phase 2 of the version-mismatch banner: the
+/// banner shows immediately with hashes, then the UI calls this to fill in
+/// the requested side's message once it resolves.
+#[tauri::command]
+pub async fn get_revision_message(
+    m: tauri::State<'_, model::Model>,
+    bucket: String,
+    namespace: String,
+    hash: String,
+    catalog: Option<String>,
+) -> Result<Option<String>, String> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+    let origin = catalog
+        .map(|c| Host::from_str(&c))
+        .transpose()
+        .map_err(|e: quilt_uri::UriError| e.to_string())?;
+    let manifest_uri = quilt_uri::ManifestUri {
+        origin,
+        bucket,
+        namespace,
+        hash,
+    };
+    model::revision_message(&*m, manifest_uri)
+        .await
+        .map_err(|e| e.to_frontend_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use quilt_uri::fixtures;
+    use std::sync::Arc;
+
+    /// A Keeping choice names the stored scope; folders keep the library's rule.
+    #[test]
+    fn a_keeping_choice_names_the_stored_scope() {
+        use super::{KeepingScope, SyncScope};
+        let folders = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            super::sync_scope(KeepingScope::EntirePackage, folders(&["ignored"])),
+            Ok(SyncScope::EntirePackage)
+        );
+        assert_eq!(
+            super::sync_scope(KeepingScope::Folders, folders(&["./results/", "data/raw"])),
+            Ok(SyncScope::Folders(folders(&["data/raw", "results"])))
+        );
+        assert_eq!(
+            super::sync_scope(KeepingScope::Folders, folders(&["."])),
+            Ok(SyncScope::EntirePackage)
+        );
+        assert!(super::sync_scope(KeepingScope::Folders, folders(&["data/../x"])).is_err());
+    }
+
+    use crate::engine::Error;
+    use crate::engine::autopull::PausedReason;
+    use crate::engine::autopull::Watcher;
+    use crate::engine::autopull::reporter::LogReporter;
+    use crate::engine::autopull::reporter::test_support::RecordingReporter;
+    use crate::engine::model::MockQuiltModel;
+    use crate::engine::quilt;
+
+    /// A typed name quilt3 would refuse never reaches the model.
+    #[tokio::test]
+    async fn create_refuses_a_name_quilt3_would_refuse() {
+        for name in [
+            "team/a%41",
+            "team/a b",
+            "team/a.b",
+            "team",
+            "team/",
+            "a/b/c",
+            // A combining vowel sign: `char::is_alphanumeric` takes it, quilt3 does not.
+            "team/\u{915}\u{93f}",
+        ] {
+            let model = MockQuiltModel::new();
+            let err = super::package_create_command(&model, name, None, None)
+                .await
+                .expect_err(name);
+            assert!(matches!(err, Error::PackageName(_)), "{name}: {err}");
+            assert_eq!(
+                err.user_facing(),
+                format!(
+                    "Package name must be prefix/name, using only letters, digits, _ and -; got: {name}"
+                )
+            );
+        }
+    }
+
+    /// quilt3's `\w` is Unicode, so a name in any script is a name.
+    #[tokio::test]
+    async fn create_takes_a_name_quilt3_takes() {
+        for name in ["team/plate-07_B", "team/données", "チーム/データ"] {
+            let mut model = MockQuiltModel::new();
+            let expected = name.to_string();
+            model
+                .expect_package_create()
+                .withf(move |ns, _, _| ns.to_string() == expected)
+                .times(1)
+                .returning(|_, _, _| Err(Error::General("stop here".to_string())));
+            let err = super::package_create_command(&model, name, None, None)
+                .await
+                .expect_err("the mock stops it");
+            assert!(matches!(err, Error::General(_)), "{name}: {err}");
+        }
+    }
+
+    /// The error S3 returns when the active role cannot write a bucket. The
+    /// upload path types the `AccessDenied` code distinctly instead of
+    /// folding it into a generic put failure, which is what lets the push
+    /// message tell a role problem apart from a broken upload.
+    fn access_denied_error() -> Error {
+        Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::AccessDenied("s3://locked/x".to_string()),
+        )))
+    }
+
+    /// A certify installs no revision, so its success must lift the tick's
+    /// diverged pause itself, as reset does; otherwise autosync stays stopped.
+    #[tokio::test]
+    async fn certifying_resumes_a_diverged_pause() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let watcher = certify_watcher(&ns).await;
+        let mut model = installed_model();
+        model
+            .expect_package_revision_certify_latest()
+            .times(1)
+            .returning(|_| {
+                Ok(quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                })
+            });
+
+        super::certify_and_resume(&model, &watcher, "acme/demo")
+            .await
+            .expect("certify");
+
+        assert_eq!(watcher.paused_reason(&ns).await, None);
+    }
+
+    /// A refused certify changed nothing, so the package is still diverged.
+    #[tokio::test]
+    async fn a_refused_certify_leaves_the_pause() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let watcher = certify_watcher(&ns).await;
+        let mut model = installed_model();
+        model
+            .expect_package_revision_certify_latest()
+            .times(1)
+            .returning(|_| Err(access_denied_error()));
+
+        assert!(
+            super::certify_and_resume(&model, &watcher, "acme/demo")
+                .await
+                .is_err()
+        );
+
+        assert_eq!(
+            watcher.paused_reason(&ns).await,
+            Some(PausedReason::Diverged)
+        );
+    }
+
+    async fn certify_watcher(ns: &quilt_uri::Namespace) -> Watcher {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        watcher
+            .pause_for_test(ns.clone(), PausedReason::Diverged)
+            .await;
+        watcher
+    }
+
+    /// Start `write` while another writer holds the package's lock, and
+    /// assert it waits without reporting an apply: it has written nothing yet,
+    /// so quitting then loses nothing and must not ask. Then let the other
+    /// writer go and let `write` finish, whatever it returns.
+    async fn assert_nothing_applies_while_another_writer_holds<T>(
+        watcher: &Watcher,
+        package: &quilt::InstalledPackage,
+        write: impl std::future::Future<Output = T>,
+    ) {
+        // Another writer of the package, the `quilt` CLI say, holds its lock.
+        let other_writer = package.lock().await.expect("lock");
+        let mut write = std::pin::pin!(write);
+        let early = tokio::time::timeout(std::time::Duration::from_millis(200), &mut write).await;
+        assert!(early.is_err(), "the write waits for the other writer");
+        assert!(
+            !watcher.inner_for_test().aggregator.apply_in_progress(),
+            "nothing is applying while the write waits for the lock"
+        );
+
+        drop(other_writer);
+        tokio::time::timeout(std::time::Duration::from_secs(5), write)
+            .await
+            .expect("the write runs once the other writer lets go");
+    }
+
+    async fn created_package(
+        dir: &tempfile::TempDir,
+    ) -> (crate::engine::model::Model, quilt::InstalledPackage) {
+        use crate::engine::model::QuiltModel;
+        let model = crate::engine::model::Model::create(dir.path());
+        model.set_home(dir.path().join("home")).await.expect("home");
+        let (package, _) = model
+            .package_create(("acme", "demo").into(), None, None)
+            .await
+            .expect("create");
+        (model, package)
+    }
+
+    /// The Pull button takes the package's lock with the flag still down,
+    /// then pulls with the flag up and the scope the package stores.
+    #[tokio::test]
+    async fn a_pull_raises_the_apply_flag_once_it_holds_the_lock() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let aggregator = watcher.inner_for_test().aggregator.clone();
+        let locking = aggregator.clone();
+        let mut model = installed_model();
+        model.expect_get_installed_package_lineage().returning(|_| {
+            Ok(quilt::lineage::PackageLineage {
+                sync_scope: quilt::lineage::SyncScope::EntirePackage,
+                ..Default::default()
+            })
+        });
+        model.expect_lock_package().times(1).returning(move |p| {
+            assert!(!locking.apply_in_progress(), "down while taking the lock");
+            Ok(p.namespace.clone())
+        });
+        model
+            .expect_locked_package_pull()
+            .withf(|_, _, scope| *scope == quilt::lineage::SyncScope::EntirePackage)
+            .times(1)
+            .returning(move |_, _, _| {
+                assert!(aggregator.apply_in_progress(), "up while pulling");
+                Ok(quilt::flow::Pulled::Applied(quilt::flow::PullReport {
+                    manifest_uri: quilt_uri::ManifestUri {
+                        bucket: "bucket".to_string(),
+                        namespace: ("acme", "demo").into(),
+                        hash: "h1".to_string(),
+                        origin: None,
+                    },
+                    added: Vec::new(),
+                    added_not_fetched: Vec::new(),
+                    updated: Vec::new(),
+                    removed: Vec::new(),
+                    message: None,
+                }))
+            });
+
+        super::package_pull_command(&model, &watcher, "acme/demo")
+            .await
+            .expect("pull");
+
+        assert!(
+            !watcher.inner_for_test().aggregator.apply_in_progress(),
+            "and down again once it returns"
+        );
+    }
+
+    /// A model whose pull fails with `error`, for a package published to a
+    /// known deployment.
+    fn failing_pull_model(error: impl Fn() -> Error + Send + Sync + 'static) -> MockQuiltModel {
+        failing_pull_model_on(Some(fixtures::host()), error)
+    }
+
+    /// [`failing_pull_model`] for a package whose remote has `origin`.
+    fn failing_pull_model_on(
+        origin: Option<quilt_uri::Host>,
+        error: impl Fn() -> Error + Send + Sync + 'static,
+    ) -> MockQuiltModel {
+        let mut model = installed_model();
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    quilt_uri::ManifestUri {
+                        bucket: "bucket".to_string(),
+                        namespace: ("acme", "demo").into(),
+                        hash: "h0".to_string(),
+                        origin: origin.clone(),
+                    },
+                    "h1".to_string(),
+                ))
+            });
+        model
+            .expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        model
+            .expect_locked_package_pull()
+            .times(1)
+            .returning(move |_, _, _| Err(error()));
+        model
+    }
+
+    fn pull_conflict_error() -> Error {
+        Error::Quilt(quilt::Error::PackageOp(
+            quilt::PackageOpError::PullConflict(vec![
+                std::path::PathBuf::from("a.csv"),
+                std::path::PathBuf::from("b.csv"),
+            ]),
+        ))
+    }
+
+    /// A Get latest the engine refused for a conflict pauses the package the
+    /// way the tick does, so the header turns to the conflict at once instead
+    /// of offering the same refused pull until the next tick.
+    #[tokio::test]
+    async fn a_pull_refused_by_a_conflict_pauses_the_package() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let model = failing_pull_model(pull_conflict_error);
+
+        let err = super::package_pull_command(&model, &watcher, "acme/demo")
+            .await
+            .expect_err("a conflict refuses the pull");
+        assert!(
+            matches!(
+                err,
+                Error::Quilt(quilt::Error::PackageOp(
+                    quilt::PackageOpError::PullConflict(_)
+                ))
+            ),
+            "the refusal still reaches the caller: {err:?}"
+        );
+
+        let reason = PausedReason::PullConflict(vec!["a.csv".to_string(), "b.csv".to_string()]);
+        assert_eq!(watcher.paused_reason(&ns).await, Some(reason.clone()));
+        assert_eq!(
+            crate::engine::commands::main_page::conflict_files(watcher.paused_reason(&ns).await.as_ref()),
+            Some(vec!["a.csv".to_string(), "b.csv".to_string()]),
+            "the page reads the pause as the conflict state"
+        );
+        // Announced as the tick announces it: the `autosync-paused` event,
+        // attributed to the package's own deployment.
+        assert_eq!(*reporter.paused.lock().unwrap(), vec![(ns, reason)]);
+        assert_eq!(
+            *reporter.hosts.lock().unwrap(),
+            vec![Some(fixtures::host())]
+        );
+    }
+
+    /// A package with a bucket and no catalog is paused too, with no host, so
+    /// its header stops offering the refused pull.
+    #[tokio::test]
+    async fn a_pull_refused_by_a_conflict_pauses_a_package_without_a_catalog() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let model = failing_pull_model_on(None, pull_conflict_error);
+
+        super::package_pull_command(&model, &watcher, "acme/demo")
+            .await
+            .expect_err("a conflict refuses the pull");
+
+        let reason = PausedReason::PullConflict(vec!["a.csv".to_string(), "b.csv".to_string()]);
+        assert_eq!(watcher.paused_reason(&ns).await, Some(reason.clone()));
+        assert_eq!(*reporter.paused.lock().unwrap(), vec![(ns, reason)]);
+        assert_eq!(*reporter.hosts.lock().unwrap(), vec![None]);
+    }
+
+    /// Any other refusal leaves the pause map alone: only a conflict has a
+    /// state of its own the header would otherwise miss.
+    #[tokio::test]
+    async fn a_pull_refused_for_another_reason_pauses_nothing() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let model = failing_pull_model(access_denied_error);
+
+        assert!(
+            super::package_pull_command(&model, &watcher, "acme/demo")
+                .await
+                .is_err()
+        );
+
+        assert_eq!(watcher.paused_reason(&ns).await, None);
+        assert!(reporter.paused.lock().unwrap().is_empty());
+    }
+
+    struct ToastCollector(Arc<std::sync::Mutex<Vec<crate::engine::toast::Toast>>>);
+
+    impl crate::engine::toast::ToastEmitter for ToastCollector {
+        fn emit(&self, toast: &crate::engine::toast::Toast) {
+            self.0.lock().unwrap().push(toast.clone());
+        }
+    }
+
+    /// Another pull got there first: the button says so, with no toast and
+    /// no pull event.
+    #[tokio::test]
+    async fn a_pull_that_finds_nothing_to_do_says_so_and_reports_nothing() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::engine::telemetry::Telemetry::default();
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let toasts = super::ToastCenter::new(Box::new(ToastCollector(Arc::clone(&seen))));
+        let mut model = installed_model();
+        model
+            .expect_get_installed_package_lineage()
+            .returning(|_| Ok(quilt::lineage::PackageLineage::default()));
+        model
+            .expect_lock_package()
+            .returning(|p| Ok(p.namespace.clone()));
+        model
+            .expect_locked_package_pull()
+            .times(1)
+            .returning(|_, _, _| Ok(quilt::flow::Pulled::UpToDate));
+
+        let said =
+            super::pull_and_report(&model, &telemetry, &watcher, &toasts, "acme/demo", None).await;
+
+        assert_eq!(
+            said,
+            Ok("Package acme/demo is already up to date".to_string())
+        );
+        assert_eq!(seen.lock().unwrap().len(), 0, "no toast");
+        assert_eq!(telemetry.queued_events(), Vec::<String>::new());
+    }
+
+    /// A refused pull still reports the refusal, though an up-to-date one
+    /// reports no event.
+    #[tokio::test]
+    async fn a_refused_pull_reports_the_refusal() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::engine::telemetry::Telemetry::default();
+        let toasts = super::ToastCenter::new(Box::new(ToastCollector(Arc::default())));
+        let model = failing_pull_model(pull_conflict_error);
+
+        super::pull_and_report(&model, &telemetry, &watcher, &toasts, "acme/demo", None)
+            .await
+            .expect_err("a conflict refuses the pull");
+
+        assert_eq!(telemetry.queued_events(), vec!["action_refused".to_owned()]);
+    }
+
+    /// The Commit button with nothing to commit says so and sends no event.
+    #[test]
+    fn a_commit_with_nothing_to_commit_says_so_and_reports_nothing() {
+        let telemetry = crate::engine::telemetry::Telemetry::default();
+
+        let said = super::report_commit(
+            &telemetry,
+            "acme/demo",
+            None,
+            Ok(quilt::flow::Committed::NothingToCommit),
+        );
+
+        assert_eq!(
+            said,
+            Ok("Package acme/demo has nothing to commit".to_string())
+        );
+        assert_eq!(telemetry.queued_events(), Vec::<String>::new());
+    }
+
+    /// A commit that records a revision reports it.
+    #[test]
+    fn a_commit_that_records_reports_it() {
+        let telemetry = crate::engine::telemetry::Telemetry::default();
+
+        let said = super::report_commit(
+            &telemetry,
+            "acme/demo",
+            None,
+            Ok(quilt::flow::Committed::Recorded(
+                quilt::lineage::CommitState::default(),
+            )),
+        );
+
+        assert_eq!(said, Ok("Successfully committed acme/demo".to_string()));
+        assert_eq!(
+            telemetry.queued_events(),
+            vec!["package_committed".to_owned()]
+        );
+    }
+
+    /// A refused commit still reports the refusal.
+    #[test]
+    fn a_refused_commit_reports_the_refusal() {
+        let telemetry = crate::engine::telemetry::Telemetry::default();
+
+        super::report_commit(
+            &telemetry,
+            "acme/demo",
+            None,
+            Err(Error::Quilt(quilt::Error::Login(
+                quilt::LoginError::NoSession(None),
+            ))),
+        )
+        .expect_err("a dead session refuses the commit");
+
+        assert_eq!(telemetry.queued_events(), vec!["action_refused".to_owned()]);
+    }
+
+    /// The Publish buttons with nothing to publish: they say so and send no
+    /// event, since nothing was committed or pushed.
+    #[test]
+    fn a_publish_with_nothing_to_publish_says_so_and_reports_nothing() {
+        let telemetry = crate::engine::telemetry::Telemetry::default();
+
+        let said = super::report_publish(
+            &telemetry,
+            "acme/demo",
+            None,
+            Ok((
+                ("acme", "demo").into(),
+                quilt::PublishOutcome::NothingToPublish,
+            )),
+        );
+
+        assert_eq!(
+            said,
+            Ok("Package acme/demo has nothing to publish".to_string())
+        );
+        assert_eq!(telemetry.queued_events(), Vec::<String>::new());
+    }
+
+    /// A publish that commits and pushes still reports all three events.
+    #[test]
+    fn a_publish_that_commits_and_pushes_reports_them() {
+        let telemetry = crate::engine::telemetry::Telemetry::default();
+        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+        let outcome = quilt::PublishOutcome::CommittedAndPushed(quilt::PushOutcome {
+            manifest_uri: quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: namespace.clone(),
+                hash: "h1".to_string(),
+                origin: None,
+            },
+            certified_latest: true,
+        });
+
+        let said = super::report_publish(&telemetry, "acme/demo", None, Ok((namespace, outcome)));
+
+        assert_eq!(
+            said,
+            Ok("Successfully published package acme/demo".to_string())
+        );
+        assert_eq!(
+            telemetry.queued_events(),
+            vec![
+                "package_published".to_owned(),
+                "package_committed".to_owned(),
+                "package_pushed".to_owned()
+            ]
+        );
+    }
+
+    /// A model whose push answers `pushed`.
+    fn push_model(pushed: quilt::Pushed) -> MockQuiltModel {
+        let mut model = installed_model();
+        model
+            .expect_package_push()
+            .times(1)
+            .returning(move |_, _| Ok(pushed.clone()));
+        model
+    }
+
+    /// Another push got there first: the button says so, with no push event.
+    #[tokio::test]
+    async fn a_push_with_nothing_to_push_says_so_and_reports_nothing() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::engine::telemetry::Telemetry::default();
+        let model = push_model(quilt::Pushed::NothingToPush);
+
+        let said = super::push_and_report(&model, &telemetry, &watcher, "acme/demo", None).await;
+
+        assert_eq!(
+            said,
+            Ok("Package acme/demo has nothing to push".to_string())
+        );
+        assert_eq!(telemetry.queued_events(), Vec::<String>::new());
+    }
+
+    /// A push that uploads a revision still reports it.
+    #[tokio::test]
+    async fn a_push_that_uploads_reports_the_push() {
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+        let telemetry = crate::engine::telemetry::Telemetry::default();
+        let model = push_model(quilt::Pushed::Uploaded(quilt::PushOutcome {
+            manifest_uri: quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            },
+            certified_latest: true,
+        }));
+
+        let said = super::push_and_report(&model, &telemetry, &watcher, "acme/demo", None).await;
+
+        assert_eq!(
+            said,
+            Ok("Successfully pushed package acme/demo".to_string())
+        );
+        assert_eq!(telemetry.queued_events(), vec!["package_pushed".to_owned()]);
+    }
+
+    /// A model whose dry run, on the held lock, answers `verdict`, for a
+    /// package that reads as behind with a clean tree.
+    fn dry_run_model(verdict: quilt::flow::PullOutcome) -> MockQuiltModel {
+        let mut model = installed_model();
+        model
+            .expect_lock_package()
+            .times(1)
+            .returning(|p| Ok(p.namespace.clone()));
+        model
+            .expect_locked_package_pull_outcome()
+            .times(1)
+            .returning(move |_| {
+                Ok(quilt::flow::PullPreview {
+                    outcome: verdict.clone(),
+                    added: Vec::new(),
+                    changed: Vec::new(),
+                    removed: Vec::new(),
+                    latest_hash: None,
+                })
+            });
+        model.expect_locked_package_status().returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                quilt::lineage::UpstreamState::Behind,
+                std::collections::BTreeMap::new(),
+            ))
+        });
+        model
+    }
+
+    fn conflict_pause() -> PausedReason {
+        PausedReason::PullConflict(vec!["a.csv".to_string()])
+    }
+
+    /// The status events reported after the first `seen`.
+    fn statuses_since(
+        reporter: &RecordingReporter,
+        seen: usize,
+    ) -> Vec<crate::engine::autopull::reporter::PackageStatusEvent> {
+        reporter.statuses.lock().unwrap()[seen..]
+            .iter()
+            .map(|(_, event)| event.clone())
+            .collect()
+    }
+
+    /// A recorded conflict that the dry run no longer finds — the conflicting
+    /// edit undone, or the lineage advanced by another process — is taken back,
+    /// and the clear announced so an open page re-reads instead of offering
+    /// Publish for a conflict that is gone.
+    #[tokio::test]
+    async fn a_safe_dry_run_takes_back_a_recorded_conflict() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        for verdict in [
+            quilt::flow::PullOutcome::CleanUpdate,
+            quilt::flow::PullOutcome::KeepsLocalChanges {
+                added: Vec::new(),
+                modified: vec![std::path::PathBuf::from("a.csv")],
+                removed: Vec::new(),
+            },
+            quilt::flow::PullOutcome::UpToDate,
+        ] {
+            let reporter = Arc::new(RecordingReporter::default());
+            let watcher = Watcher::new_for_test(reporter.clone());
+            watcher
+                .pause(&ns, Some(&fixtures::host()), conflict_pause())
+                .await;
+            let seen = reporter.statuses.lock().unwrap().len();
+            let model = dry_run_model(verdict.clone());
+
+            let preview = super::package_pull_outcome_command(&model, &watcher, "acme/demo")
+                .await
+                .expect("dry run");
+
+            assert_eq!(preview.outcome, verdict);
+            assert_eq!(watcher.paused_reason(&ns).await, None, "{verdict:?}");
+            let announced = statuses_since(&reporter, seen);
+            assert_eq!(announced.len(), 1, "{verdict:?}: one announcement");
+            let event = &announced[0];
+            assert_eq!(event.namespace, ns);
+            assert_eq!(event.status, "behind");
+            // The pause moved neither the upstream state nor the tree, so the
+            // plain observation would repeat one the page may already have
+            // acted on, and its fingerprint gate would drop the clear.
+            let observed = crate::engine::autopull::reporter::status_fingerprint(
+                &quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::Behind,
+                    std::collections::BTreeMap::new(),
+                ),
+            );
+            assert_ne!(event.fingerprint, observed);
+            assert_ne!(event.fingerprint, "paused;true");
+        }
+    }
+
+    /// Without a status the clear could not be announced, and an open page
+    /// would keep offering Publish for a conflict the backend had dropped. So
+    /// the pause stays, unannounced, for the next dry run to take back.
+    #[tokio::test]
+    async fn a_failed_status_read_keeps_a_recorded_conflict() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        watcher
+            .pause(&ns, Some(&fixtures::host()), conflict_pause())
+            .await;
+        let seen = reporter.statuses.lock().unwrap().len();
+        let mut model = installed_model();
+        model
+            .expect_lock_package()
+            .times(1)
+            .returning(|p| Ok(p.namespace.clone()));
+        model
+            .expect_locked_package_pull_outcome()
+            .times(1)
+            .returning(|_| {
+                Ok(quilt::flow::PullPreview {
+                    outcome: quilt::flow::PullOutcome::CleanUpdate,
+                    added: Vec::new(),
+                    changed: Vec::new(),
+                    removed: Vec::new(),
+                    latest_hash: None,
+                })
+            });
+        model
+            .expect_locked_package_status()
+            .returning(|_, _| Err(Error::General("status unreadable".to_string())));
+
+        super::package_pull_outcome_command(&model, &watcher, "acme/demo")
+            .await
+            .expect("dry run");
+
+        assert_eq!(watcher.paused_reason(&ns).await, Some(conflict_pause()));
+        assert_eq!(statuses_since(&reporter, seen), Vec::new());
+    }
+
+    /// A dry run that still finds the conflict leaves the pause as it is.
+    #[tokio::test]
+    async fn a_blocked_dry_run_keeps_a_recorded_conflict() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        watcher
+            .pause(&ns, Some(&fixtures::host()), conflict_pause())
+            .await;
+        let seen = reporter.statuses.lock().unwrap().len();
+        let model = dry_run_model(quilt::flow::PullOutcome::Blocked {
+            conflicts: vec![std::path::PathBuf::from("a.csv")],
+        });
+
+        super::package_pull_outcome_command(&model, &watcher, "acme/demo")
+            .await
+            .expect("dry run");
+
+        assert_eq!(watcher.paused_reason(&ns).await, Some(conflict_pause()));
+        assert_eq!(statuses_since(&reporter, seen), Vec::new());
+    }
+
+    /// Only a conflict is the dry run's to take back: every other pause has a
+    /// cause the verdict says nothing about.
+    #[tokio::test]
+    async fn a_safe_dry_run_keeps_any_other_pause() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        for reason in [
+            PausedReason::PendingChanges,
+            PausedReason::PendingCommit,
+            PausedReason::Diverged,
+            PausedReason::RoleDenied {
+                role: "reader".to_string(),
+            },
+            PausedReason::Other("workflow rejected".to_string()),
+        ] {
+            let reporter = Arc::new(RecordingReporter::default());
+            let watcher = Watcher::new_for_test(reporter.clone());
+            watcher
+                .pause(&ns, Some(&fixtures::host()), reason.clone())
+                .await;
+            let seen = reporter.statuses.lock().unwrap().len();
+            let model = dry_run_model(quilt::flow::PullOutcome::CleanUpdate);
+
+            super::package_pull_outcome_command(&model, &watcher, "acme/demo")
+                .await
+                .expect("dry run");
+
+            assert_eq!(watcher.paused_reason(&ns).await, Some(reason.clone()));
+            assert_eq!(statuses_since(&reporter, seen), Vec::new(), "{reason:?}");
+        }
+    }
+
+    /// With nothing paused there is nothing to take back or announce.
+    #[tokio::test]
+    async fn a_dry_run_with_no_pause_announces_nothing() {
+        let ns: quilt_uri::Namespace = ("acme", "demo").into();
+        let reporter = Arc::new(RecordingReporter::default());
+        let watcher = Watcher::new_for_test(reporter.clone());
+        let model = dry_run_model(quilt::flow::PullOutcome::CleanUpdate);
+
+        super::package_pull_outcome_command(&model, &watcher, "acme/demo")
+            .await
+            .expect("dry run");
+
+        assert_eq!(watcher.paused_reason(&ns).await, None);
+        assert!(reporter.statuses.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_pull_waiting_for_the_package_lock_reports_nothing_applying() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let (model, package) = created_package(&dir).await;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+
+        assert_nothing_applies_while_another_writer_holds(
+            &watcher,
+            &package,
+            Box::pin(super::package_pull_command(&model, &watcher, "acme/demo")),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_reset_waiting_for_the_package_lock_reports_nothing_applying() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let (model, package) = created_package(&dir).await;
+        let watcher = Watcher::new_for_test(Arc::new(LogReporter));
+
+        assert_nothing_applies_while_another_writer_holds(
+            &watcher,
+            &package,
+            Box::pin(super::reset_local_command(&model, &watcher, "acme/demo")),
+        )
+        .await;
+    }
+
+    /// A model that commits for real and has no remote to push to: a publish
+    /// is its commit. Hand-written rather than mocked, so the lock it takes and
+    /// the tree it walks are the package's own.
+    struct CommitOnlyPublisher {
+        domain: tokio::sync::Mutex<quilt::LocalDomain>,
+    }
+
+    impl CommitOnlyPublisher {
+        async fn created(dir: &tempfile::TempDir) -> (Self, quilt::InstalledPackage) {
+            use crate::engine::model::QuiltModel;
+            let model = Self {
+                domain: tokio::sync::Mutex::new(quilt::LocalDomain::new(dir.path())),
+            };
+            model
+                .domain
+                .lock()
+                .await
+                .set_home(dir.path().join("home"))
+                .await
+                .expect("home");
+            let (package, _) = model
+                .package_create(("acme", "demo").into(), None, None)
+                .await
+                .expect("create");
+            (model, package)
+        }
+    }
+
+    fn committed(
+        namespace: &quilt_uri::Namespace,
+        commit: &quilt::flow::Committed,
+    ) -> quilt::PublishOutcome {
+        quilt::PublishOutcome::CommittedAndPushed(quilt::PushOutcome {
+            manifest_uri: quilt_uri::ManifestUri {
+                bucket: String::new(),
+                namespace: namespace.clone(),
+                hash: commit.hash().unwrap_or_default().to_string(),
+                origin: None,
+            },
+            certified_latest: true,
+        })
+    }
+
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "`locked_package_publish` awaits; `resolve_workflow` does not — see `SilentHost` in `package_list.rs`."
+    )]
+    impl crate::engine::model::QuiltModel for CommitOnlyPublisher {
+        type Locked = quilt::LockedPackage;
+
+        fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
+            &self.domain
+        }
+
+        async fn resolve_workflow(
+            &self,
+            _: &quilt::InstalledPackage,
+            _: super::WorkflowIntent,
+        ) -> Result<Option<quilt::manifest::Workflow>, Error> {
+            Ok(None)
+        }
+
+        async fn locked_package_publish(
+            &self,
+            package: &quilt::LockedPackage,
+            message: String,
+            metadata: quilt_rs::flow::UserMeta,
+            workflow: Option<quilt::manifest::Workflow>,
+            host_config: Option<quilt_rs::io::remote::HostConfig>,
+            _: Option<quilt::lineage::InstalledPackageStatus>,
+        ) -> Result<quilt::PublishOutcome, Error> {
+            let commit = package
+                .commit(message, metadata, workflow, host_config)
+                .await?;
+            Ok(committed(&("acme", "demo").into(), &commit))
+        }
+    }
+
+    /// A file that lands while Publish waits for another writer is in the
+    /// revision, so the revision's message must name it too: Publish reads
+    /// the changes it describes only once it holds the lock.
+    #[tokio::test]
+    async fn a_publish_waiting_for_the_package_lock_names_what_it_commits() {
+        use crate::engine::model::QuiltModel;
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let (model, package) = CommitOnlyPublisher::created(&dir).await;
+        let home = model.package_home(&package.namespace).await.expect("home");
+        let settings: crate::engine::publish_settings::SharedPublishSettings = Arc::new(
+            tokio::sync::RwLock::new(crate::engine::publish_settings::PublishSettings::default()),
+        );
+
+        // Another writer of the package, a download say, holds its lock.
+        let other_writer = package.lock().await.expect("lock");
+        let mut publish = std::pin::pin!(Box::pin(super::package_publish_command(
+            &model,
+            &settings,
+            "acme/demo"
+        )));
+        let early = tokio::time::timeout(std::time::Duration::from_millis(200), &mut publish).await;
+        assert!(early.is_err(), "the publish waits for the other writer");
+        std::fs::write(home.join("data.csv"), "a,b\n").expect("write");
+        drop(other_writer);
+        tokio::time::timeout(std::time::Duration::from_secs(5), publish)
+            .await
+            .expect("the publish runs once the other writer lets go")
+            .expect("publish");
+
+        let revision = package.manifest().await.expect("manifest");
+        assert!(
+            revision
+                .rows
+                .iter()
+                .any(|row| row.logical_key == std::path::Path::new("data.csv")),
+            "the revision holds the file"
+        );
+        assert_eq!(revision.header.message.as_deref(), Some("Add data.csv"));
+    }
+
+    fn installed_model() -> MockQuiltModel {
+        let mut model = MockQuiltModel::new();
+        model.expect_get_installed_package().returning(|_| {
+            Ok(Some(
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(("acme", "demo").into()),
+            ))
+        });
+        model
+    }
+
+    /// The catalog is optional: an empty catalog field sets a remote with no
+    /// host, and the package is pushed on this computer's AWS credentials.
+    #[tokio::test]
+    async fn an_empty_catalog_sets_a_remote_without_a_host() -> Result<(), Error> {
+        use mockall::predicate::always;
+        use mockall::predicate::eq;
+
+        for origin in ["", "  "] {
+            let mut model = installed_model();
+            model
+                .expect_set_remote()
+                .times(1)
+                .with(always(), eq(None), eq("my-bucket".to_string()), always())
+                .returning(|_, _, _, _| Ok(None));
+            super::set_remote_command(
+                &model,
+                "acme/demo",
+                origin,
+                "my-bucket",
+                super::WorkflowIntent::BucketDefault,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// A blank catalog removes it; a typed one is parsed as a host.
+    #[tokio::test]
+    async fn change_catalog_passes_the_typed_catalog() -> Result<(), Error> {
+        use mockall::predicate::always;
+        use mockall::predicate::eq;
+
+        for (typed, origin) in [
+            ("", None),
+            ("  ", None),
+            ("quilt.test", Some(fixtures::host())),
+        ] {
+            let mut model = installed_model();
+            model
+                .expect_change_catalog()
+                .times(1)
+                .with(always(), eq(origin))
+                .returning(|_, _| Err(Error::General("stop here".to_string())));
+            let err = super::change_catalog_command(&model, "acme/demo", typed)
+                .await
+                .expect_err("the mock stops it");
+            assert!(matches!(err, Error::General(_)), "{typed:?}: {err}");
+        }
+        Ok(())
+    }
+
+    /// A catalog that is not a hostname never reaches the package.
+    #[tokio::test]
+    async fn change_catalog_refuses_a_malformed_catalog() {
+        let model = installed_model();
+        super::change_catalog_command(&model, "acme/demo", "not a host")
+            .await
+            .expect_err("not a host");
+    }
+
+    /// A refusal drawn in a dialog stands above the fields the reader is about to
+    /// edit, so a generic sentence reads as a claim about the new contents. It
+    /// names the bucket it was refused for.
+    #[test]
+    fn a_set_remote_refusal_names_the_bucket() {
+        assert_eq!(
+            super::set_remote_refusal("my-bucket", &Error::General("no permission".to_string())),
+            "Could not set the remote to my-bucket: General error: no permission"
+        );
+    }
+
+    /// One click, one message. The toast names the package and what arrived,
+    /// so the page's own line would repeat it — from behind the toast layer,
+    /// where its white box reads as a backdrop rather than as a message.
+    #[test]
+    fn a_reported_pull_leaves_the_page_slot_to_the_toast() {
+        assert_eq!(super::pull_success_message("acme/rna-seq", true), "");
+    }
+
+    /// And when there was nothing to report — a metadata-only revision raises
+    /// no toast — the click still has to be answered.
+    #[test]
+    fn an_unreported_pull_still_confirms_the_click() {
+        let msg = super::pull_success_message("acme/rna-seq", false);
+        assert_eq!(msg, "Successfully pulled package acme/rna-seq");
+    }
+
+    /// A denied push must say the role cannot write here, not surface a raw
+    /// storage error. Write denial is invisible until the push — the
+    /// readable bucket list never distinguishes read from write.
+    #[test]
+    fn push_denial_reports_a_write_permission_problem() {
+        let msg = super::write_failure_message("push package", &access_denied_error());
+
+        assert!(msg.contains("can't write"), "got: {msg}");
+        assert!(
+            msg.contains("switch role"),
+            "must name the remedy, got: {msg}"
+        );
+    }
+
+    /// The denial message replaces the storage error rather than appending
+    /// to it: an `AccessDenied` in a toast reads as a bug, not as a role the
+    /// user can change.
+    #[test]
+    fn push_denial_does_not_leak_the_raw_storage_error() {
+        let msg = super::write_failure_message("push package", &access_denied_error());
+
+        assert!(!msg.contains("AccessDenied"), "got: {msg}");
+        assert!(!msg.contains("S3 error"), "got: {msg}");
+    }
+
+    /// Publish shares the denial wording with push — both are writes, and
+    /// the remedy is the same regardless of which button was pressed.
+    #[test]
+    fn publish_denial_reports_the_same_write_permission_problem() {
+        assert_eq!(
+            super::write_failure_message("publish package", &access_denied_error()),
+            super::write_failure_message("push package", &access_denied_error()),
+        );
+    }
+
+    fn expired_session_error() -> Error {
+        Error::from(quilt::Error::S3(quilt::S3Error {
+            host: Some(fixtures::host()),
+            kind: quilt::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
+        }))
+    }
+
+    /// A write is where a stale session usually surfaces. The toast cannot
+    /// navigate to `/login` the way the error page does, so the message itself
+    /// has to carry the remedy and the host.
+    #[test]
+    fn push_with_an_expired_session_names_signing_in() {
+        let msg = super::write_failure_message("push package", &expired_session_error());
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(msg.contains("quilt.test"), "must name the host, got: {msg}");
+        assert!(!msg.contains("ExpiredToken"), "raw SDK text leaked: {msg}");
+        assert!(!msg.contains("S3 error"), "got: {msg}");
+    }
+
+    /// The screenshot case: a commit, not a push. Committing reads the bucket's
+    /// workflow config before writing anything, so a dead session fails here —
+    /// and this path did not share the push path's remedy text.
+    #[test]
+    fn commit_while_signed_out_names_signing_in() {
+        let host = fixtures::host();
+        let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+            host.clone(),
+        ))));
+        let msg =
+            super::auth_failure_message(&err).unwrap_or_else(|| format!("Failed to commit: {err}"));
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(msg.contains("quilt.test"), "must name the host: {msg}");
+        assert!(!msg.contains("Failed to commit"), "fell through: {msg}");
+    }
+
+    /// Anything that is not an auth failure must keep its existing text, so the
+    /// new branch narrows the message set rather than replacing it.
+    #[test]
+    fn auth_message_declines_a_non_auth_error() {
+        let err = Error::Commit("Message is required".to_string());
+        assert!(super::auth_failure_message(&err).is_none());
+    }
+
+    /// A refused vend is the same dead end as a rejected credential, one step
+    /// earlier, so the toast must carry the same remedy rather than falling
+    /// through to `Failed to push package: …` and a bare error label.
+    #[test]
+    fn push_while_signed_out_names_signing_in() {
+        let host = fixtures::host();
+        let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+            host.clone(),
+        ))));
+        let msg = super::write_failure_message("push package", &err);
+
+        assert!(msg.contains("sign in again"), "got: {msg}");
+        assert!(msg.contains("quilt.test"), "must name the host: {msg}");
+        assert!(!msg.contains("Failed to push"), "fell through: {msg}");
+        assert!(!msg.contains("No session"), "raw label leaked: {msg}");
+    }
+
+    /// Ambient credentials have no deployment to sign in to, so the remedy is
+    /// `~/.aws` or `aws sso login`, not a sign-in.
+    #[test]
+    fn push_with_invalid_local_credentials_names_the_file() {
+        let err = Error::from(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::InvalidCredentials("InvalidAccessKeyId: nope".to_string()),
+        )));
+        let msg = super::write_failure_message("push package", &err);
+
+        assert!(msg.contains("~/.aws"), "got: {msg}");
+        assert!(msg.contains("aws sso login"), "got: {msg}");
+        assert!(
+            !msg.contains("sign in"),
+            "there is no stack to sign in to: {msg}"
+        );
+    }
+
+    /// Every failure that is not a denial keeps its pre-existing text, so
+    /// the new branch narrows the message set rather than replacing it.
+    #[test]
+    fn non_denial_failures_keep_their_original_message() {
+        let err = Error::Commit("Message is required".to_string());
+
+        assert_eq!(
+            super::write_failure_message("push package", &err),
+            "Failed to push package: Commit error: Message is required",
+        );
+        assert_eq!(
+            super::write_failure_message("publish package", &err),
+            "Failed to publish package: Commit error: Message is required",
+        );
+    }
+
+    /// A storage failure that is *not* a denial must not be swept into the
+    /// role message — the user would go switch roles over a transient
+    /// upload error.
+    #[test]
+    fn non_denial_storage_failure_is_not_reported_as_a_role_problem() {
+        let err = Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::PutObject("SlowDown: throttled".to_string()),
+        )));
+
+        let msg = super::write_failure_message("push package", &err);
+
+        assert!(!msg.contains("switch role"), "got: {msg}");
+        assert!(msg.contains("SlowDown"), "got: {msg}");
+    }
+
+    /// The requested revision's deep-link URI — its own bucket + catalog,
+    /// deliberately different from anything installed.
+    fn requested_uri() -> quilt_uri::S3PackageUri {
+        quilt_uri::S3PackageUri {
+            catalog: Some(fixtures::host()),
+            bucket: "reqbucket".to_string(),
+            namespace: ("foo", "bar").into(),
+            revision: quilt_uri::RevisionPointer::Hash("aaaa1111".to_string()),
+            path: None,
+        }
+    }
+
+    #[test]
+    fn banner_serializes_expected_json_shape() {
+        let dv = super::RemoteBanner::DifferentVersion {
+            requested_hash: "aaaa1111".to_string(),
+            requested_bucket: "reqbucket".to_string(),
+            requested_origin: Some(fixtures::host()),
+            installed_hash: "bbbb2222".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_string(&dv).unwrap(),
+            r#"{"kind":"differentVersion","requestedHash":"aaaa1111","requestedBucket":"reqbucket","requestedOrigin":"quilt.test","installedHash":"bbbb2222"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&super::RemoteBanner::LocalOnly).unwrap(),
+            r#"{"kind":"localOnly"}"#
+        );
+    }
+
+    #[test]
+    fn banner_maps_different_version() {
+        let outcome = crate::engine::model::InstallOutcome::DifferentVersion {
+            requested_hash: "aaaa1111".to_string(),
+            installed_hash: "bbbb2222".to_string(),
+        };
+        assert_eq!(
+            super::banner_for_outcome(&outcome, &requested_uri()),
+            Some(super::RemoteBanner::DifferentVersion {
+                requested_hash: "aaaa1111".to_string(),
+                requested_bucket: "reqbucket".to_string(),
+                requested_origin: Some(fixtures::host()),
+                installed_hash: "bbbb2222".to_string(),
+            })
+        );
+    }
+
+    /// The UI mirrors this exact externally-tagged JSON in
+    /// `quilt_sync_ui::commands`'s `pull_outcome_wire_form_is_verbatim`. If the
+    /// two drift, the two-phase Pull affordance silently misreads the dry-run
+    /// outcome at the Tauri boundary.
+    #[test]
+    fn pull_outcome_wire_form_is_verbatim() {
+        use std::path::PathBuf;
+
+        use crate::engine::quilt::flow::PullOutcome;
+        assert_eq!(
+            serde_json::to_string(&PullOutcome::UpToDate).unwrap(),
+            r#""UpToDate""#
+        );
+        assert_eq!(
+            serde_json::to_string(&PullOutcome::CleanUpdate).unwrap(),
+            r#""CleanUpdate""#
+        );
+        assert_eq!(
+            serde_json::to_string(&PullOutcome::KeepsLocalChanges {
+                added: vec![PathBuf::from("a.txt")],
+                modified: vec![],
+                removed: vec![PathBuf::from("c.txt")],
+            })
+            .unwrap(),
+            r#"{"KeepsLocalChanges":{"added":["a.txt"],"modified":[],"removed":["c.txt"]}}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&PullOutcome::Blocked {
+                conflicts: vec![PathBuf::from("x.txt")],
+            })
+            .unwrap(),
+            r#"{"Blocked":{"conflicts":["x.txt"]}}"#
+        );
+    }
+
+    /// The UI mirrors this exact camelCase JSON in `quilt_sync_ui::commands`'s
+    /// `pull_preview_wire_form_is_verbatim`. If the two drift, the package page
+    /// silently misreads what a newer revision brings at the Tauri boundary.
+    #[test]
+    fn pull_preview_wire_form_is_verbatim() {
+        use std::path::PathBuf;
+
+        use crate::engine::quilt::flow::PullOutcome;
+        use crate::engine::quilt::flow::PullPreview;
+        assert_eq!(
+            serde_json::to_string(&PullPreview {
+                outcome: PullOutcome::CleanUpdate,
+                added: vec![PathBuf::from("a.txt")],
+                changed: vec![PathBuf::from("b.txt")],
+                removed: vec![PathBuf::from("c.txt")],
+                latest_hash: Some("abc123".to_string()),
+            })
+            .unwrap(),
+            r#"{"outcome":"CleanUpdate","added":["a.txt"],"changed":["b.txt"],"removed":["c.txt"],"latestHash":"abc123"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&PullPreview {
+                outcome: PullOutcome::UpToDate,
+                added: vec![],
+                changed: vec![],
+                removed: vec![],
+                latest_hash: None,
+            })
+            .unwrap(),
+            r#"{"outcome":"UpToDate","added":[],"changed":[],"removed":[],"latestHash":null}"#
+        );
+    }
+
+    #[test]
+    fn banner_maps_local_only_and_installed() {
+        assert_eq!(
+            super::banner_for_outcome(&crate::engine::model::InstallOutcome::LocalOnly, &requested_uri()),
+            Some(super::RemoteBanner::LocalOnly)
+        );
+        assert_eq!(
+            super::banner_for_outcome(&crate::engine::model::InstallOutcome::Installed, &requested_uri()),
+            None
+        );
+    }
+
+    /// A package gone between the menu opening and the item being pressed is an
+    /// error to report, not a panic — every other op in this file uses `panic!`
+    /// on the same lookup, and a menu item is the one caller that can outlive
+    /// its package.
+    #[tokio::test]
+    async fn undoing_a_package_that_is_gone_reports_it() {
+        let mut model = crate::engine::model::mocks::create();
+        model.expect_get_installed_package().returning(|_| Ok(None));
+        let ns: quilt_uri::Namespace = "team/dataset".try_into().unwrap();
+
+        let err = crate::engine::model::package_undo_commit(&model, &ns)
+            .await
+            .expect_err("a missing package cannot be undone");
+
+        assert!(
+            err.to_string().contains("team/dataset"),
+            "the refusal names the package: {err}"
+        );
+    }
+
+    /// The command hands the engine's refusal back as the message the dialog
+    /// draws. The dirty-tree refusal names the paths, so nothing here reworks it.
+    #[tokio::test]
+    async fn an_engine_refusal_reaches_the_caller_as_its_own_sentence() {
+        let mut model = crate::engine::model::mocks::create();
+        model.expect_get_installed_package().returning(|ns| {
+            Ok(Some(crate::engine::commands::test_support::make_installed_package(
+                ns.clone(),
+            )))
+        });
+        model
+            .expect_package_undo_commit()
+            .times(1)
+            .return_once(|_| {
+                Err(Error::from(quilt::Error::PackageOp(
+                    quilt::PackageOpError::Undo(
+                        "value.txt would be overwritten, and does not hold this \
+                     revision's committed content. Commit or restore it by \
+                     hand, then undo"
+                            .to_string(),
+                    ),
+                )))
+            });
+        let ns: quilt_uri::Namespace = "team/dataset".try_into().unwrap();
+
+        let err = crate::engine::model::package_undo_commit(&model, &ns)
+            .await
+            .expect_err("a dirty tree refuses");
+
+        assert!(err.to_string().contains("value.txt"), "got: {err}");
+    }
+
+    /// A create from a folder says what the ignore rules left out, and a
+    /// create that left nothing out says nothing.
+    #[tokio::test]
+    async fn the_create_toast_counts_what_was_left_out() -> Result<(), Error> {
+        let dir = tempfile::TempDir::new()?;
+        let model = crate::engine::model::Model::create(dir.path());
+        model.set_home(dir.path().join("home")).await?;
+        let source = tempfile::TempDir::new()?;
+        std::fs::create_dir_all(source.path().join(".git"))?;
+        std::fs::write(source.path().join(".git/config"), "x")?;
+        std::fs::write(source.path().join(".DS_Store"), "x")?;
+        std::fs::write(source.path().join("data.csv"), "a,b")?;
+        let source = Some(source.path().display().to_string());
+
+        let left_out =
+            super::package_create_command(&model, "acme/demo", source.clone(), None).await?;
+        let toast = super::left_out_toast("acme/demo", &left_out).expect("a toast");
+        assert_eq!(toast.kind, crate::engine::toast::ToastKind::Info);
+        assert_eq!(toast.title.as_deref(), Some("acme/demo"));
+        assert_eq!(
+            toast.body,
+            "1 file and 1 folder were left out by ignore rules."
+        );
+
+        let left_out = super::package_create_command(&model, "acme/empty", None, None).await?;
+        assert_eq!(super::left_out_toast("acme/empty", &left_out), None);
+        Ok(())
+    }
+
+    /// The toast reads gc's sentence after the removal, or names the busy
+    /// package that kept the files.
+    #[test]
+    fn the_pruned_toast_says_what_was_freed() {
+        let freed = quilt::flow::Pruned::Freed(quilt::flow::GcReport {
+            objects: 6,
+            bytes: 630_200,
+            ..Default::default()
+        });
+        let toast = super::pruned_toast("acme/demo", &freed);
+        assert_eq!(toast.kind, crate::engine::toast::ToastKind::Success);
+        assert_eq!(toast.title.as_deref(), Some("acme/demo"));
+        assert_eq!(toast.body, "Removed. Freed 630.2 kB: 6 objects.");
+
+        let busy = quilt::flow::Pruned::Busy(("acme", "other").into());
+        let toast = super::pruned_toast("acme/demo", &busy);
+        assert_eq!(toast.kind, crate::engine::toast::ToastKind::Info);
+        assert_eq!(
+            toast.body,
+            "Removed. Kept downloaded files: acme/other is busy."
+        );
+    }
+
+    /// A prune that failed after the uninstall answers success, with a
+    /// warning toast saying what was left; any other failure stays one.
+    #[test]
+    fn a_failed_prune_is_a_removed_package_and_a_warning() {
+        let failed = Error::Quilt(quilt::Error::PruneFailed(
+            ("acme", "demo").into(),
+            Box::new(quilt::Error::PackageBusy(("acme", "other").into())),
+            None,
+        ));
+        let (result, toast) = super::settle_uninstall("acme/demo", Err(failed));
+        assert!(result.is_ok());
+        let toast = toast.expect("a toast");
+        assert_eq!(toast.kind, crate::engine::toast::ToastKind::Warning);
+        assert!(
+            toast
+                .body
+                .starts_with("Uninstalled acme/demo, but not all of its downloaded files"),
+            "{}",
+            toast.body
+        );
+
+        let other = Error::General("boom".to_string());
+        let (result, toast) = super::settle_uninstall("acme/demo", Err(other));
+        assert!(result.is_err());
+        assert!(toast.is_none());
+
+        let (result, toast) = super::settle_uninstall("acme/demo", Ok(None));
+        assert!(result.is_ok());
+        assert!(toast.is_none(), "no prune, no toast");
+    }
+
+    /// `prune` deletes the package's objects; without it they stay.
+    #[tokio::test]
+    async fn uninstall_prunes_only_when_asked() -> Result<(), Error> {
+        use crate::engine::model::QuiltModel as _;
+
+        let dir = tempfile::TempDir::new()?;
+        let model = crate::engine::model::Model::create(dir.path());
+        model.set_home(dir.path().join("home")).await?;
+        let source = tempfile::TempDir::new()?;
+        std::fs::write(source.path().join("a.txt"), "abc")?;
+        for name in ["kept", "gone"] {
+            model
+                .package_create(
+                    ("acme", name).into(),
+                    Some(source.path().to_path_buf()),
+                    None,
+                )
+                .await?;
+        }
+        std::fs::write(source.path().join("b.txt"), "bb")?;
+        model
+            .package_create(
+                ("acme", "pruned").into(),
+                Some(source.path().to_path_buf()),
+                None,
+            )
+            .await?;
+
+        let kept = super::package_uninstall_command(&model, "acme/kept", false).await?;
+        assert_eq!(kept, None);
+        let pruned = super::package_uninstall_command(&model, "acme/pruned", true).await?;
+        assert_eq!(
+            pruned.map(|p| p.to_string()).as_deref(),
+            Some("Freed 2 B: 1 object"),
+            "a.txt is still used by acme/gone"
+        );
+        Ok(())
+    }
+}

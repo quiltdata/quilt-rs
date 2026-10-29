@@ -14,40 +14,31 @@ use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tokio::sync;
 
-use crate::telemetry::prelude::*;
+use crate::engine::telemetry::prelude::*;
 
-mod app;
-mod autopull;
-mod changelog;
-mod commands;
-mod commit_message;
-mod design_settings;
-mod env;
-mod error;
-mod experimental_settings;
-mod fswatcher;
-mod log_settings;
-mod model;
-mod notify;
-mod oauth;
-mod publish_settings;
-mod quilt;
-mod quit;
-mod routes;
-mod tasks;
-mod telemetry;
-mod toast;
-mod tray;
-mod uri;
+mod desktop;
+mod engine;
+
+use desktop::tray;
+use desktop::uri;
+use engine::app;
+use engine::autopull;
+use engine::commands;
+use engine::env;
+use engine::experimental_settings;
+use engine::fswatcher;
+use engine::oauth;
+use engine::publish_settings;
+use engine::quilt;
+use engine::quit;
+use engine::telemetry;
+use engine::toast;
 
 use app::App;
 use autopull::StatusReporter;
 use autopull::Watcher;
 use autopull::reporter::TauriEventReporter;
-use error::Error;
-use model::Model;
-
-type Result<T = ()> = std::result::Result<T, Error>;
+use engine::model::Model;
 
 rust_i18n::i18n!("locales");
 
