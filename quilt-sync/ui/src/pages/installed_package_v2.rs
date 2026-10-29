@@ -24,6 +24,7 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands;
+use crate::commands::NotDownloaded;
 use crate::kit::{Banner, BannerVariant, LoadFailure, PageLayout, publish_height};
 use crate::routes;
 use crate::util;
@@ -815,12 +816,12 @@ fn file_downloader(namespace: String, w: Wiring, files: Files) -> Callback<Vec<S
             downloading.set(true);
             let answer = commands::package_download_backlog(ns.clone(), paths.clone()).await;
             downloading.try_set(false);
-            answer.map(|skipped| {
+            answer.map(|left_out| {
                 // Safe on any package: every box is disabled while the page's
                 // lock is held, so nothing was ticked since this was sent, and
                 // moving on only took ticks away.
                 ticked.try_update(|t| file_pane::selection::tick_all(t, &paths, false));
-                if let Some(said) = download_outcome(ns, asked, &skipped) {
+                if let Some(said) = download_outcome(ns, asked, &left_out) {
                     outcome.try_set(Some(said));
                 }
                 String::new()
@@ -1079,14 +1080,16 @@ fn close_own<T>(open: &mut Option<T>, mine: impl Fn(&T) -> bool) {
 }
 
 /// What the band says after a download: nothing when every file came down,
-/// and a warning naming the files the remote no longer holds when some did not.
-fn download_outcome(namespace: String, asked: usize, skipped: &[String]) -> Option<Outcome> {
-    file_pane::selection::unavailable(asked, skipped).map(|(lead, paths)| Outcome {
-        namespace,
-        variant: BannerVariant::Warning,
-        lead,
-        detail: Some(paths),
-    })
+/// and a warning naming the files left out when some did not.
+fn download_outcome(namespace: String, asked: usize, left_out: &NotDownloaded) -> Option<Outcome> {
+    file_pane::selection::unavailable(asked, &left_out.skipped, &left_out.hash_mismatch).map(
+        |(lead, paths)| Outcome {
+            namespace,
+            variant: BannerVariant::Warning,
+            lead,
+            detail: Some(paths),
+        },
+    )
 }
 
 /// Opens a revision's catalog page, reporting a failure on the keyed band.
@@ -1881,9 +1884,19 @@ mod tests {
     /// files left behind; one it finished says nothing, as success does here.
     #[test]
     fn a_download_that_left_files_behind_warns_and_names_them() {
-        assert_eq!(download_outcome("team/a".to_string(), 3, &[]), None);
         assert_eq!(
-            download_outcome("team/a".to_string(), 3, &["raw/b.csv".to_string()]),
+            download_outcome("team/a".to_string(), 3, &NotDownloaded::default()),
+            None
+        );
+        assert_eq!(
+            download_outcome(
+                "team/a".to_string(),
+                3,
+                &NotDownloaded {
+                    skipped: vec!["raw/b.csv".to_string()],
+                    hash_mismatch: Vec::new(),
+                }
+            ),
             Some(said(
                 "team/a",
                 BannerVariant::Warning,
