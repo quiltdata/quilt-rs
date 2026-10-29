@@ -443,7 +443,10 @@ pub async fn get_settings_data(
         log_level,
         log_env: LogEnv::from_env(),
         logs_dir: app.logging.dir.path().display().to_string(),
-        logs_dir_is_temporary: matches!(app.logging.dir, crate::engine::telemetry::LogsDir::Temporary(_)),
+        logs_dir_is_temporary: matches!(
+            app.logging.dir,
+            crate::engine::telemetry::LogsDir::Temporary(_)
+        ),
         os: std::env::consts::OS.to_string(),
         changelog: changelog::latest_entries(),
         publish: publish_data,

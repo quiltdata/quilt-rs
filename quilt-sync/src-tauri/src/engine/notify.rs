@@ -169,7 +169,9 @@ mod tests {
         let _ = Notify::new("committing".to_string())
             .on_success(
                 &telemetry,
-                MixpanelEvent::PackageCommitted(crate::engine::telemetry::event::PackageEvent::hostless()),
+                MixpanelEvent::PackageCommitted(
+                    crate::engine::telemetry::event::PackageEvent::hostless(),
+                ),
             )
             .map(
                 Err::<(), Error>(Error::TauriUi(TauriUiError::UserCancelled)),

@@ -3217,7 +3217,9 @@ mod tests {
     /// companion to [`lineage_with_named_paths`] that also wires up
     /// `get_installed_packages_list`, matching the mock-building pattern
     /// `mock_clean_roster` and `mock_two_bucket_roster` use above.
-    fn mock_with_lineages(packages: &[(&str, Vec<(&str, u64)>)]) -> crate::engine::model::MockQuiltModel {
+    fn mock_with_lineages(
+        packages: &[(&str, Vec<(&str, u64)>)],
+    ) -> crate::engine::model::MockQuiltModel {
         let mut model = crate::engine::model::mocks::create();
 
         let installed: Vec<quilt::InstalledPackage> = packages

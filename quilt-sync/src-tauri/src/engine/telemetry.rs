@@ -140,7 +140,11 @@ pub struct Telemetry {
 ///
 /// A free function because both the caller's thread and the background sender need
 /// it, and the sender owns its own clones of what it reads.
-fn report_delivery_failure(faults: &Faults, refusal_reported: &AtomicBool, err: &crate::engine::Error) {
+fn report_delivery_failure(
+    faults: &Faults,
+    refusal_reported: &AtomicBool,
+    err: &crate::engine::Error,
+) {
     match mixpanel::DeliveryFailure::classify(err) {
         mixpanel::DeliveryFailure::Refused => {
             if !refusal_reported.swap(true, Ordering::Relaxed) {

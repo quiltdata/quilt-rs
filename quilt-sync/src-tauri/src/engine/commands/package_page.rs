@@ -2494,7 +2494,9 @@ mod tests {
     }
 
     fn test_watcher() -> Watcher {
-        Watcher::new_for_test(std::sync::Arc::new(crate::engine::autopull::reporter::LogReporter))
+        Watcher::new_for_test(std::sync::Arc::new(
+            crate::engine::autopull::reporter::LogReporter,
+        ))
     }
 
     /// The download writes working files like a pull, so it holds the flag

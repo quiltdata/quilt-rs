@@ -1216,7 +1216,9 @@ async fn a_change_with_no_time_waits_a_full_wait() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
-        last_change: LastChange::new(crate::engine::quilt::state_store::PackageStateStore::in_memory()),
+        last_change: LastChange::new(
+            crate::engine::quilt::state_store::PackageStateStore::in_memory(),
+        ),
         ..make_inner_for_run_once(reporter.clone()).await
     };
     let before = crate::engine::autopull::last_change::now();
@@ -1283,7 +1285,9 @@ async fn a_commit_waits_the_wait_before_its_push() -> Result<(), Error> {
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
-        last_change: LastChange::new(crate::engine::quilt::state_store::PackageStateStore::in_memory()),
+        last_change: LastChange::new(
+            crate::engine::quilt::state_store::PackageStateStore::in_memory(),
+        ),
         ..make_inner_for_run_once(reporter.clone()).await
     };
     inner
@@ -1334,7 +1338,8 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
         });
 
     let reporter = Arc::new(RecordingReporter::default());
-    let (tx, rx) = tokio::sync::watch::channel(crate::engine::autopull::status::SyncTrayStatus::default());
+    let (tx, rx) =
+        tokio::sync::watch::channel(crate::engine::autopull::status::SyncTrayStatus::default());
     let aggregator = Arc::new(crate::engine::autopull::status::SyncTrayAggregator::new(tx));
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
@@ -1352,7 +1357,10 @@ async fn run_once_publishes_aggregator_status_on_pause() -> Result<(), Error> {
     };
     run_once(&model, &RoleCache::default(), &inner).await?;
     let after = rx.borrow().clone();
-    assert_eq!(after.mode, crate::engine::autopull::status::TrayMode::Paused);
+    assert_eq!(
+        after.mode,
+        crate::engine::autopull::status::TrayMode::Paused
+    );
     assert_eq!(after.error.as_deref(), Some("workflow rejected"));
     Ok(())
 }
@@ -1396,7 +1404,8 @@ async fn run_once_publishes_pending_changes_count() -> Result<(), Error> {
             )))
         });
     let reporter = Arc::new(RecordingReporter::default());
-    let (tx, rx) = tokio::sync::watch::channel(crate::engine::autopull::status::SyncTrayStatus::default());
+    let (tx, rx) =
+        tokio::sync::watch::channel(crate::engine::autopull::status::SyncTrayStatus::default());
     let aggregator = Arc::new(crate::engine::autopull::status::SyncTrayAggregator::new(tx));
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),

@@ -592,9 +592,9 @@ pub trait QuiltModel {
             })?;
         let working_folder_path = installed_package.package_home().await?;
         if !working_folder_path.exists() {
-            return Err(Error::FsOpen(crate::engine::error::FsOpenError::PathNotFound(
-                working_folder_path,
-            )));
+            return Err(Error::FsOpen(
+                crate::engine::error::FsOpenError::PathNotFound(working_folder_path),
+            ));
         }
 
         Ok(working_folder_path)
@@ -608,9 +608,9 @@ pub trait QuiltModel {
         let package_home = self.package_home(namespace).await?;
         let file_path = package_home.join(relative_path);
         if !file_path.exists() {
-            return Err(Error::FsOpen(crate::engine::error::FsOpenError::PathNotFound(
-                file_path,
-            )));
+            return Err(Error::FsOpen(
+                crate::engine::error::FsOpenError::PathNotFound(file_path),
+            ));
         }
         Ok(file_path)
     }

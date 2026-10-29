@@ -1741,7 +1741,9 @@ mod tests {
         let reason = PausedReason::PullConflict(vec!["a.csv".to_string(), "b.csv".to_string()]);
         assert_eq!(watcher.paused_reason(&ns).await, Some(reason.clone()));
         assert_eq!(
-            crate::engine::commands::main_page::conflict_files(watcher.paused_reason(&ns).await.as_ref()),
+            crate::engine::commands::main_page::conflict_files(
+                watcher.paused_reason(&ns).await.as_ref()
+            ),
             Some(vec!["a.csv".to_string(), "b.csv".to_string()]),
             "the page reads the pause as the conflict state"
         );
@@ -2719,11 +2721,17 @@ mod tests {
     #[test]
     fn banner_maps_local_only_and_installed() {
         assert_eq!(
-            super::banner_for_outcome(&crate::engine::model::InstallOutcome::LocalOnly, &requested_uri()),
+            super::banner_for_outcome(
+                &crate::engine::model::InstallOutcome::LocalOnly,
+                &requested_uri()
+            ),
             Some(super::RemoteBanner::LocalOnly)
         );
         assert_eq!(
-            super::banner_for_outcome(&crate::engine::model::InstallOutcome::Installed, &requested_uri()),
+            super::banner_for_outcome(
+                &crate::engine::model::InstallOutcome::Installed,
+                &requested_uri()
+            ),
             None
         );
     }
@@ -2754,9 +2762,9 @@ mod tests {
     async fn an_engine_refusal_reaches_the_caller_as_its_own_sentence() {
         let mut model = crate::engine::model::mocks::create();
         model.expect_get_installed_package().returning(|ns| {
-            Ok(Some(crate::engine::commands::test_support::make_installed_package(
-                ns.clone(),
-            )))
+            Ok(Some(
+                crate::engine::commands::test_support::make_installed_package(ns.clone()),
+            ))
         });
         model
             .expect_package_undo_commit()

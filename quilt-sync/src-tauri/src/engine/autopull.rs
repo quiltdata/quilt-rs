@@ -191,7 +191,10 @@ impl Watcher {
     /// raises the same question a background one does. The tick takes its own
     /// guard further down, at the call it brackets.
     #[must_use]
-    pub fn apply_guard(&self, namespace: &Namespace) -> crate::engine::autopull::status::ApplyGuard<'_> {
+    pub fn apply_guard(
+        &self,
+        namespace: &Namespace,
+    ) -> crate::engine::autopull::status::ApplyGuard<'_> {
         self.inner.aggregator.apply_guard(namespace)
     }
 
@@ -238,8 +241,11 @@ impl Watcher {
                     Arc::new(move |run| {
                         let run_handle = run_handle.clone();
                         tauri::async_runtime::spawn(async move {
-                            Box::pin(crate::engine::tasks::execute(&*run_handle.state::<Model>(), run))
-                                .await;
+                            Box::pin(crate::engine::tasks::execute(
+                                &*run_handle.state::<Model>(),
+                                run,
+                            ))
+                            .await;
                         });
                     }),
                 )
@@ -823,7 +829,9 @@ mod tests {
             let mut changes = BTreeMap::new();
             changes.insert(
                 std::path::PathBuf::from("file.txt"),
-                crate::engine::quilt::lineage::Change::Added(crate::engine::quilt::manifest::ManifestRow::default()),
+                crate::engine::quilt::lineage::Change::Added(
+                    crate::engine::quilt::manifest::ManifestRow::default(),
+                ),
             );
             Ok(crate::engine::quilt::lineage::InstalledPackageStatus::new(
                 crate::engine::quilt::lineage::UpstreamState::UpToDate,
@@ -1505,7 +1513,9 @@ mod tests {
         let mut status = crate::engine::quilt::lineage::InstalledPackageStatus::default();
         status.changes.insert(
             std::path::PathBuf::from("a"),
-            crate::engine::quilt::lineage::Change::Added(crate::engine::quilt::manifest::ManifestRow::default()),
+            crate::engine::quilt::lineage::Change::Added(
+                crate::engine::quilt::manifest::ManifestRow::default(),
+            ),
         );
         observe_walk(
             inner,

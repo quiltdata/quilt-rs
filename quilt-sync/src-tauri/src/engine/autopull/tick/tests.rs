@@ -47,7 +47,8 @@ fn hex(s: &str) -> String {
 }
 
 fn test_aggregator() -> Arc<crate::engine::autopull::status::SyncTrayAggregator> {
-    let (tx, _) = tokio::sync::watch::channel(crate::engine::autopull::status::SyncTrayStatus::default());
+    let (tx, _) =
+        tokio::sync::watch::channel(crate::engine::autopull::status::SyncTrayStatus::default());
     Arc::new(crate::engine::autopull::status::SyncTrayAggregator::new(tx))
 }
 
@@ -64,7 +65,9 @@ fn make_inner(settings: AutosyncSettings) -> WatcherInner {
         clocks: Clocks::default(),
         walks: crate::engine::autopull::watched::WatchedWalks::default(),
         tasks: crate::engine::tasks::Tasks::default(),
-        last_change: LastChange::new(crate::engine::quilt::state_store::PackageStateStore::in_memory()),
+        last_change: LastChange::new(
+            crate::engine::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     }
 }
 
@@ -1737,7 +1740,9 @@ fn applied() -> quilt::flow::PullReport {
 /// different branches and were identical but for this field, so the merge that
 /// brought them together broke the copy that had not heard about `clocks`.
 /// Spelling the difference is what stops the next field from doing it again.
-fn inner_with(aggregator: Arc<crate::engine::autopull::status::SyncTrayAggregator>) -> WatcherInner {
+fn inner_with(
+    aggregator: Arc<crate::engine::autopull::status::SyncTrayAggregator>,
+) -> WatcherInner {
     WatcherInner {
         aggregator,
         ..make_inner(enabled())
@@ -2577,7 +2582,8 @@ async fn unusable_credentials_without_a_catalog_name_the_aws_files() -> Result<(
         )))
     });
     let reporter = Arc::new(RecordingReporter::default());
-    let (tx, rx) = tokio::sync::watch::channel(crate::engine::autopull::status::SyncTrayStatus::default());
+    let (tx, rx) =
+        tokio::sync::watch::channel(crate::engine::autopull::status::SyncTrayStatus::default());
     let inner = WatcherInner {
         reporter: reporter.clone(),
         aggregator: Arc::new(crate::engine::autopull::status::SyncTrayAggregator::new(tx)),

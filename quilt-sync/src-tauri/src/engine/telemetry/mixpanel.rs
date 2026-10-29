@@ -260,7 +260,10 @@ fn wire_payload(
 /// The event as a dry run reports it — the **same** name and properties the live
 /// path sends, identity included, so a developer reads the payload rather than a
 /// paraphrase of it that could drift from it.
-fn dry_run_line(event: &MixpanelEvent, install_id: Option<&InstallId>) -> crate::engine::Result<String> {
+fn dry_run_line(
+    event: &MixpanelEvent,
+    install_id: Option<&InstallId>,
+) -> crate::engine::Result<String> {
     let (name, properties) = wire_payload(event, install_id)?;
     Ok(match properties {
         Some(properties) => {

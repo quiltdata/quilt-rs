@@ -1821,7 +1821,11 @@ mod tests {
             });
         model
             .expect_get_installed_package_status()
-            .returning(|_, _| Err(crate::engine::error::Error::General("network error".to_string())));
+            .returning(|_, _| {
+                Err(crate::engine::error::Error::General(
+                    "network error".to_string(),
+                ))
+            });
 
         let tracing = crate::engine::telemetry::Telemetry::default();
         let ns = ("test", "broken").into();

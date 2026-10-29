@@ -538,7 +538,9 @@ mod tests {
     #[tokio::test]
     async fn a_change_moves_the_last_change_and_schedules_a_walk() {
         let (mut state, _tx) = state();
-        let inner = crate::engine::autopull::inner_for_tests(crate::engine::autopull::AutosyncSettings::default());
+        let inner = crate::engine::autopull::inner_for_tests(
+            crate::engine::autopull::AutosyncSettings::default(),
+        );
         inner
             .walks
             .vouch_for(&BTreeMap::from([(ns(), PathBuf::from("/pkg"))]));
@@ -561,7 +563,9 @@ mod tests {
     #[tokio::test]
     async fn a_rescan_walks_without_moving_the_last_change() {
         let (mut state, _tx) = state();
-        let inner = crate::engine::autopull::inner_for_tests(crate::engine::autopull::AutosyncSettings::default());
+        let inner = crate::engine::autopull::inner_for_tests(
+            crate::engine::autopull::AutosyncSettings::default(),
+        );
         let signal = MappingSignal {
             namespace: ns(),
             kind: SignalKind::Rescan,
@@ -577,7 +581,9 @@ mod tests {
     #[tokio::test]
     async fn a_lost_watch_stops_the_check_trusting_the_package() {
         let (mut state, _tx) = state();
-        let inner = crate::engine::autopull::inner_for_tests(crate::engine::autopull::AutosyncSettings::default());
+        let inner = crate::engine::autopull::inner_for_tests(
+            crate::engine::autopull::AutosyncSettings::default(),
+        );
         inner
             .walks
             .vouch_for(&BTreeMap::from([(ns(), PathBuf::from("/pkg"))]));
@@ -657,7 +663,9 @@ mod tests {
         );
         let reporter = Arc::new(RecordingReporter::default());
         state.reporter = reporter.clone();
-        let inner = crate::engine::autopull::inner_for_tests(crate::engine::autopull::AutosyncSettings::default());
+        let inner = crate::engine::autopull::inner_for_tests(
+            crate::engine::autopull::AutosyncSettings::default(),
+        );
 
         drive_with(&mut state, &model, &inner, async {
             tx.send(MappingSignal::changed(ns())).unwrap();
@@ -683,7 +691,9 @@ mod tests {
         state.trailing = TrailingWalks::with_quiet(TEST_QUIET);
         let walks = Arc::new(Mutex::new(0));
         let model = walking_model(Vec::new(), Arc::clone(&walks));
-        let inner = crate::engine::autopull::inner_for_tests(crate::engine::autopull::AutosyncSettings::default());
+        let inner = crate::engine::autopull::inner_for_tests(
+            crate::engine::autopull::AutosyncSettings::default(),
+        );
 
         drive_with(&mut state, &model, &inner, async {
             for _ in 0..30 {

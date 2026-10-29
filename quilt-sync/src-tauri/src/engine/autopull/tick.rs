@@ -586,8 +586,8 @@ pub(crate) async fn refresh_then_maybe_sync(
     if publish_eligible {
         // A pending commit with no changes has no last-change time, so it
         // publishes now.
-        if let Some(at) =
-            crate::engine::autopull::publish_deadline(changed_at, wait).filter(|at| *at > SystemTime::now())
+        if let Some(at) = crate::engine::autopull::publish_deadline(changed_at, wait)
+            .filter(|at| *at > SystemTime::now())
         {
             info!("autosync: namespace={namespace} changed less than the wait ago, deferring");
             return Ok(Some(RefreshOutcome::deferred(

@@ -113,7 +113,8 @@ fn inner(wait: Duration, pull: bool, push: bool) -> (WatcherInner, Arc<Recording
 /// `acme/demo` last changed `ago`, was walked since, and counts down.
 async fn changed(inner: WatcherInner, ago: Duration) -> WatcherInner {
     let inner = WatcherInner {
-        last_change: crate::engine::autopull::last_change::LastChange::changed_for_test(&ns(), ago).await,
+        last_change: crate::engine::autopull::last_change::LastChange::changed_for_test(&ns(), ago)
+            .await,
         ..inner
     };
     inner.clocks.publish_waiting.write().await.insert(ns());

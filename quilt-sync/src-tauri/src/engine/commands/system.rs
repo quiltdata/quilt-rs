@@ -72,7 +72,9 @@ fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<PathBu
         Ok(path)
     } else {
         debug!("User cancelled directory selection");
-        Err(Error::TauriUi(crate::engine::error::TauriUiError::UserCancelled))
+        Err(Error::TauriUi(
+            crate::engine::error::TauriUiError::UserCancelled,
+        ))
     };
 
     // Cleanup logic: remove temporary canonical directory if needed
@@ -638,7 +640,10 @@ fn bounded(message: &str) -> String {
               because there is nothing to await, and an async command taking state would \
               have to return a Result it could never populate."
 )]
-pub fn report_ui_panic(message: String, tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>) {
+pub fn report_ui_panic(
+    message: String,
+    tracing: tauri::State<'_, crate::engine::telemetry::Telemetry>,
+) {
     let message = bounded(&message);
     warn!("UI panic: {message}");
     tracing.report_ui_panic(&message);
@@ -715,9 +720,9 @@ mod tests {
     async fn a_missing_file_has_no_path_to_copy() {
         let mut m = model::MockQuiltModel::new();
         m.expect_file_path().returning(|_, path| {
-            Err(Error::FsOpen(crate::engine::error::FsOpenError::PathNotFound(
-                path.clone(),
-            )))
+            Err(Error::FsOpen(
+                crate::engine::error::FsOpenError::PathNotFound(path.clone()),
+            ))
         });
 
         assert!(
