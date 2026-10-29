@@ -1,12 +1,13 @@
 //! The WebSocket transport, for the UI served to a plain browser.
 //!
-//! One shared socket at `/ws?t=<token>` on the page's own host. Requests are
+//! One shared socket at `/ws` on the page's own host, authorised by the
+//! cookie the server set when the page was opened with `?t=<token>`. Requests are
 //! `{"id", "cmd", "args"}`; replies are `{"id", "ok"}` or `{"id", "err"}`; events
 //! are `{"event", "payload"}` and the server broadcasts all of them, so listeners
 //! are only a registry here.
 //!
-//! After the socket drops, it reconnects with the same token, which survives a
-//! restart of the engine, and the listening pages read again. When the engine
+//! After the socket drops, it reconnects with the same cookie; the token
+//! survives a restart of the engine, and the listening pages read again. When the engine
 //! refuses the token (it was reset), it stops trying and says so in a banner.
 
 use std::cell::RefCell;
@@ -18,9 +19,6 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{MessageEvent, WebSocket};
-
-/// The query parameter only reaches the first page: router navigation drops it.
-const TOKEN_KEY: &str = "quiltsync-token";
 
 const MAX_BACKOFF_MS: i32 = 10_000;
 
@@ -66,29 +64,16 @@ pub(super) fn reconnects() -> u32 {
     RECONNECTS.with(Get::get)
 }
 
-/// The session token from `?t=` on this page, or the one saved from an earlier
-/// page. `None` means the page was not opened by the `QuiltSync` server.
-pub(super) fn token() -> Option<String> {
-    let window = web_sys::window()?;
-    let storage = window.session_storage().ok().flatten();
-    let from_url = window
-        .location()
-        .search()
-        .ok()
-        .and_then(|search| web_sys::UrlSearchParams::new_with_str(&search).ok())
-        .and_then(|params| params.get("t"))
-        .filter(|t| !t.is_empty());
-    if let Some(token) = from_url {
-        if let Some(storage) = &storage {
-            let _ = storage.set_item(TOKEN_KEY, &token);
-        }
-        return Some(token);
-    }
-    storage?
-        .get_item(TOKEN_KEY)
-        .ok()
-        .flatten()
-        .filter(|t| !t.is_empty())
+/// Whether the `QuiltSync` server served this page, in a browser or in the
+/// desktop window. The server sets this readable marker beside the token's
+/// `HttpOnly` cookie; test harnesses and the gallery are served over HTTP too,
+/// but without it.
+pub(super) fn served() -> bool {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| js_sys::Reflect::get(&d, &JsValue::from_str("cookie")).ok())
+        .and_then(|c| c.as_string())
+        .is_some_and(|c| c.split(';').any(|pair| pair.trim() == "quiltsync-web=1"))
 }
 
 fn js_err(err: &JsValue) -> String {
@@ -104,7 +89,6 @@ fn connect() -> Result<(), String> {
     if exists {
         return Ok(());
     }
-    let token = token().ok_or("No QuiltSync session token")?;
     let window = web_sys::window().ok_or("No window")?;
     let location = window.location();
     let scheme = if location.protocol().map_err(|e| js_err(&e))? == "https:" {
@@ -113,7 +97,7 @@ fn connect() -> Result<(), String> {
         "ws"
     };
     let host = location.host().map_err(|e| js_err(&e))?;
-    let url = format!("{scheme}://{host}/ws?t={}", urlencoding::encode(&token));
+    let url = format!("{scheme}://{host}/ws");
     let socket = WebSocket::new(&url).map_err(|e| js_err(&e))?;
 
     // Leaked on purpose, one set per connection: a socket may fire after this
@@ -247,11 +231,10 @@ fn retry_after(delay: i32) {
 /// Whether the engine answers 401 to this page's token. An engine that does
 /// not answer at all is down, not refusing.
 async fn token_refused() -> bool {
-    let (Some(window), Some(token)) = (web_sys::window(), token()) else {
+    let Some(window) = web_sys::window() else {
         return false;
     };
-    let url = format!("/ws?t={}", urlencoding::encode(&token));
-    let Ok(response) = JsFuture::from(window.fetch_with_str(&url)).await else {
+    let Ok(response) = JsFuture::from(window.fetch_with_str("/ws")).await else {
         return false;
     };
     response

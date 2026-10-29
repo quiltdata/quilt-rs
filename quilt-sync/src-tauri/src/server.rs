@@ -43,6 +43,9 @@ use crate::telemetry::prelude::*;
 struct AppState {
     services: Arc<Services>,
     token: Arc<str>,
+    /// Browsers share one host's cookies across its ports, so the name carries
+    /// the port: two engines on `localhost` keep their own.
+    cookie: Arc<str>,
 }
 
 /// A fresh random session token.
@@ -84,15 +87,20 @@ pub async fn serve(services: Arc<Services>, bind: SocketAddr, token: String) -> 
         );
     }
     let statics = ServeDir::new(&dir).fallback(ServeFile::new(dir.join("index.html")));
+    let listener = tokio::net::TcpListener::bind(bind).await?;
+    let addr = listener.local_addr()?;
     let state = AppState {
         services,
         token: token.into(),
+        cookie: format!("quiltsync-{}", addr.port()).into(),
     };
-    let listener = tokio::net::TcpListener::bind(bind).await?;
-    let addr = listener.local_addr()?;
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .fallback_service(statics)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            cookie_from_link,
+        ))
         .layer(axum::middleware::map_response(no_cache))
         .with_state(state);
     let app = if addr.ip().is_loopback() {
@@ -149,6 +157,65 @@ fn origin_matches_host(headers: &HeaderMap) -> bool {
     matches!((origin, host), (Some(o), Some(h)) if o.eq_ignore_ascii_case(h))
 }
 
+/// A page opened with `?t=<token>` trades it for a cookie and comes back
+/// without it, so the token stays out of the address bar and history.
+async fn cookie_from_link(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let uri = request.uri();
+    let query = uri.query().unwrap_or_default();
+    let mut token_ok = false;
+    let rest: Vec<(String, String)> = url::form_urlencoded::parse(query.as_bytes())
+        .filter(|(key, value)| {
+            if key == "t" {
+                token_ok = *value == *state.token;
+                return false;
+            }
+            true
+        })
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    if uri.path() == "/ws" || !token_ok {
+        return next.run(request).await;
+    }
+    let mut location = uri.path().to_string();
+    if !rest.is_empty() {
+        location.push('?');
+        location.push_str(
+            &url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(rest)
+                .finish(),
+        );
+    }
+    let cookie = format!(
+        "{}={}; HttpOnly; SameSite=Strict; Path=/",
+        state.cookie, state.token
+    );
+    let mut response = (
+        StatusCode::SEE_OTHER,
+        [(header::LOCATION, location), (header::SET_COOKIE, cookie)],
+    )
+        .into_response();
+    // Readable by the page, unlike the token: it tells the UI to use the socket.
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        header::HeaderValue::from_static("quiltsync-web=1; SameSite=Strict; Path=/"),
+    );
+    response
+}
+
+/// The token from the page's cookie, if it sent one.
+fn cookie_token<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .find_map(|pair| pair.trim().strip_prefix(name)?.strip_prefix('='))
+}
+
 async fn ws_handler(
     State(state): State<AppState>,
     Query(query): Query<HashMap<String, String>>,
@@ -156,14 +223,20 @@ async fn ws_handler(
     // Taken as a `Result` so the token and Origin checks answer first.
     ws: std::result::Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
-    if query.get("t").map(String::as_str) != Some(&*state.token) {
+    // `?t=` stays for clients that aren't pages, like the e2e fixtures.
+    let by_cookie = cookie_token(&headers, &state.cookie) == Some(&*state.token);
+    if !by_cookie && query.get("t").map(String::as_str) != Some(&*state.token) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     if !origin_matches_host(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
     match ws {
-        Ok(ws) => ws.on_upgrade(move |socket| session(socket, state.services)),
+        Ok(ws) => {
+            let via = if by_cookie { "cookie" } else { "link" };
+            info!("web client connected, token by {via}");
+            ws.on_upgrade(move |socket| session(socket, state.services))
+        }
         Err(rejection) => rejection.into_response(),
     }
 }

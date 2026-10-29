@@ -11,15 +11,14 @@ mod ws;
 
 /// Whether this page talks to the backend over the WebSocket rather than Tauri.
 ///
-/// The WebSocket is used whenever the page carries a session token (`?t=` on
-/// the first URL, saved in `sessionStorage`), which only the `QuiltSync` server
-/// hands out: in a browser and in the desktop window alike, which loads the
-/// server's page and may still have a `window.__TAURI__` injected. The bundled
-/// page (`tauri://`) has no token and keeps IPC. Anything else — a test
-/// harness, the gallery, a page opened from disk — keeps the old no-bridge
-/// behaviour: every call fails quietly.
+/// The WebSocket is used whenever the `QuiltSync` server served the page, in a
+/// browser and in the desktop window alike, which may still have a
+/// `window.__TAURI__` injected; the server marks it with a cookie when the page
+/// is opened from its link. The bundled page (`tauri://`) keeps IPC. Anything
+/// else — a test harness, the gallery, a page opened from disk — keeps the old
+/// no-bridge behaviour: every call fails quietly.
 pub fn is_web_mode() -> bool {
-    ws::token().is_some()
+    ws::served()
 }
 
 /// How many times the WebSocket reconnected, as a tracked read: a read that

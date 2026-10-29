@@ -52,6 +52,8 @@ test("the main page renders after setup", async ({ page, quiltsync }) => {
   await expect(page.getByRole("heading", { name: "No packages yet" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Create package" }).first()).toBeVisible();
   await expect(page).toHaveTitle("QuiltSync");
+  // The link's token became a cookie and left the address.
+  expect(new URL(page.url()).searchParams.has("t")).toBe(false);
 });
 
 test("a file written into a package folder appears on its page", async ({ page, quiltsync }) => {
