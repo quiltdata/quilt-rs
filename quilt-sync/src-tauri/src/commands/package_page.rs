@@ -522,7 +522,7 @@ async fn files_data(
 }
 
 /// Untracked files are not counted: reset's touch set is `lineage.paths`
-/// (`flow/reset_to_latest.rs:56`), and a file it does not track stays.
+/// (`touched` in `flow/reset_to_latest.rs`), and a file it does not track stays.
 fn resolve_data(
     lineage: &quilt::lineage::PackageLineage,
     comparison: quilt::flow::ResolveComparison,
