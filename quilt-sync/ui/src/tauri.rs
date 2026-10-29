@@ -44,23 +44,34 @@ extern "C" {
 /// dying, and the panic it is reporting is more informative than anything that could
 /// go wrong here.
 pub fn invoke_and_forget<A: Serialize>(cmd: &str, args: &A) {
-    if let Ok(args_js) = serde_wasm_bindgen::to_value(args) {
-        let _ = tauri_invoke_catching(cmd, args_js);
+    if let Ok(call) = engine_call(cmd, args) {
+        let _ = tauri_invoke_catching(ENGINE_CALL, call);
     }
 }
 
-/// Call a Tauri command with typed arguments and return type.
+/// The backend's one Tauri command: it runs the engine command it is given.
+const ENGINE_CALL: &str = "engine_call";
+
+/// `engine_call`'s arguments: the command's name and its own arguments.
+fn engine_call<A: Serialize>(cmd: &str, args: &A) -> Result<JsValue, String> {
+    #[derive(Serialize)]
+    struct EngineCall<'a, A> {
+        cmd: &'a str,
+        args: &'a A,
+    }
+    serde_wasm_bindgen::to_value(&EngineCall { cmd, args }).map_err(|e| e.to_string())
+}
+
+/// Call a backend command with typed arguments and return type.
 ///
-/// Tauri's `invoke` expects camelCase argument keys (the proc macro
-/// converts `snake_case` Rust parameter names to `camelCase` on the JS
-/// side). Use `#[serde(rename_all = "camelCase")]` on arg structs.
+/// The backend reads arguments by their camelCase names. Use
+/// `#[serde(rename_all = "camelCase")]` on arg structs.
 ///
 /// Uses the `catch`-bound `tauri_invoke_catching`: a missing bridge (a browser
 /// test harness, or a page loaded outside Tauri) must come back as an `Err`
 /// here, not an uncaught JS exception — see that binding's doc comment.
 pub async fn invoke<A: Serialize, R: DeserializeOwned>(cmd: &str, args: &A) -> Result<R, String> {
-    let args_js = serde_wasm_bindgen::to_value(args).map_err(|e| e.to_string())?;
-    let promise = tauri_invoke_catching(cmd, args_js)
+    let promise = tauri_invoke_catching(ENGINE_CALL, engine_call(cmd, args)?)
         .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
     let result = JsFuture::from(promise)
         .await
@@ -68,15 +79,11 @@ pub async fn invoke<A: Serialize, R: DeserializeOwned>(cmd: &str, args: &A) -> R
     serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
 }
 
-/// Call a Tauri command with no arguments. See [`invoke`] for why this catches.
+/// Call a backend command with no arguments.
 pub async fn invoke_unit<R: DeserializeOwned>(cmd: &str) -> Result<R, String> {
-    let args = js_sys::Object::new();
-    let promise = tauri_invoke_catching(cmd, args.into())
-        .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
-    let result = JsFuture::from(promise)
-        .await
-        .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
-    serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
+    #[derive(Serialize)]
+    struct NoArgs {}
+    invoke(cmd, &NoArgs {}).await
 }
 
 /// `__TAURI__.event` delivers payloads as `{ event, payload, id, ... }`.

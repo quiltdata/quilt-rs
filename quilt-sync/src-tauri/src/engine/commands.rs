@@ -1,7 +1,7 @@
 //! The commands, grouped by domain, as plain functions over
 //! [`Services`](crate::engine::services::Services). Everything is re-exported
-//! at `commands::*`, so the desktop app's Tauri wrappers and other callers keep
-//! the flat `commands::<name>` paths.
+//! at `commands::*`, so the [command table](crate::engine::dispatch) and other
+//! callers keep the flat `commands::<name>` paths.
 //!
 //! # The `uri` argument some commands take but never use
 //!
@@ -17,6 +17,7 @@
 
 mod auth;
 mod commit_data;
+mod desktop;
 mod main_page;
 mod package_data;
 mod package_entries;
@@ -30,6 +31,7 @@ mod toast;
 
 pub use auth::*;
 pub use commit_data::*;
+pub use desktop::*;
 pub use main_page::*;
 pub use package_data::*;
 pub use package_list::*;

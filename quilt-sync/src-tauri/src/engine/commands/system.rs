@@ -33,7 +33,7 @@ pub struct SetupData {
 
 #[allow(
     clippy::unused_async,
-    reason = "every plain command is async, so the Tauri wrappers treat them alike"
+    reason = "every plain command is async, so the dispatch treats them alike"
 )]
 pub async fn get_setup_data() -> Result<SetupData, String> {
     let home = get_default_home_dir().map_err(|e| e.to_string())?;
@@ -455,7 +455,7 @@ fn bounded(message: &str) -> String {
 /// what an error-level event does — one panic, two reports.
 #[allow(
     clippy::unused_async,
-    reason = "every plain command is async, so the Tauri wrappers treat them alike"
+    reason = "every plain command is async, so the dispatch treats them alike"
 )]
 pub async fn report_ui_panic(s: &Services, message: String) -> Result<(), String> {
     let message = bounded(&message);

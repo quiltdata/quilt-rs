@@ -425,7 +425,7 @@ impl Watcher {
     }
 
     /// Point-in-time view of the paused set, used by the
-    /// `get_autosync_snapshot` Tauri command so the UI can re-hydrate
+    /// `get_autosync_snapshot` command so the UI can re-hydrate
     /// per-page banners on navigation. Read-only — the lock is released
     /// before the function returns.
     pub async fn snapshot(&self) -> reporter::WatcherSnapshot {

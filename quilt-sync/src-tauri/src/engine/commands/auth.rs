@@ -218,7 +218,7 @@ impl From<RoleInfo> for RolesData {
 /// everything that needs to *name* the active role.
 ///
 /// The roster is why this exists. Its two access-marking phases both want
-/// the role, and the heavy phase runs as one Tauri command invocation per
+/// the role, and the heavy phase runs as one command invocation per
 /// row, concurrently — 50 denied rows on one host would otherwise queue 50
 /// `/me` round trips behind `Auth::refresh_lock_for(host)`, the same mutex
 /// credential vending takes, all re-answering a question the light phase

@@ -419,7 +419,7 @@ fn report_publish(
     // `login_required` / `setup_required` publish-time errors can trigger the
     // `/login` and `/setup` redirects in `ui::error_handler::handle_or_display`
     // instead of surfacing as a plain toast. This requires `make_action` to
-    // parse the JSON envelope (or the Tauri command to bypass `Notify` for
+    // parse the JSON envelope (or the command to bypass `Notify` for
     // these variants); both are out of scope here.
     let msg_err = |err: &Error| write_failure_message("publish package", err);
 

@@ -10,6 +10,8 @@ pub mod changelog;
 pub mod commands;
 pub mod commit_message;
 pub mod design_settings;
+pub mod desktop;
+pub mod dispatch;
 pub mod env;
 pub mod error;
 pub mod events;

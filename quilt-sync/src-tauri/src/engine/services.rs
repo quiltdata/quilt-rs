@@ -1,7 +1,7 @@
 //! Everything the commands and the sync engine share, built without Tauri.
 //!
-//! The desktop app builds one `Arc<Services>`, manages it, and its commands
-//! are thin wrappers over the plain functions in [`crate::engine::commands`].
+//! The desktop app builds one `Arc<Services>`, manages it, and runs every
+//! command through [`crate::engine::dispatch`].
 
 use std::path::PathBuf;
 use std::sync::Arc;
