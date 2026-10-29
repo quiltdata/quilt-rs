@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use rfd::FileDialog;
 use serde_json::Value;
 use tauri::Manager;
+use tauri::Runtime;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -26,12 +27,12 @@ impl From<tauri::Error> for Error {
 }
 
 /// The desktop features, over the Tauri app.
-struct TauriDesktop {
-    app: tauri::AppHandle,
+struct TauriDesktop<R: Runtime> {
+    app: tauri::AppHandle<R>,
 }
 
 #[async_trait]
-impl Desktop for TauriDesktop {
+impl<R: Runtime> Desktop for TauriDesktop<R> {
     async fn pick_folder(&self, start: &Path) -> crate::engine::Result<Option<PathBuf>> {
         let window = self
             .app
@@ -78,8 +79,8 @@ impl Desktop for TauriDesktop {
 
 /// Run the engine command `cmd` with `args`, as the UI names them.
 #[tauri::command]
-pub async fn engine_call(
-    app: tauri::AppHandle,
+pub async fn engine_call<R: Runtime>(
+    app: tauri::AppHandle<R>,
     s: tauri::State<'_, Arc<Services>>,
     cmd: String,
     args: Value,
@@ -89,7 +90,8 @@ pub async fn engine_call(
 }
 
 /// The Tauri invoke handler: every command goes through [`engine_call`].
-pub fn invoke_handler() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
+pub fn invoke_handler<R: Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static
+{
     tauri::generate_handler![engine_call]
 }
 
@@ -143,5 +145,59 @@ mod tests {
         let called = ui_calls();
         assert!(called.len() > 80, "found only {} UI calls", called.len());
         assert_eq!(called, listed);
+    }
+
+    /// The window's call, as Tauri delivers it, reaches the engine's command
+    /// and brings back its value or its error.
+    #[test]
+    fn a_call_through_tauri_reaches_the_engine() {
+        use std::sync::Arc;
+
+        use serde_json::{Value, json};
+        use tauri::Manager;
+
+        use crate::engine::services::Services;
+
+        let data_dir = tempfile::tempdir().expect("temp data dir");
+        let app = tauri::test::mock_builder()
+            .invoke_handler(super::invoke_handler())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let services = tauri::async_runtime::block_on(Services::init(
+            data_dir.path().to_path_buf(),
+            semver::Version::new(0, 0, 0),
+        ))
+        .expect("services");
+        app.manage(Arc::clone(&services));
+        let window = tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
+            .build()
+            .expect("window");
+
+        let call = |cmd: &str, args: Value| {
+            tauri::test::get_ipc_response(
+                &window,
+                tauri::webview::InvokeRequest {
+                    cmd: "engine_call".into(),
+                    callback: tauri::ipc::CallbackFn(0),
+                    error: tauri::ipc::CallbackFn(1),
+                    url: "tauri://localhost".parse().unwrap(),
+                    body: tauri::ipc::InvokeBody::Json(json!({"cmd": cmd, "args": args})),
+                    headers: tauri::http::HeaderMap::default(),
+                    invoke_key: tauri::test::INVOKE_KEY.to_string(),
+                },
+            )
+            .map(|body| body.deserialize::<Value>().expect("JSON"))
+        };
+
+        let matched = call(
+            "test_quiltignore_pattern",
+            json!({"pattern": "*.tmp", "path": "a.tmp"}),
+        );
+        assert_eq!(matched, Ok(Value::Bool(true)));
+        assert_eq!(call("get_toasts", json!({})), Ok(json!([])));
+        assert_eq!(
+            call("nope", json!({})),
+            Err(Value::String("command nope not found".into()))
+        );
     }
 }
