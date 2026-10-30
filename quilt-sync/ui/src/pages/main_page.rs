@@ -438,7 +438,7 @@ fn PackageListRow(
             provisional=Signal::derive(move || row.provisional())
             downloads=Signal::derive(move || counted().map(RowDownloads::from))
             host=host
-            size=Signal::derive(move || counted().map(Held::from))
+            size=Signal::derive(move || counted().map(Held::from).map(util::counted))
         />
     }
 }
