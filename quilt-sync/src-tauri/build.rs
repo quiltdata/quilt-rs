@@ -8,6 +8,14 @@ fn main() {
     let dist = Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/dist");
     std::fs::create_dir_all(&dist)
         .unwrap_or_else(|err| panic!("could not create {}: {err}", dist.display()));
+    // A release build embeds the UI for its server; without it the app would
+    // serve an empty page.
+    let index = dist.join("index.html");
+    assert!(
+        std::env::var("PROFILE").as_deref() != Ok("release") || index.exists(),
+        "{} is missing: run `trunk build --release` in quilt-sync/ui first",
+        index.display()
+    );
 
     tauri_build::build();
 }

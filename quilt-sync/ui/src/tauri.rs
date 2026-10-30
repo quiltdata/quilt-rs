@@ -7,6 +7,16 @@ use serde::de::DeserializeOwned;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
+mod ws;
+
+/// Whether this page talks to the engine over its WebSocket rather than
+/// Tauri: the engine served it to a browser. The desktop window keeps Tauri;
+/// anything else (a test harness, the gallery) has no bridge at all, and every
+/// call fails quietly.
+pub fn is_web_mode() -> bool {
+    ws::served()
+}
+
 #[wasm_bindgen]
 extern "C" {
     /// `listen`, bound so a throw comes back as a value. Same hazard as
@@ -44,6 +54,12 @@ extern "C" {
 /// dying, and the panic it is reporting is more informative than anything that could
 /// go wrong here.
 pub fn invoke_and_forget<A: Serialize>(cmd: &str, args: &A) {
+    if is_web_mode() {
+        if let Ok(args) = serde_json::to_value(args) {
+            ws::send_and_forget(cmd, &args);
+        }
+        return;
+    }
     if let Ok(call) = engine_call(cmd, args) {
         let _ = tauri_invoke_catching(ENGINE_CALL, call);
     }
@@ -71,6 +87,11 @@ fn engine_call<A: Serialize>(cmd: &str, args: &A) -> Result<JsValue, String> {
 /// test harness, or a page loaded outside Tauri) must come back as an `Err`
 /// here, not an uncaught JS exception — see that binding's doc comment.
 pub async fn invoke<A: Serialize, R: DeserializeOwned>(cmd: &str, args: &A) -> Result<R, String> {
+    if is_web_mode() {
+        let args = serde_json::to_value(args).map_err(|e| e.to_string())?;
+        let reply = ws::request(cmd, args).await?;
+        return serde_json::from_str(&reply).map_err(|e| e.to_string());
+    }
     let promise = tauri_invoke_catching(ENGINE_CALL, engine_call(cmd, args)?)
         .map_err(|e| e.as_string().unwrap_or_else(|| format!("{e:?}")))?;
     let result = JsFuture::from(promise)
@@ -105,6 +126,8 @@ enum ListenerState {
     Cancelled,
     /// Terminal: `unlisten` has been (or will be) called.
     Done,
+    /// Registered with the WebSocket transport under this handle.
+    Ws(u64),
 }
 
 /// Subscribe to a Tauri event. The returned `EventListener` calls the
@@ -134,6 +157,9 @@ pub fn listen_then<T: DeserializeOwned + 'static>(
     mut callback: impl FnMut(T) + 'static,
     on_registered: impl FnOnce() + 'static,
 ) -> EventListener {
+    if is_web_mode() {
+        return listen_ws(event, callback, on_registered);
+    }
     let event_name = event.to_string();
     let event_name_for_closure = event_name.clone();
     let closure: Closure<dyn FnMut(JsValue)> = Closure::new(move |raw: JsValue| {
@@ -186,7 +212,7 @@ pub fn listen_then<T: DeserializeOwned + 'static>(
                         drop(s);
                         on_registered();
                     }
-                    ListenerState::Resolved(_) | ListenerState::Done => {}
+                    ListenerState::Resolved(_) | ListenerState::Done | ListenerState::Ws(_) => {}
                 }
             }
             Err(err) => web_sys::console::error_1(
@@ -197,6 +223,35 @@ pub fn listen_then<T: DeserializeOwned + 'static>(
 
     EventListener {
         state: SendWrapper::new(state),
+    }
+}
+
+/// [`listen_then`] over the WebSocket: the transport holds the callback and
+/// runs `on_registered` once events flow.
+fn listen_ws<T: DeserializeOwned + 'static>(
+    event: &str,
+    mut callback: impl FnMut(T) + 'static,
+    on_registered: impl FnOnce() + 'static,
+) -> EventListener {
+    let event_name = event.to_string();
+    let callback: ws::Callback =
+        Rc::new(RefCell::new(
+            move |payload: &serde_json::Value| match serde_json::from_value::<T>(payload.clone()) {
+                Ok(payload) => callback(payload),
+                Err(err) => web_sys::console::error_1(
+                    &format!("listen: failed to deserialize {event_name}: {err}").into(),
+                ),
+            },
+        ));
+    let state = match ws::listen(event, callback, Box::new(on_registered)) {
+        Ok(id) => ListenerState::Ws(id),
+        Err(err) => {
+            web_sys::console::error_1(&format!("listen: no connection for {event}: {err}").into());
+            ListenerState::Done
+        }
+    };
+    EventListener {
+        state: SendWrapper::new(Rc::new(RefCell::new(state))),
     }
 }
 
@@ -217,6 +272,7 @@ impl Drop for EventListener {
                 // when it does.
                 *s = ListenerState::Cancelled;
             }
+            ListenerState::Ws(id) => ws::unlisten(id),
             ListenerState::Cancelled | ListenerState::Done => {}
         }
     }

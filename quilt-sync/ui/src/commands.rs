@@ -1262,6 +1262,11 @@ pub async fn get_main_page_watcher() -> Result<MainPageWatcherData, String> {
 /// again. Carries nothing. Kept in lockstep with the backend.
 pub const AUTOSYNC_CHANGED_EVENT: &str = "autosync-changed";
 
+/// A package was created, installed or uninstalled, maybe from another window
+/// or tab: read the package list again. Carries nothing. Kept in lockstep with
+/// the backend.
+pub const PACKAGES_CHANGED_EVENT: &str = "packages-changed";
+
 /// One host in the Accounts card, as it arrives.
 ///
 /// Mirrors `quilt_sync::commands::main_page::AccountHost`. `currentRole` is

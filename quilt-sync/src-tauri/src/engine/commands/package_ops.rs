@@ -28,6 +28,10 @@ use crate::engine::telemetry::MixpanelEvent;
 use crate::engine::telemetry::event::{PackageEvent, RemotePackageEvent};
 use crate::engine::toast::ToastCenter;
 
+/// Tells every client the list of installed packages changed, so main pages
+/// read it again. No payload.
+pub const PACKAGES_CHANGED_EVENT: &str = "packages-changed";
+
 async fn package_commit_command(
     m: &model::Model,
     namespace: &str,
@@ -744,6 +748,9 @@ pub async fn package_uninstall(
     if let Some(toast) = toast {
         toasts.post(toast).await;
     }
+    if result.is_ok() {
+        s.events.emit(PACKAGES_CHANGED_EVENT, ());
+    }
     Notify::new(msg_init)
         .on_success(
             tracing,
@@ -1030,6 +1037,9 @@ pub async fn package_create(
     {
         toasts.post(toast).await;
     }
+    if result.is_ok() {
+        s.events.emit(PACKAGES_CHANGED_EVENT, ());
+    }
     notify.map(result, msg_ok, msg_err)
 }
 
@@ -1059,6 +1069,9 @@ pub async fn package_install_paths(
     let msg_err = |err: &Error| format!("Failed to install paths: {}", err.user_facing());
 
     let result = package_install_paths_command(m, &uri, &paths).await;
+    if result.is_ok() {
+        s.events.emit(PACKAGES_CHANGED_EVENT, ());
+    }
     let msg_ok = match &result {
         Ok(report) if !report.skipped.is_empty() || !report.hash_mismatch.is_empty() => {
             let listed = |paths: &[PathBuf]| {
@@ -1353,6 +1366,9 @@ pub async fn handle_remote_package(
     let outcome = model::install_package_only(m, &s3_uri)
         .await
         .map_err(|e| e.to_frontend_string())?;
+    if let model::InstallOutcome::Installed = outcome {
+        s.events.emit(PACKAGES_CHANGED_EVENT, ());
+    }
 
     // Preserve the Installed side effect: if the URI names a path, install
     // it and open it in the default application.

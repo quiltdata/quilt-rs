@@ -21,6 +21,10 @@
 
 ## [v0.26.2-dev]
 
+### Added
+
+- The tray's *Open in browser* opens QuiltSync in a browser tab beside the window, with the same pages kept in step with the app (<https://github.com/quiltdata/quilt-rs/pull/1266>)
+
 ### Changed
 
 - Under the hood, everything but the window, tray and deep links moves into an engine with no Tauri in it, which the desktop app drives. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1262>)
