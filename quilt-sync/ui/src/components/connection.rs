@@ -96,7 +96,7 @@ mod tests {
 
     use super::*;
     use crate::engine::fake::{FakeEngine, ask};
-    use crate::test_support::{mount, sleep_ms};
+    use crate::test_support::{mount, sleep_ms, unmount_earlier};
 
     fn alerts(root: &web_sys::Element) -> u32 {
         root.query_selector_all("[role=alert]").unwrap().length()
@@ -156,13 +156,19 @@ mod tests {
         // A nudge asks again.
         engine.event(crate::commands::NAVIGATE_EVENT, &serde_json::Value::Null);
         sleep_ms(0).await;
-        assert_eq!(engine.requests().len(), 2);
+        let requests = engine.requests();
+        assert_eq!(requests.len(), 2);
+        // Answered, so no ask outlives the test to take a later test's reply.
+        engine.reply(&requests[1]["id"], &serde_json::Value::Null);
+        sleep_ms(0).await;
 
         let _ = window.history().unwrap().replace_state_with_url(
             &wasm_bindgen::JsValue::NULL,
             "",
             Some(&before),
         );
+        // Else it asks again at every later test's connect.
+        unmount_earlier();
     }
 
     /// While the page reconnects it says so, and stops saying so once back.
