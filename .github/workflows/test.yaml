@@ -133,14 +133,20 @@ jobs:
     if: needs.changes.outputs.css == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      # Pinned, so a new Biome release cannot fail an unrelated PR; Renovate
+      # bumps it. Keep `biome.jsonc`'s `$schema` on the same version.
+      # renovate: datasource=npm depName=@biomejs/biome
+      BIOME_VERSION: 2.6.4
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      # The project's own action, pinned by commit as third-party code. It
-      # installs the latest Biome, as rumdl's action does for rumdl.
+      # The project's own action, pinned by commit as third-party code.
       - name: Install Biome
         uses: biomejs/setup-biome@4c91541eaada48f67d7dbd7833600ce162b68f51 # v2.7.1
+        with:
+          version: ${{ env.BIOME_VERSION }}
 
       - name: Install just
         uses: taiki-e/install-action@just
