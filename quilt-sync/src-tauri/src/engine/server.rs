@@ -692,4 +692,55 @@ mod tests {
             }
         }
     }
+
+    /// With every slot busy, a quit answer still goes through at once, while
+    /// any other call waits for a slot.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_quit_answer_skips_a_full_queue() {
+        let running = start().await;
+        let mut socket = connect(running.addr).await;
+        next_json(&mut socket).await;
+
+        let send = |call: Value| tungstenite::Message::Text(call.to_string().into());
+        let writing = running.services.settings_writes.lock().await;
+        for id in 0..MAX_CALLS {
+            let call =
+                json!({"id": id, "cmd": "update_log_settings", "args": {"level": "default"}});
+            socket.send(send(call)).await.unwrap();
+        }
+        socket
+            .send(send(json!({"id": 100, "cmd": "get_toasts"})))
+            .await
+            .unwrap();
+        socket
+            .send(send(json!({"id": 101, "cmd": "quit_cancel"})))
+            .await
+            .unwrap();
+
+        let first = next_json(&mut socket).await;
+        assert_eq!(
+            first,
+            json!({"id": 101, "ok": null}),
+            "the quit answer first"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), socket.next())
+                .await
+                .is_err(),
+            "nothing else while every slot waits"
+        );
+
+        drop(writing);
+        let mut ids = std::collections::HashSet::new();
+        while ids.len() < MAX_CALLS + 1 {
+            let reply = next_json(&mut socket).await;
+            if let Some(id) = reply.get("id").and_then(Value::as_u64) {
+                ids.insert(id);
+            }
+        }
+        assert!(
+            ids.contains(&100),
+            "the waiting call runs once a slot frees"
+        );
+    }
 }
