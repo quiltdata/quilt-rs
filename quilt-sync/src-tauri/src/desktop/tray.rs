@@ -46,24 +46,34 @@ pub struct TrayController {
 }
 
 const MENU_ID_OPEN: &str = "tray-open";
+const MENU_ID_BROWSER: &str = "tray-browser";
 const MENU_ID_QUIT: &str = "tray-quit";
 
 impl TrayController {
+    /// `link` is the engine's page with its token, for *Open in browser*.
     pub fn install(
         app: &AppHandle,
         status_rx: watch::Receiver<SyncTrayStatus>,
+        link: String,
     ) -> Result<Self, TrayError> {
         let open_item = MenuItem::with_id(app, MENU_ID_OPEN, "Open Quilt", true, None::<&str>)?;
+        let browser_item =
+            MenuItem::with_id(app, MENU_ID_BROWSER, "Open in browser", true, None::<&str>)?;
         let quit_item = MenuItem::with_id(app, MENU_ID_QUIT, "Quit", true, None::<&str>)?;
-        let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
+        let menu = Menu::with_items(app, &[&open_item, &browser_item, &quit_item])?;
 
         let icon = load_tray_icon(app)?;
         let tray = TrayIconBuilder::new()
             .icon(icon)
             .menu(&menu)
             .tooltip("Quilt — idle")
-            .on_menu_event(|app, event| match event.id().as_ref() {
+            .on_menu_event(move |app, event| match event.id().as_ref() {
                 MENU_ID_OPEN => show_main_window(app),
+                MENU_ID_BROWSER => {
+                    if let Err(err) = opener::open_browser(&link) {
+                        warn!("failed to open the browser: {err}");
+                    }
+                }
                 MENU_ID_QUIT => request_quit(app),
                 _ => {}
             })
@@ -85,6 +95,7 @@ impl TrayController {
 
         let listener = spawn_status_listener(tray.clone(), status_rx);
         let _ = open_item;
+        let _ = browser_item;
         let _ = quit_item;
 
         install_close_handler(app);

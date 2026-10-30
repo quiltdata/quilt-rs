@@ -22,6 +22,8 @@ use desktop::tray;
 use desktop::uri;
 use engine::env;
 use engine::services::Services;
+use engine::start;
+use engine::start::Started;
 
 rust_i18n::i18n!("locales");
 
@@ -57,11 +59,36 @@ fn main() {
                 .app_local_data_dir()
                 .expect("Failed to resolve data dir");
             let version = app.package_info().version.clone();
-            let services = tauri::async_runtime::block_on(Services::init(data_dir, version))?;
+            let desktop = desktop::commands::desktop(app.handle());
+            let engine = match tauri::async_runtime::block_on(start::start(
+                data_dir,
+                version,
+                Some(desktop),
+            ))? {
+                Started::Engine(engine) => engine,
+                Started::Running(link) => {
+                    // Another process is the engine for this data folder; its
+                    // page is this launch's window.
+                    match link {
+                        Some(link) => {
+                            if let Err(err) = opener::open_browser(&link) {
+                                eprintln!("QuiltSync is already running at {link}: {err}");
+                            }
+                        }
+                        None => eprintln!("QuiltSync is already running for this data folder"),
+                    }
+                    std::process::exit(0);
+                }
+            };
+            let services = Arc::clone(&engine.services);
             desktop::forward_events(app.handle(), &services.events);
             app.manage(Arc::clone(&services));
 
-            match tray::TrayController::install(app.handle(), services.tray_status.clone()) {
+            match tray::TrayController::install(
+                app.handle(),
+                services.tray_status.clone(),
+                engine.link.clone(),
+            ) {
                 Ok(controller) => {
                     app.manage(controller);
                 }
@@ -73,6 +100,8 @@ fn main() {
             }
 
             uri::setup_deep_link_handler(app.handle());
+            // Holds the data folder's lock for the life of the app.
+            app.manage(engine);
 
             Ok(())
         })

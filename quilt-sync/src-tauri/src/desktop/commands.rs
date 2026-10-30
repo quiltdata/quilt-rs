@@ -77,6 +77,12 @@ impl<R: Runtime> Desktop for TauriDesktop<R> {
     }
 }
 
+/// The desktop features over `app`, for the engine's server to hand its
+/// commands.
+pub fn desktop<R: Runtime>(app: &tauri::AppHandle<R>) -> Arc<dyn Desktop> {
+    Arc::new(TauriDesktop { app: app.clone() })
+}
+
 /// Run the engine command `cmd` with `args`, as the UI names them.
 #[tauri::command]
 pub async fn engine_call<R: Runtime>(
