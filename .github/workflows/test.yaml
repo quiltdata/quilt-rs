@@ -381,10 +381,10 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'quilt-sync/ui/package-lock.json'
 
-      - name: Install trunk and just
+      - name: Install trunk, cargo-nextest and just
         uses: taiki-e/install-action@v2
         with:
-          tool: trunk,just
+          tool: trunk,nextest,just
 
       - name: Determine wasm-bindgen version
         id: wasm-bindgen-version
