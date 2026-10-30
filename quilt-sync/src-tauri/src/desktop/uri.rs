@@ -12,7 +12,6 @@ use crate::engine::Error;
 use crate::engine::Result;
 use crate::engine::model;
 use crate::engine::navigation;
-use crate::engine::oauth::Landing;
 use crate::engine::routes;
 use crate::engine::services::Services;
 use crate::engine::telemetry::MixpanelEvent;
@@ -134,26 +133,25 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
         let oauth_state = &s.oauth;
         let m = &*s.model;
 
-        let result = match oauth_state
+        let (landing, params) = oauth_state
             .take_params(&host, auth_params.code.clone(), &state)
-            .await
-        {
-            Ok((oauth_params, landing)) => {
+            .await;
+        let result = match params {
+            Ok(oauth_params) => {
                 info!("OAuth 2.1 callback for host: {}", host_str);
-                let login_result = model::login_oauth(m, &host, oauth_params).await;
-                (login_result, landing)
+                model::login_oauth(m, &host, oauth_params).await
             }
             Err(err) => {
                 error!(
                     "OAuth callback rejected for {}, aborting: {}",
                     host_str, err
                 );
-                (Err(err), Landing::default())
+                Err(err)
             }
         };
 
         match result {
-            (Ok(()), landing) => {
+            Ok(()) => {
                 let final_path = landing
                     .back
                     .as_deref()
@@ -176,7 +174,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                 }));
                 navigate(&s, landing.page.as_deref(), final_path);
             }
-            (Err(err), landing) => {
+            Err(err) => {
                 error!("Failed to login via deep link: {}", err);
                 navigate(
                     &s,

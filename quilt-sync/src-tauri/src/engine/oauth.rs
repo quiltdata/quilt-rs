@@ -121,7 +121,7 @@ impl OAuthState {
         host: &quilt_uri::Host,
         code: String,
         state: &str,
-    ) -> Result<(quilt::auth::OAuthParams, Landing), Error> {
+    ) -> (Landing, Result<quilt::auth::OAuthParams, Error>) {
         let host_key = host.to_string();
         let mut guard = self.pending.lock().await;
         let pending = match guard.remove(&host_key) {
@@ -129,43 +129,52 @@ impl OAuthState {
                 info!("Found pending OAuth state for {host_key}");
                 p
             }
-            Some(_) => {
+            Some(expired) => {
                 warn!("Pending OAuth state for {host_key} has expired");
-                return Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
-                    format!(
-                        "OAuth state for {host_key} has expired; login again to restart the flow"
-                    ),
-                )));
+                return (
+                    expired.landing,
+                    Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
+                        format!(
+                            "OAuth state for {host_key} has expired; login again to restart the flow"
+                        ),
+                    ))),
+                );
             }
             None => {
                 let keys: Vec<String> = guard.keys().cloned().collect();
                 warn!("No pending OAuth state for {host_key}. Pending hosts: {keys:?}");
-                return Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
-                    format!(
-                        "No active OAuth flow for {host_key}; \
-                     please start the login flow from within the app"
-                    ),
-                )));
+                return (
+                    Landing::default(),
+                    Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
+                        format!(
+                            "No active OAuth flow for {host_key}; \
+                         please start the login flow from within the app"
+                        ),
+                    ))),
+                );
             }
         };
         drop(guard);
 
         if pending.state != state {
             warn!("OAuth state mismatch for {host_key}: possible CSRF attack");
-            return Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
-                format!("State mismatch for {host_key}: possible CSRF attack"),
-            )));
+            return (
+                pending.landing,
+                Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
+                    format!("State mismatch for {host_key}: possible CSRF attack"),
+                ))),
+            );
         }
 
-        Ok((
-            quilt::auth::OAuthParams {
+        (
+            pending.landing,
+            Ok(quilt::auth::OAuthParams {
                 code,
                 code_verifier: pending.code_verifier,
                 redirect_uri: pending.redirect_uri,
                 client_id: pending.client_id,
-            },
-            pending.landing,
-        ))
+            }),
+        )
     }
 }
 
@@ -212,10 +221,10 @@ mod tests {
         };
         let req = oauth.start_login(&host, "client-id", landing).await;
         let state = extract_state(&req.authorize_url);
-        let (_, landing) = oauth
+        let (landing, params) = oauth
             .take_params(&host, "auth-code".to_string(), &state)
-            .await
-            .unwrap();
+            .await;
+        assert!(params.is_ok());
         assert_eq!(
             landing,
             Landing {
@@ -231,9 +240,10 @@ mod tests {
         let oauth = OAuthState::default();
         let host = fixtures::host();
         // No start_login call — simulates an unsolicited deep link.
-        let result = oauth
+        let (landing, result) = oauth
             .take_params(&host, "auth-code".to_string(), "state")
             .await;
+        assert_eq!(landing, Landing::default(), "no page asked for it");
         assert!(
             matches!(
                 result,
@@ -248,14 +258,21 @@ mod tests {
         tokio::time::pause();
         let oauth = OAuthState::default();
         let host = fixtures::host();
-        let req = oauth
-            .start_login(&host, "client-id", Landing::default())
-            .await;
+        let asked = Landing {
+            back: None,
+            page: Some("a-tab".to_string()),
+        };
+        let req = oauth.start_login(&host, "client-id", asked).await;
         let state = extract_state(&req.authorize_url);
         tokio::time::advance(TTL + Duration::from_secs(1)).await;
-        let result = oauth
+        let (landing, result) = oauth
             .take_params(&host, "auth-code".to_string(), &state)
             .await;
+        assert_eq!(
+            landing.page.as_deref(),
+            Some("a-tab"),
+            "the page that asked hears that it expired"
+        );
         assert!(
             matches!(
                 result,
