@@ -62,7 +62,10 @@ fn main() {
                     info!("Single-instance deep link: {:?}", uri_str);
                     uri::handle_deep_link_url(app, uri_str)
                 }
-                None => Ok(()),
+                None => {
+                    tray::show_main_window(app);
+                    Ok(())
+                }
             } {
                 error!("{}", err);
             }
