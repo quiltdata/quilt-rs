@@ -23,7 +23,7 @@
 
 ### Fixed
 
-- On Windows and Linux, opening QuiltSync while it runs in the tray shows its window
+- On Windows and Linux, opening QuiltSync while it runs in the tray shows its window (<https://github.com/quiltdata/quilt-rs/pull/1275>)
 
 ## [v0.26.1] - 2026-10-29
 
