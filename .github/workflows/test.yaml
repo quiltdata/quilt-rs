@@ -113,10 +113,11 @@ jobs:
       - name: Lint markdown files
         run: just lint-md
 
-  workspace:
-    name: workspace
-    # The quilt-rs crates. This runner has no Tauri system libraries, so it
-    # cannot build `quilt-sync`; `quilt-sync-ui` is tested in `frontend`.
+  quilt-rs:
+    name: quilt-rs
+    # quilt-rs, quilt-cli and quilt-uri. This runner has no Tauri system
+    # libraries, so it cannot build `quilt-sync`; `quilt-sync-ui` is tested in
+    # `frontend`.
     needs: changes
     if: needs.changes.outputs.rs == 'true'
     runs-on: ubuntu-24.04
@@ -162,9 +163,9 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-  workspace-cross-platform:
-    name: workspace (${{ matrix.platform }})
-    # The tests of `workspace` on the other OSes. Only on `main`, scheduled
+  quilt-rs-cross-platform:
+    name: quilt-rs (${{ matrix.platform }})
+    # The tests of `quilt-rs` on the other OSes. Only on `main`, scheduled
     # runs included: pull requests test on Linux only, so an OS-specific bug
     # shows up here, after the merge.
     if: github.ref == 'refs/heads/main'
@@ -205,7 +206,7 @@ jobs:
         run: just test no-aws rs --no-fail-fast
 
       - name: Test (live AWS fixtures)
-        # Same rule as in `workspace`.
+        # Same rule as in `quilt-rs`.
         if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         # The tests that write to S3 run in `live-writes`.
         run: just test live rs 'not test(/::live_write_/)' --no-fail-fast
@@ -225,8 +226,8 @@ jobs:
       cancel-in-progress: false
       queue: max
     needs: changes
-    # Same rule as the live step in `workspace`. Windows on `main` only, as
-    # in `workspace-cross-platform`. No macOS: it shares Linux's Unix
+    # Same rule as the live step in `quilt-rs`. Windows on `main` only, as
+    # in `quilt-rs-cross-platform`. No macOS: it shares Linux's Unix
     # semantics, and every leg here waits for the one before it.
     if: needs.changes.outputs.rs == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
@@ -305,14 +306,14 @@ jobs:
       - name: Format and lint
         run: just check sync
 
-      # Two steps, for the reason given in `workspace`.
+      # Two steps, for the reason given in `quilt-rs`.
       - name: Test
         run: just test no-aws sync
         env:
           RUST_LOG: debug
 
       - name: Test (live AWS fixtures)
-        # Same rule as in `workspace`.
+        # Same rule as in `quilt-rs`.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: just test live sync
         env:
@@ -323,7 +324,7 @@ jobs:
   quilt-sync-cross-platform:
     name: quilt-sync (${{ matrix.platform }})
     # The tests of `quilt-sync` on the other OSes, on `main` only, as in
-    # `workspace-cross-platform`. Holds the only clippy run of the backend for
+    # `quilt-rs-cross-platform`. Holds the only clippy run of the backend for
     # these OSes.
     if: github.ref == 'refs/heads/main'
     strategy:
