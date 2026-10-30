@@ -38,9 +38,9 @@ just -l
 targets. CI checks all three, so a clean `just lint` leaves nothing for it to
 reject. `just fmt` is the half that writes, over the same file set.
 
-While working, run only the tests you touch: `just test no-aws -p <crate>`
-(it has a cost, below), or `just test no-aws -E 'test(name)'` for one test.
-Before a push, run `just ci`.
+While working, run only the tests you touch:
+`just test no-aws -E 'package(quilt-rs)'` for one crate, or `-E 'test(name)'`
+for one test. Before a push, run `just ci`.
 
 `just ci` runs everything CI checks, in one command, for use just before you
 push. CI runs the same recipes, some with a narrower scope, and on a pull
