@@ -90,17 +90,17 @@ pub(super) fn served() -> bool {
 }
 
 /// The token from the address, kept for later loads and dropped from the
-/// address; or, with none there, the one kept before. Storage that is missing
-/// or throws only means nothing is kept.
+/// address; or, with none there, the one kept before. When storage is missing
+/// or throws, the token stays in the address, so a reload still has it.
 fn read_token() -> Option<String> {
     let window = web_sys::window()?;
     let storage = window.local_storage().ok().flatten();
     let href = window.location().href().ok()?;
     if let Some((token, rest)) = split_token(&href) {
-        if let Some(storage) = &storage {
-            let _ = storage.set_item(TOKEN_KEY, &token);
-        }
-        if let Ok(history) = window.history() {
+        let kept = storage
+            .as_ref()
+            .is_some_and(|storage| storage.set_item(TOKEN_KEY, &token).is_ok());
+        if kept && let Ok(history) = window.history() {
             let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&rest));
         }
         return Some(token);
