@@ -12,7 +12,7 @@
 //! back-off, and a hello after any closed socket, even one that never got
 //! going, reloads the page: requests failed and events were lost in the gap,
 //! and the engine may be a newer one. When the engine refuses the token (it was reset), the page stops
-//! trying and says so once.
+//! trying and says so once; so does a page that can't keep its token.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -29,7 +29,11 @@ const FIRST_RETRY_MS: i32 = 500;
 const LAST_RETRY_MS: i32 = 5_000;
 
 /// What every request answers once the engine refused the token.
-const REFUSED: &str = "QuiltSync was restarted with a new link. Open the link it printed.";
+const REFUSED: &str = "QuiltSync has a new link. Open it from the tray menu: Open in browser.";
+
+/// What every request answers when the page can't keep its token.
+const NO_STORAGE: &str =
+    "QuiltSync in a browser needs site storage. Turn it on for this site and open the link again.";
 
 pub(super) type Callback = Rc<RefCell<dyn FnMut(&serde_json::Value)>>;
 type OnReady = Box<dyn FnOnce()>;
@@ -52,8 +56,9 @@ enum Link {
     /// A retry, or the check of a refused token, is under way: no new socket
     /// until it is done.
     Waiting,
-    /// The engine refused the token: no more sockets.
-    Refused,
+    /// The engine refused the token, or the page couldn't keep it: no more
+    /// sockets, and every request answers this.
+    Refused(&'static str),
 }
 
 #[derive(Default)]
@@ -80,7 +85,13 @@ const TOKEN_KEY: &str = "quiltsync-token";
 
 thread_local! {
     static STATE: RefCell<State> = RefCell::default();
-    static TOKEN: Option<String> = read_token();
+    static TOKEN: Option<Token> = read_token();
+}
+
+enum Token {
+    Kept(String),
+    /// The address had one, but the page has no storage to keep it in.
+    Unkept,
 }
 
 /// Whether the engine served this page, so it talks over the socket: the page
@@ -91,9 +102,8 @@ pub(super) fn served() -> bool {
 }
 
 /// The token from the address, kept for later loads and dropped from the
-/// address; or, with none there, the one kept before. When storage is missing
-/// or throws, the token stays in the address, so a reload still has it.
-fn read_token() -> Option<String> {
+/// address; or, with none there, the one kept before.
+fn read_token() -> Option<Token> {
     let window = web_sys::window()?;
     let storage = window.local_storage().ok().flatten();
     let href = window.location().href().ok()?;
@@ -101,12 +111,15 @@ fn read_token() -> Option<String> {
         let kept = storage
             .as_ref()
             .is_some_and(|storage| storage.set_item(TOKEN_KEY, &token).is_ok());
-        if kept && let Ok(history) = window.history() {
+        if !kept {
+            return Some(Token::Unkept);
+        }
+        if let Ok(history) = window.history() {
             let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&rest));
         }
-        return Some(token);
+        return Some(Token::Kept(token));
     }
-    storage?.get_item(TOKEN_KEY).ok().flatten()
+    storage?.get_item(TOKEN_KEY).ok().flatten().map(Token::Kept)
 }
 
 /// The `t` of `href`, and `href` without it.
@@ -119,7 +132,10 @@ fn split_token(href: &str) -> Option<(String, String)> {
 }
 
 fn token() -> String {
-    TOKEN.with(|t| t.clone().unwrap_or_default())
+    TOKEN.with(|t| match t {
+        Some(Token::Kept(token)) => token.clone(),
+        Some(Token::Unkept) | None => String::new(),
+    })
 }
 
 fn js_err(err: &JsValue) -> String {
@@ -130,8 +146,12 @@ fn js_err(err: &JsValue) -> String {
 fn connect() -> Result<(), String> {
     match STATE.with_borrow(|s| s.link) {
         Link::Idle => {}
-        Link::Refused => return Err(REFUSED.to_owned()),
+        Link::Refused(message) => return Err(message.to_owned()),
         Link::Connecting | Link::Ready | Link::Waiting => return Ok(()),
+    }
+    if TOKEN.with(|t| matches!(t, Some(Token::Unkept))) {
+        refuse(NO_STORAGE);
+        return Err(NO_STORAGE.to_owned());
     }
     let host = web_sys::window()
         .ok_or("No window")?
@@ -258,7 +278,7 @@ fn on_close() {
     // plain HTTP.
     wasm_bindgen_futures::spawn_local(async move {
         if token_refused().await {
-            refuse();
+            refuse(REFUSED);
         } else {
             retry_after(delay);
         }
@@ -292,14 +312,14 @@ async fn token_refused() -> bool {
 }
 
 /// Stop reconnecting, fail what waits, and say so once.
-fn refuse() {
+fn refuse(message: &'static str) {
     let pending = STATE.with_borrow_mut(|s| {
-        s.link = Link::Refused;
+        s.link = Link::Refused(message);
         s.queue.clear();
         s.on_ready.clear();
         std::mem::take(&mut s.pending)
     });
-    let refused = JsValue::from_str(REFUSED);
+    let refused = JsValue::from_str(message);
     for (_, (_, reject)) in pending {
         let _ = reject.call1(&JsValue::NULL, &refused);
     }
@@ -315,7 +335,7 @@ fn refuse() {
         "position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:12px 16px;\
          background:#b3261e;color:#fff;font:600 14px/1.4 system-ui,sans-serif;text-align:center",
     );
-    banner.set_text_content(Some(REFUSED));
+    banner.set_text_content(Some(message));
     let _ = body.append_child(&banner);
 }
 
