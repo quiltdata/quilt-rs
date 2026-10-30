@@ -13,9 +13,15 @@ on:
   workflow_dispatch:
   push:
     # Only `main`: a pull request branch already runs on `pull_request`, and
-    # a `push` run too would test every commit there twice.
+    # a `push` run too would test every commit there twice. The merge queue
+    # has already tested each commit here, but this run stays: rust-cache
+    # saves only from `main`, so it keeps every job's cache warm, and runner
+    # minutes cost nothing on a public repository.
     branches: [main]
   pull_request:
+  # The merge queue tests `main` plus a pull request on a temporary branch
+  # before `main` moves, with every job on every OS.
+  merge_group:
 
 # Read-only: third-party actions run with this token.
 permissions:
@@ -23,6 +29,7 @@ permissions:
 
 concurrency:
   # `event_name` so a scheduled run and a push to main cannot cancel each other.
+  # Each merge queue entry has its own branch, so entries never cancel each other.
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
@@ -36,8 +43,8 @@ env:
 jobs:
   changes:
     name: changes
-    # Which jobs a pull request needs, by the files it changes. `main`,
-    # scheduled and manual runs run every job. A job left out shows as skipped.
+    # Which jobs a pull request needs, by the files it changes. Every other
+    # event, the merge queue included, runs every job. A job left out shows as skipped.
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     # The filter lists a pull request's files through the API.
@@ -171,10 +178,9 @@ jobs:
 
   crates-cross-platform:
     name: crates (${{ matrix.platform }})
-    # The tests of `crates` on the other OSes. Only on `main`, scheduled
-    # runs included: pull requests test on Linux only, so an OS-specific bug
-    # shows up here, after the merge.
-    if: github.ref == 'refs/heads/main'
+    # The tests of `crates` on the other OSes. Pull requests test on Linux
+    # only, to stay fast; the merge queue runs these before a merge.
+    if: github.event_name != 'pull_request'
     strategy:
       fail-fast: false
       matrix:
@@ -236,14 +242,14 @@ jobs:
       cancel-in-progress: false
       queue: max
     needs: changes
-    # Same rule as the live step in `crates`. Windows on `main` only, as
-    # in `crates-cross-platform`. No macOS: it shares Linux's Unix
+    # Same rule as the live step in `crates`. Windows not on pull requests,
+    # as in `crates-cross-platform`. No macOS: it shares Linux's Unix
     # semantics, and every leg here waits for the one before it.
     if: needs.changes.outputs.crates == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ github.ref == 'refs/heads/main' && fromJSON('["ubuntu-24.04", "windows-latest"]') || fromJSON('["ubuntu-24.04"]') }}
+        platform: ${{ github.event_name != 'pull_request' && fromJSON('["ubuntu-24.04", "windows-latest"]') || fromJSON('["ubuntu-24.04"]') }}
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 45
     env:
@@ -339,10 +345,10 @@ jobs:
 
   quilt-sync-cross-platform:
     name: quilt-sync (${{ matrix.platform }})
-    # The tests of `quilt-sync` on the other OSes, on `main` only, as in
-    # `crates-cross-platform`. Holds the only clippy run of the backend for
+    # The tests of `quilt-sync` on the other OSes, not on pull requests, as
+    # in `crates-cross-platform`. Holds the only clippy run of the backend for
     # these OSes.
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request'
     strategy:
       matrix:
         platform: [macos-15, windows-latest]
@@ -500,3 +506,29 @@ jobs:
 
       - name: Build
         run: just release-build
+
+  checks:
+    name: all checks
+    # The one check the branch rules require. A skipped matrix job reports
+    # under its unexpanded name, so requiring each job by name would block
+    # every pull request; this job passes on both pull requests and the merge
+    # queue. A skipped job counts as passed.
+    needs:
+      - changes
+      - markdown
+      - crates
+      - crates-cross-platform
+      - live-writes
+      - cargo-deny
+      - quilt-sync
+      - quilt-sync-cross-platform
+      - frontend-lint
+      - frontend-wasm-tests
+      - frontend-build
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

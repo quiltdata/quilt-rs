@@ -38,6 +38,10 @@ just -l
 targets. CI checks all three, so a clean `just lint` leaves nothing for it to
 reject. `just fmt` is the half that writes, over the same file set.
 
+While working, run only the tests you touch: `just test no-aws -p <crate>`
+(it has a cost, below), or `just test no-aws -E 'test(name)'` for one test.
+Before a push, run `just ci`.
+
 `just ci` runs everything CI checks, in one command, for use just before you
 push. CI runs the same recipes, some with a narrower scope, and on a pull
 request it skips the jobs the changed files cannot affect. `just ci` includes
@@ -150,11 +154,17 @@ ones to check first.
 skip markdown-only changes, the `crates` jobs also skip `quilt-sync/**`, the
 frontend job runs only when the UI or something it builds from changes, and
 the markdown lint runs only on `*.md`. A pull request
-tests on Linux only: the macOS and Windows jobs run on `main` and never appear
-on a pull request at all. So read the check list for what is there, not for
-the absence of red — a check that never ran is not a check that passed. A
-fork gets the same set as a branch here, minus the `live_*` tests, which are
-skipped rather than failed (see "Tests that need AWS" above).
+tests on Linux only: the macOS and Windows jobs show as skipped. So read the
+check list for what is there, not for the absence of red — a check that never
+ran is not a check that passed. A fork gets the same set as a branch here,
+minus the `live_*` tests, which are skipped rather than failed (see "Tests that
+need AWS" above). The one required check, `all checks`, passes when no job
+failed.
+
+A maintainer merges with "Merge when ready", which puts the pull request in
+the merge queue. The queue tests `main` plus the pull request with every job on
+every OS, and `main` moves only if that passes. So an OS-specific bug stops the
+merge rather than showing up on `main` after it.
 
 **Every review comment is resolved, and @greptileai is at 5/5.** Reviews come
 from Greptile and Copilot as well as from maintainers. The bots are usually
