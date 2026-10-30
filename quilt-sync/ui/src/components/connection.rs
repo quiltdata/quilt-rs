@@ -57,7 +57,15 @@ pub fn FollowEngine() -> impl IntoView {
         let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
             if let Ok(Some(page)) = commands::take_navigation().await {
-                navigate(&page, NavigateOptions::default());
+                // The router ignores a move to where the page already is, so
+                // opening the same link again reloads, which runs it again.
+                if Some(&page) == here().as_ref() {
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.location().reload();
+                    }
+                } else {
+                    navigate(&page, NavigateOptions::default());
+                }
             }
         });
     };
@@ -70,6 +78,16 @@ pub fn FollowEngine() -> impl IntoView {
         go,
     );
     on_cleanup(move || drop(listener));
+}
+
+/// The page's address, without its host.
+fn here() -> Option<String> {
+    let location = web_sys::window()?.location();
+    Some(format!(
+        "{}{}",
+        location.pathname().ok()?,
+        location.search().ok()?
+    ))
 }
 
 #[cfg(test)]
