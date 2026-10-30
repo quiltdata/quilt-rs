@@ -27,6 +27,7 @@ use quilt_sync_ui::pages::ToolbarBand;
 use quilt_sync_ui::pages::list_region_class;
 use quilt_sync_ui::pages::rows_class;
 use quilt_sync_ui::util::Held;
+use quilt_sync_ui::util::counted;
 
 const MINUTE: f64 = 60_000.0;
 const HOUR: f64 = 60.0 * MINUTE;
@@ -285,7 +286,7 @@ fn TooltipStory() -> impl IntoView {
                                 tone=StateTone::Success
                                 downloads=downloads
                                 host=host.map(str::to_string)
-                                size=size
+                                size=size.map(counted)
                             />
                         </Cell>
                     }
