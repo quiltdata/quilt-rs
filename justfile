@@ -18,12 +18,12 @@ coverage:
     cargo tarpaulin --out html
 
 # The crates a lint `scope` selects. `all` is every crate built for the host.
-# CI lints the rest apart: `rs`, the quilt-rs crates, on a runner without
-# Tauri's system libraries; `sync`, QuiltSync's backend; `ui`, the frontend,
-# which is built for wasm. Cargo forbids dependency cycles, so no `rs` crate
-# depends on QuiltSync.
+# CI lints the rest apart: `crates`, the ones published to crates.io, on a
+# runner without Tauri's system libraries; `sync`, QuiltSync's backend; `ui`,
+# the frontend, which is built for wasm. Cargo forbids dependency cycles, so
+# none of `crates` depends on QuiltSync.
 lint_all := "--workspace"
-lint_rs := "--workspace --exclude quilt-sync --exclude quilt-sync-ui"
+lint_crates := "--workspace --exclude quilt-sync --exclude quilt-sync-ui"
 lint_sync := "-p quilt-sync"
 lint_ui := "--target wasm32-unknown-unknown -p quilt-sync-ui"
 
@@ -44,15 +44,15 @@ fmt:
 lint-md:
     git ls-files -z '*.md' | xargs -0 rumdl check
 
-# Check formatting, then lint `scope` (all, rs, sync or ui); `all` and `rs` also build quilt-uri for wasm
+# Check formatting, then lint `scope` (all, crates, sync or ui); `all` and `crates` also build quilt-uri for wasm
 check scope="all": && (clippy scope)
     cargo fmt --all --check
-    {{ if scope =~ '^(all|rs)$' { "cargo check -p quilt-uri --target wasm32-unknown-unknown" } else { "" } }}
-    {{ if scope =~ '^(all|rs)$' { "cargo check -p quilt-uri --target wasm32-unknown-unknown --all-features" } else { "" } }}
+    {{ if scope =~ '^(all|crates)$' { "cargo check -p quilt-uri --target wasm32-unknown-unknown" } else { "" } }}
+    {{ if scope =~ '^(all|crates)$' { "cargo check -p quilt-uri --target wasm32-unknown-unknown --all-features" } else { "" } }}
 
-# Lint `scope` (all, rs, sync or ui) with clippy for this OS
+# Lint `scope` (all, crates, sync or ui) with clippy for this OS
 clippy scope="all":
-    cargo clippy {{ if scope == "all" { lint_all } else if scope == "rs" { lint_rs } else if scope == "sync" { lint_sync } else if scope == "ui" { lint_ui } else { error("scope is all, rs, sync or ui") } }} --all-targets --all-features -- --deny warnings
+    cargo clippy {{ if scope == "all" { lint_all } else if scope == "crates" { lint_crates } else if scope == "sync" { lint_sync } else if scope == "ui" { lint_ui } else { error("scope is all, crates, sync or ui") } }} --all-targets --all-features -- --deny warnings
 
 # `--all-features` is the cargo-deny action's default.
 #

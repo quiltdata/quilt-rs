@@ -45,7 +45,7 @@ jobs:
       pull-requests: read
     outputs:
       md: ${{ github.event_name != 'pull_request' || steps.filter.outputs.md == 'true' }}
-      rs: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rs == 'true' }}
+      crates: ${{ github.event_name != 'pull_request' || steps.filter.outputs.crates == 'true' }}
       sync: ${{ github.event_name != 'pull_request' || steps.filter.outputs.sync == 'true' }}
       ui: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ui == 'true' }}
     steps:
@@ -65,7 +65,7 @@ jobs:
               - justfile
               - .github/workflows/test.yaml
             # Cargo forbids dependency cycles, so no other crate depends on QuiltSync.
-            rs:
+            crates:
               - "**"
               - "!**/*.md"
               - "!quilt-sync/**"
@@ -113,13 +113,14 @@ jobs:
       - name: Lint markdown files
         run: just lint-md
 
-  quilt-rs:
-    name: quilt-rs
-    # quilt-rs, quilt-cli and quilt-uri. This runner has no Tauri system
-    # libraries, so it cannot build `quilt-sync`; `quilt-sync-ui` is tested in
-    # `frontend`.
+  crates:
+    name: crates
+    # The crates published to crates.io: quilt-rs, quilt-uri and quilt-cli.
+    # Both QuiltSync crates are `publish = false`. This runner has no Tauri
+    # system libraries, so it cannot build `quilt-sync`; `quilt-sync-ui` is
+    # tested in `frontend`.
     needs: changes
-    if: needs.changes.outputs.rs == 'true'
+    if: needs.changes.outputs.crates == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -137,7 +138,7 @@ jobs:
           tool: nextest,just
 
       - name: Format, lint and wasm check
-        run: just check rs
+        run: just check crates
 
       # Split in two so a fork pull request is not a different, quieter run of
       # the same step. Everything that needs no credentials runs everywhere;
@@ -145,14 +146,14 @@ jobs:
       # secrets. With `live-writes`, the selections partition the suite — none
       # overlaps.
       - name: Test
-        run: just test no-aws rs
+        run: just test no-aws crates
 
       - name: Test (live AWS fixtures)
         # Secrets reach a pull request only from a branch in this repository —
         # a platform rule, so this is a skip, not a failure.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         # The tests that write to S3 run in `live-writes`.
-        run: just test live rs 'not test(/::live_write_/)'
+        run: just test live crates 'not test(/::live_write_/)'
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -163,9 +164,9 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
-  quilt-rs-cross-platform:
-    name: quilt-rs (${{ matrix.platform }})
-    # The tests of `quilt-rs` on the other OSes. Only on `main`, scheduled
+  crates-cross-platform:
+    name: crates (${{ matrix.platform }})
+    # The tests of `crates` on the other OSes. Only on `main`, scheduled
     # runs included: pull requests test on Linux only, so an OS-specific bug
     # shows up here, after the merge.
     if: github.ref == 'refs/heads/main'
@@ -197,19 +198,19 @@ jobs:
       # The only lint of code built for this OS alone. Linux cannot lint it
       # for the other target: aws-lc-rs compiles C for the target it builds.
       - name: Lint
-        run: just clippy rs
+        run: just clippy crates
 
       # `--no-fail-fast`, and every step runs after a failure: one run should
       # list every failure, not just the first.
       - name: Test
         if: ${{ !cancelled() }}
-        run: just test no-aws rs --no-fail-fast
+        run: just test no-aws crates --no-fail-fast
 
       - name: Test (live AWS fixtures)
-        # Same rule as in `quilt-rs`.
+        # Same rule as in `crates`.
         if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
         # The tests that write to S3 run in `live-writes`.
-        run: just test live rs 'not test(/::live_write_/)' --no-fail-fast
+        run: just test live crates 'not test(/::live_write_/)' --no-fail-fast
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -226,10 +227,10 @@ jobs:
       cancel-in-progress: false
       queue: max
     needs: changes
-    # Same rule as the live step in `quilt-rs`. Windows on `main` only, as
-    # in `quilt-rs-cross-platform`. No macOS: it shares Linux's Unix
+    # Same rule as the live step in `crates`. Windows on `main` only, as
+    # in `crates-cross-platform`. No macOS: it shares Linux's Unix
     # semantics, and every leg here waits for the one before it.
-    if: needs.changes.outputs.rs == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: needs.changes.outputs.crates == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
       fail-fast: false
       matrix:
@@ -252,7 +253,7 @@ jobs:
           tool: nextest,just
 
       - name: Test (live AWS fixture writes)
-        run: just test live rs 'test(/::live_write_/)' --no-fail-fast
+        run: just test live crates 'test(/::live_write_/)' --no-fail-fast
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -260,7 +261,7 @@ jobs:
   cargo-deny:
     name: cargo-deny
     needs: changes
-    if: needs.changes.outputs.rs == 'true'
+    if: needs.changes.outputs.crates == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -306,14 +307,14 @@ jobs:
       - name: Format and lint
         run: just check sync
 
-      # Two steps, for the reason given in `quilt-rs`.
+      # Two steps, for the reason given in `crates`.
       - name: Test
         run: just test no-aws sync
         env:
           RUST_LOG: debug
 
       - name: Test (live AWS fixtures)
-        # Same rule as in `quilt-rs`.
+        # Same rule as in `crates`.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: just test live sync
         env:
@@ -324,7 +325,7 @@ jobs:
   quilt-sync-cross-platform:
     name: quilt-sync (${{ matrix.platform }})
     # The tests of `quilt-sync` on the other OSes, on `main` only, as in
-    # `quilt-rs-cross-platform`. Holds the only clippy run of the backend for
+    # `crates-cross-platform`. Holds the only clippy run of the backend for
     # these OSes.
     if: github.ref == 'refs/heads/main'
     strategy:

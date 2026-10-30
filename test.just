@@ -1,7 +1,7 @@
 # The crates a test `scope` selects. `all` is every crate that tests on the
-# host, with every target. CI tests the rest apart: `rs`, the quilt-rs crates,
-# on a runner without Tauri's system libraries; `sync`, QuiltSync's backend;
-# `ui`, the frontend's host tests.
+# host, with every target. CI tests the rest apart: `crates`, the ones
+# published to crates.io, on a runner without Tauri's system libraries; `sync`,
+# QuiltSync's backend; `ui`, the frontend's host tests.
 #
 # `quilt-sync-ui` has tests for two targets, and neither harness runs the
 # other's: its `#[test]` functions run on the host, in `all` and `ui`, and its
@@ -14,7 +14,7 @@
 # `--lib --bins`, not `--bin quilt-sync-ui`: most of the tests are in the
 # library target, and `--bin` alone runs only the few in the binary.
 all := "--workspace --all-targets"
-rs := "--workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui"
+crates := "--workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui"
 sync := "-p quilt-sync --all-targets"
 ui := "-p quilt-sync-ui --lib --bins"
 
@@ -30,15 +30,15 @@ wasm_budget := "75"
 
 # `shift` drops the scope, so only the arguments after it reach nextest.
 #
-# Run the tests of `scope` (all, rs, sync or ui) needing no AWS credentials (what a fork's CI runs); arguments go to nextest
+# Run the tests of `scope` (all, crates, sync or ui) needing no AWS credentials (what a fork's CI runs); arguments go to nextest
 [positional-arguments]
 no-aws scope="all" *args:
-    shift && cargo nextest run --profile no-aws {{ if scope == "all" { all } else if scope == "rs" { rs } else if scope == "sync" { sync } else if scope == "ui" { ui } else { error("scope is all, rs, sync or ui") } }} "$@"
+    shift && cargo nextest run --profile no-aws {{ if scope == "all" { all } else if scope == "crates" { crates } else if scope == "sync" { sync } else if scope == "ui" { ui } else { error("scope is all, crates, sync or ui") } }} "$@"
 
 # Run the live_* fixture tests of `scope`, which need AWS credentials, narrowed by the nextest `filter`; arguments go to nextest
 [positional-arguments]
 live scope="all" filter="all()" *args:
-    shift 2 && cargo nextest run {{ if scope == "all" { all } else if scope == "rs" { rs } else if scope == "sync" { sync } else if scope == "ui" { ui } else { error("scope is all, rs, sync or ui") } }} -E {{ quote("test(/::live_/) and (" + filter + ")") }} "$@"
+    shift 2 && cargo nextest run {{ if scope == "all" { all } else if scope == "crates" { crates } else if scope == "sync" { sync } else if scope == "ui" { ui } else { error("scope is all, crates, sync or ui") } }} -E {{ quote("test(/::live_/) and (" + filter + ")") }} "$@"
 
 # nextest does not run doctests. The QuiltSync crates are left out: CI's runner
 # for them cannot build them.

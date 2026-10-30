@@ -147,7 +147,7 @@ a pull request missing any of these will be sent back, so they are the cheap
 ones to check first.
 
 **CI is green.** Which checks run depends on what you touched: the Rust jobs
-skip markdown-only changes, the quilt-rs jobs also skip `quilt-sync/**`, the
+skip markdown-only changes, the `crates` jobs also skip `quilt-sync/**`, the
 frontend job runs only when the UI or something it builds from changes, and
 the markdown lint runs only on `*.md`. A pull request
 tests on Linux only: the macOS and Windows jobs run on `main` and never appear
