@@ -12,10 +12,13 @@ use crate::kit::{Banner, BannerVariant, Blankslate};
 
 /// A bar while the page is reconnecting, and one that stays once the engine
 /// refused it.
+///
+/// Over the top of the page rather than above it: every page fills the window
+/// exactly, so a bar that pushed it down would cut off its bottom.
 #[component]
 pub fn ConnectionBanner() -> impl IntoView {
     let connection = engine::connection();
-    move || match connection.get() {
+    let bar = move || match connection.get() {
         Connection::Rejected(message) => {
             Some(view! { <Banner variant=BannerVariant::Critical>{message}</Banner> }.into_any())
         }
@@ -28,7 +31,8 @@ pub fn ConnectionBanner() -> impl IntoView {
             .into_any(),
         ),
         Connection::Connecting | Connection::Open(_) => None,
-    }
+    };
+    view! { <div style="position:fixed;top:0;left:0;right:0;z-index:1000">{bar}</div> }
 }
 
 /// The page opened without its link: say how to get one, rather than fail on
