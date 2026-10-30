@@ -1,9 +1,9 @@
 //! Hand-rolled GraphQL calls against the registry's `/graphql` endpoint.
 //!
-//! Only the role surface lives here — `me`, `switchRole`, and the
-//! role-scoped `buckets` list. These three have no REST equivalent, which
-//! is the only reason quilt-rs speaks GraphQL at all; everything else in
-//! the auth layer stays on the REST endpoints. Deliberately a few typed
+//! The role surface lives here — `me`, `switchRole`, and the role-scoped
+//! `buckets` list — plus `package`'s revision list. None of these has a REST
+//! equivalent, which is the only reason quilt-rs speaks GraphQL at all;
+//! everything else in the auth layer stays on the REST endpoints. Deliberately a few typed
 //! documents over the existing `HttpClient` rather than a generated client.
 
 use serde::Deserialize;
@@ -14,6 +14,7 @@ use crate::Res;
 use crate::error::RoleError;
 use crate::io::remote::client::HttpClient;
 use quilt_uri::Host;
+use quilt_uri::Namespace;
 
 const ME_QUERY: &str = "query { me { role { name } roles { name } } }";
 
@@ -198,6 +199,94 @@ pub(super) async fn query_buckets(
     Ok(data.buckets.into_iter().map(|b| b.name).collect())
 }
 
+/// `package.revisions` — one entry per timestamped pointer under
+/// `.quilt/named_packages/<name>/`. `hash` only: the registry caps a
+/// document's cost, and the pointer is all a caller needs.
+const PACKAGE_REVISIONS_QUERY: &str = "\
+query($bucket: String!, $name: String!, $number: Int!, $perPage: Int!) { \
+package(bucket: $bucket, name: $name) { \
+revisions { total page(number: $number, perPage: $perPage) { hash } } \
+} }";
+
+const REVISIONS_PER_PAGE: u32 = 100;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageRevisionsVariables<'a> {
+    bucket: &'a str,
+    name: String,
+    number: u32,
+    per_page: u32,
+}
+
+#[derive(Deserialize)]
+struct RevisionHash {
+    hash: String,
+}
+
+#[derive(Deserialize)]
+struct RevisionPage {
+    total: u32,
+    page: Vec<RevisionHash>,
+}
+
+#[derive(Deserialize)]
+struct PackageRevisions {
+    revisions: RevisionPage,
+}
+
+#[derive(Deserialize)]
+struct PackageRevisionsData {
+    package: Option<PackageRevisions>,
+}
+
+/// The hashes of every revision the registry lists for `namespace` in
+/// `bucket`, page by page. A package the registry does not know (never
+/// pushed) lists nothing; one that vanishes after the first page is an
+/// error, since the pages already read are not its whole history.
+pub(super) async fn query_package_revisions(
+    http_client: &impl HttpClient,
+    registry: &url::Host,
+    bucket: &str,
+    namespace: &Namespace,
+    access_token: &str,
+) -> Res<Vec<String>> {
+    let mut hashes = Vec::new();
+    for number in 1.. {
+        let variables = PackageRevisionsVariables {
+            bucket,
+            name: namespace.to_string(),
+            number,
+            per_page: REVISIONS_PER_PAGE,
+        };
+        let data: PackageRevisionsData = execute(
+            http_client,
+            registry,
+            PACKAGE_REVISIONS_QUERY,
+            variables,
+            access_token,
+        )
+        .await?;
+        let Some(package) = data.package else {
+            if number == 1 {
+                break;
+            }
+            return Err(RoleError::GraphQl(format!(
+                "package {namespace} vanished from the registry while listing page {number}"
+            ))
+            .into());
+        };
+        let RevisionPage { total, page } = package.revisions;
+        // A page drops pointers that vanished before resolving, so a short or
+        // even empty page is not the end: only `total` says whether more follow.
+        hashes.extend(page.into_iter().map(|r| r.hash));
+        if u64::from(number) * u64::from(REVISIONS_PER_PAGE) >= u64::from(total) {
+            break;
+        }
+    }
+    Ok(hashes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,13 +296,19 @@ mod tests {
     use crate::Error;
     use crate::auth::test_utils::ACCESS_TOKEN;
     use crate::auth::test_utils::GraphQlTestHttpClient;
-    use crate::auth::test_utils::get_host;
     use crate::auth::test_utils::get_registry_host;
+    use quilt_uri::fixtures;
 
     #[test(tokio::test)]
     async fn query_me_returns_active_and_available_roles() -> Res {
         let client = GraphQlTestHttpClient::default();
-        let me = query_me(&client, &get_registry_host(), &get_host(), ACCESS_TOKEN).await?;
+        let me = query_me(
+            &client,
+            &get_registry_host(),
+            &fixtures::host(),
+            ACCESS_TOKEN,
+        )
+        .await?;
 
         assert_eq!(me.role.name, "ReadWrite");
         assert_eq!(
@@ -229,9 +324,14 @@ mod tests {
             me_is_null: true,
             ..GraphQlTestHttpClient::default()
         };
-        let err = query_me(&client, &get_registry_host(), &get_host(), ACCESS_TOKEN)
-            .await
-            .unwrap_err();
+        let err = query_me(
+            &client,
+            &get_registry_host(),
+            &fixtures::host(),
+            ACCESS_TOKEN,
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             matches!(err, Error::Role(RoleError::NotAuthenticated(_))),
@@ -245,9 +345,14 @@ mod tests {
             top_level_error: Some("field 'me' is deprecated".to_string()),
             ..GraphQlTestHttpClient::default()
         };
-        let err = query_me(&client, &get_registry_host(), &get_host(), ACCESS_TOKEN)
-            .await
-            .unwrap_err();
+        let err = query_me(
+            &client,
+            &get_registry_host(),
+            &fixtures::host(),
+            ACCESS_TOKEN,
+        )
+        .await
+        .unwrap_err();
 
         assert!(
             matches!(&err, Error::Role(RoleError::GraphQl(m)) if m.contains("deprecated")),
@@ -324,7 +429,136 @@ mod tests {
         };
         let buckets = query_buckets(&client, &get_registry_host(), ACCESS_TOKEN).await?;
 
-        assert!(buckets.is_empty());
+        assert_eq!(buckets, [] as [String; 0]);
         Ok(())
+    }
+
+    /// 150 pointers, one of which vanished before it resolved: page 1 holds
+    /// 100, page 2 the 49 left, and the short second page is not mistaken
+    /// for the end — `total` is.
+    #[test(tokio::test)]
+    async fn query_package_revisions_reads_every_page() -> Res {
+        let hashes: Vec<String> = (0..150).map(|i| format!("hash-{i:03}")).collect();
+        let mut slots: Vec<Option<String>> = hashes.iter().cloned().map(Some).collect();
+        slots[120] = None;
+        let client = GraphQlTestHttpClient {
+            package_revisions: Some(slots),
+            ..GraphQlTestHttpClient::default()
+        };
+        let namespace: Namespace = ("team", "dataset").into();
+
+        let listed = query_package_revisions(
+            &client,
+            &get_registry_host(),
+            "quilt-bucket",
+            &namespace,
+            ACCESS_TOKEN,
+        )
+        .await?;
+
+        let mut expected = hashes;
+        expected.remove(120);
+        assert_eq!(listed, expected);
+        assert_eq!(
+            *client.package_queries_seen.lock().unwrap(),
+            vec![
+                serde_json::json!({"bucket": "quilt-bucket", "name": "team/dataset", "number": 1, "perPage": 100}),
+                serde_json::json!({"bucket": "quilt-bucket", "name": "team/dataset", "number": 2, "perPage": 100}),
+            ]
+        );
+        Ok(())
+    }
+
+    /// A whole page whose pointers all vanished comes back empty, and the
+    /// pages after it still hold revisions: only `total` ends the listing.
+    #[test(tokio::test)]
+    async fn query_package_revisions_reads_past_an_emptied_page() -> Res {
+        let mut slots: Vec<Option<String>> =
+            (0..250).map(|i| Some(format!("hash-{i:03}"))).collect();
+        slots[100..200].fill(None);
+        let client = GraphQlTestHttpClient {
+            package_revisions: Some(slots),
+            ..GraphQlTestHttpClient::default()
+        };
+        let namespace: Namespace = ("team", "dataset").into();
+
+        let listed = query_package_revisions(
+            &client,
+            &get_registry_host(),
+            "quilt-bucket",
+            &namespace,
+            ACCESS_TOKEN,
+        )
+        .await?;
+
+        assert_eq!(listed.len(), 150);
+        assert_eq!(listed.last().map(String::as_str), Some("hash-249"));
+        Ok(())
+    }
+
+    /// A package deleted between pages answers page 2 with `package: null`.
+    /// The 100 hashes already read are not the whole history, so the
+    /// listing is refused rather than returned short.
+    #[test(tokio::test)]
+    async fn query_package_revisions_refuses_a_package_gone_mid_listing() {
+        let client = GraphQlTestHttpClient {
+            package_revisions: Some((0..150).map(|i| Some(format!("hash-{i:03}"))).collect()),
+            package_gone_from_page: Some(2),
+            ..GraphQlTestHttpClient::default()
+        };
+        let result = query_package_revisions(
+            &client,
+            &get_registry_host(),
+            "quilt-bucket",
+            &("team", "dataset").into(),
+            ACCESS_TOKEN,
+        )
+        .await;
+
+        assert!(
+            matches!(&result, Err(Error::Role(RoleError::GraphQl(m))) if m.contains("team/dataset")),
+            "expected GraphQl error, got {result:?}"
+        );
+        assert_eq!(client.package_queries_seen.lock().unwrap().len(), 2);
+    }
+
+    /// `package: null` is a package never pushed: nothing is listed.
+    #[test(tokio::test)]
+    async fn query_package_revisions_lists_nothing_for_no_such_package() -> Res {
+        let client = GraphQlTestHttpClient::default();
+        let listed = query_package_revisions(
+            &client,
+            &get_registry_host(),
+            "quilt-bucket",
+            &("team", "dataset").into(),
+            ACCESS_TOKEN,
+        )
+        .await?;
+
+        assert_eq!(listed, [] as [String; 0]);
+        assert_eq!(client.package_queries_seen.lock().unwrap().len(), 1);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn query_package_revisions_surfaces_top_level_graphql_errors() {
+        let client = GraphQlTestHttpClient {
+            top_level_error: Some("query cost exceeds 42".to_string()),
+            ..GraphQlTestHttpClient::default()
+        };
+        let err = query_package_revisions(
+            &client,
+            &get_registry_host(),
+            "quilt-bucket",
+            &("team", "dataset").into(),
+            ACCESS_TOKEN,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(&err, Error::Role(RoleError::GraphQl(m)) if m.contains("cost")),
+            "expected GraphQl error, got {err:?}"
+        );
     }
 }

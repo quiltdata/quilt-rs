@@ -1,6 +1,7 @@
 //! Tests for configuring a package's remote via `set_remote`.
 
 use super::*;
+use quilt_uri::fixtures;
 
 use test_log::test;
 
@@ -50,15 +51,16 @@ async fn test_set_remote_on_local_package() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -70,7 +72,7 @@ async fn test_set_remote_on_local_package() -> Res {
         .expect("remote_uri should be set");
     assert_eq!(
         remote_uri.origin.as_ref().unwrap().to_string(),
-        "example.com"
+        "quilt.test"
     );
     assert_eq!(remote_uri.bucket, "my-bucket");
     assert_eq!(remote_uri.hash, "");
@@ -111,15 +113,16 @@ async fn test_set_remote_empty_bucket_error() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     let result = package
         .set_remote(
             String::new(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await;
@@ -136,57 +139,63 @@ async fn test_set_remote_empty_bucket_error() -> Res {
     Ok(())
 }
 
+/// Remote that rejects any `verify_bucket` call — models the case
+/// where the user typed a bucket that doesn't resolve on S3.
+struct BadBucketRemote;
+
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "every method here panics on call. That cannot be written as `fn -> impl Future`: `!` is not a `Future`, and wrapping the panic in `std::future::ready` makes the call unreachable (`unreachable_code`). `async fn` is the only form that satisfies the trait and still panics on an unexpected call."
+)]
+impl Remote for BadBucketRemote {
+    async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
+        unreachable!("test only exercises verify_bucket")
+    }
+    async fn get_object_stream(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+    ) -> Res<crate::io::remote::RemoteObjectStream> {
+        unreachable!("test only exercises verify_bucket")
+    }
+    async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
+        unreachable!("test only exercises verify_bucket")
+    }
+    async fn put_object(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+    ) -> Res {
+        unreachable!("test only exercises verify_bucket")
+    }
+    async fn upload_file(
+        &self,
+        _host_config: &crate::io::remote::HostConfig,
+        _source_path: impl AsRef<std::path::Path>,
+        _dest_uri: &S3Uri,
+        _size: u64,
+    ) -> Res<(S3Uri, ObjectHash)> {
+        unreachable!("test only exercises verify_bucket")
+    }
+    async fn host_config(&self, _host: Option<&Host>) -> Res<crate::io::remote::HostConfig> {
+        Ok(crate::io::remote::HostConfig::default())
+    }
+    async fn verify_bucket(&self, bucket: &str) -> Res {
+        Err(crate::error::RemoteCatalogError::BucketUnreachable(bucket.to_string()).into())
+    }
+    async fn published_revisions(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _namespace: &Namespace,
+    ) -> Res<Vec<String>> {
+        unreachable!("test only exercises verify_bucket")
+    }
+}
+
 #[test(tokio::test)]
 async fn test_set_remote_rejects_unreachable_bucket() -> Res {
-    use crate::error::RemoteCatalogError;
-
-    /// Remote that rejects any `verify_bucket` call — models the case
-    /// where the user typed a bucket that doesn't resolve on S3.
-    struct BadBucketRemote;
-
-    #[allow(
-        clippy::unused_async_trait_impl,
-        reason = "every method here panics on call. That cannot be written as `fn -> impl Future`: `!` is not a `Future`, and wrapping the panic in `std::future::ready` makes the call unreachable (`unreachable_code`). `async fn` is the only form that satisfies the trait and still panics on an unexpected call."
-    )]
-    impl Remote for BadBucketRemote {
-        async fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<bool> {
-            unreachable!("test only exercises verify_bucket")
-        }
-        async fn get_object_stream(
-            &self,
-            _host: Option<&Host>,
-            _s3_uri: &S3Uri,
-        ) -> Res<crate::io::remote::RemoteObjectStream> {
-            unreachable!("test only exercises verify_bucket")
-        }
-        async fn resolve_url(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> Res<S3Uri> {
-            unreachable!("test only exercises verify_bucket")
-        }
-        async fn put_object(
-            &self,
-            _host: Option<&Host>,
-            _s3_uri: &S3Uri,
-            _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
-        ) -> Res {
-            unreachable!("test only exercises verify_bucket")
-        }
-        async fn upload_file(
-            &self,
-            _host_config: &crate::io::remote::HostConfig,
-            _source_path: impl AsRef<std::path::Path>,
-            _dest_uri: &S3Uri,
-            _size: u64,
-        ) -> Res<(S3Uri, ObjectHash)> {
-            unreachable!("test only exercises verify_bucket")
-        }
-        async fn host_config(&self, _host: Option<&Host>) -> Res<crate::io::remote::HostConfig> {
-            Ok(crate::io::remote::HostConfig::default())
-        }
-        async fn verify_bucket(&self, bucket: &str) -> Res {
-            Err(RemoteCatalogError::BucketUnreachable(bucket.to_string()).into())
-        }
-    }
-
     let (home, _temp_dir1) = Home::from_temp_dir()?;
     let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
 
@@ -217,15 +226,16 @@ async fn test_set_remote_rejects_unreachable_bucket() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote: BadBucketRemote,
+        remote: std::sync::Arc::new(BadBucketRemote),
         storage,
         namespace,
+        state_store: None,
     };
 
     let result = package
         .set_remote(
             "typo-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await;
@@ -269,7 +279,7 @@ async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
                     "bucket": "old-bucket",
                     "namespace": "test/overwrite",
                     "hash": "abc123",
-                    "origin": "old.host"
+                    "origin": "one.quilt.test"
                 },
                 "base_hash": "abc123",
                 "latest_hash": "abc123",
@@ -286,15 +296,16 @@ async fn test_set_remote_rejects_change_on_pushed_package() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     let result = package
         .set_remote(
             "new-bucket".to_string(),
-            Some("new.host".parse()?),
+            Some(fixtures::another_host()),
             WorkflowIntent::BucketDefault,
         )
         .await;
@@ -332,7 +343,7 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
                     "bucket": "my-bucket",
                     "namespace": "test/idempotent",
                     "hash": "abc123",
-                    "origin": "my.host"
+                    "origin": "quilt.test"
                 },
                 "base_hash": "abc123",
                 "latest_hash": "abc123",
@@ -349,16 +360,17 @@ async fn test_set_remote_is_idempotent_on_pushed_package() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     // Same bucket+origin as existing — should be a no-op
     package
         .set_remote(
             "my-bucket".to_string(),
-            Some("my.host".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -394,7 +406,7 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
                     "bucket": "old-bucket",
                     "namespace": "test/unpushed",
                     "hash": "",
-                    "origin": "old.host"
+                    "origin": "one.quilt.test"
                 },
                 "base_hash": "",
                 "latest_hash": "",
@@ -411,15 +423,16 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     package
         .set_remote(
             "new-bucket".to_string(),
-            Some("new.host".parse()?),
+            Some(fixtures::another_host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -429,7 +442,10 @@ async fn test_set_remote_overwrites_unpushed_remote() -> Res {
         .remote_uri
         .as_ref()
         .expect("remote_uri should be set");
-    assert_eq!(remote_uri.origin.as_ref().unwrap().to_string(), "new.host");
+    assert_eq!(
+        remote_uri.origin.as_ref().unwrap().to_string(),
+        "another.quilt.test"
+    );
     assert_eq!(remote_uri.bucket, "new-bucket");
     assert_eq!(remote_uri.hash, "", "hash should remain empty");
 
@@ -480,9 +496,10 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
+        state_store: None,
     };
 
     // Commit the package (no remote yet, uses default HostConfig)
@@ -494,19 +511,24 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
             None,
         )
         .await?;
-    let hash_before = commit.hash.clone();
+    let hash_before = commit.hash().unwrap().to_string();
 
     // Now set_remote — this should trigger recommit.
     // MockRemote returns HostConfig::default() (SHA256 chunked), same as the
     // initial commit, so the row hashes stay the same. But the manifest is
     // rebuilt (e.g. workflow may change), and the lineage prev_hashes are updated.
-    package
-        .set_remote(
+    // The recommit runs under the lock set_remote already holds, so it must
+    // not wait on it.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        package.set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
-        )
-        .await?;
+        ),
+    )
+    .await
+    .expect("set_remote must not wait on its own lock")?;
 
     let lineage = package.lineage().await?;
 
@@ -517,7 +539,7 @@ async fn test_set_remote_recommits_existing_commit() -> Res {
         .expect("remote_uri should be set");
     assert_eq!(
         remote_uri.origin.as_ref().unwrap().to_string(),
-        "example.com"
+        "quilt.test"
     );
     assert_eq!(remote_uri.bucket, "my-bucket");
 
@@ -581,9 +603,10 @@ async fn test_resolve_workflow_without_remote_is_none_for_every_intent() -> Res 
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     for intent in [
@@ -663,9 +686,10 @@ schemas:
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
+        state_store: None,
     };
 
     // Commit the package locally (no remote yet, so no workflow stamped)
@@ -682,7 +706,7 @@ schemas:
     let outcome = package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -778,9 +802,10 @@ schemas:
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
+        state_store: None,
     };
 
     package
@@ -795,7 +820,7 @@ schemas:
     package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -885,9 +910,10 @@ schemas:
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace: namespace.clone(),
+        state_store: None,
     };
 
     package
@@ -900,11 +926,7 @@ schemas:
         .await?;
 
     package
-        .set_remote(
-            "my-bucket".to_string(),
-            Some("example.com".parse()?),
-            intent,
-        )
+        .set_remote("my-bucket".to_string(), Some(fixtures::host()), intent)
         .await?;
 
     let lineage = package.lineage().await?;
@@ -995,9 +1017,10 @@ async fn package_with_config(
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     package
@@ -1022,7 +1045,7 @@ async fn test_set_remote_propagates_named_workflow_error() -> Res {
     let result = package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::Named("nope".to_string()),
         )
         .await;
@@ -1063,7 +1086,7 @@ schemas:
     let outcome = package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await?;
@@ -1160,7 +1183,7 @@ async fn test_set_remote_no_workflow_against_required_bucket_is_rejected() -> Re
     let err = package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::NoWorkflow,
         )
         .await
@@ -1207,7 +1230,7 @@ schemas:
     let err = package
         .set_remote(
             "my-bucket".to_string(),
-            Some("example.com".parse()?),
+            Some(fixtures::host()),
             WorkflowIntent::BucketDefault,
         )
         .await
@@ -1256,6 +1279,49 @@ async fn test_set_remote_stamps_no_workflow() -> Res {
         workflow.id.is_none(),
         "NoWorkflow must not resolve any workflow id"
     );
+
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn test_set_remote_without_host_recommits_with_bucket_workflow() -> Res {
+    // A bucket with no catalog still re-commits: the workflow comes from the
+    // bucket's config, as with a catalog.
+    let (package, _temp_dir1, _temp_dir2) =
+        package_with_config("nohost", FOO_CONFIG, b"{}").await?;
+    let hash_before = package
+        .lineage()
+        .await?
+        .commit
+        .expect("commit should exist")
+        .hash;
+
+    package
+        .set_remote(
+            "my-bucket".to_string(),
+            None,
+            WorkflowIntent::Named("foo".to_string()),
+        )
+        .await?;
+
+    let lineage = package.lineage().await?;
+    let remote_uri = lineage
+        .remote_uri
+        .as_ref()
+        .expect("remote_uri should be set");
+    assert_eq!(remote_uri.bucket, "my-bucket");
+    assert_eq!(remote_uri.origin, None);
+    let new_commit = lineage.commit.as_ref().expect("commit should exist");
+    assert_eq!(new_commit.prev_hashes.first(), Some(&hash_before));
+    let manifest_path = package
+        .paths
+        .installed_manifest(&package.namespace, &new_commit.hash);
+    let manifest = Manifest::from_path(&package.storage, &manifest_path).await?;
+    let workflow = manifest
+        .header
+        .workflow
+        .expect("recommit should stamp the named workflow");
+    assert_eq!(workflow.id.expect("workflow id should be set").id, "foo");
 
     Ok(())
 }

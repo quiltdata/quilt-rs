@@ -1,0 +1,117 @@
+/* Region 4 is one region. Its toolbar names the view directly below it, so the
+ * pair is a single child of `PageLayout`'s column — `.main`'s gap separates
+ * REGIONS, and letting it fall between the toolbar and its own list drew them as
+ * two, spaced further apart than the toolbar was from the queue above it.
+ *
+ * No gap here: `ListToolbar`'s own `padding-bottom` is the internal spacing, and
+ * having it in one place is what keeps the toolbar sitting on its list in every
+ * arm of the read.
+ *
+ * The pair is also what keeps the toolbar in place: a sticky box stays only
+ * inside its parent, and here that parent runs to the end of the list. */
+.list_region {
+  display: flex;
+  flex-direction: column;
+}
+
+/* A group heading stays under the bands while its rows scroll, so the bucket or
+ * package being read stays named. The headings share one parent, so the next one
+ * stops over the last. */
+[data-page-scroll] .list_region [data-group-heading] {
+  position: sticky;
+  top: var(--pinned-bottom);
+  z-index: 1;
+}
+
+/* The rows hold positioned parts with a `z-index` of their own, such as a split
+ * button. Isolated, they stack inside their list and cannot rise over a heading. */
+[data-page-scroll] .list_region [data-group-heading] + * {
+  isolation: isolate;
+}
+
+/* The parts above the list stay in place while its rows scroll the page under
+ * them. Each is its own sticky band, since no one box holds them all: the
+ * strip is built outside the package read, and the queue, the toolbar and the
+ * rows inside it. A band's `top` is the appbar's fixed height plus the banner
+ * row and the bands above it, which `publish_height` measures and writes on
+ * the frame, where the `--pinned-*` values are made of them.
+ *
+ * Each band reaches up over the gap above it and paints it with the page's
+ * background, so rows never show through a gap, and a band sits at the same
+ * place stuck or not. */
+[data-page-scroll] .strip,
+[data-page-scroll] .queue,
+[data-page-scroll] .toolbar {
+  position: sticky;
+  z-index: 1;
+  background: var(--q-bgColor-page);
+}
+
+/* Each band stops high enough to leave the floor in view under the toolbar.
+ * When the bands are taller than the window, as with many hosts in Accounts,
+ * they stack upwards from there instead, and the top of the stack goes under
+ * the appbar rather than the list out of sight. */
+
+/* Its gap is `.main`'s top padding. */
+[data-page-scroll] .strip {
+  top: min(
+    var(--pinned-top),
+    var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar) - var(--pinned-queue) -
+      var(--pinned-strip)
+  );
+  margin-top: calc(-1 * var(--q-space-5));
+  padding-top: var(--q-space-5);
+}
+
+/* Its gap, and the toolbar's, is `.main`'s gap between regions. */
+[data-page-scroll] .queue {
+  top: min(
+    var(--pinned-top) + var(--pinned-strip),
+    var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar) - var(--pinned-queue)
+  );
+  margin-top: calc(-1 * var(--q-space-6));
+  padding-top: var(--q-space-6);
+}
+
+[data-page-scroll] .toolbar {
+  top: min(
+    var(--pinned-top) + var(--pinned-strip) + var(--pinned-queue),
+    var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar)
+  );
+  margin-top: calc(-1 * var(--q-space-6));
+  padding-top: var(--q-space-6);
+}
+
+/* A long queue scrolls inside, so the bands together stay shorter than the
+ * window. A third of the frame, which the gallery sets to the window floor.
+ * At either end the wheel moves on to the page. */
+.queue_scroll {
+  max-height: calc(var(--q-frame-height, 100vh) / 3);
+  overflow-y: auto;
+}
+
+/* A run of rows under one heading: a list for a screen reader, and on screen the
+ * flat run it has always been.
+ *
+ * The hairline above the run comes from `Card`'s `.body > * + *`, exactly as it used
+ * to come above the first row; the one between rows moves here, because the rows are
+ * no longer that card's direct children. */
+/* `list-style: none` is enough for WebKit to drop the list semantics with it,
+ * so every one of these carries an explicit `role="list"`. */
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rows > li + li {
+  border-top: 1px solid var(--q-borderColor-muted);
+}
+
+/* A list with no dividing rule: the packages an expanded cause reveals. */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+

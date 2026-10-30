@@ -20,6 +20,7 @@ use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::oauth::OAuthState;
 use crate::quilt;
+use crate::quilt::io::storage::LocalStorage;
 use crate::quilt::paths::DomainPaths;
 use crate::routes;
 use crate::telemetry::event::{AuthEvent, LoginEvent, LoginFlow};
@@ -94,11 +95,20 @@ impl ErasedAuth {
 /// It is addressed through the builder that created it
 /// ([`DomainPaths::auth_host`]), so the name looked up here is the normalized
 /// host login wrote, not whatever string a caller happened to hold.
-fn erase_auth_dir(data_dir: &Path, host: &str) -> Result<ErasedAuth, Error> {
+///
+/// Holds the host's auth lock across the erase, so a refresh in flight here or
+/// in another process lands first, and one waiting finds no session after it.
+async fn erase_auth_dir(data_dir: &Path, host: &str) -> Result<ErasedAuth, Error> {
     let host = Host::from_str(host)?;
-    let auth_dir = data_dir.join(quilt::paths::AUTH_DIR);
-    let host_dir = DomainPaths::new(data_dir.to_path_buf()).auth_host(&host);
+    let paths = DomainPaths::new(data_dir.to_path_buf());
+    let auth_dir = paths.auth_dir();
+    let host_dir = paths.auth_host(&host);
 
+    if !host_dir.exists() {
+        return Ok(ErasedAuth::NothingStored(host));
+    }
+    let _lock = quilt::auth::lock_host(&LocalStorage::new(), &paths, &host).await?;
+    // Another logout may have erased it while this one waited.
     if !host_dir.exists() {
         return Ok(ErasedAuth::NothingStored(host));
     }
@@ -130,7 +140,7 @@ async fn erase_auth_command(
     tracing: &Telemetry,
     host: &str,
 ) -> Result<(), Error> {
-    let erased = erase_auth_dir(data_dir, host);
+    let erased = erase_auth_dir(data_dir, host).await;
 
     // Every logout leaves exactly one signal, and which one says what happened.
     match &erased {
@@ -166,13 +176,14 @@ pub async fn erase_auth(
     tracing: tauri::State<'_, Telemetry>,
     host: String,
 ) -> Result<String, String> {
-    let app_handle = app_handle.lock().await;
+    // Not held across the erase, which may wait on another process's auth lock.
+    let data_dir = app_handle.lock().await.path().app_local_data_dir();
 
     let msg_init = format!("Erasing auth for {host}");
     let msg_ok = format!("Successfully erased auth for {host}");
     let msg_err = |err: &Error| format!("Failed to erase auth: {err}");
 
-    let result = match app_handle.path().app_local_data_dir() {
+    let result = match data_dir {
         Ok(data_dir) => erase_auth_command(&data_dir, &*m, &roles, &tracing, &host).await,
         Err(err) => Err(Error::from(err)),
     };
@@ -496,6 +507,7 @@ pub async fn login_oauth(
 
 #[cfg(test)]
 mod tests {
+    use quilt_uri::fixtures;
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -563,7 +575,7 @@ mod tests {
     #[tokio::test]
     async fn switch_role_clears_the_remote_client_cache() {
         let recording = mock_model_recording_cache_clears("ReadOnly");
-        let host = "test.quilt.dev";
+        let host = "quilt.test";
 
         switch_role_command(
             &recording.model,
@@ -607,7 +619,7 @@ mod tests {
             &RoleCache::default(),
             &watcher,
             &Telemetry::default(),
-            "test.quilt.dev",
+            "quilt.test",
             "ReadWrite",
         )
         .await
@@ -643,7 +655,7 @@ mod tests {
             &RoleCache::default(),
             &watcher,
             &Telemetry::default(),
-            "test.quilt.dev",
+            "quilt.test",
             "ReadWrite",
         )
         .await;
@@ -671,7 +683,7 @@ mod tests {
             &RoleCache::default(),
             &test_watcher(),
             &Telemetry::default(),
-            "test.quilt.dev",
+            "quilt.test",
             "readonly",
         )
         .await
@@ -709,7 +721,7 @@ mod tests {
             &RoleCache::default(),
             &test_watcher(),
             &Telemetry::default(),
-            "test.quilt.dev",
+            "quilt.test",
             "ReadOnly",
         )
         .await;
@@ -777,7 +789,7 @@ mod tests {
     #[tokio::test]
     async fn logging_out_a_host_with_nothing_stored_reports_an_anomaly() {
         let data_dir = TempDir::new().expect("temp data dir");
-        seed_auth_dirs(data_dir.path(), &["a.quilt.dev"]);
+        seed_auth_dirs(data_dir.path(), &["one.quilt.test"]);
 
         let mut m = MockQuiltModel::new();
         m.expect_clear_remote_client_cache().returning(|_| ());
@@ -788,7 +800,7 @@ mod tests {
             &m,
             &RoleCache::default(),
             &telemetry,
-            "never-logged-in.quilt.dev",
+            "another.quilt.test",
         )
         .await
         .expect("a logout that finds nothing stored is still a success");
@@ -803,6 +815,41 @@ mod tests {
             reported[0].contains("Logout found no stored auth"),
             "and it is the anomaly, not something else: {reported:?}"
         );
+        let host = Host::from_str("another.quilt.test").expect("host");
+        assert!(
+            !DomainPaths::new(data_dir.path().to_path_buf())
+                .auth_lock(&host)
+                .exists(),
+            "and it wrote nothing, not even a lock"
+        );
+    }
+
+    /// A logout waits for a refresh holding the host's lock, so the refresh
+    /// cannot write the session back after the erase.
+    #[tokio::test]
+    async fn logging_out_waits_for_a_refresh_holding_the_host_lock() {
+        let data_dir = TempDir::new().expect("temp data dir");
+        seed_auth_dirs(data_dir.path(), &["quilt.test"]);
+        let paths = DomainPaths::new(data_dir.path().to_path_buf());
+        let host = Host::from_str("quilt.test").expect("host");
+        let storage = LocalStorage::new();
+
+        let mut m = MockQuiltModel::new();
+        m.expect_clear_remote_client_cache().returning(|_| ());
+        let roles = RoleCache::default();
+        let telemetry = Telemetry::default();
+        let logout = || erase_auth_command(data_dir.path(), &m, &roles, &telemetry, "quilt.test");
+
+        let refresh = quilt::auth::lock_host(&storage, &paths, &host)
+            .await
+            .expect("lock");
+        let waited = tokio::time::timeout(std::time::Duration::from_millis(300), logout()).await;
+        assert!(waited.is_err(), "the logout must wait for the lock");
+        assert!(paths.auth_host(&host).exists(), "nothing erased yet");
+
+        drop(refresh);
+        logout().await.expect("logout");
+        assert!(!paths.auth_host(&host).exists());
     }
 
     /// The other side of the same rule: a logout that *does* erase something
@@ -811,7 +858,7 @@ mod tests {
     #[tokio::test]
     async fn a_successful_logout_reports_no_fault() {
         let data_dir = TempDir::new().expect("temp data dir");
-        seed_auth_dirs(data_dir.path(), &["a.quilt.dev"]);
+        seed_auth_dirs(data_dir.path(), &["quilt.test"]);
 
         let mut m = MockQuiltModel::new();
         m.expect_clear_remote_client_cache().returning(|_| ());
@@ -822,7 +869,7 @@ mod tests {
             &m,
             &RoleCache::default(),
             &telemetry,
-            "a.quilt.dev",
+            "quilt.test",
         )
         .await
         .expect("logout");
@@ -837,7 +884,7 @@ mod tests {
     #[tokio::test]
     async fn logging_out_erases_only_its_own_host() {
         let data_dir = TempDir::new().expect("temp data dir");
-        seed_auth_dirs(data_dir.path(), &["a.quilt.dev", "b.quilt.dev"]);
+        seed_auth_dirs(data_dir.path(), &["one.quilt.test", "another.quilt.test"]);
 
         let mut m = MockQuiltModel::new();
         m.expect_clear_remote_client_cache().returning(|_| ());
@@ -847,15 +894,18 @@ mod tests {
             &m,
             &RoleCache::default(),
             &Telemetry::default(),
-            "a.quilt.dev",
+            "one.quilt.test",
         )
         .await
         .expect("logout");
 
         let auth = data_dir.path().join(quilt::paths::AUTH_DIR);
-        assert!(!auth.join("a.quilt.dev").exists(), "its own host is gone");
         assert!(
-            auth.join("b.quilt.dev").exists(),
+            !auth.join("one.quilt.test").exists(),
+            "its own host is gone"
+        );
+        assert!(
+            auth.join("another.quilt.test").exists(),
             "another host's credentials must survive someone else's logout"
         );
     }
@@ -874,7 +924,7 @@ mod tests {
             &m,
             &RoleCache::default(),
             &Telemetry::default(),
-            "never.logged.in",
+            "quilt.test",
         )
         .await
         .expect("nothing to erase is not a failure");
@@ -900,10 +950,10 @@ mod tests {
 
     #[tokio::test]
     async fn logging_out_drops_the_cached_role() {
-        let host: Host = "test.quilt.dev".parse().expect("host");
+        let host = fixtures::host();
         let roles = warmed_role_cache(&host).await;
         let data_dir = TempDir::new().expect("temp data dir");
-        seed_auth_dirs(data_dir.path(), &["test.quilt.dev"]);
+        seed_auth_dirs(data_dir.path(), &["quilt.test"]);
 
         let mut erasing = MockQuiltModel::new();
         erasing.expect_clear_remote_client_cache().returning(|_| ());
@@ -912,7 +962,7 @@ mod tests {
             &erasing,
             &roles,
             &Telemetry::default(),
-            "test.quilt.dev",
+            "quilt.test",
         )
         .await
         .expect("logout");
@@ -948,7 +998,7 @@ mod tests {
         });
         model.expect_clear_remote_client_cache().returning(|_| ());
 
-        let data = get_roles_command(&model, &RoleCache::default(), "test.quilt.dev")
+        let data = get_roles_command(&model, &RoleCache::default(), "quilt.test")
             .await
             .expect("roles");
 
@@ -993,25 +1043,21 @@ mod tests {
     #[tokio::test]
     async fn test_get_login_error_data() -> Result<(), String> {
         let data = get_login_error_data(
-            "test.quilt.dev".to_string(),
+            "quilt.test".to_string(),
             Some("Login failed".to_string()),
             "Auth failed".to_string(),
         )
         .await?;
         assert_eq!(data.title, "Login failed");
         assert_eq!(data.message, "Auth failed");
-        assert_eq!(data.login_host, "test.quilt.dev");
+        assert_eq!(data.login_host, "quilt.test");
         Ok(())
     }
 
     #[tokio::test]
     async fn test_get_login_error_data_default_title() -> Result<(), String> {
-        let data = get_login_error_data(
-            "test.quilt.dev".to_string(),
-            None,
-            "Auth failed".to_string(),
-        )
-        .await?;
+        let data =
+            get_login_error_data("quilt.test".to_string(), None, "Auth failed".to_string()).await?;
         assert_eq!(data.title, "Login failed");
         assert_eq!(data.message, "Auth failed");
         Ok(())
@@ -1023,14 +1069,14 @@ mod tests {
     #[tokio::test]
     async fn test_get_login_data() -> Result<(), String> {
         let data = get_login_data(
-            "test.quilt.dev".to_string(),
+            "quilt.test".to_string(),
             "/installed-packages-list".to_string(),
         )
         .await?;
 
-        assert_eq!(data.host, "test.quilt.dev");
+        assert_eq!(data.host, "quilt.test");
         assert_eq!(data.back, "/installed-packages-list");
-        assert_eq!(data.catalog_url, "https://test.quilt.dev/code");
+        assert_eq!(data.catalog_url, "https://quilt.test/code");
         Ok(())
     }
 
@@ -1038,11 +1084,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_login_data_empty_back() -> Result<(), String> {
-        let data = get_login_data("test.quilt.dev".to_string(), String::new()).await?;
+        let data = get_login_data("quilt.test".to_string(), String::new()).await?;
 
-        assert_eq!(data.host, "test.quilt.dev");
+        assert_eq!(data.host, "quilt.test");
         assert_eq!(data.back, "");
-        assert_eq!(data.catalog_url, "https://test.quilt.dev/code");
+        assert_eq!(data.catalog_url, "https://quilt.test/code");
         Ok(())
     }
 }

@@ -7,6 +7,23 @@ use crate::components::buttons;
 use crate::components::{Notification, ToolbarActions};
 use crate::util;
 
+/// The remote button's label, and whether it is drawn as a warning. A bucket
+/// is a configured remote, with or without a catalog: the computer's AWS
+/// credentials reach a bucket alone.
+fn remote_button(
+    uri: Option<&quilt_uri::S3PackageUri>,
+    remote_locked: bool,
+    status: &str,
+) -> (&'static str, bool) {
+    if !util::has_bucket(uri) {
+        ("Set remote", true)
+    } else if remote_locked {
+        ("Show remote", false)
+    } else {
+        ("Change remote", status == "error")
+    }
+}
+
 // ── Toolbar actions (rendered into Layout's toolbar) ──
 
 pub(super) fn build_toolbar_actions(
@@ -21,18 +38,8 @@ pub(super) fn build_toolbar_actions(
     let has_catalog = origin_url.is_some();
     let catalog_disabled = data.status == "local";
 
-    let remote_configured = data
-        .uri
-        .as_ref()
-        .is_some_and(|u| u.catalog.is_some() && !u.bucket.is_empty());
-    let is_error = data.status == "error";
-    let (remote_label, remote_warning) = if !remote_configured {
-        ("Set remote", true)
-    } else if data.remote_locked {
-        ("Show remote", false)
-    } else {
-        ("Change remote", is_error)
-    };
+    let (remote_label, remote_warning) =
+        remote_button(data.uri.as_ref(), data.remote_locked, &data.status);
 
     ToolbarActions::new(move || {
         let navigate = use_navigate();
@@ -43,7 +50,7 @@ pub(super) fn build_toolbar_actions(
             let ns = ns_for_open.clone();
             let uri = uri_for_open.clone();
             leptos::task::spawn_local(async move {
-                match commands::open_in_file_browser(ns, uri).await {
+                match commands::open_in_file_browser(ns.to_string(), uri).await {
                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
                     Err(e) => notification.set(Some(Notification::Error(e))),
                 }
@@ -67,10 +74,12 @@ pub(super) fn build_toolbar_actions(
             let navigate = navigate.clone();
             ui_locked.set(true);
             leptos::task::spawn_local(async move {
-                match commands::package_uninstall(ns, uri).await {
+                // v1 keeps the downloaded files: only the v2 confirmation
+                // offers to delete them.
+                match commands::package_uninstall(ns.to_string(), uri, false).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
-                        navigate("/installed-packages-list", NavigateOptions::default());
+                        navigate("/", NavigateOptions::default());
                     }
                     Err(e) => {
                         ui_locked.set(false);
@@ -108,4 +117,50 @@ pub(super) fn build_toolbar_actions(
         }
         .into_any()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remote_button;
+
+    fn uri(s: &str) -> quilt_uri::S3PackageUri {
+        s.parse().unwrap()
+    }
+
+    /// No bucket: the package needs one, so the button says so as a warning.
+    #[test]
+    fn no_bucket_asks_for_a_remote() {
+        assert_eq!(remote_button(None, false, "local"), ("Set remote", true));
+    }
+
+    /// A bucket without a catalog is configured, the same as one with a
+    /// catalog: no warning.
+    #[test]
+    fn a_bucket_without_a_catalog_is_configured() {
+        let bare = uri("quilt+s3://data-bucket#package=team/survey");
+        assert_eq!(
+            remote_button(Some(&bare), false, "local"),
+            ("Change remote", false)
+        );
+        assert_eq!(
+            remote_button(Some(&bare), true, "up_to_date"),
+            ("Show remote", false)
+        );
+        let with_catalog = uri("quilt+s3://data-bucket#package=team/survey&catalog=quilt.test");
+        assert_eq!(
+            remote_button(Some(&with_catalog), true, "up_to_date"),
+            remote_button(Some(&bare), true, "up_to_date"),
+        );
+    }
+
+    /// An unpublished remote that fails to read is flagged, so the reader
+    /// checks what they typed.
+    #[test]
+    fn an_unpublished_remote_in_error_is_flagged() {
+        let bare = uri("quilt+s3://data-bucket#package=team/survey");
+        assert_eq!(
+            remote_button(Some(&bare), false, "error"),
+            ("Change remote", true)
+        );
+    }
 }

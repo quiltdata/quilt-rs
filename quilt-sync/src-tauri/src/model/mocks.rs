@@ -1,4 +1,5 @@
 use super::*;
+use quilt_uri::fixtures;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -29,13 +30,11 @@ pub fn mock_installed_package(model: &mut MockQuiltModel) -> &MockQuiltModel {
         bucket: "quilt-example".to_string(),
         namespace: ("foo", "bar").into(),
         hash: "6c3758a4d2bf8fe730be5d12f5e095950dc123c373f55f66ca4b3ced74772b22".to_string(),
-        origin: Some("test.quilt.dev".parse().unwrap()),
+        origin: Some(fixtures::host()),
     };
     model.expect_get_installed_package().returning(move |_| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new())
-                .create_installed_package(("foo", "bar").into())
-                .expect("Failed to create installed package"),
+            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("foo", "bar").into()),
         ))
     });
     model
@@ -75,9 +74,7 @@ pub fn mock_remote_package_different_version(model: &mut MockQuiltModel) -> &Moc
     // These are needed for ViewInstalledPackage::create after the error is caught
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new())
-                .create_installed_package(("foo", "bar").into())
-                .expect("Failed to create installed package"),
+            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("foo", "bar").into()),
         ))
     });
 
@@ -122,9 +119,7 @@ pub fn mock_remote_package_local_only(model: &mut MockQuiltModel) -> &MockQuiltM
         .returning(|_| Ok(InstallCheck::LocalOnly));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
-            quilt::LocalDomain::new(PathBuf::new())
-                .create_installed_package(("foo", "bar").into())
-                .expect("Failed to create installed package"),
+            quilt::LocalDomain::new(PathBuf::new()).create_installed_package(("foo", "bar").into()),
         ))
     });
 

@@ -1,0 +1,134 @@
+/*
+ * Our opinions, layered on top of modern-normalize.
+ *
+ * `_normalize.scss` runs first and owns the cross-browser floor: box-sizing,
+ * font inheritance on form controls, `body { margin: 0 }`, and a long tail of
+ * small fixes (`::-moz-focus-inner` on buttons, `button { text-transform: none }`,
+ * `[type=search]` appearance, `summary { display: list-item }`). None of that is
+ * repeated here — this file is only what modern-normalize deliberately leaves
+ * to the application.
+ *
+ * Global by necessity: every rule targets an element selector, and CSS Modules
+ * can only scope classes. Keep it small — anything that is one component's
+ * business belongs in that component's module.
+ */
+
+/* Document baseline in our tokens; overrides normalize's `html` floors.
+ * No ground here: v1 loads this bundle too and `data-theme` follows the OS
+ * whatever the flag, so a themed body would sit under v1's unswitched black
+ * ink. `_chrome.scss` paints the gallery's. */
+body {
+  color: var(--q-fgColor-default);
+  font-family: var(--q-font-sans);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+}
+
+/* The frame `/` and `/installed-package` show while they resolve the design
+ * generation, and only a reader carrying `theme::set_v2`'s root marker wants a
+ * ground under it. That marker records the generation the reader has opted into —
+ * their design setting, and nothing else — and `body` itself must
+ * stay bare regardless, since a v2 reader visits v1's pages too. For that reader
+ * the frame holds the v2 page's skeleton, which paints its own ground; this one
+ * is the floor under it. An attribute, like `[data-sr-only]`: it marks a role, on
+ * an element outside any module.
+ *
+ * `flow-root` so the frame contains its children's margins. A plain block lets a
+ * first child's top margin collapse through it, which moves the frame down and
+ * leaves a band of bare body above the ground — the region spinner this frame
+ * used to hold did exactly that with its 32px. */
+:root.qui-v2 [data-home-frame] {
+  display: flow-root;
+  min-height: 100vh;
+  background: var(--q-bgColor-page);
+}
+
+/* Native chrome — the `<select>` popup the kit hands to the OS, form-control
+ * internals, the list card's scrollbar — paints from `color-scheme` rather than from
+ * our tokens.
+ *
+ * On the v2 SURFACES, never on `:root`. The root's scheme decides the canvas, and
+ * `qui-v2` marks the generation a reader is in rather than a page that is showing
+ * — so a root rule turned the canvas dark under v1's unswitched black ink the
+ * moment that reader opened a v1 page, and v1 pages are exactly what the
+ * generation leaves untouched. The document stays light; a v2 page paints its own
+ * ground and carries its own scheme. */
+:root {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] [data-v2-page],
+:root.qui-v2[data-theme="dark"] [data-home-frame] {
+  color-scheme: dark;
+}
+
+/* The launch window. Every rule above needs an element, and the frame before the
+ * wasm module mounts has none — its canvas is the UA's. `index.html` sets the
+ * three attributes this reads before the first paint, and `theme::stop_booting`
+ * clears `data-booting` in `main` before the mount, so the dark canvas covers
+ * the empty frame and nothing after it. That scoping is the point: a v2 reader
+ * opens v1's pages too, and those draw on a light canvas. */
+:root.qui-v2[data-theme="dark"][data-booting] {
+  color-scheme: dark;
+  background: var(--q-bgColor-page);
+}
+
+/* Every button here is styled, so strip native chrome: one that forgets its
+ * module renders as bare text — a visible reminder rather than a subtly-wrong
+ * native widget. */
+button {
+  appearance: none;
+  background: none;
+  border: 0;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+/* One focus ring, declared once so a component that forgets still gets one.
+ * `:focus-visible` so a mouse click leaves nothing behind. A component may
+ * restyle it; nothing may remove it. */
+:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+}
+
+/* Text for screen readers only, declared once because four components now want
+ * it and a CSS Module cannot share a class across files — `@use` isolates
+ * members, and `modules` is generated, so a mixin cannot reach into it.
+ *
+ * An attribute rather than a class: this marks a role, not a style hook, and
+ * everything else in this file selects on elements and pseudo-classes too.
+ *
+ * `clip-path` and 1px rather than `display: none` or `visibility: hidden`,
+ * either of which removes the text from the accessibility tree — which is the
+ * one thing it exists to be in. Absolutely positioned, so it cannot disturb the
+ * box of whatever holds it: `Spinner` is a 14px ring drawn with a border, and
+ * text in its flow would distort it. */
+[data-sr-only] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* The metadata editor's menus, inside a modal. The editor draws them
+ * `position: absolute` from a zero-size anchor of its own, so a modal's
+ * `overflow: auto` crops them at its edges. Fixed at the viewport's corner, the
+ * anchor leaves the modal's clip, and the editor still places the menu right:
+ * it measures the anchor and offsets from it. Global by necessity: the class is
+ * the editor's, outside any module. Doubled to outrank the editor's own
+ * scoped rule. */
+dialog .jse-absolute-popup.jse-absolute-popup {
+  position: fixed;
+  top: 0;
+  left: 0;
+}

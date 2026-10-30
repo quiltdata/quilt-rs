@@ -1,0 +1,4745 @@
+//! The package file pane: the list of the package's files.
+//!
+//! The region beside the context pane, and the page's growing half. Built from
+//! the kit the gallery's file-pane scene composes — `EntryRow`, `EntryGroup`,
+//! `ListToolbar`, `Select`, `Card` — so the scene stays the design record and
+//! this is the same arrangement with the page's data in it.
+//!
+//! # The frame has slots the later slices fill
+//!
+//! Search takes a row of its own above the toolbar; select-all sits on the
+//! toolbar's left, in the rows' checkbox column; grouping and the facets are one
+//! right-hand group. Search, grouping, the facets and select-all are drawn. The other
+//! slots are left absent rather than drawn inert — a control that does nothing is
+//! worse than one that is not there yet.
+//!
+//! # What this slice draws
+//!
+//! - **Rows, silent at rest.** `Downloaded` carries no label; `Changed`, `New`,
+//!   `Deleted` and `Not downloaded` do (design §3's table). A file that is
+//!   here — unchanged, changed or new — holds `EntryRow`'s muted check in its
+//!   box column, in either scope and whatever the rest of the list is; a file
+//!   that is not carries a box when it can be picked, and otherwise nothing.
+//!   So the column reads as what you have and fills up as files land, rather
+//!   than flipping to blank when the last one does. An ignored row has none.
+//!   A folder heading summarises its rows the same way: a box while a row
+//!   under it has one, and the same muted check when every file under it is
+//!   here, so a collapsed folder says either without being opened. The check
+//!   judges the folder whole, not the rows the facet and the search leave, so
+//!   it is true whatever the view shows; the box follows the view, because
+//!   it acts on it. Under `Ignored` no heading has one. Over the cap, a
+//!   folder the cut runs through has none either: its files past the cut
+//!   were never loaded.
+//!   A missing file Keeping fetches by itself — any under `The whole
+//!   package`, one under a kept folder — has no box, so a folder still
+//!   receiving only such files shows neither.
+//! - **A heading counts what it holds of its folder.** `raw/ 54` while the
+//!   view hides none of the folder's files, and `raw/ 3 of 54` once a facet
+//!   or a search hides some. The first number is the rows under the heading,
+//!   collapsed or not; the second is the folder's loaded files in `All`.
+//! - **The facets filter by state.** `All · Changed · Not downloaded ·
+//!   Ignored`, each with the package's count (the payload's `counts`, not the
+//!   loaded rows). A facet at zero stays in place and cannot be chosen, except
+//!   `All`, the home a facet that empties falls back to. `All` leaves ignored
+//!   files out; only `Ignored` shows them, with no label and no box, since the
+//!   view already says it and an ignored file is never selectable. A tracked
+//!   file that is also ignored is two rows, as in v1, and counts under both.
+//! - **A click does the thing the row can do.** A file that is here opens, a
+//!   missing one is `EntryRow`'s `Select` shape, and a deleted one is inert.
+//! - **Selection feeds one action.** Select-all, the headings' boxes and the
+//!   footer's `[Download]` read one ticked set the page owns ([`selection`]).
+//!   They count only the rows with a box, so under whole-package Keeping
+//!   none of them is drawn.
+//! - **Nothing to download is said, not left blank.** A package with no file
+//!   left to download reads `All 1,090 files downloaded` where select-all
+//!   would be, under either scope, with the Success tone's tick in the box's
+//!   hole: the column's summary, the same tick as the main page's `Everything
+//!   is Latest`. A deleted file has nothing to fetch, so it counts as
+//!   downloaded: the line names it, `All 1,090 files downloaded · 1 deleted
+//!   here`, and drops the tick, which says every file is on disk.
+//! - **The cap is stated.** Over the cap the backend says so, and the pane
+//!   says how many files the package has. The flag decides, never a length.
+//! - **Search narrows what is shown.** A case-insensitive substring of the
+//!   whole path; headings are drawn from the rows it leaves, and a search that
+//!   leaves none says so.
+//! - **Resolve mode marks the rows that differ.** The page's one differing set
+//!   (`FileMarks.differing`) marks each drawn row whose path is in it, through
+//!   `EntryRow`'s `differs`. A mark describes a row and never chooses one: the
+//!   facet and the search decide what is drawn, and a row past the cap, hidden,
+//!   or in a collapsed folder is not marked, though a collapsed folder's
+//!   heading says it holds one.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+use std::time::Duration;
+
+use leptos::prelude::*;
+
+use crate::commands::{EntryCounts, EntryData, EntryList, FilesData, IgnoredBy};
+use crate::kit::state_label::StateTone;
+use crate::kit::{
+    Blankslate, Button, ButtonVariant, Card, EntryAction, EntryGroup, EntryRow, EntrySelection,
+    GroupSelection, ListToolbar, LoadFailure, MenuAction, NameTooltip, Naming, SearchInput,
+    Segment, SegmentedControl, Select, SelectAll, SkeletonBox, SkeletonText, publish_height,
+};
+use crate::pages::copy_mark::CopyMark;
+use crate::pages::row_menu::{RowCommand, menu_actions};
+use crate::util::{format_size, thousands, with_deleted_here};
+
+pub(crate) mod selection;
+
+pub use selection::{Kept, Picking};
+
+stylance::import_crate_style!(
+    style,
+    "src/pages/installed_package_v2/file_pane.module.scss"
+);
+
+/// How the list is grouped. Not remembered: every visit starts at
+/// [`Grouping::BaseFolder`], because which axis is useful depends on the shape
+/// of the package in front of the reader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grouping {
+    /// The folder the file is in. The default: it always reflects real
+    /// structure, and its failure mode — many small groups — is visible.
+    BaseFolder,
+    /// The first segment of the path.
+    TopFolder,
+    /// Flat, full paths.
+    None,
+}
+
+impl Grouping {
+    const ALL: [Self; 3] = [Self::BaseFolder, Self::TopFolder, Self::None];
+
+    /// The words on the `Group:` select.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::BaseFolder => "Base folder",
+            Self::TopFolder => "Top folder",
+            Self::None => "None",
+        }
+    }
+
+    fn from_label(label: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|g| g.label() == label)
+            .unwrap_or(Self::BaseFolder)
+    }
+}
+
+/// Which files the list shows, by where they stand. One choice of four, and
+/// the pane's only filter.
+///
+/// Held by the page as its [`Facet::key`], the words without the count: the
+/// count moves when the package does, and a choice held as the words would
+/// then match no segment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Facet {
+    /// Every file that is not ignored.
+    All,
+    /// Added, modified or deleted.
+    Changed,
+    /// In the revision and not on disk.
+    NotDownloaded,
+    /// Matched by `.quiltignore`. The only view that shows them.
+    Ignored,
+}
+
+impl Facet {
+    const ALL: [Self; 4] = [Self::All, Self::Changed, Self::NotDownloaded, Self::Ignored];
+
+    /// The segment's words without its count, and the value the page holds.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::Changed => "Changed",
+            Self::NotDownloaded => "Not downloaded",
+            Self::Ignored => "Ignored",
+        }
+    }
+
+    fn from_key(key: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|f| f.key() == key)
+            .unwrap_or(Self::All)
+    }
+
+    /// The package's count for this facet: the whole package, not the rows
+    /// that were loaded.
+    const fn count(self, counts: &EntryCounts) -> usize {
+        match self {
+            Self::All => counts.all,
+            Self::Changed => counts.changed,
+            Self::NotDownloaded => counts.not_downloaded,
+            Self::Ignored => counts.ignored,
+        }
+    }
+
+    /// Whether a row belongs in this view. The backend's rule for the counts
+    /// (`EntryCounts::of`), so a facet shows the rows its count counted.
+    const fn admits(self, place: Place, ignored: bool) -> bool {
+        match self {
+            Self::Ignored => ignored,
+            _ if ignored => false,
+            Self::All => true,
+            Self::Changed => matches!(place, Place::Changed | Place::New | Place::Deleted),
+            Self::NotDownloaded => matches!(place, Place::Missing),
+        }
+    }
+
+    /// Nothing in the package for this view, so it cannot be chosen. Never
+    /// `All`, which stays choosable at zero.
+    fn is_empty(self, counts: &EntryCounts) -> bool {
+        self != Self::All && self.count(counts) == 0
+    }
+
+    /// `Not downloaded 17`.
+    fn words(self, counts: &EntryCounts) -> String {
+        format!("{} {}", self.key(), thousands(self.count(counts)))
+    }
+}
+
+/// One thing the list draws: a row on its own, or a heading over its rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Item {
+    Row {
+        index: usize,
+        name: String,
+    },
+    Group {
+        heading: String,
+        rows: Vec<(usize, String)>,
+    },
+}
+
+/// Group paths, given in path order, for drawing.
+///
+/// Root files come first and carry no heading: `(root)` would name a folder
+/// that does not exist. A group of one carries no heading either — it would be
+/// mostly heading — so its row stands alone and shows its whole path. Groups
+/// keep the order of their first file, so the list still reads in path order
+/// even where a subfolder's paths sort between a folder's own files.
+#[must_use]
+pub fn group(paths: &[&str], grouping: Grouping) -> Vec<Item> {
+    let row = |index: usize| Item::Row {
+        index,
+        name: paths[index].to_string(),
+    };
+    // Where the heading ends and the row's own name starts.
+    let cut = |path: &str| match grouping {
+        Grouping::BaseFolder => path.rfind('/'),
+        Grouping::TopFolder => path.find('/'),
+        Grouping::None => None,
+    };
+
+    let mut roots = Vec::new();
+    let mut groups: Vec<(&str, Vec<usize>)> = Vec::new();
+    for (index, path) in paths.iter().enumerate() {
+        match cut(path) {
+            None => roots.push(row(index)),
+            Some(at) => {
+                let heading = &path[..=at];
+                match groups.iter_mut().find(|(h, _)| *h == heading) {
+                    Some((_, members)) => members.push(index),
+                    None => groups.push((heading, vec![index])),
+                }
+            }
+        }
+    }
+
+    roots
+        .into_iter()
+        .chain(groups.into_iter().map(|(heading, members)| {
+            if let [only] = members[..] {
+                return row(only);
+            }
+            Item::Group {
+                heading: heading.to_string(),
+                rows: members
+                    .into_iter()
+                    .map(|i| (i, paths[i][heading.len()..].to_string()))
+                    .collect(),
+            }
+        }))
+        .collect()
+}
+
+/// Whether the search keeps a file: a case-insensitive substring of its whole
+/// logical path, so a folder's name finds the files under it. An empty search
+/// keeps everything.
+#[must_use]
+pub fn path_matches(path: &str, query: &str) -> bool {
+    path.to_lowercase().contains(&query.to_lowercase())
+}
+
+/// What the pane draws from: the page read's rows, and whether it cut them.
+#[derive(Clone, Debug)]
+pub struct FileList {
+    /// Sorted by path, then capped.
+    pub entries: Vec<EntryData>,
+    /// The facets' counts, over the whole package.
+    pub counts: EntryCounts,
+    /// Every file the package has, before the cap.
+    pub total: usize,
+    /// The backend cut the list. Never inferred from `entries.len()`.
+    pub truncated: bool,
+}
+
+impl From<EntryList> for FileList {
+    fn from(list: EntryList) -> Self {
+        Self {
+            entries: list.entries,
+            counts: list.counts,
+            total: list.total,
+            truncated: list.truncated,
+        }
+    }
+}
+
+/// Where the pane's list stands.
+#[derive(Clone, Debug)]
+pub enum Listing {
+    Loading,
+    /// The page read sent no list, and why: not even a local status could be
+    /// computed, so there is nothing honest to classify the rows by.
+    Unlisted(String),
+    Ready(FileList),
+}
+
+impl From<FilesData> for Listing {
+    fn from(files: FilesData) -> Self {
+        match files {
+            FilesData::Listed(list) => Self::Ready(list.into()),
+            FilesData::Unlisted { reason } => Self::Unlisted(reason),
+        }
+    }
+}
+
+/// Where a file is, which decides its words and its click.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Place {
+    /// Here and unchanged. Silent.
+    Here,
+    Changed,
+    New,
+    /// In the revision, gone from disk: nothing to open.
+    Deleted,
+    /// Not downloaded.
+    Missing,
+    /// A status this page does not know. Drawn, silent and inert, rather than
+    /// guessed at.
+    Unknown,
+}
+
+impl Place {
+    fn of(status: &str) -> Self {
+        match status {
+            "pristine" => Self::Here,
+            "modified" => Self::Changed,
+            "added" => Self::New,
+            "deleted" => Self::Deleted,
+            "remote" => Self::Missing,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// The file is on disk: unchanged, changed or new. What opens on a click,
+    /// and what carries the downloaded row's check.
+    const fn is_here(self) -> bool {
+        matches!(self, Self::Here | Self::Changed | Self::New)
+    }
+
+    const fn state(self) -> Option<(&'static str, StateTone)> {
+        match self {
+            Self::Here | Self::Unknown => None,
+            Self::Changed => Some(("Changed", StateTone::Attention)),
+            Self::New => Some(("New", StateTone::Attention)),
+            Self::Deleted => Some(("Deleted", StateTone::Danger)),
+            Self::Missing => Some(("Not downloaded", StateTone::Neutral)),
+        }
+    }
+}
+
+/// The one line saying the list is not all of the package.
+///
+/// It describes the loaded list, not the view: a facet or a search narrows the
+/// rows further, and the notice still speaks of the list they are drawn from.
+///
+/// Page-local and not a kit piece: not a `Banner`, which reports an outcome
+/// for the whole page, and not a `ZeroLine`, which is the healthy queue's
+/// one-liner. It sits under the toolbar, held with it, above the rows it
+/// qualifies.
+#[component]
+fn CapNotice(total: usize, shown: usize) -> impl IntoView {
+    view! {
+        <p class=style::cap>
+            {format!(
+                "This package has {} files. This list covers the first {} by path.",
+                thousands(total),
+                thousands(shown),
+            )}
+        </p>
+    }
+}
+
+/// One file, reduced to what drawing it needs.
+#[derive(Clone, PartialEq, Eq)]
+struct Row {
+    path: String,
+    /// The manifest's size, which the footer sums.
+    bytes: u64,
+    size: String,
+    place: Place,
+    /// Matched by `.quiltignore`. Drawn only under [`Facet::Ignored`], where
+    /// the view already says it, so the row carries no label and no click.
+    ignored: bool,
+    /// The rule that matched it: the row names it and its source, and *Stop
+    /// ignoring* names its pattern.
+    ignored_by: Option<IgnoredBy>,
+    /// An ignored folder: one row named with a trailing `/`, and no size,
+    /// since nothing inside it was walked. `path` has no trailing `/`, so it
+    /// sorts and groups under its parent like a file.
+    folder: bool,
+}
+
+impl From<EntryData> for Row {
+    fn from(e: EntryData) -> Self {
+        Self {
+            place: Place::of(&e.status),
+            bytes: e.size,
+            size: if e.folder {
+                String::new()
+            } else {
+                format_size(e.size)
+            },
+            ignored: e.ignored_by.is_some(),
+            ignored_by: e.ignored_by,
+            folder: e.folder,
+            path: e.filename,
+        }
+    }
+}
+
+impl Row {
+    /// Whether a box can tick it: not downloaded, and not ignored — an ignored
+    /// file is stopped being ignored before it is fetched.
+    fn selectable(&self) -> bool {
+        self.place == Place::Missing && !self.ignored
+    }
+
+    /// Whether it has a box: selectable, and not fetched by Keeping itself.
+    fn pickable(&self, kept: &Kept) -> bool {
+        self.selectable() && !kept.fetches(&self.path)
+    }
+}
+
+/// The paths a box could tick among `rows`, in path order.
+fn offered(rows: &[Row], kept: &Kept) -> Vec<String> {
+    rows.iter()
+        .filter(|r| r.pickable(kept))
+        .map(|r| r.path.clone())
+        .collect()
+}
+
+/// Whether a file can be named at the revision the package holds, which
+/// *Copy URI* needs, and whether it has a catalog page, which *Open in
+/// catalog* needs too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reach {
+    /// The remote's bucket holds the revision the package holds, with no
+    /// unpublished revision on top.
+    pub published: bool,
+    /// The remote names a catalog host.
+    pub catalog: bool,
+}
+
+impl Reach {
+    /// From the package's remote, at the revision it holds, and whether a
+    /// revision is waiting to be published.
+    #[must_use]
+    pub fn of(uri: Option<&quilt_uri::S3PackageUri>, has_local_commit: bool) -> Self {
+        let held = uri.is_some_and(|u| {
+            !u.bucket.is_empty()
+                && matches!(&u.revision, quilt_uri::RevisionPointer::Hash(h) if !h.is_empty())
+        });
+        Self {
+            published: held && !has_local_commit,
+            catalog: uri.is_some_and(|u| u.catalog.is_some()),
+        }
+    }
+}
+
+/// The page's half of the rows' `[⋯]`: what the package can be reached by,
+/// the page's one-command lock, where a chosen item goes, and the row whose
+/// copy just landed.
+#[derive(Clone, Copy)]
+pub struct RowMenu {
+    pub reach: Reach,
+    /// The page's lock. The `.quiltignore` items wait for it.
+    pub busy: Signal<bool>,
+    pub on_command: Callback<RowCommand>,
+    /// By path. The page's, so a re-read keeps it.
+    pub copied: CopyMark<String>,
+}
+
+/// The header's words for a command held back by the lock.
+const BUSY: &str = "Something else is running";
+
+/// A row's `[⋯]` items, following the lock while the menu is open.
+fn row_actions(r: &Row, menu: Option<RowMenu>) -> Signal<Vec<MenuAction>> {
+    let Some(RowMenu {
+        reach,
+        busy,
+        on_command,
+        ..
+    }) = menu
+    else {
+        return Signal::stored(Vec::new());
+    };
+    let pattern = r.ignored_by.as_ref().map(|by| by.pattern.as_str());
+    let commands = row_commands(&r.path, r.folder, r.place, pattern, reach);
+    Signal::derive(move || {
+        let busy = busy.get();
+        menu_actions(&commands, on_command)
+            .into_iter()
+            .zip(&commands)
+            .map(|(action, command)| {
+                if busy && command.edits_ignore() {
+                    action.disabled(BUSY)
+                } else {
+                    action
+                }
+            })
+            .collect()
+    })
+}
+
+/// The items a row offers, in their fixed order and groups: open and reveal;
+/// catalog, if any, and copy; then the `.quiltignore` item. v1's entries form
+/// gates its buttons the same way, but Ignore is on every row: the pane does
+/// not read `junky_pattern`, and the popup is prefilled with the path instead.
+fn row_commands(
+    path: &str,
+    folder: bool,
+    place: Place,
+    ignored_by: Option<&str>,
+    reach: Reach,
+) -> Vec<RowCommand> {
+    let path = path.to_string();
+    // An ignored row's file is opened, linked and copied from its tracked row,
+    // if it has one; this row is only the way back.
+    if let Some(pattern) = ignored_by {
+        return vec![RowCommand::StopIgnoring {
+            path,
+            folder,
+            pattern: pattern.to_string(),
+        }];
+    }
+    let mut commands = Vec::new();
+    if matches!(place, Place::Here | Place::Changed | Place::New) {
+        commands.push(RowCommand::Open(path.clone()));
+        commands.push(RowCommand::Reveal(path.clone()));
+    }
+    // A changed or deleted file is not here as the held revision has it, and a
+    // new one is in no revision.
+    if reach.published && matches!(place, Place::Here | Place::Missing) {
+        if reach.catalog {
+            commands.push(RowCommand::OpenInCatalog(path.clone()));
+        }
+        commands.push(RowCommand::CopyUri(path.clone()));
+    }
+    if place == Place::New {
+        commands.push(RowCommand::CopyPath(path.clone()));
+    }
+    commands.push(RowCommand::Ignore(path));
+    commands
+}
+
+/// What every row of one drawing of the list is drawn with: the page's
+/// handlers and the Keeping scope.
+#[derive(Clone, Copy)]
+struct Drawing {
+    on_open: Callback<String>,
+    picking: Picking,
+    menu: Option<RowMenu>,
+}
+
+/// One row. `name` is what the list shows — the whole path, or the part under
+/// a heading — and the whole path is always the `title`. `differs` marks it as
+/// one of resolve mode's differing files.
+fn row(r: &Row, name: String, drawing: Drawing, differs: bool) -> AnyView {
+    let Drawing {
+        on_open,
+        picking,
+        menu,
+    } = drawing;
+    let actions = row_actions(r, menu);
+    let copied = menu.map_or(Signal::stored(false), |m| m.copied.says(r.path.clone()));
+    let (name, path) = if r.folder {
+        (format!("{name}/"), format!("{}/", r.path))
+    } else {
+        (name, r.path.clone())
+    };
+    let state = if r.ignored { None } else { r.place.state() };
+    let note = r.ignored_by.as_ref().map(IgnoredBy::words);
+    let words = state.map(|(words, _)| words.to_string());
+    let tone = state.map_or(StateTone::Neutral, |(_, tone)| tone);
+    let action = match r.place {
+        _ if r.ignored => None,
+        Place::Here | Place::Changed | Place::New => {
+            let path = r.path.clone();
+            Some(EntryAction::Open(Callback::new(move |()| {
+                on_open.run(path.clone());
+            })))
+        }
+        Place::Missing if picking.kept.with_value(|k| r.pickable(k)) => {
+            let ticked = picking.ticked;
+            let (is, set) = (r.path.clone(), r.path.clone());
+            Some(EntryAction::Select(
+                EntrySelection::new(
+                    Signal::derive(move || ticked.with(|t| t.contains(&is))),
+                    Callback::new(move |next| {
+                        ticked.update(|t| selection::tick_all(t, std::slice::from_ref(&set), next));
+                    }),
+                )
+                .disabled(picking.busy),
+            ))
+        }
+        // Nothing to open, and nothing to tick: ignored, or Keeping fetches it.
+        Place::Missing | Place::Deleted | Place::Unknown => None,
+    };
+    // A file that is here says so, in every scope and state; a row with a
+    // box ignores the prop.
+    let have_mark = !r.ignored && r.place.is_here();
+    match action {
+        Some(action) => view! {
+            <EntryRow
+                name=name
+                path=path
+                state=words
+                tone=tone
+                size=r.size.clone()
+                note=note.clone()
+                action=action
+                actions=actions
+                differs=differs
+                have_mark=have_mark
+                copied=copied
+            />
+        }
+        .into_any(),
+        None => view! {
+            <EntryRow
+                name=name
+                path=path
+                state=words
+                tone=tone
+                size=r.size.clone()
+                note=note.clone()
+                actions=actions
+                differs=differs
+                copied=copied
+            />
+        }
+        .into_any(),
+    }
+}
+
+/// Resolve mode's differing set, keyed as `EntryData.filename` is; absent
+/// outside the mode.
+type Differing = Option<Arc<BTreeSet<String>>>;
+
+/// Whether resolve mode marks the row drawing `path`.
+fn differs(differing: &Differing, path: &str) -> bool {
+    differing.as_ref().is_some_and(|set| set.contains(path))
+}
+
+/// What a heading knows about its whole folder as loaded, whatever the view
+/// shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Folder {
+    /// Every file under it is here.
+    all_here: bool,
+    /// Its files that are not ignored: the `All` view's rows under it.
+    total: usize,
+}
+
+/// Each heading the loaded rows draw under `grouping`, with its [`Folder`].
+/// Built over every loaded row rather than the shown ones, so the heading's
+/// total is the folder's, and a facet or a search that hides a missing file
+/// never earns its folder the check.
+///
+/// A folder is all here when it has at least one row that is not ignored, and
+/// every such row is here. Over the cap (`truncated`), a folder the cut runs
+/// through has files that were never loaded, so it gets no check whatever its
+/// loaded rows say. The backend sorts by path before it cuts, and the paths
+/// under one folder are a contiguous run of that order, so only a folder
+/// holding the last loaded path can run past the cut: every other folder ends
+/// before it or was never loaded at all. That is the one folder holding it
+/// under `TopFolder`, and that folder and each headed folder above it under
+/// `BaseFolder`. A last row at the root, or under no heading, costs no folder
+/// its check.
+fn folders(rows: &[Row], grouping: Grouping, truncated: bool) -> BTreeMap<String, Folder> {
+    let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
+    // The greatest path rather than the last, so the rule holds even if the
+    // rows ever arrive out of order.
+    let cut = truncated.then(|| paths.iter().copied().max()).flatten();
+    group(&paths, grouping)
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Group {
+                heading,
+                rows: members,
+            } => {
+                let tracked: Vec<&Row> = members
+                    .iter()
+                    .map(|(index, _)| &rows[*index])
+                    .filter(|r| !r.ignored)
+                    .collect();
+                let straddles = cut.is_some_and(|last| last.starts_with(heading.as_str()));
+                let all_here =
+                    !straddles && !tracked.is_empty() && tracked.iter().all(|r| r.place.is_here());
+                let total = tracked.len();
+                Some((heading, Folder { all_here, total }))
+            }
+            Item::Row { .. } => None,
+        })
+        .collect()
+}
+
+/// The rows, grouped as the select says. `collapsed` names the headings the
+/// reader closed; it is the page's, so a re-read that rebuilds these views
+/// finds each folder as the reader left it. `differing` marks rows only; it
+/// never decides which are drawn. `folders` is [`folders`] over the loaded
+/// rows: a heading's total, and its check under every `facet` but `Ignored`,
+/// which draws no box and no check on any row and so has nothing to summarise.
+fn rows_view(
+    rows: &[Row],
+    grouping: Grouping,
+    facet: Facet,
+    collapsed: RwSignal<BTreeSet<String>>,
+    drawing: Drawing,
+    differing: &Differing,
+    folders: &BTreeMap<String, Folder>,
+) -> AnyView {
+    let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
+    let items = group(&paths, grouping);
+    // A list with no heading at all has no disclosure to align to, so the
+    // gutter the rows keep for one is zero (`EntryRow`'s module doc).
+    let headed = items.iter().any(|i| matches!(i, Item::Group { .. }));
+    let drawn = items
+        .into_iter()
+        .map(|item| match item {
+            Item::Row { index, name } => {
+                let r = &rows[index];
+                row(r, name, drawing, differs(differing, &r.path))
+            }
+            Item::Group {
+                heading,
+                rows: members,
+            } => {
+                let shown = members.len();
+                // The shown rows are some of the loaded ones, so the folder is
+                // always there; the fallback reads one number rather than a
+                // wrong pair.
+                let whole = folders.get(&heading).copied();
+                let total = whole.map_or(shown, |f| f.total);
+                // Collapsed, the heading is where a differing row shows.
+                let holds_marked = members
+                    .iter()
+                    .any(|(index, _)| differs(differing, &rows[*index].path));
+                // A collapsed group renders nothing, so the heading rebuilds its
+                // rows each time it opens: it keeps the rows, not their views.
+                let members: Vec<(Row, String)> = members
+                    .into_iter()
+                    .map(|(index, name)| (rows[index].clone(), name))
+                    .collect();
+                let pickable: Vec<Row> = members.iter().map(|(r, _)| r.clone()).collect();
+                let pickable = drawing.picking.kept.with_value(|k| offered(&pickable, k));
+                // The rows' check, summarised over the whole folder as loaded:
+                // drawn only where no box is.
+                let all_here = facet != Facet::Ignored && whole.is_some_and(|f| f.all_here);
+                let members = StoredValue::new(members);
+                let open = RwSignal::new(!collapsed.with_untracked(|c| c.contains(&heading)));
+                let folder = heading.clone();
+                Effect::new(move |_| {
+                    let open = open.get();
+                    collapsed.update(|c| {
+                        if open {
+                            c.remove(&folder);
+                        } else {
+                            c.insert(folder.clone());
+                        }
+                    });
+                });
+                // Stored, so `children` stays `Copy` as the heading needs it.
+                let differing = StoredValue::new(differing.clone());
+                let children = move || {
+                    members.with_value(|ms| {
+                        ms.iter()
+                            .map(|(r, name)| {
+                                let marked = differing.with_value(|d| differs(d, &r.path));
+                                row(r, name.clone(), drawing, marked)
+                            })
+                            .collect_view()
+                    })
+                };
+                match group_selection(pickable, drawing.picking) {
+                    Some(selection) => view! {
+                        <EntryGroup
+                            name=heading
+                            shown=Signal::stored(shown)
+                            total=Signal::stored(total)
+                            open=open
+                            selection=selection
+                            differs=holds_marked
+                        >
+                            {children}
+                        </EntryGroup>
+                    }
+                    .into_any(),
+                    None => view! {
+                        <EntryGroup
+                            name=heading
+                            shown=Signal::stored(shown)
+                            total=Signal::stored(total)
+                            open=open
+                            differs=holds_marked
+                            have_mark=all_here
+                        >
+                            {children}
+                        </EntryGroup>
+                    }
+                    .into_any(),
+                }
+            }
+        })
+        .collect_view();
+    view! {
+        <NameTooltip>
+            <div
+                class=style::list
+                style=format!("--q-entry-gutter:{}", if headed { "16px" } else { "0px" })
+            >
+                {drawn}
+            </div>
+        </NameTooltip>
+    }
+    .into_any()
+}
+
+/// The rows the facet and the search leave, in path order. The one place the
+/// pane narrows its rows, so what the list draws and what select-all ticks
+/// cannot disagree.
+fn shown_rows(rows: &[Row], query: &str, facet: Facet) -> Vec<Row> {
+    rows.iter()
+        .filter(|r| facet.admits(r.place, r.ignored) && path_matches(&r.path, query))
+        .cloned()
+        .collect()
+}
+
+/// How long the query waits after the last keystroke before the list
+/// follows it, so a burst of typing costs one rebuild.
+#[cfg(not(test))]
+const SEARCH_SETTLE: Duration = Duration::from_millis(150);
+/// Short under test: the frontend suite runs against the runner's 20s budget.
+#[cfg(test)]
+pub(crate) const SEARCH_SETTLE: Duration = Duration::from_millis(25);
+
+/// The query the list is drawn for: the field's text once typing pauses.
+///
+/// The field itself stays instant; only the list trails it. An empty field
+/// applies at once, whether the clear control, a deleted query or the page on
+/// another package emptied it. A pending timer is dropped with the pane.
+/// The search field's text, and the query the list is drawn for.
+#[derive(Clone, Copy)]
+struct Search {
+    field: RwSignal<String>,
+    settled: Signal<String>,
+}
+
+fn settled(search: RwSignal<String>) -> Signal<String> {
+    let query = RwSignal::new(search.get_untracked());
+    let timer: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
+    Effect::new(move |_| {
+        let typed = search.get();
+        if let Some(handle) = timer.get_value() {
+            handle.clear();
+        }
+        timer.set_value(None);
+        if typed.is_empty() || query.with_untracked(|q| *q == typed) {
+            query.set(typed);
+        } else if let Ok(handle) = set_timeout_with_handle(move || query.set(typed), SEARCH_SETTLE)
+        {
+            timer.set_value(Some(handle));
+        }
+    });
+    on_cleanup(move || {
+        if let Some(Some(handle)) = timer.try_get_value() {
+            handle.clear();
+        }
+    });
+    query.into()
+}
+
+/// The search, alone on the row above the toolbar and the pane's full width.
+///
+/// The `display:flex` row is load-bearing: `SearchInput` grows along its
+/// parent's main axis, and dropped straight into the pane's column it would
+/// grow tall rather than wide (the gallery's file-pane scene has the story).
+fn search_row(search: RwSignal<String>) -> impl IntoView {
+    view! {
+        <div class=style::search>
+            <SearchInput value=search aria_label="Search files" placeholder="Search files…" />
+        </div>
+    }
+}
+
+/// The four facets, each carrying the package's count.
+///
+/// A facet at zero stays in its place and cannot be chosen, except `All`: it
+/// is the pane's home, and the view a facet that empties falls back to. The
+/// fallback happens here, before the control is built, because an inert
+/// segment must not hold the choice (`Segment::inert`).
+fn facets(counts: &EntryCounts, facet: RwSignal<String>) -> impl IntoView {
+    if Facet::from_key(&facet.get_untracked()).is_empty(counts) {
+        facet.set(Facet::All.key().to_string());
+    }
+    let options = Facet::ALL
+        .into_iter()
+        .map(|f| {
+            let words = f.words(counts);
+            let segment = if f.is_empty(counts) {
+                Segment::inert(words)
+            } else {
+                Segment::new(words)
+            };
+            segment.valued(f.key())
+        })
+        .collect();
+    view! {
+        <SegmentedControl
+            aria_label="Show files"
+            name="file-facets"
+            options=options
+            selected=facet
+        />
+    }
+}
+
+/// A heading's box: present when a row under it can be ticked. It ticks
+/// exactly those rows, so `Mixed` is a fact about them. `EntryGroup` names it
+/// `Select all in {heading}`.
+fn group_selection(pickable: Vec<String>, picking: Picking) -> Option<GroupSelection> {
+    if pickable.is_empty() {
+        return None;
+    }
+    let ticked = picking.ticked;
+    let members = StoredValue::new(pickable);
+    Some(
+        GroupSelection::new(
+            Signal::derive(move || {
+                ticked.with(|t| members.with_value(|ms| selection::group_state(t, ms)))
+            }),
+            Callback::new(move |next| {
+                members.with_value(|ms| ticked.update(|t| selection::tick_all(t, ms, next)));
+            }),
+        )
+        .disabled(picking.busy),
+    )
+}
+
+/// The toolbar's left slot, in the rows' checkbox column, a row's `space-3`
+/// in from the pane's edge. The caption's words come after the box's hole and
+/// the gutter the rows keep for a disclosure, where the rows' names start.
+///
+/// A package with nothing left to download says so here, `All 1,090 files
+/// downloaded`, under either Keeping scope and whatever the view shows: it is
+/// a fact about the package, counted as the `All` facet counts. Files deleted
+/// here are named after it, `· 1 deleted here`, and take the tick away.
+/// Otherwise it is select-all, absent while nothing on screen can be ticked,
+/// as under whole-package scope.
+fn left_slot(
+    picking: Picking,
+    shown: Signal<Vec<String>>,
+    narrowed: Signal<bool>,
+    headed: Signal<bool>,
+    counts: &EntryCounts,
+) -> AnyView {
+    let gutter = move || {
+        format!(
+            "--q-entry-gutter:{}",
+            if headed.get() { "16px" } else { "0px" }
+        )
+    };
+    // The package's counts, not the view's, so a facet, a search or the cap
+    // changes nothing; and not a package with nothing in `All` to speak of.
+    // A deleted file has nothing to fetch, so it counts as downloaded: a
+    // change here waiting to be published, which the words name rather than
+    // hide. The package's deleted count too, so one past the cap is named.
+    if counts.not_downloaded == 0 && counts.all > 0 {
+        let (files, deleted) = (counts.all, counts.deleted);
+        // The box's hole and the gutter, as a row with no box keeps them, so
+        // the words start where the rows' names do. In it, the column's summary: a box when
+        // the rows have boxes, and this tick when every row has its file. The
+        // Success tone's own tick, from `StateTone`, rather than a second one
+        // drawn here — the same tick as the main page's `Everything is
+        // Latest`. The rows' mark is the Octicon check in muted grey,
+        // bookkeeping; this one is a statement. The tick says every file is
+        // on disk, so a deleted one leaves the hole empty.
+        return view! {
+            <div class=style::selectall style=gutter>
+                <span class=style::done>
+                    {(deleted == 0).then(|| StateTone::Success.glyph())}
+                </span>
+                <span class=style::gutter />
+                <span class=style::caption>{downloaded_words(files, deleted)}</span>
+            </div>
+        }
+        .into_any();
+    }
+    let ticked = picking.ticked;
+    let selected = Signal::derive(move || {
+        shown.with(|s| ticked.with(|t| selection::ticked_among(t, s).len()))
+    });
+    let total = Signal::derive(move || shown.with(Vec::len));
+    let any = Signal::derive(move || total.get() > 0);
+    view! {
+        <Show when=move || any.get()>
+            <div class=style::selectall>
+                <SelectAll
+                    selected=selected
+                    total=total
+                    narrowed=narrowed
+                    disabled=picking.busy
+                    on_toggle=move |next| {
+                        shown.with_untracked(|s| ticked.update(|t| selection::tick_all(t, s, next)));
+                    }
+                />
+            </div>
+        </Show>
+    }
+    .into_any()
+}
+
+/// `All 1,090 files downloaded`, and `1 file downloaded` for a package of one,
+/// with the files deleted here named as Keeping names them: `· 1 deleted
+/// here`. Public for the gallery, whose drawn pane says the same words.
+#[must_use]
+pub fn downloaded_words(files: usize, deleted: usize) -> String {
+    let words = if files == 1 {
+        String::from("1 file downloaded")
+    } else {
+        format!("All {} files downloaded", thousands(files))
+    };
+    with_deleted_here(words, deleted)
+}
+
+/// The list's last child while something is ticked, held at the bottom of the
+/// window: a right-aligned primary that says what it will fetch, `Download 3 · 114.1 kB`. The count
+/// and the bytes are every loaded tick, hidden ones included, so the count can
+/// exceed select-all's `1 of 1 selected` under a search (owner, 2026-09-25).
+///
+/// Slides 4px and fades in over 160ms and has no exit (`.footer`, which copies
+/// the Banner's carve-out): unticking the last row grows the list back, and
+/// animating that would move rows under the pointer. Not the gallery's
+/// `g-fp-footer`: that is gallery chrome, which the app does not load.
+fn footer(picking: Picking, rows: StoredValue<Vec<Row>>) -> AnyView {
+    let ticked = picking.ticked;
+    // Every loaded row, not only the shown ones: a search hides a tick, it
+    // does not undo it.
+    let chosen = Memo::new(move |_| {
+        ticked.with(|t| rows.with_value(|rs| picking.kept.with_value(|k| ticked_rows(t, rs, k))))
+    });
+    view! {
+        <Show when=move || chosen.with(|(paths, _)| !paths.is_empty())>
+            <FooterBand>
+                <Button
+                    variant=ButtonVariant::Primary
+                    loading=picking.downloading
+                    disabled=picking.busy
+                    on_click=move |_| picking.on_download.run(chosen.get_untracked().0)
+                >
+                    {move || chosen.with(|(paths, bytes)| footer_words(paths.len(), *bytes))}
+                </Button>
+            </FooterBand>
+        </Show>
+    }
+    .into_any()
+}
+
+/// The footer's band, held at the bottom of the window. It publishes its
+/// height, which a row reached from the keyboard keeps clear of.
+#[component]
+pub(crate) fn FooterBand(children: Children) -> impl IntoView {
+    let band = NodeRef::new();
+    publish_height(band, "--q-footer-height");
+    view! { <div class=style::footer node_ref=band>{children()}</div> }
+}
+
+/// The ticked paths among the rows on offer, in path order, and their bytes:
+/// one pass over one set, so the count and the bytes cannot describe two.
+fn ticked_rows(ticked: &BTreeSet<String>, rows: &[Row], kept: &Kept) -> (Vec<String>, u64) {
+    rows.iter()
+        .filter(|r| r.pickable(kept) && ticked.contains(&r.path))
+        .fold((Vec::new(), 0), |(mut paths, bytes), r| {
+            paths.push(r.path.clone());
+            (paths, bytes.saturating_add(r.bytes))
+        })
+}
+
+/// The footer's `[Download]`, in files and bytes: `Download 3 · 114.1 kB`.
+fn footer_words(files: usize, bytes: u64) -> String {
+    format!("Download {} · {}", thousands(files), format_size(bytes))
+}
+
+/// The pane's search and toolbar, held under the package header while the rows
+/// scroll the page. It publishes its height as the list toolbar's, which a
+/// folder heading sticks under.
+#[component]
+pub fn FileToolbarBand(children: Children) -> impl IntoView {
+    let band = NodeRef::new();
+    publish_height(band, "--q-toolbar-height");
+    view! { <div class=style::band node_ref=band>{children()}</div> }
+}
+
+/// The pane's column, for the gallery's drawn pane: see
+/// [`package_page_class`](super::package_page_class).
+pub fn file_pane_class() -> &'static str {
+    style::root
+}
+
+/// The box the rows are drawn in.
+pub fn file_list_class() -> &'static str {
+    style::list
+}
+
+/// The `[Download]` footer.
+pub fn file_footer_class() -> &'static str {
+    style::footer
+}
+
+/// The toolbar under the search row: select-all or the caption on the left,
+/// the view controls on the right. The facets need the package's counts, so a
+/// pane with no answer draws grouping alone.
+fn toolbar(grouping: RwSignal<String>, left: AnyView, facets: Option<AnyView>) -> impl IntoView {
+    view! {
+        // Stacks upwards, so the line nearest the rows is the one acting on
+        // them. Select-all goes first, on the left.
+        <ListToolbar reverse_when_stacked=true>
+            {left}
+            <div class=style::views>
+                <Select
+                    naming=Naming::Prefix("Group".to_string())
+                    options=Grouping::ALL.iter().map(|g| g.label().to_string()).collect()
+                    selected=grouping
+                />
+                {facets}
+            </div>
+        </ListToolbar>
+    }
+}
+
+/// The file pane.
+#[component]
+pub fn FilePane(
+    listing: Signal<Listing>,
+    /// The `Group:` select's value. The page owns it, so a re-read does not
+    /// reset it; a visit to another package does.
+    grouping: RwSignal<String>,
+    /// The folder headings the reader collapsed. The page's, like `grouping`.
+    collapsed: RwSignal<BTreeSet<String>>,
+    /// The search field's text. The page's, like `grouping`.
+    search: RwSignal<String>,
+    /// The chosen [`Facet`], as its [`Facet::key`]. The page owns it, for the
+    /// grouping's reason.
+    facet: RwSignal<String>,
+    /// Open a downloaded file, by its logical path.
+    on_open: Callback<String>,
+    /// Read the list again after a failure.
+    on_retry: Callback<()>,
+    /// What is ticked and what `[Download]` does. The page's, so it outlives
+    /// a re-read.
+    #[prop(optional)]
+    picking: Picking,
+    /// The rows' `[⋯]`. Absent draws none, as the gallery's cells do.
+    #[prop(optional)]
+    menu: Option<RowMenu>,
+    /// Resolve mode's differing set (`FileMarks.differing`): the drawn rows
+    /// whose path is in it are marked. Absent outside the mode, and by default.
+    #[prop(optional, into)]
+    differing: Signal<Differing>,
+) -> impl IntoView {
+    // Outside the match, so a re-read that redraws the list keeps the query.
+    let query = settled(search);
+    move || match listing.get() {
+        Listing::Loading => view! { <FilePaneSkeleton /> }.into_any(),
+        Listing::Unlisted(reason) => view! {
+            <section class=style::root aria-label="Files">
+                <FileToolbarBand>
+                    {search_row(search)}
+                    {toolbar(grouping, ().into_any(), None)}
+                </FileToolbarBand>
+                <Card bare=true label="Files">
+                    <LoadFailure
+                        centred=true
+                        words="Could not list this package's files."
+                        detail=reason
+                        on_retry=on_retry
+                    />
+                </Card>
+            </section>
+        }
+        .into_any(),
+        Listing::Ready(list) => ready(
+            list,
+            grouping,
+            collapsed,
+            Search {
+                field: search,
+                settled: query,
+            },
+            facet,
+            on_open,
+            picking,
+            menu,
+            differing,
+        ),
+    }
+}
+
+/// Whether `rows` draw at least one heading under `grouping`, which is what
+/// gives the toolbar's slot the rows' disclosure gutter.
+fn draws_a_heading(rows: &[Row], grouping: Grouping) -> bool {
+    let paths: Vec<&str> = rows.iter().map(|r| r.path.as_str()).collect();
+    group(&paths, grouping)
+        .iter()
+        .any(|i| matches!(i, Item::Group { .. }))
+}
+
+// Each is one of the page's own values, which `FilePane` hands on whole.
+#[allow(clippy::too_many_arguments)]
+fn ready(
+    list: FileList,
+    grouping: RwSignal<String>,
+    collapsed: RwSignal<BTreeSet<String>>,
+    search: Search,
+    facet: RwSignal<String>,
+    on_open: Callback<String>,
+    picking: Picking,
+    menu: Option<RowMenu>,
+    differing: Signal<Differing>,
+) -> AnyView {
+    let query = search.settled;
+    let FileList {
+        entries,
+        counts,
+        total,
+        truncated,
+    } = list;
+    let loaded_count = entries.len();
+    let rows: Vec<Row> = entries.into_iter().map(Row::from).collect();
+    let rows = StoredValue::new(rows);
+    let drawing = Drawing {
+        on_open,
+        picking,
+        menu,
+    };
+
+    // What the list draws and select-all counts and ticks. A memo over the
+    // settled query and the facet, so a pause that leaves the same rows
+    // standing — the first letters typed into a big package — rebuilds
+    // nothing. The facet is read as it is: only typing is debounced.
+    let shown = Memo::new(move |_| {
+        let f = Facet::from_key(&facet.get());
+        query.with(|q| rows.with_value(|rs| shown_rows(rs, q, f)))
+    });
+    // A view control narrowed the list. Known here, not from the count: a
+    // facet can narrow to exactly as many rows as there are (`SelectAll`).
+    let narrowed = Signal::derive(move || {
+        !query.with(String::is_empty) || Facet::from_key(&facet.get()) != Facet::All
+    });
+    let shown_offered =
+        Signal::derive(move || shown.with(|rs| picking.kept.with_value(|k| offered(rs, k))));
+    // Each heading's folder over every loaded row: keyed on the grouping
+    // alone, so neither the facet nor the search moves it.
+    let folders = Memo::new(move |_| {
+        rows.with_value(|rs| self::folders(rs, Grouping::from_label(&grouping.get()), truncated))
+    });
+    let headed = Signal::derive(move || {
+        shown.with(|rs| draws_a_heading(rs, Grouping::from_label(&grouping.get())))
+    });
+
+    let body = move || {
+        if total == 0 {
+            return view! {
+                <Blankslate
+                    heading="Nothing in this package"
+                    description="This package has no files yet."
+                />
+            }
+            .into_any();
+        }
+        let g = Grouping::from_label(&grouping.get());
+        let f = Facet::from_key(&facet.get());
+        shown.with(|rs| {
+            if !rs.is_empty() {
+                return folders
+                    .with(|fs| rows_view(rs, g, f, collapsed, drawing, &differing.get(), fs));
+            }
+            // Compact: `Blankslate`'s own padding is taller than this box at
+            // the height floor. No action yet — see `Blankslate`.
+            if rows.with_value(|rs| !shown_rows(rs, "", f).is_empty()) {
+                // The facet has rows here; the search left none of them.
+                view! {
+                    <Blankslate
+                        compact=true
+                        heading="No files match"
+                        description="Nothing in this view matches what you are looking for."
+                    />
+                }
+                .into_any()
+            } else if f == Facet::All && counts.all == 0 {
+                // Never zero-count unless it is `All`: an inert facet cannot
+                // be chosen. So `All` at zero is a package all ignored, and
+                // any other empty facet counts files the cap left out.
+                view! {
+                    <Blankslate
+                        compact=true
+                        heading="No files to show"
+                        description="Every file in this package is ignored."
+                    />
+                }
+                .into_any()
+            } else {
+                view! {
+                    <Blankslate
+                        compact=true
+                        heading="None of the loaded files are in this view"
+                        description="Its files sort after the ones this list covers."
+                    />
+                }
+                .into_any()
+            }
+        })
+    };
+
+    view! {
+        <section class=style::root aria-label="Files">
+            <FileToolbarBand>
+                {search_row(search.field)}
+                {toolbar(
+                    grouping,
+                    left_slot(picking, shown_offered, narrowed, headed, &counts),
+                    Some(facets(&counts, facet).into_any()),
+                )}
+                // Held with the toolbar, so a reader deep in the rows still
+                // sees why the list stops where it does.
+                {truncated.then(|| view! { <CapNotice total=total shown=loaded_count /> })}
+            </FileToolbarBand>
+            // The rows sit on the page; `Card` rules between the rows and the
+            // footer. It fills the window's height, so a short list still has
+            // its footer at the bottom.
+            <Card bare=true fill=true label="Files">
+                {body}
+                {footer(picking, rows)}
+            </Card>
+            // A copy's words, for a reader who cannot see the row's mark.
+            // Outside the list, which a search or a facet re-arranges.
+            {menu.map(|m| view! {
+                <span data-sr-only role="status">{move || m.copied.said.get()}</span>
+            })}
+        </section>
+    }
+    .into_any()
+}
+
+/// The pane before its read answers. Reserves the toolbar's height and the
+/// list's, so nothing moves when the rows land.
+#[component]
+pub fn FilePaneSkeleton() -> impl IntoView {
+    view! {
+        <section class=style::root aria-label="Files">
+            <FileToolbarBand>
+                // The search field: full width, one control high.
+                <SkeletonBox width="100%" height="32px" />
+                // The answered pane's own toolbar, over placeholders, so it
+                // stacks where that one stacks and is as tall on either line.
+                <ListToolbar reverse_when_stacked=true>
+                    // Select-all's spot, which an answered pane always fills —
+                    // with select-all, or with the caption saying every file is
+                    // here. The box's 17px, then a line of the caption's type.
+                    <div class=style::selectall aria-hidden="true">
+                        <SkeletonBox width="17px" height="17px" />
+                        <span class=style::caption>
+                            <SkeletonText width="96px" />
+                        </span>
+                    </div>
+                    <div class=style::views>
+                        // The `Group:` select's width, then the facets'.
+                        <SkeletonBox width="166px" height="32px" />
+                        <SkeletonBox width="396px" height="32px" />
+                    </div>
+                </ListToolbar>
+            </FileToolbarBand>
+            <Card bare=true label="Files" busy=Signal::stored(true)>
+                <div class=style::skeleton>
+                    {["48%", "62%", "55%", "48%", "62%", "55%", "48%", "62%"]
+                        .into_iter()
+                        .map(|width| view! { <SkeletonBox width=width /> })
+                        .collect_view()}
+                </div>
+            </Card>
+        </section>
+    }
+}
+
+#[cfg(test)]
+mod grouping_tests {
+    use super::*;
+
+    /// A folder's total counts every loaded file under it that is not
+    /// ignored, whatever any of them stands at.
+    #[test]
+    fn a_folder_s_total_leaves_its_ignored_files_out() {
+        let rows: Vec<Row> = [
+            ("notes/a.md", "pristine", None),
+            ("notes/b.md", "modified", None),
+            ("raw/.DS_Store", "pristine", Some(".DS_Store")),
+            ("raw/a.csv", "pristine", None),
+            ("raw/b.csv", "remote", None),
+            ("trash/.DS_Store", "pristine", Some(".DS_Store")),
+            ("trash/Thumbs.db", "pristine", Some("Thumbs.db")),
+        ]
+        .into_iter()
+        .map(|(path, status, ignored_by)| {
+            Row::from(EntryData {
+                filename: path.to_string(),
+                size: 0,
+                status: status.to_string(),
+                junky_pattern: None,
+                ignored_by: ignored_by
+                    .map(|p| IgnoredBy::new(p, crate::commands::RuleSource::Default)),
+                folder: false,
+                namespace: "team/dataset".try_into().unwrap(),
+            })
+        })
+        .collect();
+        let folders = folders(&rows, Grouping::BaseFolder, false);
+        let totals: Vec<(&str, usize)> = folders
+            .iter()
+            .map(|(heading, f)| (heading.as_str(), f.total))
+            .collect();
+        assert_eq!(totals, [("notes/", 2), ("raw/", 2), ("trash/", 0)]);
+    }
+
+    fn row(index: usize, name: &str) -> Item {
+        Item::Row {
+            index,
+            name: name.to_string(),
+        }
+    }
+
+    fn heading(heading: &str, rows: &[(usize, &str)]) -> Item {
+        Item::Group {
+            heading: heading.to_string(),
+            rows: rows.iter().map(|&(i, n)| (i, n.to_string())).collect(),
+        }
+    }
+
+    /// Path order, as the page read sends it.
+    const PACKAGE: &[&str] = &[
+        "README.md",
+        "notes/a.md",
+        "notes/b.md",
+        "quilt_summarize.json",
+        "raw/2026/plate-01.csv",
+        "raw/2026/plate-02.csv",
+        "raw/readme.txt",
+    ];
+
+    #[test]
+    fn base_folder_puts_root_files_first_with_no_heading() {
+        assert_eq!(
+            group(PACKAGE, Grouping::BaseFolder),
+            vec![
+                row(0, "README.md"),
+                row(3, "quilt_summarize.json"),
+                heading("notes/", &[(1, "a.md"), (2, "b.md")]),
+                heading("raw/2026/", &[(4, "plate-01.csv"), (5, "plate-02.csv")]),
+                // A group of one gets no heading: the row stands alone and
+                // carries its folder in its name.
+                row(6, "raw/readme.txt"),
+            ]
+        );
+    }
+
+    #[test]
+    fn top_folder_groups_by_the_first_segment_and_names_the_rest() {
+        assert_eq!(
+            group(PACKAGE, Grouping::TopFolder),
+            vec![
+                row(0, "README.md"),
+                row(3, "quilt_summarize.json"),
+                heading("notes/", &[(1, "a.md"), (2, "b.md")]),
+                heading(
+                    "raw/",
+                    &[
+                        (4, "2026/plate-01.csv"),
+                        (5, "2026/plate-02.csv"),
+                        (6, "readme.txt")
+                    ]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn none_is_flat_full_paths_in_path_order() {
+        let flat: Vec<Item> = PACKAGE.iter().enumerate().map(|(i, p)| row(i, p)).collect();
+        assert_eq!(group(PACKAGE, Grouping::None), flat);
+    }
+
+    #[test]
+    fn a_singleton_top_folder_is_ungrouped_and_shows_its_path() {
+        assert_eq!(
+            group(&["a.txt", "docs/deep/one.md"], Grouping::TopFolder),
+            vec![row(0, "a.txt"), row(1, "docs/deep/one.md")]
+        );
+    }
+
+    /// Path order does not keep a folder's files together: a subfolder's paths
+    /// can sort between them. One heading per folder all the same.
+    #[test]
+    fn a_folder_split_by_its_subfolder_is_still_one_group() {
+        assert_eq!(
+            group(
+                &["a/m.txt", "a/n/x.txt", "a/n/y.txt", "a/z.txt"],
+                Grouping::BaseFolder
+            ),
+            vec![
+                heading("a/", &[(0, "m.txt"), (3, "z.txt")]),
+                heading("a/n/", &[(1, "x.txt"), (2, "y.txt")]),
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_search_matches_every_file() {
+        assert!(path_matches("raw/2026/plate-01.csv", ""));
+    }
+
+    #[test]
+    fn search_ignores_case_on_both_sides() {
+        assert!(path_matches("raw/Plate-01.CSV", "plate-01.csv"));
+        assert!(path_matches("raw/plate-01.csv", "PLATE"));
+    }
+
+    /// The whole logical path, not only the name: a folder finds its files.
+    #[test]
+    fn search_matches_a_substring_anywhere_in_the_path() {
+        assert!(path_matches("raw/2026/plate-01.csv", "2026/pla"));
+        assert!(path_matches("raw/2026/plate-01.csv", "w/20"));
+        assert!(!path_matches("raw/2026/plate-01.csv", "2027"));
+    }
+}
+
+#[cfg(test)]
+mod facet_tests {
+    use super::*;
+
+    #[test]
+    fn the_caption_counts_as_the_facet_does() {
+        assert_eq!(downloaded_words(1_090, 0), "All 1,090 files downloaded");
+        assert_eq!(downloaded_words(2, 0), "All 2 files downloaded");
+        assert_eq!(downloaded_words(1, 0), "1 file downloaded");
+    }
+
+    /// Files deleted here are named after it, in Keeping's words.
+    #[test]
+    fn the_caption_names_the_files_deleted_here() {
+        assert_eq!(
+            downloaded_words(1_090, 1),
+            "All 1,090 files downloaded · 1 deleted here"
+        );
+        assert_eq!(
+            downloaded_words(5_000, 1_200),
+            "All 5,000 files downloaded · 1,200 deleted here"
+        );
+        assert_eq!(downloaded_words(1, 1), "1 file downloaded · 1 deleted here");
+    }
+
+    /// The facet and the search narrow together, in the one hook both the list
+    /// and select-all read.
+    #[test]
+    fn shown_rows_takes_the_facet_and_the_search_together() {
+        let row = |path: &str, status: &str| Row {
+            path: path.to_string(),
+            bytes: 0,
+            size: String::new(),
+            place: Place::of(status),
+            ignored: false,
+            ignored_by: None,
+            folder: false,
+        };
+        let rows = [
+            row("raw/a.csv", "modified"),
+            row("raw/b.csv", "pristine"),
+            row("notes/a.md", "modified"),
+        ];
+        let paths = |query: &str, facet: Facet| {
+            shown_rows(&rows, query, facet)
+                .into_iter()
+                .map(|r| r.path)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(paths("raw/", Facet::Changed), ["raw/a.csv"]);
+        assert_eq!(paths("", Facet::Changed), ["raw/a.csv", "notes/a.md"]);
+        assert_eq!(paths("raw/", Facet::All), ["raw/a.csv", "raw/b.csv"]);
+        assert_eq!(paths("raw/", Facet::NotDownloaded), [] as [String; 0]);
+    }
+
+    /// The backend's own rule (`EntryCounts::of`), so a facet shows the rows
+    /// its count counted.
+    #[test]
+    fn each_facet_admits_the_rows_its_count_counts() {
+        let admitted = |facet: Facet| {
+            [
+                ("pristine", false),
+                ("modified", false),
+                ("added", false),
+                ("deleted", false),
+                ("remote", false),
+                ("pristine", true),
+                ("remote", true),
+            ]
+            .into_iter()
+            .filter(|&(status, ignored)| facet.admits(Place::of(status), ignored))
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            admitted(Facet::All),
+            [
+                ("pristine", false),
+                ("modified", false),
+                ("added", false),
+                ("deleted", false),
+                ("remote", false),
+            ]
+        );
+        assert_eq!(
+            admitted(Facet::Changed),
+            [("modified", false), ("added", false), ("deleted", false)]
+        );
+        assert_eq!(admitted(Facet::NotDownloaded), [("remote", false)]);
+        assert_eq!(
+            admitted(Facet::Ignored),
+            [("pristine", true), ("remote", true)]
+        );
+    }
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::*;
+    use crate::pages::row_menu::group_starts;
+
+    fn labels(status: &str, ignored_by: Option<&str>, published: bool) -> Vec<&'static str> {
+        row_commands(
+            "raw/a.csv",
+            false,
+            Place::of(status),
+            ignored_by,
+            Reach {
+                published,
+                catalog: true,
+            },
+        )
+        .iter()
+        .map(RowCommand::label)
+        .collect()
+    }
+
+    /// With the held revision published: only a file that revision holds as
+    /// it is here gets its catalog page and its address.
+    #[test]
+    fn each_row_offers_what_its_status_allows() {
+        let all = |status| labels(status, None, true);
+        assert_eq!(
+            all("pristine"),
+            [
+                "Open file",
+                "Reveal in folder",
+                "Open in catalog",
+                "Copy URI",
+                "Ignore"
+            ]
+        );
+        assert_eq!(all("modified"), ["Open file", "Reveal in folder", "Ignore"]);
+        assert_eq!(
+            all("added"),
+            ["Open file", "Reveal in folder", "Copy path", "Ignore"]
+        );
+        assert_eq!(all("deleted"), ["Ignore"]);
+        assert_eq!(all("remote"), ["Open in catalog", "Copy URI", "Ignore"]);
+    }
+
+    /// Each row's items with a `|` where a rule goes.
+    fn grouped(status: &str, ignored_by: Option<&str>, published: bool) -> String {
+        let commands = row_commands(
+            "raw/a.csv",
+            false,
+            Place::of(status),
+            ignored_by,
+            Reach {
+                published,
+                catalog: true,
+            },
+        );
+        commands
+            .iter()
+            .zip(group_starts(&commands))
+            .map(|(c, starts)| {
+                if starts {
+                    format!("| {}", c.label())
+                } else {
+                    c.label().to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// The local file, its address, and `.quiltignore`, each its own group; a
+    /// group a row lacks draws no rule, and none leads or trails.
+    #[test]
+    fn rules_fall_between_the_groups_a_row_has() {
+        assert_eq!(
+            grouped("pristine", None, true),
+            "Open file, Reveal in folder, | Open in catalog, Copy URI, | Ignore"
+        );
+        assert_eq!(
+            grouped("modified", None, true),
+            "Open file, Reveal in folder, | Ignore"
+        );
+        assert_eq!(
+            grouped("added", None, false),
+            "Open file, Reveal in folder, | Copy path, | Ignore"
+        );
+        assert_eq!(grouped("deleted", None, true), "Ignore");
+        assert_eq!(
+            grouped("remote", None, true),
+            "Open in catalog, Copy URI, | Ignore"
+        );
+        assert_eq!(
+            grouped("pristine", None, false),
+            "Open file, Reveal in folder, | Ignore"
+        );
+        assert_eq!(grouped("pristine", Some("*.tmp"), true), "Stop ignoring");
+    }
+
+    /// An ignored row offers only the way back, whatever its status.
+    #[test]
+    fn an_ignored_row_offers_only_stop_ignoring() {
+        assert_eq!(labels("pristine", Some("*.tmp"), true), ["Stop ignoring"]);
+        assert_eq!(
+            row_commands(
+                "a.tmp",
+                false,
+                Place::Here,
+                Some("*.tmp"),
+                Reach {
+                    published: true,
+                    catalog: true,
+                }
+            ),
+            [RowCommand::StopIgnoring {
+                path: "a.tmp".to_string(),
+                folder: false,
+                pattern: "*.tmp".to_string(),
+            }]
+        );
+    }
+
+    /// With no published revision to name, no row gets the catalog or the
+    /// address, downloaded or not. A New row's path needs neither.
+    #[test]
+    fn the_catalog_and_the_address_need_a_published_revision() {
+        assert_eq!(
+            labels("pristine", None, false),
+            ["Open file", "Reveal in folder", "Ignore"]
+        );
+        assert_eq!(labels("remote", None, false), ["Ignore"]);
+        assert_eq!(
+            labels("added", None, false),
+            ["Open file", "Reveal in folder", "Copy path", "Ignore"]
+        );
+    }
+
+    fn remote(catalog: Option<&str>, hash: &str) -> quilt_uri::S3PackageUri {
+        quilt_uri::S3PackageUri {
+            revision: quilt_uri::RevisionPointer::Hash(hash.to_string()),
+            ..crate::util::package_uri("team-bucket", &"team/a".try_into().unwrap(), catalog)
+        }
+    }
+
+    /// With no catalog, a file the held revision has as it is here keeps its
+    /// address, and has no catalog page.
+    #[test]
+    fn without_a_catalog_a_row_offers_its_address_alone() {
+        let commands = |status| {
+            row_commands(
+                "raw/a.csv",
+                false,
+                Place::of(status),
+                None,
+                Reach {
+                    published: true,
+                    catalog: false,
+                },
+            )
+            .iter()
+            .map(RowCommand::label)
+            .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            commands("pristine"),
+            ["Open file", "Reveal in folder", "Copy URI", "Ignore"]
+        );
+        assert_eq!(commands("remote"), ["Copy URI", "Ignore"]);
+        assert_eq!(
+            commands("modified"),
+            ["Open file", "Reveal in folder", "Ignore"]
+        );
+    }
+
+    /// A bucket holding the revision, and nothing unpublished; a catalog host
+    /// is not needed.
+    #[test]
+    fn a_package_reaches_its_files_when_its_held_revision_is_published() {
+        let published =
+            |uri: Option<&quilt_uri::S3PackageUri>, ahead| Reach::of(uri, ahead).published;
+        assert!(published(
+            Some(&remote(Some("quilt.test"), "abc123")),
+            false
+        ));
+        assert!(
+            !published(Some(&remote(Some("quilt.test"), "abc123")), true),
+            "an unpublished revision"
+        );
+        assert!(
+            published(Some(&remote(None, "abc123")), false),
+            "no catalog host"
+        );
+        assert!(!Reach::of(Some(&remote(None, "abc123")), false).catalog);
+        assert!(Reach::of(Some(&remote(Some("quilt.test"), "abc123")), false).catalog);
+        assert!(
+            !published(Some(&remote(Some("quilt.test"), "")), false),
+            "a bucket never published to"
+        );
+        assert!(!published(None, false), "no remote");
+    }
+
+    /// Each command names the row's path, and Ignore is prefilled with it.
+    #[test]
+    fn the_commands_carry_the_row_s_path() {
+        assert_eq!(
+            row_commands(
+                "raw/a.csv",
+                false,
+                Place::New,
+                None,
+                Reach {
+                    published: true,
+                    catalog: true,
+                }
+            ),
+            [
+                RowCommand::Open("raw/a.csv".to_string()),
+                RowCommand::Reveal("raw/a.csv".to_string()),
+                RowCommand::CopyPath("raw/a.csv".to_string()),
+                RowCommand::Ignore("raw/a.csv".to_string()),
+            ]
+        );
+    }
+}
+
+#[cfg(test)]
+mod menu_pane_tests {
+    use super::*;
+    use crate::commands::{EntryCounts, EntryData};
+    use crate::test_support::mount;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    const TRIGGER: &str = "button[aria-label='More actions for this file']";
+
+    fn one_row(status: &str, menu: Option<RowMenu>) -> web_sys::Element {
+        let entry = EntryData {
+            filename: "here.txt".to_string(),
+            size: 4_100,
+            status: status.to_string(),
+            junky_pattern: None,
+            ignored_by: None,
+            folder: false,
+            namespace: "team/dataset".try_into().unwrap(),
+        };
+        let list = FileList {
+            entries: vec![entry],
+            counts: EntryCounts {
+                all: 1,
+                ..EntryCounts::default()
+            },
+            total: 1,
+            truncated: false,
+        };
+        let listing = Signal::stored(Listing::Ready(list));
+        let grouping = RwSignal::new(Grouping::None.label().to_string());
+        let facet = RwSignal::new(Facet::All.key().to_string());
+        let (on_open, on_retry) = (Callback::new(|_: String| ()), Callback::new(|()| ()));
+        mount(move || match menu {
+            Some(menu) => view! {
+                <FilePane
+                    listing=listing
+                    grouping=grouping
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=facet
+                    on_open=on_open
+                    on_retry=on_retry
+                    menu=menu
+                />
+            }
+            .into_any(),
+            None => view! {
+                <FilePane
+                    listing=listing
+                    grouping=grouping
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=facet
+                    on_open=on_open
+                    on_retry=on_retry
+                />
+            }
+            .into_any(),
+        })
+    }
+
+    fn menu(busy: Signal<bool>, chosen: RwSignal<Option<RowCommand>>) -> RowMenu {
+        RowMenu {
+            reach: Reach {
+                published: true,
+                catalog: true,
+            },
+            busy,
+            on_command: Callback::new(move |c| chosen.set(Some(c))),
+            copied: CopyMark::new(),
+        }
+    }
+
+    async fn open_items(el: &web_sys::Element) -> Vec<web_sys::HtmlButtonElement> {
+        el.query_selector(TRIGGER)
+            .unwrap()
+            .expect("the row's [⋯]")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        leptos::task::tick().await;
+        let found = el.query_selector_all("[popover] button").unwrap();
+        (0..found.length())
+            .map(|i| found.item(i).unwrap().unchecked_into())
+            .collect()
+    }
+
+    fn item<'a>(
+        items: &'a [web_sys::HtmlButtonElement],
+        words: &str,
+    ) -> &'a web_sys::HtmlButtonElement {
+        items
+            .iter()
+            .find(|b| b.text_content().unwrap_or_default().starts_with(words))
+            .unwrap_or_else(|| panic!("no item {words}"))
+    }
+
+    /// A copy that landed marks its own row in place and says what it copied
+    /// in the pane's live region, which sits outside the rows; both go when
+    /// the mark does.
+    #[wasm_bindgen_test]
+    async fn a_landed_copy_marks_its_row_and_says_so() {
+        let menu = menu(Signal::stored(false), RwSignal::new(None));
+        let el = one_row("pristine", Some(menu));
+        let region = el
+            .query_selector("section > [role=status]")
+            .unwrap()
+            .expect("a live region outside the rows");
+        assert!(region.has_attribute("data-sr-only"));
+        assert_eq!(region.text_content().unwrap_or_default(), "");
+        assert!(!el.text_content().unwrap_or_default().contains("Copied"));
+
+        let stamp = menu.copied.bump();
+        menu.copied.settle(
+            stamp,
+            Some("here.txt".to_string()),
+            "Copied URI of here.txt".to_string(),
+        );
+        leptos::task::tick().await;
+        let mark = el
+            .query_selector("[aria-hidden=true][class*=copied]")
+            .unwrap()
+            .expect("the row's mark");
+        assert_eq!(mark.text_content().unwrap_or_default(), "Copied");
+        assert_eq!(
+            region.text_content().unwrap_or_default(),
+            "Copied URI of here.txt"
+        );
+
+        menu.copied.forget();
+        leptos::task::tick().await;
+        assert!(!el.text_content().unwrap_or_default().contains("Copied"));
+        assert!(
+            el.text_content().unwrap_or_default().contains("4.1"),
+            "and the size is back"
+        );
+    }
+
+    /// The row's `[⋯]` lists what the row allows, and an item hands the page
+    /// its command.
+    #[wasm_bindgen_test]
+    async fn a_row_s_menu_offers_its_items_and_hands_the_chosen_one_to_the_page() {
+        let chosen = RwSignal::new(None);
+        let el = one_row("pristine", Some(menu(Signal::stored(false), chosen)));
+        let items = open_items(&el).await;
+        let words: Vec<String> = items
+            .iter()
+            .map(|b| b.text_content().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            words,
+            [
+                "Open file",
+                "Reveal in folder",
+                "Open in catalog",
+                "Copy URI",
+                "Ignore"
+            ]
+        );
+        assert_eq!(
+            el.query_selector_all("[popover] [role='separator']")
+                .unwrap()
+                .length(),
+            2,
+            "a rule between each of the three groups",
+        );
+        item(&items, "Copy URI").click();
+        assert_eq!(
+            chosen.get_untracked(),
+            Some(RowCommand::CopyUri("here.txt".to_string()))
+        );
+    }
+
+    /// A row resolve mode marks keeps its `[⋯]`: the mark and the menu are
+    /// two props on one `EntryRow`, and neither replaces the other.
+    #[wasm_bindgen_test]
+    async fn a_marked_row_keeps_its_menu() {
+        let entry = EntryData {
+            filename: "here.txt".to_string(),
+            size: 4_100,
+            status: "pristine".to_string(),
+            junky_pattern: None,
+            ignored_by: None,
+            folder: false,
+            namespace: "team/dataset".try_into().unwrap(),
+        };
+        let list = FileList {
+            entries: vec![entry],
+            counts: EntryCounts {
+                all: 1,
+                ..EntryCounts::default()
+            },
+            total: 1,
+            truncated: false,
+        };
+        let differing = RwSignal::new(Some(std::sync::Arc::new(BTreeSet::from([
+            "here.txt".to_string()
+        ]))));
+        let chosen = RwSignal::new(None);
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list.clone()))
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    menu=menu(Signal::stored(false), chosen)
+                    differing=differing
+                />
+            }
+        });
+        let marked = el
+            .query_selector(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
+            .unwrap()
+            .expect("the row is marked");
+        assert!(
+            marked.query_selector(TRIGGER).unwrap().is_some(),
+            "the marked row carries its [⋯]",
+        );
+        item(&open_items(&el).await, "Open file").click();
+        assert_eq!(
+            chosen.get_untracked(),
+            Some(RowCommand::Open("here.txt".to_string()))
+        );
+    }
+
+    /// The lock holds back the `.quiltignore` items, saying why, and nothing
+    /// else; they come back when it is released, without closing the menu.
+    #[wasm_bindgen_test]
+    async fn while_the_page_is_busy_ignore_waits_and_open_does_not() {
+        let busy = RwSignal::new(true);
+        let el = one_row("pristine", Some(menu(busy.into(), RwSignal::new(None))));
+        let items = open_items(&el).await;
+        let ignore = item(&items, "Ignore");
+        assert!(ignore.disabled());
+        assert_eq!(
+            ignore.get_attribute("title").as_deref(),
+            Some("Something else is running")
+        );
+        assert!(!item(&items, "Open file").disabled());
+        assert!(!item(&items, "Copy URI").disabled());
+
+        busy.set(false);
+        leptos::task::tick().await;
+        let items: Vec<web_sys::HtmlButtonElement> = {
+            let found = el.query_selector_all("[popover] button").unwrap();
+            (0..found.length())
+                .map(|i| found.item(i).unwrap().unchecked_into())
+                .collect()
+        };
+        assert!(!item(&items, "Ignore").disabled());
+    }
+
+    /// A pane given no menu draws none: the gallery's cells.
+    #[wasm_bindgen_test]
+    fn without_a_menu_a_row_draws_no_trigger() {
+        let el = one_row("pristine", None);
+        assert!(el.query_selector(TRIGGER).unwrap().is_none());
+    }
+}
+
+#[cfg(test)]
+mod pane_tests {
+    use super::*;
+    use crate::commands::{EntryCounts, EntryData};
+    use crate::test_support::{button_saying, element_saying, mount};
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn entry(path: &str, status: &str) -> EntryData {
+        EntryData {
+            filename: path.to_string(),
+            size: 4_100,
+            status: status.to_string(),
+            junky_pattern: None,
+            ignored_by: None,
+            folder: false,
+            namespace: "team/dataset".try_into().unwrap(),
+        }
+    }
+
+    fn ignored(path: &str) -> EntryData {
+        EntryData {
+            ignored_by: Some(IgnoredBy::new(
+                ".DS_Store",
+                crate::commands::RuleSource::Default,
+            )),
+            ..entry(path, "pristine")
+        }
+    }
+
+    /// A folder `.quiltignore` matched, as the backend sends it: no trailing
+    /// slash and no size.
+    fn ignored_folder(path: &str) -> EntryData {
+        EntryData {
+            size: 0,
+            ignored_by: Some(IgnoredBy::new(
+                format!("{}/", path.rsplit('/').next().unwrap()),
+                crate::commands::RuleSource::Default,
+            )),
+            folder: true,
+            ..entry(path, "pristine")
+        }
+    }
+
+    /// A whole list: its counts are its own rows', as the backend counts them.
+    fn list(entries: Vec<EntryData>, total: usize, truncated: bool) -> FileList {
+        let mut counts = EntryCounts::default();
+        for e in &entries {
+            if e.ignored_by.is_some() {
+                counts.ignored += 1;
+                counts.ignored_folders += usize::from(e.folder);
+                continue;
+            }
+            counts.all += 1;
+            match e.status.as_str() {
+                "added" | "modified" => counts.changed += 1,
+                "deleted" => {
+                    counts.changed += 1;
+                    counts.deleted += 1;
+                }
+                "remote" => counts.not_downloaded += 1,
+                _ => {}
+            }
+        }
+        FileList {
+            entries,
+            counts,
+            total,
+            truncated,
+        }
+    }
+
+    fn facet(el: &web_sys::Element, words: &str) -> web_sys::HtmlInputElement {
+        element_saying(el, words)
+            .closest("label")
+            .unwrap()
+            .expect("a segment")
+            .query_selector("input[type=radio]")
+            .unwrap()
+            .expect("its radio")
+            .unchecked_into()
+    }
+
+    fn facet_pane(listing: Listing, facet: RwSignal<String>) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listing)
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=facet
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        })
+    }
+
+    fn drawn(el: &web_sys::Element) -> Vec<String> {
+        let found = el.query_selector_all("[data-full-name]").unwrap();
+        (0..found.length())
+            .filter_map(|i| found.get(i)?.dyn_into::<web_sys::Element>().ok())
+            .filter_map(|e| e.get_attribute("data-full-name"))
+            .collect()
+    }
+
+    fn mixed() -> FileList {
+        list(
+            vec![
+                entry("added.txt", "added"),
+                entry("deleted.txt", "deleted"),
+                entry("here.txt", "pristine"),
+                entry("modified.txt", "modified"),
+                entry("remote.txt", "remote"),
+                ignored(".DS_Store"),
+            ],
+            6,
+            false,
+        )
+    }
+
+    /// Choosing a facet narrows the rows to it, and `All` brings them back.
+    #[wasm_bindgen_test]
+    async fn choosing_a_facet_narrows_the_rows_to_it() {
+        let chosen = RwSignal::new(Facet::All.key().to_string());
+        let el = facet_pane(Listing::Ready(mixed()), chosen);
+        assert_eq!(
+            drawn(&el),
+            [
+                "added.txt",
+                "deleted.txt",
+                "here.txt",
+                "modified.txt",
+                "remote.txt"
+            ]
+        );
+
+        facet(&el, "Changed 3").click();
+        leptos::task::tick().await;
+        assert_eq!(chosen.get_untracked(), "Changed", "the page holds the key");
+        assert_eq!(drawn(&el), ["added.txt", "deleted.txt", "modified.txt"]);
+
+        facet(&el, "Not downloaded 1").click();
+        leptos::task::tick().await;
+        assert_eq!(drawn(&el), ["remote.txt"]);
+
+        facet(&el, "All 5").click();
+        leptos::task::tick().await;
+        assert_eq!(drawn(&el).len(), 5);
+    }
+
+    /// Every row under `Ignored` is ignored, so none says so; and an ignored
+    /// file is never selectable, even one that is not downloaded — stop
+    /// ignoring it first.
+    #[wasm_bindgen_test]
+    fn ignored_rows_carry_no_label_and_no_box() {
+        let chosen = RwSignal::new(Facet::Ignored.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(
+                vec![
+                    ignored(".DS_Store"),
+                    EntryData {
+                        ignored_by: Some(IgnoredBy::new(
+                            "*.tmp",
+                            crate::commands::RuleSource::Default,
+                        )),
+                        ..entry("scratch.tmp", "remote")
+                    },
+                    entry("here.txt", "pristine"),
+                ],
+                3,
+                false,
+            )),
+            chosen,
+        );
+        assert_eq!(drawn(&el), [".DS_Store", "scratch.tmp"]);
+        let list = el
+            .query_selector(&format!(".{}", style::list))
+            .unwrap()
+            .expect("the list");
+        assert!(
+            list.query_selector("input[type=checkbox]")
+                .unwrap()
+                .is_none(),
+            "no box; markup was {}",
+            list.inner_html()
+        );
+        assert!(
+            list.query_selector("button").unwrap().is_none(),
+            "and nothing to click"
+        );
+        assert!(
+            !text(&list).contains("Not downloaded"),
+            "no label; markup was {}",
+            list.inner_html()
+        );
+    }
+
+    /// Each ignored row names its rule and where the rule came from.
+    #[wasm_bindgen_test]
+    fn ignored_rows_name_their_rule_s_source() {
+        use crate::commands::RuleSource;
+        let by = |path: &str, pattern: &str, source| EntryData {
+            ignored_by: Some(IgnoredBy::new(pattern, source)),
+            ..entry(path, "pristine")
+        };
+        let chosen = RwSignal::new(Facet::Ignored.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(
+                vec![
+                    by(".DS_Store", ".DS_Store", RuleSource::Default),
+                    by("a.tmp", "*.tmp", RuleSource::User { line: 4 }),
+                    EntryData {
+                        folder: true,
+                        size: 0,
+                        ..by("cache", "cache/", RuleSource::Package { line: 2 })
+                    },
+                ],
+                3,
+                false,
+            )),
+            chosen,
+        );
+        let list = el
+            .query_selector(&format!(".{}", style::list))
+            .unwrap()
+            .expect("the list");
+        let words = text(&list);
+        for note in [
+            ".DS_Store · Built-in rule",
+            "*.tmp · Your rules, line 4",
+            "cache/ · This package's .quiltignore, line 2",
+        ] {
+            assert!(words.contains(note), "{note:?} in {words}");
+        }
+    }
+
+    /// An ignored folder is one row under `Ignored`, named with a trailing
+    /// slash and no size, and its facet counts it.
+    #[wasm_bindgen_test]
+    fn an_ignored_folder_is_one_row_named_with_a_slash() {
+        let chosen = RwSignal::new(Facet::Ignored.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(
+                vec![entry("a.csv", "pristine"), ignored_folder("cache")],
+                2,
+                false,
+            )),
+            chosen,
+        );
+        assert_eq!(drawn(&el), ["cache/"]);
+        assert!(facet(&el, "Ignored 1").checked());
+        let row = el
+            .query_selector("[data-full-name='cache/']")
+            .unwrap()
+            .expect("the folder's row");
+        let row_text = text(&row.parent_element().unwrap());
+        // Its rule's note has no line number, so any digit would be a size.
+        assert!(
+            !row_text.chars().any(|c| c.is_ascii_digit()),
+            "no size: {row_text}"
+        );
+    }
+
+    /// Under `Base folder` an ignored folder sits under its parent's heading
+    /// like a file, never as a heading of its own, and the heading's total
+    /// still leaves it out.
+    #[wasm_bindgen_test]
+    async fn an_ignored_folder_sits_under_its_parent_s_heading() {
+        let (search, facet) = (RwSignal::new(String::new()), RwSignal::new(String::new()));
+        facet.set(Facet::Ignored.key().to_string());
+        let el = driven_pane(
+            vec![
+                entry("data/a.csv", "pristine"),
+                entry("data/b.csv", "pristine"),
+                ignored_folder("data/cache"),
+                ignored("data/x.tmp"),
+            ],
+            Picking::default(),
+            search,
+            facet,
+        );
+        leptos::task::tick().await;
+        assert_eq!(
+            drawn(&el),
+            ["data/", "data/cache/", "data/x.tmp"],
+            "{}",
+            el.inner_html()
+        );
+        facet.set(Facet::All.key().to_string());
+        leptos::task::tick().await;
+        assert_eq!(heading_count(&el, "data/"), "2", "{}", el.inner_html());
+    }
+
+    /// A tracked file that `.quiltignore` also matches is two rows, as in v1:
+    /// the ignored one under `Ignored`, and the tracked one — here deleted,
+    /// since the walk skips it — under `All` and `Changed`. Counts follow rows.
+    #[wasm_bindgen_test]
+    async fn an_ignored_tracked_file_keeps_both_its_rows() {
+        let chosen = RwSignal::new(Facet::All.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(
+                vec![ignored("data.csv"), entry("data.csv", "deleted")],
+                2,
+                false,
+            )),
+            chosen,
+        );
+        assert_eq!(drawn(&el), ["data.csv"]);
+        assert!(text(&el).contains("Deleted"));
+
+        facet(&el, "Ignored 1").click();
+        leptos::task::tick().await;
+        assert_eq!(drawn(&el), ["data.csv"]);
+        assert!(!text(&el).contains("Deleted"), "the ignored row is silent");
+
+        facet(&el, "Changed 1").click();
+        leptos::task::tick().await;
+        assert_eq!(drawn(&el), ["data.csv"]);
+    }
+
+    /// A facet with nothing in it stays on screen and cannot be chosen. `All`
+    /// always can: it is the pane's home and where a view falls back to.
+    #[wasm_bindgen_test]
+    fn a_zero_count_facet_is_present_and_inert() {
+        let el = pane(Listing::Ready(list(vec![ignored(".DS_Store")], 1, false)));
+        assert!(facet(&el, "Changed 0").disabled());
+        assert!(facet(&el, "Not downloaded 0").disabled());
+        assert!(!facet(&el, "Ignored 1").disabled());
+        assert!(!facet(&el, "All 0").disabled(), "home is never shut");
+    }
+
+    /// A re-read can empty the facet the reader is on — the download finished,
+    /// so `Not downloaded` is zero. The view falls back to `All`, since an
+    /// inert segment cannot hold the choice.
+    #[wasm_bindgen_test]
+    async fn a_chosen_facet_that_empties_falls_back_to_all() {
+        let chosen = RwSignal::new(Facet::NotDownloaded.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(vec![entry("here.txt", "pristine")], 1, false)),
+            chosen,
+        );
+        leptos::task::tick().await;
+        assert_eq!(chosen.get_untracked(), "All");
+        assert!(facet(&el, "All 1").checked());
+        assert_eq!(drawn(&el), ["here.txt"]);
+    }
+
+    /// A package whose every file is ignored has nothing under `All`, and all
+    /// of it under `Ignored`.
+    #[wasm_bindgen_test]
+    async fn a_wholly_ignored_package_lists_its_files_under_ignored() {
+        let chosen = RwSignal::new(Facet::All.key().to_string());
+        let el = facet_pane(
+            Listing::Ready(list(vec![ignored(".DS_Store")], 1, false)),
+            chosen,
+        );
+        element_saying(&el, "Every file in this package is ignored.");
+
+        facet(&el, "Ignored 1").click();
+        leptos::task::tick().await;
+        assert_eq!(drawn(&el), [".DS_Store"]);
+    }
+
+    /// Over the cap a facet can count files none of whose rows were loaded.
+    /// The view says so rather than drawing an empty box.
+    #[wasm_bindgen_test]
+    fn a_facet_whose_files_are_past_the_cap_says_so() {
+        let el = facet_pane(
+            Listing::Ready(FileList {
+                counts: EntryCounts {
+                    all: 1_500,
+                    changed: 4,
+                    not_downloaded: 0,
+                    ignored: 0,
+                    ignored_folders: 0,
+                    deleted: 0,
+                },
+                ..list(vec![entry("a.csv", "pristine")], 1_500, true)
+            }),
+            RwSignal::new(Facet::Changed.key().to_string()),
+        );
+        assert_eq!(drawn(&el), [] as [String; 0]);
+        element_saying(&el, "None of the loaded files are in this view");
+    }
+
+    /// The facets describe the package, not the loaded rows: over the cap a
+    /// facet still says how many files the package has in it.
+    #[wasm_bindgen_test]
+    fn the_facets_count_the_whole_package() {
+        let el = pane(Listing::Ready(FileList {
+            counts: EntryCounts {
+                all: 4_309,
+                changed: 2,
+                not_downloaded: 17,
+                ignored: 3,
+                ignored_folders: 0,
+                deleted: 0,
+            },
+            ..list(vec![entry("a.csv", "pristine")], 4_312, true)
+        }));
+        for words in ["All 4,309", "Changed 2", "Not downloaded 17", "Ignored 3"] {
+            assert!(
+                facet(&el, words).name() == "file-facets",
+                "one group of four; markup was {}",
+                el.inner_html()
+            );
+        }
+        assert!(facet(&el, "All 4,309").checked(), "All is the start");
+    }
+
+    fn pane(listing: Listing) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listing)
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        })
+    }
+
+    fn text(el: &web_sys::Element) -> String {
+        el.text_content().unwrap_or_default()
+    }
+
+    /// Ignored rows are hidden until the `Ignored` facet shows them, and even
+    /// then one that is not downloaded carries no box: stop ignoring it first.
+    #[test]
+    fn only_a_missing_row_that_is_not_ignored_can_be_ticked() {
+        let r = |place, ignored| Row {
+            path: "a.csv".to_string(),
+            bytes: 0,
+            size: String::new(),
+            place,
+            ignored,
+            ignored_by: None,
+            folder: false,
+        };
+        assert!(r(Place::Missing, false).selectable());
+        assert!(!r(Place::Missing, true).selectable());
+        for place in [
+            Place::Here,
+            Place::Changed,
+            Place::New,
+            Place::Deleted,
+            Place::Unknown,
+        ] {
+            assert!(!r(place, false).selectable());
+        }
+    }
+
+    /// The footer says what the press fetches, in files and bytes.
+    #[test]
+    fn the_footer_says_its_files_and_bytes() {
+        let plain = |words: String| words.replace('\u{a0}', " ");
+        assert_eq!(plain(footer_words(3, 114_100)), "Download 3 · 114.1 kB");
+        assert_eq!(plain(footer_words(2, 0)), "Download 2 · 0 B");
+        assert_eq!(
+            plain(footer_words(1_000, 86_300_000_000)),
+            "Download 1,000 · 86.3 GB"
+        );
+    }
+
+    /// The bytes are summed over exactly the rows the count counts: ticked
+    /// and on offer. A tick on a row that cannot be ticked any more — it was
+    /// downloaded — drops out of both.
+    #[test]
+    fn the_footers_count_and_bytes_are_one_set() {
+        let row = |path: &str, status: &str, bytes| Row {
+            bytes,
+            ..Row::from(EntryData {
+                filename: path.to_string(),
+                size: bytes,
+                status: status.to_string(),
+                junky_pattern: None,
+                ignored_by: None,
+                folder: false,
+                namespace: "team/dataset".try_into().unwrap(),
+            })
+        };
+        let rows = [
+            row("a.csv", "remote", 1),
+            row("b.csv", "remote", 20),
+            row("c.csv", "pristine", 300),
+            row("d.csv", "remote", 4_000),
+        ];
+        let ticked: BTreeSet<String> = ["a.csv", "c.csv", "d.csv", "gone.csv"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+
+        assert_eq!(
+            ticked_rows(&ticked, &rows, &Kept::Folders(Vec::new())),
+            (vec!["a.csv".to_string(), "d.csv".to_string()], 4_001)
+        );
+        let huge = [row("a.csv", "remote", u64::MAX), row("d.csv", "remote", 1)];
+        assert_eq!(
+            ticked_rows(&ticked, &huge, &Kept::Folders(Vec::new())).1,
+            u64::MAX,
+            "saturates, never wraps"
+        );
+    }
+
+    /// The flag decides, never the length: a list of two that the backend says
+    /// was cut gets the notice, and a list it says is whole does not.
+    #[wasm_bindgen_test]
+    fn the_cap_notice_appears_only_when_the_backend_says_the_list_was_cut() {
+        let rows = || vec![entry("a.csv", "pristine"), entry("b.csv", "pristine")];
+
+        let cut = pane(Listing::Ready(list(rows(), 4_312, true)));
+        assert!(
+            text(&cut)
+                .contains("This package has 4,312 files. This list covers the first 2 by path."),
+            "markup was {}",
+            cut.inner_html()
+        );
+        assert!(
+            cut.query_selector(&format!(".{} .{}", style::band, style::cap))
+                .unwrap()
+                .is_some(),
+            "held with the toolbar; markup was {}",
+            cut.inner_html()
+        );
+
+        let whole = pane(Listing::Ready(list(rows(), 4_312, false)));
+        assert!(
+            !text(&whole).contains("This package has"),
+            "markup was {}",
+            whole.inner_html()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn ignored_files_are_hidden() {
+        let el = pane(Listing::Ready(list(
+            vec![entry("a.csv", "pristine"), ignored(".DS_Store")],
+            2,
+            false,
+        )));
+        assert!(
+            text(&el).contains("a.csv"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            !text(&el).contains("DS_Store"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// Design §3's table: the resting states are silent, the rest are named.
+    #[wasm_bindgen_test]
+    fn rows_are_labelled_by_state_and_the_resting_state_is_silent() {
+        let el = pane(Listing::Ready(list(
+            vec![
+                entry("added.txt", "added"),
+                entry("deleted.txt", "deleted"),
+                entry("here.txt", "pristine"),
+                entry("modified.txt", "modified"),
+                entry("remote.txt", "remote"),
+            ],
+            5,
+            false,
+        )));
+        let row_text = |name: &str| {
+            element_saying(&el, name)
+                .closest(&format!(".{}", style::list))
+                .unwrap()
+                .expect("inside the list");
+            let title = el
+                .query_selector(&format!("[data-full-name='{name}']"))
+                .unwrap()
+                .expect("titled row");
+            text(&title.parent_element().unwrap())
+        };
+        assert!(row_text("added.txt").contains("New"));
+        assert!(row_text("deleted.txt").contains("Deleted"));
+        assert!(row_text("modified.txt").contains("Changed"));
+        assert!(row_text("remote.txt").contains("Not downloaded"));
+        let here = row_text("here.txt");
+        for word in ["New", "Deleted", "Changed", "Not downloaded", "Downloaded"] {
+            assert!(
+                !here.contains(word),
+                "a downloaded row says nothing: {here}"
+            );
+        }
+    }
+
+    /// A click does what the row can do: a file here opens, a missing one is a
+    /// box, and a deleted one is inert.
+    #[wasm_bindgen_test]
+    fn a_downloaded_row_opens_a_missing_one_ticks_and_a_deleted_one_is_inert() {
+        let opened = RwSignal::new(Vec::<String>::new());
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(
+                        vec![
+                            entry("deleted.txt", "deleted"),
+                            entry("here.txt", "pristine"),
+                            entry("remote.txt", "remote"),
+                        ],
+                        3,
+                        false,
+                    )))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(move |path: String| opened.update(|o| o.push(path)))
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        });
+        let titled = |name: &str| {
+            el.query_selector(&format!("[data-full-name='{name}']"))
+                .unwrap()
+                .expect("titled row")
+        };
+
+        let here: web_sys::HtmlElement = titled("here.txt").dyn_into().unwrap();
+        assert_eq!(
+            here.tag_name(),
+            "BUTTON",
+            "a downloaded row's name is a button"
+        );
+        here.click();
+        assert_eq!(opened.get_untracked(), vec!["here.txt".to_string()]);
+
+        let remote = titled("remote.txt").closest("label").unwrap();
+        assert!(
+            remote.is_some_and(|l| l.query_selector("input[type=checkbox]").unwrap().is_some()),
+            "a missing row is the Select shape"
+        );
+
+        let deleted = titled("deleted.txt");
+        assert_eq!(deleted.tag_name(), "SPAN");
+        assert!(
+            deleted.closest("label").unwrap().is_none(),
+            "and a deleted one is inert"
+        );
+    }
+
+    /// A pane over these rows, with its selection handed in so a test can
+    /// read what was ticked and what `[Download]` asked for.
+    fn picking_pane(
+        entries: Vec<EntryData>,
+        picking: Picking,
+        grouping: Grouping,
+    ) -> web_sys::Element {
+        let total = entries.len();
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(entries, total, false)))
+                    grouping=RwSignal::new(grouping.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                />
+            }
+        })
+    }
+
+    fn boxes(el: &web_sys::Element) -> u32 {
+        el.query_selector_all("input[type=checkbox]")
+            .unwrap()
+            .length()
+    }
+
+    fn tick(el: &web_sys::Element, name: &str) {
+        let row = el
+            .query_selector(&format!("[data-full-name='{name}']"))
+            .unwrap()
+            .expect("titled row")
+            .closest("label")
+            .unwrap()
+            .expect("a selectable row is a label");
+        let input: web_sys::HtmlElement = row
+            .query_selector("input[type=checkbox]")
+            .unwrap()
+            .unwrap()
+            .unchecked_into();
+        input.click();
+    }
+
+    fn mixed_package() -> Vec<EntryData> {
+        vec![
+            entry("added.txt", "added"),
+            entry("deleted.txt", "deleted"),
+            entry("here.txt", "pristine"),
+            EntryData {
+                status: "remote".to_string(),
+                ..ignored("junk.tmp")
+            },
+            entry("remote-a.csv", "remote"),
+            entry("remote-b.csv", "remote"),
+        ]
+    }
+
+    /// Whether the row or heading drawing `name` holds the downloaded row's
+    /// check: a glyph in the box-shaped hole that leads it, and not a box. A
+    /// heading's name carries its folder as `title`, as a row's carries its
+    /// path.
+    fn has_check(el: &web_sys::Element, name: &str) -> bool {
+        el.query_selector(&format!("[data-full-name='{name}']"))
+            .unwrap()
+            .expect("titled row")
+            .parent_element()
+            .and_then(|line| line.first_element_child())
+            .is_some_and(|hole| {
+                hole.query_selector("svg").unwrap().is_some()
+                    && hole.query_selector("input").unwrap().is_none()
+            })
+    }
+
+    /// Whether the heading `folder` carries its box, named for its group.
+    fn heading_has_box(el: &web_sys::Element, folder: &str) -> bool {
+        el.query_selector(&format!("input[aria-label='Select all in {folder}']"))
+            .unwrap()
+            .is_some()
+    }
+
+    /// Whether the caption `words` has the Success tone's tick in the box's
+    /// hole that leads its line.
+    fn caption_has_tick(el: &web_sys::Element, words: &str) -> bool {
+        element_saying(el, words)
+            .parent_element()
+            .and_then(|line| line.first_element_child())
+            .is_some_and(|hole| hole.query_selector("svg").unwrap().is_some())
+    }
+
+    /// Under files-I-pick every file that is here says so with a check —
+    /// unchanged, changed or new — and a deleted or missing one does not. The
+    /// rule is the row's own, so a facet that hides every box leaves the checks
+    /// where they were.
+    #[wasm_bindgen_test]
+    async fn each_file_that_is_here_carries_the_check() {
+        let (search, facet) = (RwSignal::new(String::new()), RwSignal::new(String::new()));
+        facet.set(Facet::All.key().to_string());
+        let mut entries = mixed_package();
+        entries.push(entry("changed.txt", "modified"));
+        let el = driven_pane(entries, Picking::default(), search, facet);
+        for here in ["added.txt", "changed.txt", "here.txt"] {
+            assert!(
+                has_check(&el, here),
+                "{here} is on disk; markup was {}",
+                el.inner_html()
+            );
+        }
+        for away in ["deleted.txt", "remote-a.csv", "remote-b.csv"] {
+            assert!(
+                !has_check(&el, away),
+                "{away} is not on disk; markup was {}",
+                el.inner_html()
+            );
+        }
+
+        facet.set(Facet::Changed.key().to_string());
+        leptos::task::tick().await;
+        assert_eq!(boxes(&el), 0, "markup was {}", el.inner_html());
+        assert!(
+            has_check(&el, "added.txt"),
+            "a facet does not turn the checks off; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// A facet or a search narrows what select-all reaches, and its label
+    /// says so; under `Ignored` nothing can be ticked, so it is gone.
+    #[wasm_bindgen_test]
+    async fn the_view_controls_narrow_select_all_and_say_so() {
+        let (search, facet) = (RwSignal::new(String::new()), RwSignal::new(String::new()));
+        facet.set(Facet::NotDownloaded.key().to_string());
+        let entries = mixed_package();
+        let total = entries.len();
+        let picking = Picking::default();
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(entries, total, false)))
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=search
+                    facet=facet
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                />
+            }
+        });
+        element_saying(&el, "Select all 2 shown");
+        search.set("remote-a".to_string());
+        // The list follows the search once typing settles.
+        crate::test_support::sleep_ms(40).await;
+        element_saying(&el, "Select all 1 shown");
+        // A search hides a tick without undoing it: `[Download]` counts both,
+        // and sums both rows' bytes.
+        picking
+            .ticked
+            .set(["remote-a.csv".to_string(), "remote-b.csv".to_string()].into());
+        leptos::task::tick().await;
+        element_saying(&el, "1 of 1 selected");
+        button_saying(&el, "Download 2 · 8.2\u{a0}kB");
+        search.set(String::new());
+        facet.set(Facet::Ignored.key().to_string());
+        leptos::task::tick().await;
+        assert_eq!(boxes(&el), 0, "markup was {}", el.inner_html());
+        assert!(!text(&el).contains("Select all"));
+        button_saying(&el, "Download 2 · 8.2\u{a0}kB");
+    }
+
+    #[expect(dead_code, reason = "only the classes these tests need are loaded")]
+    mod sheets {
+        stylance::import_crate_style!(pub row, "src/kit/entry_row.module.scss");
+        stylance::import_crate_style!(pub group, "src/kit/entry_group.module.scss");
+        stylance::import_crate_style!(pub check, "src/kit/checkbox.module.scss");
+        stylance::import_crate_style!(pub toolbar, "src/kit/list_toolbar.module.scss");
+    }
+
+    /// The cap's notice sits right under the toolbar, whose bottom padding is
+    /// the room above it, and keeps as much again below.
+    #[wasm_bindgen_test]
+    async fn the_cap_notice_has_one_gap_above_and_below() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("file_pane.module.scss"),
+            &[("band", style::band), ("cap", style::cap)],
+        );
+        load_module_style(
+            include_str!("../../kit/list_toolbar.module.scss"),
+            &[("root", sheets::toolbar::root)],
+        );
+        let el = mount(|| {
+            view! {
+                <div style="width:660px; --q-space-2:8px; --q-space-3:12px">
+                    <FilePane
+                        listing=Signal::stored(Listing::Ready(list(
+                            vec![entry("a.csv", "pristine")],
+                            4_312,
+                            true,
+                        )))
+                        grouping=RwSignal::new(Grouping::None.label().to_string())
+                        collapsed=RwSignal::new(BTreeSet::new())
+                        search=RwSignal::new(String::new())
+                        facet=RwSignal::new(Facet::All.key().to_string())
+                        on_open=Callback::new(|_: String| ())
+                        on_retry=Callback::new(|()| ())
+                        picking=Picking::default()
+                    />
+                </div>
+            }
+        });
+        leptos::task::tick().await;
+        let rect = |selector: String| {
+            el.query_selector(&selector)
+                .unwrap()
+                .expect("present")
+                .get_bounding_client_rect()
+        };
+        let toolbar = rect(format!(".{}", sheets::toolbar::root));
+        let cap = rect(format!(".{}", style::cap));
+        assert!(
+            (cap.top() - toolbar.bottom()).abs() < 0.5,
+            "no room past the toolbar's own: {} under {}",
+            cap.top(),
+            toolbar.bottom()
+        );
+        let text = el
+            .query_selector(&format!(".{}", style::cap))
+            .unwrap()
+            .expect("the notice")
+            .unchecked_into::<web_sys::HtmlElement>();
+        assert_eq!(
+            web_sys::window()
+                .unwrap()
+                .get_computed_style(&text)
+                .unwrap()
+                .unwrap()
+                .get_property_value("padding-bottom")
+                .unwrap(),
+            "8px",
+            "and as much below"
+        );
+    }
+
+    /// Select-all's box, a heading's and a row's share one x, the list's left
+    /// edge, with headings and without; and a folder's name and a file's start
+    /// on one x after it.
+    #[wasm_bindgen_test]
+    async fn the_boxes_make_the_list_s_left_edge() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("file_pane.module.scss"),
+            &[
+                ("selectall", style::selectall),
+                ("gutter", style::gutter),
+                ("band", style::band),
+            ],
+        );
+        load_module_style(
+            include_str!("../../kit/entry_row.module.scss"),
+            &[
+                ("root", sheets::row::root),
+                ("main", sheets::row::main),
+                ("gutter", sheets::row::gutter),
+                ("nobox", sheets::row::nobox),
+                ("name", sheets::row::name),
+            ],
+        );
+        load_module_style(
+            include_str!("../../kit/entry_group.module.scss"),
+            &[
+                ("head", sheets::group::head),
+                ("disclose", sheets::group::disclose),
+                ("nobox", sheets::group::nobox),
+                ("name", sheets::group::name),
+            ],
+        );
+        load_module_style(
+            include_str!("../../kit/checkbox.module.scss"),
+            &[
+                ("root", sheets::check::root),
+                ("input", sheets::check::input),
+                ("indicator", sheets::check::indicator),
+            ],
+        );
+        for grouping in [Grouping::BaseFolder, Grouping::None] {
+            let el = mount(move || {
+                view! {
+                    <div style="width:660px; --q-space-1:4px; --q-space-2:8px; \
+                                --q-space-3:12px">
+                        <FilePane
+                            listing=Signal::stored(Listing::Ready(list(
+                                vec![
+                                    entry("a.csv", "remote"),
+                                    entry("raw/b.csv", "remote"),
+                                    entry("raw/c.csv", "remote"),
+                                ],
+                                3,
+                                false,
+                            )))
+                            grouping=RwSignal::new(grouping.label().to_string())
+                            collapsed=RwSignal::new(BTreeSet::new())
+                            search=RwSignal::new(String::new())
+                            facet=RwSignal::new(Facet::All.key().to_string())
+                            on_open=Callback::new(|_: String| ())
+                            on_retry=Callback::new(|()| ())
+                            picking=Picking::default()
+                        />
+                    </div>
+                }
+            });
+            leptos::task::tick().await;
+            let left = |selector: &str| {
+                el.query_selector(selector)
+                    .unwrap()
+                    .expect(selector)
+                    .get_bounding_client_rect()
+                    .left()
+            };
+            let select_all = left(&format!(".{} input", style::selectall));
+            let row = left("label input");
+            assert_eq!(select_all, row, "select-all's box over a row's");
+            if grouping == Grouping::BaseFolder {
+                assert_eq!(
+                    left("input[aria-label='Select all in raw/']"),
+                    row,
+                    "and a heading's"
+                );
+                assert_eq!(
+                    left(&format!(
+                        ".{} .{}",
+                        sheets::group::head,
+                        sheets::group::name
+                    )),
+                    left("[data-full-name='raw/b.csv']"),
+                    "a folder's name over its files'"
+                );
+            } else {
+                // No headings, so no gutter: the name sits one gap after the box.
+                let input = el
+                    .query_selector("label input")
+                    .unwrap()
+                    .unwrap()
+                    .get_bounding_client_rect();
+                assert_eq!(left("[data-full-name='a.csv']"), input.right() + 8.0);
+            }
+        }
+    }
+
+    /// Only a not-downloaded, non-ignored row carries a box — here two of
+    /// them — and select-all counts exactly those.
+    #[wasm_bindgen_test]
+    fn only_downloadable_rows_carry_a_box_and_select_all_counts_them() {
+        let el = picking_pane(mixed_package(), Picking::default(), Grouping::BaseFolder);
+        assert_eq!(
+            boxes(&el),
+            3,
+            "two rows and select-all; markup was {}",
+            el.inner_html()
+        );
+        element_saying(&el, "Select all 2");
+    }
+
+    #[wasm_bindgen_test]
+    async fn select_all_reads_what_is_ticked_and_ticks_what_is_shown() {
+        let picking = Picking::default();
+        let el = picking_pane(mixed_package(), picking, Grouping::BaseFolder);
+
+        tick(&el, "remote-a.csv");
+        leptos::task::tick().await;
+        element_saying(&el, "1 of 2 selected");
+
+        // Mixed, so a click ticks the rest.
+        element_saying(&el, "1 of 2 selected").click();
+        leptos::task::tick().await;
+        element_saying(&el, "2 of 2 selected");
+        assert_eq!(
+            picking.ticked.get_untracked(),
+            ["remote-a.csv", "remote-b.csv"]
+                .map(String::from)
+                .into_iter()
+                .collect()
+        );
+
+        element_saying(&el, "2 of 2 selected").click();
+        leptos::task::tick().await;
+        element_saying(&el, "Select all 2");
+    }
+
+    /// A heading's box names its group, and ticks the rows under it.
+    #[wasm_bindgen_test]
+    async fn a_heading_box_names_its_group_and_ticks_its_rows() {
+        let picking = Picking::default();
+        let el = picking_pane(
+            vec![
+                entry("raw/a.csv", "remote"),
+                entry("raw/b.csv", "remote"),
+                entry("raw/c.csv", "pristine"),
+            ],
+            picking,
+            Grouping::BaseFolder,
+        );
+        let heading: web_sys::HtmlElement = el
+            .query_selector("input[aria-label='Select all in raw/']")
+            .unwrap()
+            .expect("the heading's box names its group")
+            .unchecked_into();
+        heading.click();
+        leptos::task::tick().await;
+        assert_eq!(picking.ticked.get_untracked().len(), 2);
+        element_saying(&el, "2 of 2 selected");
+    }
+
+    /// The footer exists only while something is ticked, and `[Download]`
+    /// sends the ticked paths in path order.
+    #[wasm_bindgen_test]
+    async fn the_footer_appears_on_a_tick_and_downloads_the_ticked_paths() {
+        let asked = RwSignal::new(Vec::<Vec<String>>::new());
+        let picking = Picking {
+            on_download: Callback::new(move |paths| asked.update(|a| a.push(paths))),
+            ..Picking::default()
+        };
+        let el = picking_pane(mixed_package(), picking, Grouping::BaseFolder);
+        let download = |el: &web_sys::Element| {
+            let all = el.query_selector_all("button").unwrap();
+            (0..all.length())
+                .map(|i| {
+                    all.item(i)
+                        .unwrap()
+                        .unchecked_into::<web_sys::HtmlElement>()
+                })
+                .find(|b| {
+                    b.text_content()
+                        .unwrap_or_default()
+                        .trim()
+                        .starts_with("Download")
+                })
+        };
+        assert!(download(&el).is_none(), "no footer with nothing ticked");
+
+        tick(&el, "remote-b.csv");
+        tick(&el, "remote-a.csv");
+        leptos::task::tick().await;
+        let button = download(&el).expect("the footer's Download");
+        assert_eq!(
+            button.text_content().unwrap_or_default().trim(),
+            "Download 2 · 8.2\u{a0}kB",
+            "two rows of 4,100 bytes"
+        );
+        button.click();
+        assert_eq!(
+            asked.get_untracked(),
+            vec![vec!["remote-a.csv".to_string(), "remote-b.csv".to_string()]]
+        );
+    }
+
+    /// While the page runs a command, a download included, no box moves:
+    /// rows, group headings and select-all are all disabled. So a download
+    /// that settles clears only the ticks it sent.
+    #[wasm_bindgen_test]
+    fn every_box_is_disabled_while_the_page_is_busy() {
+        let picking = Picking {
+            busy: Signal::stored(true),
+            ..Picking::default()
+        };
+        let el = picking_pane(mixed_package(), picking, Grouping::BaseFolder);
+        let all = el.query_selector_all("input[type=checkbox]").unwrap();
+        assert!(all.length() > 0, "markup was {}", el.inner_html());
+        for i in 0..all.length() {
+            let input: web_sys::HtmlInputElement = all.item(i).unwrap().unchecked_into();
+            assert!(
+                input.disabled(),
+                "box {i} is live; markup was {}",
+                el.inner_html()
+            );
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn the_download_shows_its_progress_on_the_button() {
+        let picking = Picking {
+            downloading: Signal::stored(true),
+            ..Picking::default()
+        };
+        picking.ticked.set(["remote-a.csv".to_string()].into());
+        let el = picking_pane(mixed_package(), picking, Grouping::BaseFolder);
+        let button = button_saying(&el, "Download 1 · 4.1\u{a0}kB");
+        assert_eq!(button.get_attribute("aria-busy").as_deref(), Some("true"));
+        assert!(button.disabled());
+    }
+
+    /// Under whole-package Keeping the scope has taken the per-file choice
+    /// away: no boxes, no select-all, and no footer even with a tick left over.
+    /// A file that is here still carries its check and one still coming does
+    /// not, so the column reads as how far the download has got.
+    #[wasm_bindgen_test]
+    fn whole_package_scope_draws_no_boxes_no_select_all_and_no_footer() {
+        let picking = Picking {
+            kept: StoredValue::new(Kept::Package),
+            ..Picking::default()
+        };
+        picking.ticked.set(["remote-a.csv".to_string()].into());
+        let el = picking_pane(
+            vec![
+                entry("here.txt", "pristine"),
+                entry("raw/a.csv", "remote"),
+                entry("raw/b.csv", "remote"),
+                entry("remote-a.csv", "remote"),
+            ],
+            picking,
+            Grouping::BaseFolder,
+        );
+        assert_eq!(boxes(&el), 0, "markup was {}", el.inner_html());
+        assert!(!text(&el).contains("Select all"));
+        assert!(!text(&el).contains("Download"));
+        assert!(
+            has_check(&el, "here.txt"),
+            "here.txt is on disk; markup was {}",
+            el.inner_html()
+        );
+        for away in ["remote-a.csv", "raw/a.csv", "raw/b.csv"] {
+            assert!(
+                !has_check(&el, away),
+                "{away} is still coming; markup was {}",
+                el.inner_html()
+            );
+        }
+    }
+
+    /// Under kept folders a missing file in one has no box, as under the whole
+    /// package, and one outside keeps its box. Select-all, the headings and
+    /// the footer count only the rows with a box, so a tick left over on a
+    /// kept file counts nowhere.
+    #[wasm_bindgen_test]
+    async fn under_kept_folders_only_files_outside_them_carry_a_box() {
+        let picking = Picking {
+            kept: StoredValue::new(Kept::Folders(vec!["raw".to_string()])),
+            ..Picking::default()
+        };
+        picking
+            .ticked
+            .set(["raw/a.csv".to_string(), "notes.txt".to_string()].into());
+        let el = picking_pane(
+            vec![
+                entry("notes.txt", "remote"),
+                entry("raw/a.csv", "remote"),
+                entry("raw/b.csv", "remote"),
+                entry("raw2/a.csv", "remote"),
+                entry("raw2/b.csv", "remote"),
+            ],
+            picking,
+            Grouping::BaseFolder,
+        );
+        assert_eq!(
+            boxes(&el),
+            5,
+            "three rows, raw2/'s heading and select-all; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            !heading_has_box(&el, "raw/"),
+            "markup was {}",
+            el.inner_html()
+        );
+        assert!(!has_check(&el, "raw/"), "raw/ is still receiving files");
+        assert!(
+            heading_has_box(&el, "raw2/"),
+            "markup was {}",
+            el.inner_html()
+        );
+        element_saying(&el, "1 of 3 selected");
+        button_saying(&el, "Download 1 · 4.1\u{a0}kB");
+
+        element_saying(&el, "1 of 3 selected").click();
+        leptos::task::tick().await;
+        element_saying(&el, "3 of 3 selected");
+        button_saying(&el, "Download 3 · 12.3\u{a0}kB");
+    }
+
+    /// A heading summarises its rows as select-all summarises the list: under
+    /// files-I-pick a folder whose files are all here carries the rows' check,
+    /// and one with a file still to fetch carries a box and no check.
+    #[wasm_bindgen_test]
+    fn a_heading_carries_the_check_when_every_file_under_it_is_here() {
+        let el = picking_pane(
+            vec![
+                entry("notes/a.md", "pristine"),
+                entry("notes/b.md", "modified"),
+                entry("raw/a.csv", "pristine"),
+                entry("raw/b.csv", "remote"),
+            ],
+            Picking::default(),
+            Grouping::BaseFolder,
+        );
+        assert!(
+            has_check(&el, "notes/"),
+            "every file under notes/ is here; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            !heading_has_box(&el, "notes/"),
+            "notes/ has nothing to tick; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            heading_has_box(&el, "raw/"),
+            "raw/ holds a file to fetch; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            !has_check(&el, "raw/"),
+            "a heading with a box draws no check; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// The heading's check judges the folder whole, not the rows the view
+    /// leaves: under `Changed` a folder whose one shown file is here but which
+    /// holds a file not downloaded shows neither box nor check, while a folder
+    /// all here keeps its check there and under a search that hides some of it.
+    #[wasm_bindgen_test]
+    async fn a_heading_judges_its_whole_folder_whatever_the_view_shows() {
+        let (search, facet) = (RwSignal::new(String::new()), RwSignal::new(String::new()));
+        facet.set(Facet::Changed.key().to_string());
+        let el = driven_pane(
+            vec![
+                entry("notes/a.md", "modified"),
+                entry("notes/b.md", "added"),
+                entry("notes/c.txt", "pristine"),
+                entry("raw/plate-01.csv", "modified"),
+                entry("raw/plate-02.csv", "remote"),
+                entry("raw/plate-03.csv", "added"),
+            ],
+            Picking::default(),
+            search,
+            facet,
+        );
+        assert!(
+            !heading_has_box(&el, "raw/"),
+            "raw/ shows nothing to tick; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            !has_check(&el, "raw/"),
+            "raw/ holds a file not downloaded; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            has_check(&el, "notes/"),
+            "every file under notes/ is here; markup was {}",
+            el.inner_html()
+        );
+
+        facet.set(Facet::All.key().to_string());
+        search.set(".md".to_string());
+        crate::test_support::sleep_ms(40).await;
+        assert!(
+            !text(&el).contains("c.txt"),
+            "the search hides notes/c.txt; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            has_check(&el, "notes/"),
+            "a search that hides some of notes/ leaves its check; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// `Ignored` draws no box and no check on any row, so no heading has a
+    /// check either, even over a folder whose tracked files are all here.
+    #[wasm_bindgen_test]
+    async fn under_ignored_no_heading_has_a_check() {
+        let (search, facet) = (RwSignal::new(String::new()), RwSignal::new(String::new()));
+        facet.set(Facet::Ignored.key().to_string());
+        let el = driven_pane(
+            vec![
+                entry("notes/a.md", "pristine"),
+                ignored("notes/.DS_Store"),
+                ignored("notes/Thumbs.db"),
+            ],
+            Picking::default(),
+            search,
+            facet,
+        );
+        leptos::task::tick().await;
+        assert!(
+            !has_check(&el, "notes/"),
+            "the ignored view summarises nothing; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// Under whole-package Keeping there are no boxes, so a folder still
+    /// receiving files shows neither box nor check, like its rows still
+    /// coming, and a folder whose files have all landed carries the check.
+    #[wasm_bindgen_test]
+    fn under_whole_package_a_heading_still_receiving_files_shows_neither() {
+        let picking = Picking {
+            kept: StoredValue::new(Kept::Package),
+            ..Picking::default()
+        };
+        let el = picking_pane(
+            vec![
+                entry("notes/a.md", "pristine"),
+                entry("notes/b.md", "added"),
+                entry("raw/a.csv", "pristine"),
+                entry("raw/b.csv", "remote"),
+            ],
+            picking,
+            Grouping::BaseFolder,
+        );
+        assert_eq!(boxes(&el), 0, "markup was {}", el.inner_html());
+        assert!(
+            has_check(&el, "notes/"),
+            "every file under notes/ is here; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            !has_check(&el, "raw/"),
+            "raw/ is still receiving files; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// A pane over `listing`, grouped by base folder, that the test can swap.
+    fn listed_pane(listing: RwSignal<Listing>, picking: Picking) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::from(listing)
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                />
+            }
+        })
+    }
+
+    /// Two folders whose loaded files are all here, `zeta/` holding the last
+    /// loaded path.
+    fn alpha_and_zeta() -> Vec<EntryData> {
+        vec![
+            entry("alpha/a.csv", "pristine"),
+            entry("alpha/b.csv", "pristine"),
+            entry("zeta/a.csv", "pristine"),
+            entry("zeta/b.csv", "modified"),
+        ]
+    }
+
+    /// Over the cap the folder the cut runs through may have files past it,
+    /// so it carries no check; a folder that ends before the cut keeps its
+    /// own. Under the cap the same rows give both folders the check.
+    #[wasm_bindgen_test]
+    fn over_the_cap_the_folder_the_cut_runs_through_has_no_check() {
+        let cut = listed_pane(
+            RwSignal::new(Listing::Ready(list(alpha_and_zeta(), 1_500, true))),
+            Picking::default(),
+        );
+        assert!(
+            has_check(&cut, "alpha/"),
+            "alpha/ ends before the cut; markup was {}",
+            cut.inner_html()
+        );
+        assert!(
+            !has_check(&cut, "zeta/"),
+            "zeta/ may run past the cut; markup was {}",
+            cut.inner_html()
+        );
+
+        let whole = listed_pane(
+            RwSignal::new(Listing::Ready(list(alpha_and_zeta(), 4, false))),
+            Picking::default(),
+        );
+        for folder in ["alpha/", "zeta/"] {
+            assert!(
+                has_check(&whole, folder),
+                "{folder} is all here; markup was {}",
+                whole.inner_html()
+            );
+        }
+    }
+
+    /// Under base-folder grouping the cut runs through every folder above the
+    /// last loaded path too: `zeta/`'s own files can sort after `zeta/deep/`.
+    #[wasm_bindgen_test]
+    fn over_the_cap_the_folders_above_the_last_path_have_no_check_either() {
+        let el = listed_pane(
+            RwSignal::new(Listing::Ready(list(
+                vec![
+                    entry("alpha/a.csv", "pristine"),
+                    entry("alpha/b.csv", "pristine"),
+                    entry("zeta/a.csv", "pristine"),
+                    entry("zeta/b.csv", "pristine"),
+                    entry("zeta/deep/a.csv", "pristine"),
+                    entry("zeta/deep/b.csv", "pristine"),
+                ],
+                1_500,
+                true,
+            ))),
+            Picking::default(),
+        );
+        assert!(has_check(&el, "alpha/"), "markup was {}", el.inner_html());
+        for folder in ["zeta/", "zeta/deep/"] {
+            assert!(
+                !has_check(&el, folder),
+                "{folder} may run past the cut; markup was {}",
+                el.inner_html()
+            );
+        }
+    }
+
+    /// A pane over `entries` whose search and facet the test drives.
+    fn driven_pane(
+        entries: Vec<EntryData>,
+        picking: Picking,
+        search: RwSignal<String>,
+        facet: RwSignal<String>,
+    ) -> web_sys::Element {
+        let total = entries.len();
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(entries, total, false)))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=search
+                    facet=facet
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                />
+            }
+        })
+    }
+
+    /// Everything here: `All` counts three, one of them ignored and not counted.
+    fn downloaded_package() -> Vec<EntryData> {
+        vec![
+            entry("README.md", "pristine"),
+            entry("raw/a.csv", "pristine"),
+            entry("raw/b.csv", "modified"),
+            ignored("raw/.DS_Store"),
+        ]
+    }
+
+    /// With nothing left to download the slot select-all would take says so,
+    /// with the `All` facet's count, under either Keeping scope — the Success
+    /// tone's tick before the words, and every row and heading with its check.
+    #[wasm_bindgen_test]
+    fn a_package_with_nothing_to_download_says_so_in_either_scope() {
+        for kept in [Kept::Folders(Vec::new()), Kept::Package] {
+            let picking = Picking {
+                kept: StoredValue::new(kept),
+                ..Picking::default()
+            };
+            let el = picking_pane(downloaded_package(), picking, Grouping::BaseFolder);
+            element_saying(&el, "All 3 files downloaded");
+            assert_eq!(boxes(&el), 0, "markup was {}", el.inner_html());
+            assert!(!text(&el).contains("Select all"));
+            assert!(
+                caption_has_tick(&el, "All 3 files downloaded"),
+                "the caption's hole holds the tick; markup was {}",
+                el.inner_html()
+            );
+            for here in ["README.md", "raw/a.csv", "raw/b.csv"] {
+                assert!(
+                    has_check(&el, here),
+                    "{here} is on disk; markup was {}",
+                    el.inner_html()
+                );
+            }
+            assert!(
+                has_check(&el, "raw/"),
+                "every heading carries the check; markup was {}",
+                el.inner_html()
+            );
+        }
+    }
+
+    /// A modified file is on disk and has nothing to fetch, so it changes
+    /// nothing: the plain caption and its tick.
+    #[wasm_bindgen_test]
+    fn a_modified_file_leaves_the_caption_and_its_tick() {
+        let entries = vec![
+            entry("README.md", "modified"),
+            entry("raw/a.csv", "pristine"),
+            entry("raw/b.csv", "added"),
+        ];
+        let el = picking_pane(entries, Picking::default(), Grouping::BaseFolder);
+        assert!(
+            caption_has_tick(&el, "All 3 files downloaded"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// A deleted file has nothing to fetch either, so the package still reads
+    /// as downloaded, under either scope, and the line names the file deleted
+    /// here. It is not on disk, so the tick goes and the folder holding it has
+    /// no check; the hole stays, and select-all does not take the slot. Once
+    /// the file is gone from the list, the plain caption and its tick return.
+    #[wasm_bindgen_test]
+    async fn a_deleted_file_is_named_after_the_caption_in_either_scope() {
+        for kept in [Kept::Folders(Vec::new()), Kept::Package] {
+            let picking = Picking {
+                kept: StoredValue::new(kept),
+                ..Picking::default()
+            };
+            let mut entries = downloaded_package();
+            entries.push(entry("raw/c.csv", "deleted"));
+            let total = entries.len();
+            let listing = RwSignal::new(Listing::Ready(list(entries, total, false)));
+            let el = listed_pane(listing, picking);
+            let words = "All 4 files downloaded · 1 deleted here";
+            element_saying(&el, words);
+            assert!(
+                !caption_has_tick(&el, words),
+                "no tick while a file is deleted; markup was {}",
+                el.inner_html()
+            );
+            assert!(
+                !text(&el).contains("Select all"),
+                "markup was {}",
+                el.inner_html()
+            );
+            assert!(
+                !has_check(&el, "raw/"),
+                "raw/ holds a deleted file; markup was {}",
+                el.inner_html()
+            );
+
+            let entries = downloaded_package();
+            let total = entries.len();
+            listing.set(Listing::Ready(list(entries, total, false)));
+            leptos::task::tick().await;
+            assert!(
+                caption_has_tick(&el, "All 3 files downloaded"),
+                "the plain caption returns; markup was {}",
+                el.inner_html()
+            );
+        }
+    }
+
+    /// The deleted count is the package's, so a deleted file past the cap,
+    /// not among the loaded rows, is named all the same, and the tick goes.
+    #[wasm_bindgen_test]
+    fn a_deleted_file_past_the_cap_is_named_all_the_same() {
+        let entries = downloaded_package();
+        let loaded = entries.len();
+        let mut listing = list(entries, loaded + 1, true);
+        listing.counts.all += 1;
+        listing.counts.changed += 1;
+        listing.counts.deleted += 1;
+        let el = listed_pane(RwSignal::new(Listing::Ready(listing)), Picking::default());
+        let words = "All 4 files downloaded · 1 deleted here";
+        element_saying(&el, words);
+        assert!(
+            !caption_has_tick(&el, words),
+            "no tick while a file is deleted; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_package_of_one_downloaded_file_says_it_in_the_singular() {
+        let el = picking_pane(
+            vec![entry("README.md", "pristine")],
+            Picking::default(),
+            Grouping::BaseFolder,
+        );
+        element_saying(&el, "1 file downloaded");
+    }
+
+    /// The caption is about the package, so the view controls leave it: a
+    /// search that matches nothing, and a facet with no rows in it.
+    #[wasm_bindgen_test]
+    async fn a_search_or_a_facet_leaves_the_caption_standing() {
+        let (search, facet) = (
+            RwSignal::new(String::new()),
+            RwSignal::new(Facet::All.key().to_string()),
+        );
+        let el = driven_pane(downloaded_package(), Picking::default(), search, facet);
+        search.set("nothing-matches".to_string());
+        crate::test_support::sleep_ms(40).await;
+        element_saying(&el, "No files match");
+        element_saying(&el, "All 3 files downloaded");
+        search.set(String::new());
+        facet.set(Facet::Ignored.key().to_string());
+        crate::test_support::sleep_ms(40).await;
+        element_saying(&el, "All 3 files downloaded");
+    }
+
+    /// A package with files left to download never says it has none, even
+    /// where the view holds nothing to tick: under `Changed` select-all is
+    /// simply gone, as before.
+    #[wasm_bindgen_test]
+    async fn a_view_with_nothing_to_tick_is_not_a_package_with_nothing_to_download() {
+        let (search, facet) = (
+            RwSignal::new(String::new()),
+            RwSignal::new(Facet::All.key().to_string()),
+        );
+        let el = driven_pane(mixed_package(), Picking::default(), search, facet);
+        element_saying(&el, "Select all 2");
+        facet.set(Facet::Changed.key().to_string());
+        leptos::task::tick().await;
+        assert!(!text(&el).contains("Select all"));
+        assert!(
+            !text(&el).contains("files downloaded"),
+            "markup was {}",
+            el.inner_html()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn grouping_defaults_to_base_folder_and_none_flattens_the_list() {
+        let grouping = RwSignal::new(Grouping::BaseFolder.label().to_string());
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(
+                        vec![
+                            entry("README.md", "pristine"),
+                            entry("notes/a.md", "pristine"),
+                            entry("notes/b.md", "pristine"),
+                        ],
+                        3,
+                        false,
+                    )))
+                    grouping=grouping
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        });
+        let select: web_sys::HtmlSelectElement = el
+            .query_selector("select")
+            .unwrap()
+            .expect("the grouping select")
+            .unchecked_into();
+        assert_eq!(select.value(), "Base folder");
+        assert_eq!(select.length(), 3, "Base folder, Top folder, None");
+        element_saying(&el, "notes/");
+        assert!(
+            el.query_selector("[aria-expanded]").unwrap().is_some(),
+            "a heading with its disclosure"
+        );
+
+        grouping.set(Grouping::None.label().to_string());
+        leptos::task::tick().await;
+
+        assert!(
+            el.query_selector("[aria-expanded]").unwrap().is_none(),
+            "no headings under None; markup was {}",
+            el.inner_html()
+        );
+        element_saying(&el, "notes/a.md");
+    }
+
+    #[wasm_bindgen_test]
+    fn loading_draws_skeletons_and_a_failure_offers_a_retry() {
+        let loading = pane(Listing::Loading);
+        assert!(
+            loading
+                .query_selector("[aria-busy=true]")
+                .unwrap()
+                .is_some(),
+            "markup was {}",
+            loading.inner_html()
+        );
+
+        let unlisted = pane(Listing::Unlisted("Access denied".to_string()));
+        element_saying(&unlisted, "Could not list this package's files.");
+        assert!(
+            text(&unlisted).contains("Access denied"),
+            "the reason is stated; markup was {}",
+            unlisted.inner_html()
+        );
+        assert!(
+            unlisted
+                .query_selector("[data-full-name]")
+                .unwrap()
+                .is_none(),
+            "and no row is drawn without a status"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn an_empty_package_says_so() {
+        let el = pane(Listing::Ready(list(Vec::new(), 0, false)));
+        element_saying(&el, "Nothing in this package");
+        assert!(
+            text(&el).contains("This package has no files yet."),
+            "worded for a local-only package too; markup was {}",
+            el.inner_html()
+        );
+    }
+
+    /// Over the cap, only the loaded rows are known to be ignored: the counts,
+    /// being the whole package's, say the rest are not.
+    #[wasm_bindgen_test]
+    fn a_cut_list_all_ignored_speaks_of_the_loaded_files_only() {
+        let cut = pane(Listing::Ready(FileList {
+            counts: EntryCounts {
+                all: 4_311,
+                ignored: 1,
+                ..EntryCounts::default()
+            },
+            ..list(vec![ignored(".DS_Store")], 4_312, true)
+        }));
+        element_saying(&cut, "None of the loaded files are in this view");
+        assert!(
+            !text(&cut).contains("Every file in this package is ignored."),
+            "markup was {}",
+            cut.inner_html()
+        );
+
+        let whole = pane(Listing::Ready(list(vec![ignored(".DS_Store")], 1, false)));
+        assert!(
+            text(&whole).contains("Every file in this package is ignored."),
+            "markup was {}",
+            whole.inner_html()
+        );
+    }
+
+    /// A re-read rebuilds the rows; a folder the reader closed stays closed.
+    #[wasm_bindgen_test]
+    async fn a_collapsed_folder_stays_collapsed_across_a_re_read() {
+        let files = || {
+            Listing::Ready(list(
+                vec![
+                    entry("notes/a.md", "pristine"),
+                    entry("notes/b.md", "pristine"),
+                ],
+                2,
+                false,
+            ))
+        };
+        let listing = RwSignal::new(files());
+        let collapsed = RwSignal::new(BTreeSet::new());
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::from(listing)
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=collapsed
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        });
+        let disclosure = || {
+            el.query_selector("[aria-expanded]")
+                .unwrap()
+                .expect("the folder's disclosure")
+        };
+        disclosure()
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        crate::test_support::sleep_ms(10).await;
+        assert_eq!(
+            disclosure().get_attribute("aria-expanded").as_deref(),
+            Some("false")
+        );
+        assert!(
+            collapsed.get_untracked().contains("notes/"),
+            "recorded on the page"
+        );
+
+        listing.set(files());
+        leptos::task::tick().await;
+
+        assert_eq!(
+            disclosure().get_attribute("aria-expanded").as_deref(),
+            Some("false"),
+            "still collapsed; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            el.query_selector("[data-full-name='notes/a.md']")
+                .unwrap()
+                .is_none(),
+            "its rows stay hidden"
+        );
+        assert!(collapsed.get_untracked().contains("notes/"));
+    }
+
+    /// Type into the search field as a reader would, and wait for the list to
+    /// settle on it.
+    async fn type_search(el: &web_sys::Element, query: &str) {
+        type_key(el, query).await;
+        crate::test_support::sleep_ms(40).await;
+    }
+
+    /// Type into the search field, one keystroke of a burst: no pause after.
+    async fn type_key(el: &web_sys::Element, query: &str) {
+        let field: web_sys::HtmlInputElement = el
+            .query_selector("input[type=search]")
+            .unwrap()
+            .expect("the search field")
+            .unchecked_into();
+        field.set_value(query);
+        field
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+        leptos::task::tick().await;
+    }
+
+    fn searchable(search: RwSignal<String>, entries: Vec<EntryData>) -> web_sys::Element {
+        let total = entries.len();
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(entries, total, false)))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=search
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        })
+    }
+
+    fn titled(el: &web_sys::Element, path: &str) -> bool {
+        el.query_selector(&format!("[data-full-name='{path}']"))
+            .unwrap()
+            .is_some()
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_search_field_is_named_and_writes_the_pages_query() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(search, vec![entry("a.csv", "pristine")]);
+        let field = el
+            .query_selector("input[type=search]")
+            .unwrap()
+            .expect("the search field");
+        assert_eq!(
+            field.get_attribute("aria-label").as_deref(),
+            Some("Search files")
+        );
+        type_search(&el, "a.c").await;
+        assert_eq!(search.get_untracked(), "a.c");
+    }
+
+    /// Case-insensitive, over the whole path: `RAW` finds everything under
+    /// `raw/`, including a file whose own name does not say it.
+    #[wasm_bindgen_test]
+    async fn the_search_narrows_the_rows_to_paths_containing_it() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("README.md", "pristine"),
+                entry("raw/2026/plate-01.csv", "remote"),
+                entry("raw/2026/plate-02.csv", "pristine"),
+                entry("notes/raw-data.md", "pristine"),
+            ],
+        );
+        type_search(&el, "RAW/").await;
+        assert!(titled(&el, "raw/2026/plate-01.csv"), "{}", el.inner_html());
+        assert!(titled(&el, "raw/2026/plate-02.csv"));
+        assert!(!titled(&el, "README.md"), "{}", el.inner_html());
+        assert!(!titled(&el, "notes/raw-data.md"));
+
+        type_search(&el, "").await;
+        for path in ["README.md", "raw/2026/plate-01.csv", "notes/raw-data.md"] {
+            assert!(titled(&el, path), "cleared, {path} is back");
+        }
+    }
+
+    /// Headings are drawn from the rows the search leaves: a folder with no
+    /// match has no heading, and one left with a single file loses its heading
+    /// and shows the row's whole path, as any group of one does.
+    #[wasm_bindgen_test]
+    async fn group_headings_follow_the_rows_the_search_leaves() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("notes/a.md", "pristine"),
+                entry("notes/b.md", "pristine"),
+                entry("raw/plate-01.csv", "pristine"),
+                entry("raw/plate-02.csv", "pristine"),
+            ],
+        );
+        element_saying(&el, "notes/");
+        element_saying(&el, "raw/");
+
+        type_search(&el, "plate").await;
+        element_saying(&el, "raw/");
+        assert!(
+            !text(&el).contains("notes/"),
+            "no match, no heading: {}",
+            el.inner_html()
+        );
+
+        type_search(&el, "plate-01").await;
+        assert!(
+            el.query_selector("[aria-expanded]").unwrap().is_none(),
+            "a group of one has no heading: {}",
+            el.inner_html()
+        );
+        element_saying(&el, "raw/plate-01.csv");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_search_matching_nothing_says_so() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(search, vec![entry("a.csv", "pristine")]);
+        type_search(&el, "zzz").await;
+        element_saying(&el, "No files match");
+        assert!(!titled(&el, "a.csv"));
+        assert!(
+            el.query_selector("input[type=search]").unwrap().is_some(),
+            "the field stays, so the reader can change the search"
+        );
+    }
+
+    /// Ignored files stay hidden whatever the search: only their facet shows
+    /// them.
+    #[wasm_bindgen_test]
+    async fn the_search_does_not_find_ignored_files() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![entry("a.csv", "pristine"), ignored(".DS_Store")],
+        );
+        type_search(&el, "DS_Store").await;
+        assert!(!text(&el).contains(".DS_Store"), "{}", el.inner_html());
+        element_saying(&el, "No files match");
+    }
+
+    /// A folder the reader closed is still closed when a search hides it and
+    /// then brings it back: the headings are rebuilt, the page's record is not.
+    #[wasm_bindgen_test]
+    async fn a_collapsed_folder_stays_collapsed_through_a_search() {
+        let search = RwSignal::new(String::new());
+        let collapsed = RwSignal::new(BTreeSet::new());
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(
+                        vec![
+                            entry("notes/a.md", "pristine"),
+                            entry("notes/b.md", "pristine"),
+                            entry("raw/plate-01.csv", "pristine"),
+                            entry("raw/plate-02.csv", "pristine"),
+                        ],
+                        4,
+                        false,
+                    )))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=collapsed
+                    search=search
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        });
+        // `notes/` sorts first, so its disclosure is the first one drawn.
+        let notes = || {
+            el.query_selector("[aria-expanded]")
+                .unwrap()
+                .expect("the notes/ disclosure")
+        };
+        notes().unchecked_into::<web_sys::HtmlElement>().click();
+        crate::test_support::sleep_ms(10).await;
+        assert!(collapsed.get_untracked().contains("notes/"));
+
+        type_search(&el, "plate").await;
+        assert!(!text(&el).contains("notes/"), "{}", el.inner_html());
+        assert!(
+            collapsed.get_untracked().contains("notes/"),
+            "hiding a folder does not open it"
+        );
+
+        type_search(&el, "").await;
+        crate::test_support::sleep_ms(10).await;
+        assert_eq!(
+            notes().get_attribute("aria-expanded").as_deref(),
+            Some("false"),
+            "back, and still collapsed: {}",
+            el.inner_html()
+        );
+        assert!(
+            el.query_selector("[data-full-name='notes/a.md']")
+                .unwrap()
+                .is_none()
+        );
+        assert!(titled(&el, "raw/plate-01.csv"));
+    }
+
+    /// What the heading `folder` says after its name: how many rows it holds,
+    /// and of how many once a view hides some.
+    fn heading_count(el: &web_sys::Element, folder: &str) -> String {
+        let head = el
+            .query_selector(&format!("[data-full-name='{folder}']"))
+            .unwrap()
+            .expect("the heading's name")
+            .parent_element()
+            .expect("the heading");
+        text(&head)
+            .strip_prefix(folder)
+            .expect("the heading starts with its name")
+            .to_string()
+    }
+
+    /// `raw/` holds five files the `All` set counts, two of them not
+    /// downloaded, and an ignored file that it does not count.
+    fn raw_folder() -> Vec<EntryData> {
+        vec![
+            entry("notes/a.md", "pristine"),
+            entry("notes/b.md", "pristine"),
+            ignored("raw/.DS_Store"),
+            entry("raw/a-1.csv", "pristine"),
+            entry("raw/a-2.csv", "remote"),
+            entry("raw/b-1.csv", "remote"),
+            entry("raw/b-2.csv", "modified"),
+            entry("raw/b-3.csv", "pristine"),
+        ]
+    }
+
+    /// With nothing hidden a heading reads its one number.
+    #[wasm_bindgen_test]
+    fn a_heading_with_nothing_hidden_reads_one_number() {
+        let el = searchable(RwSignal::new(String::new()), raw_folder());
+        assert_eq!(heading_count(&el, "raw/"), "5", "{}", el.inner_html());
+        assert_eq!(heading_count(&el, "notes/"), "2", "{}", el.inner_html());
+    }
+
+    /// A facet that hides some of a folder's files: its heading reads how many
+    /// it holds of how many the folder has, and a folder it hides none of
+    /// keeps one number.
+    #[wasm_bindgen_test]
+    async fn a_facet_that_hides_files_puts_the_total_in_the_heading() {
+        let (search, facet) = (RwSignal::new(String::new()), RwSignal::new(String::new()));
+        facet.set(Facet::NotDownloaded.key().to_string());
+        let mut entries = raw_folder();
+        entries.push(entry("todo/x.csv", "remote"));
+        entries.push(entry("todo/y.csv", "remote"));
+        let el = driven_pane(entries, Picking::default(), search, facet);
+        leptos::task::tick().await;
+        assert_eq!(heading_count(&el, "raw/"), "2 of 5", "{}", el.inner_html());
+        assert_eq!(heading_count(&el, "todo/"), "2", "{}", el.inner_html());
+    }
+
+    /// A search that hides some of a folder's files does the same.
+    #[wasm_bindgen_test]
+    async fn a_search_that_hides_files_puts_the_total_in_the_heading() {
+        let el = searchable(RwSignal::new(String::new()), raw_folder());
+        type_search(&el, "raw/").await;
+        assert_eq!(heading_count(&el, "raw/"), "5", "{}", el.inner_html());
+        type_search(&el, "raw/a-").await;
+        assert_eq!(heading_count(&el, "raw/"), "2 of 5", "{}", el.inner_html());
+    }
+
+    /// Collapsing hides rows without changing what the heading counts.
+    #[wasm_bindgen_test]
+    async fn a_collapsed_heading_keeps_its_numbers() {
+        let collapsed = RwSignal::new(BTreeSet::from(["raw/".to_string()]));
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(raw_folder(), 8, false)))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=collapsed
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::NotDownloaded.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                />
+            }
+        });
+        leptos::task::tick().await;
+        assert!(!titled(&el, "raw/a-2.csv"), "{}", el.inner_html());
+        assert_eq!(heading_count(&el, "raw/"), "2 of 5", "{}", el.inner_html());
+    }
+
+    /// A keystroke that leaves the same rows standing rebuilds nothing: the
+    /// rows on screen are the very nodes that were there before it.
+    #[wasm_bindgen_test]
+    async fn a_search_that_keeps_every_row_rebuilds_none() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("raw/plate-01.csv", "pristine"),
+                entry("raw/plate-02.csv", "pristine"),
+            ],
+        );
+        let before = el
+            .query_selector("[data-full-name='raw/plate-01.csv']")
+            .unwrap()
+            .expect("the row");
+        type_search(&el, "pla").await;
+        type_search(&el, "plat").await;
+        let after = el
+            .query_selector("[data-full-name='raw/plate-01.csv']")
+            .unwrap()
+            .expect("the row");
+        assert!(before.is_same_node(Some(&after)), "the row was rebuilt");
+    }
+
+    /// A burst of typing costs one rebuild: while the keys come, the list
+    /// stays as it was, and it follows the last query once typing pauses.
+    #[wasm_bindgen_test]
+    async fn a_burst_of_typing_draws_only_its_final_query() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(
+            search,
+            vec![
+                entry("notes/raw.md", "pristine"),
+                entry("raw/plate-01.csv", "pristine"),
+                entry("raw/plate-02.csv", "pristine"),
+            ],
+        );
+        for key in ["r", "ra", "raw/", "raw/plate-0", "raw/plate-01"] {
+            type_key(&el, key).await;
+            assert_eq!(search.get_untracked(), key, "the field is instant");
+            for path in ["notes/raw.md", "raw/plate-01.csv", "raw/plate-02.csv"] {
+                assert!(
+                    titled(&el, path),
+                    "mid-burst at {key:?}, {path} is still drawn"
+                );
+            }
+        }
+        crate::test_support::sleep_ms(40).await;
+        assert!(titled(&el, "raw/plate-01.csv"), "{}", el.inner_html());
+        assert!(!titled(&el, "raw/plate-02.csv"));
+        assert!(!titled(&el, "notes/raw.md"));
+    }
+
+    /// Clearing is never left waiting: the rows come back on the keystroke.
+    #[wasm_bindgen_test]
+    async fn clearing_the_search_applies_at_once() {
+        let search = RwSignal::new(String::new());
+        let el = searchable(search, vec![entry("a.csv", "pristine")]);
+        type_search(&el, "zzz").await;
+        element_saying(&el, "No files match");
+        type_key(&el, "").await;
+        assert!(titled(&el, "a.csv"), "{}", el.inner_html());
+    }
+
+    /// Only typing is debounced: a facet applies on the click. And a search
+    /// that settles leaves the facet and the ticks as they were.
+    #[wasm_bindgen_test]
+    async fn a_facet_applies_at_once_and_a_settling_search_keeps_it_and_the_ticks() {
+        let search = RwSignal::new(String::new());
+        let chosen = RwSignal::new(Facet::All.key().to_string());
+        let picking = Picking::default();
+        let ticked = picking.ticked;
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(Listing::Ready(list(
+                        mixed_package(),
+                        mixed_package().len(),
+                        false,
+                    )))
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=search
+                    facet=chosen
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                />
+            }
+        });
+        tick(&el, "remote-a.csv");
+        leptos::task::tick().await;
+        assert!(ticked.get_untracked().contains("remote-a.csv"));
+
+        let segment: web_sys::HtmlInputElement = el
+            .query_selector("input[type=radio][value='Not downloaded']")
+            .unwrap()
+            .expect("the Not downloaded segment")
+            .unchecked_into();
+        segment.click();
+        leptos::task::tick().await;
+        assert!(
+            !titled(&el, "here.txt"),
+            "no wait for a facet: {}",
+            el.inner_html()
+        );
+        assert!(titled(&el, "remote-b.csv"));
+
+        type_search(&el, "remote-a").await;
+        assert_eq!(chosen.get_untracked(), Facet::NotDownloaded.key());
+        assert!(titled(&el, "remote-a.csv"), "{}", el.inner_html());
+        assert!(!titled(&el, "remote-b.csv"));
+        assert!(
+            ticked.get_untracked().contains("remote-a.csv"),
+            "the tick stands"
+        );
+        let input: web_sys::HtmlInputElement = el
+            .query_selector("[data-full-name='remote-a.csv']")
+            .unwrap()
+            .unwrap()
+            .closest("label")
+            .unwrap()
+            .unwrap()
+            .query_selector("input[type=checkbox]")
+            .unwrap()
+            .unwrap()
+            .unchecked_into();
+        assert!(input.checked(), "drawn ticked after the search settles");
+    }
+}
+
+#[cfg(test)]
+mod marks_tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::commands::{EntryCounts, EntryData};
+    use crate::test_support::mount;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn entry(path: &str, status: &str) -> EntryData {
+        EntryData {
+            filename: path.to_string(),
+            size: 4_100,
+            status: status.to_string(),
+            junky_pattern: None,
+            ignored_by: None,
+            folder: false,
+            namespace: "team/dataset".try_into().unwrap(),
+        }
+    }
+
+    fn listed(entries: Vec<EntryData>) -> Listing {
+        let total = entries.len();
+        Listing::Ready(FileList {
+            counts: EntryCounts {
+                all: total,
+                ..EntryCounts::default()
+            },
+            entries,
+            total,
+            truncated: false,
+        })
+    }
+
+    fn marks(keys: &[&str]) -> Arc<BTreeSet<String>> {
+        Arc::new(keys.iter().map(|k| (*k).to_string()).collect())
+    }
+
+    /// A pane in `Group: None` whose marks the test moves.
+    fn marked_pane(
+        entries: Vec<EntryData>,
+        differing: RwSignal<Option<Arc<BTreeSet<String>>>>,
+    ) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listed(entries))
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    differing=differing
+                />
+            }
+        })
+    }
+
+    /// The row drawing `path`, if it is drawn and marked.
+    fn is_marked(el: &web_sys::Element, path: &str) -> bool {
+        let name = el
+            .query_selector(&format!("[data-full-name='{path}']"))
+            .unwrap()
+            .unwrap_or_else(|| panic!("{path} is drawn; markup was {}", el.inner_html()));
+        name.closest(&format!("[aria-describedby='{}']", crate::kit::DIFFERS_ID))
+            .unwrap()
+            .is_some()
+    }
+
+    /// Each drawn row whose path is in the set is marked, and no other.
+    #[wasm_bindgen_test]
+    fn a_row_in_the_differing_set_is_marked_and_the_rest_are_not() {
+        let el = marked_pane(
+            vec![
+                entry("plate/a.csv", "pristine"),
+                entry("plate/b.csv", "remote"),
+                entry("plate/c.csv", "pristine"),
+            ],
+            RwSignal::new(Some(marks(&[
+                "plate/a.csv",
+                "plate/b.csv",
+                "past/the-cap.csv",
+            ]))),
+        );
+        assert!(is_marked(&el, "plate/a.csv"));
+        assert!(is_marked(&el, "plate/b.csv"));
+        assert!(!is_marked(&el, "plate/c.csv"));
+    }
+
+    /// Opening and leaving the mode marks and clears the rows in place, and a
+    /// tick survives both.
+    #[wasm_bindgen_test]
+    async fn marks_follow_the_mode_without_resetting_the_ticks() {
+        let differing = RwSignal::new(None);
+        let picking = Picking::default();
+        let ticked = picking.ticked;
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listed(vec![
+                        entry("plate/a.csv", "remote"),
+                        entry("plate/b.csv", "remote"),
+                    ]))
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    picking=picking
+                    differing=differing
+                />
+            }
+        });
+        ticked.set(BTreeSet::from(["plate/b.csv".to_string()]));
+        assert!(
+            !is_marked(&el, "plate/a.csv"),
+            "nothing is marked outside the mode"
+        );
+
+        differing.set(Some(marks(&["plate/a.csv"])));
+        leptos::task::tick().await;
+        assert!(is_marked(&el, "plate/a.csv"), "opening the mode marks it");
+        assert!(!is_marked(&el, "plate/b.csv"));
+
+        differing.set(None);
+        leptos::task::tick().await;
+        assert!(!is_marked(&el, "plate/a.csv"), "leaving the mode clears it");
+        assert_eq!(
+            ticked.get_untracked(),
+            BTreeSet::from(["plate/b.csv".to_string()]),
+            "the ticks are the page's, untouched by the marks"
+        );
+    }
+
+    /// A mark describes a row; the search still decides whether it is drawn,
+    /// and a marked row keeps its box.
+    #[wasm_bindgen_test]
+    async fn a_mark_never_narrows_the_view_or_takes_the_box() {
+        let search = RwSignal::new(String::new());
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listed(vec![
+                        entry("plate/a.csv", "remote"),
+                        entry("plate/b.csv", "pristine"),
+                    ]))
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=search
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    differing=RwSignal::new(Some(marks(&["plate/a.csv"])))
+                />
+            }
+        });
+        assert!(is_marked(&el, "plate/a.csv"));
+        assert!(
+            el.query_selector("[data-full-name='plate/b.csv']")
+                .unwrap()
+                .is_some(),
+            "an unmarked row is still drawn"
+        );
+        let row = el
+            .query_selector("[data-full-name='plate/a.csv']")
+            .unwrap()
+            .unwrap()
+            .closest("label")
+            .unwrap()
+            .expect("a marked, not-downloaded row is still a selectable label");
+        assert!(
+            row.query_selector("input[type=checkbox]")
+                .unwrap()
+                .is_some()
+        );
+
+        search.set("b.csv".to_string());
+        crate::test_support::sleep_ms(40).await;
+        assert!(
+            el.query_selector("[data-full-name='plate/a.csv']")
+                .unwrap()
+                .is_none(),
+            "a search hides a marked row like any other"
+        );
+        search.set(String::new());
+        leptos::task::tick().await;
+        assert!(is_marked(&el, "plate/a.csv"), "and it is marked once shown");
+    }
+
+    /// A pane grouped by base folder, with `plate/` collapsed, over two rows.
+    fn folder_pane(differing: Option<Arc<BTreeSet<String>>>) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listed(vec![
+                        entry("plate/a.csv", "pristine"),
+                        entry("plate/b.csv", "pristine"),
+                    ]))
+                    grouping=RwSignal::new(Grouping::BaseFolder.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::from(["plate/".to_string()]))
+                    search=RwSignal::new(String::new())
+                    facet=RwSignal::new(Facet::All.key().to_string())
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    differing=RwSignal::new(differing.clone())
+                />
+            }
+        })
+    }
+
+    /// The folder's disclosure.
+    fn disclosure(el: &web_sys::Element) -> web_sys::HtmlElement {
+        el.query_selector("[aria-expanded]")
+            .unwrap()
+            .expect("the folder's disclosure")
+            .unchecked_into()
+    }
+
+    /// Whether the folder's heading says it holds a file that differs: its
+    /// disclosure names the resolve pane's sentence, and it says so in words.
+    /// One id among the description's: the disclosure names its tooltip too.
+    fn heading_marked(el: &web_sys::Element) -> bool {
+        let described = disclosure(el)
+            .get_attribute("aria-describedby")
+            .is_some_and(|ids| {
+                ids.split_whitespace()
+                    .any(|id| id == crate::kit::DIFFERS_ID)
+            });
+        let says = el
+            .text_content()
+            .unwrap_or_default()
+            .contains("Contains files that differ");
+        assert_eq!(
+            described,
+            says,
+            "the two cues agree; markup was {}",
+            el.inner_html()
+        );
+        described
+    }
+
+    /// Collapsing never hides a difference: a closed folder holding a marked
+    /// file says so on its heading, though none of its rows is drawn.
+    #[wasm_bindgen_test]
+    fn a_collapsed_folder_holding_a_marked_file_says_so() {
+        let el = folder_pane(Some(marks(&["plate/a.csv"])));
+        assert!(
+            el.query_selector("[data-full-name='plate/a.csv']")
+                .unwrap()
+                .is_none(),
+            "collapsed, the row is not drawn"
+        );
+        assert!(heading_marked(&el));
+    }
+
+    /// Open, the rows carry the mark themselves and the heading drops it.
+    #[wasm_bindgen_test]
+    async fn an_open_folder_leaves_the_mark_to_its_rows() {
+        let el = folder_pane(Some(marks(&["plate/a.csv"])));
+        disclosure(&el).click();
+        crate::test_support::sleep_ms(10).await;
+        assert!(is_marked(&el, "plate/a.csv"), "opened, its row is marked");
+        assert!(!is_marked(&el, "plate/b.csv"));
+        assert!(!heading_marked(&el), "the rows say it now");
+    }
+
+    /// A folder whose files are all the same in both revisions has no mark.
+    #[wasm_bindgen_test]
+    fn a_collapsed_folder_with_no_marked_file_shows_no_mark() {
+        let el = folder_pane(Some(marks(&["elsewhere/c.csv"])));
+        assert!(!heading_marked(&el));
+    }
+
+    /// Outside resolve mode no heading is marked.
+    #[wasm_bindgen_test]
+    fn outside_resolve_mode_a_collapsed_folder_shows_no_mark() {
+        let el = folder_pane(None);
+        assert!(!heading_marked(&el));
+    }
+
+    /// A path with two rows is one key: each row is marked where it is drawn.
+    #[wasm_bindgen_test]
+    async fn both_rows_of_an_ignored_tracked_path_are_marked() {
+        let facet = RwSignal::new(Facet::All.key().to_string());
+        let ignored = EntryData {
+            ignored_by: Some(IgnoredBy::new(
+                "plate/",
+                crate::commands::RuleSource::Default,
+            )),
+            ..entry("plate/a.csv", "pristine")
+        };
+        let listing = Listing::Ready(FileList {
+            entries: vec![entry("plate/a.csv", "deleted"), ignored],
+            counts: EntryCounts {
+                all: 1,
+                changed: 1,
+                not_downloaded: 0,
+                ignored: 1,
+                ignored_folders: 0,
+                deleted: 1,
+            },
+            total: 2,
+            truncated: false,
+        });
+        let el = mount(move || {
+            view! {
+                <FilePane
+                    listing=Signal::stored(listing.clone())
+                    grouping=RwSignal::new(Grouping::None.label().to_string())
+                    collapsed=RwSignal::new(BTreeSet::new())
+                    search=RwSignal::new(String::new())
+                    facet=facet
+                    on_open=Callback::new(|_: String| ())
+                    on_retry=Callback::new(|()| ())
+                    differing=RwSignal::new(Some(marks(&["plate/a.csv"])))
+                />
+            }
+        });
+        assert!(is_marked(&el, "plate/a.csv"), "the Deleted row, under All");
+        facet.set(Facet::Ignored.key().to_string());
+        leptos::task::tick().await;
+        assert!(
+            is_marked(&el, "plate/a.csv"),
+            "the ignored row, under Ignored"
+        );
+    }
+}

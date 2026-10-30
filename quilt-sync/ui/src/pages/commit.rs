@@ -3,7 +3,7 @@ use std::time::Duration;
 use leptos::html;
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_navigate, use_query_map};
+use leptos_router::hooks::use_navigate;
 
 use quilt_uri::S3PackageUri;
 
@@ -16,10 +16,12 @@ use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{
     IgnorePopup, IgnorePopupData, Layout, Notification, PreviousWorkflow, Spinner, ToolbarActions,
     UnignorePopup, UnignorePopupData, WorkflowSection, build_workflow_view, previous_workflow_note,
-    with_popover,
+    settings_hint_view, with_popover,
 };
 use crate::util;
 use crate::util::format_size;
+
+use super::json_editor::{JsonEditor, get_json_editor_value};
 
 // ── Commit page ──
 
@@ -29,7 +31,7 @@ pub fn Commit() -> impl IntoView {
     let ui_locked = RwSignal::new(false);
     let refetch = Trigger::new();
 
-    let query = use_query_map();
+    let query = crate::routes::use_query();
     let data = LocalResource::new(move || {
         refetch.track();
         let namespace = query.read().get("namespace").unwrap_or_default();
@@ -59,18 +61,15 @@ pub fn Commit() -> impl IntoView {
                 match data.await {
                     Ok(d) => {
                         let ns = d.namespace.clone();
-                        let pkg_href = format!(
-                            "/installed-package?namespace={}&filter=unmodified",
-                            d.namespace
-                        );
+                        let pkg_href = crate::routes::package_page_href(&d.namespace);
                         let breadcrumbs = vec![
                             BreadcrumbItem::Link(BreadcrumbLink {
-                                href: "/installed-packages-list".to_string(),
+                                href: "/".to_string(),
                                 title: String::new(),
                             }),
                             BreadcrumbItem::Link(BreadcrumbLink {
                                 href: pkg_href,
-                                title: ns.clone(),
+                                title: ns.to_string(),
                             }),
                             BreadcrumbItem::Current("Commit".to_string()),
                         ];
@@ -115,9 +114,16 @@ fn CommitContent(
 
     let namespace = data.namespace.clone();
     let message = RwSignal::new(data.message.clone());
-    let user_meta = data.user_meta.clone();
-    let user_meta_for_editor = data.user_meta.clone();
+    // The editor starts from the publish settings' default metadata, as
+    // one-click Publish would send it; with none set, from the current
+    // revision's metadata, since a form can't show "keep".
+    let starting_meta = starting_metadata(data.settings_user_meta.as_deref(), &data.user_meta);
+    let user_meta = starting_meta.clone();
+    let user_meta_for_editor = starting_meta.clone();
     let user_meta_error = data.user_meta_error.clone();
+    let message_hint = message_settings_hint(data.has_message_template);
+    let metadata_from_settings = data.settings_user_meta.is_some();
+    let settings_workflow = data.settings_workflow.clone();
     let entries = data.entries;
     let ignored_count = data.ignored_count;
     let unmodified_count = data.unmodified_count;
@@ -127,7 +133,11 @@ fn CommitContent(
     // submits. The selected index into that list is the whole client-side
     // state.
     let previous_workflow = PreviousWorkflow::from_stamp(data.workflow.as_ref());
-    let wf_view = build_workflow_view(&data.workflows, previous_workflow.preselect_id());
+    let wf_view = build_workflow_view(
+        &data.workflows,
+        previous_workflow.preselect_id(),
+        data.settings_workflow.as_deref(),
+    );
     // `wf_view.initial` is the single source of truth for the starting
     // selection: it both seeds this signal (which submit reads) and is passed
     // to `WorkflowSection` to render the `selected` attribute, so display and
@@ -175,9 +185,10 @@ fn CommitContent(
     // writes edits into the hidden `#metadata` textarea and dispatches an
     // `input` event (see json-editor-glue.js), so this tracks edits from either
     // the editor or the textarea fallback.
-    let metadata_text = RwSignal::new(data.user_meta.clone());
-    // The previous revision's metadata, as seeded into the editor. Used as the
-    // effective candidate when the editor is left empty — see
+    let metadata_text = RwSignal::new(starting_meta);
+    // The previous revision's metadata, which an empty editor keeps — not
+    // necessarily what the editor was seeded with. Used as the effective
+    // candidate when the editor is left empty — see
     // `effective_metadata` and the parity note at the validation send site.
     let seeded_previous_meta = data.user_meta.clone();
     // Per-field dirtiness: validation runs eagerly (the Name check must fire on
@@ -257,17 +268,22 @@ fn CommitContent(
             };
             let refresh = first_load.try_get_value().unwrap_or(false);
             first_load.set_value(false);
-            let _ = commands::load_workflow_rules(ns.clone(), id.clone(), refresh).await;
+            let _ = commands::load_workflow_rules(ns.to_string(), id.clone(), refresh).await;
             // Parity with the commit path's `UserMeta::Keep`: an empty/whitespace
             // editor keeps the previous revision's metadata, so the commit gate
             // validates that seeded value — not `{}`. Live validation must check
             // the same thing, so substitute the seeded previous metadata here.
             // (Both empty collapse to `{}` on both paths — consistent.)
             let effective_meta = effective_metadata(&metadata, &seeded_previous_meta);
-            let violations =
-                commands::validate_commit_candidate(ns, id, message, effective_meta, handle)
-                    .await
-                    .unwrap_or_default();
+            let violations = commands::validate_commit_candidate(
+                ns.to_string(),
+                id,
+                message,
+                effective_meta,
+                handle.to_string(),
+            )
+            .await
+            .unwrap_or_default();
             (key, violations)
         }
     });
@@ -304,19 +320,22 @@ fn CommitContent(
 
     let show_filter = ignored_count > 0 || unmodified_count > 0;
 
-    // Whether this package has a remote we can publish to. When there is no
-    // resolvable origin, the `[Commit and Push]` primary is hidden and only
-    // `[Commit]` is shown.
-    let has_remote = data.uri.as_ref().is_some_and(|u| u.catalog.is_some());
+    // Whether this package has a bucket to push to. Without one, the
+    // `[Commit and Push]` primary is hidden and only `[Commit]` is shown.
+    let has_remote = util::has_bucket(data.uri.as_ref());
 
     // A role denial on this package's bucket. Both action-bar buttons are
     // disabled by it (not hidden: the user navigated here on purpose, and a
     // vanished button explains nothing) and both carry the same tooltip saying
     // why and what to do about it.
     let no_access_reason = data.no_access_reason.clone();
-    let commit_hint = util::commit_denied_hint(no_access_reason.as_deref());
+    let no_session = data.no_session;
+    let no_session_host = data.no_session_host.clone();
+    let commit_hint = util::commit_denied_hint(no_access_reason.as_deref())
+        .or_else(|| util::commit_no_session_hint(no_session, no_session_host.as_deref()));
+    let commit_blocked = commit_hint.is_some();
     let commit_is_disabled =
-        Signal::derive(move || commit_disabled(&message.get(), no_access_reason.as_deref()));
+        Signal::derive(move || commit_disabled(&message.get(), commit_blocked));
 
     let ns_for_action = namespace.clone();
     let uri_for_action = data.uri.clone();
@@ -343,15 +362,15 @@ fn CommitContent(
             .unwrap_or(WorkflowIntent::BucketDefault);
         leptos::task::spawn_local(async move {
             let result = if push {
-                commands::package_commit_and_push(ns.clone(), msg, meta, wf, uri).await
+                commands::package_commit_and_push(ns.to_string(), msg, meta, wf, uri).await
             } else {
-                commands::package_commit(ns.clone(), msg, meta, wf, uri).await
+                commands::package_commit(ns.to_string(), msg, meta, wf, uri).await
             };
             match result {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     navigate(
-                        &format!("/installed-package?namespace={ns}&filter=unmodified"),
+                        &crate::routes::package_page_href(&ns),
                         NavigateOptions::default(),
                     );
                 }
@@ -383,6 +402,7 @@ fn CommitContent(
                         view=wf_view
                         selected=selected_workflow
                         note=workflow_note
+                        settings_workflow=settings_workflow
                     />
 
                     // ── Namespace (readonly) ──
@@ -394,7 +414,7 @@ fn CommitContent(
                                 id="namespace"
                                 name="namespace"
                                 readonly
-                                prop:value=namespace.clone()
+                                prop:value=namespace.to_string()
                             />
                         </p>
                         {move || field_violation_view(&live_violations.get(), ViolationField::Name)}
@@ -417,6 +437,7 @@ fn CommitContent(
                                 }
                             />
                         </p>
+                        {settings_hint_view(message_hint)}
                         {move || field_violation_view(&live_violations.get(), ViolationField::Message)}
                     </div>
 
@@ -446,6 +467,9 @@ fn CommitContent(
                             textarea_ref=textarea_ref
                             initial_value=user_meta_for_editor
                         />
+                        // Only when Settings set it: no nudge to set one.
+                        {metadata_from_settings
+                            .then(|| settings_hint_view("This metadata is your default in"))}
                         // After the editor so the error sits below it and its
                         // toggling never shifts the editor; a separate reactive
                         // node, so validation updates don't re-render the editor.
@@ -565,6 +589,7 @@ fn CommitContent(
                     <UnignorePopup
                         data=data
                         notification=notification
+                        refetch=refetch
                         on_close=move || show_unignore_popup.set(None)
                     />
                 }
@@ -595,7 +620,7 @@ fn build_toolbar_actions(
             let ns = ns_for_open.clone();
             let uri = uri_for_open.clone();
             leptos::task::spawn_local(async move {
-                match commands::open_in_file_browser(ns, uri).await {
+                match commands::open_in_file_browser(ns.to_string(), uri).await {
                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
                     Err(e) => notification.set(Some(Notification::Error(e))),
                 }
@@ -619,10 +644,12 @@ fn build_toolbar_actions(
             let navigate = navigate.clone();
             ui_locked.set(true);
             leptos::task::spawn_local(async move {
-                match commands::package_uninstall(ns, uri).await {
+                // v1 keeps the downloaded files: only the v2 confirmation
+                // offers to delete them.
+                match commands::package_uninstall(ns.to_string(), uri, false).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
-                        navigate("/installed-packages-list", NavigateOptions::default());
+                        navigate("/", NavigateOptions::default());
                     }
                     Err(e) => {
                         ui_locked.set(false);
@@ -709,7 +736,7 @@ fn CommitEntryRow(
         let path = path_for_open.clone();
         let uri = uri_for_open.clone();
         leptos::task::spawn_local(async move {
-            match commands::open_in_default_application(ns, path, uri).await {
+            match commands::open_in_default_application(ns.to_string(), path, uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -724,7 +751,7 @@ fn CommitEntryRow(
         let path = path_for_reveal.clone();
         let uri = uri_for_reveal.clone();
         leptos::task::spawn_local(async move {
-            match commands::reveal_in_file_browser(ns, path, uri).await {
+            match commands::reveal_in_file_browser(ns.to_string(), path, uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -750,7 +777,7 @@ fn CommitEntryRow(
     let on_ignore = move |_| {
         if let Some(pattern) = junky_pattern.clone() {
             show_ignore_popup.set(Some(IgnorePopupData {
-                namespace: ns_for_ignore.clone(),
+                namespace: ns_for_ignore.to_string(),
                 path: path_for_ignore.clone(),
                 suggested_pattern: pattern,
                 uri: uri_for_ignore.clone(),
@@ -758,12 +785,16 @@ fn CommitEntryRow(
         }
     };
 
-    let ignored_by = entry.ignored_by.clone();
+    let ignored_by = entry.ignored_by.as_ref().map(|by| by.pattern.clone());
     let ns_for_unignore = entry.namespace.clone();
+    let path_for_unignore = entry.filename.clone();
+    let folder = entry.folder;
     let on_unignore = move |_| {
         if let Some(pattern) = ignored_by.clone() {
             show_unignore_popup.set(Some(UnignorePopupData {
-                namespace: ns_for_unignore.clone(),
+                namespace: ns_for_unignore.to_string(),
+                path: path_for_unignore.clone(),
+                folder,
                 pattern,
                 uri: uri_for_unignore.clone(),
             }));
@@ -834,16 +865,16 @@ fn CommitEntryRow(
 
 /// Whether the action bar's Commit / Commit and Push buttons must be inert.
 ///
-/// Two independent reasons, both of which make the click a guaranteed failure:
-/// an empty message (the manifest header requires one), and a role that cannot
-/// read the package's bucket. The second is the non-obvious one — committing
-/// looks like offline work, but the workflow quality gate reads the bucket's
-/// `.quilt/workflows/config.yml` before any manifest is written, so a denied
-/// role turns every commit into a 403. The buttons are disabled rather than
-/// hidden, and [`crate::util::commit_denied_hint`] supplies the tooltip that
-/// says why.
-fn commit_disabled(message: &str, no_access_reason: Option<&str>) -> bool {
-    message.trim().is_empty() || no_access_reason.is_some()
+/// An empty message (the manifest header requires one), or anything that makes
+/// the click a guaranteed failure — a role that cannot read the bucket, or no
+/// session for the deployment.
+///
+/// The non-obvious part: committing looks like offline work, but the workflow
+/// quality gate reads the bucket's `.quilt/workflows/config.yml` before any
+/// manifest is written. Disabled rather than hidden, with a hint saying which
+/// of the two it is and what fixes it.
+fn commit_disabled(message: &str, blocked: bool) -> bool {
+    message.trim().is_empty() || blocked
 }
 
 // ── Live-validation view model ──
@@ -853,7 +884,7 @@ fn commit_disabled(message: &str, no_access_reason: Option<&str>) -> bool {
 /// Guards the mount-time Effect run, which observes the initial key equal to the
 /// seeded mirror — scheduling a `set` there would re-run the validation resource
 /// with identical input (`RwSignal::set` has no `PartialEq` dedupe).
-fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
+pub(super) fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
     key != debounced
 }
 
@@ -863,7 +894,23 @@ fn should_debounce<T: PartialEq>(key: &T, debounced: &T) -> bool {
 /// validates — so live validation substitutes that seeded previous value rather
 /// than validating `{}`. A non-empty editor is validated as typed. When both are
 /// empty they collapse to `{}` on both paths, keeping live and commit consistent.
-fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
+/// Where the form's message comes from, ahead of a link to Settings. The
+/// message always has a default there, so the hint shows either way.
+fn message_settings_hint(has_template: bool) -> &'static str {
+    if has_template {
+        "This message follows your template in"
+    } else {
+        "You can change the default message in"
+    }
+}
+
+/// The text the metadata editor starts with: the publish settings' default
+/// metadata when there is one, else the previous revision's metadata.
+pub(super) fn starting_metadata(settings: Option<&str>, previous: &str) -> String {
+    settings.unwrap_or(previous).to_string()
+}
+
+pub(super) fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
     if editor_text.trim().is_empty() {
         seeded_previous.to_string()
     } else {
@@ -879,7 +926,7 @@ fn effective_metadata(editor_text: &str, seeded_previous: &str) -> String {
 /// pristine form — e.g. empty seeded metadata live-validated against a schema
 /// with required fields — never paints "as you type" errors before the user
 /// types.
-fn displayed_violations(
+pub(super) fn displayed_violations(
     violations: &[CommitViolation],
     message_dirty: bool,
     metadata_dirty: bool,
@@ -898,7 +945,10 @@ fn displayed_violations(
 /// The messages of the violations that belong under `field`, in order. Pure
 /// mapping from the backend's per-field violation list to the strings one field
 /// renders, so the routing is unit-testable without a DOM.
-fn field_violations(violations: &[CommitViolation], field: ViolationField) -> Vec<String> {
+pub(super) fn field_violations(
+    violations: &[CommitViolation],
+    field: ViolationField,
+) -> Vec<String> {
     violations
         .iter()
         .filter(|violation| violation.field == field)
@@ -922,88 +972,11 @@ fn field_violation_view(
     })
 }
 
-// ── JSON editor integration ──
-
-// The boundary passes DOM elements, not id strings, so the JS registry can key
-// by element identity — see the `Transition`-safety note in json-editor-glue.js.
-#[wasm_bindgen::prelude::wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = ["window"], js_name = "__getJsonEditorValue")]
-    fn get_json_editor_value_js(target: &web_sys::HtmlElement) -> String;
-
-    #[wasm_bindgen(js_namespace = ["window"], js_name = "__createJsonEditor")]
-    fn create_json_editor_js(
-        target: &web_sys::HtmlElement,
-        textarea: &web_sys::HtmlElement,
-        initial_value: &str,
-    );
-
-    #[wasm_bindgen(js_namespace = ["window"], js_name = "__destroyJsonEditor")]
-    fn destroy_json_editor_js(target: &web_sys::HtmlElement);
-}
-
-/// Read the committed metadata at submit: the editor's live value, or this
-/// dialog's textarea when the editor never mounted or is empty.
-fn get_json_editor_value(
-    editor_ref: NodeRef<html::Div>,
-    textarea_ref: NodeRef<html::Textarea>,
-) -> String {
-    if let Some(editor) = editor_ref.get_untracked() {
-        let value = get_json_editor_value_js(&editor);
-        if !value.is_empty() {
-            return value;
-        }
-    }
-    textarea_ref
-        .get_untracked()
-        .map(|ta| ta.value())
-        .unwrap_or_default()
-}
-
-#[component]
-fn JsonEditor(
-    node_ref: NodeRef<html::Div>,
-    textarea_ref: NodeRef<html::Textarea>,
-    initial_value: String,
-) -> impl IntoView {
-    // Mount needs both the editor div and the textarea. The div is DOM-ordered
-    // after the textarea, so the div's `on_load` alone would suffice; both are
-    // wired so the mount fires on whichever ref lands last (`on_load` is
-    // effect-based and fires even for a ref already loaded when registered),
-    // and the guard makes the redundant call a no-op.
-    let mounted = StoredValue::new(false);
-    let init = StoredValue::new(initial_value);
-    let try_mount = move || {
-        if mounted.get_value() {
-            return;
-        }
-        let (Some(editor), Some(textarea)) =
-            (node_ref.get_untracked(), textarea_ref.get_untracked())
-        else {
-            return;
-        };
-        mounted.set_value(true);
-        init.with_value(|v| create_json_editor_js(&editor, &textarea, v));
-    };
-    node_ref.on_load(move |_| try_mount());
-    textarea_ref.on_load(move |_| try_mount());
-
-    on_cleanup(move || {
-        if let Some(editor) = node_ref.get_untracked() {
-            destroy_json_editor_js(&editor);
-        }
-    });
-
-    view! {
-        <div class="metadata" node_ref=node_ref></div>
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         commit_disabled, displayed_violations, effective_metadata, field_violations,
-        should_debounce,
+        message_settings_hint, should_debounce, starting_metadata,
     };
     use crate::commands::{CommitViolation, ViolationField};
     use crate::util::commit_denied_hint;
@@ -1017,19 +990,20 @@ mod tests {
         }
     }
 
-    /// A denied bucket makes both action-bar buttons inert, and — the contrast
-    /// that keeps this test honest — an otherwise identical package on a
-    /// readable bucket leaves them live. Same message on both sides, so the
-    /// only thing under test is the access term.
+    /// A blocked bucket makes both action-bar buttons inert, and — the contrast
+    /// that keeps this test honest — an otherwise identical unblocked package
+    /// leaves them live. Same message on both sides, so the only thing under
+    /// test is the blocked term.
     #[test]
-    fn a_denied_bucket_disables_the_commit_buttons_a_readable_one_does_not() {
-        assert!(commit_disabled("a message", Some(DENIED)));
-        assert!(!commit_disabled("a message", None));
+    fn a_blocked_bucket_disables_the_commit_buttons_an_open_one_does_not() {
+        assert!(commit_disabled("a message", true));
+        assert!(!commit_disabled("a message", false));
     }
 
-    /// The disabled buttons are not silent: the same denial supplies the
-    /// tooltip that names the role and the fix, and a readable bucket has no
-    /// tooltip to show.
+    /// The disabled buttons are not silent, and the two reasons do not borrow
+    /// each other's remedy: a denial says switch role, an absent session says
+    /// sign in. Telling someone to switch role when the role was never the
+    /// problem is the failure this pair exists to prevent.
     #[test]
     fn the_disabled_commit_buttons_explain_themselves() {
         assert_eq!(
@@ -1037,14 +1011,26 @@ mod tests {
             Some("Current role ReadOnly has no access to this bucket. Switch role to commit.")
         );
         assert_eq!(commit_denied_hint(None), None);
+
+        assert_eq!(
+            crate::util::commit_no_session_hint(true, Some("quilt.test")).as_deref(),
+            Some("Not signed in to quilt.test. Sign in to commit.")
+        );
+        // A bare bucket on ambient credentials has no deployment to sign in
+        // to, and must still block rather than falling through to enabled.
+        assert_eq!(
+            crate::util::commit_no_session_hint(true, None).as_deref(),
+            Some("No usable AWS credentials. Update ~/.aws or run aws sso login to commit.")
+        );
+        assert_eq!(crate::util::commit_no_session_hint(false, None), None);
     }
 
-    /// The message gate is unchanged and independent of access: an empty
-    /// message still disables on a bucket the role can read.
+    /// The message gate is unchanged and independent of the rest: an empty
+    /// message still disables on an unblocked bucket.
     #[test]
     fn an_empty_message_still_disables_on_a_readable_bucket() {
-        assert!(commit_disabled("", None));
-        assert!(commit_disabled("   ", None));
+        assert!(commit_disabled("", false));
+        assert!(commit_disabled("   ", false));
     }
 
     #[test]
@@ -1059,6 +1045,33 @@ mod tests {
         assert_eq!(effective_metadata(r#"{"x":1}"#, "prev"), r#"{"x":1}"#);
         // Both empty collapse to the same empty string → `{}` on both paths.
         assert_eq!(effective_metadata("", ""), "");
+    }
+
+    #[test]
+    fn editor_starts_from_settings_but_an_emptied_editor_keeps_the_previous() {
+        let settings = r#"{"source":"desktop"}"#;
+        let previous = r#"{"owner":"alice"}"#;
+        // The editor starts from the settings' default metadata.
+        let start = starting_metadata(Some(settings), previous);
+        assert_eq!(start, settings);
+        // Left as seeded, it is validated as the settings value.
+        assert_eq!(effective_metadata(&start, previous), settings);
+        // Cleared, it keeps the previous revision's metadata, not the settings'.
+        assert_eq!(effective_metadata("", previous), previous);
+        // With no settings metadata, the editor starts from the previous one.
+        assert_eq!(starting_metadata(None, previous), previous);
+    }
+
+    #[test]
+    fn message_hint_says_whether_a_template_is_set() {
+        assert_eq!(
+            message_settings_hint(true),
+            "This message follows your template in"
+        );
+        assert_eq!(
+            message_settings_hint(false),
+            "You can change the default message in"
+        );
     }
 
     #[test]
@@ -1126,7 +1139,86 @@ mod tests {
     #[test]
     fn field_violations_empty_when_field_clean() {
         let violations = vec![violation(ViolationField::Message, "x")];
-        assert!(field_violations(&violations, ViolationField::Name).is_empty());
-        assert!(field_violations(&[], ViolationField::Message).is_empty());
+        assert_eq!(
+            field_violations(&violations, ViolationField::Name),
+            [] as [String; 0]
+        );
+        assert_eq!(
+            field_violations(&[], ViolationField::Message),
+            [] as [String; 0]
+        );
+    }
+
+    fn commit_data(uri: Option<&str>) -> crate::commands::CommitData {
+        crate::commands::CommitData {
+            namespace: "org/pkg".try_into().unwrap(),
+            uri: uri.map(|u| quilt_uri::S3PackageUri::try_from(u).unwrap()),
+            remote_locked: false,
+            newer: None,
+            status: "up_to_date".to_string(),
+            message: "Updated 1 file".to_string(),
+            user_meta: String::new(),
+            user_meta_error: None,
+            settings_user_meta: None,
+            settings_workflow: None,
+            has_message_template: false,
+            workflow: None,
+            workflows: crate::commands::CommitWorkflows::NotConfigured,
+            no_access_reason: None,
+            no_session: false,
+            no_session_host: None,
+            entries: Vec::new(),
+            ignored_count: 0,
+            unmodified_count: 0,
+            counts: crate::commands::EntryCounts::default(),
+            changed_bytes: 0,
+            junk: None,
+        }
+    }
+
+    async fn action_bar(uri: Option<&'static str>) -> Vec<String> {
+        use leptos::prelude::*;
+        use leptos_router::components::Router;
+        use wasm_bindgen::JsCast;
+
+        crate::test_support::unmount_earlier();
+        let el = crate::test_support::mount(move || {
+            view! {
+                <Router>
+                    <super::CommitContent
+                        data=commit_data(uri)
+                        notification=RwSignal::new(None)
+                        ui_locked=RwSignal::new(false)
+                        refetch=Trigger::new()
+                    />
+                </Router>
+            }
+        });
+        crate::test_support::sleep_ms(80).await;
+        let all = el.query_selector_all(".qui-actionbar button").unwrap();
+        (0..all.length())
+            .map(|i| {
+                all.item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::Element>()
+                    .text_content()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// Commit and Push follows the bucket, not the catalog: a package with a
+    /// bucket and no catalog pushes on the computer's AWS credentials, and
+    /// one with no bucket only commits.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn a_bucket_without_a_catalog_offers_commit_and_push() {
+        let pushes = action_bar(Some("quilt+s3://team-bucket#package=org/pkg")).await;
+        assert!(pushes.iter().any(|b| b == "Commit and Push"), "{pushes:?}");
+
+        let local = action_bar(None).await;
+        assert!(!local.iter().any(|b| b == "Commit and Push"), "{local:?}");
+        assert!(!local.is_empty(), "the commit button stays");
     }
 }

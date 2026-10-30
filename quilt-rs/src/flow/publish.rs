@@ -5,6 +5,7 @@ use tracing::info;
 
 use crate::Res;
 use crate::flow;
+use crate::flow::Committed;
 use crate::flow::UserMeta;
 use crate::flow::push::PushResult;
 use crate::io::remote::HostConfig;
@@ -30,7 +31,7 @@ pub struct CommitOptions {
 }
 
 /// Result of a successful publish — one variant per branch of the
-/// two-state decision in [`publish_package`].
+/// decision in [`publish_package`].
 ///
 /// Generic over the push payload: the flow layer returns
 /// `PublishOutcome<PushResult>`; the public API (`InstalledPackage::publish`)
@@ -43,12 +44,17 @@ pub enum PublishOutcome<P> {
     /// Pushed a previously-committed revision without a new commit
     /// (working directory had no changes).
     PushedOnly(P),
+    /// No pending commit, and the commit made no new hash: nothing was
+    /// committed or pushed.
+    NothingToPublish,
 }
 
 impl<P> PublishOutcome<P> {
-    pub fn push(&self) -> &P {
+    /// The push, unless there was nothing to publish.
+    pub fn push(&self) -> Option<&P> {
         match self {
-            Self::CommittedAndPushed(p) | Self::PushedOnly(p) => p,
+            Self::CommittedAndPushed(p) | Self::PushedOnly(p) => Some(p),
+            Self::NothingToPublish => None,
         }
     }
 }
@@ -63,11 +69,10 @@ impl<P> PublishOutcome<P> {
 ///   always unpushed — [`flow::push`] clears it on success)
 /// - otherwise → commit (with the caller's message/metadata/workflow),
 ///   then push. `status.changes` may be empty: a message- or
-///   metadata-only revision is a legitimate user intent, and if the
-///   resulting manifest header and rows happen to match the last-pushed
-///   state the content-addressed top hash will match and push is a
-///   no-op — so repeat clicks with identical input don't produce
-///   divergent commits on the remote.
+///   metadata-only revision is a legitimate user intent. When the commit
+///   makes no new hash, the pending commit is pushed if there is one;
+///   otherwise nothing is pushed and the outcome is `NothingToPublish`, so
+///   repeat clicks with identical input publish nothing.
 #[allow(clippy::too_many_arguments)]
 pub async fn publish_package(
     lineage: PackageLineage,
@@ -104,12 +109,24 @@ pub async fn publish_package(
             commit_opts.workflow,
         )
         .await?;
-        // commit wrote a new manifest to disk; reload it so push uploads
-        // the new rows, not the pre-commit manifest we were handed.
-        let committed_path = paths.installed_manifest(&namespace, &new_commit.hash);
-        let committed_manifest = Manifest::from_path(storage, &committed_path).await?;
-        debug!("✔️ Publish: commit done");
-        (lineage, committed_manifest, true)
+        match new_commit {
+            Committed::Recorded(new_commit) => {
+                // commit wrote a new manifest to disk; reload it so push uploads
+                // the new rows, not the pre-commit manifest we were handed.
+                let committed_path = paths.installed_manifest(&namespace, &new_commit.hash);
+                let committed_manifest = Manifest::from_path(storage, &committed_path).await?;
+                debug!("✔️ Publish: commit done");
+                (lineage, committed_manifest, true)
+            }
+            Committed::NothingToCommit if has_pending_commit => {
+                debug!("✔️ Publish: nothing new to commit, pushing the pending commit");
+                (lineage, manifest.clone(), false)
+            }
+            Committed::NothingToCommit => {
+                info!("✔️ Publish: nothing to publish");
+                return Ok(PublishOutcome::NothingToPublish);
+            }
+        }
     };
 
     info!("⏳ Publish: pushing revision");
@@ -216,14 +233,74 @@ mod tests {
         )
         .await?;
 
-        let push = match &outcome {
-            PublishOutcome::CommittedAndPushed(p) => p,
-            PublishOutcome::PushedOnly(_) => {
-                panic!("expected CommittedAndPushed even without file changes");
-            }
+        let PublishOutcome::CommittedAndPushed(push) = &outcome else {
+            panic!("expected CommittedAndPushed even without file changes");
         };
         assert!(push.certified_latest);
         assert!(push.lineage.commit.is_none());
+        Ok(())
+    }
+
+    /// The same input twice: the second publish makes no new hash, so it
+    /// commits nothing, pushes nothing and writes no second tag.
+    #[test(tokio::test)]
+    async fn test_publish_same_input_twice_publishes_nothing() -> Res {
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("foo", "bar").into();
+        let options = || CommitOptions {
+            message: "Custom message".to_string(),
+            user_meta: UserMeta::Keep,
+            workflow: None,
+        };
+
+        let lineage = PackageLineage {
+            remote_uri: Some(first_push_uri()),
+            ..PackageLineage::default()
+        };
+        let first = publish_package(
+            lineage,
+            &mut Manifest::default(),
+            &paths,
+            &storage,
+            &remote,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            namespace.clone(),
+            HostConfig::default(),
+            options(),
+        )
+        .await?;
+        let PublishOutcome::CommittedAndPushed(push) = first else {
+            panic!("expected CommittedAndPushed, got {first:?}");
+        };
+        let hash = push.lineage.remote()?.hash.clone();
+        let mut manifest =
+            Manifest::from_path(&storage, &paths.installed_manifest(&namespace, &hash)).await?;
+
+        let second = publish_package(
+            push.lineage,
+            &mut manifest,
+            &paths,
+            &storage,
+            &remote,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            namespace.clone(),
+            HostConfig::default(),
+            options(),
+        )
+        .await?;
+
+        assert!(
+            matches!(second, PublishOutcome::NothingToPublish),
+            "expected NothingToPublish, got {second:?}"
+        );
+        assert_eq!(
+            remote.published_revisions(None, "b", &namespace).await?,
+            vec![hash]
+        );
         Ok(())
     }
 
@@ -242,7 +319,7 @@ mod tests {
             ..PackageLineage::default()
         };
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let storage = MockStorage::default();
         storage
             .write_byte_stream(
@@ -275,11 +352,8 @@ mod tests {
         )
         .await?;
 
-        let push = match &outcome {
-            PublishOutcome::PushedOnly(p) => p,
-            PublishOutcome::CommittedAndPushed(_) => {
-                panic!("should skip commit when no changes");
-            }
+        let PublishOutcome::PushedOnly(push) = &outcome else {
+            panic!("should skip commit when no changes");
         };
         assert!(push.certified_latest);
         assert_eq!(push.lineage.remote()?.hash, hash);
@@ -300,9 +374,12 @@ mod tests {
         };
 
         let storage = MockStorage::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         storage
-            .write_byte_stream(PathBuf::from("/working-dir/foo"), ByteStream::default())
+            .write_byte_stream(
+                std::path::absolute("/working-dir/foo")?,
+                ByteStream::default(),
+            )
             .await?;
 
         let status = InstalledPackageStatus {
@@ -325,7 +402,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),
@@ -355,7 +432,10 @@ mod tests {
     ) -> Res<(MockStorage, MockRemote)> {
         let storage = MockStorage::default();
         storage
-            .write_byte_stream(PathBuf::from("/working-dir/foo"), ByteStream::default())
+            .write_byte_stream(
+                std::path::absolute("/working-dir/foo")?,
+                ByteStream::default(),
+            )
             .await?;
 
         let remote = MockRemote::default();
@@ -428,7 +508,7 @@ mod tests {
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let added = row_from_fixture(&manifest_src, "0mb.bin");
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (storage, remote) =
             setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
 
@@ -445,7 +525,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),
@@ -457,11 +537,8 @@ mod tests {
         )
         .await?;
 
-        let push = match &outcome {
-            PublishOutcome::CommittedAndPushed(p) => p,
-            PublishOutcome::PushedOnly(_) => {
-                panic!("expected CommittedAndPushed, got PushedOnly");
-            }
+        let PublishOutcome::CommittedAndPushed(push) = &outcome else {
+            panic!("expected CommittedAndPushed, got PushedOnly");
         };
         assert_first_push_of_foo_bar(push)
     }
@@ -482,12 +559,12 @@ mod tests {
         let storage = MockStorage::default();
         storage
             .write_byte_stream(
-                PathBuf::from("/working-dir/foo"),
+                std::path::absolute("/working-dir/foo")?,
                 ByteStream::from_static(fixtures::objects::less_than_8mb()),
             )
             .await?;
         let remote = MockRemote::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let object_path = paths
             .objects_dir()
             .join(fixtures::objects::LESS_THAN_8MB_HASH_HEX);
@@ -517,7 +594,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),
@@ -529,11 +606,8 @@ mod tests {
         )
         .await?;
 
-        let push = match &outcome {
-            PublishOutcome::CommittedAndPushed(p) => p,
-            PublishOutcome::PushedOnly(_) => {
-                panic!("expected CommittedAndPushed, got PushedOnly");
-            }
+        let PublishOutcome::CommittedAndPushed(push) = &outcome else {
+            panic!("expected CommittedAndPushed, got PushedOnly");
         };
         assert_first_push_of_foo_bar(push)
     }
@@ -552,7 +626,7 @@ mod tests {
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let added = row_from_fixture(&manifest_src, "0mb.bin");
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (storage, remote) =
             setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
 
@@ -597,7 +671,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),
@@ -609,11 +683,8 @@ mod tests {
         )
         .await?;
 
-        let push = match &outcome {
-            PublishOutcome::CommittedAndPushed(p) => p,
-            PublishOutcome::PushedOnly(_) => {
-                panic!("expected CommittedAndPushed, got PushedOnly");
-            }
+        let PublishOutcome::CommittedAndPushed(push) = &outcome else {
+            panic!("expected CommittedAndPushed, got PushedOnly");
         };
         assert_first_push_of_foo_bar(push)?;
 
@@ -641,7 +712,7 @@ mod tests {
 
         // Remove has nothing to copy into the object store, but setup still
         // seeds /working-dir/foo so the helper stays uniform across tests.
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (storage, remote) =
             setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
 
@@ -659,7 +730,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),
@@ -671,11 +742,8 @@ mod tests {
         )
         .await?;
 
-        let push = match &outcome {
-            PublishOutcome::CommittedAndPushed(p) => p,
-            PublishOutcome::PushedOnly(_) => {
-                panic!("expected CommittedAndPushed, got PushedOnly");
-            }
+        let PublishOutcome::CommittedAndPushed(push) = &outcome else {
+            panic!("expected CommittedAndPushed, got PushedOnly");
         };
         assert_first_push_of_foo_bar(push)?;
         assert!(
@@ -693,7 +761,7 @@ mod tests {
         let manifest_src = fixtures::manifest_with_objects_all_sizes::manifest().await?;
         let added = row_from_fixture(&manifest_src, "0mb.bin");
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (storage, remote) =
             setup_storages_for_commit_and_push(&paths, fixtures::objects::ZERO_HASH_HEX).await?;
 
@@ -710,7 +778,7 @@ mod tests {
             &paths,
             &storage,
             &remote,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             HostConfig::default(),
@@ -722,11 +790,8 @@ mod tests {
         )
         .await?;
 
-        let push = match &outcome {
-            PublishOutcome::CommittedAndPushed(p) => p,
-            PublishOutcome::PushedOnly(_) => {
-                panic!("expected CommittedAndPushed, got PushedOnly");
-            }
+        let PublishOutcome::CommittedAndPushed(push) = &outcome else {
+            panic!("expected CommittedAndPushed, got PushedOnly");
         };
         assert_first_push_of_foo_bar(push)
     }

@@ -1,17 +1,21 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use ignore::gitignore::Gitignore;
 use tracing::trace;
 use tracing::warn;
 
 use crate::Error;
 use crate::Res;
 use crate::checksum::calculate_hash;
+use crate::checksum::hash_file;
 use crate::checksum::verify_hash;
+use crate::file_stamp::EntryKind;
+use crate::file_stamp::FileStamp;
+use crate::file_stamp::read_dir_stamps;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -23,7 +27,11 @@ use crate::lineage::InstalledPackageStatus;
 use crate::lineage::PackageLineage;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestRow;
+use crate::object_hash::ObjectHash;
+use crate::paths::DomainPaths;
 use crate::quiltignore;
+use crate::stat_cache::CachedHash;
+use crate::stat_cache::StatCache;
 use quilt_uri::Tag;
 use quilt_uri::UriError;
 
@@ -44,128 +52,251 @@ pub async fn refresh_latest_hash(
 
 #[derive(Debug)]
 enum WorkdirFile {
-    Tracked(PathBuf, ManifestRow),
-    NotTracked(PathBuf, ManifestRow),
-    New(PathBuf),
+    Tracked(PathBuf, FileStamp, ManifestRow),
+    NotTracked(PathBuf, FileStamp, ManifestRow),
+    New(PathBuf, FileStamp),
     Removed(ManifestRow),
     UnSupported,
 }
 
-/// Located files and ignored files collected during the directory walk.
-struct LocateResult {
-    files: Vec<(PathBuf, WorkdirFile)>,
-    /// Files matched by `.quiltignore`: (`logical_key`, `absolute_path`, `matched_pattern`, size)
-    ignored_files: Vec<(PathBuf, PathBuf, String, u64)>,
-    /// Newest `mtime` across non-ignored files in the walk. Ignored files
-    /// are deliberately excluded — touching a file inside an
-    /// `.quiltignore`-matched cache directory must not gate autosync.
-    most_recent_mtime: Option<SystemTime>,
+/// What the walk of the package home found, before it is matched with the
+/// manifest.
+#[derive(Default)]
+pub(crate) struct Walked {
+    /// (`logical_key`, `absolute_path`, kind, stamp) for everything not ignored
+    /// that is not a folder.
+    pub(crate) entries: Vec<(PathBuf, PathBuf, EntryKind, FileStamp)>,
+    /// Files matched by an ignore rule: (`logical_key`, rule, size)
+    ignored_files: Vec<(PathBuf, quiltignore::IgnoredBy, u64)>,
+    /// Folders matched by an ignore rule: (path relative to the package home,
+    /// rule). The walk does not enter them.
+    ignored_dirs: Vec<(PathBuf, quiltignore::IgnoredBy)>,
 }
 
-async fn locate_files_in_package_home(
-    storage: &(impl Storage + Sync),
-    manifest: &Manifest,
-    package_home: impl AsRef<Path>,
-    mut tracked_paths: HashMap<PathBuf, ManifestRow>,
-    quiltignore: Option<&Gitignore>,
-) -> Res<LocateResult> {
-    let package_home = package_home.as_ref();
+/// What the package already has, so ignore rules other than the package's
+/// spare it: its files, and every folder holding one.
+#[derive(Default)]
+pub(crate) struct Tracked {
+    pub(crate) files: HashSet<PathBuf>,
+    pub(crate) dirs: HashSet<PathBuf>,
+}
+
+impl Tracked {
+    pub(crate) fn new<'a>(keys: impl Iterator<Item = &'a PathBuf>) -> Self {
+        let mut tracked = Tracked::default();
+        for key in keys {
+            for dir in key.ancestors().skip(1) {
+                if dir.as_os_str().is_empty() || !tracked.dirs.insert(dir.to_path_buf()) {
+                    break;
+                }
+            }
+            tracked.files.insert(key.clone());
+        }
+        tracked
+    }
+}
+
+/// The whole walk, one folder call at a time. Blocking.
+pub(crate) fn walk_package_home(
+    package_home: &Path,
+    rules: &quiltignore::Rules,
+    tracked: &Tracked,
+) -> Res<Walked> {
+    let mut walked = Walked::default();
     let mut queue = VecDeque::new();
     queue.push_back(package_home.to_path_buf());
 
-    let mut files = Vec::new();
-    let mut ignored_files = Vec::new();
-    let mut most_recent_mtime: Option<SystemTime> = None;
-
     while let Some(dir) = queue.pop_front() {
-        let mut dir_entries = match storage.read_dir(&dir).await {
-            Ok(dir_entries) => dir_entries,
+        let entries = match read_dir_stamps(&dir) {
+            Ok(entries) => entries,
+            // A folder that lists but can't be stamped holds files the walk
+            // can't see; skipping it would report them removed.
+            Err(err) if std::fs::read_dir(&dir).is_ok() => return Err(err.into()),
             Err(err) => {
                 warn!("❌ Failed to read directory {}: {}", dir.display(), err);
                 continue;
             }
         };
-
-        while let Some(dir_entry) = dir_entries.next_entry().await? {
-            let file_path = dir_entry.path();
-
-            let file_type = dir_entry.file_type().await?;
-            if !file_type.is_file() {
-                if file_type.is_dir() {
-                    if let Some(gi) = quiltignore {
-                        let rel = file_path.strip_prefix(package_home)?;
-                        if quiltignore::is_ignored(gi, rel, true) {
-                            continue;
-                        }
+        for (name, kind, stamp) in entries {
+            let file_path = dir.join(name);
+            let logical_key = crate::paths::logical_key(file_path.strip_prefix(package_home)?);
+            match kind {
+                EntryKind::Dir => {
+                    if let Some(ignored_by) =
+                        rules.dir_ignored_by(&logical_key, tracked.dirs.contains(&logical_key))
+                    {
+                        walked.ignored_dirs.push((logical_key, ignored_by));
+                        continue;
                     }
                     queue.push_back(file_path);
-                } else {
-                    // TODO: handle symlinks
-                    files.push((file_path, WorkdirFile::UnSupported));
                 }
-                continue;
-            }
-
-            // One `metadata()` per regular file: ignored files need `len()`
-            // and non-ignored files contribute `modified()` to the
-            // working-tree quiet-window accumulator. The walk already paid
-            // for the `DirEntry`, so this is cheaper than re-statting later.
-            let meta = dir_entry.metadata().await.ok();
-
-            let logical_key = file_path.strip_prefix(package_home)?.to_path_buf();
-            if let Some(gi) = quiltignore
-                && let Some(pattern) = quiltignore::matched_pattern(gi, &logical_key, false)
-            {
-                let size = meta.as_ref().map_or(0, std::fs::Metadata::len);
-                ignored_files.push((logical_key, file_path, pattern, size));
-                continue;
-            }
-            if let Some(mtime) = meta.and_then(|m| m.modified().ok()) {
-                most_recent_mtime = Some(most_recent_mtime.map_or(mtime, |cur| cur.max(mtime)));
-            }
-            if let Some(row) = tracked_paths.remove(&logical_key) {
-                files.push((logical_key, WorkdirFile::Tracked(file_path, row)));
-            } else if let Some(row) = manifest.get_record(&logical_key) {
-                files.push((logical_key, WorkdirFile::NotTracked(file_path, row.clone())));
-            } else {
-                files.push((logical_key, WorkdirFile::New(file_path)));
+                EntryKind::File => {
+                    if let Some(ignored_by) =
+                        rules.file_ignored_by(&logical_key, tracked.files.contains(&logical_key))
+                    {
+                        walked
+                            .ignored_files
+                            .push((logical_key, ignored_by, stamp.size));
+                        continue;
+                    }
+                    walked.entries.push((logical_key, file_path, kind, stamp));
+                }
+                EntryKind::Other => walked.entries.push((logical_key, file_path, kind, stamp)),
             }
         }
     }
+    Ok(walked)
+}
 
+fn locate_files(
+    walked: Vec<(PathBuf, PathBuf, EntryKind, FileStamp)>,
+    manifest: &Manifest,
+    mut tracked_paths: HashMap<PathBuf, ManifestRow>,
+) -> Vec<(PathBuf, WorkdirFile)> {
+    // Every file the walk met is looked up here, so the rows are indexed once.
+    let mut manifest_rows: HashMap<&Path, &ManifestRow> = HashMap::new();
+    for row in &manifest.rows {
+        manifest_rows
+            .entry(row.logical_key.as_path())
+            .or_insert(row);
+    }
+    let mut files = Vec::with_capacity(walked.len());
+    for (logical_key, file_path, kind, stamp) in walked {
+        if kind != EntryKind::File {
+            // TODO: handle symlinks
+            files.push((file_path, WorkdirFile::UnSupported));
+            continue;
+        }
+        if let Some(row) = tracked_paths.remove(&logical_key) {
+            files.push((logical_key, WorkdirFile::Tracked(file_path, stamp, row)));
+        } else if let Some(row) = manifest_rows.get(logical_key.as_path()).copied() {
+            files.push((
+                logical_key,
+                WorkdirFile::NotTracked(file_path, stamp, row.clone()),
+            ));
+        } else {
+            files.push((logical_key, WorkdirFile::New(file_path, stamp)));
+        }
+    }
     for (logical_key, row) in tracked_paths {
         files.push((logical_key, WorkdirFile::Removed(row)));
     }
-
-    Ok(LocateResult {
-        files,
-        ignored_files,
-        most_recent_mtime,
-    })
+    files
 }
 
-async fn detect_change(
-    storage: &(impl Storage + Sync),
-    logical_key: &Path,
-    location: WorkdirFile,
-    host_config: &HostConfig,
-) -> Res<Option<Change>> {
-    match location {
-        WorkdirFile::Tracked(path, row) => verify_hash(storage, &path, row, host_config)
+/// Hashes files, through the stat cache when there is one.
+struct Hasher<'a, S> {
+    storage: &'a S,
+    cache: Option<&'a mut StatCache>,
+    /// When this walk read the stamps; what the cache saves them as.
+    walked_at: SystemTime,
+}
+
+impl<S: Storage + Sync> Hasher<'_, S> {
+    /// The hash of the file at `path` with `algorithm`, and its size.
+    async fn hash(
+        &mut self,
+        logical_key: &Path,
+        path: &Path,
+        stamp: &FileStamp,
+        algorithm: u64,
+    ) -> Res<(ObjectHash, u64)> {
+        if let Some(cache) = self.cache.as_deref()
+            && let Some(hash) = cache.lookup(logical_key, stamp, algorithm)
+        {
+            return Ok((hash.clone(), stamp.size));
+        }
+        let (hash, size) = hash_file(self.storage, path, algorithm).await?;
+        if let Some(cache) = self.cache.as_deref_mut() {
+            cache.record(
+                logical_key,
+                CachedHash {
+                    stamp: *stamp,
+                    hash: hash.clone(),
+                    saved_at: self.walked_at,
+                },
+            );
+        }
+        Ok((hash, size))
+    }
+
+    /// The same rows `checksum::verify_hash` gives: `None` when the file
+    /// matches `row`, otherwise the row hashed with the host's algorithm.
+    async fn verify(
+        &mut self,
+        logical_key: &Path,
+        path: &Path,
+        stamp: &FileStamp,
+        row: ManifestRow,
+        host_config: &HostConfig,
+    ) -> Res<Option<ManifestRow>> {
+        let (hash, size) = self
+            .hash(logical_key, path, stamp, row.hash.algorithm())
+            .await?;
+        if hash == row.hash {
+            return Ok(None);
+        }
+        if hash.algorithm() == host_config.checksums.algorithm_code() {
+            return Ok(Some(ManifestRow { hash, size, ..row }));
+        }
+        self.calculate(&row.logical_key, path, stamp, host_config)
             .await
-            .map(|opt_row| opt_row.map(Change::Modified)),
-        WorkdirFile::NotTracked(path, row) => verify_hash(storage, &path, row, host_config)
-            .await
-            .map(|opt_row| opt_row.map(Change::Modified)),
-        WorkdirFile::New(path) => calculate_hash(storage, &path, logical_key, host_config)
-            .await
-            .map(|row| Some(Change::Added(row))),
-        WorkdirFile::Removed(row) => Ok(Some(Change::Removed(row))),
-        WorkdirFile::UnSupported => {
-            // TODO: handle symlinks
-            // TODO: changes.insert(path, Change::Broken)
-            warn!("❌ Unexpected file type: {}", logical_key.display());
-            Ok(None)
+            .map(Some)
+    }
+
+    /// The same row `checksum::calculate_hash` gives.
+    async fn calculate(
+        &mut self,
+        logical_key: &Path,
+        path: &Path,
+        stamp: &FileStamp,
+        host_config: &HostConfig,
+    ) -> Res<ManifestRow> {
+        let (hash, size) = self
+            .hash(
+                logical_key,
+                path,
+                stamp,
+                host_config.checksums.algorithm_code(),
+            )
+            .await?;
+        Ok(ManifestRow {
+            logical_key: logical_key.to_path_buf(),
+            physical_key: crate::paths::file_url(path)?,
+            size,
+            hash,
+            ..ManifestRow::default()
+        })
+    }
+
+    async fn detect_change(
+        &mut self,
+        logical_key: &Path,
+        location: WorkdirFile,
+        host_config: &HostConfig,
+    ) -> Res<Option<Change>> {
+        if let Some(cache) = self.cache.as_deref_mut()
+            && !matches!(location, WorkdirFile::Removed(_) | WorkdirFile::UnSupported)
+        {
+            cache.see(logical_key);
+        }
+        match location {
+            WorkdirFile::Tracked(path, stamp, row) | WorkdirFile::NotTracked(path, stamp, row) => {
+                self.verify(logical_key, &path, &stamp, row, host_config)
+                    .await
+                    .map(|opt_row| opt_row.map(Change::Modified))
+            }
+            WorkdirFile::New(path, stamp) => self
+                .calculate(logical_key, &path, &stamp, host_config)
+                .await
+                .map(|row| Some(Change::Added(row))),
+            WorkdirFile::Removed(row) => Ok(Some(Change::Removed(row))),
+            WorkdirFile::UnSupported => {
+                // TODO: handle symlinks
+                // TODO: changes.insert(path, Change::Broken)
+                warn!("❌ Unexpected file type: {}", logical_key.display());
+                Ok(None)
+            }
         }
     }
 }
@@ -174,14 +305,60 @@ async fn fingerprint_files(
     storage: &(impl Storage + Sync),
     files: Vec<(PathBuf, WorkdirFile)>,
     host_config: HostConfig,
+    cache: Option<&mut StatCache>,
+    walked_at: SystemTime,
 ) -> Res<ChangeSet> {
+    let mut hasher = Hasher {
+        storage,
+        cache,
+        walked_at,
+    };
     let mut changes = ChangeSet::new();
     for (logical_key, location) in files {
-        if let Some(change) = detect_change(storage, &logical_key, location, &host_config).await? {
+        if let Some(change) = hasher
+            .detect_change(&logical_key, location, &host_config)
+            .await?
+        {
             changes.insert(logical_key, change);
         }
     }
     Ok(changes)
+}
+
+/// Hash again the files `status` says were added or modified, without a stat
+/// cache, so a commit names its objects by what they hold now.
+pub async fn rehash_changes(
+    storage: &(impl Storage + Sync),
+    manifest: &Manifest,
+    package_home: impl AsRef<Path>,
+    mut status: InstalledPackageStatus,
+    host_config: &HostConfig,
+) -> Res<InstalledPackageStatus> {
+    let package_home = package_home.as_ref();
+    let mut changes = ChangeSet::new();
+    for (logical_key, change) in std::mem::take(&mut status.changes) {
+        let path = package_home.join(&logical_key);
+        let change = match change {
+            Change::Removed(row) => Some(Change::Removed(row)),
+            Change::Added(_) => Some(Change::Added(
+                calculate_hash(storage, &path, &logical_key, host_config).await?,
+            )),
+            Change::Modified(current) => match manifest.get_record(&logical_key) {
+                Some(base) => verify_hash(storage, &path, base.clone(), host_config)
+                    .await?
+                    .map(Change::Modified),
+                None => Some(Change::Modified(ManifestRow {
+                    meta: current.meta,
+                    ..calculate_hash(storage, &path, &logical_key, host_config).await?
+                })),
+            },
+        };
+        if let Some(change) = change {
+            changes.insert(logical_key, change);
+        }
+    }
+    status.changes = changes;
+    Ok(status)
 }
 
 /// Creates the status of local modifications
@@ -193,9 +370,35 @@ async fn fingerprint_files(
 pub async fn create_status(
     lineage: PackageLineage,
     storage: &(impl Storage + Sync),
+    paths: &DomainPaths,
     manifest: &Manifest,
     package_home: impl AsRef<Path>,
     host_config: HostConfig,
+) -> Res<(PackageLineage, InstalledPackageStatus)> {
+    create_status_cached(
+        lineage,
+        storage,
+        paths,
+        manifest,
+        package_home,
+        host_config,
+        None,
+    )
+    .await
+}
+
+/// [`create_status`], hashing only the files whose stamp differs from what
+/// `cache` saved. The changes are the same as without it, unless a file's
+/// content changed with every stamp value kept, which the daily full walk
+/// catches.
+pub async fn create_status_cached(
+    lineage: PackageLineage,
+    storage: &(impl Storage + Sync),
+    paths: &DomainPaths,
+    manifest: &Manifest,
+    package_home: impl AsRef<Path>,
+    host_config: HostConfig,
+    cache: Option<&mut StatCache>,
 ) -> Res<(PackageLineage, InstalledPackageStatus)> {
     // `trace`: this runs on a timer, several times a second across packages, and
     // the answer is almost always the same. The signal worth a debug line is "the
@@ -245,25 +448,24 @@ pub async fn create_status(
     }
     trace!("✔️ Found {} paths in lineage", orig_paths.len());
 
-    let quiltignore = quiltignore::load(package_home.as_ref())?;
-    let locate_result = locate_files_in_package_home(
-        storage,
-        manifest,
-        package_home,
-        orig_paths,
-        quiltignore.as_ref(),
-    )
-    .await?;
+    let rules = quiltignore::Rules::load(package_home.as_ref(), &paths.user_quiltignore())?;
+    let tracked = Tracked::new(
+        manifest
+            .rows
+            .iter()
+            .map(|row| &row.logical_key)
+            .chain(orig_paths.keys()),
+    );
+    let home = package_home.as_ref().to_path_buf();
+    let walked_at = SystemTime::now();
+    let walk = tokio::task::spawn_blocking(move || walk_package_home(&home, &rules, &tracked))
+        .await
+        .map_err(std::io::Error::other)??;
+    let files = locate_files(walk.entries, manifest, orig_paths);
     // Captured before the vector is consumed; reported once, on the outcome line.
-    let walked = locate_result.files.len();
-    let changes = fingerprint_files(storage, locate_result.files, host_config).await?;
-
-    // Collect ignored files with their matched pattern (captured during the walk)
-    let ignored_files: Vec<(PathBuf, String, u64)> = locate_result
-        .ignored_files
-        .into_iter()
-        .map(|(logical_key, _abs_path, pattern, size)| (logical_key, pattern, size))
-        .collect();
+    let walked = files.len();
+    let changes = fingerprint_files(storage, files, host_config, cache, walked_at).await?;
+    let ignored_files = walk.ignored_files;
 
     // Detect junky files among the changes
     let junky_changes: Vec<(PathBuf, String)> = changes
@@ -273,8 +475,9 @@ pub async fn create_status(
 
     let mut status = InstalledPackageStatus::new(lineage.clone().into(), changes);
     status.ignored_files = ignored_files;
+    status.ignored_dirs = walk.ignored_dirs;
     status.junky_changes = junky_changes;
-    status.most_recent_mtime = locate_result.most_recent_mtime;
+    status.latest_hash.clone_from(&lineage.latest_hash);
     trace!(
         // `walked` earns its place by distinguishing two readings of "0 changes":
         // nothing changed, or we looked at nothing — a wrong or empty working
@@ -284,10 +487,11 @@ pub async fn create_status(
         // a second reporting the *input*, which duplicated `ignored` and dumped the
         // whole file list; the only fact it carried alone is the count now in front.
         // Names live in the per-path `trace` above, for one package at a time.
-        "✔️ Status: {} files walked, {} changes, {} ignored, {} junky",
+        "✔️ Status: {} files walked, {} changes, {} ignored, {} ignored folders, {} junky",
         walked,
         status.changes.len(),
         status.ignored_files.len(),
+        status.ignored_dirs.len(),
         status.junky_changes.len(),
     );
     Ok((lineage, status))
@@ -311,7 +515,13 @@ mod tests {
     use crate::lineage::UpstreamState;
     use crate::object_hash::Crc64Hash;
     use crate::object_hash::Sha256ChunkedHash;
+    use crate::quiltignore::RuleSource;
     use quilt_uri::ManifestUri;
+
+    /// Domain paths inside the storage's temp dir, so no test reads a real user-wide rules file.
+    fn domain_paths(storage: &MockStorage) -> DomainPaths {
+        DomainPaths::new(storage.temp_dir.path().join("domain"))
+    }
 
     /// Helper to create a `PackageLineage` with a dummy remote (avoids Local state).
     /// Uses a non-empty hash so the lineage isn't treated as "never pushed".
@@ -321,7 +531,7 @@ mod tests {
             lineage.remote_uri = Some(ManifestUri {
                 hash: dummy_hash.clone(),
                 bucket: "test-bucket".to_string(),
-                origin: Some("catalog.dev".parse().unwrap()),
+                origin: Some(quilt_uri::fixtures::host()),
                 ..ManifestUri::default()
             });
         }
@@ -340,6 +550,7 @@ mod tests {
         let (_lineage, status) = create_status(
             lineage_with_remote(PackageLineage::default()),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
@@ -362,15 +573,22 @@ mod tests {
             ..PackageLineage::default()
         });
 
+        let storage = MockStorage::default();
+
         let (_lineage, status) = create_status(
             lineage,
-            &MockStorage::default(),
+            &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
         )
         .await?;
         assert_eq!(status.upstream_state, UpstreamState::Behind);
+        assert_eq!(
+            status.latest_hash, "BBB",
+            "the status names the newer revision it was computed against"
+        );
         Ok(())
     }
 
@@ -386,9 +604,12 @@ mod tests {
             ..PackageLineage::default()
         });
 
+        let storage = MockStorage::default();
+
         let (_, status) = create_status(
             lineage,
-            &MockStorage::default(),
+            &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
@@ -410,9 +631,12 @@ mod tests {
             ..PackageLineage::default()
         });
 
+        let storage = MockStorage::default();
+
         let (_, status) = create_status(
             lineage,
-            &MockStorage::default(),
+            &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
@@ -450,6 +674,7 @@ mod tests {
         let (_, status) = create_status(
             lineage.clone(),
             &storage,
+            &domain_paths(&storage),
             &manifest,
             &working_dir,
             HostConfig::default(),
@@ -463,6 +688,7 @@ mod tests {
         let (_, status) = create_status(
             lineage,
             &storage,
+            &domain_paths(&storage),
             &manifest,
             working_dir,
             HostConfig::default(),
@@ -495,6 +721,7 @@ mod tests {
         let (_, status) = create_status(
             lineage,
             &storage,
+            &domain_paths(&storage),
             &manifest,
             working_dir.clone(),
             HostConfig::default(),
@@ -509,13 +736,81 @@ mod tests {
                 hash: Sha256ChunkedHash::try_from(fixtures::objects::LESS_THAN_8MB_HASH_B64)?
                     .into(),
                 meta: None,
-                physical_key: format!("file://{}", physical_key.display()),
+                physical_key: crate::paths::file_url(&physical_key)?,
             };
             assert!(added_row.matches_content(&reference_row));
             Ok(())
         } else {
             panic!("Expected Change::Added, got {added_file:?}")
         }
+    }
+
+    /// A row's physical key is a proper `file://` URL, as quilt3 writes one
+    /// with `PurePath.as_uri()`: a `#` in the name is encoded, so the key
+    /// reads back to the same file rather than ending at a fragment.
+    #[test(tokio::test)]
+    async fn test_added_file_has_a_file_url_that_reads_back() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("home");
+        let file = working_dir.join("a#1.csv");
+        storage
+            .write_byte_stream(&file, ByteStream::from_static(b"a,b\n"))
+            .await?;
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &domain_paths(&storage),
+            &Manifest::default(),
+            working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        let Some(Change::Added(row)) = status.changes.values().next() else {
+            panic!("expected one added file, got {:?}", status.changes);
+        };
+        let url = url::Url::parse(&row.physical_key)?;
+        assert_eq!(url.fragment(), None, "{}", row.physical_key);
+        assert_eq!(url.to_file_path().ok(), Some(file));
+        Ok(())
+    }
+
+    /// A logical key separates folders with `/` on every OS, though the walk
+    /// finds `\\` on Windows. Compared as text: Windows paths treat both
+    /// separators as one, so a `PathBuf` comparison would pass either way.
+    #[test(tokio::test)]
+    async fn test_added_file_in_a_folder_has_a_slash_key() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("home");
+        storage
+            .write_byte_stream(
+                working_dir.join("data").join("raw").join("a.csv"),
+                ByteStream::from_static(b"a,b\n"),
+            )
+            .await?;
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &domain_paths(&storage),
+            &Manifest::default(),
+            working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        let keys: Vec<&str> = status
+            .changes
+            .keys()
+            .map(|key| key.to_str().expect("UTF-8"))
+            .collect();
+        assert_eq!(keys, ["data/raw/a.csv"]);
+        let Some(Change::Added(row)) = status.changes.values().next() else {
+            panic!("expected one added file, got {:?}", status.changes);
+        };
+        assert_eq!(row.logical_key.to_str(), Some("data/raw/a.csv"));
+        Ok(())
     }
 
     #[test(tokio::test)]
@@ -539,8 +834,15 @@ mod tests {
             host: None,
         };
 
-        let (_, status) =
-            create_status(lineage, &storage, &manifest, working_dir, host_config).await?;
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            working_dir,
+            host_config,
+        )
+        .await?;
 
         let added_file = status.changes.get(&file_path).unwrap();
         if let Change::Added(added_row) = added_file {
@@ -584,6 +886,7 @@ mod tests {
         let (_, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             &working_dir,
             HostConfig::default(),
@@ -618,6 +921,7 @@ mod tests {
         let (_, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             &working_dir,
             HostConfig::default(),
@@ -630,6 +934,44 @@ mod tests {
                 .changes
                 .contains_key(&PathBuf::from("cache/file.txt"))
         );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_quiltignore_directory_recorded_once() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+
+        for path in ["cache/file.txt", "cache/nested/deep.txt", "keep.txt"] {
+            storage
+                .write_byte_stream(working_dir.join(path), ByteStream::from_static(b"x"))
+                .await?;
+        }
+
+        std::fs::write(working_dir.join(".quiltignore"), "cache/\nnested/\n").unwrap();
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &domain_paths(&storage),
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        // `cache/nested` matches a rule too, but the walk never enters `cache`.
+        assert_eq!(
+            status.ignored_dirs,
+            vec![(
+                PathBuf::from("cache"),
+                quiltignore::IgnoredBy {
+                    pattern: "cache/".to_string(),
+                    source: RuleSource::Package { line: 1 },
+                }
+            )]
+        );
+        assert_eq!(status.ignored_files, Vec::new());
         Ok(())
     }
 
@@ -656,6 +998,7 @@ mod tests {
         let (_, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             &working_dir,
             HostConfig::default(),
@@ -694,6 +1037,7 @@ mod tests {
         let (_, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             &working_dir,
             HostConfig::default(),
@@ -702,43 +1046,6 @@ mod tests {
 
         assert!(!status.changes.contains_key(&PathBuf::from("file.tmp")));
         assert!(status.changes.contains_key(&PathBuf::from("file.txt")));
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn test_most_recent_mtime_equals_max_file_mtime() -> Res {
-        let storage = MockStorage::default();
-        let working_dir = storage.temp_dir.as_ref().join("pkg");
-        let path_a = working_dir.join("a.txt");
-        let path_b = working_dir.join("b.txt");
-        storage
-            .write_byte_stream(&path_a, ByteStream::from_static(b"a"))
-            .await?;
-        // Make `b.txt` strictly newer than `a.txt`. The sleep must
-        // exceed the mtime resolution of the underlying filesystem,
-        // otherwise both writes share an mtime and `mtime_a.max(mtime_b)
-        // == mtime_a == mtime_b` — the assertion below would then pass
-        // vacuously even if `most_recent_mtime` returned `min` instead
-        // of `max`. 1.1 s covers HFS+ (1 s); FAT32 (2 s) is left
-        // uncovered — out of scope for CI which runs on ext4 / APFS.
-        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
-        storage
-            .write_byte_stream(&path_b, ByteStream::from_static(b"b"))
-            .await?;
-
-        let (_, status) = create_status(
-            PackageLineage::default(),
-            &storage,
-            &Manifest::default(),
-            &working_dir,
-            HostConfig::default(),
-        )
-        .await?;
-
-        let mtime_a = std::fs::metadata(&path_a)?.modified()?;
-        let mtime_b = std::fs::metadata(&path_b)?.modified()?;
-        let expected = mtime_a.max(mtime_b);
-        assert_eq!(status.most_recent_mtime, Some(expected));
         Ok(())
     }
 
@@ -759,6 +1066,7 @@ mod tests {
         let (_, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             &working_dir,
             HostConfig::default(),
@@ -803,6 +1111,7 @@ mod tests {
         let (_, status) = create_status(
             lineage,
             &storage,
+            &domain_paths(&storage),
             &manifest,
             &working_dir,
             HostConfig::default(),
@@ -816,12 +1125,366 @@ mod tests {
         Ok(())
     }
 
+    /// [`LocalStorage`] that counts the files it opens.
+    #[derive(Default)]
+    struct CountingStorage {
+        inner: crate::io::storage::LocalStorage,
+        opens: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CountingStorage {
+        fn opens(&self) -> usize {
+            self.opens.swap(0, std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl Storage for CountingStorage {
+        async fn copy(
+            &self,
+            from: impl AsRef<Path> + Send,
+            to: impl AsRef<Path> + Send,
+        ) -> Res<u64> {
+            self.inner.copy(from, to).await
+        }
+        async fn create_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.create_dir_all(path).await
+        }
+        async fn create_file(&self, path: impl AsRef<Path>) -> Res<tokio::fs::File> {
+            self.inner.create_file(path).await
+        }
+        async fn exists(&self, path: impl AsRef<Path>) -> bool {
+            self.inner.exists(path).await
+        }
+        async fn is_file(&self, path: impl AsRef<Path>) -> bool {
+            self.inner.is_file(path).await
+        }
+        async fn modified_timestamp(
+            &self,
+            path: impl AsRef<Path>,
+        ) -> Res<chrono::DateTime<chrono::Utc>> {
+            self.inner.modified_timestamp(path).await
+        }
+        async fn open_file(&self, path: impl AsRef<Path> + Send) -> Res<tokio::fs::File> {
+            self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.open_file(path).await
+        }
+        async fn read_byte_stream(&self, path: impl AsRef<Path> + Send + Sync) -> Res<ByteStream> {
+            self.inner.read_byte_stream(path).await
+        }
+        async fn read_dir(&self, path: impl AsRef<Path> + Send + Sync) -> Res<tokio::fs::ReadDir> {
+            self.inner.read_dir(path).await
+        }
+        async fn remove_dir_all(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.remove_dir_all(path).await
+        }
+        async fn remove_file(&self, path: impl AsRef<Path> + Send) -> Result<(), std::io::Error> {
+            self.inner.remove_file(path).await
+        }
+        async fn rename(&self, from: impl AsRef<Path> + Send, to: impl AsRef<Path> + Send) -> Res {
+            self.inner.rename(from, to).await
+        }
+        async fn write_byte_stream(
+            &self,
+            path: impl AsRef<Path> + Send + Sync,
+            body: ByteStream,
+        ) -> Res {
+            self.inner.write_byte_stream(path, body).await
+        }
+        async fn create_private_dir(&self, path: impl AsRef<Path> + Send) -> Res {
+            self.inner.create_private_dir(path).await
+        }
+        async fn write_private_byte_stream(
+            &self,
+            path: impl AsRef<Path> + Send + Sync,
+            body: ByteStream,
+        ) -> Res {
+            self.inner.write_private_byte_stream(path, body).await
+        }
+        async fn lock_exclusive(
+            &self,
+            path: impl AsRef<Path> + Send,
+        ) -> Res<crate::io::storage::LockGuard> {
+            self.inner.lock_exclusive(path).await
+        }
+        async fn try_lock_exclusive(
+            &self,
+            path: impl AsRef<Path> + Send,
+        ) -> Res<Option<crate::io::storage::LockGuard>> {
+            self.inner.try_lock_exclusive(path).await
+        }
+    }
+
+    /// A package home with a committed file `tracked.txt` and a new file
+    /// `new.txt`, both edited an hour ago so no entry is racy.
+    struct CachedPackage {
+        home: tempfile::TempDir,
+        storage: CountingStorage,
+        store: crate::state_store::PackageStateStore,
+        lineage: PackageLineage,
+        manifest: Manifest,
+    }
+
+    const AN_HOUR: std::time::Duration = std::time::Duration::from_secs(3600);
+
+    fn set_modified(path: &Path, at: SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+    }
+
+    impl CachedPackage {
+        async fn new() -> Result<Self, Box<dyn std::error::Error>> {
+            let home = tempfile::TempDir::new()?;
+            std::fs::write(home.path().join("tracked.txt"), b"one")?;
+            std::fs::write(home.path().join("new.txt"), b"new")?;
+            let an_hour_ago = SystemTime::now() - AN_HOUR;
+            set_modified(&home.path().join("tracked.txt"), an_hour_ago);
+            set_modified(&home.path().join("new.txt"), an_hour_ago);
+            let storage = CountingStorage::default();
+            let row = calculate_hash(
+                &storage,
+                &home.path().join("tracked.txt"),
+                Path::new("tracked.txt"),
+                &HostConfig::default(),
+            )
+            .await?;
+            let mut manifest = Manifest::default();
+            manifest.insert_record(row.clone()).await?;
+            let lineage = PackageLineage {
+                paths: BTreeMap::from([(
+                    PathBuf::from("tracked.txt"),
+                    PathState {
+                        hash: row.hash.clone().into(),
+                        ..PathState::default()
+                    },
+                )]),
+                ..PackageLineage::default()
+            };
+            storage.opens();
+            Ok(Self {
+                home,
+                storage,
+                store: crate::state_store::PackageStateStore::in_memory(),
+                lineage,
+                manifest,
+            })
+        }
+
+        fn path(&self, name: &str) -> PathBuf {
+            self.home.path().join(name)
+        }
+
+        /// A domain root with no user-wide rules file.
+        fn domain_paths(&self) -> DomainPaths {
+            DomainPaths::new(self.home.path().join("no-domain"))
+        }
+
+        async fn walk_with(&self, host_config: HostConfig) -> Res<ChangeSet> {
+            let namespace = ("acme", "demo").into();
+            let mut cache = self.store.stat_cache(&namespace).await;
+            let (_, status) = create_status_cached(
+                self.lineage.clone(),
+                &self.storage,
+                &self.domain_paths(),
+                &self.manifest,
+                self.home.path(),
+                host_config,
+                Some(&mut cache),
+            )
+            .await?;
+            self.store.save_stat_cache(&namespace, &cache).await;
+            Ok(status.changes)
+        }
+
+        async fn walk(&self) -> Res<ChangeSet> {
+            self.walk_with(HostConfig::default()).await
+        }
+
+        async fn walk_without_cache(&self) -> Res<ChangeSet> {
+            let (_, status) = create_status(
+                self.lineage.clone(),
+                &self.storage,
+                &self.domain_paths(),
+                &self.manifest,
+                self.home.path(),
+                HostConfig::default(),
+            )
+            .await?;
+            Ok(status.changes)
+        }
+    }
+
+    #[test(tokio::test)]
+    async fn an_unchanged_package_walk_reads_no_file_contents()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package = CachedPackage::new().await?;
+        let first = package.walk().await?;
+        assert_eq!(package.storage.opens(), 2, "the first walk hashes both");
+        let second = package.walk().await?;
+        assert_eq!(package.storage.opens(), 0);
+        assert_eq!(first, second);
+        assert_eq!(second, package.walk_without_cache().await?);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_missing_cache_gives_the_same_changes() -> Result<(), Box<dyn std::error::Error>> {
+        let package = CachedPackage::new().await?;
+        std::fs::write(package.path("tracked.txt"), b"two")?;
+        let cached = package.walk().await?;
+        let uncached = package.walk_without_cache().await?;
+        assert_eq!(cached, uncached);
+        assert!(matches!(
+            cached.get(Path::new("tracked.txt")),
+            Some(Change::Modified(_))
+        ));
+        assert!(matches!(
+            cached.get(Path::new("new.txt")),
+            Some(Change::Added(_))
+        ));
+        Ok(())
+    }
+
+    /// `touch -r` and `cp -p` over a file: new content, same size, the old
+    /// edit time put back.
+    #[test(tokio::test)]
+    async fn new_content_with_the_edit_time_restored_is_seen()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package = CachedPackage::new().await?;
+        assert!(!package.walk().await?.contains_key(Path::new("tracked.txt")));
+        let path = package.path("tracked.txt");
+        let old = std::fs::metadata(&path)?.modified()?;
+        // A change time is never older than the one before it, but it can be
+        // the same tick on a coarse clock.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&path, b"two")?;
+        set_modified(&path, old);
+        assert_eq!(std::fs::metadata(&path)?.modified()?, old);
+
+        let changes = package.walk().await?;
+        assert!(
+            matches!(
+                changes.get(Path::new("tracked.txt")),
+                Some(Change::Modified(_))
+            ),
+            "{changes:?}"
+        );
+        assert_eq!(changes, package.walk_without_cache().await?);
+        Ok(())
+    }
+
+    /// `rsync -a`: new content written beside the file, its edit time set to
+    /// the old one, then renamed over it.
+    #[test(tokio::test)]
+    async fn a_file_replaced_with_the_edit_time_restored_is_seen()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package = CachedPackage::new().await?;
+        package.walk().await?;
+        let path = package.path("new.txt");
+        let old = std::fs::metadata(&path)?.modified()?;
+        let beside = package.path(".new.txt.tmp");
+        std::fs::write(&beside, b"NEW")?;
+        set_modified(&beside, old);
+        std::fs::rename(&beside, &path)?;
+
+        let changes = package.walk().await?;
+        assert_eq!(changes, package.walk_without_cache().await?);
+        let Some(Change::Added(row)) = changes.get(Path::new("new.txt")) else {
+            panic!("{changes:?}");
+        };
+        let (fresh, _) = hash_file(&package.storage, &path, row.hash.algorithm()).await?;
+        assert_eq!(row.hash, fresh);
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn a_file_edited_in_the_second_it_was_walked_is_hashed_again()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package = CachedPackage::new().await?;
+        set_modified(&package.path("new.txt"), SystemTime::now() + AN_HOUR);
+        package.walk().await?;
+        package.storage.opens();
+        package.walk().await?;
+        assert_eq!(package.storage.opens(), 1, "only the racy file");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn another_host_algorithm_hashes_again() -> Result<(), Box<dyn std::error::Error>> {
+        let package = CachedPackage::new().await?;
+        package.walk().await?;
+        package.storage.opens();
+        let crc64 = HostConfig {
+            checksums: HostChecksums::Crc64,
+            host: None,
+        };
+        let changes = package.walk_with(crc64).await?;
+        assert_eq!(package.storage.opens(), 1, "the new file, for its row");
+        let Some(Change::Added(row)) = changes.get(Path::new("new.txt")) else {
+            panic!("{changes:?}");
+        };
+        assert_eq!(
+            row.hash.algorithm(),
+            crate::object_hash::MULTIHASH_CRC64_NVME
+        );
+        Ok(())
+    }
+
+    /// A folder that lists but can't be searched: its files are there, so the
+    /// walk fails rather than call them removed.
+    #[cfg(unix)]
+    #[test(tokio::test)]
+    async fn a_folder_that_lists_but_cant_be_stamped_is_an_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+        let package = CachedPackage::new().await?;
+        let sub = package.path("sub");
+        std::fs::create_dir(&sub)?;
+        std::fs::write(sub.join("inside.txt"), b"x")?;
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o444))?;
+        let walked = package.walk_without_cache().await;
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755))?;
+        assert!(walked.is_err(), "{walked:?}");
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn rehash_changes_corrects_a_stale_hash() -> Result<(), Box<dyn std::error::Error>> {
+        let package = CachedPackage::new().await?;
+        let (_, mut status) = create_status(
+            package.lineage.clone(),
+            &package.storage,
+            &package.domain_paths(),
+            &package.manifest,
+            package.home.path(),
+            HostConfig::default(),
+        )
+        .await?;
+        std::fs::write(package.path("new.txt"), b"changed after the walk")?;
+        let stale = status.changes.clone();
+        status = rehash_changes(
+            &package.storage,
+            &package.manifest,
+            package.home.path(),
+            status,
+            &HostConfig::default(),
+        )
+        .await?;
+        assert_ne!(stale, status.changes);
+        assert_eq!(status.changes, package.walk_without_cache().await?);
+        Ok(())
+    }
+
     #[test(tokio::test)]
     async fn test_local_status() -> Res {
         let storage = MockStorage::default();
         let (lineage, status) = create_status(
             PackageLineage::default(),
             &storage,
+            &domain_paths(&storage),
             &Manifest::default(),
             PathBuf::default(),
             HostConfig::default(),
@@ -830,6 +1493,229 @@ mod tests {
         assert_eq!(status.upstream_state, UpstreamState::Local);
         assert!(status.changes.is_empty());
         assert!(lineage.remote_uri.is_none());
+        Ok(())
+    }
+
+    async fn write_files(storage: &MockStorage, dir: &Path, names: &[&str]) -> Res {
+        for name in names {
+            storage
+                .write_byte_stream(dir.join(name), ByteStream::from_static(b"x"))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// A lineage and manifest that track the given files exactly as they are on disk.
+    async fn track_files(
+        storage: &MockStorage,
+        dir: &Path,
+        names: &[&str],
+    ) -> Res<(PackageLineage, Manifest)> {
+        let mut lineage = PackageLineage::default();
+        let mut manifest = Manifest::default();
+        for name in names {
+            let row = calculate_hash(
+                storage,
+                &dir.join(name),
+                Path::new(name),
+                &HostConfig::default(),
+            )
+            .await?;
+            lineage.paths.insert(
+                PathBuf::from(name),
+                PathState {
+                    hash: row.hash.clone().into(),
+                    ..PathState::default()
+                },
+            );
+            manifest.rows.push(row);
+        }
+        Ok((lineage, manifest))
+    }
+
+    fn ignored_source(status: &InstalledPackageStatus, path: &str) -> Option<RuleSource> {
+        status
+            .ignored_files
+            .iter()
+            .find(|(key, _, _)| key == Path::new(path))
+            .map(|(_, ignored_by, _)| ignored_by.source.clone())
+    }
+
+    #[test(tokio::test)]
+    async fn test_defaults_ignore_new_clutter_but_keep_zarr_metadata() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+        write_files(
+            &storage,
+            &working_dir,
+            &[
+                ".DS_Store",
+                ".env",
+                ".git/config",
+                ".venv/bin/python",
+                ".zattrs",
+                ".zarray",
+                ".zgroup",
+                "img.zarr/0/.zarray",
+                "data.csv",
+            ],
+        )
+        .await?;
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &domain_paths(&storage),
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        let changes: Vec<&Path> = status.changes.keys().map(PathBuf::as_path).collect();
+        assert_eq!(
+            changes,
+            [
+                ".zarray",
+                ".zattrs",
+                ".zgroup",
+                "data.csv",
+                "img.zarr/0/.zarray"
+            ]
+            .map(Path::new)
+            .to_vec()
+        );
+        assert_eq!(
+            ignored_source(&status, ".DS_Store"),
+            Some(RuleSource::Default)
+        );
+        assert_eq!(ignored_source(&status, ".env"), Some(RuleSource::Default));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_defaults_leave_tracked_files_alone() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+        write_files(&storage, &working_dir, &[".DS_Store", ".git/config"]).await?;
+        let (lineage, manifest) =
+            track_files(&storage, &working_dir, &[".DS_Store", ".git/config"]).await?;
+        write_files(&storage, &working_dir, &[".git/HEAD"]).await?;
+
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &domain_paths(&storage),
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert!(status.changes.is_empty(), "{:?}", status.changes);
+        assert_eq!(ignored_source(&status, ".DS_Store"), None);
+        assert_eq!(ignored_source(&status, ".git/config"), None);
+        assert_eq!(
+            ignored_source(&status, ".git/HEAD"),
+            Some(RuleSource::Default)
+        );
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_user_rules_apply_to_new_files_only() -> Res {
+        let storage = MockStorage::default();
+        let paths = domain_paths(&storage);
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+        write_files(&storage, &working_dir, &["kept.tmp", "new.tmp", ".env"]).await?;
+        let (lineage, manifest) = track_files(&storage, &working_dir, &["kept.tmp"]).await?;
+        std::fs::create_dir_all(paths.user_quiltignore().parent().unwrap())?;
+        std::fs::write(paths.user_quiltignore(), "# mine\n*.tmp\n!.env\n")?;
+
+        let (_, status) = create_status(
+            lineage,
+            &storage,
+            &paths,
+            &manifest,
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert_eq!(
+            ignored_source(&status, "new.tmp"),
+            Some(RuleSource::User {
+                path: paths.user_quiltignore(),
+                line: 2,
+            })
+        );
+        assert_eq!(ignored_source(&status, "kept.tmp"), None);
+        assert!(!status.changes.contains_key(Path::new("kept.tmp")));
+        assert!(matches!(
+            status.changes.get(Path::new(".env")),
+            Some(Change::Added(_))
+        ));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_package_rule_wins_over_user_rule() -> Res {
+        let storage = MockStorage::default();
+        let paths = domain_paths(&storage);
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+        write_files(&storage, &working_dir, &["a.tmp"]).await?;
+        std::fs::write(working_dir.join(".quiltignore"), "*.log\na.tmp\n")?;
+        std::fs::create_dir_all(paths.user_quiltignore().parent().unwrap())?;
+        std::fs::write(paths.user_quiltignore(), "*.tmp\n")?;
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &paths,
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        let (_, ignored_by, _) = &status.ignored_files[0];
+        assert_eq!(ignored_by.pattern, "a.tmp");
+        assert_eq!(ignored_by.source, RuleSource::Package { line: 2 });
+        assert!(status.changes.contains_key(Path::new(".quiltignore")));
+        Ok(())
+    }
+
+    #[test(tokio::test)]
+    async fn test_folder_brought_back_keeps_its_clutter_out() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = storage.temp_dir.as_ref().join("pkg");
+        write_files(
+            &storage,
+            &working_dir,
+            &[".snakemake/x/log.txt", ".snakemake/x/.DS_Store"],
+        )
+        .await?;
+        std::fs::write(working_dir.join(".quiltignore"), "!/.snakemake/\n")?;
+
+        let (_, status) = create_status(
+            PackageLineage::default(),
+            &storage,
+            &domain_paths(&storage),
+            &Manifest::default(),
+            &working_dir,
+            HostConfig::default(),
+        )
+        .await?;
+
+        assert!(
+            status
+                .changes
+                .contains_key(Path::new(".snakemake/x/log.txt"))
+        );
+        assert_eq!(
+            ignored_source(&status, ".snakemake/x/.DS_Store"),
+            Some(RuleSource::Default)
+        );
         Ok(())
     }
 }

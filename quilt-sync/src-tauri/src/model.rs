@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use mockall::automock;
@@ -13,7 +13,6 @@ use crate::quilt;
 use crate::telemetry::prelude::*;
 
 use quilt_rs::RoleInfo;
-use quilt_rs::flow::PullOutcome;
 use quilt_rs::flow::UserMeta;
 use quilt_rs::io::remote::HostConfig;
 use quilt_rs::io::remote::WorkflowIntent;
@@ -60,9 +59,123 @@ pub struct Model {
     clippy::unused_async_trait_impl,
     reason = "mockall's generated `MockQuiltModel` impl returns canned values without awaiting; the lint fires on the expansion, not on the trait's own default bodies, which do await."
 )]
-#[automock]
+#[automock(type Locked = quilt_uri::Namespace;)]
 pub trait QuiltModel {
+    /// A package with its lock held, as the autopull tick holds it across one
+    /// package's refresh: [`quilt::LockedPackage`] for the real model. The
+    /// mock's is the package's namespace, so a tick test routes on the
+    /// outcomes it mocks without taking a real lock.
+    type Locked: LockedOps;
+
     fn get_quilt(&self) -> &sync::Mutex<quilt::LocalDomain>;
+
+    /// Takes `package`'s lock if no other writer holds it, in this process or
+    /// another; `None` while one does. Never waits.
+    async fn try_lock_package(
+        &self,
+        package: &quilt::InstalledPackage,
+    ) -> Result<Option<Self::Locked>, Error> {
+        Self::Locked::try_lock(package).await
+    }
+
+    /// Takes `package`'s lock, waiting while another writer holds it, in this
+    /// process or another. A writer that reports its work in flight takes this
+    /// first and reports only once it holds the lock: while it waits it has
+    /// written nothing.
+    async fn lock_package(&self, package: &quilt::InstalledPackage) -> Result<Self::Locked, Error> {
+        Self::Locked::lock(package).await
+    }
+
+    /// [`Self::get_installed_package_status`], under the held lock.
+    async fn locked_package_status(
+        &self,
+        package: &Self::Locked,
+        host_config: Option<HostConfig>,
+    ) -> Result<quilt::lineage::InstalledPackageStatus, Error> {
+        package.status(host_config).await
+    }
+
+    /// [`Self::locked_package_status`] from an earlier walk, with no walk:
+    /// `None` when the lineage is no longer the walked one.
+    async fn locked_package_status_from_walk(
+        &self,
+        package: &Self::Locked,
+        walked_lineage: &quilt::lineage::PackageLineage,
+        walked: quilt::lineage::InstalledPackageStatus,
+    ) -> Result<Option<quilt::lineage::InstalledPackageStatus>, Error> {
+        package.status_from_walk(walked_lineage, walked).await
+    }
+
+    /// Dry-run classifier, under the held lock: what would a pull do right
+    /// now? Delegates to the engine's [`quilt::LockedPackage::pull_outcome`];
+    /// wrapping it on the trait lets the command route on the verdict
+    /// through a `MockQuiltModel` in unit tests without hitting real storage.
+    async fn locked_package_pull_outcome(
+        &self,
+        package: &Self::Locked,
+    ) -> Result<quilt::flow::PullPreview, Error> {
+        package.pull_outcome().await
+    }
+
+    /// [`Self::locked_package_pull_outcome`]'s verdict alone, without the
+    /// incoming paths: for the autopull tick, which routes on the verdict and
+    /// runs it on every package each tick.
+    async fn locked_package_pull_verdict(
+        &self,
+        package: &Self::Locked,
+    ) -> Result<quilt::flow::PullOutcome, Error> {
+        package.pull_verdict().await
+    }
+
+    /// Pull the package on the held lock. `scope` is the package's stored
+    /// choice, which both callers (a user's button, the autopull tick) read
+    /// from the lineage and pass, so a mocked model can drive either path.
+    async fn locked_package_pull(
+        &self,
+        package: &Self::Locked,
+        host_config: Option<HostConfig>,
+        scope: SyncScope,
+    ) -> Result<quilt::flow::Pulled, Error> {
+        package.pull(host_config, scope).await
+    }
+
+    /// [`Self::package_install_paths`] on the held lock.
+    async fn locked_package_install_paths(
+        &self,
+        package: &Self::Locked,
+        paths: &[PathBuf],
+    ) -> Result<quilt::flow::InstallPathsReport, Error> {
+        package.install_paths(paths).await
+    }
+
+    /// Reset the package to its remote's latest revision, on the held lock.
+    async fn locked_package_reset_local(
+        &self,
+        package: &Self::Locked,
+    ) -> Result<quilt_uri::ManifestUri, Error> {
+        package.reset_to_latest().await
+    }
+
+    /// [`Self::package_push`] on the held lock.
+    async fn locked_package_push(&self, package: &Self::Locked) -> Result<quilt::Pushed, Error> {
+        package.push().await
+    }
+
+    /// [`Self::package_publish`] on the held lock. `status` is one walked on
+    /// the same lock, so the publish reuses it instead of walking again.
+    async fn locked_package_publish(
+        &self,
+        package: &Self::Locked,
+        message: String,
+        metadata: UserMeta,
+        workflow: Option<quilt::manifest::Workflow>,
+        host_config: Option<HostConfig>,
+        status: Option<quilt::lineage::InstalledPackageStatus>,
+    ) -> Result<quilt::PublishOutcome, Error> {
+        package
+            .publish(message, metadata, workflow, host_config, status)
+            .await
+    }
 
     async fn browse_remote_manifest(
         &self,
@@ -104,6 +217,89 @@ pub trait QuiltModel {
         Ok(package.lineage().await?)
     }
 
+    async fn get_installed_package_current_revision(
+        &self,
+        package: &quilt::InstalledPackage,
+        lineage: &quilt::lineage::PackageLineage,
+    ) -> Result<Option<quilt::flow::Revision>, Error> {
+        Ok(package.current_revision(lineage).await?)
+    }
+
+    async fn get_installed_package_revision_count(
+        &self,
+        package: &quilt::InstalledPackage,
+    ) -> Result<usize, Error> {
+        Ok(package.revision_count().await?)
+    }
+
+    async fn get_installed_package_revision_history(
+        &self,
+        package: &quilt::InstalledPackage,
+        lineage: &quilt::lineage::PackageLineage,
+    ) -> Result<Vec<quilt::flow::HistoryEntry>, Error> {
+        Ok(package.revision_history(lineage).await?)
+    }
+
+    /// Which objects each revision uses that nothing else does: what the
+    /// popover's rows and footer say removing them frees.
+    async fn get_installed_package_revision_usage(
+        &self,
+        package: &quilt::InstalledPackage,
+    ) -> Result<quilt::flow::RevisionUsage, Error> {
+        Ok(package.revision_usage().await?)
+    }
+
+    /// Remove old revisions of `package` and the objects only they used. It
+    /// takes the package's own lock, and refuses while another writer holds it.
+    async fn package_remove_revisions(
+        &self,
+        package: &quilt::InstalledPackage,
+        hashes: &BTreeSet<String>,
+    ) -> Result<quilt::flow::RemovalReport, Error> {
+        Ok(package.remove_revisions(hashes).await?)
+    }
+
+    /// The logical keys of the manifest `lineage` selects, each with the size
+    /// its row records — the same snapshot the rest of the page read uses, so
+    /// a pull landing mid-read cannot pair one revision's keys with another's
+    /// tracked paths. The sizes are the manifest's, not a stat of the files.
+    /// Beside them, the untracked paths the scope covers that already have a
+    /// file here ([`quilt::InstalledPackage::untracked_on_disk`]).
+    async fn get_installed_package_sizes(
+        &self,
+        package: &quilt::InstalledPackage,
+        lineage: &quilt::lineage::PackageLineage,
+    ) -> Result<(BTreeMap<PathBuf, u64>, BTreeSet<PathBuf>), Error> {
+        let manifest = package.manifest_from_lineage(lineage).await?;
+        let on_disk = package
+            .untracked_on_disk(&package.package_home().await?, lineage, &manifest)
+            .await;
+        let sizes = manifest
+            .rows
+            .into_iter()
+            .map(|row| (row.logical_key, row.size))
+            .collect();
+        Ok((sizes, on_disk))
+    }
+
+    /// The manifest `lineage` selects, header and rows.
+    async fn get_installed_package_manifest(
+        &self,
+        package: &quilt::InstalledPackage,
+        lineage: &quilt::lineage::PackageLineage,
+    ) -> Result<quilt::manifest::Manifest, Error> {
+        Ok(package.manifest_from_lineage(lineage).await?)
+    }
+
+    /// This copy's revision against the published `latest`, read fresh.
+    async fn get_installed_package_resolve_comparison(
+        &self,
+        package: &quilt::InstalledPackage,
+        lineage: &quilt::lineage::PackageLineage,
+    ) -> Result<quilt::flow::ResolveComparison, Error> {
+        Ok(package.resolve_comparison(lineage).await?)
+    }
+
     async fn get_installed_package_records(
         &self,
         package: &quilt::InstalledPackage,
@@ -129,6 +325,22 @@ pub trait QuiltModel {
         Ok(package.status(host_config).await?)
     }
 
+    /// [`Self::get_installed_package_status`] and how much of the current
+    /// revision this copy holds, from the same manifest read and walk.
+    async fn get_installed_package_status_with_downloads(
+        &self,
+        package: &quilt::InstalledPackage,
+        host_config: Option<HostConfig>,
+    ) -> Result<
+        (
+            quilt::lineage::InstalledPackageStatus,
+            quilt::lineage::DownloadCounts,
+        ),
+        Error,
+    > {
+        Ok(package.status_with_downloads(host_config).await?)
+    }
+
     async fn recompute_local_status(
         &self,
         package: &quilt::InstalledPackage,
@@ -144,7 +356,7 @@ pub trait QuiltModel {
         metadata: UserMeta,
         workflow: Option<quilt::manifest::Workflow>,
         host_config: Option<HostConfig>,
-    ) -> Result<quilt::lineage::CommitState, Error> {
+    ) -> Result<quilt::flow::Committed, Error> {
         Ok(package
             .commit(message, metadata, workflow, host_config)
             .await?)
@@ -154,27 +366,12 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         paths: &[PathBuf],
-    ) -> Result<quilt::lineage::LineagePaths, Error> {
+    ) -> Result<quilt::flow::InstallPathsReport, Error> {
         Ok(package.install_paths(paths).await?)
     }
 
-    /// `scope` is resolved by the caller through
-    /// [`resolve_sync_scope`](crate::experimental_settings::resolve_sync_scope)
-    /// — the package's stored choice, honoured only while the experiment is on.
-    /// It is a parameter rather than something read in here so the two paths
-    /// that pull (a user's button, the autopull tick) resolve it the same way
-    /// and a mocked model can drive either.
-    async fn package_pull(
-        &self,
-        package: &quilt::InstalledPackage,
-        host_config: Option<HostConfig>,
-        scope: SyncScope,
-    ) -> Result<quilt_uri::ManifestUri, Error> {
-        Ok(package.pull(host_config, scope).await?)
-    }
-
-    /// Persist a package's standing [`SyncScope`]. Storage only — what a pull
-    /// actually does with it still goes through `resolve_sync_scope`.
+    /// Persist a package's standing [`SyncScope`]. Storage only — the next
+    /// pull, by hand or by the tick, applies it.
     async fn package_set_sync_scope(
         &self,
         package: &quilt::InstalledPackage,
@@ -182,17 +379,6 @@ pub trait QuiltModel {
     ) -> Result<(), Error> {
         package.set_sync_scope(scope).await?;
         Ok(())
-    }
-
-    /// Dry-run classifier: what would `package_pull` do right now? Delegates
-    /// to the engine's [`InstalledPackage::pull_outcome`]; wrapping it on the
-    /// trait lets the autosync tick route on the [`PullOutcome`] through a
-    /// `MockQuiltModel` in unit tests without hitting real storage.
-    async fn package_pull_outcome(
-        &self,
-        package: &quilt::InstalledPackage,
-    ) -> Result<PullOutcome, Error> {
-        Ok(package.pull_outcome(None).await?)
     }
 
     async fn is_package_installed(
@@ -232,7 +418,7 @@ pub trait QuiltModel {
         &self,
         package: &quilt::InstalledPackage,
         host_config: Option<HostConfig>,
-    ) -> Result<quilt::PushOutcome, Error> {
+    ) -> Result<quilt::Pushed, Error> {
         Ok(package.push(host_config).await?)
     }
 
@@ -243,10 +429,9 @@ pub trait QuiltModel {
         metadata: UserMeta,
         workflow: Option<quilt::manifest::Workflow>,
         host_config: Option<HostConfig>,
-        status: Option<quilt::lineage::InstalledPackageStatus>,
     ) -> Result<quilt::PublishOutcome, Error> {
         Ok(package
-            .publish(message, metadata, workflow, host_config, status)
+            .publish(message, metadata, workflow, host_config)
             .await?)
     }
 
@@ -307,11 +492,17 @@ pub trait QuiltModel {
         Ok(package.certify_latest().await?)
     }
 
-    async fn package_revision_reset_local(
+    /// Undo the package's newest local commit.
+    ///
+    /// The engine refuses four ways: no pending commit, no parent to step back
+    /// to, a remote of any kind, and a working tree holding uncommitted edits.
+    /// The surface gates on the first three from the page payload; the fourth is
+    /// transient and comes back as a message.
+    async fn package_undo_commit(
         &self,
         package: &quilt::InstalledPackage,
-    ) -> Result<quilt_uri::ManifestUri, Error> {
-        Ok(package.reset_to_latest().await?)
+    ) -> Result<quilt::lineage::CommitState, Error> {
+        Ok(package.undo_commit().await?)
     }
 
     /// Set the package's remote, returning `Some(reason)` when the bucket's
@@ -320,14 +511,24 @@ pub trait QuiltModel {
     async fn set_remote(
         &self,
         package: &quilt::InstalledPackage,
-        origin: quilt_uri::Host,
+        origin: Option<quilt_uri::Host>,
         bucket: String,
         workflow: WorkflowIntent,
     ) -> Result<Option<String>, Error> {
         Ok(package
-            .set_remote(bucket, Some(origin), workflow)
+            .set_remote(bucket, origin, workflow)
             .await?
             .resolution_warning)
+    }
+
+    /// Replace only the catalog of the package's remote, keeping its bucket,
+    /// remote hash and commits.
+    async fn change_catalog(
+        &self,
+        package: &quilt::InstalledPackage,
+        origin: Option<quilt_uri::Host>,
+    ) -> Result<quilt_uri::ManifestUri, Error> {
+        Ok(package.change_catalog(origin).await?)
     }
 
     async fn package_create(
@@ -335,34 +536,51 @@ pub trait QuiltModel {
         namespace: quilt_uri::Namespace,
         source: Option<PathBuf>,
         message: Option<String>,
-    ) -> Result<quilt::InstalledPackage, Error> {
-        Ok(self
-            .get_quilt()
-            .lock()
-            .await
-            .create_package(namespace, source, message)
-            .await?)
+    ) -> Result<(quilt::InstalledPackage, quilt::flow::LeftOut), Error> {
+        // On a clone, with the domain mutex released: the create waits on the
+        // package's lock, and every other command needs the mutex meanwhile.
+        let quilt = self.get_quilt().lock().await.clone();
+        Ok(quilt.create_package(namespace, source, message).await?)
     }
 
     async fn package_install(
         &self,
         remote_manifest: &quilt_uri::ManifestUri,
     ) -> Result<quilt::InstalledPackage, Error> {
-        Ok(self
-            .get_quilt()
-            .lock()
-            .await
-            .install_package(remote_manifest)
-            .await?)
+        // See `package_create`: the install waits on the package's lock.
+        let quilt = self.get_quilt().lock().await.clone();
+        Ok(quilt.install_package(remote_manifest).await?)
     }
 
-    async fn package_uninstall(&self, namespace: quilt_uri::Namespace) -> Result<(), Error> {
-        Ok(self
-            .get_quilt()
-            .lock()
-            .await
-            .uninstall_package(namespace)
-            .await?)
+    /// With `prune`, also deletes the package's objects no other installed
+    /// package uses, and says what that freed.
+    async fn package_uninstall(
+        &self,
+        namespace: quilt_uri::Namespace,
+        prune: bool,
+    ) -> Result<Option<quilt::flow::Pruned>, Error> {
+        // See `package_create`: an uninstall during the package's download
+        // waits for it, and must not hold every other package up meanwhile.
+        let quilt = self.get_quilt().lock().await.clone();
+        if prune {
+            return Ok(Some(quilt.uninstall_package_pruning(namespace).await?));
+        }
+        quilt.uninstall_package(namespace).await?;
+        Ok(None)
+    }
+
+    async fn gc(&self) -> Result<quilt::flow::GcReport, Error> {
+        // See `package_create`: the sweep reads every installed manifest and
+        // deletes what none of them uses, and other commands must not wait.
+        let quilt = self.get_quilt().lock().await.clone();
+        Ok(quilt.gc().await?)
+    }
+
+    async fn measure_storage(&self) -> Result<quilt::flow::StorageSize, Error> {
+        // See `package_create`: the walk reads every installed manifest and
+        // other commands must not wait on it.
+        let quilt = self.get_quilt().lock().await.clone();
+        Ok(quilt.measure_storage().await?)
     }
 
     async fn package_home(&self, namespace: &quilt_uri::Namespace) -> Result<PathBuf, Error> {
@@ -500,15 +718,220 @@ pub trait QuiltModel {
 }
 
 impl QuiltModel for Model {
+    type Locked = quilt::LockedPackage;
+
     fn get_quilt(&self) -> &sync::Mutex<quilt::LocalDomain> {
         &self.quilt
     }
 }
 
+/// What [`QuiltModel`]'s `locked_package_*` defaults do with a held lock:
+/// the [`quilt::LockedPackage`] calls, behind a trait so the mock can hold a
+/// namespace instead.
+pub trait LockedOps: Send + Sync + Sized {
+    async fn try_lock(package: &quilt::InstalledPackage) -> Result<Option<Self>, Error>;
+
+    async fn lock(package: &quilt::InstalledPackage) -> Result<Self, Error>;
+
+    async fn status(
+        &self,
+        host_config: Option<HostConfig>,
+    ) -> Result<quilt::lineage::InstalledPackageStatus, Error>;
+
+    async fn status_from_walk(
+        &self,
+        walked_lineage: &quilt::lineage::PackageLineage,
+        walked: quilt::lineage::InstalledPackageStatus,
+    ) -> Result<Option<quilt::lineage::InstalledPackageStatus>, Error>;
+
+    async fn pull_outcome(&self) -> Result<quilt::flow::PullPreview, Error>;
+
+    async fn pull_verdict(&self) -> Result<quilt::flow::PullOutcome, Error>;
+
+    async fn pull(
+        &self,
+        host_config: Option<HostConfig>,
+        scope: SyncScope,
+    ) -> Result<quilt::flow::Pulled, Error>;
+
+    async fn install_paths(
+        &self,
+        paths: &[PathBuf],
+    ) -> Result<quilt::flow::InstallPathsReport, Error>;
+
+    async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error>;
+
+    async fn push(&self) -> Result<quilt::Pushed, Error>;
+
+    async fn publish(
+        &self,
+        message: String,
+        metadata: UserMeta,
+        workflow: Option<quilt::manifest::Workflow>,
+        host_config: Option<HostConfig>,
+        status: Option<quilt::lineage::InstalledPackageStatus>,
+    ) -> Result<quilt::PublishOutcome, Error>;
+}
+
+impl LockedOps for quilt::LockedPackage {
+    async fn try_lock(package: &quilt::InstalledPackage) -> Result<Option<Self>, Error> {
+        Ok(package.try_lock().await?)
+    }
+
+    async fn lock(package: &quilt::InstalledPackage) -> Result<Self, Error> {
+        Ok(package.lock().await?)
+    }
+
+    async fn status(
+        &self,
+        host_config: Option<HostConfig>,
+    ) -> Result<quilt::lineage::InstalledPackageStatus, Error> {
+        Ok(quilt::LockedPackage::status(self, host_config).await?)
+    }
+
+    async fn status_from_walk(
+        &self,
+        walked_lineage: &quilt::lineage::PackageLineage,
+        walked: quilt::lineage::InstalledPackageStatus,
+    ) -> Result<Option<quilt::lineage::InstalledPackageStatus>, Error> {
+        Ok(quilt::LockedPackage::status_from_walk(self, walked_lineage, walked).await?)
+    }
+
+    async fn pull_outcome(&self) -> Result<quilt::flow::PullPreview, Error> {
+        Ok(quilt::LockedPackage::pull_outcome(self, None).await?)
+    }
+
+    async fn pull_verdict(&self) -> Result<quilt::flow::PullOutcome, Error> {
+        Ok(quilt::LockedPackage::pull_verdict(self, None).await?)
+    }
+
+    async fn pull(
+        &self,
+        host_config: Option<HostConfig>,
+        scope: SyncScope,
+    ) -> Result<quilt::flow::Pulled, Error> {
+        Ok(quilt::LockedPackage::pull(self, host_config, scope).await?)
+    }
+
+    async fn install_paths(
+        &self,
+        paths: &[PathBuf],
+    ) -> Result<quilt::flow::InstallPathsReport, Error> {
+        Ok(quilt::LockedPackage::install_paths(self, paths).await?)
+    }
+
+    async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error> {
+        Ok(quilt::LockedPackage::reset_to_latest(self).await?)
+    }
+
+    async fn push(&self) -> Result<quilt::Pushed, Error> {
+        Ok(quilt::LockedPackage::push(self, None).await?)
+    }
+
+    async fn publish(
+        &self,
+        message: String,
+        metadata: UserMeta,
+        workflow: Option<quilt::manifest::Workflow>,
+        host_config: Option<HostConfig>,
+        status: Option<quilt::lineage::InstalledPackageStatus>,
+    ) -> Result<quilt::PublishOutcome, Error> {
+        Ok(
+            quilt::LockedPackage::publish(self, message, metadata, workflow, host_config, status)
+                .await?,
+        )
+    }
+}
+
+/// The mock's lock: the namespace it stands for. It never takes a real one,
+/// since a mocked model routes on the `locked_package_*` outcomes a test
+/// sets, never on these defaults. Not test-only, because `MockQuiltModel` is
+/// generated in every build.
+#[allow(
+    clippy::unused_async_trait_impl,
+    reason = "every body is `unreachable!`; the trait's methods are async"
+)]
+impl LockedOps for quilt_uri::Namespace {
+    async fn try_lock(_: &quilt::InstalledPackage) -> Result<Option<Self>, Error> {
+        unreachable!("a mocked model sets its own try-lock outcome")
+    }
+
+    async fn lock(_: &quilt::InstalledPackage) -> Result<Self, Error> {
+        unreachable!("a mocked model sets its own lock")
+    }
+
+    async fn status(
+        &self,
+        _: Option<HostConfig>,
+    ) -> Result<quilt::lineage::InstalledPackageStatus, Error> {
+        unreachable!("a mocked model sets its own status")
+    }
+
+    async fn status_from_walk(
+        &self,
+        _: &quilt::lineage::PackageLineage,
+        _: quilt::lineage::InstalledPackageStatus,
+    ) -> Result<Option<quilt::lineage::InstalledPackageStatus>, Error> {
+        unreachable!("a mocked model sets its own status")
+    }
+
+    async fn pull_outcome(&self) -> Result<quilt::flow::PullPreview, Error> {
+        unreachable!("a mocked model sets its own pull outcome")
+    }
+
+    async fn pull_verdict(&self) -> Result<quilt::flow::PullOutcome, Error> {
+        unreachable!("a mocked model sets its own pull verdict")
+    }
+
+    async fn pull(
+        &self,
+        _: Option<HostConfig>,
+        _: SyncScope,
+    ) -> Result<quilt::flow::Pulled, Error> {
+        unreachable!("a mocked model sets its own pull")
+    }
+
+    async fn install_paths(&self, _: &[PathBuf]) -> Result<quilt::flow::InstallPathsReport, Error> {
+        unreachable!("a mocked model sets its own install")
+    }
+
+    async fn reset_to_latest(&self) -> Result<quilt_uri::ManifestUri, Error> {
+        unreachable!("a mocked model sets its own reset")
+    }
+
+    async fn push(&self) -> Result<quilt::Pushed, Error> {
+        unreachable!("a mocked model sets its own push")
+    }
+
+    async fn publish(
+        &self,
+        _: String,
+        _: UserMeta,
+        _: Option<quilt::manifest::Workflow>,
+        _: Option<HostConfig>,
+        _: Option<quilt::lineage::InstalledPackageStatus>,
+    ) -> Result<quilt::PublishOutcome, Error> {
+        unreachable!("a mocked model sets its own publish")
+    }
+}
+
 impl Model {
+    #[cfg(test)]
     pub fn create(data_dir: impl AsRef<Path>) -> Self {
         debug!("Root directory is {:?}", data_dir.as_ref());
         let quilt = quilt::LocalDomain::new(data_dir);
+        Model {
+            quilt: sync::Mutex::new(quilt),
+        }
+    }
+
+    /// [`Self::create`], with the packages' walks using `store`'s stat cache.
+    pub fn create_with_state_store(
+        data_dir: impl AsRef<Path>,
+        store: std::sync::Arc<quilt::state_store::PackageStateStore>,
+    ) -> Self {
+        debug!("Root directory is {:?}", data_dir.as_ref());
+        let quilt = quilt::LocalDomain::new(data_dir).with_state_store(store);
         Model {
             quilt: sync::Mutex::new(quilt),
         }
@@ -565,10 +988,10 @@ pub mod mocks;
 /// the call is guaranteed to suspend.
 #[cfg(test)]
 mod domain_lock_tests {
+    use quilt_uri::fixtures;
     use std::future::Future;
     use std::future::poll_fn;
     use std::pin::pin;
-    use std::str::FromStr;
     use std::task::Poll;
 
     use tempfile::TempDir;
@@ -577,7 +1000,6 @@ mod domain_lock_tests {
 
     use super::Model;
     use super::QuiltModel;
-    use quilt_uri::Host;
 
     /// A runtime whose blocking pool is a single thread, so a test can hold
     /// it and starve every file read the call under test issues.
@@ -629,7 +1051,7 @@ mod domain_lock_tests {
         runtime_with_one_blocking_thread().block_on(async {
             let temp = TempDir::new().expect("temp dir");
             let model = Model::create(temp.path());
-            let host = Host::from_str("test.quilt.dev").expect("host");
+            let host = fixtures::host();
 
             assert_domain_lock_is_free_while_awaiting(
                 &model,
@@ -646,10 +1068,76 @@ mod domain_lock_tests {
         runtime_with_one_blocking_thread().block_on(async {
             let temp = TempDir::new().expect("temp dir");
             let model = Model::create(temp.path());
-            let host = Host::from_str("test.quilt.dev").expect("host");
+            let host = fixtures::host();
 
             assert_domain_lock_is_free_while_awaiting(&model, model.refresh_roles(&host)).await;
             assert_domain_lock_is_free_while_awaiting(&model, model.readable_buckets(&host)).await;
         });
+    }
+
+    /// A sweep reads every installed manifest and deletes what none of them
+    /// uses; the app must stay usable while it does.
+    #[test]
+    fn gc_releases_the_domain_lock_before_it_awaits() {
+        runtime_with_one_blocking_thread().block_on(async {
+            let temp = TempDir::new().expect("temp dir");
+            let model = Model::create(temp.path());
+
+            assert_domain_lock_is_free_while_awaiting(&model, model.gc()).await;
+        });
+    }
+
+    /// Measuring walks all of `.quilt/`; the app must stay usable while it
+    /// does.
+    #[test]
+    fn measure_storage_releases_the_domain_lock_before_it_awaits() {
+        runtime_with_one_blocking_thread().block_on(async {
+            let temp = TempDir::new().expect("temp dir");
+            let model = Model::create(temp.path());
+
+            assert_domain_lock_is_free_while_awaiting(&model, model.measure_storage()).await;
+        });
+    }
+}
+
+/// A domain writer waits on its package's lock, which a download of that
+/// package can hold for minutes. It must wait with the domain mutex released,
+/// or every command and the tick would wait with it.
+#[cfg(test)]
+mod domain_writer_tests {
+    use std::time::Duration;
+
+    use tempfile::TempDir;
+
+    use super::Model;
+    use super::QuiltModel;
+    use crate::Error;
+
+    #[tokio::test]
+    async fn an_uninstall_waiting_on_its_package_leaves_the_domain_free() -> Result<(), Error> {
+        let dir = TempDir::new()?;
+        let model = Model::create(dir.path());
+        model.set_home(dir.path().join("home")).await?;
+        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+        let (installed, _) = model.package_create(namespace.clone(), None, None).await?;
+
+        // Another writer of the package, a download say, holds its lock.
+        let downloading = installed.lock().await?;
+        let mut uninstall = std::pin::pin!(model.package_uninstall(namespace.clone(), false));
+        let early = tokio::time::timeout(Duration::from_millis(200), &mut uninstall).await;
+        assert!(early.is_err(), "the uninstall waits for the download");
+
+        assert!(
+            model.get_quilt().try_lock().is_ok(),
+            "the domain mutex is free while the uninstall waits"
+        );
+        assert_eq!(model.get_installed_packages_list().await?.len(), 1);
+
+        drop(downloading);
+        tokio::time::timeout(Duration::from_secs(5), uninstall)
+            .await
+            .expect("the uninstall runs once the download lets go")?;
+        assert!(model.get_installed_packages_list().await?.is_empty());
+        Ok(())
     }
 }

@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
 
 use quilt_rs::io::remote::WORKFLOWS_CONFIG_KEY;
+use quilt_rs::io::remote::WorkflowIntent;
 use quilt_rs::io::remote::WorkflowsConfig;
 use quilt_rs::workflow::PackageCandidate;
 use quilt_rs::workflow::RuleViolation;
@@ -22,9 +23,13 @@ use crate::Error;
 use crate::commands::RoleCache;
 use crate::model;
 use crate::model::QuiltModel;
+use crate::publish_settings::PublishSettings;
+use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
 
-use super::package_data::InstalledPackageEntryData;
+use super::package_entries::ENTRIES_CAP;
+use super::package_entries::EntryCounts;
+use super::package_entries::InstalledPackageEntryData;
 use super::package_list::denied_mark;
 
 // ── Merge data for Leptos UI ──
@@ -32,7 +37,7 @@ use super::package_list::denied_mark;
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MergeData {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub uri: Option<quilt_uri::S3PackageUri>,
 }
 
@@ -58,7 +63,7 @@ async fn get_merge_data_from_model(
     }
 
     Ok(MergeData {
-        namespace: namespace.to_string(),
+        namespace: namespace.clone(),
         uri,
     })
 }
@@ -83,12 +88,33 @@ pub async fn get_merge_data(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitData {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub uri: Option<quilt_uri::S3PackageUri>,
+    /// The package has been pushed, so its remote is pinned to its push
+    /// history and can only be shown.
+    pub remote_locked: bool,
+    /// The remote's `latest` hash, as the package page's header names it:
+    /// `None` when this read did not reach the remote.
+    pub newer: Option<String>,
     pub status: String,
+    /// The message the form starts with: what one-click Publish would send,
+    /// the settings' template rendered over the summary of the changes.
     pub message: String,
+    /// The current revision's metadata: what an emptied editor keeps.
     pub user_meta: String,
     pub user_meta_error: Option<String>,
+    /// The publish settings' default metadata, which the editor starts with
+    /// in place of [`Self::user_meta`]. `None` when it is empty, which means
+    /// "keep" — a form can't show that, so the editor starts from
+    /// `user_meta` as before.
+    pub settings_user_meta: Option<String>,
+    /// The publish settings' default workflow id, preselected ahead of the
+    /// bucket's own preselection when the bucket declares it. `None` defers
+    /// to the bucket.
+    pub settings_workflow: Option<String>,
+    /// Whether the publish settings set a message template, so the form can
+    /// say where its message comes from.
+    pub has_message_template: bool,
     pub workflow: Option<CommitWorkflowData>,
     pub workflows: CommitWorkflows,
     /// Why the active role cannot reach this package's bucket, worded exactly
@@ -103,9 +129,44 @@ pub struct CommitData {
     /// so on a denial the commit affordances cannot succeed and the page
     /// disables them, quoting this as the reason.
     pub no_access_reason: Option<String>,
+    /// There is no session to commit with. Disables the commit affordances
+    /// like a denial does, but the remedy is a sign-in rather than a role
+    /// switch — a separate field, not a second meaning for
+    /// `no_access_reason`.
+    pub no_session: bool,
+    /// The deployment to sign in to, when there is one. `None` for a bare
+    /// bucket on ambient AWS credentials, fixed in `~/.aws` or by `aws sso login` — so it
+    /// cannot carry the blocked state on its own.
+    pub no_session_host: Option<String>,
     pub entries: Vec<InstalledPackageEntryData>,
     pub ignored_count: usize,
     pub unmodified_count: usize,
+    /// The package's entries by kind, over the whole package rather than the
+    /// capped `entries`, as the v2 package page counts them. `counts.changed`
+    /// is what `Publish N files` says.
+    pub counts: EntryCounts,
+    /// The bytes the revision brings in: the new and changed files' sizes,
+    /// over the whole package. A deletion is a change but brings none.
+    pub changed_bytes: u64,
+    /// The system files the revision would publish, over the whole package:
+    /// the capped `entries` can leave them out.
+    pub junk: Option<JunkSummary>,
+}
+
+/// The system files among the changes, for the commit page's warning.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct JunkSummary {
+    pub count: usize,
+    /// The first few distinct file names, in path order: enough to say what
+    /// they are, never thousands over IPC and into one banner.
+    pub names: Vec<String>,
+    /// How many more distinct names there are than `names` holds.
+    pub more_names: usize,
+    /// The first one and the pattern that matches it, which *Ignore them*
+    /// offers.
+    pub first_path: String,
+    pub first_pattern: String,
 }
 
 #[derive(Serialize)]
@@ -274,6 +335,7 @@ async fn get_commit_data_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
+    settings: &PublishSettings,
     namespace: &quilt_uri::Namespace,
 ) -> Result<CommitData, Error> {
     let installed_package = m.get_installed_package(namespace).await?.ok_or_else(|| {
@@ -288,6 +350,10 @@ async fn get_commit_data_from_model(
         .remote_uri
         .as_ref()
         .map(quilt_uri::S3PackageUri::from);
+    let remote_locked = lineage
+        .remote_uri
+        .as_ref()
+        .is_some_and(|r| !r.hash.is_empty());
     let origin_host = typed_uri.as_ref().and_then(|u| u.catalog.as_ref());
     if let Some(host) = origin_host {
         tracing.add_host(host);
@@ -307,6 +373,8 @@ async fn get_commit_data_from_model(
     // the commit affordances can be disabled and explained rather than
     // failing on click.
     let mut no_access_reason = None;
+    let mut no_session = false;
+    let mut no_session_host = None;
     let status = match m
         .get_installed_package_status(&installed_package, None)
         .await
@@ -320,9 +388,22 @@ async fn get_commit_data_from_model(
             no_access_reason = denied_mark(m, roles, origin_host).await.reason;
             m.recompute_local_status(&installed_package, None).await?
         }
+        // Everything this page shows is local and was not refused.
+        // Propagating routes the frontend to `/login`, taking the unsaved work
+        // with it; the commit action is what refuses.
+        Err(err) if err.is_session_absent() => {
+            tracing::info!(
+                "No session for the remote of {}; opening the commit page on cached lineage",
+                installed_package.namespace,
+            );
+            no_session = true;
+            no_session_host = origin_host.map(ToString::to_string);
+            m.recompute_local_status(&installed_package, None).await?
+        }
         Err(err) => return Err(err),
     };
 
+    let newer = super::package_page::newer_revision(&status);
     let pkg_status_str = match status.upstream_state {
         quilt::lineage::UpstreamState::UpToDate => "up_to_date",
         quilt::lineage::UpstreamState::Ahead => "ahead",
@@ -339,9 +420,14 @@ async fn get_commit_data_from_model(
         .map(|(p, pat)| (p.clone(), pat.clone()))
         .collect();
 
-    // Modified entries
+    // The changes first, then unchanged and ignored files, cut at the cap
+    // before each push: a long list keeps every change it can, and the page
+    // shows how many it left out. Committing includes them all regardless.
     let mut entries_list = Vec::new();
     for (filename, change) in &status.changes {
+        if entries_list.len() >= ENTRIES_CAP {
+            break;
+        }
         let (status_str, size) = match change {
             quilt::lineage::Change::Added(r) => ("added", r.size),
             quilt::lineage::Change::Modified(r) => ("modified", r.size),
@@ -353,16 +439,17 @@ async fn get_commit_data_from_model(
             status: status_str.to_string(),
             junky_pattern: junky_map.get(filename).cloned(),
             ignored_by: None,
-            namespace: namespace.to_string(),
+            folder: false,
+            namespace: namespace.clone(),
         });
-        if entries_list.len() > 1000 {
-            break;
-        }
     }
 
     // Unmodified entries (from manifest, not changed)
     let manifest_entries = m.get_installed_package_records(&installed_package).await?;
     for (filename, row) in &manifest_entries {
+        if entries_list.len() >= ENTRIES_CAP {
+            break;
+        }
         if status.changes.contains_key(filename) {
             continue;
         }
@@ -377,26 +464,25 @@ async fn get_commit_data_from_model(
             .to_string(),
             junky_pattern: None,
             ignored_by: None,
-            namespace: namespace.to_string(),
+            folder: false,
+            namespace: namespace.clone(),
         });
-        if entries_list.len() > 1000 {
-            break;
-        }
     }
 
     // Ignored files
-    for (filename, pattern, size) in &status.ignored_files {
+    for (filename, ignored_by, size) in &status.ignored_files {
+        if entries_list.len() >= ENTRIES_CAP {
+            break;
+        }
         entries_list.push(InstalledPackageEntryData {
             filename: filename.display().to_string(),
             size: *size,
             status: "pristine".to_string(),
             junky_pattern: None,
-            ignored_by: Some(pattern.clone()),
-            namespace: namespace.to_string(),
+            ignored_by: Some(ignored_by.into()),
+            folder: false,
+            namespace: namespace.clone(),
         });
-        if entries_list.len() > 1000 {
-            break;
-        }
     }
 
     entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
@@ -409,8 +495,22 @@ async fn get_commit_data_from_model(
         .filter(|f| !status.changes.contains_key(*f))
         .count();
 
-    // Generate commit message from changes
-    let message = crate::commit_message::generate(&status.changes);
+    let counts = super::package_entries::entry_counts(&status, &lineage.paths, &manifest_entries);
+    let changed_bytes = changed_bytes(&status.changes);
+    let junk = junk_summary(&status.junky_changes);
+
+    // Start from what one-click Publish and autosync would send.
+    let (message, settings_user_meta, settings_workflow) =
+        model::publish_inputs(namespace, settings, &status);
+    let settings_user_meta = Some(settings_user_meta).filter(|m| !m.trim().is_empty());
+    let settings_workflow = match settings_workflow {
+        WorkflowIntent::Named(id) => Some(id),
+        WorkflowIntent::BucketDefault | WorkflowIntent::NoWorkflow => None,
+    };
+    let has_message_template = settings
+        .message_template
+        .as_deref()
+        .is_some_and(|t| !t.trim().is_empty());
 
     // Load remote manifest for user_meta and workflow
     let (user_meta, user_meta_error, workflow) =
@@ -424,17 +524,16 @@ async fn get_commit_data_from_model(
                     },
                     None => (String::new(), None),
                 };
-                let workflow = origin_host.and_then(|host| {
+                let workflow =
                     remote_manifest
                         .header
                         .workflow
                         .as_ref()
                         .map(|w| CommitWorkflowData {
                             id: w.id.as_ref().map(|id| id.id.clone()),
-                            url: catalog_object_url(&w.config, Some(host)),
+                            url: catalog_object_url(&w.config, origin_host),
                             config_url: None,
-                        })
-                });
+                        });
                 (meta_value, meta_error, workflow)
             }
             None => (String::new(), None, None),
@@ -450,19 +549,72 @@ async fn get_commit_data_from_model(
     );
 
     Ok(CommitData {
-        namespace: namespace.to_string(),
+        namespace: namespace.clone(),
         uri: typed_uri,
+        remote_locked,
+        newer,
         status: pkg_status_str.to_string(),
         message,
         user_meta,
         user_meta_error,
+        settings_user_meta,
+        settings_workflow,
+        has_message_template,
         workflow,
         workflows,
         no_access_reason,
+        no_session,
+        no_session_host,
         entries: entries_list,
         ignored_count,
         unmodified_count,
+        counts,
+        changed_bytes,
+        junk,
     })
+}
+
+/// How many system-file names the warning names; the count stays exact.
+const JUNK_NAMES_SHOWN: usize = 3;
+
+/// The system files among the changes, uncapped, or `None` when there are
+/// none.
+fn junk_summary(junky: &[(std::path::PathBuf, String)]) -> Option<JunkSummary> {
+    let mut sorted: Vec<_> = junky.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let (first_path, first_pattern) = sorted.first()?;
+    // A set beside the list, so many distinct names stay a linear scan; the
+    // list keeps path order.
+    let mut seen = std::collections::HashSet::new();
+    let mut names: Vec<String> = Vec::new();
+    for (path, _) in &sorted {
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |n| n.to_string_lossy().into_owned(),
+        );
+        if seen.insert(name.clone()) && names.len() < JUNK_NAMES_SHOWN {
+            names.push(name);
+        }
+    }
+    let more_names = seen.len() - names.len();
+    Some(JunkSummary {
+        count: sorted.len(),
+        names,
+        more_names,
+        first_path: first_path.display().to_string(),
+        first_pattern: first_pattern.clone(),
+    })
+}
+
+/// What the new and changed files weigh; a deletion adds nothing.
+fn changed_bytes(changes: &quilt::lineage::ChangeSet) -> u64 {
+    changes
+        .values()
+        .map(|change| match change {
+            quilt::lineage::Change::Added(row) | quilt::lineage::Change::Modified(row) => row.size,
+            quilt::lineage::Change::Removed(_) => 0,
+        })
+        .sum()
 }
 
 #[tauri::command]
@@ -470,13 +622,15 @@ pub async fn get_commit_data(
     m: tauri::State<'_, model::Model>,
     roles: tauri::State<'_, RoleCache>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    publish_settings: tauri::State<'_, SharedPublishSettings>,
     namespace: String,
 ) -> Result<CommitData, String> {
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    get_commit_data_from_model(&*m, &roles, &tracing, &namespace)
+    let settings = publish_settings.read().await.clone();
+    get_commit_data_from_model(&*m, &roles, &tracing, &settings, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -765,6 +919,7 @@ pub async fn validate_commit_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     use crate::commands::test_support::*;
     use crate::model::mocks;
@@ -780,12 +935,12 @@ mod tests {
             .await
             .map_err(|e| e.to_string())?;
 
-        assert_eq!(data.namespace, "foo/bar");
+        assert_eq!(data.namespace.to_string(), "foo/bar");
         let uri = data.uri.as_ref().expect("URI present");
         assert_eq!(uri.bucket, "quilt-example");
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         Ok(())
     }
@@ -810,24 +965,69 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
-        assert_eq!(data.namespace, "foo/bar");
+        assert_eq!(data.namespace.to_string(), "foo/bar");
         let uri = data.uri.as_ref().expect("URI present");
         assert_eq!(uri.bucket, "quilt-example");
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         Ok(())
     }
 
-    /// The model mocks shared by the denial-contrast pair below: an installed
-    /// package with a remote, a cached manifest, and an ungoverned bucket. The
-    /// caller wires up the status call, which is the only thing that differs.
-    fn denial_contrast_model() -> crate::model::MockQuiltModel {
+    /// The form starts from what one-click Publish would send: the rendered
+    /// template, the default metadata and the default workflow. The current
+    /// revision's metadata is still carried, since an emptied editor keeps it.
+    #[tokio::test]
+    async fn commit_data_starts_from_the_publish_settings() -> Result<(), String> {
+        let mut model = mocks::create();
+        mocks::mock_installed_package(&mut model);
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+        let settings = PublishSettings {
+            message_template: Some("Review {namespace}: {changes}".to_string()),
+            default_workflow: Some(" release ".to_string()),
+            default_metadata: Some(r#"{"source":"desktop"}"#.to_string()),
+        };
+
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &settings,
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        let summary = crate::commit_message::generate(&std::collections::BTreeMap::new());
+        assert_eq!(data.message, format!("Review foo/bar: {summary}"));
+        assert_eq!(
+            data.settings_user_meta.as_deref(),
+            Some(r#"{"source":"desktop"}"#)
+        );
+        assert_eq!(data.settings_workflow.as_deref(), Some("release"));
+        assert!(data.has_message_template);
+        // The fixture's revision has no metadata of its own.
+        assert_eq!(data.user_meta, "");
+        Ok(())
+    }
+
+    /// The settings' metadata and the previous revision's travel separately,
+    /// so the editor can start from the one while an emptied editor keeps the
+    /// other.
+    #[tokio::test]
+    async fn commit_data_keeps_settings_and_previous_metadata_apart() -> Result<(), String> {
         let mut model = mocks::create();
         model
             .expect_get_installed_package()
@@ -835,7 +1035,99 @@ mod tests {
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
-                let uri = make_manifest_uri(&pkg.namespace.to_string());
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri(&pkg.namespace.to_string()),
+                    "abcdef".to_string(),
+                ))
+            });
+        model
+            .expect_get_installed_package_status()
+            .returning(|_, _| Ok(quilt::lineage::InstalledPackageStatus::default()));
+        model.expect_browse_remote_manifest().returning(|_| {
+            let mut manifest = mocks::create_remote_manifest();
+            manifest.header.user_meta = Some(serde_json::json!({"owner": "alice"}));
+            Ok(manifest)
+        });
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
+        let tracing = crate::telemetry::Telemetry::default();
+        let namespace = ("foo", "bar").into();
+        let settings = PublishSettings {
+            default_metadata: Some(r#"{"source":"desktop"}"#.to_string()),
+            ..PublishSettings::default()
+        };
+
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &settings,
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        assert_eq!(
+            data.settings_user_meta.as_deref(),
+            Some(r#"{"source":"desktop"}"#)
+        );
+        assert_eq!(data.user_meta, r#"{"owner":"alice"}"#);
+        Ok(())
+    }
+
+    /// With nothing set, the form starts as it did before: the bare summary,
+    /// the current revision's metadata and the bucket's preselection.
+    #[tokio::test]
+    async fn commit_data_without_publish_settings_keeps_the_old_start() -> Result<(), String> {
+        for default_metadata in [None, Some("  ".to_string())] {
+            let mut model = mocks::create();
+            mocks::mock_installed_package(&mut model);
+            let tracing = crate::telemetry::Telemetry::default();
+            let namespace = ("foo", "bar").into();
+            let settings = PublishSettings {
+                message_template: None,
+                default_workflow: Some("  ".to_string()),
+                default_metadata,
+            };
+
+            let data = get_commit_data_from_model(
+                &model,
+                &RoleCache::default(),
+                &tracing,
+                &settings,
+                &namespace,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+            assert_eq!(
+                data.message,
+                crate::commit_message::generate(&std::collections::BTreeMap::new())
+            );
+            assert_eq!(data.settings_user_meta, None);
+            assert_eq!(data.settings_workflow, None);
+            assert!(!data.has_message_template);
+        }
+        Ok(())
+    }
+
+    /// The model mocks shared by the denial-contrast pair below: an installed
+    /// package with a remote, a cached manifest, and an ungoverned bucket. The
+    /// caller wires up the status call, which is the only thing that differs.
+    fn denial_contrast_model(origin: quilt_uri::Host) -> crate::model::MockQuiltModel {
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |pkg| {
+                let uri = quilt_uri::ManifestUri {
+                    origin: Some(origin.clone()),
+                    ..make_manifest_uri(&pkg.namespace.to_string())
+                };
                 Ok(quilt::lineage::PackageLineage::from_remote(
                     uri,
                     "abcdef".to_string(),
@@ -853,6 +1145,101 @@ mod tests {
         model
     }
 
+    /// The header's catalog target needs the remote's `latest`, and only a
+    /// status read against the remote just now names it.
+    #[tokio::test]
+    async fn commit_data_names_latest_only_when_it_reached_the_remote() -> Result<(), String> {
+        for (refreshed, expected) in [(true, Some("bbbb")), (false, None)] {
+            let mut model = denial_contrast_model(fixtures::host());
+            model
+                .expect_get_installed_package_status()
+                .returning(move |_, _| {
+                    Ok(quilt::lineage::InstalledPackageStatus {
+                        latest_hash: "bbbb".to_string(),
+                        latest_refreshed: refreshed,
+                        ..quilt::lineage::InstalledPackageStatus::new(
+                            quilt::lineage::UpstreamState::Behind,
+                            quilt::lineage::ChangeSet::new(),
+                        )
+                    })
+                });
+            let data = get_commit_data_from_model(
+                &model,
+                &RoleCache::default(),
+                &crate::telemetry::Telemetry::default(),
+                &PublishSettings::default(),
+                &("foo", "bar").into(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            assert_eq!(data.newer.as_deref(), expected, "refreshed: {refreshed}");
+        }
+        Ok(())
+    }
+
+    /// The page opens on a dead session, by either route; the commit action is
+    /// what refuses.
+    #[tokio::test]
+    async fn commit_data_opens_when_there_is_no_session() -> Result<(), String> {
+        for err in [
+            Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+                fixtures::another_host(),
+            )))),
+            Error::from(quilt::Error::S3(quilt::S3Error {
+                host: Some(fixtures::another_host()),
+                kind: quilt::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
+            })),
+        ] {
+            let described = err.to_string();
+            let mut model = denial_contrast_model(fixtures::one_host());
+            model
+                .expect_get_installed_package_status()
+                .return_once(move |_, _| Err(err));
+            model.expect_recompute_local_status().returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::UpToDate,
+                    one_local_change(),
+                ))
+            });
+
+            let tracing = crate::telemetry::Telemetry::default();
+            let namespace = ("foo", "bar").into();
+
+            let data = get_commit_data_from_model(
+                &model,
+                &RoleCache::default(),
+                &tracing,
+                &PublishSettings::default(),
+                &namespace,
+            )
+            .await
+            .map_err(|e| format!("page must open without a session ({described}): {e}"))?;
+
+            assert_eq!(
+                data.namespace.to_string(),
+                "foo/bar",
+                "the page opened on cached lineage ({described})"
+            );
+            // The package's own origin, not whatever host the error carried:
+            // the page states a fact about the package in front of the user.
+            assert_eq!(
+                data.no_session_host.as_deref(),
+                Some("one.quilt.test"),
+                "the page must name its own deployment so the commit action can \
+                 explain itself, instead of looking ready ({described})"
+            );
+            assert!(
+                data.no_session,
+                "blocked-ness must not depend on there being a host to name ({described})"
+            );
+            assert_eq!(
+                data.no_access_reason, None,
+                "an absent session is not a role denial ({described})"
+            );
+        }
+        Ok(())
+    }
+
     /// Opening the page is local work: a role that cannot read the remote
     /// bucket can still have local edits worth looking at, so a denial on the
     /// status refresh must not keep the Commit page shut — the entries come
@@ -864,7 +1251,7 @@ mod tests {
     /// affordances to quote.
     #[tokio::test]
     async fn commit_data_opens_and_states_the_denial() -> Result<(), String> {
-        let mut model = denial_contrast_model();
+        let mut model = denial_contrast_model(fixtures::host());
         model
             .expect_get_installed_package_status()
             .returning(|_, _| Err(access_denied_error()));
@@ -885,11 +1272,17 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
-        assert_eq!(data.namespace, "foo/bar");
+        assert_eq!(data.namespace.to_string(), "foo/bar");
         assert!(
             data.entries.iter().any(|e| e.filename == "file.txt"),
             "the locally-computed change must still be listed"
@@ -906,7 +1299,7 @@ mod tests {
     /// carries no reason at all, so the commit affordances stay live.
     #[tokio::test]
     async fn commit_data_on_a_readable_bucket_states_no_denial() -> Result<(), String> {
-        let mut model = denial_contrast_model();
+        let mut model = denial_contrast_model(fixtures::host());
         model
             .expect_get_installed_package_status()
             .returning(|_, _| {
@@ -919,9 +1312,15 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(
             data.entries.iter().any(|e| e.filename == "file.txt"),
@@ -938,8 +1337,14 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("missing", "package").into();
 
-        let result =
-            get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace).await;
+        let result = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await;
         assert!(result.is_err());
     }
 
@@ -947,13 +1352,38 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_commit_data_with_workflow() -> Result<(), String> {
+        let workflow = commit_data_stamped(Some(fixtures::host()))
+            .await?
+            .workflow
+            .expect("the stamp");
+        assert_eq!(workflow.id, Some("gamma".to_string()));
+        assert!(workflow.url.is_some());
+        Ok(())
+    }
+
+    /// A bucket with no catalog keeps the previous revision's workflow, so
+    /// the form starts on it; there is only no catalog page to link.
+    #[tokio::test]
+    async fn a_bucket_without_a_catalog_keeps_the_previous_workflow() -> Result<(), String> {
+        let workflow = commit_data_stamped(None)
+            .await?
+            .workflow
+            .expect("the stamp");
+        assert_eq!(workflow.id, Some("gamma".to_string()));
+        assert_eq!(workflow.url, None);
+        Ok(())
+    }
+
+    /// The commit data of a package whose remote revision was published with
+    /// the workflow `gamma`.
+    async fn commit_data_stamped(origin: Option<quilt_uri::Host>) -> Result<CommitData, String> {
         let mut model = mocks::create();
 
         let remote_manifest = quilt_uri::ManifestUri {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),
-            origin: Some("test.quilt.dev".parse().unwrap()),
+            origin,
         };
         model
             .expect_get_installed_package()
@@ -1001,15 +1431,15 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        assert!(data.workflow.is_some());
-        let workflow = data.workflow.unwrap();
-        assert_eq!(workflow.id, Some("gamma".to_string()));
-        assert!(workflow.url.is_some());
-        Ok(())
+        get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())
     }
 
     // (Adapted from pages/commit.rs: test_workflow_null_checked)
@@ -1022,7 +1452,7 @@ mod tests {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),
-            origin: Some("test.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
         };
         model
             .expect_get_installed_package()
@@ -1067,9 +1497,15 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(data.workflow.is_some());
         let workflow = data.workflow.unwrap();
@@ -1088,7 +1524,7 @@ mod tests {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),
-            origin: Some("test.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
         };
         model
             .expect_get_installed_package()
@@ -1125,9 +1561,15 @@ mod tests {
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(data.workflow.is_none());
         Ok(())
@@ -1146,7 +1588,7 @@ mod tests {
             bucket: "quilt-example".to_string(),
             namespace: ("foo", "bar").into(),
             hash: "abcdef".to_string(),
-            origin: Some("test.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
         };
         model
             .expect_get_installed_package()
@@ -1179,12 +1621,147 @@ mod tests {
         model
     }
 
+    /// The totals count every change in the package, not the capped list, so
+    /// `Publish N files` stays true past the cap. Deletions are changes, but
+    /// bring no bytes into the revision.
+    /// Each distinct name once, in path order, however many there are.
+    #[test]
+    fn the_junk_summary_names_each_file_once_in_path_order() {
+        let junky: Vec<_> = [
+            "b/.DS_Store",
+            "a/.DS_Store",
+            "a/x.pyc",
+            "c/x.pyc",
+            "b/y.pyc",
+        ]
+        .into_iter()
+        .map(|p| (std::path::PathBuf::from(p), "*".to_string()))
+        .collect();
+        let junk = junk_summary(&junky).expect("system files");
+        assert_eq!(junk.count, 5);
+        assert_eq!(junk.names, [".DS_Store", "x.pyc", "y.pyc"]);
+        assert_eq!(junk.more_names, 0);
+        assert_eq!(junk.first_path, "a/.DS_Store");
+        assert_eq!(junk_summary(&[]), None);
+
+        let many: Vec<_> = (0..20_000)
+            .map(|i| {
+                (
+                    std::path::PathBuf::from(format!("gen/m{i:05}.pyc")),
+                    "*.pyc".to_string(),
+                )
+            })
+            .collect();
+        let many = junk_summary(&many).expect("system files");
+        assert_eq!(many.count, 20_000);
+        assert_eq!(many.names, ["m00000.pyc", "m00001.pyc", "m00002.pyc"]);
+        assert_eq!(many.more_names, 19_997);
+    }
+
+    #[tokio::test]
+    async fn commit_data_totals_count_past_the_list_cap() -> Result<(), String> {
+        let mut model = mocks::create();
+        let remote_manifest = quilt_uri::ManifestUri {
+            bucket: "quilt-example".to_string(),
+            namespace: ("foo", "bar").into(),
+            hash: "abcdef".to_string(),
+            origin: Some(fixtures::host()),
+        };
+        model
+            .expect_get_installed_package()
+            .returning(move |_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |_| {
+                Ok(quilt::lineage::PackageLineage::from_remote(
+                    remote_manifest.clone(),
+                    remote_manifest.hash.clone(),
+                ))
+            });
+        let row = |size| quilt::manifest::ManifestRow {
+            size,
+            ..quilt::manifest::ManifestRow::default()
+        };
+        let mut status = quilt::lineage::InstalledPackageStatus::default();
+        for i in 0..1200 {
+            status.changes.insert(
+                std::path::PathBuf::from(format!("new/{i:04}.csv")),
+                quilt::lineage::Change::Added(row(10)),
+            );
+        }
+        status.changes.insert(
+            std::path::PathBuf::from("changed.csv"),
+            quilt::lineage::Change::Modified(row(5)),
+        );
+        status.changes.insert(
+            std::path::PathBuf::from("gone.csv"),
+            quilt::lineage::Change::Removed(row(1_000_000)),
+        );
+        status.ignored_files.push((
+            std::path::PathBuf::from("scratch.tmp"),
+            quilt::quiltignore::IgnoredBy {
+                pattern: "*.tmp".to_string(),
+                source: quilt::quiltignore::RuleSource::Default,
+            },
+            7,
+        ));
+        // System files past the cap still warn: `new/1100.csv` sorts after
+        // every row the list keeps.
+        for path in ["new/1100.csv", "new/1101.csv"] {
+            status
+                .junky_changes
+                .push((std::path::PathBuf::from(path), "*.csv".to_string()));
+        }
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| Ok(status));
+        model
+            .expect_get_installed_package_records()
+            .returning(|_| Ok(std::collections::BTreeMap::new()));
+        model
+            .expect_browse_remote_manifest()
+            .returning(|_| Ok(mocks::create_remote_manifest()));
+        model.expect_get_workflows_config().returning(|_| Ok(None));
+
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &PublishSettings::default(),
+            &("foo", "bar").into(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        assert_eq!(data.entries.len(), ENTRIES_CAP, "cut at the cap exactly");
+        assert!(
+            data.entries.iter().all(|e| e.ignored_by.is_none()
+                && matches!(e.status.as_str(), "added" | "modified" | "deleted")),
+            "changes fill the list before anything else"
+        );
+        assert_eq!(data.counts.changed, 1202);
+        assert_eq!(data.counts.deleted, 1);
+        assert_eq!(data.counts.ignored, 1);
+        assert_eq!(data.changed_bytes, 1200 * 10 + 5);
+        assert_eq!(
+            data.junk,
+            Some(JunkSummary {
+                count: 2,
+                names: vec!["1100.csv".to_string(), "1101.csv".to_string()],
+                more_names: 0,
+                first_path: "new/1100.csv".to_string(),
+                first_pattern: "*.csv".to_string(),
+            })
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_get_commit_data_workflows_available() -> Result<(), String> {
         let mut model = base_commit_model();
         // A sandbox-shaped config: multiple workflows, a declared default, and
         // the required flag set true.
-        let yaml: serde_yaml::Value = serde_yaml::from_str(
+        let yaml: serde_json::Value = serde_saphyr::from_str(
             r#"
 version: "1"
 is_workflow_required: true
@@ -1208,9 +1785,15 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         // `Ok(Some(cfg))` → Available, carrying the list/default/required flag.
         let CommitWorkflows::Available {
@@ -1228,12 +1811,12 @@ workflows:
         assert_eq!(ids, vec!["dummy", "alpha"]);
         assert_eq!(workflows[0].name.as_deref(), Some("Dummy workflow"));
         assert_eq!(workflows[0].description.as_deref(), Some("Do nothing."));
-        // The package has a catalog host (test.quilt.dev) and remote bucket
+        // The package has a catalog host (quilt.test) and remote bucket
         // (quilt-example), so the config object gets a catalog link. These
         // workflows declare no schemas, so their schema links stay None.
         assert_eq!(
             config_url.as_deref(),
-            Some("https://test.quilt.dev/b/quilt-example/tree/.quilt/workflows/config.yml")
+            Some("https://quilt.test/b/quilt-example/tree/.quilt/workflows/config.yml")
         );
         assert!(
             workflows
@@ -1253,9 +1836,15 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(matches!(data.workflows, CommitWorkflows::NotConfigured));
         Ok(())
@@ -1275,9 +1864,15 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(matches!(data.workflows, CommitWorkflows::Unavailable));
         Ok(())
@@ -1293,13 +1888,13 @@ workflows:
                 id: "alpha".to_string(),
                 name: Some("Alpha".to_string()),
                 description: None,
-                metadata_schema_url: Some("https://catalog/b/bucket/tree/meta.json".to_string()),
+                metadata_schema_url: Some("https://quilt.test/b/bucket/tree/meta.json".to_string()),
                 entries_schema_url: None,
             }],
             default_workflow: Some("alpha".to_string()),
             is_workflow_required: true,
             config_url: Some(
-                "https://catalog/b/bucket/tree/.quilt/workflows/config.yml".to_string(),
+                "https://quilt.test/b/bucket/tree/.quilt/workflows/config.yml".to_string(),
             ),
         };
         assert_eq!(
@@ -1310,12 +1905,12 @@ workflows:
                     "id": "alpha",
                     "name": "Alpha",
                     "description": null,
-                    "metadataSchemaUrl": "https://catalog/b/bucket/tree/meta.json",
+                    "metadataSchemaUrl": "https://quilt.test/b/bucket/tree/meta.json",
                     "entriesSchemaUrl": null,
                 }],
                 "defaultWorkflow": "alpha",
                 "isWorkflowRequired": true,
-                "configUrl": "https://catalog/b/bucket/tree/.quilt/workflows/config.yml",
+                "configUrl": "https://quilt.test/b/bucket/tree/.quilt/workflows/config.yml",
             })
         );
         assert_eq!(
@@ -1330,14 +1925,14 @@ workflows:
             serde_json::to_value(CommitWorkflows::Invalid {
                 reason: "bad schema".to_string(),
                 config_url: Some(
-                    "https://catalog/b/bucket/tree/.quilt/workflows/config.yml".to_string(),
+                    "https://quilt.test/b/bucket/tree/.quilt/workflows/config.yml".to_string(),
                 ),
             })
             .unwrap(),
             serde_json::json!({
                 "state": "invalid",
                 "reason": "bad schema",
-                "configUrl": "https://catalog/b/bucket/tree/.quilt/workflows/config.yml",
+                "configUrl": "https://quilt.test/b/bucket/tree/.quilt/workflows/config.yml",
             })
         );
     }
@@ -1359,9 +1954,15 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         let CommitWorkflows::Invalid { reason, config_url } = data.workflows else {
             return Err("expected Invalid".to_string());
@@ -1374,7 +1975,7 @@ workflows:
         // the user can open and fix it (catalog host + remote bucket in scope).
         assert_eq!(
             config_url.as_deref(),
-            Some("https://test.quilt.dev/b/quilt-example/tree/.quilt/workflows/config.yml")
+            Some("https://quilt.test/b/quilt-example/tree/.quilt/workflows/config.yml")
         );
         Ok(())
     }
@@ -1393,9 +1994,15 @@ workflows:
         let tracing = crate::telemetry::Telemetry::default();
         let namespace = ("foo", "bar").into();
 
-        let data = get_commit_data_from_model(&model, &RoleCache::default(), &tracing, &namespace)
-            .await
-            .map_err(|e| e.to_string())?;
+        let data = get_commit_data_from_model(
+            &model,
+            &RoleCache::default(),
+            &tracing,
+            &PublishSettings::default(),
+            &namespace,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         assert!(matches!(data.workflows, CommitWorkflows::Unavailable));
         Ok(())
@@ -1434,7 +2041,7 @@ workflows:
     async fn test_get_bucket_workflows_available() -> Result<(), String> {
         // `Ok(Some(cfg))` → Available, carrying the bucket's declared workflows.
         let mut model = mocks::create();
-        let yaml: serde_yaml::Value = serde_yaml::from_str(
+        let yaml: serde_json::Value = serde_saphyr::from_str(
             r#"
 version: "1"
 is_workflow_required: true
@@ -1483,7 +2090,7 @@ workflows:
         // link. The schema objects live under their own bucket, taken from the
         // `schemas` section's URLs.
         let mut model = mocks::create();
-        let yaml: serde_yaml::Value = serde_yaml::from_str(
+        let yaml: serde_json::Value = serde_saphyr::from_str(
             r#"
 version: "1"
 default_workflow: alpha
@@ -1508,7 +2115,7 @@ schemas:
             .expect_get_bucket_workflows_config()
             .return_once(move |_, _| Ok(Some(config)));
 
-        let host: quilt_uri::Host = "test.quilt.dev".parse().map_err(|_| "bad host")?;
+        let host = fixtures::host();
         let workflows = get_bucket_workflows_from_model(&model, Some(host), "my-bucket").await;
 
         let CommitWorkflows::Available {
@@ -1521,17 +2128,17 @@ schemas:
         };
         assert_eq!(
             config_url.as_deref(),
-            Some("https://test.quilt.dev/b/my-bucket/tree/.quilt/workflows/config.yml")
+            Some("https://quilt.test/b/my-bucket/tree/.quilt/workflows/config.yml")
         );
         // `alpha` declares both schemas; each is linked against its own bucket.
         let alpha = &workflows[0];
         assert_eq!(
             alpha.metadata_schema_url.as_deref(),
-            Some("https://test.quilt.dev/b/schemas-bucket/tree/meta.json")
+            Some("https://quilt.test/b/schemas-bucket/tree/meta.json")
         );
         assert_eq!(
             alpha.entries_schema_url.as_deref(),
-            Some("https://test.quilt.dev/b/schemas-bucket/tree/entries.json")
+            Some("https://quilt.test/b/schemas-bucket/tree/entries.json")
         );
         // `bare` declares neither schema, so it has no schema links.
         let bare = &workflows[1];
@@ -1700,11 +2307,9 @@ schemas:
                 .unwrap()
         );
         // Validation against an ungoverned selection yields no violations.
-        assert!(
-            cache
-                .validate("foo/bar", "wf", "", "", "foo/bar")
-                .await
-                .is_empty()
+        assert_eq!(
+            cache.validate("foo/bar", "wf", "", "", "foo/bar").await,
+            [] as [CommitViolation; 0]
         );
         Ok(())
     }
@@ -1756,11 +2361,9 @@ schemas:
     #[tokio::test]
     async fn validate_without_loaded_rules_is_clean() {
         let cache = WorkflowRulesCache::default();
-        assert!(
-            cache
-                .validate("foo/bar", "wf", "", "", "foo/bar")
-                .await
-                .is_empty()
+        assert_eq!(
+            cache.validate("foo/bar", "wf", "", "", "foo/bar").await,
+            [] as [CommitViolation; 0]
         );
     }
 

@@ -27,6 +27,25 @@ First-run screen. User picks the home directory for Quilt data.
 
 After submit -> **Installed Packages List**
 
+### Setup (v2)
+
+In the v2 design, `/setup` renders this page instead: one card
+with the same explanation, the directory field (chosen with **Browse**, not
+typed) and **Save**. A failed pick or save says so in the band under the
+appbar.
+
+```text
++--[appbar]----------------------------------------------+
+| [logo]                                 [refresh] [gear] |
++---------------------------------------------------------+
+|        Set up QuiltSync                                 |
+|        Select a directory where QuiltSync will ...      |
+|        Set home directory                               |
+|        [ /home/user/QuiltSync__________ ] [Browse]      |
+|        [Save]                                           |
++---------------------------------------------------------+
+```
+
 ---
 
 ### Login
@@ -54,11 +73,108 @@ page that triggered it via `back` parameter.
 
 After login -> redirect to `back` URL (the page user came from)
 
+### Login (v2)
+
+In the v2 design, `/login` renders this page instead: one card
+titled with the host. **Log in with browser** first; then the catalog's
+address with **Open browser**, the **Code** field and **Submit code and Log
+in**, which waits for a code. A failure says so in the band under the
+appbar; opening the browser sign-in says to continue there.
+
+```text
++--[appbar]----------------------------------------------+
+| [logo]                                 [refresh] [gear] |
++---------------------------------------------------------+
+|        Log in to open.quiltdata.com                     |
+|        [Log in with browser]                            |
+|        ------------------------------------------       |
+|        Or visit https://open.quiltdata.com/code ...     |
+|        [Open browser]                                   |
+|        Code                                             |
+|        [ ______________________________ ]               |
+|        [Submit code and Log in]                         |
++---------------------------------------------------------+
+```
+
 ---
 
-### Installed Packages List (Home)
+### Main Page
 
-Main screen. Lists all locally installed packages.
+The main screen, unless Settings → Experimental → **New design** is off.
+`/` renders this or the Installed Packages List below according to
+the effective design generation, and both stay reachable at `/main` and
+`/installed-packages-list`.
+
+Four regions, in reading order. The queue is absent — not empty — when nothing
+needs a decision, and says so in one line instead.
+
+```text
++--[appbar]----------------------------------------------+
+| [logo]                                 [refresh] [gear] |
++---------------------------------------------------------+
+|  +--[Autosync]--------+  +--[Accounts]-----------------+ |
+|  | Pulling      [x]   |  | open.quiltdata.com          | |
+|  | Publishing   [x]   |  |   as ReadWriteQuiltBucket   | |
+|  | Next check in 0:28 |  | demo.quiltdata.com          | |
+|  +--------------------+  |   Signed out    [Sign in]   | |
+|                          +-----------------------------+ |
++---------------------------------------------------------+
+|  ▲ 4 packages need your attention                       |
+|  ------------------------------------------------------ |
+|  > Signed out from demo.quiltdata.com — 2 packages      |
+|                                              [Sign in]  |
+|  ------------------------------------------------------ |
+|    user/pkg-a  has a newer revision        Get latest → |
+|  ------------------------------------------------------ |
+|    user/pkg-b  has 2 changed files            Publish → |
+|  ------------------------------------------------------ |
++--[toolbar]----------------------------------------------+
+| [Packages|Recent files]  [Search…] [Group:Bucket]        |
+|                          [Sort:Changed] [Create package] |
++---------------------------------------------------------+
+|  +---------------------------------------------------+  |
+|  | user/package-a          Latest       2 hours ago   |  |
+|  | user/package-b          2 files changed   just now |  |
+|  +---------------------------------------------------+  |
++---------------------------------------------------------+
+```
+
+- **Autosync card** — whether background pulling and publishing are running,
+  each switchable on its own, and when the next check is due.
+- **Accounts card** — every catalog your packages point at plus every host you
+  have signed into, with the role each is using.
+- **Attention queue** — a status line, `N packages need your attention`, then
+  one row per package needing a decision, beside the one thing to do about it.
+  Where a whole catalog or bucket is the cause, it is said once with a count
+  rather than repeated per package. When nothing needs you, the line alone:
+  `All packages are up to date`. Until every package's check has answered, a
+  placeholder holds that line's place, so a healthy load does not move the
+  list.
+- **List** — your packages with each one's state and when it last changed,
+  searchable, groupable by Bucket / Prefix / None and sortable by Changed /
+  Name; or switched to a feed of recently changed files.
+
+Grouping options differ per view: packages group by Bucket, Prefix or None;
+recent files group by Package or None.
+
+Resting the pointer anywhere on a package row, or reaching it with Tab, opens
+its tooltip; the pointer passes through it to the rows below. It gives:
+
+- the package's full name, which the row may cut short;
+- *Host: open.quiltdata.com*, left out for a package with no catalog;
+- what it keeps: *Every file in the package is kept*, *Only the files you
+  picked are kept*, or *Files in 2 folders are kept*;
+- how much is downloaded, in Keeping's words on the package page, as in *"12 of
+  340 files · 1.9 MB of 3.4 MB downloaded."*
+
+The last two are left out until the row's check answers, and again when a check
+fails.
+
+### Installed Packages List
+
+Lists all locally installed packages. The main screen only when Settings →
+Experimental → **New design** is off; otherwise the Main Page takes `/`
+and this one stays at `/installed-packages-list`.
 
 ```text
 +--[appbar]----------------------------------------------+
@@ -139,6 +255,40 @@ without a page reload. Status changes propagate via
 Shows contents of a single installed package: file entries
 with checkboxes, status indicator, and a toolbar.
 
+This is the page when Settings → Experimental → **New design** is off.
+On, `/installed-package` renders the redesigned package page instead, with a
+header, a context pane and a file pane; it has no address of its own.
+
+On the redesigned page, the context pane's **Keeping** caption says how much of
+the current revision is here, in files and in bytes:
+
+- *"54 of 56 files · 1.9 MB of 3.4 MB downloaded."*
+- *"All files are downloaded · 3.4 MB."* when nothing is outstanding, and
+  *"No files are downloaded · 3.4 MB."* when nothing is here.
+- *"This revision has no files."* for an empty revision.
+- Under *The whole package* the caption adds *"— files added later are
+  downloaded too."*, and *Download 2 files · 1.5 MB* fetches the backlog.
+- Under *Folders* the kept folders are listed with *Change folders*, which
+  opens a dialog of folder paths, one a row, with *Add folder*, *Cancel* and
+  *Save*. A folder keeps every file under it, including files added there
+  later; `data/raw` keeps `data/raw/x/a.csv` and not `data/raw2/a.csv`.
+  Choosing *Folders* with none kept opens the dialog, and *Cancel* returns to
+  the previous option. *Save* downloads nothing: *Download N files* fetches
+  the files under the kept folders. A folder with `..` is refused in the
+  dialog. Choosing another option replaces the folders. The CLI sets the same
+  folders with `quilt keep --folder`. In the file list, files under the kept
+  folders have no checkbox, and *Get latest* downloads the new ones there.
+
+The sizes are the manifest rows' sizes summed, not disk usage. Only the files
+the current revision lists are counted: a new file is not counted until it is
+committed, and a modified file counts at the size the manifest records, not its
+size on disk. A file deleted here counts as downloaded: it is a local change
+waiting to commit, and Download would not fetch it. So the caption names those
+files, as in *"54 of 56 files · 1.9 MB of 3.4 MB downloaded · 1 deleted here."*
+When the sizes cannot be read the caption gives the count alone, *"54 of 56
+downloaded."*, and the button *Download 2 files*. The file pane's footer says
+the ticked files' bytes the same way, *Download 3 · 114.1 kB*.
+
 ```text
 +--[appbar]----------------------------------------------+
 | [logo]  user/package-a                 [refresh] [gear] |
@@ -196,6 +346,10 @@ with checkboxes, status indicator, and a toolbar.
     already have, and one a teammate added is listed but not fetched
   - *Sync entire package* — a pull fetches the added ones too, on this package,
     from now on (the autopull tick included)
+
+  A package that keeps chosen folders, set on the redesigned page or with
+  `quilt keep --folder`, selects neither option, and picking one replaces the
+  folders. Its file list keeps a checkbox on every file.
 
   Picking either **stores the choice and downloads nothing**. The band renders
   whether or not anything is pending: once a package has caught up it is the
@@ -289,6 +443,70 @@ Both buttons are disabled when the message field is empty.
   shown, because there is nothing to push to.
 
 After either action -> **Installed Package**
+
+---
+
+### Commit (v2)
+
+In the v2 design, `/commit` renders this page instead, from the
+same read and through the same commands. The header and any banner span the
+page. From about a 1024px window, the form is on the left and the changed
+files on the right; narrower, it is one column with the files last.
+
+```text
++--[appbar]-------------------------------------------------------------------+
+| [logo]                                                     [refresh] [gear] |
++-----------------------------------------------------------------------------+
+| Packages > user/package-a                                                   |
+| New revision                         [Publish 3 files | v] [Open folder]    |
+|                                                                             |
+| [! 2 system files would be published (.DS_Store)]           [Ignore them]   |
+|                                                                             |
+| Message                              What's included · 3 files · 8.5 MB     |
+|                                                2 ignored files not included |
+| [ Updated 3 files: a.csv, ... ]      +-----------------------------------+  |
+| Workflow                             | data/file-a.csv  Changed 4.2 MB ..|  |
+| [ Bucket's default (Plate reads) v ] | data/file-b.parq New     4.3 MB ..|  |
+| Metadata  Edit                       | data/file-c.json Deleted 18 kB  ..|  |
+| v {                                  +-----------------------------------+  |
+|     assay: "ELISA"                                                          |
+|     plate: 7                                                                |
+|   }                                                                         |
++-----------------------------------------------------------------------------+
+```
+
+- The rows scroll in their own box, so the header and its primary stay on
+  screen however long the list is. Wide, the box fills the right column.
+  Narrow, it takes the height the form leaves, with a floor of two rows and a
+  half; when the form leaves less (the editor open in a short window), the
+  whole page scrolls instead.
+- The rows have no checkboxes, so they have no leading column either.
+- With no file changes, the right column shows a file glyph over "No file
+  changes. This revision only updates metadata."
+- The primary reads `Publish N files`, or `Publish revision` when only
+  metadata changed; its caret holds `Save without publishing`. A package
+  with no bucket gets `Save revision` with no caret. N and the size count
+  every change in the package, not the capped list; the size is the new and
+  changed files' bytes. The list holds at most 1000 rows (the package page's
+  cap), changes first; past it a line says "Showing 1000 of N files. All N
+  are included." The system-files banner counts the whole package.
+- The message starts empty over the publish message as its placeholder;
+  an empty message submits the placeholder.
+- The workflow is a live select, or plain words when there is nothing to
+  choose. The metadata is a read-only preview, one line per top-level field,
+  with `Edit` (`Add` when empty) right after its name, which opens the JSON
+  editor and becomes `Close editor`; a failed metadata check opens it.
+  The bar under the editor drags it taller, and never shorter than it
+  opens. Each says "From your publish settings" only while Settings supplied it.
+- A role without access, no session, or a failing workflow check disables
+  the whole primary, with the reason in a tooltip.
+- `Ignore` on a row and `Ignore them` on the banner open the **Ignore
+  Popup**; adding the pattern re-reads the page.
+- Arriving from `Create new revision` focuses the message
+  (`focus=message`); `Review before publishing…` focuses nothing.
+
+After either action -> **Installed Package**. A failure stays on the page,
+in the banner under the appbar, and the page re-reads.
 
 ---
 
@@ -500,9 +718,40 @@ publish quiet window.
 
 ---
 
+### Quit Confirmation
+
+Shown when quitting would interrupt a package being written — the tray's
+**Quit**, or closing the window when close-to-tray is off. Not shown when
+nothing is being written, which is the common case.
+
+```text
++---------------------------------------------------------+
+|                                                         |
+|   Still syncing                                         |
+|                                                         |
+|   QuiltSync is writing files right now. Quitting will    |
+|   interrupt it and leave this package part-way between   |
+|   two revisions.                                        |
+|                                                         |
+|   [Stay]  [Quit anyway]                                 |
+|                                                         |
++---------------------------------------------------------+
+```
+
+- Raised over whatever page is open; the tray path shows the window first
+- No click-outside dismiss — the two buttons are the only ways out
+- [Stay] -> abandons the quit; a later quit asks again
+- [Quit anyway] -> exits, interrupting the write
+- It asks, it never waits for the write to finish
+- If the prompt cannot be shown or does not report itself on screen, the quit
+  proceeds rather than appearing to be ignored
+
+---
+
 ### Settings
 
-Application settings and diagnostics.
+Application settings and diagnostics. This is the page when Settings →
+Experimental → **New design** is off.
 
 ```text
 +--[appbar]----------------------------------------------+
@@ -540,10 +789,11 @@ Application settings and diagnostics.
 |  Experimental                                           |
 |  ------------                                           |
 |  Enable entire-package sync    [ ]                      |
-|  hint: adds a per-package choice — sync the entire      |
-|        package, including files added later, instead    |
-|        of picking files. Off until you choose it on a   |
-|        package.                                         |
+|  hint: adds a per-package option to sync everything in  |
+|        a package, instead of picking files.             |
+|                                                         |
+|  New design                    [ ]                      |
+|  hint: the redesigned QuiltSync.                        |
 |                                                         |
 |  Account                                                |
 |  -------                                                |
@@ -560,6 +810,74 @@ Application settings and diagnostics.
 |                                                         |
 +---------------------------------------------------------+
 ```
+
+### Settings (v2)
+
+In the v2 design, `/settings` renders this page instead. One
+column of cards, most used first. No Refresh or Settings in the appbar.
+
+```text
++--[appbar]----------------------------------------------+
+| [logo]                                                  |
++---------------------------------------------------------+
+| < Packages                                              |
+| Settings                                                |
+|                                                         |
+| Syncing                                                 |
+|  [x] Get new revisions                          Saved   |
+|      Every [1] minute                                   |
+|  [ ] Publish your changes                               |
+|      After [5] minutes of inactivity                    |
+|  [x] Watch folders for changes                          |
+| Publishing                                              |
+|  Message template  [ Generated from the changes     ]   |
+|  Default workflow  [ Each bucket's default          ]   |
+|  Default metadata                              [Add]    |
+|                                               [Save]    |
+| Accounts                                                |
+|  open.quiltdata.com   Role [analyst v]      [Sign out]  |
+|  custom.registry.io   Signed out             [Sign in]  |
+| App                                                     |
+|  [ ] Keep running in the tray when the window is closed |
+| Storage                                                 |
+|  Where packages live  /home/user/QuiltSync      [Open]  |
+|  App storage          [Check size]     [Free up space]  |
+| Experimental                                            |
+|  [x] New design                                         |
+| Help                                                    |
+|  Report a problem              [Report a problem...]    |
+|  Log level  [Default v]                                 |
+|  Logs folder  ...  [Open]     Data folder  ...  [Open]  |
+| About                                                   |
+|  Version  0.22.10                    [Release notes]    |
++---------------------------------------------------------+
+```
+
+- Toggles, the log level and the minute fields save as they change, and
+  the row says *Saved* for a moment. While a control's save is out it is
+  held: a toggle or the log level greyed, a minute field read-only with the
+  cursor still in it. Saves run in the order they were made;
+  then the page reads again. A failed save says so in the band under the
+  appbar, and the control goes back to what is stored.
+- A minute field saves on Enter or leaving it, only a whole number of at
+  least 1. The pull minutes are the interval while the window is focused;
+  the unfocused and closed intervals stay as stored. A stored time that is
+  not whole minutes shows rounded and is written only when changed.
+- Publishing is the one card with **Save**, enabled while the fields differ
+  from what is stored and the metadata is valid JSON. The metadata folds to
+  a preview with `Edit` (`Add` when empty); clicking its label while open
+  puts the cursor in the editor.
+- Accounts are read on their own, so asking each host's role does not hold
+  the page. **Sign in** returns here; **Sign out** asks first. A role pick
+  switches at once.
+- *Check size* measures `.quilt/` and what Free up space would free; the
+  answer stays until you leave the page. **Free up space** works without a
+  measure, and updates a measured line from what it freed.
+- **Report a problem…** opens a dialog: an optional *What went wrong?*, the
+  list of what is sent, **Send to Quilt** (collects the logs, sends them
+  with your text) and **Email instead** (collects the logs, opens your mail
+  app with the text and the zip's path).
+- Turning *New design* off saves, then goes to `/`.
 
 ---
 
@@ -584,6 +902,22 @@ Generic error page with recovery options.
 Buttons shown depend on context (e.g. [Login] only when
 auth-related).
 
+### Error (v2)
+
+In the v2 design, `/error` renders the same title, message and
+buttons centred in the v2 frame; **Login** shows only when there is a host.
+*Open .quilt directory* reports in the band under the appbar. An unknown
+address draws the same shape with *Page not found* and **Go home**.
+
+### Opening a Quilt link (v2)
+
+`/remote-package` runs the link as it opens. In the v2 design it
+shows a spinner in the v2 frame, with **Refresh** disabled, then replaces
+itself with the package page. A failure draws the error buttons (Reload page,
+Open .quilt directory, Go home) in the same frame; Reload page runs the link
+again without reloading the window. A link that needs a sign-in or setup goes
+there instead, replacing this page so Back does not run the link again.
+
 ---
 
 ## Flow Diagram
@@ -595,7 +929,8 @@ auth-related).
                             |
                             v
   +---------------------------------------------------+
-  |          Installed Packages List (Home)            |<---------+
+  |   Home  (Main Page or Installed Packages List,     |<---------+
+  |          per Settings -> Experimental)             |
   +---+-------+------------+---------------+----------+           |
       |       |            |               |                      |
       |       | [Create]   | [Commit and   | [gear]               |

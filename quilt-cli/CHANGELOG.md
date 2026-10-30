@@ -3,17 +3,277 @@
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
      Put quilt-rs and quilt-uri updates under their respective `###` section.
-     Use alpha pre-release versions (e.g. v0.24.1-alpha1) instead of [Unreleased]
-     to keep changelog in sync with Cargo.toml version.
+     Between releases a cross-crate line names the upstream -dev version and
+     compares against main; the release PR points it at the released tag.
+     Head unreleased changes with the Cargo.toml version: `-dev`, no date
+     (e.g. [v0.32.1-dev]), not [Unreleased]. If the cycle needs a bigger bump,
+     rename both. The first PR to change the crate after a release opens the
+     next patch `-dev` version and heading; the release PR drops `-dev` and
+     adds the date.
+     Describe the change since the last release, not each PR: when a PR makes
+     an unreleased entry stale, rewrite it in place and append the PR link.
+     Work no user can reach yet gets one "Under the hood" line, not a feature
+     entry; it earns a real entry once reachable, even behind a switch.
+     Never edit released sections.
 -->
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.30.0-alpha1] - 2026-08-07
+## [v0.40.0] - 2026-10-29
 
 ### Changed
 
-- `quilt list` prints a table of bucket, namespace and upstream status — each bucket named once, spanning its packages' rows — instead of one `InstalledPackage<namespace>` line per package. Status comes from the local lineage record, so listing stays offline and reports the last-known remote tip; `quilt status <namespace>` refreshes it (<https://github.com/quiltdata/quilt-rs/pull/846>)
+- `quilt install` and `quilt keep` report a file whose bytes do not match the hash the package records as `Hash mismatch` (the package may be corrupt), not as `Skipped`. `quilt install --json` adds `hash_mismatch`
+  - <https://github.com/quiltdata/quilt-rs/issues/1246>
+  - <https://github.com/quiltdata/quilt-rs/pull/1254>
+
+### Fixed
+
+- On Windows, files in folders get logical keys with `/`, not `\` (<https://github.com/quiltdata/quilt-rs/pull/1253>)
+
+### quilt-rs
+
+- Updated [from v0.50.0 to v0.51.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.50.0...quilt-rs/v0.51.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.39.0] - 2026-10-28
+
+### Added
+
+- `quilt keep` sets which files a package keeps: the files you pick (`--files`), all of them (`--all`) or the files under a folder (`--folder <dir>`), and downloads them. `--no-download` only saves the setting; with no flag it prints it. `quilt install --keep-all` and `--keep-folder <dir>` set it at install (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+
+### Changed
+
+- `quilt pull` follows that setting, so a package that keeps all files or a folder also gets the files a new revision adds there (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `quilt pull`, `quilt push` and `quilt commit` succeed when there is nothing to do and print `Already up to date`, `Nothing to push` or `Nothing to commit`. Before, pull and push failed, and commit recorded the same revision again. With `--json`, `hash` is `null`
+  - <https://github.com/quiltdata/quilt-rs/pull/1227>
+  - <https://github.com/quiltdata/quilt-rs/pull/1230>
+  - <https://github.com/quiltdata/quilt-rs/pull/1242>
+- `quilt install -p` installs the paths not yet tracked and lists the others as `Already installed`, instead of failing. `--json` adds `already_installed` (<https://github.com/quiltdata/quilt-rs/pull/1239>)
+
+### quilt-rs
+
+- Updated [from v0.49.0 to v0.50.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...quilt-rs/v0.50.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.38.0] - 2026-10-26
+
+### Changed
+
+- `quilt push --bucket <b>` works without `--host`, so a local-only package can be pushed to a bucket with no catalog, on the AWS credentials on this computer (<https://github.com/quiltdata/quilt-rs/pull/1209>)
+- `quilt list --fetch` shows the status of a package whose bucket has no catalog. When the AWS credentials on this computer are missing or refused, the row says so and suggests updating `~/.aws` or running `aws sso login`, and `--json` adds `"credentials_unusable": true`
+  - <https://github.com/quiltdata/quilt-rs/pull/1193>
+  - <https://github.com/quiltdata/quilt-rs/pull/1210>
+- `quilt log` and `quilt remove-revisions` know which revisions of a package with no catalog are published, so old ones can be removed (<https://github.com/quiltdata/quilt-rs/pull/1212>)
+
+### quilt-rs
+
+- Updated [from v0.48.0 to v0.49.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.48.0...quilt-rs/v0.49.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.37.3] - 2026-10-23
+
+### Fixed
+
+- On Unix, saved logins are readable by your user alone (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- The CLI and QuiltSync no longer lose a login when both refresh it at once (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+### quilt-rs
+
+- Updated [from v0.47.0 to v0.48.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.47.0...quilt-rs/v0.48.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.37.2] - 2026-10-22
+
+### quilt-rs
+
+- Updated [from v0.46.0 to v0.47.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.46.0...quilt-rs/v0.47.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.4.2 to v0.4.3](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.2...quilt-uri/v0.4.3) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
+## [v0.37.1] - 2026-10-21
+
+### quilt-rs
+
+- Updated [from v0.45.0 to v0.46.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.45.0...quilt-rs/v0.46.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.37.0] - 2026-10-20
+
+### Added
+
+- `quilt status` and `quilt create` say how many files and folders the ignore rules left out, and `--json` gains the counts. `quilt status --ignored` lists each one with the rule that matched it: a built-in rule, or a rules file and line
+  - <https://github.com/quiltdata/quilt-rs/pull/1146>
+  - <https://github.com/quiltdata/quilt-rs/pull/1157>
+  - <https://github.com/quiltdata/quilt-rs/pull/1158>
+
+### Changed
+
+- `quilt create` and `quilt status` leave out new OS and editor clutter, secrets and caches (`.DS_Store`, `.git/`, `.venv/`, `.env`, `node_modules/` and similar). Files already in a package stay. Put your own rules for every package in `.quiltignore` in the domain folder (<https://github.com/quiltdata/quilt-rs/pull/1143>)
+
+### quilt-rs
+
+- Updated [from v0.44.0 to v0.45.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.44.0...quilt-rs/v0.45.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.36.2] - 2026-10-13
+
+### quilt-rs
+
+- Updated [from v0.43.0 to v0.44.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.43.0...quilt-rs/v0.44.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.36.1] - 2026-10-09
+
+### quilt-rs
+
+- Updated [from v0.42.1 to v0.43.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.1...quilt-rs/v0.43.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.36.0] - 2026-10-07
+
+### Added
+
+- `quilt remove-revisions` removes the old revisions this copy no longer needs, oldest first, with the stored files only they use, and says what it freed. `--count N` removes only the N oldest. Revisions still needed (current, latest, base, not pushed or not published) are kept (<https://github.com/quiltdata/quilt-rs/pull/1051>)
+- `QUILT_DOMAIN` sets the domain when `--domain` is not given (<https://github.com/quiltdata/quilt-rs/pull/1059>)
+- `--format text|json` and `QUILT_FORMAT` pick the format of a command's result, so `export QUILT_FORMAT=json` makes every command print JSON; `--json` still works (<https://github.com/quiltdata/quilt-rs/pull/1062>)
+
+### Changed
+
+- `QUILT_LOG` sets how much is logged, in place of `RUST_LOG`, which is no longer read. A level such as `debug` applies to quilt while its dependencies stay at warnings, directives such as `quilt_rs=trace` still work, and an invalid value such as `debgu` stops the command. `--log <filter>` sets it for one command, and `-v` is `--log info` (<https://github.com/quiltdata/quilt-rs/pull/1067>, <https://github.com/quiltdata/quilt-rs/pull/1068>, <https://github.com/quiltdata/quilt-rs/pull/1071>)
+- `quilt log` says why each revision is kept (`current`, `latest`, `base`, `not pushed`, `unpublished`), or how much removing it would free; `--json` adds `kept` and `frees` (<https://github.com/quiltdata/quilt-rs/pull/1051>)
+- `quilt log`, `quilt gc` and `quilt remove-revisions` round sizes the way QuiltSync does, and go up to EB (<https://github.com/quiltdata/quilt-rs/pull/1072>)
+
+### quilt-rs
+
+- Updated [from v0.42.0 to v0.42.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.0...quilt-rs/v0.42.1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.35.0] - 2026-10-02
+
+### Added
+
+- `quilt list --fetch` checks each package's remote and counts its changed files, showing what QuiltSync's main page shows (`latest`, `not the latest`, `3 files changed`, …). Plain `quilt list` stays offline (<https://github.com/quiltdata/quilt-rs/pull/1032>)
+- `quilt gc` deletes what the local store keeps for nothing: stored files no installed package uses, the cache of remote manifests and leftovers of interrupted commands. It prints what it freed, for example `Freed 630.2 kB: 6 objects, 2 cached manifests`; `--json` prints the counts and bytes (<https://github.com/quiltdata/quilt-rs/pull/1030>)
+- `quilt uninstall --prune` also deletes the package's stored files that no other installed package uses, and says what it freed; `--json` adds a `pruned` key (<https://github.com/quiltdata/quilt-rs/pull/1040>)
+
+### Changed
+
+- `quilt list` names its status column `last synced`, words each status as of the package's last install, pull or push (`synced`, `unpushed commit`, `never pushed`, `local only`, …) and points to `quilt status` for a fresh check (<https://github.com/quiltdata/quilt-rs/pull/1031>)
+- `--domain` (`-d`) is a global flag, accepted before or after the command (<https://github.com/quiltdata/quilt-rs/pull/1033>)
+
+### Deprecated
+
+- `quilt push --origin` (`-o`) is deprecated; use `--host`, so every command names the catalog host the same way. `--origin` still works, with a warning (<https://github.com/quiltdata/quilt-rs/pull/1039>)
+
+### quilt-rs
+
+- Updated [from v0.41.0 to v0.42.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.41.0...quilt-rs/v0.42.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.4.1 to v0.4.2](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.1...quilt-uri/v0.4.2) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
+## [v0.34.0] - 2026-09-30
+
+### Added
+
+- `quilt home` prints the folder where installed packages keep their files, and `quilt home <dir>` sets it. While packages are installed, a different home is refused unless you pass `--overwrite` (<https://github.com/quiltdata/quilt-rs/pull/1025>)
+
+### Changed
+
+- A command on a package that another quilt process, such as QuiltSync, is changing waits for it and prints `waiting for another quilt process…` to stderr. It used to run at once, and one side's changes could be lost (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+
+### Deprecated
+
+- `--home <dir>` is deprecated in favor of `quilt home <dir>`. It still works with a warning, and now refuses a different home while packages are installed (<https://github.com/quiltdata/quilt-rs/pull/1025>)
+
+### quilt-rs
+
+- Updated [from v0.40.0 to v0.41.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...quilt-rs/v0.41.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.33.0] - 2026-09-28
+
+### Changed
+
+- `quilt install` with paths, on a bucket without versioning, installs every file it can when a later revision has replaced some objects. It used to store the later revision's bytes for such a file, which then read as modified. Now it skips the file and lists it as `Skipped: "<path>" (no longer on the remote)` instead of `Path:`. In `--json` output it appears under a new `skipped` key instead of `paths` (<https://github.com/quiltdata/quilt-rs/pull/991>)
+
+### quilt-rs
+
+- Updated [from v0.39.1 to v0.40.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.39.1...quilt-rs/v0.40.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.32.0] - 2026-09-18
+
+### Added
+
+- `--json` works on every command, not just `list` and `status`, so a script or an agent can read any result without parsing tables — `quilt push --json | jq .hash`. Failures are machine-readable too: `{"error": {"kind": "...", "message": "..."}}` on stderr, with a stable `kind` to branch on instead of matching English (<https://github.com/quiltdata/quilt-rs/pull/941>)
+
+### Fixed
+
+- The "you are not logged in" error now tells you to run `quilt login`. It named `quilt_rs`, the library crate, which ships no binary — so the command it handed you could not work (<https://github.com/quiltdata/quilt-rs/pull/943>)
+
+### Changed
+
+- A failure raised before a command runs — an unreadable domain, a rejected flag combination — now prints as a plain message on stderr, the same as any other command failure, instead of a decorated tracing line (`ERROR quilt: Failed to run command: ...`) (<https://github.com/quiltdata/quilt-rs/pull/941>)
+
+### quilt-rs
+
+- Updated [from v0.39.0 to v0.39.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.39.0...quilt-rs/v0.39.1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.4.0 to v0.4.1](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.0...quilt-uri/v0.4.1) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
+## [v0.31.2] - 2026-09-15
+
+### Fixed
+
+- `quilt pull` can be retried after an interruption — a dropped connection, an expired credential, a kill, power loss. The apply deleted each path it was about to update before re-fetching it, so an interruption lost those paths from the working tree and from tracking at once, and every retry read that gap as a conflict and refused. A pull now fetches and stages the whole update before it writes anything into the working tree (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- `quilt pull` no longer disturbs a process that has a package file open. Each file is staged and renamed into place, so a reader sees one revision's bytes or the other's and never a prefix of either; a process with the file memory-mapped — ordinary for HDF5, Zarr, Arrow and `numpy` `mmap_mode` — used to die on `SIGBUS` (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- `quilt pull` no longer reports a conflict on a locally edited file whose content is already byte-identical to the incoming revision (<https://github.com/quiltdata/quilt-rs/pull/921>)
+
+### Security
+
+- The prebuilt binaries take rustls 0.23.45 for [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285), where TLS 1.3 handshake messages were accepted across encryption level boundaries. It arrives transitively through the AWS SDK's TLS stack; no manifest here selects it (<https://github.com/quiltdata/quilt-rs/pull/923>)
+
+### quilt-rs
+
+- Updated [from v0.38.0 to v0.39.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.38.0...quilt-rs/v0.39.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.31.1] - 2026-09-11
+
+### quilt-rs
+
+- Updated [from v0.37.0 to v0.38.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.37.0...quilt-rs/v0.38.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.31.0] - 2026-09-08
+
+### Added
+
+- `quilt pull` now names the files a revision brought — downloaded, updated, removed, and the ones left on the remote — where it printed the top-hash alone. See [`README.md`](README.md) (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+### quilt-rs
+
+- Updated [from v0.36.0 to v0.37.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.36.0...quilt-rs/v0.37.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.30.0] - 2026-09-02
+
+### Added
+
+- `-v` / `--verbose` shows INFO-level logs on stderr; `RUST_LOG` still takes precedence for target-specific filtering (<https://github.com/quiltdata/quilt-rs/pull/847>)
+- `quilt log` lists a package's revisions, newest first, with the short hash, the commit message, and the date this copy obtained the revision. That date is what is recorded locally and nothing more: a manifest carries no timestamp of its own, so for a revision fetched from a remote it is the fetch time rather than the commit time — hence the `obtained` heading. A package's full published history is not available yet (<https://github.com/quiltdata/quilt-rs/pull/849>)
+- `quilt list --json` and `quilt status --json` print a machine-readable form, so `quilt list --json | jq` works (<https://github.com/quiltdata/quilt-rs/pull/851>)
+- `quilt undo-commit` discards the newest commit and restores the one before it. Works until a package's first push, and refuses rather than overwriting anything uncommitted (<https://github.com/quiltdata/quilt-rs/pull/860>)
+
+### Changed
+
+- `quilt list` prints a table of bucket, namespace and status — each bucket named once, spanning its packages' rows — instead of one `InstalledPackage<namespace>` line per package. The status compares commits: your last commit against the last-known remote tip, read from the local lineage record so listing stays offline. It is not the package's overall state — uncommitted edits are invisible to it, so a package with local changes still lists as `up_to_date`. `quilt status <namespace>` reads the working copy and refreshes the tip (<https://github.com/quiltdata/quilt-rs/pull/846>)
+- Piping a command's output now works — stdout carries only the command's own output, and logs go to stderr at WARN and above (was INFO on stdout) (<https://github.com/quiltdata/quilt-rs/pull/847>)
+- `quilt` no longer needs `--home` on first use — it defaults to `~/QuiltSync`, the same working-copy directory QuiltSync uses. Pass `--home` to choose a different one; it is still remembered after that (<https://github.com/quiltdata/quilt-rs/pull/848>)
+- `commit`, `pull`, `push`, `status` and `uninstall` infer the package from the directory you are standing in, so `--namespace` is only needed from outside a package's working copy. Inference reads the two path components below the configured home; anywhere else it is an error naming the flag (<https://github.com/quiltdata/quilt-rs/pull/850>)
+
+### Fixed
+
+- A command that fails now exits non-zero: it used to report the error and exit 0, so a shell script could not tell success from failure
+  - <https://github.com/quiltdata/quilt-rs/pull/848>
+  - <https://github.com/quiltdata/quilt-rs/pull/851>
+
+### quilt-rs
+
+- Updated [from v0.35.0 to v0.36.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.35.0...quilt-rs/v0.36.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.29.2] - 2026-08-07
 

@@ -1,0 +1,191 @@
+//! What the DOM tests share. `#[cfg(test)]`, so none of it reaches a binary.
+
+use leptos::prelude::*;
+use wasm_bindgen::JsCast;
+
+thread_local! {
+    /// Every view `mount` has drawn, still mounted, with the owner above it.
+    static MOUNTED: std::cell::RefCell<Vec<(Owner, Box<dyn std::any::Any>)>> =
+        std::cell::RefCell::default();
+}
+
+/// Mount a view into a fresh container under `<body>` and hand back the
+/// container to query.
+///
+/// The handle is kept rather than dropped: dropping it unmounts the view, and
+/// every caller wants it to outlive the call. [`unmount_earlier`] is the one
+/// way it goes.
+pub(crate) fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
+    let doc = web_sys::window().unwrap().document().unwrap();
+    let container: web_sys::HtmlElement = doc.create_element("div").unwrap().dyn_into().unwrap();
+    doc.body().unwrap().append_child(&container).unwrap();
+    // An owner above the handle's own, because something the view spawns can
+    // keep that one alive past its handle; this one is cleaned up by hand.
+    let owner = Owner::new();
+    let handle = owner.with(|| leptos::mount::mount_to(container.clone(), f));
+    MOUNTED.with(|m| m.borrow_mut().push((owner, Box::new(handle))));
+    container.into()
+}
+
+/// Unmount every view earlier tests mounted. Each `Router` listens for link
+/// clicks on the window and the first one registered takes the click, so a
+/// test that clicks a link must be the only router left.
+pub(crate) fn unmount_earlier() {
+    let earlier = MOUNTED.with(|m| std::mem::take(&mut *m.borrow_mut()));
+    for (owner, handle) in earlier {
+        owner.cleanup();
+        drop(handle);
+    }
+}
+
+/// A promise-backed sleep — four lines over `set_timeout`, which is why the
+/// crate carries no `gloo-timers`.
+pub(crate) async fn sleep_ms(ms: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        window()
+            .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms)
+            .unwrap();
+    });
+    wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+}
+
+/// The innermost element drawing exactly these words — how a reader finds a
+/// thing on screen, and what keeps a test off the stylesheet's class names.
+pub(crate) fn element_saying(root: &web_sys::Element, text: &str) -> web_sys::HtmlElement {
+    let all = root.query_selector_all("*").unwrap();
+    let mut found: Option<web_sys::Element> = None;
+    for i in 0..all.length() {
+        let el: web_sys::Element = all.item(i).unwrap().unchecked_into();
+        if el.text_content().unwrap_or_default().trim() == text {
+            // A descendant follows its ancestor in document order, so the last
+            // exact match is the element holding the words and nothing else.
+            found = Some(el);
+        }
+    }
+    found
+        .unwrap_or_else(|| panic!("nothing says {text:?}; markup was {}", root.inner_html()))
+        .unchecked_into()
+}
+
+/// The button whose text is exactly these words, as a reader finds it.
+pub(crate) fn button_saying(root: &web_sys::Element, text: &str) -> web_sys::HtmlButtonElement {
+    let all = root.query_selector_all("button").unwrap();
+    (0..all.length())
+        .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+        .find(|b| b.text_content().unwrap_or_default().trim() == text)
+        .unwrap_or_else(|| panic!("no button says {text:?}; markup was {}", root.inner_html()))
+        .unchecked_into()
+}
+
+/// An element's box structure: each tag and its classes, nested, and nothing
+/// else — no text, no ids, no other attributes.
+///
+/// For pinning that two renders lay out alike when no stylesheet is loaded to
+/// measure them: the same elements carrying the same classes take the same
+/// boxes. Ids are left out because a control mints a fresh one per instance.
+pub(crate) fn shape(el: &web_sys::Element) -> String {
+    let mut out = format!(
+        "<{} {}>",
+        el.tag_name().to_lowercase(),
+        el.get_attribute("class").unwrap_or_default()
+    );
+    let children = el.children();
+    for i in 0..children.length() {
+        out.push_str(&shape(&children.item(i).unwrap()));
+    }
+    out.push_str("</>");
+    out
+}
+
+/// Focus an element as the keyboard would, so it matches `:focus-visible` — a
+/// tooltip opens for that focus and not for a click's.
+///
+/// A headless browser whose window is not the active one moves focus without
+/// firing focus events, as CI's does. The event is sent by hand then, so what
+/// listens for it still hears it.
+pub(crate) fn keyboard_focus(el: &web_sys::Element) {
+    let options = web_sys::FocusOptions::new();
+    options.set_focus_visible(true);
+    let html: &web_sys::HtmlElement = el.unchecked_ref();
+    with_event_or_sent(el, "focusin", || html.focus_with_options(&options).unwrap());
+}
+
+/// Take focus off an element, sending `focusout` by hand where the browser
+/// does not, as [`keyboard_focus`] does `focusin`.
+pub(crate) fn blur(el: &web_sys::Element) {
+    let html: &web_sys::HtmlElement = el.unchecked_ref();
+    with_event_or_sent(el, "focusout", || html.blur().unwrap());
+}
+
+/// Run `act`, and if it fired no bubbling `kind` at `el`, dispatch one.
+fn with_event_or_sent(el: &web_sys::Element, kind: &str, act: impl FnOnce()) {
+    let fired = std::rc::Rc::new(std::cell::Cell::new(false));
+    let heard = fired.clone();
+    let listener = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || heard.set(true));
+    el.add_event_listener_with_callback(kind, listener.as_ref().unchecked_ref())
+        .unwrap();
+    act();
+    el.remove_event_listener_with_callback(kind, listener.as_ref().unchecked_ref())
+        .unwrap();
+    if !fired.get() {
+        let init = web_sys::EventInit::new();
+        init.set_bubbles(true);
+        let event = web_sys::Event::new_with_event_init_dict(kind, &init).unwrap();
+        el.dispatch_event(&event).unwrap();
+    }
+}
+
+/// Where focus stands, for an assertion's message when a focus test fails.
+pub(crate) fn focus_report(el: &web_sys::Element) -> String {
+    let doc = window().document().unwrap();
+    format!(
+        "document focused: {:?}; element is active: {}; :focus {:?}; :focus-visible {:?}; open modals: {:?}; inert: {:?}; focused: {:?}",
+        doc.has_focus(),
+        doc.active_element().as_ref() == Some(el),
+        el.matches(":focus"),
+        el.matches(":focus-visible"),
+        doc.query_selector_all(":modal").map(|l| l.length()),
+        doc.query_selector_all("[inert]").map(|l| l.length()),
+        doc.active_element().map(|a| a.tag_name()),
+    )
+}
+
+/// The element `aria-describedby` names on `el` that is a tooltip, if any. A
+/// description is a list of ids, and the tooltip is one of them.
+pub(crate) fn describing_tooltip(el: &web_sys::Element) -> Option<web_sys::Element> {
+    let doc = window().document().unwrap();
+    el.get_attribute("aria-describedby")?
+        .split_whitespace()
+        .filter_map(|id| doc.get_element_by_id(id))
+        .find(|named| named.get_attribute("role").as_deref() == Some("tooltip"))
+}
+
+/// Load a component's stylesheet into the test page, which loads none of its own,
+/// so a test can check what is drawn and not only what is in the DOM.
+///
+/// Only for a module that is plain CSS: `classes` maps each of its class names to
+/// the hashed one `stylance` gives the component, and the text is otherwise loaded
+/// as it is. A name is replaced only as a whole word, so `.column` leaves
+/// `.columns` alone.
+pub(crate) fn load_module_style(css: &str, classes: &[(&str, &str)]) {
+    let mut out = String::with_capacity(css.len());
+    let mut rest = css;
+    while let Some(dot) = rest.find('.') {
+        out.push_str(&rest[..=dot]);
+        rest = &rest[dot + 1..];
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-'))
+            .unwrap_or(rest.len());
+        let word = &rest[..end];
+        match classes.iter().find(|(name, _)| *name == word) {
+            Some((_, hashed)) => out.push_str(hashed),
+            None => out.push_str(word),
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    let doc = window().document().unwrap();
+    let tag = doc.create_element("style").unwrap();
+    tag.set_text_content(Some(&out));
+    doc.head().unwrap().append_child(&tag).unwrap();
+}

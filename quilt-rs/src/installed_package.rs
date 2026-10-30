@@ -1,4 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
 
 use tracing::log;
@@ -8,8 +10,9 @@ use crate::Res;
 use crate::error::LoginError;
 use crate::error::PackageOpError;
 use crate::flow;
-use crate::flow::PullOutcome;
 use crate::flow::UserMeta;
+use std::sync::Arc;
+
 use crate::flow::cache_remote_manifest;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -22,6 +25,7 @@ use crate::io::remote::fetch_workflows_config;
 use crate::io::remote::resolve_workflow;
 use crate::io::remote::resolve_workflow_from_config;
 use crate::io::storage::LocalStorage;
+use crate::io::storage::LockGuard;
 use crate::io::storage::Storage;
 use crate::lineage;
 use crate::lineage::CommitState;
@@ -31,8 +35,11 @@ use crate::lineage::SyncScope;
 use crate::lineage::UpstreamState;
 use crate::manifest::Manifest;
 use crate::manifest::Workflow;
+use crate::package_lock;
 use crate::paths;
 use crate::paths::copy_cached_to_installed;
+use crate::quiltignore::Scope;
+use crate::state_store::PackageStateStore;
 use crate::workflow::WorkflowRules;
 use quilt_uri::Host;
 use quilt_uri::ManifestUri;
@@ -41,6 +48,7 @@ use quilt_uri::S3Uri;
 use quilt_uri::UriError;
 
 /// Result of a push operation visible to callers outside `quilt-rs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PushOutcome {
     pub manifest_uri: ManifestUri,
     /// Whether the pushed revision was certified as "latest".
@@ -49,10 +57,47 @@ pub struct PushOutcome {
     pub certified_latest: bool,
 }
 
+/// What a push did: nothing, because there was no pending commit, or the
+/// [`PushOutcome`] of the revision it uploaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Pushed {
+    NothingToPush,
+    Uploaded(PushOutcome),
+}
+
+/// What [`InstalledPackage::keep`] did, or what [`InstalledPackage::kept`]
+/// read.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeepReport {
+    /// The scope the package keeps.
+    pub scope: SyncScope,
+    /// The backlog files it downloaded, sorted.
+    pub downloaded: Vec<PathBuf>,
+    /// The backlog files whose bytes the remote no longer holds.
+    pub skipped: Vec<PathBuf>,
+    /// The backlog files whose pinned version does not match the hash the
+    /// package records.
+    pub hash_mismatch: Vec<PathBuf>,
+    /// The backlog files still not here afterwards.
+    pub outstanding: usize,
+}
+
 /// Result of a publish operation visible to callers outside `quilt-rs`.
 /// Alias of [`flow::PublishOutcome`] parameterized over the public
 /// [`PushOutcome`], so external callers see a non-generic type name.
 pub type PublishOutcome = flow::PublishOutcome<PushOutcome>;
+
+/// Every early return from the dry run means the same thing — nothing for a
+/// pull to do, and so no incoming paths or newer revision to name.
+fn nothing_to_pull() -> flow::PullPreview {
+    flow::PullPreview {
+        outcome: flow::PullOutcome::UpToDate,
+        added: Vec::new(),
+        changed: Vec::new(),
+        removed: Vec::new(),
+        latest_hash: None,
+    }
+}
 
 /// Result of [`InstalledPackage::set_remote`].
 ///
@@ -76,9 +121,40 @@ pub struct SetRemoteOutcome {
 pub struct InstalledPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     pub lineage: lineage::PackageLineageIo,
     pub paths: paths::DomainPaths,
-    pub remote: R,
+    pub remote: Arc<R>,
     pub storage: S,
     pub namespace: Namespace,
+    /// The desktop app's state store. With one, a walk hashes only the files
+    /// whose stamp changed; the command line has none and hashes every file.
+    pub state_store: Option<Arc<PackageStateStore>>,
+}
+
+impl<S: Storage + Clone, R: Remote> Clone for InstalledPackage<S, R> {
+    fn clone(&self) -> Self {
+        Self {
+            lineage: self.lineage.clone(),
+            paths: self.paths.clone(),
+            remote: Arc::clone(&self.remote),
+            storage: self.storage.clone(),
+            namespace: self.namespace.clone(),
+            state_store: self.state_store.clone(),
+        }
+    }
+}
+
+/// An [`InstalledPackage`] with its lock held: no other writer of this
+/// package, in this process or another, runs until it drops.
+///
+/// Take one with [`InstalledPackage::lock`] or [`InstalledPackage::try_lock`].
+/// Its writers are the package's writers without the lock, so a caller that
+/// needs more than one call under one lock (the autopull tick classifies,
+/// then pulls or publishes) makes them all on the handle. The handle has no
+/// way to lock again: the lock is not reentrant, and a task that took its own
+/// package's lock twice would wait on itself forever.
+#[derive(Debug)]
+pub struct LockedPackage<S: Storage = LocalStorage, R: Remote = RemoteS3> {
+    package: InstalledPackage<S, R>,
+    _held: LockGuard,
 }
 
 impl std::fmt::Display for InstalledPackage {
@@ -87,7 +163,31 @@ impl std::fmt::Display for InstalledPackage {
     }
 }
 
-impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
+impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
+    /// Takes this package's lock, waiting while another writer holds it.
+    ///
+    /// Every public writer here takes it before its first read of the entry
+    /// and holds it through its write. See [`LockedPackage`]. Each boxes the
+    /// body it runs on the handle: inline, that body would sit inside every
+    /// caller's future, and the CLI's command future then outgrows the
+    /// compiler's layout depth limit.
+    pub async fn lock(&self) -> Res<LockedPackage<S, R>> {
+        let held = package_lock::lock(&self.storage, &self.paths, &self.namespace).await?;
+        Ok(LockedPackage {
+            package: self.clone(),
+            _held: held,
+        })
+    }
+
+    /// [`Self::lock`] without the wait: `None` while another writer holds it.
+    pub async fn try_lock(&self) -> Res<Option<LockedPackage<S, R>>> {
+        let held = package_lock::try_lock(&self.storage, &self.paths, &self.namespace).await?;
+        Ok(held.map(|held| LockedPackage {
+            package: self.clone(),
+            _held: held,
+        }))
+    }
+
     pub async fn scaffold_paths(&self) -> Res {
         let home = self.lineage.domain_home(&self.storage).await?;
         self.paths
@@ -99,8 +199,177 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         self.paths.scaffold_for_caching(&self.storage, bucket).await
     }
 
+    /// The revisions this copy has, newest first.
+    ///
+    /// See [`flow::list_revisions`] for what "newest" means — it is acquisition
+    /// order, not the order the revisions were made in.
+    pub async fn revisions(&self) -> Res<Vec<flow::Revision>> {
+        flow::list_revisions(&self.paths, &self.storage, &self.namespace).await
+    }
+
+    /// How many revisions this copy has, without parsing any of them.
+    ///
+    /// Equal to `self.revisions().await?.len()` when every manifest parses; a
+    /// damaged one is still counted, where [`Self::revisions`] fails on it.
+    pub async fn revision_count(&self) -> Res<usize> {
+        flow::count_revisions(&self.paths, &self.storage, &self.namespace).await
+    }
+
+    /// [`Self::revisions`], each marked by whether `lineage`'s remote lists
+    /// it — a timestamped pointer to it exists. One listing for the whole
+    /// package, never inferred from `CommitState`. No remote: no remote
+    /// call, and every entry is unpublished.
+    pub async fn revision_history(
+        &self,
+        lineage: &lineage::PackageLineage,
+    ) -> Res<Vec<flow::HistoryEntry>> {
+        let revisions = self.revisions().await?;
+        let published = self.registry_listing(lineage).await?;
+        Ok(revisions
+            .into_iter()
+            .map(|revision| flow::HistoryEntry {
+                published: published.contains(&revision.hash),
+                revision,
+            })
+            .collect())
+    }
+
+    /// What removing this package's revisions would free: which objects each
+    /// uses that nothing else does. A read, under no lock, for showing; the
+    /// removal measures again under its locks. See [`flow::RevisionUsage`].
+    pub async fn revision_usage(&self) -> Res<flow::RevisionUsage> {
+        flow::RevisionUsage::read(&self.paths, &self.storage, &self.namespace).await
+    }
+
+    /// Remove `hashes`, old revisions this copy holds, and the objects only
+    /// they used. See [`flow::remove_revisions`].
+    ///
+    /// Try-locks the package: while another writer holds it, nothing is
+    /// removed and the error is [`Error::PackageBusy`]. Under the lock it
+    /// re-reads the lineage and the registry listing, and a hash that is
+    /// [protected](flow::protection) or not held refuses the whole request
+    /// with [`Error::RevisionNotRemovable`]. A listing that fails refuses it
+    /// too, since an unpublished revision cannot be told apart without it.
+    pub async fn remove_revisions(&self, hashes: &BTreeSet<String>) -> Res<flow::RemovalReport> {
+        let Some(_locked) = self.try_lock().await? else {
+            return Err(Error::PackageBusy(self.namespace.clone()));
+        };
+        let lineage = self.lineage().await?;
+        let history = self.revision_history(&lineage).await?;
+        let kept = flow::protection(&lineage, &history);
+        for hash in hashes {
+            let why = match kept.get(hash) {
+                Some(reasons) => format!(
+                    "it is kept ({})",
+                    reasons
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" \u{b7} ")
+                ),
+                None if !history.iter().any(|entry| entry.revision.hash == *hash) => {
+                    "this copy does not hold it".to_string()
+                }
+                None => continue,
+            };
+            return Err(Error::RevisionNotRemovable {
+                namespace: self.namespace.clone(),
+                hash: hash.clone(),
+                why,
+            });
+        }
+        let domain = self.lineage.read_domain(&self.storage).await?;
+        flow::remove_revisions(&self.paths, &self.storage, &domain, &self.namespace, hashes).await
+    }
+
+    /// The revisions `lineage`'s remote lists: its catalog's registry, or
+    /// with no catalog the bucket itself. No remote: no request, and none.
+    async fn registry_listing(&self, lineage: &lineage::PackageLineage) -> Res<HashSet<String>> {
+        Ok(match lineage.remote_uri.as_ref() {
+            Some(ManifestUri {
+                origin,
+                bucket,
+                namespace,
+                ..
+            }) => self
+                .remote
+                .published_revisions(origin.as_ref(), bucket, namespace)
+                .await?
+                .into_iter()
+                .collect(),
+            None => HashSet::new(),
+        })
+    }
+
+    /// The revision selected by one lineage snapshot.
+    ///
+    /// Unlike [`Self::revisions`], this reads only the manifest selected by
+    /// [`lineage::PackageLineage::current_hash`]. That distinction keeps an
+    /// unrelated damaged historical manifest from breaking a read of the
+    /// current package state. The caller supplies the snapshot so adjacent
+    /// facts such as the bucket cannot come from a different revision if the
+    /// lineage changes while a page read is in flight.
+    pub async fn current_revision(
+        &self,
+        lineage: &lineage::PackageLineage,
+    ) -> Res<Option<flow::Revision>> {
+        let Some(hash) = lineage.current_hash().map(str::to_owned) else {
+            return Ok(None);
+        };
+
+        let manifest = self.manifest_from_lineage(lineage).await?;
+        let installed_path = self.paths.installed_manifest(&self.namespace, &hash);
+        let obtained = self.storage.modified_timestamp(&installed_path).await?;
+
+        Ok(Some(flow::Revision {
+            hash,
+            obtained,
+            message: manifest.header.message,
+        }))
+    }
+
+    /// [`flow::compare_for_resolve`] over the manifest `lineage` selects and the
+    /// published `latest`, resolved now rather than read from `lineage`, whose
+    /// `latest_hash` is only as fresh as the last write. The published manifest
+    /// is cached by hash. The listing is [`Self::revision_history`]'s.
+    ///
+    /// # Errors
+    /// No remote; the tag read, the manifest fetch or the listing failing.
+    pub async fn resolve_comparison(
+        &self,
+        lineage: &lineage::PackageLineage,
+    ) -> Res<flow::ResolveComparison> {
+        let remote_uri = lineage.remote()?.clone();
+        let fresh = flow::refresh_latest_hash(lineage.clone(), &*self.remote).await?;
+        let published_uri = ManifestUri {
+            hash: fresh.latest_hash,
+            ..remote_uri.clone()
+        };
+        self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
+        let published =
+            cache_remote_manifest(&self.paths, &self.storage, &*self.remote, &published_uri)
+                .await?;
+        let current = self.manifest_from_lineage(lineage).await?;
+        let listed = self.registry_listing(lineage).await?;
+        Ok(flow::compare_for_resolve(
+            &current,
+            &published,
+            lineage.commit.as_ref(),
+            &listed,
+        ))
+    }
+
     pub async fn manifest(&self) -> Res<Manifest> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
+        self.manifest_from_lineage(&lineage).await
+    }
+
+    /// Read the manifest selected by an already-read lineage snapshot.
+    ///
+    /// Keeping selection and recovery on that same value prevents a concurrent
+    /// lineage edit from changing which manifest supplies the message halfway
+    /// through a larger read.
+    pub async fn manifest_from_lineage(&self, lineage: &lineage::PackageLineage) -> Res<Manifest> {
         let Some(hash) = lineage.current_hash() else {
             return Ok(Manifest::default());
         };
@@ -122,7 +391,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             Some(remote_uri) => {
                 log::info!("Attempting to recover from cache at {remote_uri}");
                 let cached_manifest =
-                    cache_remote_manifest(&self.paths, &self.storage, &self.remote, remote_uri)
+                    cache_remote_manifest(&self.paths, &self.storage, &*self.remote, remote_uri)
                         .await?;
                 copy_cached_to_installed(&self.paths, &self.storage, remote_uri).await?;
                 Ok(cached_manifest)
@@ -140,6 +409,116 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
     pub async fn package_home(&self) -> Res<PathBuf> {
         self.lineage.package_home(&self.storage).await
+    }
+
+    /// [`flow::preview_stop_ignoring`] for the file or folder at `path`.
+    pub async fn preview_stop_ignoring(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        scope: Scope,
+    ) -> Res<Option<flow::StopIgnoring>> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let manifest = self.manifest_from_lineage(&lineage).await?;
+        flow::preview_stop_ignoring(
+            &self.paths,
+            &manifest,
+            &lineage,
+            &package_home,
+            path,
+            is_dir,
+            scope,
+        )
+        .await
+    }
+
+    /// [`flow::stop_ignoring`] for the file or folder at `path`. Like every
+    /// writer here it holds the package's lock, so a pull or reset never
+    /// replaces `.quiltignore` under it.
+    pub async fn stop_ignoring(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        scope: Scope,
+    ) -> Res<Option<Vec<String>>> {
+        Box::pin(self.lock().await?.stop_ignoring(path, is_dir, scope)).await
+    }
+
+    async fn stop_ignoring_unlocked(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        scope: Scope,
+    ) -> Res<Option<Vec<String>>> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let manifest = self.manifest_from_lineage(&lineage).await?;
+        let _user_rules = match scope {
+            Scope::AllPackages => Some(
+                self.storage
+                    .lock_exclusive(self.paths.user_quiltignore_lock())
+                    .await?,
+            ),
+            Scope::Package => None,
+        };
+        flow::stop_ignoring(
+            &self.paths,
+            &manifest,
+            &lineage,
+            &package_home,
+            path,
+            is_dir,
+            scope,
+        )
+    }
+
+    /// [`flow::status`], through the state store's stat cache when the
+    /// package has one.
+    async fn walk(
+        &self,
+        lineage: lineage::PackageLineage,
+        manifest: &Manifest,
+        package_home: &PathBuf,
+        host_config: HostConfig,
+    ) -> Res<(lineage::PackageLineage, InstalledPackageStatus)> {
+        let Some(store) = &self.state_store else {
+            return flow::status(
+                lineage,
+                &self.storage,
+                &self.paths,
+                manifest,
+                package_home,
+                host_config,
+            )
+            .await;
+        };
+        let mut cache = store.stat_cache(&self.namespace).await;
+        let walked = flow::status_cached(
+            lineage,
+            &self.storage,
+            &self.paths,
+            manifest,
+            package_home,
+            host_config,
+            Some(&mut cache),
+        )
+        .await?;
+        store.save_stat_cache(&self.namespace, &cache).await;
+        Ok(walked)
+    }
+
+    /// What a commit is about to name its objects by: with a stat cache, the
+    /// added and modified files are hashed again first.
+    async fn rehash_for_commit(
+        &self,
+        manifest: &Manifest,
+        package_home: &PathBuf,
+        status: InstalledPackageStatus,
+        host_config: &HostConfig,
+    ) -> Res<InstalledPackageStatus> {
+        if self.state_store.is_none() {
+            return Ok(status);
+        }
+        flow::rehash_changes(&self.storage, manifest, package_home, status, host_config).await
     }
 
     /// Recompute working-tree status against the cached manifest without
@@ -164,45 +543,54 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
-        let (_, status) = flow::status(
-            lineage,
-            &self.storage,
-            &manifest,
-            &package_home,
-            host_config,
-        )
-        .await?;
+        let (_, status) = self
+            .walk(lineage, &manifest, &package_home, host_config)
+            .await?;
         Ok(status)
     }
 
     pub async fn status(&self, host_config_opt: Option<HostConfig>) -> Res<InstalledPackageStatus> {
-        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let (_, status) = self.status_with_lineage(host_config_opt).await?;
+        Ok(status)
+    }
 
-        // Only refresh latest hash if we have a remote
-        let lineage = match lineage.remote_uri.as_ref() {
-            Some(_) => match flow::refresh_latest_hash(lineage.clone(), &self.remote).await {
-                Ok(lineage) => lineage,
-                Err(Error::Login(LoginError::Required(_))) => {
-                    return Err(Error::Login(LoginError::Required(
-                        lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
-                    )));
-                }
-                // A denial is not a degradable failure. Every other error
-                // here means "the remote is unreachable right now", and
-                // continuing on stale lineage is exactly right — it is what
-                // lets the app work offline. A denial means the request
-                // arrived and was refused: the answer will not change until
-                // the role does, and swallowing it leaves the caller unable
-                // to tell the user why. Callers distinguish it with
-                // [`Error::is_access_denied`].
-                Err(err) if err.is_access_denied() => return Err(err),
-                Err(err) => {
-                    log::warn!("Failed to refresh latest hash: {err}");
-                    lineage
-                }
-            },
-            None => lineage,
-        };
+    /// [`Self::status`] and the lineage it was computed from — one read, so a
+    /// caller that needs more of the lineage (the local commit) cannot pair the
+    /// status with a different snapshot.
+    async fn status_with_lineage(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<(lineage::PackageLineage, InstalledPackageStatus)> {
+        let (lineage, _, status) = self.status_with_manifest(host_config_opt).await?;
+        Ok((lineage, status))
+    }
+
+    /// [`Self::status`] and how much of the current revision this copy holds,
+    /// in files and in the bytes the manifest records, counted from the
+    /// manifest and the walk the status itself read.
+    pub async fn status_with_downloads(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<(InstalledPackageStatus, lineage::DownloadCounts)> {
+        let (lineage, manifest, status) = self.status_with_manifest(host_config_opt).await?;
+        let on_disk = self
+            .untracked_on_disk(&self.package_home().await?, &lineage, &manifest)
+            .await;
+        let counts = lineage::DownloadCounts::count(
+            &lineage,
+            manifest.rows.iter().map(|row| (&row.logical_key, row.size)),
+            &status.changes,
+            &on_disk,
+        );
+        Ok((status, counts))
+    }
+
+    async fn status_with_manifest(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<(lineage::PackageLineage, Manifest, InstalledPackageStatus)> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let (lineage, latest_refreshed) = self.refresh_latest(lineage).await?;
         let manifest = self.manifest().await?;
 
         let host_config = match host_config_opt {
@@ -215,22 +603,137 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
-        let (_, status) = flow::status(
+        let (lineage, status) = self
+            .walk(lineage, &manifest, &package_home, host_config)
+            .await?;
+        Ok((
             lineage,
-            &self.storage,
-            &manifest,
-            &package_home,
-            host_config,
-        )
-        .await?;
-        Ok(status)
+            manifest,
+            InstalledPackageStatus {
+                latest_refreshed,
+                ..status
+            },
+        ))
     }
 
-    pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<LineagePaths> {
-        if paths.is_empty() {
-            return Ok(BTreeMap::new());
-        }
+    /// `lineage` with the remote's `latest` fetched, and whether it was. Only a
+    /// remote that can't be reached keeps the last-known tip.
+    async fn refresh_latest(
+        &self,
+        lineage: lineage::PackageLineage,
+    ) -> Res<(lineage::PackageLineage, bool)> {
+        // Only refresh latest hash if we have a remote
+        Ok(match lineage.remote_uri.as_ref() {
+            Some(_) => match flow::refresh_latest_hash(lineage.clone(), &*self.remote).await {
+                Ok(lineage) => (lineage, true),
+                Err(Error::Login(LoginError::NoSession(_))) => {
+                    return Err(Error::Login(LoginError::NoSession(
+                        lineage.remote_uri.as_ref().and_then(|r| r.origin.clone()),
+                    )));
+                }
+                // A denial is not a degradable failure. Every other error
+                // here means "the remote is unreachable right now", and
+                // continuing on stale lineage is exactly right — it is what
+                // lets the app work offline. A denial means the request
+                // arrived and was refused: the answer will not change until
+                // the role does, and swallowing it leaves the caller unable
+                // to tell the user why. Callers distinguish it with
+                // [`Error::is_access_denied`].
+                Err(err) if err.is_access_denied() => return Err(err),
+                // Nor is a rejected credential: the session is dead, and
+                // stale lineage would report the package as fine.
+                Err(err) if err.is_session_absent() => return Err(err),
+                // No `latest` tag, and none ever seen: the remote answered,
+                // and its answer is that nothing was published yet. That is
+                // a read, not an outage, so the verdict is fresh.
+                Err(err) if err.is_not_found() && lineage.latest_hash.is_empty() => (lineage, true),
+                Err(err) => {
+                    log::warn!("Failed to refresh latest hash: {err}");
+                    (lineage, false)
+                }
+            },
+            None => (lineage, false),
+        })
+    }
 
+    /// [`Self::status`] without the working-tree walk: the changes of an earlier
+    /// walk, `walked`, under a fresh upstream state. `walked_lineage` is the
+    /// lineage that walk read; `None` when the package's lineage has changed
+    /// since (its `latest` aside), and the caller should walk.
+    async fn status_from_walk(
+        &self,
+        walked_lineage: &lineage::PackageLineage,
+        walked: InstalledPackageStatus,
+    ) -> Res<Option<InstalledPackageStatus>> {
+        let lineage = self.lineage().await?;
+        let without_latest = |l: &lineage::PackageLineage| lineage::PackageLineage {
+            latest_hash: String::new(),
+            ..l.clone()
+        };
+        if without_latest(&lineage) != without_latest(walked_lineage) {
+            return Ok(None);
+        }
+        let (lineage, latest_refreshed) = self.refresh_latest(lineage).await?;
+        Ok(Some(InstalledPackageStatus {
+            upstream_state: lineage.clone().into(),
+            latest_refreshed,
+            latest_hash: lineage.latest_hash,
+            ..walked
+        }))
+    }
+
+    /// This package's [`PackageState`](lineage::PackageState), as every front
+    /// end shows it.
+    ///
+    /// Asks the remote only when there is one: a package with no remote is
+    /// resolved from its lineage, without the network or a working-tree walk.
+    /// Otherwise this is [`Self::status`] — the remote's `latest` tip plus the
+    /// working tree — resolved by
+    /// [`PackageState::resolve`](lineage::PackageState::resolve). A remote with
+    /// no catalog host is read on the machine's own AWS credentials.
+    /// The fetched tip is not written back to lineage.
+    ///
+    /// Errors are `status`'s, returned as they are: a denial
+    /// ([`Error::is_access_denied`]), a missing or rejected session, or any other
+    /// failure. What a front end shows for each is its own policy.
+    pub async fn state(&self) -> Res<lineage::PackageStateReport> {
+        let lineage = self.lineage().await?;
+        if let Some(report) = lineage::PackageStateReport::without_remote(&lineage) {
+            return Ok(report);
+        }
+        // The commit flag comes from the lineage the status was computed from,
+        // not the read above: a push landing in between would otherwise pair a
+        // fresh `UpToDate` with a stale commit and say "revision not published".
+        let (lineage, status) = self.status_with_lineage(None).await?;
+        let changed_files = status.changes.len();
+        Ok(lineage::PackageStateReport {
+            state: lineage::PackageState::resolve(
+                status.upstream_state,
+                lineage.commit.is_some(),
+                lineage.remote_uri.is_some(),
+                Some(changed_files),
+            ),
+            upstream_state: status.upstream_state,
+            changed_files: Some(changed_files),
+            latest_refreshed: status.latest_refreshed,
+        })
+    }
+
+    /// Downloads `paths` and starts tracking them. A path whose bytes the
+    /// remote no longer holds, or whose bytes do not match the hash the package
+    /// records, is left out, not an error: see
+    /// [`InstallPathsReport::skipped`](flow::InstallPathsReport::skipped) and
+    /// [`InstallPathsReport::hash_mismatch`](flow::InstallPathsReport::hash_mismatch). A
+    /// path the copy already tracks is left as it is: see
+    /// [`InstallPathsReport::already_installed`](flow::InstallPathsReport::already_installed).
+    pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
+        if paths.is_empty() {
+            return Ok(flow::InstallPathsReport::default());
+        }
+        Box::pin(self.lock().await?.install_paths(paths)).await
+    }
+
+    async fn install_paths_unlocked(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -238,23 +741,30 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
-        let mut manifest = self.manifest().await?;
-        let lineage = flow::install_paths(
+        let mut manifest = self.manifest_from_lineage(&lineage).await?;
+        let (lineage, report) = flow::install_paths(
             lineage,
             &mut manifest,
             &self.paths,
             package_home,
             self.namespace.clone(),
             &self.storage,
-            &self.remote,
+            &*self.remote,
             &paths.iter().collect::<Vec<&PathBuf>>(),
         )
         .await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.paths)
+        Ok(flow::InstallPathsReport {
+            paths: lineage.paths,
+            ..report
+        })
     }
 
     pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
+        Box::pin(self.lock().await?.uninstall_paths(paths)).await
+    }
+
+    async fn uninstall_paths_unlocked(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
         let lineage = flow::uninstall_paths(lineage, package_home, &self.storage, paths).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
@@ -266,7 +776,8 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         unimplemented!()
     }
 
-    /// Commit the package's pending changes as a new revision.
+    /// Commit the package's pending changes as a new revision, or nothing
+    /// when that revision's hash is the current one's.
     ///
     /// See [`UserMeta`] for the metadata contract: `Keep` inherits the
     /// previous revision's package-level metadata, `Clear` removes it,
@@ -277,11 +788,26 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         user_meta: UserMeta,
         workflow: Option<Workflow>,
         host_config_opt: Option<HostConfig>,
-    ) -> Res<CommitState> {
+    ) -> Res<flow::Committed> {
+        Box::pin(
+            self.lock()
+                .await?
+                .commit(message, user_meta, workflow, host_config_opt),
+        )
+        .await
+    }
+
+    async fn commit_unlocked(
+        &self,
+        message: String,
+        user_meta: UserMeta,
+        workflow: Option<Workflow>,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<flow::Committed> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
-        let mut manifest = self.manifest().await?;
+        let mut manifest = self.manifest_from_lineage(&lineage).await?;
 
         let host_config = match host_config_opt {
             Some(hc) => hc,
@@ -293,26 +819,24 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             },
         };
 
-        // Captured before `host_config` moves into `flow::status`: the commit
+        // Captured before `host_config` moves into the walk: the commit
         // gate fetches the workflow's config + schemas from the same origin the
         // workflow was resolved against.
         let host = host_config.host.clone();
 
-        let (lineage, status) = flow::status(
-            lineage,
-            &self.storage,
-            &manifest,
-            &package_home,
-            host_config,
-        )
-        .await?;
+        let (lineage, status) = self
+            .walk(lineage, &manifest, &package_home, host_config.clone())
+            .await?;
+        let status = self
+            .rehash_for_commit(&manifest, &package_home, status, &host_config)
+            .await?;
 
         let (lineage, commit) = flow::commit(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             host.as_ref(),
             package_home,
             status,
@@ -327,17 +851,28 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     /// Commit any working-directory changes (if any) and push the revision to
-    /// the remote in one step. Errors if the package has no remote or nothing
-    /// to publish.
+    /// the remote in one step. Errors if the package has no remote; returns
+    /// `NothingToPublish` when there is nothing to commit or push.
     ///
-    /// `status_opt` is a caller-provided cache of `flow::status`: when
-    /// `Some`, this method reuses it verbatim instead of re-scanning the
-    /// working tree. The caller must ensure the status was computed from the
-    /// same on-disk lineage and manifest that `publish` will re-read — i.e.
-    /// nothing else should have mutated this package between the two calls.
-    /// Passing `None` is always safe and falls back to an internal
-    /// `flow::status` call.
+    /// Walks the working tree under the lock. A caller that already has a
+    /// status walked under the same lock passes it to
+    /// [`LockedPackage::publish`] instead.
     pub async fn publish(
+        &self,
+        message: String,
+        user_meta: UserMeta,
+        workflow: Option<Workflow>,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<PublishOutcome> {
+        Box::pin(
+            self.lock()
+                .await?
+                .publish(message, user_meta, workflow, host_config_opt, None),
+        )
+        .await
+    }
+
+    async fn publish_unlocked(
         &self,
         message: String,
         user_meta: UserMeta,
@@ -364,30 +899,27 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
-        let mut manifest = self.manifest().await?;
+        let mut manifest = self.manifest_from_lineage(&lineage).await?;
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
 
         let (lineage, status) = match status_opt {
             Some(status) => (lineage, status),
             None => {
-                flow::status(
-                    lineage,
-                    &self.storage,
-                    &manifest,
-                    &package_home,
-                    host_config.clone(),
-                )
-                .await?
+                self.walk(lineage, &manifest, &package_home, host_config.clone())
+                    .await?
             }
         };
+        let status = self
+            .rehash_for_commit(&manifest, &package_home, status, &host_config)
+            .await?;
 
         let outcome = flow::publish(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             package_home,
             status,
             self.namespace.clone(),
@@ -403,6 +935,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let (committed, push_result) = match outcome {
             flow::PublishOutcome::CommittedAndPushed(p) => (true, p),
             flow::PublishOutcome::PushedOnly(p) => (false, p),
+            flow::PublishOutcome::NothingToPublish => return Ok(PublishOutcome::NothingToPublish),
         };
         let certified_latest = push_result.certified_latest;
         let lineage = self
@@ -421,10 +954,24 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     }
 
     /// Push the local revision to the remote.
-    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<PushOutcome> {
+    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<Pushed> {
+        Box::pin(self.lock().await?.push(host_config_opt)).await
+    }
+
+    async fn push_unlocked(&self, host_config_opt: Option<HostConfig>) -> Res<Pushed> {
+        let (_, lineage) = self.lineage.read(&self.storage).await?;
+        Ok(self.push_from(lineage, host_config_opt).await?.0)
+    }
+
+    /// Pushes from the entry the caller read under the lock, and returns the
+    /// entry it wrote with the outcome.
+    async fn push_from(
+        &self,
+        lineage: lineage::PackageLineage,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<(Pushed, lineage::PackageLineage)> {
         self.scaffold_paths().await?;
 
-        let (_, lineage) = self.lineage.read(&self.storage).await?;
         let remote_uri = match lineage.remote_uri.as_ref() {
             Some(uri) if !uri.bucket.is_empty() => uri.clone(),
             Some(_) => {
@@ -440,14 +987,12 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         };
 
         if lineage.commit.is_none() {
-            return Err(Error::PackageOp(PackageOpError::Push(
-                "No commits to push".to_string(),
-            )));
+            return Ok((Pushed::NothingToPush, lineage));
         }
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
-        let manifest = self.manifest().await?;
+        let manifest = self.manifest_from_lineage(&lineage).await?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
@@ -457,48 +1002,154 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             Some(self.namespace.clone()),
             host_config,
         )
         .await?;
         let certified_latest = result.certified_latest;
         let lineage = self.lineage.write(&self.storage, result.lineage).await?;
-        Ok(PushOutcome {
+        let outcome = PushOutcome {
             manifest_uri: lineage.remote()?.clone(),
             certified_latest,
-        })
+        };
+        Ok((Pushed::Uploaded(outcome), lineage))
     }
 
     /// Record this package's standing [`SyncScope`].
     ///
-    /// Storage only, and deliberately separate from [`Self::pull`]: writing the
-    /// choice and acting on it are different decisions, made by different
-    /// callers. Nothing in this crate reads the stored value back.
+    /// Storage only, and deliberately separate from [`Self::pull`] and from
+    /// installing the [`Self::backlog`]: writing the choice and acting on it
+    /// are different decisions, made by different callers.
     ///
-    /// Goes through
-    /// [`PackageLineageIo::edit`](lineage::PackageLineageIo::edit)
-    /// rather than read-then-write, because this writer is user-triggered and
-    /// can land at any moment — including mid-pull on the autosync tick, which
-    /// is doing its own read-modify-write of the same entry. Reading here and
-    /// writing later would clobber whatever that pull had recorded.
+    /// Like every writer here it holds the package's lock, so a choice made
+    /// while the autosync tick pulls waits for the pull and then lands on the
+    /// entry the pull wrote.
     pub async fn set_sync_scope(&self, scope: SyncScope) -> Res<()> {
+        Box::pin(self.lock().await?.set_sync_scope(scope)).await
+    }
+
+    async fn set_sync_scope_unlocked(&self, scope: SyncScope) -> Res<()> {
         self.lineage
             .edit(&self.storage, |l| l.sync_scope = scope)
             .await?;
         Ok(())
     }
 
+    /// Store `scope`, then, when `download` asks, download its
+    /// [`Self::backlog`], all under one hold of the package's lock, so no pull
+    /// lands between reading the backlog and installing it.
+    pub async fn keep(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
+        Box::pin(self.lock().await?.keep(scope, download)).await
+    }
+
+    async fn keep_unlocked(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
+        self.set_sync_scope_unlocked(scope).await?;
+        let kept = self.kept_unlocked().await?;
+        if !download || kept.outstanding == 0 {
+            return Ok(kept);
+        }
+        let backlog = self.backlog().await?;
+        let report = self.install_paths_unlocked(&backlog).await?;
+        Ok(KeepReport {
+            scope: kept.scope,
+            downloaded: backlog
+                .into_iter()
+                .filter(|path| {
+                    !report.skipped.contains(path)
+                        && !report.hash_mismatch.contains(path)
+                        && !report.already_installed.contains(path)
+                })
+                .collect(),
+            outstanding: report.skipped.len() + report.hash_mismatch.len(),
+            skipped: report.skipped,
+            hash_mismatch: report.hash_mismatch,
+        })
+    }
+
+    /// The stored [`SyncScope`] and how many files its [`Self::backlog`] holds,
+    /// read together under the package's lock.
+    pub async fn kept(&self) -> Res<KeepReport> {
+        Box::pin(self.lock().await?.kept()).await
+    }
+
+    async fn kept_unlocked(&self) -> Res<KeepReport> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        let outstanding = self.backlog_of(&package_home, &lineage).await?.len();
+        Ok(KeepReport {
+            scope: lineage.sync_scope,
+            outstanding,
+            ..KeepReport::default()
+        })
+    }
+
+    /// The current revision's files the stored [`SyncScope`] covers that this
+    /// copy neither tracks nor has a file for, sorted: what installing the
+    /// backlog fetches. Empty under individual-file scope. Hashes nothing and
+    /// reads nothing from the remote.
+    pub async fn backlog(&self) -> Res<Vec<PathBuf>> {
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        self.backlog_of(&package_home, &lineage).await
+    }
+
+    async fn backlog_of(
+        &self,
+        package_home: &Path,
+        lineage: &lineage::PackageLineage,
+    ) -> Res<Vec<PathBuf>> {
+        let manifest = self.manifest_from_lineage(lineage).await?;
+        let on_disk = self
+            .untracked_on_disk(package_home, lineage, &manifest)
+            .await;
+        let no_changes = lineage::ChangeSet::new();
+        let mut backlog: Vec<PathBuf> = manifest
+            .rows
+            .iter()
+            .map(|row| &row.logical_key)
+            .filter(|key| lineage::DownloadCounts::in_backlog(lineage, &no_changes, &on_disk, key))
+            .cloned()
+            .collect();
+        backlog.sort();
+        Ok(backlog)
+    }
+
+    /// The paths of `manifest` the scope covers that this copy does not track
+    /// but that have a file in the working folder: the files the backlog
+    /// leaves out, since installing them would refuse to overwrite them.
+    pub async fn untracked_on_disk(
+        &self,
+        package_home: &Path,
+        lineage: &lineage::PackageLineage,
+        manifest: &Manifest,
+    ) -> BTreeSet<PathBuf> {
+        let mut on_disk = BTreeSet::new();
+        for key in manifest.rows.iter().map(|row| &row.logical_key) {
+            if !lineage.paths.contains_key(key)
+                && lineage.sync_scope.covers_untracked(key)
+                && self.storage.exists(package_home.join(key)).await
+            {
+                on_disk.insert(key.clone());
+            }
+        }
+        on_disk
+    }
+
     /// `scope` comes from the caller, not from the package's stored
-    /// [`SyncScope`]. Both faces of this engine —
-    /// the desktop app and the `quilt` CLI — reach pull through here, and only
-    /// one of them has a setting; reading the field at this level would let
-    /// state the app wrote change what the CLI does.
+    /// [`SyncScope`], so a caller can still choose. The desktop app and the
+    /// `quilt` CLI both pass the stored one.
     pub async fn pull(
         &self,
         host_config_opt: Option<HostConfig>,
         scope: SyncScope,
-    ) -> Res<ManifestUri> {
+    ) -> Res<flow::Pulled> {
+        Box::pin(self.lock().await?.pull(host_config_opt, scope)).await
+    }
+
+    async fn pull_unlocked(
+        &self,
+        host_config_opt: Option<HostConfig>,
+        scope: SyncScope,
+    ) -> Res<flow::Pulled> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -506,7 +1157,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
-        let mut manifest = self.manifest().await?;
+        let mut manifest = self.manifest_from_lineage(&lineage).await?;
 
         let host_config =
             host_config_opt.unwrap_or(self.remote.host_config(remote_uri.origin.as_ref()).await?);
@@ -518,25 +1169,31 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             &manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             &package_home,
             host_config,
         )
         .await?;
-        let lineage = flow::pull(
+        // Nothing to pull, but the lineage still carries the `latest_hash` the
+        // tag read refreshed.
+        let Some(snapshot) = snapshot else {
+            self.lineage.write(&self.storage, lineage).await?;
+            return Ok(flow::Pulled::UpToDate);
+        };
+        let (lineage, pulled) = flow::pull(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             package_home,
             snapshot,
             self.namespace.clone(),
             scope,
         )
         .await?;
-        let lineage = self.lineage.write(&self.storage, lineage).await?;
-        Ok(lineage.remote()?.clone())
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(pulled)
     }
 
     /// Dry-run: what would `pull` do right now, without mutating anything?
@@ -559,13 +1216,41 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     /// only when the package is genuinely current.
     ///
     /// Network-light — the caller (watcher / UI) uses it for two-phase render
-    /// and routing.
+    /// and routing. A caller that needs only the verdict uses
+    /// [`Self::pull_verdict`], which skips collecting the incoming paths.
     ///
     /// # Errors
     /// For a package with a real remote, propagates tag-resolution, manifest
     /// read, and remote fetch errors. The Local early return never touches the
     /// network, so those shapes cannot produce those errors.
-    pub async fn pull_outcome(&self, host_config_opt: Option<HostConfig>) -> Res<PullOutcome> {
+    pub async fn pull_outcome(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<flow::PullPreview> {
+        self.pull_dry_run(host_config_opt, true).await
+    }
+
+    /// [`Self::pull_outcome`]'s verdict alone: the same reads and the same
+    /// answer, without collecting the paths the newer revision brings. For a
+    /// caller that only routes on the verdict, such as a background check run
+    /// on every package at an interval.
+    ///
+    /// # Errors
+    /// As [`Self::pull_outcome`].
+    pub async fn pull_verdict(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<flow::PullOutcome> {
+        Ok(self.pull_dry_run(host_config_opt, false).await?.outcome)
+    }
+
+    /// The dry run behind [`Self::pull_outcome`] and [`Self::pull_verdict`].
+    /// With `with_paths` unset the preview's path lists stay empty.
+    async fn pull_dry_run(
+        &self,
+        host_config_opt: Option<HostConfig>,
+        with_paths: bool,
+    ) -> Res<flow::PullPreview> {
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
 
         // A local-only package has no `latest` tag to resolve: `snapshot_for_pull`
@@ -575,7 +1260,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // contract. A remote whose local hash is empty but whose `latest` tag has
         // moved classifies as `Diverged` (not `Local`), so it still fetches below.
         if UpstreamState::from(lineage.clone()) == UpstreamState::Local {
-            return Ok(PullOutcome::UpToDate);
+            return Ok(nothing_to_pull());
         }
 
         // Divergence-by-hash is a purely lineage-local fact: `UpstreamState::from`
@@ -593,7 +1278,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // read refreshes `latest_hash`, so it correctly falls through to the
         // post-walk `!= Behind` check below rather than being caught here.
         if UpstreamState::from(lineage.clone()) == UpstreamState::Diverged {
-            return Ok(PullOutcome::UpToDate);
+            return Ok(nothing_to_pull());
         }
 
         let remote_uri = lineage.remote()?.clone();
@@ -605,35 +1290,67 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // tag resolution, then the manifest fetch, then the walk. The ctor
         // short-circuits `base == latest` before any fetch, so `Ahead` (where
         // `latest == base`) costs no network here.
-        let snapshot = match flow::snapshot_for_pull(
+        let (lineage, Some(snapshot)) = flow::snapshot_for_pull(
             lineage,
             &base,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             &package_home,
             host_config,
         )
-        .await
-        {
-            Ok((_, snapshot)) => snapshot,
-            Err(Error::PackageOp(PackageOpError::AlreadyUpToDate)) => {
-                return Ok(PullOutcome::UpToDate);
-            }
-            Err(err) => return Err(err),
+        .await?
+        else {
+            return Ok(nothing_to_pull());
         };
 
         // `upstream_state` is computed from the ctor-refreshed lineage, so
         // `Diverged`/`Ahead` still report `UpToDate` (nothing to pull), matching
         // the previous contract.
         if snapshot.status.upstream_state != UpstreamState::Behind {
-            return Ok(PullOutcome::UpToDate);
+            return Ok(nothing_to_pull());
         }
-        Ok(flow::classify_pull(
+        // Same reconciling pass the pull itself runs: a preview that called a
+        // byte-identical edit a conflict would send the user to resolve one the
+        // pull would not raise.
+        let identical = flow::identical_to_latest(
+            &self.storage,
+            &package_home,
+            &snapshot.status,
+            &lineage.paths,
+            &base,
+            &snapshot.latest_manifest,
+        )
+        .await?;
+        // One delta serves both the verdict and the incoming paths, so building
+        // it twice would double the path and hash cloning on a large manifest.
+        let delta = flow::pull_delta(&base, &snapshot.latest_manifest);
+        let outcome = flow::classify_pull_with_delta(
             &snapshot.status,
             &base,
             &snapshot.latest_manifest,
-        ))
+            &identical,
+            &delta,
+        );
+        let flow::IncomingPaths {
+            added,
+            changed,
+            removed,
+        } = if with_paths {
+            flow::IncomingPaths::from_delta(&delta)
+        } else {
+            flow::IncomingPaths::default()
+        };
+        Ok(flow::PullPreview {
+            outcome,
+            added,
+            changed,
+            removed,
+            // The hash the `latest` tag resolved to — the same one the
+            // snapshot fetched the manifest by and wrote into the lineage's
+            // `latest_hash`.
+            latest_hash: Some(snapshot.latest.hash),
+        })
     }
 
     /// Pushes any pending local commit, then promotes the resulting remote
@@ -642,24 +1359,31 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
     /// merge page when the user resolves a `Diverged` state in favor of
     /// their own revision.
     pub async fn certify_latest(&self) -> Res<ManifestUri> {
+        Box::pin(self.lock().await?.certify_latest()).await
+    }
+
+    async fn certify_latest_unlocked(&self) -> Res<ManifestUri> {
         let (_, lineage) = self.lineage.read(&self.storage).await?;
 
-        // Push first so the hash we tag exists on remote. Push mutates
-        // lineage on disk, so re-read to pick up the new remote hash.
+        // Push first so the hash we tag exists on remote, under the lock this
+        // call already holds, and carry on from the entry the push wrote.
         let lineage = if lineage.commit.is_some() {
-            self.push(None).await?;
-            self.lineage.read(&self.storage).await?.1
+            self.push_from(lineage, None).await?.1
         } else {
             lineage
         };
 
         let pushed_manifest_uri = lineage.remote()?.clone();
-        let lineage = flow::certify_latest(lineage, &self.remote, pushed_manifest_uri).await?;
+        let lineage = flow::certify_latest(lineage, &*self.remote, pushed_manifest_uri).await?;
         let lineage = self.lineage.write(&self.storage, lineage).await?;
         Ok(lineage.remote()?.clone())
     }
 
     pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
+        Box::pin(self.lock().await?.reset_to_latest()).await
+    }
+
+    async fn reset_to_latest_unlocked(&self) -> Res<ManifestUri> {
         self.scaffold_paths().await?;
 
         let (package_home, lineage) = self.lineage.read(&self.storage).await?;
@@ -667,13 +1391,13 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
 
         self.scaffold_paths_for_caching(&remote_uri.bucket).await?;
 
-        let mut manifest = self.manifest().await?;
+        let mut manifest = self.manifest_from_lineage(&lineage).await?;
         let lineage = flow::reset_to_latest(
             lineage,
             &mut manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             package_home,
             self.namespace.clone(),
         )
@@ -682,7 +1406,50 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         Ok(lineage.remote()?.clone())
     }
 
+    /// Discard this package's newest local commit and restore the revision
+    /// before it. See [`flow::undo_commit`].
+    ///
+    /// The remote check below is narrower than the chain rule: a remote-backed
+    /// package with unpushed commits still has a chain, but undoing there would
+    /// leave a pending commit equal to its own base.
+    pub async fn undo_commit(&self) -> Res<CommitState> {
+        Box::pin(self.lock().await?.undo_commit()).await
+    }
+
+    async fn undo_commit_unlocked(&self) -> Res<CommitState> {
+        self.scaffold_paths().await?;
+
+        let (package_home, lineage) = self.lineage.read(&self.storage).await?;
+        if lineage.remote_uri.is_some() {
+            return Err(Error::PackageOp(crate::PackageOpError::Undo(
+                "this package has a remote, so its commit chain has been consumed by pushing; \
+                 undo is only available before the first push"
+                    .to_string(),
+            )));
+        }
+
+        let (lineage, commit) = flow::undo_commit(
+            lineage,
+            &self.paths,
+            &self.storage,
+            package_home,
+            self.namespace.clone(),
+        )
+        .await?;
+        self.lineage.write(&self.storage, lineage).await?;
+        Ok(commit)
+    }
+
     pub async fn set_remote(
+        &self,
+        bucket: String,
+        origin: Option<Host>,
+        workflow: WorkflowIntent,
+    ) -> Res<SetRemoteOutcome> {
+        Box::pin(self.lock().await?.set_remote(bucket, origin, workflow)).await
+    }
+
+    async fn set_remote_unlocked(
         &self,
         bucket: String,
         origin: Option<Host>,
@@ -728,9 +1495,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // yet: on success the recommit itself writes the lineage (carrying the
         // remote set above) and the new manifest; on failure the kind of error
         // decides what, if anything, is saved.
-        if let Some(origin) = origin
-            && lineage.commit.is_some()
-        {
+        if lineage.commit.is_some() {
             return match self
                 .recommit_for_remote(lineage.clone(), origin, bucket, workflow)
                 .await
@@ -776,20 +1541,43 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             };
         }
 
-        // No origin or no local commit — nothing to recommit or validate.
+        // No local commit — nothing to recommit or validate.
         self.lineage.write(&self.storage, lineage).await?;
 
         Ok(SetRemoteOutcome::default())
     }
 
+    /// Replace only the catalog host of the package's remote: add, change or
+    /// remove it. The bucket, the remote hash and the commits stay, so unlike
+    /// [`Self::set_remote`] this is safe on a published package: manifests and
+    /// hashes live in the bucket, and no manifest names the catalog.
+    pub async fn change_catalog(&self, origin: Option<Host>) -> Res<ManifestUri> {
+        Box::pin(self.lock().await?.change_catalog(origin)).await
+    }
+
+    async fn change_catalog_unlocked(&self, origin: Option<Host>) -> Res<ManifestUri> {
+        let (_, mut lineage) = self.lineage.read(&self.storage).await?;
+        let Some(remote) = lineage.remote_uri.as_mut().filter(|r| !r.bucket.is_empty()) else {
+            return Err(Error::PackageOp(PackageOpError::Package(
+                "This package has no bucket yet; set a remote first".to_string(),
+            )));
+        };
+        if remote.origin == origin {
+            return Ok(remote.clone());
+        }
+        remote.origin = origin;
+        let lineage = self.lineage.write(&self.storage, lineage).await?;
+        Ok(lineage.remote()?.clone())
+    }
+
     async fn recommit_for_remote(
         &self,
         lineage: lineage::PackageLineage,
-        origin: Host,
+        host: Option<Host>,
         bucket: String,
         workflow: WorkflowIntent,
     ) -> Res {
-        let host = Some(origin);
+        // With no host this is SHA-256 chunked.
         let host_config = self.remote.host_config(host.as_ref()).await?;
         let workflows_config_uri = S3Uri {
             key: WORKFLOWS_CONFIG_KEY.to_string(),
@@ -801,27 +1589,27 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         // gate would otherwise re-download the same config via the header's
         // pinned URI.
         let (config_uri, workflows_config) =
-            fetch_workflows_config(&self.remote, host.as_ref(), &workflows_config_uri).await?;
+            fetch_workflows_config(&*self.remote, host.as_ref(), &workflows_config_uri).await?;
         // Publish later pushes this pending recommit *without* re-resolving the
         // workflow, so recommit must stamp the caller's chosen workflow now.
         // With `WorkflowIntent::BucketDefault` (the no-gesture path) this picks
         // up the bucket's `default_workflow`, so a locally-created package's
         // first publish is governed even when the user expresses no choice.
         let workflow = resolve_workflow_from_config(
-            &self.remote,
+            &*self.remote,
             host.as_ref(),
             workflow,
             config_uri,
             workflows_config.as_ref(),
         )
         .await?;
-        let manifest = self.manifest().await?;
+        let manifest = self.manifest_from_lineage(&lineage).await?;
         let lineage = flow::recommit(
             lineage,
             &manifest,
             &self.paths,
             &self.storage,
-            &self.remote,
+            &*self.remote,
             host.as_ref(),
             self.namespace.clone(),
             host_config,
@@ -855,7 +1643,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
         let Some((origin, config_uri)) = self.workflows_config_location().await? else {
             return Ok(None);
         };
-        resolve_workflow(&self.remote, origin.as_ref(), intent, &config_uri).await
+        resolve_workflow(&*self.remote, origin.as_ref(), intent, &config_uri).await
     }
 
     /// Fetch and parse the bucket's `.quilt/workflows/config.yml` for this
@@ -870,7 +1658,7 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             return Ok(None);
         };
         let (_, config) =
-            fetch_workflows_config(&self.remote, origin.as_ref(), &config_uri).await?;
+            fetch_workflows_config(&*self.remote, origin.as_ref(), &config_uri).await?;
         Ok(config)
     }
 
@@ -892,17 +1680,172 @@ impl<S: Storage + Sync, R: Remote> InstalledPackage<S, R> {
             return Ok(None);
         };
         let (_, config) =
-            fetch_workflows_config(&self.remote, origin.as_ref(), &config_uri).await?;
+            fetch_workflows_config(&*self.remote, origin.as_ref(), &config_uri).await?;
         let Some(config) = config else {
             return Ok(None);
         };
         Ok(Some(
-            fetch_workflow_rules(&self.remote, origin.as_ref(), &config, workflow_id).await?,
+            fetch_workflow_rules(&*self.remote, origin.as_ref(), &config, workflow_id).await?,
         ))
     }
 }
 
+/// The package's writers on the held lock. Each is the [`InstalledPackage`]
+/// method of the same name, without taking the lock.
+impl<S: Storage + Clone + Sync, R: Remote> LockedPackage<S, R> {
+    #[must_use]
+    pub fn namespace(&self) -> &Namespace {
+        &self.package.namespace
+    }
+
+    /// [`InstalledPackage::status`], read under the lock.
+    pub async fn status(&self, host_config_opt: Option<HostConfig>) -> Res<InstalledPackageStatus> {
+        self.package.status(host_config_opt).await
+    }
+
+    /// [`InstalledPackage::status`] without the walk, from an earlier walk's
+    /// status and the lineage it read: the remote's `latest` is fetched, and
+    /// the walk's changes are kept. `None` when the lineage under the lock is
+    /// not the walked one (its `latest` aside); then the caller walks.
+    pub async fn status_from_walk(
+        &self,
+        walked_lineage: &lineage::PackageLineage,
+        walked: InstalledPackageStatus,
+    ) -> Res<Option<InstalledPackageStatus>> {
+        self.package.status_from_walk(walked_lineage, walked).await
+    }
+
+    /// [`InstalledPackage::pull_outcome`], read under the lock.
+    pub async fn pull_outcome(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<flow::PullPreview> {
+        self.package.pull_outcome(host_config_opt).await
+    }
+
+    /// [`InstalledPackage::pull_verdict`], read under the lock.
+    pub async fn pull_verdict(
+        &self,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<flow::PullOutcome> {
+        self.package.pull_verdict(host_config_opt).await
+    }
+
+    pub async fn install_paths(&self, paths: &[PathBuf]) -> Res<flow::InstallPathsReport> {
+        self.package.install_paths_unlocked(paths).await
+    }
+
+    pub async fn uninstall_paths(&self, paths: &Vec<PathBuf>) -> Res<LineagePaths> {
+        self.package.uninstall_paths_unlocked(paths).await
+    }
+
+    pub async fn commit(
+        &self,
+        message: String,
+        user_meta: UserMeta,
+        workflow: Option<Workflow>,
+        host_config_opt: Option<HostConfig>,
+    ) -> Res<flow::Committed> {
+        self.package
+            .commit_unlocked(message, user_meta, workflow, host_config_opt)
+            .await
+    }
+
+    /// [`InstalledPackage::publish`]. `status_opt` is a status the caller
+    /// walked on this same handle; when `Some`, the publish reuses it rather
+    /// than walking the tree again. The lock held since then means nothing
+    /// else changed the package in between.
+    pub async fn publish(
+        &self,
+        message: String,
+        user_meta: UserMeta,
+        workflow: Option<Workflow>,
+        host_config_opt: Option<HostConfig>,
+        status_opt: Option<InstalledPackageStatus>,
+    ) -> Res<PublishOutcome> {
+        self.package
+            .publish_unlocked(message, user_meta, workflow, host_config_opt, status_opt)
+            .await
+    }
+
+    pub async fn push(&self, host_config_opt: Option<HostConfig>) -> Res<Pushed> {
+        self.package.push_unlocked(host_config_opt).await
+    }
+
+    pub async fn set_sync_scope(&self, scope: SyncScope) -> Res<()> {
+        self.package.set_sync_scope_unlocked(scope).await
+    }
+
+    pub async fn keep(&self, scope: SyncScope, download: bool) -> Res<KeepReport> {
+        self.package.keep_unlocked(scope, download).await
+    }
+
+    pub async fn kept(&self) -> Res<KeepReport> {
+        self.package.kept_unlocked().await
+    }
+
+    pub async fn stop_ignoring(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        scope: Scope,
+    ) -> Res<Option<Vec<String>>> {
+        self.package
+            .stop_ignoring_unlocked(path, is_dir, scope)
+            .await
+    }
+
+    pub async fn pull(
+        &self,
+        host_config_opt: Option<HostConfig>,
+        scope: SyncScope,
+    ) -> Res<flow::Pulled> {
+        self.package.pull_unlocked(host_config_opt, scope).await
+    }
+
+    pub async fn certify_latest(&self) -> Res<ManifestUri> {
+        self.package.certify_latest_unlocked().await
+    }
+
+    pub async fn reset_to_latest(&self) -> Res<ManifestUri> {
+        self.package.reset_to_latest_unlocked().await
+    }
+
+    pub async fn undo_commit(&self) -> Res<CommitState> {
+        self.package.undo_commit_unlocked().await
+    }
+
+    pub async fn set_remote(
+        &self,
+        bucket: String,
+        origin: Option<Host>,
+        workflow: WorkflowIntent,
+    ) -> Res<SetRemoteOutcome> {
+        self.package
+            .set_remote_unlocked(bucket, origin, workflow)
+            .await
+    }
+
+    pub async fn change_catalog(&self, origin: Option<Host>) -> Res<ManifestUri> {
+        self.package.change_catalog_unlocked(origin).await
+    }
+}
+
+#[cfg(test)]
+mod change_catalog_tests;
+#[cfg(test)]
+mod current_revision_tests;
+#[cfg(test)]
+mod older_revision_tests;
+#[cfg(test)]
+mod ordered_writers_tests;
+#[cfg(test)]
+mod resolve_comparison_tests;
+#[cfg(test)]
+mod revision_history_tests;
 #[cfg(test)]
 mod set_remote_tests;
+#[cfg(test)]
+mod stat_cache_tests;
 #[cfg(test)]
 mod sync_flow_tests;

@@ -3,12 +3,45 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!--
+    The first paint, before the wasm module exists. `theme::follow_os` and
+    `theme::set_v2` set these same two things, but only once Rust is running, and
+    a document with no theme and no marker paints white whatever the OS says.
+
+    The stored generation is last session's answer, not this one's: `/` resolves
+    the real one — v2 unless the reader chose the classic design — and `set_v2`
+    corrects the marker. Only a stored v1 answer ("0") predicts v1, so a
+    first-ever launch, with nothing stored, opens in v2, the default.
+
+    `data-booting` keeps this to the empty frame — `_base.scss` hangs the dark
+    canvas off it, and `main` clears it before the mount.
+  -->
+  <script>
+    (function () {
+      var root = document.documentElement;
+      try {
+        if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+          root.setAttribute("data-theme", "dark");
+        } else {
+          root.setAttribute("data-theme", "light");
+        }
+      } catch (e) {}
+      try {
+        if (window.localStorage.getItem("quiltsync.design-preview") !== "0") {
+          root.classList.add("qui-v2");
+          root.setAttribute("data-booting", "");
+        }
+      } catch (e) {}
+    })();
+  </script>
   <!-- copy assets into dist/ -->
   <link data-trunk rel="copy-dir" href="assets" />
   <!-- fonts -->
   <link rel="stylesheet" href="assets/css/external/400.css" />
   <link rel="stylesheet" href="assets/css/external/500.css" />
   <link rel="stylesheet" href="assets/css/external/700.css" />
+  <!-- v2 kit bundle: tokens + every component module (not the gallery chrome). -->
+  <link data-trunk rel="scss" href="assets/css/kit/app.scss" />
   <!-- base styles -->
   <link rel="stylesheet" href="assets/css/theme.css" />
   <link rel="stylesheet" href="assets/css/spinner.css" />
@@ -19,6 +52,7 @@
   <link rel="stylesheet" href="assets/css/views/appbar.css" />
   <link rel="stylesheet" href="assets/css/views/logo.css" />
   <link rel="stylesheet" href="assets/css/views/notify.css" />
+  <link rel="stylesheet" href="assets/css/views/toasts.css" />
   <link rel="stylesheet" href="assets/css/views/popup.css" />
   <link rel="stylesheet" href="assets/css/views/toolbar.css" />
   <link rel="stylesheet" href="assets/css/views/breadcrumbs.css" />
@@ -33,6 +67,7 @@
   <link rel="stylesheet" href="assets/css/components/button.css" />
   <link rel="stylesheet" href="assets/css/components/entries-filter.css" />
   <link rel="stylesheet" href="assets/css/components/ignore-popup.css" />
+  <link rel="stylesheet" href="assets/css/components/quit-prompt.css" />
   <link rel="stylesheet" href="assets/css/components/popover.css" />
   <link rel="stylesheet" href="assets/css/components/workflow_select.css" />
   <!-- all page styles -->
@@ -47,7 +82,7 @@
   <!-- json editor for commit page -->
   <script src="assets/js/json-editor.js"></script>
   <!-- WASM -->
-  <link data-trunk rel="rust" data-wasm-opt="z" />
+  <link data-trunk rel="rust" data-bin="quilt-sync-ui" data-wasm-opt="z" />
 </head>
 <body></body>
 </html>

@@ -1,0 +1,300 @@
+//! Segmented control — one choice, all options visible.
+//!
+//! The same data as [`Select`](super::Select): a list of options and the chosen
+//! one. The difference is only whether the options are on screen or behind a
+//! dropdown, so the rule of thumb is a count — two or three short options here,
+//! more than that in a `Select`.
+//!
+//! # The rule of thumb is about width, and it loses to discoverability
+//!
+//! The installed-package page's file facets break it on purpose: four options,
+//! none short, `All 53 · Changed 2 · Not downloaded 17 · Ignored 3`. Measured at
+//! the shipping width they are 396px of a 680px toolbar and they push it to a
+//! third row.
+//!
+//! Kept anyway, decided 2026-09-18: those segments are not four filters, they
+//! are the page's statement of *what can be filtered*. `Ignored` is the case —
+//! a user who has never ignored a file learns that ignoring exists by seeing the
+//! segment, and that view replaced a hidden checkbox precisely because nobody
+//! found it. Behind a `Select` it would be hidden again.
+//!
+//! The page is `installed_package_v2/file_pane.rs`.
+//!
+//! So: reach for a `Select` when the options are a choice the user already knows
+//! they have, and stay here when the options *are* the disclosure. The cost is
+//! width, and it is worth naming in a review rather than discovering in a wrap.
+//!
+//! # An option can be present and unchoosable
+//!
+//! Same reasoning one step further: a facet whose count is zero must stay on
+//! screen — a control that disappears when it is empty teaches nothing and
+//! moves everything beside it. [`Segment::inert`] is that state. It is a
+//! disabled radio, so the platform takes it out of the tab order and announces
+//! it, and the segment keeps its place in the row.
+
+use leptos::prelude::*;
+
+stylance::import_crate_style!(style, "src/kit/segmented_control.module.scss");
+
+/// One segment: its words, and whether it can be chosen.
+///
+/// **One value, not a list of labels beside a list of disabled ones.** Two lists
+/// can disagree — a disabled label that is in neither, or the selected one — and
+/// the same discipline governs [`EntryAction`](super::EntryAction) and
+/// [`CheckState`](super::CheckState).
+#[derive(Clone)]
+pub struct Segment {
+    label: String,
+    value: String,
+    enabled: bool,
+}
+
+impl Segment {
+    /// A segment the user can choose.
+    #[must_use]
+    pub fn new(label: impl Into<String>) -> Self {
+        let label = label.into();
+        Self {
+            value: label.clone(),
+            label,
+            enabled: true,
+        }
+    }
+
+    /// What choosing this segment stores in `selected`, when it is not the
+    /// words. Words that carry a count change under the user — a facet's
+    /// `Changed 2` becomes `Changed 3` on the next read — and a choice held as
+    /// the words would then match no option. The value is what stays put.
+    #[must_use]
+    pub fn valued(mut self, value: impl Into<String>) -> Self {
+        self.value = value.into();
+        self
+    }
+
+    /// Visible, in place, and unchoosable — a facet that currently matches
+    /// nothing. Not the same as leaving it out: the row would reflow and the
+    /// view would stop being discoverable, which is the whole reason these are
+    /// segments and not a `Select`.
+    ///
+    /// The caller must not hand this the value `selected` currently holds. A
+    /// disabled radio cannot be deselected by the user, so the control would be
+    /// stuck — and the state has no meaning anyway: whatever is on screen came
+    /// from a view that has rows.
+    #[must_use]
+    pub fn inert(label: impl Into<String>) -> Self {
+        Self {
+            enabled: false,
+            ..Self::new(label)
+        }
+    }
+}
+
+impl From<&str> for Segment {
+    fn from(label: &str) -> Self {
+        Self::new(label)
+    }
+}
+
+impl From<String> for Segment {
+    fn from(label: String) -> Self {
+        Self::new(label)
+    }
+}
+
+#[component]
+pub fn SegmentedControl(
+    /// Names the group for assistive technology. Never drawn — the options are visible, so
+    /// a visible group label would be redundant.
+    ///
+    /// `aria_label` and not a [`FormControl`](super::FormControl): this only ever appears in a toolbar,
+    /// where every option is already on screen. Same reason `SearchInput` takes one.
+    #[prop(into)]
+    aria_label: String,
+    /// Groups the radios. Must be unique on the page — two controls sharing a name
+    /// become one group, and selecting in either clears the other.
+    ///
+    /// `&'static str` deliberately: a name that varied at runtime would silently
+    /// regroup the inputs, so it is not something a caller should be able to
+    /// compute.
+    name: &'static str,
+    options: Vec<Segment>,
+    selected: RwSignal<String>,
+) -> impl IntoView {
+    view! {
+        <div class=style::root role="radiogroup" aria-label=aria_label>
+            {options
+                .into_iter()
+                .map(|Segment { label, value, enabled }| {
+                    let is_selected = {
+                        let value = value.clone();
+                        move || selected.get() == value
+                    };
+                    let on_change = {
+                        let value = value.clone();
+                        move |_| selected.set(value.clone())
+                    };
+                    view! {
+                        <label class=style::option>
+                            <input
+                                type="radio"
+                                class=style::input
+                                name=name
+                                value=value
+                                disabled=!enabled
+                                prop:checked=is_selected
+                                on:change=on_change
+                            />
+                            <span class=style::text>{label}</span>
+                        </label>
+                    }
+                })
+                .collect_view()}
+        </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::element_saying;
+    use crate::test_support::mount;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    fn control(selected: RwSignal<String>) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <SegmentedControl
+                    aria_label="Group files by"
+                    name="group-by"
+                    options=vec!["Flat".into(), "Package".into()]
+                    selected=selected
+                />
+            }
+        })
+    }
+
+    fn radios(el: &web_sys::Element) -> Vec<web_sys::HtmlInputElement> {
+        let found = el.query_selector_all("input").unwrap();
+        (0..found.length())
+            .map(|i| found.get(i).unwrap().unchecked_into())
+            .collect()
+    }
+
+    /// The options are on screen, so the group carries no visible heading — which
+    /// leaves `aria-label` as the only thing naming what the choice is about.
+    #[wasm_bindgen_test]
+    fn the_group_is_named_for_a_reader_who_cannot_see_it() {
+        let el = control(RwSignal::new("Flat".to_string()));
+        let group = el
+            .query_selector("[role=radiogroup]")
+            .unwrap()
+            .expect("a group");
+        assert_eq!(
+            group.get_attribute("aria-label").as_deref(),
+            Some("Group files by")
+        );
+    }
+
+    /// An option that matches nothing stays on screen and stops being choosable.
+    /// Both halves matter: a segment that vanished at zero would teach nothing
+    /// and move the segments beside it, and one that stayed clickable would lead
+    /// to a view with no rows.
+    #[wasm_bindgen_test]
+    fn an_inert_option_is_present_and_disabled() {
+        let el = mount(|| {
+            view! {
+                <SegmentedControl
+                    aria_label="Filter files"
+                    name="facets"
+                    options=vec![
+                        Segment::new("All 53"),
+                        Segment::inert("Changed 0"),
+                    ]
+                    selected=RwSignal::new("All 53".to_string())
+                />
+            }
+        });
+        let radios = radios(&el);
+
+        assert_eq!(radios.len(), 2, "the empty facet keeps its place");
+        assert!(!radios[0].disabled(), "the one with rows behind it");
+        assert!(radios[1].disabled(), "the one without");
+    }
+
+    /// Words that carry a count change under the user; the value they stand for
+    /// does not. Selecting by the words would leave the choice matching no
+    /// option the moment a count moved.
+    #[wasm_bindgen_test]
+    async fn a_segment_selects_by_its_value_not_its_words() {
+        let selected = RwSignal::new("All".to_string());
+        let el = mount(move || {
+            view! {
+                <SegmentedControl
+                    aria_label="Filter files"
+                    name="facets-valued"
+                    options=vec![
+                        Segment::new("All 53").valued("All"),
+                        Segment::new("Changed 2").valued("Changed"),
+                    ]
+                    selected=selected
+                />
+            }
+        });
+        assert!(radios(&el)[0].checked(), "the value picks the option");
+
+        element_saying(&el, "Changed 2").click();
+        assert_eq!(selected.get_untracked(), "Changed", "the value is stored");
+
+        selected.set("All".to_string());
+        leptos::task::tick().await;
+        assert!(radios(&el)[0].checked());
+        assert!(!radios(&el)[1].checked());
+    }
+
+    /// One `name` across the options is what makes them one choice rather than
+    /// several independent ones.
+    #[wasm_bindgen_test]
+    fn the_options_are_radios_in_one_group() {
+        let el = control(RwSignal::new("Flat".to_string()));
+        let radios = radios(&el);
+
+        assert_eq!(radios.len(), 2, "one per option");
+        for radio in &radios {
+            assert_eq!(radio.type_(), "radio");
+            assert_eq!(radio.name(), "group-by");
+        }
+        assert!(radios[0].checked(), "the selected one");
+        assert!(!radios[1].checked());
+    }
+
+    #[wasm_bindgen_test]
+    fn clicking_an_option_s_word_selects_it() {
+        let selected = RwSignal::new("Flat".to_string());
+        let el = control(selected);
+
+        element_saying(&el, "Package").click();
+
+        assert_eq!(
+            selected.get_untracked(),
+            "Package",
+            "the word is inside its label"
+        );
+        assert!(radios(&el)[1].checked());
+    }
+
+    /// The toolbar writes this signal too — a control that only followed its own
+    /// clicks would show the wrong option after one.
+    #[wasm_bindgen_test]
+    async fn a_selection_made_elsewhere_moves_the_checked_option() {
+        let selected = RwSignal::new("Flat".to_string());
+        let el = control(selected);
+
+        selected.set("Package".to_string());
+        leptos::task::tick().await;
+
+        let radios = radios(&el);
+        assert!(!radios[0].checked());
+        assert!(radios[1].checked());
+    }
+}

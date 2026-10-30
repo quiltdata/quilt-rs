@@ -1,0 +1,10 @@
+/*
+ * NumberInput. `TextInput`'s box, a few digits wide, so it can sit at the end of
+ * a row. The element in the selector outranks `TextInput`'s `.root`,
+ * whichever loads last.
+ */
+
+input.root {
+  width: 9ch;
+  font-variant-numeric: tabular-nums;
+}

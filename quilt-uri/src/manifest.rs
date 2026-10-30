@@ -153,7 +153,7 @@ mod tests {
         };
         assert_eq!(
             uri.display(),
-            "quilt+s3://test-bucket#package=foo/bar@abc123&catalog=test.quilt.dev"
+            "quilt+s3://test-bucket#package=foo/bar@abc123&catalog=quilt.test"
         );
     }
 

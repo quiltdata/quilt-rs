@@ -280,19 +280,18 @@ mod tests {
     use test_log::test;
 
     use crate::auth::test_utils::*;
+    use quilt_uri::fixtures;
 
     #[test]
     fn test_connect_host() {
-        let host: Host = "test.quilt.dev".parse().unwrap();
-        assert_eq!(connect_host(&host), "test-connect.quilt.dev");
+        assert_eq!(connect_host(&fixtures::host()), "quilt-connect.test");
     }
 
     #[test]
     fn test_connect_token_url() {
-        let host: Host = "test.quilt.dev".parse().unwrap();
         assert_eq!(
-            connect_token_url(&host),
-            "https://test-connect.quilt.dev/auth/token"
+            connect_token_url(&fixtures::host()),
+            "https://quilt-connect.test/auth/token"
         );
     }
 
@@ -305,7 +304,7 @@ mod tests {
             redirect_uri: REDIRECT_URI.to_string(),
             client_id: CLIENT_ID.to_string(),
         };
-        let tokens = exchange_oauth_code(&client, &get_host(), &params)
+        let tokens = exchange_oauth_code(&client, &fixtures::host(), &params)
             .await
             .unwrap();
         assert_eq!(tokens.access_token, ACCESS_TOKEN);
@@ -348,7 +347,7 @@ mod tests {
     async fn test_refresh_oauth_tokens() -> Res {
         let tokens = refresh_oauth_tokens(
             &OAuthTestHttpClient::default(),
-            &get_host(),
+            &fixtures::host(),
             REFRESH_TOKEN,
             CLIENT_ID,
         )
@@ -411,9 +410,13 @@ mod tests {
             }
         }
 
-        let tokens =
-            refresh_oauth_tokens(&NoRefreshTokenClient, &get_host(), REFRESH_TOKEN, CLIENT_ID)
-                .await?;
+        let tokens = refresh_oauth_tokens(
+            &NoRefreshTokenClient,
+            &fixtures::host(),
+            REFRESH_TOKEN,
+            CLIENT_ID,
+        )
+        .await?;
         assert_eq!(tokens.access_token, "new-access-token");
         // Old refresh token must be retained
         assert_eq!(tokens.refresh_token, REFRESH_TOKEN);
@@ -479,7 +482,7 @@ mod tests {
             redirect_uri: REDIRECT_URI.to_string(),
             client_id: CLIENT_ID.to_string(),
         };
-        let result = exchange_oauth_code(&NoRefreshTokenClient, &get_host(), &params).await;
+        let result = exchange_oauth_code(&NoRefreshTokenClient, &fixtures::host(), &params).await;
         assert!(
             matches!(result, Err(Error::Auth(_, AuthError::TokensExchange(_)))),
             "expected TokensExchange error, got: {result:?}"

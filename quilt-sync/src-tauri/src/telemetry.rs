@@ -325,11 +325,6 @@ impl Telemetry {
 
         self.track(MixpanelEvent::AppLaunched);
     }
-
-    /// Returns the current global maximum log level as a human-readable string.
-    pub fn log_level() -> String {
-        ::tracing::level_filters::LevelFilter::current().to_string()
-    }
 }
 
 #[cfg(test)]

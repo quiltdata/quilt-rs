@@ -9,14 +9,18 @@ the workspace is split this way, see
 One Cargo workspace, six `Cargo.toml` files (root + five members).
 QuiltSync contributes two of the five members.
 
-| `Cargo.toml` | Crate | Version | Released to |
-| --- | --- | --- | --- |
-| root | — | — | (workspace manifest) |
-| `quilt-rs/` | `quilt-rs` | 0.31.0 | crates.io + GitHub Release |
-| `quilt-uri/` | `quilt-uri` | 0.2.0 | crates.io + GitHub Release |
-| `quilt-cli/` | `quilt-cli` | 0.25.2 | crates.io + GitHub Release with prebuilt binaries |
-| `quilt-sync/src-tauri/` | `quilt-sync` | 0.17.1 | GitHub Release + HubSpot mirror |
-| `quilt-sync/ui/` | `quilt-sync-ui` | 0.1.0 | **not released** — built into QuiltSync |
+| `Cargo.toml` | Crate | Released to |
+| --- | --- | --- |
+| root | — | (workspace manifest) |
+| `quilt-rs/` | `quilt-rs` | crates.io + GitHub Release |
+| `quilt-uri/` | `quilt-uri` | crates.io + GitHub Release |
+| `quilt-cli/` | `quilt-cli` | crates.io + GitHub Release with prebuilt binaries |
+| `quilt-sync/src-tauri/` | `quilt-sync` | GitHub Release + HubSpot mirror |
+| `quilt-sync/ui/` | `quilt-sync-ui` | **not released** — built into QuiltSync |
+
+Current versions live in those `Cargo.toml` files, which is what the
+release workflows read through `cargo metadata`. They are deliberately
+not repeated here.
 
 Path-dep version specifiers are kept in sync manually:
 
@@ -26,8 +30,27 @@ Path-dep version specifiers are kept in sync manually:
   don't touch them.
 
 Each released crate owns a `CHANGELOG.md`; see the header comment in
-each one for the conventions (alpha pre-release pattern, autolink
-format, cross-crate subsections).
+each one for the conventions (`-dev` versions between releases,
+autolink format, cross-crate subsections).
+
+Between releases, a crate with unreleased changes carries `X.Y.Z-dev` in
+its `Cargo.toml`, and its `CHANGELOG.md` opens with a matching `##
+[vX.Y.Z-dev]` heading and no date. The first PR to change a crate after
+its release opens the cycle: it sets the next patch `-dev` version and
+adds the heading with its entry. Crates with no changes keep their
+stable version. Cargo's version requirements skip pre-releases, so when
+`quilt-uri` or `quilt-rs` goes `-dev`, the downstream `version =`
+specifiers for it must move to the same `-dev` version. That specifier
+change alone does not open a cycle for the downstream crate; the release
+cascade bumps it. A PR that needs a bigger bump than the cycle started
+with (a feature in a patch cycle) renames the version in both places.
+The unreleased section describes the change since the last release, not
+a history of PRs: a PR that makes an unreleased entry stale rewrites it
+in place and appends its PR link. Work no user can reach yet, not even
+through Settings → Experimental, gets a single "Under the hood" line
+rather than an Added or Changed entry; it earns a real entry once it
+becomes reachable, even behind an Experimental switch. Released sections
+are never edited.
 
 ## Release workflows
 
@@ -43,9 +66,10 @@ or schedule.
 Every release in this repo is created with `--draft` and
 `--latest=false`. `make_latest=false` is **sticky** — promoting a
 draft via `gh release edit <tag> --draft=false` does not flip it back.
-No workflow ever sets `make_latest=true`; the only release marked as
-"latest" is the QuiltSync one, and it gets that flag manually during
-the review-and-publish step (see [Manual steps](#manual-steps-the-part-thats-not-in-any-workflow)).
+Crate releases never become "latest". The only release marked as
+"latest" is the QuiltSync one: the gated `promote` job sets
+`make_latest=true` when it publishes the draft (see
+[Manual steps](#manual-steps-the-part-thats-not-in-any-workflow)).
 
 ## Crates.io publishing — `release-crate.yaml`
 
@@ -114,7 +138,9 @@ End-user install paths produced by these releases:
 
 ## QuiltSync — `release-quilt-sync.yaml`
 
-Single `release` job, parallel matrix:
+A `create-release` job creates the draft once (or reuses the one
+existing draft for the tag) and outputs its numeric id; the `release`
+job then runs a parallel matrix that uploads to that id:
 
 | Platform | Runner | Tauri args |
 | --- | --- | --- |
@@ -128,17 +154,18 @@ Build pipeline:
 1. Setup Rust (release cache, with `wasm32-unknown-unknown` everywhere
    for the Leptos UI; macOS additionally adds both Apple targets).
 2. Setup Node 24 + Trunk (for `quilt-sync/ui`).
-3. `tauri-apps/tauri-action@v0` runs `trunk build --release` on the UI
+3. `tauri-apps/tauri-action` runs `trunk build --release` on the UI
    (via `beforeBuildCommand`), then bundles the targets listed in
    `tauri.conf.json` (`["app", "deb", "dmg", "msi"]`). With
    `createUpdaterArtifacts: true` it also produces `latest.json`,
-   `*.app.tar.gz`, and `*.msi.zip` updater bundles. Tag pattern:
-   `QuiltSync/v__VERSION__` (Tauri substitutes `__VERSION__` from
-   `quilt-sync/src-tauri/Cargo.toml`) — this is the final tag form,
-   matching the input `upload-to-hubspot.yaml` expects. Release is
-   created as a draft.
-4. (Windows only) `azure/login@v3` exchanges the GitHub OIDC token for
-   an Azure access token, then `azure/trusted-signing-action@v1` signs
+   `*.app.tar.gz`, and `*.msi.zip` updater bundles. Every leg uploads
+   to the draft by its numeric `releaseId`, so all platforms land in
+   one release and one `latest.json`. The tag is
+   `QuiltSync/v<version>`, with the version read from
+   `quilt-sync/src-tauri/Cargo.toml` — the final tag form, matching
+   the input `upload-to-hubspot.yaml` expects.
+4. (Windows only) `azure/login` exchanges the GitHub OIDC token for
+   an Azure access token, then `azure/trusted-signing-action` signs
    every `.exe` and `.msi`. See
    [docs/windows-signing.md](windows-signing.md).
 
@@ -204,14 +231,19 @@ and `HUBDB_COLUMN_MAP`.
 
 For any release:
 
-- Bump `version` in the relevant `Cargo.toml` and update path-dep
-  specifiers. The released crates are dependent on each other and
+- Drop `-dev` from `version` in the relevant `Cargo.toml` and update
+  path-dep specifiers. The released crates are dependent on each other and
   must be released as a cascade: `quilt-uri` → `quilt-rs` → `quilt-cli`.
   Bumping an upstream crate requires bumping every downstream crate
   that depends on it (and updating that downstream `Cargo.toml`'s
   `version =` specifier for the path dep).
-- Replace the latest `*-alphaN` block in the matching `CHANGELOG.md`
-  with a real version + today's date.
+- Drop `-dev` from the top heading in the matching `CHANGELOG.md`
+  too, and add today's date to it.
+- In the section being released, point every cross-crate line
+  (`### quilt-rs`, `### quilt-uri`) at the upstream's released version
+  and tag: `Updated [from v0.39.1 to v0.40.0](…/compare/quilt-rs/v0.39.1...quilt-rs/v0.40.0)`.
+  While the cycle runs, those lines name the upstream `-dev` version and
+  compare against `main`.
 - Run the workflow (`workflow_dispatch`).
 - Review the draft (for `quilt-cli`, download the archives and confirm
   `quilt --version`; for QuiltSync, install one of the bundles), then
@@ -219,7 +251,9 @@ For any release:
   approval is the only manual step:
   - **Crate releases** — `publish` promotes the draft and runs
     `cargo publish`.
-  - **QuiltSync** — `promote` flips the draft to public, marks it as
+  - **QuiltSync** — `promote` first fails if the tag has more than
+    one release or the draft's `latest.json` lacks any of the eight
+    platform keys; then it flips the draft to public, marks it as
     "latest", and dispatches `upload-to-hubspot.yaml` (HubFS + HubDB
     mirror) in one step.
 

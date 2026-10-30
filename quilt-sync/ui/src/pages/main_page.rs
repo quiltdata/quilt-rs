@@ -1,0 +1,5531 @@
+//! The v2 main page, drawn in the v2 design.
+//!
+//! Three regions: the state strip — Autosync beside Accounts — the attention
+//! queue, and the list. The list region is two views of one roster, Packages and
+//! Recent files, behind the toggle in its toolbar. `Transition`, never
+//! `Suspense` (§6): the Autosync card refetches on every autosync change,
+//! publish and pause, and a `Suspense` boundary re-shows its fallback each time,
+//! so the page would strobe.
+//! Today `reload` fires from the Refresh button and from a role switch, which
+//! moves the package rows as surely as it moves the Accounts card.
+//!
+//! # One read of each payload, held here
+//!
+//! §1: resolution happens once, upstream of every region. The queue is derived
+//! from the same package rows the list draws and the same host facts the Accounts
+//! card draws, so both light-phase resources live on the page rather than inside
+//! the region that happens to draw them first — a region fetching its own copy
+//! would ask the same question twice and could be told two different answers.
+//! Both are awaited in one place and handed down as plain values.
+
+mod accounts;
+mod autosync;
+mod create_package;
+mod grouping;
+pub mod package_autosync;
+pub mod queue;
+mod recent_files;
+mod toolbar_memory;
+
+use std::collections::HashMap;
+
+use leptos::prelude::*;
+
+use quilt_uri::Namespace;
+use quilt_uri::S3PackageUri;
+
+use super::status_watch::StatusWatch;
+use crate::commands;
+use crate::commands::MainPageAccountsData;
+use crate::commands::MainPageDownloadsData;
+use crate::commands::MainPagePackageData;
+use crate::commands::MainPagePackageRefreshData;
+use crate::commands::MainPagePackagesData;
+use crate::commands::MainPageRecentFilesData;
+use crate::commands::MainPageWatcherData;
+use crate::components::appbar::appbar_actions;
+use crate::error_handler::{current_path, follow_redirect};
+use crate::routes::package_page_href;
+use crate::util;
+use crate::util::Held;
+use grouping::ListRowData;
+use grouping::PackageGroup;
+use toolbar_memory::FILES_GROUP;
+use toolbar_memory::PACKAGES_GROUP;
+use toolbar_memory::PACKAGES_SORT;
+use toolbar_memory::remember_choice;
+use toolbar_memory::remembered_choice;
+
+stylance::import_crate_style!(style, "src/pages/main_page.module.scss");
+
+use crate::kit::Blankslate;
+use crate::kit::Button;
+use crate::kit::ButtonVariant;
+use crate::kit::Card;
+use crate::kit::FileRowSkeleton;
+use crate::kit::GroupHeading;
+use crate::kit::ListToolbar;
+use crate::kit::LoadFailure;
+use crate::kit::Naming;
+use crate::kit::PackageRow;
+use crate::kit::PackageRowSkeleton;
+use crate::kit::PackageState;
+use crate::kit::PageLayout;
+use crate::kit::RowDownloads;
+use crate::kit::SearchInput;
+use crate::kit::SegmentedControl;
+use crate::kit::Select;
+use crate::kit::Site;
+use crate::kit::TwoColumns;
+use crate::kit::ZeroLineSkeleton;
+use crate::kit::publish_height;
+use crate::kit::render;
+
+/// The fixed sentence shown when the fetch fails. The backend's error text is
+/// logged (see `render_fetch_error`) but never shown: §5's words-come-from-`render`
+/// constraint applies to this file too, and a raw `Result<_, String>` error is not
+/// a word from the vocabulary.
+const FETCH_ERROR_WORDS: &str = "Could not load your packages.";
+
+/// The same, for the recent-files read. A separate sentence and not the one above
+/// because the two arms fail over different reads: `Could not load your packages.`
+/// under the Recent files toggle is a wrong statement about which read failed, and
+/// a page that misreports that is worse than one that says less. The blankslate is
+/// not the alternative either — `No files yet` over a read that never answered
+/// manufactures a state the page does not know.
+const FILES_FETCH_ERROR_WORDS: &str = "Could not load your files.";
+
+/// An undrawn card is indistinguishable from no autosync and no sessions — the blank
+/// R1 forbids.
+const AUTOSYNC_ERROR_WORDS: &str = "Could not load autosync.";
+const ACCOUNTS_ERROR_WORDS: &str = "Could not load your accounts.";
+
+/// The list region's two views, as the toggle names them. Consts because each
+/// string is the toggle's option, the value the selection signal holds, and the
+/// condition the region switches on — three uses that must not drift apart.
+const PACKAGES_VIEW: &str = "Packages";
+const FILES_VIEW: &str = "Recent files";
+
+/// The packages view's `Group` axis and the feed's, which are different
+/// controls behind different signals (see `list_toolbar`'s own doc): a shared
+/// signal holding `Bucket` would render the feed's select blank the moment the
+/// reader switched to it, since `Bucket` is not one of its options.
+const GROUP_BUCKET: &str = "Bucket";
+const GROUP_CATALOG: &str = "Catalog";
+const GROUP_PREFIX: &str = "Prefix";
+const GROUP_NONE: &str = "None";
+const GROUP_PACKAGE: &str = "Package";
+const SORT_CHANGED: &str = "Changed";
+const SORT_NAME: &str = "Name";
+
+/// The failure branch, split out from `MainPage` so it can be tested without a
+/// Tauri host. Renders only the fixed sentence for the user — logging the
+/// backend's error for a developer happens once, where the fetch result is
+/// handled (`MainPage`'s `Err` arm below), not here: this is a view function,
+/// and view functions can re-run on every re-render, which would re-log the
+/// same failure each time.
+fn render_fetch_error(retry: Trigger) -> impl IntoView {
+    fetch_error_body(FETCH_ERROR_WORDS, retry)
+}
+
+/// One child, because `Card` rules between any two of its own.
+///
+/// `retry` is the failed read's trigger, never the page's.
+fn fetch_error_body(words: &'static str, retry: Trigger) -> AnyView {
+    view! { <LoadFailure words=words on_retry=Callback::new(move |()| retry.notify()) /> }
+        .into_any()
+}
+
+/// Titled, since the title is what tells this card from the one beside it.
+pub(super) fn fetch_error_card(
+    title: &'static str,
+    words: &'static str,
+    retry: Trigger,
+) -> AnyView {
+    view! { <Card title=title>{fetch_error_body(words, retry)}</Card> }.into_any()
+}
+
+/// The feed's failure branch. Same shape and same reasoning as
+/// [`render_fetch_error`]: only the fixed sentence reaches the user, and the
+/// backend's error text is logged once where the fetch result is handled — not
+/// here, because a view function can re-run on every re-render and would re-log
+/// the same failure each time.
+fn render_files_fetch_error(retry: Trigger) -> impl IntoView {
+    fetch_error_body(FILES_FETCH_ERROR_WORDS, retry)
+}
+
+/// A row's live state: the light phase's guess, replaced in place by the heavy
+/// phase's answer.
+#[derive(Clone, Copy)]
+struct RowSignals {
+    state: RwSignal<PackageState>,
+    confidence: RwSignal<Confidence>,
+    role_switch_host: RwSignal<Option<String>>,
+    /// What the status check counted on disk; `None` until a check answers.
+    downloads: RwSignal<Option<MainPageDownloadsData>>,
+    /// Files the status check counted as changed; `None` until a check answers.
+    changed_files: RwSignal<Option<usize>>,
+}
+
+/// How much the page knows about a row's state.
+///
+/// One field rather than a `provisional` boolean beside an `unchecked` one:
+/// "settled but unchecked" is not a thing, and a type that cannot express it
+/// beats a note asking people not to — `kit/banner.rs` makes the same argument
+/// for its own enum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Confidence {
+    /// The heavy phase answered, and this is its answer.
+    Settled,
+    /// Its call is still out. Not news: the row is dashed and dimmed, and the
+    /// queue waits rather than speaking (R3).
+    Pending,
+    /// Its call failed, so the row keeps the light phase's state, which is
+    /// unconfirmed but usually right. This variant tells "we could not check"
+    /// apart from "we have not checked yet" (`Pending`).
+    Unchecked,
+}
+
+impl RowSignals {
+    /// `provisional` comes from the payload: almost every light-phase state is
+    /// a cached guess, but `PullConflict` and `Paused` come from the watcher's
+    /// reading of this disk and arrive settled. If this assumed every row was
+    /// provisional, a conflict would leave the queue while the remote is
+    /// unreachable.
+    fn new(state: PackageState, role_switch_host: Option<String>, provisional: bool) -> Self {
+        Self {
+            state: RwSignal::new(state),
+            confidence: RwSignal::new(if provisional {
+                Confidence::Pending
+            } else {
+                Confidence::Settled
+            }),
+            role_switch_host: RwSignal::new(role_switch_host),
+            downloads: RwSignal::new(None),
+            changed_files: RwSignal::new(None),
+        }
+    }
+
+    /// Whether anything has confirmed this state. Both unconfirmed reasons dim
+    /// the row, because the dim says *unconfirmed* and that is true of both.
+    fn provisional(self) -> bool {
+        self.confidence.get() != Confidence::Settled
+    }
+
+    /// The heavy phase's call failed. Recorded rather than only logged, so the
+    /// queue can name the packages the page could not account for.
+    fn mark_unchecked(self) {
+        self.confidence.set(Confidence::Unchecked);
+    }
+
+    /// A call is out for this row again. Clears a previous failure, so a retry in
+    /// flight stops the cause naming a package it is currently re-checking — the
+    /// queue then waits on `in_flight`, as it does for a first load (R3).
+    fn mark_pending(self) {
+        self.confidence.set(Confidence::Pending);
+    }
+
+    /// Replace the light phase's guess with the heavy phase's answer — in BOTH
+    /// directions. The pre-filter that seeds these is an optimistic hint, and
+    /// only ever adding a mark made a false positive permanent for the life of
+    /// the page. The refresh is the real call, so it gets the last word.
+    fn apply(self, refreshed: MainPagePackageRefreshData) {
+        self.state.set(refreshed.state);
+        self.role_switch_host.set(refreshed.role_switch_host);
+        self.downloads.set(refreshed.downloads);
+        self.changed_files.set(refreshed.changed_files);
+        self.confidence.set(Confidence::Settled);
+    }
+}
+
+/// Every row's live state, held by the page instead of by the list row that draws
+/// it. The heavy phase's answer is what the attention queue is about — a package
+/// with uncommitted changes is exactly what the queue exists to name — and while
+/// those signals were private to each [`PackageListRow`] no other region could
+/// read them.
+///
+/// Two `Copy` handles and nothing else, so the store costs nothing to capture in
+/// as many closures as the page has readers.
+#[derive(Clone, Copy)]
+struct PackageStore {
+    /// One entry per light-phase package, keyed by namespace. A `StoredValue`
+    /// rather than a signal: seeding fixes the keys for the life of the payload,
+    /// and only the signals inside an entry ever change — so nothing that reads
+    /// the map should re-run when a row settles.
+    rows: StoredValue<HashMap<Namespace, RowSignals>>,
+    /// Heavy-phase calls not yet answered. R3: the queue may not claim an
+    /// all-clear while any of them is outstanding, and `provisional` cannot
+    /// carry that — a failed refresh stays provisional forever.
+    outstanding: RwSignal<usize>,
+}
+
+impl PackageStore {
+    /// One row per light-phase package, each holding that phase's guess.
+    fn seed(packages: &[MainPagePackageData]) -> Self {
+        let rows = packages
+            .iter()
+            .map(|p| {
+                (
+                    p.namespace.clone(),
+                    RowSignals::new(p.state.clone(), p.role_switch_host.clone(), p.provisional),
+                )
+            })
+            .collect();
+        Self {
+            rows: StoredValue::new(rows),
+            // One call per package. The resolve fires them, so the count doesn't
+            // depend on which `Show` branch is mounted (R0).
+            outstanding: RwSignal::new(packages.len()),
+        }
+    }
+
+    /// This package's live state, or `None` for a namespace the store was not
+    /// seeded with.
+    fn row(&self, namespace: &Namespace) -> Option<RowSignals> {
+        self.rows.with_value(|rows| rows.get(namespace).copied())
+    }
+
+    /// One heavy-phase call answered, successfully or not.
+    fn answered(&self) {
+        // `saturating_sub`, not `-= 1`: a double-decrement would be a bug in the
+        // caller, and underflowing a `usize` in a release build wraps to a number
+        // that leaves the queue silent forever (R3).
+        self.outstanding.update(|n| *n = n.saturating_sub(1));
+    }
+
+    /// More calls are going out — the counterpart to [`answered`](Self::answered),
+    /// for a retry, which fires calls the seed never counted.
+    fn asking(&self, n: usize) {
+        self.outstanding.update(|o| *o += n);
+    }
+
+    /// Whether any heavy-phase call is still outstanding (R3).
+    fn in_flight(&self) -> bool {
+        self.outstanding.get() > 0
+    }
+
+    /// The light-phase payload with the heavy phase's answers written over it,
+    /// minus every row that is still provisional. The access pre-filter
+    /// over-reports, so its guesses must not reach the queue as denials.
+    ///
+    /// Reads the signals with `.get()`, never `get_untracked()`: the caller's
+    /// reactivity is the entire point of holding these signals on the page, and
+    /// "optimising" this to an untracked read would leave the queue frozen on the
+    /// light phase again — `a_reader_of_settled_re_runs_when_a_row_settles` is
+    /// what catches that.
+    fn settled(&self, light: &[MainPagePackageData]) -> Vec<MainPagePackageData> {
+        light
+            .iter()
+            .filter_map(|p| {
+                let row = self.row(&p.namespace)?;
+                if row.provisional() {
+                    return None;
+                }
+                Some(MainPagePackageData {
+                    state: row.state.get(),
+                    role_switch_host: row.role_switch_host.get(),
+                    provisional: false,
+                    ..p.clone()
+                })
+            })
+            .collect()
+    }
+
+    /// The light-phase rows whose heavy-phase call **failed** — never the ones
+    /// still waiting. `settled` drops both alike, because neither is confirmed;
+    /// only these two are something the page can speak about, and the light
+    /// payload is what carries the host the queue groups them by.
+    fn unchecked(&self, light: &[MainPagePackageData]) -> Vec<MainPagePackageData> {
+        light
+            .iter()
+            .filter(|p| {
+                self.row(&p.namespace)
+                    .is_some_and(|row| row.confidence.get() == Confidence::Unchecked)
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+/// What one heavy-phase call does when it returns: the state write, and the
+/// answer the counter is waiting for.
+///
+/// The counter is decremented on **every** path, success or failure: `outstanding`
+/// counts calls, and a call that failed has answered (R3).
+///
+/// A row whose owner has since been disposed — by a refetch, or by the view
+/// toggle — absorbs the write silently, because `reactive_graph` routes a signal
+/// write through `try_update` and drops the `None`. That is why nothing here
+/// guards against a stale answer.
+fn record_refresh(
+    row: RowSignals,
+    store: PackageStore,
+    result: Result<MainPagePackageRefreshData, String>,
+) {
+    match result {
+        Ok(refreshed) => row.apply(refreshed),
+        Err(err) => {
+            // The row keeps the light phase's state, which is unconfirmed but
+            // not wrong. Marking it unchecked records that the check failed, as
+            // opposed to not having run yet; the queue shows failed checks as a
+            // shared cause. The backend's message is logged for diagnosis and
+            // never shown on the page.
+            row.mark_unchecked();
+            web_sys::console::error_1(&format!("refresh_main_page_package failed: {err}").into());
+        }
+    }
+    store.answered();
+}
+
+/// Re-check exactly these packages, and nothing else.
+///
+/// What the appbar's Refresh cannot do: that notifies the page's trigger and
+/// reloads every payload. This re-fires only the heavy-phase calls a cause names,
+/// which is the affordance v1 had per row and this design moved to the cause
+/// (`gallery/unchecked.rs`).
+///
+/// The rows are looked up BEFORE the counter is raised, so a namespace with no row
+/// cannot leave `outstanding` permanently above zero and the queue silent forever
+/// (R3) — the same hazard the resolve's own `store.answered()` arm guards.
+fn recheck(store: PackageStore, namespaces: &[Namespace]) {
+    let rows: Vec<(Namespace, RowSignals)> = namespaces
+        .iter()
+        .filter_map(|namespace| Some((namespace.clone(), store.row(namespace)?)))
+        .collect();
+    store.asking(rows.len());
+    for (namespace, row) in rows {
+        row.mark_pending();
+        leptos::task::spawn_local(async move {
+            let result = commands::refresh_main_page_package(namespace.to_string()).await;
+            record_refresh(row, store, result);
+        });
+    }
+}
+
+/// One row: a pure view over the signals the page holds for it. The heavy-phase
+/// call that fills those signals is fired by the resolve that seeded the store,
+/// not here — R0 is unaffected, because it is still one call per package and a row
+/// still settles where it stands by reading its own [`RowSignals`], but the number
+/// of calls is now a property of the payload rather than of which subtree happens
+/// to be mounted.
+#[component]
+fn PackageListRow(
+    namespace: Namespace,
+    /// This package's live state, owned by the page's [`PackageStore`].
+    row: RowSignals,
+    changed_at: Option<f64>,
+    host: Option<String>,
+) -> impl IntoView {
+    let href = package_page_href(&namespace);
+    let words = Signal::derive(move || render(&row.state.get(), Site::ListRow).words);
+    let tone = Signal::derive(move || render(&row.state.get(), Site::ListRow).tone);
+    // Counts from an earlier check are not shown while a row is unconfirmed.
+    let counted = move || {
+        if row.provisional() {
+            None
+        } else {
+            row.downloads.get()
+        }
+    };
+
+    view! {
+        <PackageRow
+            namespace=namespace.to_string()
+            href=href
+            changed_at=changed_at
+            state=words
+            tone=tone
+            provisional=Signal::derive(move || row.provisional())
+            downloads=Signal::derive(move || counted().map(RowDownloads::from))
+            host=host
+            size=Signal::derive(move || counted().map(Held::from))
+        />
+    }
+}
+
+/// The rows, as direct children of the card body — no wrapper element. The
+/// card's own `.body > * + *` rule (`kit/card.module.scss`) spaces them; a
+/// wrapping `div` would defeat that direct-child selector, and gallery
+/// chrome's `.g-rows` is not shipped to the app bundle at all (`app.scss`
+/// excludes it). Split out from `MainPage` so it can be tested without a
+/// Tauri host.
+/// The class a run of rows carries, for the feed's list as well as this one — it has
+/// no stylesheet of its own and the rule is the page's.
+///
+/// Public, with [`StateStrip`] and [`list_region_class`], for the gallery's
+/// whole-page scenes: they draw fixture rows rather than this page, but in the
+/// page's own layout, so a change to it shows there too.
+pub fn rows_class() -> &'static str {
+    style::rows
+}
+
+/// The class a list with no dividing rule carries — the packages an expanded
+/// cause reveals.
+pub(super) fn list_class() -> &'static str {
+    style::list
+}
+
+/// The state strip: Autosync beside Accounts, or stacked when the window is
+/// too narrow for both. The cards share one height, so the strip has one
+/// bottom edge even when Accounts has a single host.
+///
+/// The first of the page's sticky bands, under the appbar.
+#[component]
+pub fn StateStrip(children: Children) -> impl IntoView {
+    let band = NodeRef::new();
+    publish_height(band, "--q-strip-height");
+    view! {
+        <div class=style::strip node_ref=band>
+            <TwoColumns min_column=300 tight=true>
+                {children()}
+            </TwoColumns>
+        </div>
+    }
+}
+
+/// The queue's sticky band, under the strip. Drawn only around something: a
+/// queue with nothing to say leaves no band, and no height for the bands below.
+#[component]
+pub fn QueueBand(children: Children) -> impl IntoView {
+    let band = NodeRef::new();
+    publish_height(band, "--q-queue-height");
+    view! {
+        <div class=style::queue node_ref=band>
+            <div class=style::queue_scroll>{children()}</div>
+        </div>
+    }
+}
+
+/// The list toolbar's sticky band, under the queue: the last of the parts that
+/// stay while the rows scroll.
+#[component]
+pub fn ToolbarBand(children: Children) -> impl IntoView {
+    let band = NodeRef::new();
+    publish_height(band, "--q-toolbar-height");
+    view! { <div class=style::toolbar node_ref=band>{children()}</div> }
+}
+
+/// Region 4: the list toolbar, then the list that scrolls the page under it.
+pub fn list_region_class() -> &'static str {
+    style::list_region
+}
+
+/// Keyed on the namespace. Filtering drops rows out of the middle of the list,
+/// and a positional diff patches every node below the gap into a different
+/// logical row — rebuilding each row's three derived signals with it.
+///
+/// `packages` is a `Signal` so the rows reach the list without a closure above
+/// it being rebuilt to deliver them.
+#[component]
+fn PackageList(packages: Signal<Vec<ListRowData>>, store: PackageStore) -> impl IntoView {
+    view! {
+        <ul class=style::rows role="list">
+            <For
+                each=move || packages.get()
+                key=|row_data: &ListRowData| row_data.namespace.clone()
+                children=move |row_data| {
+                    // A namespace the store was not seeded with cannot happen from
+                    // one payload — the rows and the store are built from the same
+                    // packages — and drawing nothing is not worth a panic. The
+                    // counter is unaffected either way: it counts the calls the
+                    // resolve fired, not the rows.
+                    match store.row(&row_data.namespace) {
+                        Some(row) => {
+                            view! {
+                                <li>
+                                    <PackageListRow
+                                        namespace=row_data.namespace
+                                        row=row
+                                        changed_at=row_data.changed_at
+                                        host=row_data.host
+                                    />
+                                </li>
+                            }
+                                .into_any()
+                        }
+                        None => ().into_any(),
+                    }
+                }
+            />
+        </ul>
+    }
+}
+
+/// What the packages card draws. Held in a `Memo`, so only a change of shape
+/// re-renders the card.
+///
+/// That is load-bearing: a reactive closure's `rebuild` discards its whole
+/// subtree, so a `<For>` under a closure that re-runs per keystroke is destroyed
+/// before its key can do anything. The queue's `Shape` stands on the same fact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ListShape {
+    /// No packages at all. Distinct from the empty search below: different
+    /// words, and the only one of the two with an action.
+    EmptyRoster,
+    /// Packages, none of them matching what was typed.
+    NoMatch,
+    /// The groups and their rows.
+    Groups,
+}
+
+/// One group's heading and its rows, built once per group title by the keyed
+/// `<For>` above.
+///
+/// The rows come from `arranged` rather than from the value the `<For>` hands
+/// in: a keyed child is built once per key, so a captured membership would never
+/// narrow.
+fn package_group(
+    title: Option<String>,
+    arranged: Memo<Vec<PackageGroup>>,
+    group_by: Signal<String>,
+    store: PackageStore,
+) -> AnyView {
+    let key = title.clone();
+    let rows = Signal::derive(move || {
+        arranged.with(|groups| {
+            groups
+                .iter()
+                .find(|group| group.title == key)
+                .map(|group| group.rows.clone())
+                .unwrap_or_default()
+        })
+    });
+    // The heading is its own reactive node: `group_annotation` reads the store's
+    // settled signals, and keeping that read here is what limits a settle to this
+    // one heading.
+    let heading = title.map(|heading| {
+        view! {
+            {move || {
+                let group = PackageGroup {
+                    title: Some(heading.clone()),
+                    rows: rows.get(),
+                };
+                // The count is the length of the rows that follow, always,
+                // including one. Never written by hand.
+                let count = group.rows.len();
+                let note = group_annotation(&group, store, &group_by.get());
+                let heading = heading.clone();
+                match note {
+                    Some(note) => {
+                        view! { <GroupHeading title=heading count=count annotation=note /> }
+                            .into_any()
+                    }
+                    None => view! { <GroupHeading title=heading count=count /> }.into_any(),
+                }
+            }}
+        }
+    });
+    view! {
+        {heading}
+        <PackageList packages=rows store=store />
+    }
+    .into_any()
+}
+
+/// The one cause every row in this group shares, or `None`.
+///
+/// Only the bucket axis has one (§3.1): a prefix spans buckets, so no cause is
+/// a property of a prefix group. Reads the settled state rather than the light
+/// phase's guess, for the same reason the queue does — the access pre-filter
+/// over-reports, and an unconfirmed denial is not a fact about the bucket.
+///
+/// The words are `render`'s, at the site that states a shared cause once
+/// (`Site::Cause`). `GroupHeading` draws the dash.
+fn group_annotation(group: &PackageGroup, store: PackageStore, group_by: &str) -> Option<String> {
+    if group_by != GROUP_BUCKET || group.rows.is_empty() {
+        return None;
+    }
+    let mut cause: Option<String> = None;
+    for row in &group.rows {
+        let signals = store.row(&row.namespace)?;
+        if signals.provisional() {
+            return None;
+        }
+        let state = signals.state.get();
+        if !matches!(state, PackageState::RoleDenied { .. }) {
+            return None;
+        }
+        let words = render(&state, Site::Cause).words;
+        match &cause {
+            None => cause = Some(words),
+            Some(existing) if *existing == words => {}
+            // Two denials naming different roles are not one shared cause.
+            Some(_) => return None,
+        }
+    }
+    cause
+}
+
+/// The list region's controls: which view is on, the search, both `Group`
+/// axes, the sort, and whether *Create package* is open.
+///
+/// Held by [`MainPageRegions`]' body, not inside the `Suspend` below it. A
+/// refetch rebuilds that subtree, so a signal created inside it would clear the
+/// reader's search and reset their axes on every Refresh (R2), and
+/// `CreatePackageDialog` mounts outside the `Transition`, so one created there
+/// would close a dialog the reader is mid-typing into.
+///
+/// One constructor, so [`MainPageSkeleton`]'s inert set opens on exactly the
+/// values the page does: a toolbar that drew `Group: Bucket` and then
+/// `Group: None` would move under the cursor at the handover. Both read the
+/// reader's stored `Group:` and `Sort:` choices; the view and the search
+/// always start fresh.
+#[derive(Clone, Copy)]
+struct ListControls {
+    view_selected: RwSignal<String>,
+    query: RwSignal<String>,
+    group_packages_by: RwSignal<String>,
+    group_files_by: RwSignal<String>,
+    sort_by: RwSignal<String>,
+    create_open: RwSignal<bool>,
+}
+
+impl ListControls {
+    fn new() -> Self {
+        Self {
+            view_selected: RwSignal::new(PACKAGES_VIEW.to_string()),
+            query: RwSignal::new(String::new()),
+            group_packages_by: RwSignal::new(remembered_choice(&PACKAGES_GROUP)),
+            group_files_by: RwSignal::new(remembered_choice(&FILES_GROUP)),
+            sort_by: RwSignal::new(remembered_choice(&PACKAGES_SORT)),
+            create_open: RwSignal::new(false),
+        }
+    }
+
+    /// Store each `Group:` and `Sort:` choice when the reader changes it. The
+    /// page's own set only: the loading frame's is inert.
+    fn remember(self) {
+        for (signal, choice) in [
+            (self.group_packages_by, &PACKAGES_GROUP),
+            (self.group_files_by, &FILES_GROUP),
+            (self.sort_by, &PACKAGES_SORT),
+        ] {
+            Effect::watch(
+                move || signal.get(),
+                move |label, _, _| remember_choice(choice, label),
+                false,
+            );
+        }
+    }
+}
+
+/// The queue and the list before the package rows are read: the queue/list
+/// boundary's fallback, and the same regions in [`MainPageSkeleton`].
+///
+/// The toolbar is passed in because it is chrome bound to whichever signals its
+/// caller holds. `inert` takes the list region out of reach of pointer and
+/// keyboard without changing a box, for a caller whose controls lead nowhere —
+/// see [`MainPageSkeleton`].
+fn regions_skeleton(toolbar: AnyView, inert: bool) -> AnyView {
+    view! {
+        // The queue's line, held open. Without it the list starts where the
+        // queue will be and drops when the queue arrives — and the region always
+        // renders SOMETHING once it knows, even when that is the one-line
+        // all-clear, so the shift came entirely from rendering nothing while it
+        // did not. `QueueRegion` holds it on until the heavy phase answers.
+        <QueueBand>
+            <ZeroLineSkeleton />
+        </QueueBand>
+        // The toolbar, from the same helper the resolved arm calls: it is on
+        // screen with the appbar and the strip, and is never itself a skeleton.
+        // The skeletons below it are the packages view's, because that is the
+        // view the page opens on (R4).
+        <div class=style::list_region inert=inert>
+            {toolbar}
+            <Card label="Packages" bare=true busy=true>
+                <PackageRowSkeleton />
+                <PackageRowSkeleton />
+                <PackageRowSkeleton />
+            </Card>
+        </div>
+    }
+    .into_any()
+}
+
+/// The whole main page before any of its reads have answered: the appbar, the
+/// strip's two cards, and [`regions_skeleton`].
+///
+/// What `/` draws while it reads which main page the reader has switched on,
+/// when the root marker says it will be this one — see `main.rs`'s
+/// `design_loading`. It is the page's own first paint, element for element, so
+/// the handover to [`MainPage`] moves nothing: the appbar, the zero line and the
+/// toolbar land on the pixels they already hold.
+///
+/// The strip's two cards are their own skeletons, as the page's cards draw
+/// them until their reads answer. The toolbar is drawn, for its place, and
+/// inert: its signals are the frame's own and the page builds fresh ones, so a
+/// search typed or a view picked during the wait would vanish at the handover,
+/// and *Create package* would open nothing — its dialog belongs to the page.
+/// Inert rather than disabled, which would grey it and so change how the frame
+/// looks against the page that replaces it. The page's own fallback leaves the
+/// same toolbar live, over the page's signals and beside its dialog.
+///
+/// `actions` is the appbar's, passed in because the app's Settings button
+/// navigates and the gallery, which draws this too, has no router.
+#[component]
+pub fn MainPageSkeleton(actions: AnyView) -> impl IntoView {
+    view! {
+        <PageLayout heading="QuiltSync" actions=actions page_scroll=true>
+            <StateStrip>
+                {autosync::autosync_skeleton()}
+                {accounts::accounts_skeleton()}
+            </StateStrip>
+            {regions_skeleton(list_toolbar(ListControls::new()), true)}
+        </PageLayout>
+    }
+}
+
+/// The list region's chrome: the toolbar, and the toggle that names which of the
+/// region's two views is on screen.
+///
+/// A free function rather than a component so that the *same* helper can be
+/// called from both arms of the queue/list boundary — its fallback and its
+/// resolved view. Chrome is never skeletonised (§Loading), and the queue and the
+/// list must keep sharing one boundary (R6), so rendering the toolbar twice from
+/// one definition is what buys "on screen at first paint" without splitting
+/// anything.
+fn list_toolbar(controls: ListControls) -> AnyView {
+    let ListControls {
+        view_selected,
+        query,
+        group_packages_by,
+        group_files_by,
+        sort_by,
+        create_open,
+    } = controls;
+    let on_packages = move || view_selected.get() == PACKAGES_VIEW;
+    view! {
+        <ToolbarBand>
+            <ListToolbar>
+                <SegmentedControl
+                    aria_label="List view"
+                    name="main-page-view"
+                    options=vec![PACKAGES_VIEW.into(), FILES_VIEW.into()]
+                    selected=view_selected
+                />
+                // Two selects, not one with reactive options: `Select`'s `options` is
+                // built once, and a shared `selected` holding a value the other axis
+                // does not offer renders the control blank. The `SearchInput` is split
+                // the same way, one instance per view guard, both bound to the same
+                // `query` signal: its `aria_label` is a plain `String` (kit, read-only),
+                // so it cannot say "packages" on one view and "files" on the other
+                // without two instances.
+                {move || {
+                    on_packages()
+                        .then(|| {
+                            view! {
+                                <SearchInput
+                                    value=query
+                                    aria_label="Search packages"
+                                    placeholder="Search…"
+                                />
+                                <Select
+                                    naming=Naming::Prefix("Group".to_string())
+                                    options=PACKAGES_GROUP.labels()
+                                    selected=group_packages_by
+                                />
+                                <Select
+                                    naming=Naming::Prefix("Sort".to_string())
+                                    options=PACKAGES_SORT.labels()
+                                    selected=sort_by
+                                />
+                                <Button on_click=move |_| create_open.set(true)>
+                                    "Create package"
+                                </Button>
+                            }
+                        })
+                }}
+                {move || {
+                    (!on_packages())
+                        .then(|| {
+                            view! {
+                                <SearchInput value=query aria_label="Search files" placeholder="Search…" />
+                                <Select
+                                    naming=Naming::Prefix("Group".to_string())
+                                    options=FILES_GROUP.labels()
+                                    selected=group_files_by
+                                />
+                            }
+                        })
+                }}
+            </ListToolbar>
+        </ToolbarBand>
+    }
+    .into_any()
+}
+
+/// The Recent files view, and the inner boundary its own read needs.
+///
+/// A `Suspend` registers with the nearest suspense context, so without this
+/// `Transition` an unresolved feed puts the queue/list boundary back into pending
+/// — which re-renders its fallback and leaves two radio groups sharing one `name`
+/// on the page, silently clearing the reader's selection. An inner boundary for a
+/// third payload is not a split of the boundary the queue and the list share (R6).
+///
+/// Called from both arms of the packages read: the feed is an independent payload
+/// (§5's decision 3), so a failed packages read must not take it off the page.
+fn files_view(
+    recent_files: LocalResource<Result<MainPageRecentFilesData, String>>,
+    query: RwSignal<String>,
+    group_files_by: RwSignal<String>,
+    retry: Trigger,
+    // Each package's `quilt+s3` handle, by namespace — see
+    // `recent_files::RecentFilesRegion`'s own prop. Empty when the packages read
+    // failed, which is why it is passed rather than read here: the feed is a
+    // payload of its own and stands whatever the other one did, but with no
+    // packages there are no addresses and so no Copy buttons.
+    addresses: HashMap<Namespace, S3PackageUri>,
+    // Whether each package's status check counted no changed files — see the
+    // region's own prop. Empty, like `addresses`, when the packages read failed.
+    unchanged: HashMap<Namespace, Signal<bool>>,
+    first_load: FirstLoad,
+) -> AnyView {
+    view! {
+        // Three skeleton rows, as the packages view shows in the same position.
+        // Without a fallback the region is empty while the feed is read, and
+        // again on a Refresh during a read: the rebuilt `Transition` has no
+        // previous body to keep, so it behaves like a `Suspense`.
+        <Transition fallback=|| {
+            view! {
+                <Card label="Recent files" bare=true busy=true>
+                    <FileRowSkeleton />
+                    <FileRowSkeleton />
+                    <FileRowSkeleton />
+                </Card>
+            }
+        }>
+            {move || {
+                // Cloned per run, not moved: the closure a `Transition` takes is
+                // `FnMut`, and a resolve happens again on every refetch.
+                let addresses = addresses.clone();
+                let unchanged = unchanged.clone();
+                Suspend::new(async move {
+                match recent_files.await {
+                    Ok(data) => {
+                        first_load.answered();
+                        view! {
+                            <recent_files::RecentFilesRegion
+                                files=data.files
+                                query=query.into()
+                                group_by=group_files_by.into()
+                                addresses=addresses.clone()
+                                unchanged=unchanged.clone()
+                            />
+                        }
+                            .into_any()
+                    }
+                    // A missing session or setup goes where v1 sends it.
+                    Err(err) if first_load.redirect(&err) => ().into_any(),
+                    Err(err) => {
+                        web_sys::console::error_1(
+                            &format!("get_main_page_recent_files failed: {err}").into(),
+                        );
+                        view! { <Card>{render_files_fetch_error(retry)}</Card> }.into_any()
+                    }
+                    }
+                })
+            }}
+        </Transition>
+    }
+    .into_any()
+}
+
+/// Whether a failed read may still send the reader to sign-in or setup, as
+/// v1 does: only while the page has drawn no answer. After that the reader
+/// may be reading or working, and a failed re-read is reported in place.
+#[derive(Clone, Copy)]
+struct FirstLoad {
+    /// The page as it mounted, for the redirect's check against itself.
+    on: StoredValue<String>,
+    drawn: StoredValue<bool>,
+}
+
+impl FirstLoad {
+    fn new() -> Self {
+        Self {
+            on: StoredValue::new(current_path()),
+            drawn: StoredValue::new(false),
+        }
+    }
+
+    /// A read answered, so the page has something on screen.
+    fn answered(self) {
+        self.drawn.set_value(true);
+    }
+
+    fn redirect(self, error: &str) -> bool {
+        !self.drawn.get_value() && follow_redirect(error, &self.on.get_value())
+    }
+}
+
+/// A read of the watcher's payload, for [`MainPageRegions`]' test seam.
+type WatcherRead = fn() -> std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<MainPageWatcherData, String>>>,
+>;
+
+/// The page's three regions, in the order they are read: the state strip, the
+/// attention queue, then the package list. §2's arrangement, and the reason the
+/// queue sits above the list — it is what you look at first.
+///
+/// # Why this takes resources and not payloads
+///
+/// The strip has to be constructed **exactly once**. Its Autosync card owns a
+/// resource of its own whose fetcher tracks this same trigger, so a card rebuilt
+/// by a refetch would ask the backend a second time for the payload the standing
+/// card is already refetching — and worse, the new card's `Transition` has no
+/// previous body to hold, so it would render its empty fallback until the second
+/// read returned. The strip would blank on every Refresh, which is exactly the
+/// strobe §6's Transition-never-Suspense rule exists to forbid.
+///
+/// So the boundaries live **inside** this component rather than around it, and
+/// what it takes is the page's two resources. A test supplies its own —
+/// `LocalResource::new(|| async { Ok(fixture()) })` resolves with no Tauri host —
+/// which is what makes all three regions visible to an assertion at once.
+///
+/// # Three boundaries, and where the lines fall
+///
+/// The strip's Accounts card gets its own small `Transition`, so the strip does
+/// not wait for the package rows and each card holds its previous body through a
+/// refetch. The queue and the list share one, because the queue is derived from
+/// the same rows the list draws: separate boundaries would let the list arrive
+/// above a queue still deciding whether it has anything to say.
+///
+/// A refetch rebuilds that subtree, and the rebuild is what re-collapses an
+/// expanded cause group (R6): `QueueRegion` builds its expander map when it is
+/// constructed — and each group's signal lazily, the first time a render derives
+/// that cause — so a region kept across a refetch would leave a group open over
+/// rows the new payload no longer holds. Whether the queue's `packages` input is
+/// reactive is orthogonal to that: R6 asks that the region be *constructed*
+/// again, not that what it reads sit still.
+///
+/// The third is the recent-files feed's own, nested inside the list region's
+/// `Show`. A `Suspend` registers with the nearest suspense context, so without a
+/// boundary of its own the feed's unresolved read would put the queue/list
+/// `Transition` back into pending — which re-renders its fallback and so puts a
+/// second view toggle on the page, sharing the first one's radio `name` and
+/// silently clearing the reader's selection. An inner boundary for a third
+/// payload is not a split of the boundary the queue and the list must share.
+#[component]
+fn MainPageRegions(
+    /// The page's package read. Awaited once, by the boundary the queue and the
+    /// list share.
+    packages: LocalResource<Result<MainPagePackagesData, String>>,
+    /// The page's accounts read, which the Accounts card draws. Fetched once:
+    /// awaiting a resource reads its value, it does not re-run its fetcher.
+    accounts: LocalResource<Result<MainPageAccountsData, String>>,
+    /// The page's reload trigger, which every resource here tracks.
+    reload: Trigger,
+    /// Each read's own retry. Optional: a test with no failing read presses neither.
+    #[prop(optional)]
+    packages_retry: Trigger,
+    #[prop(optional)] accounts_retry: Trigger,
+    /// Handed the [`PackageStore`] the moment the page seeds one, so a test can
+    /// drive a settle the way the heavy phase would. Read-only and one-shot: the
+    /// page still owns the store and still seeds it from its own payload, so a
+    /// caller cannot make the test's page differ from the app's. The app passes
+    /// nothing; there is no Tauri host in a test, so every row's real refresh
+    /// fails and nothing would ever settle without this.
+    ///
+    /// `optional_no_strip` rather than `optional`: the plain form makes the
+    /// builder take a bare `Callback`, and the one caller that passes anything
+    /// here already holds an `Option`.
+    #[prop(optional_no_strip)]
+    on_store: Option<Callback<PackageStore>>,
+    /// Stands in for `commands::get_main_page_recent_files`. The app passes
+    /// nothing and the feed's own resource calls the command; a test passes a
+    /// closure, because there is no Tauri host to answer that call and because
+    /// counting the calls is the only way to pin R3's "fetched on the first
+    /// switch, and kept thereafter".
+    ///
+    /// A seam for the *answer* only. Which read happens and when — the gate this
+    /// component owns — stays on this side of it, so a test drives the same gate
+    /// the app runs.
+    #[prop(optional_no_strip)]
+    fetch_files: Option<Callback<(), Result<MainPageRecentFilesData, String>>>,
+    /// Stands in for `commands::get_main_page_watcher`, the same kind of seam:
+    /// with no Tauri host the real read fails at once, so a test that wants the
+    /// Autosync card still loading has to supply a read that has not answered.
+    #[prop(optional_no_strip)]
+    fetch_watcher: Option<WatcherRead>,
+) -> impl IntoView {
+    let first_load = FirstLoad::new();
+    // In the component body, NOT inside the `Suspend` closure below. A refetch
+    // rebuilds that subtree deliberately — it is what re-collapses the queue's
+    // expanders (R6) — so a view signal created inside it would reset on every
+    // Refresh and throw a reader of the feed back to Packages.
+    // Held here rather than inside the Autosync card, for the reason the accounts
+    // read is: the queue joins against this payload for a paused package's message.
+    let watcher_reload = Trigger::new();
+    let watcher = match fetch_watcher {
+        Some(read) => autosync::watcher_resource(watcher_reload, reload, read),
+        None => autosync::watcher_resource(watcher_reload, reload, commands::get_main_page_watcher),
+    };
+    // A signal, NOT awaited beside `hosts` below. The watcher reloads on a deadline,
+    // on the window coming back and after a toggle write; awaiting it inside that
+    // `Suspend` would rebuild the queue on each, re-collapsing every expanded cause
+    // (R6) several times a minute. Read where it is drawn, so only the line changes.
+    let pause_messages = Signal::derive(move || {
+        watcher
+            .get()
+            .and_then(|data| {
+                data.as_ref()
+                    .ok()
+                    .map(|data| queue::pause_messages(&data.paused))
+            })
+            .unwrap_or_default()
+    });
+    // Here, for the reason `ListControls` gives: a refetch rebuilds the
+    // resolved subtree, and a signal created inside it would reset.
+    let controls = ListControls::new();
+    controls.remember();
+    let ListControls {
+        view_selected,
+        query,
+        group_packages_by,
+        group_files_by,
+        sort_by,
+        create_open,
+    } = controls;
+    // A one-way latch, not `view_selected` itself. The resource's source closure
+    // is reactive, so gating it on the view directly would refetch on *every*
+    // toggle and resolve the feed back to nothing on the way to Packages —
+    // discarding what R3 says must be kept. A `Memo` latches without an effect:
+    // it recomputes when the view changes, but only notifies its subscriber when
+    // its own value does, which happens exactly once.
+    let files_wanted = Memo::new(move |prev: Option<&bool>| {
+        prev.copied().unwrap_or(false) || view_selected.get() == FILES_VIEW
+    });
+    // §5's decision 3: separate commands exist so the page pays only for the view
+    // it shows. A `LocalResource` runs its future eagerly on construction, so it
+    // is the guard *inside* the future, not the resource's laziness, that keeps
+    // the command from being invoked on a page that never leaves Packages.
+    // `reload` is tracked too, or Refresh would leave a stale feed on screen.
+    let files_retry = Trigger::new();
+    let recent_files = LocalResource::new(move || {
+        reload.track();
+        files_retry.track();
+        let wanted = files_wanted.get();
+        async move {
+            if !wanted {
+                return Ok(MainPageRecentFilesData { files: Vec::new() });
+            }
+            match fetch_files {
+                Some(fetch) => fetch.run(()),
+                None => commands::get_main_page_recent_files().await,
+            }
+        }
+    });
+
+    view! {
+        // Outside every boundary, so both cards are constructed once and each one
+        // owns when it blanks.
+        <StateStrip>
+            <autosync::AutosyncCard reload=watcher_reload watcher=watcher />
+            <Transition fallback=accounts::accounts_skeleton>
+                {move || Suspend::new(async move {
+                    match accounts.await {
+                        Ok(data) => {
+                            first_load.answered();
+                            view! { <accounts::AccountsBody data=data refresh=reload /> }
+                                .into_any()
+                        }
+                        // A missing session or setup goes where v1 sends it.
+                        Err(err) if first_load.redirect(&err) => ().into_any(),
+                        Err(err) => {
+                            // Logged once, here. The card says it could not read:
+                            // rows would claim sessions it has not seen, and no card
+                            // claims there are none.
+                            web_sys::console::error_1(
+                                &format!("get_main_page_accounts failed: {err}").into(),
+                            );
+                            fetch_error_card("Accounts", ACCOUNTS_ERROR_WORDS, accounts_retry)
+                        }
+                    }
+                })}
+            </Transition>
+        </StateStrip>
+        // Outside every `Transition`, beside the strip: a refetch rebuilds the
+        // resolved subtree below, and a dialog rebuilt mid-typing would close
+        // itself. The `<dialog>` is in the browser's top layer regardless of
+        // where it sits in the tree, so its position here is not a layout claim.
+        <create_package::CreatePackageDialog open=create_open reload=reload />
+        // The queue and the list, from one read of the package rows. This
+        // `Suspend` must stay a `Suspend` — memoising it, or keeping its subtree
+        // across a resolve with a `Show` or a `StoredValue`, would reuse the
+        // `QueueRegion` instance and with it the expander signals a refetch is
+        // supposed to reset (R6).
+        <Transition fallback=move || regions_skeleton(list_toolbar(controls), false)>
+            {move || Suspend::new(async move {
+                match packages.await {
+                    Ok(data) => {
+                        first_load.answered();
+                        // The light phase's payload, held for the life of this
+                        // resolve: it is the base the store's projection writes
+                        // the heavy phase's answers over, and both the store and
+                        // the list's rows are built from it. Moved rather than
+                        // cloned — the page is the only owner and `rows` is taken
+                        // before the projection captures it.
+                        let light = data.packages;
+                        // Seeded here rather than inside the list: the heavy
+                        // phase's answers belong to the page, so the queue can
+                        // read them too.
+                        let store = PackageStore::seed(&light);
+                        if let Some(on_store) = on_store {
+                            on_store.run(store);
+                        }
+                        // One heavy-phase call per light-phase package, fired by
+                        // the resolve that seeded the store. `seed` sets
+                        // `outstanding` to the roster's size, so the number of
+                        // calls has to be a property of the payload and not of
+                        // whichever subtree happens to be mounted: a resolve taken
+                        // while the reader is on Recent files builds no rows at
+                        // all, and a row that fired its own call left every one of
+                        // them unmade.
+                        //
+                        // Concurrent, not serial. The two shared resources behind
+                        // the call — credential vending and the `/me` role query —
+                        // are already serialised in the backend, and a serial walk
+                        // would make the list as slow as its slowest package while
+                        // clearing every row at once, the spinner §7 rejected.
+                        for package in &light {
+                            let Some(row) = store.row(&package.namespace) else {
+                                // Unreachable from one payload, the store having
+                                // been seeded from this very list — but a package
+                                // with no row fires no call, so the count it was
+                                // seeded with still has to be given back (R3).
+                                store.answered();
+                                continue;
+                            };
+                            let namespace = package.namespace.clone();
+                            leptos::task::spawn_local(async move {
+                                let result =
+                                    commands::refresh_main_page_package(namespace.to_string())
+                                        .await;
+                                record_refresh(row, store, result);
+                            });
+                        }
+                        let rows: Vec<ListRowData> = light
+                            .iter()
+                            .map(|p| ListRowData {
+                                namespace: p.namespace.clone(),
+                                changed_at: p.changed_at,
+                                bucket: p.bucket.clone(),
+                                host: p.host.clone(),
+                            })
+                            .collect();
+                        // The feed's Copy action addresses a package, and only
+                        // this payload carries the bucket. A package without one
+                        // is absent here, and its rows draw no Copy button.
+                        let addresses: HashMap<Namespace, S3PackageUri> = light
+                            .iter()
+                            .filter_map(|p| {
+                                let uri = util::package_uri(
+                                    p.bucket.as_deref()?,
+                                    &p.namespace,
+                                    p.host.as_deref(),
+                                );
+                                Some((p.namespace.clone(), uri))
+                            })
+                            .collect();
+                        let unchanged: HashMap<Namespace, Signal<bool>> = light
+                            .iter()
+                            .filter_map(|p| {
+                                let row = store.row(&p.namespace)?;
+                                let clean =
+                                    Signal::derive(move || row.changed_files.get() == Some(0));
+                                Some((p.namespace.clone(), clean))
+                            })
+                            .collect();
+                        // How many packages the page holds, confirmed or not. The
+                        // zero line speaks for all of them, and `settled` drops
+                        // the ones no answer confirmed (R2) — including the ones
+                        // whose call failed, which stop being outstanding without
+                        // ever being accounted for.
+                        let total = Signal::stored(light.len());
+                        // The queue reads what the heavy phase confirmed, not the
+                        // light phase's guess. The light phase never looks at the
+                        // working tree, so a package with local edits would sit
+                        // under "All packages are up to date". Reactive, so a row
+                        // settling re-renders the queue and nothing else: the list
+                        // below reads its own per-row signals.
+                        let unchecked_light = light.clone();
+                        let settled = Signal::derive(move || store.settled(&light));
+                        let unchecked = Signal::derive(move || store.unchecked(&unchecked_light));
+                        let in_flight = Signal::derive(move || store.in_flight());
+                        let retry =
+                            Callback::new(move |namespaces: Vec<Namespace>| {
+                                recheck(store, &namespaces);
+                            });
+                        view! {
+                            // No wrapper and no margin: `PageLayout`'s column owns
+                            // the gap between regions, and the queue is a direct
+                            // child of it like the other two.
+                            //
+                            // The queue sits above both views and is untouched by
+                            // the toggle below it: a queue that vanished when you
+                            // looked at your files would be the opposite of an
+                            // attention queue.
+                            <queue::QueueRegion
+                                packages=settled
+                                in_flight=in_flight
+                                total=total
+                                unchecked=unchecked
+                                retry=retry
+                                pause_messages=pause_messages
+                            />
+                            <div class=style::list_region>
+                            {list_toolbar(controls)}
+                            // Neither card carries a title: the toggle immediately
+                            // above names the view, and a card titled `Packages`
+                            // over a Packages / Recent files switch says it twice
+                            // (`Card::title`'s own doc).
+                            <Show
+                                when=move || view_selected.get() == FILES_VIEW
+                                fallback=move || {
+                                    // Cloned in the fallback's own body, not inside
+                                    // the `view!`: `Card`'s children are a `move`
+                                    // closure, so a clone written in there would
+                                    // take `rows` out of this one and leave it
+                                    // `FnOnce`, and this fallback is rebuilt every
+                                    // time the reader comes back to the view.
+                                    let rows = rows.clone();
+                                    // The empty roster is a property of the
+                                    // payload, not of what a search left standing.
+                                    let roster_empty = rows.is_empty();
+                                    // Filter, then group, then sort within each
+                                    // group, in one place. Reads `query`,
+                                    // `group_packages_by` and `sort_by` and no
+                                    // store signal, so a settle never re-runs it.
+                                    //
+                                    // A `Memo`: the lists below read a value that
+                                    // is diffed rather than a subtree that is
+                                    // rebuilt (see [`ListShape`]).
+                                    let arranged = Memo::new(move |_| {
+                                        let text = query.get();
+                                        let filtered = grouping::filter_packages(
+                                            rows.clone(),
+                                            &text,
+                                        );
+                                        let group_by = group_packages_by.get();
+                                        let sort_by = sort_by.get();
+                                        let mut groups = grouping::group_packages(
+                                            filtered,
+                                            &group_by,
+                                        );
+                                        for group in &mut groups {
+                                            grouping::sort_within(&mut group.rows, &sort_by);
+                                        }
+                                        groups
+                                    });
+                                    // `group_packages` answers the `None` axis
+                                    // with one empty group, so "nothing matched"
+                                    // is every group empty rather than no group.
+                                    let shape = Memo::new(move |_| {
+                                        if roster_empty
+                                            && query.with(|text| text.trim().is_empty())
+                                        {
+                                            ListShape::EmptyRoster
+                                        } else if arranged
+                                            .with(|groups| {
+                                                groups.iter().all(|group| group.rows.is_empty())
+                                            })
+                                        {
+                                            ListShape::NoMatch
+                                        } else {
+                                            ListShape::Groups
+                                        }
+                                    });
+                                    view! {
+                                        <Card label="Packages" bare=true>
+                                            // A heading and its rows are flat siblings
+                                            // here, never wrapped in a `div` per group
+                                            // — `Card`'s own `.body > * + *` rule
+                                            // (`kit/card.module.scss`) spaces any two
+                                            // direct children, and a wrapper would
+                                            // defeat that.
+                                            {move || match shape.get() {
+                                                ListShape::EmptyRoster => {
+                                                    // The empty roster, not the empty search
+                                                    // below — different words, and the only
+                                                    // one of the two with an action. A reader
+                                                    // who has typed something is answered
+                                                    // about what they typed, which is why
+                                                    // this wants an empty query and not
+                                                    // merely no rows.
+                                                    view! {
+                                                        <Blankslate
+                                                            heading="No packages yet"
+                                                            description="A package is a folder of files that QuiltSync keeps in step with an S3 bucket. Create one from a folder you already have, or install an existing package from the catalog."
+                                                            primary_action=view! {
+                                                                <Button
+                                                                    variant=ButtonVariant::Primary
+                                                                    on_click=move |_| create_open.set(true)
+                                                                >
+                                                                    "Create package"
+                                                                </Button>
+                                                            }
+                                                                .into_any()
+                                                        />
+                                                    }
+                                                        .into_any()
+                                                }
+                                                ListShape::NoMatch => {
+                                                    // Its own closure: the words carry the
+                                                    // query, so they follow every keystroke
+                                                    // while the shape stands still.
+                                                    view! {
+                                                        {move || {
+                                                            let text = query.get();
+                                                            view! {
+                                                                <Blankslate
+                                                                    heading=format!(
+                                                                        "No packages match \u{201c}{}\u{201d}",
+                                                                        text.trim(),
+                                                                    )
+                                                                    description="Search covers the names of packages installed on this machine."
+                                                                />
+                                                            }
+                                                        }}
+                                                    }
+                                                        .into_any()
+                                                }
+                                                ListShape::Groups => {
+                                                    // Keyed on the title: a re-arrangement
+                                                    // reorders the groups, and a search
+                                                    // empties some out of existence.
+                                                    view! {
+                                                        <For
+                                                            each=move || arranged.get()
+                                                            key=|group: &PackageGroup| group.title.clone()
+                                                            children=move |group| {
+                                                                package_group(
+                                                                    group.title,
+                                                                    arranged,
+                                                                    group_packages_by.into(),
+                                                                    store,
+                                                                )
+                                                            }
+                                                        />
+                                                    }
+                                                        .into_any()
+                                                }
+                                            }}
+                                        </Card>
+                                    }
+                                }
+                            >
+                                {files_view(recent_files, query, group_files_by, files_retry, addresses.clone(), unchanged.clone(), first_load)}
+                            </Show>
+                            </div>
+                        }
+                            .into_any()
+                    }
+                    // A missing session or setup goes where v1 sends it.
+                    Err(err) if first_load.redirect(&err) => ().into_any(),
+                    Err(err) => {
+                        web_sys::console::error_1(
+                            &format!("get_main_page_packages failed: {err}").into(),
+                        );
+                        // No queue at all, rather than a zero line: `Everything is
+                        // Latest — 0 packages` over a read that never answered is a
+                        // manufactured all-clear.
+                        //
+                        // The chrome and both views stand, though. The toolbar is
+                        // chrome (R2), and the feed is a payload of its own that
+                        // this failure says nothing about (§5's decision 3), so a
+                        // reader on Recent files keeps the view they were reading
+                        // and only the Packages arm carries the sentence. No title,
+                        // as in the arm above.
+                        view! {
+                            <div class=style::list_region>
+                                {list_toolbar(controls)}
+                                <Show
+                                    when=move || view_selected.get() == FILES_VIEW
+                                    fallback=move || {
+                                        view! { <Card>{render_fetch_error(packages_retry)}</Card> }
+                                    }
+                                >
+                                    {files_view(recent_files, query, group_files_by, files_retry, HashMap::new(), HashMap::new(), first_load)}
+                                </Show>
+                            </div>
+                        }
+                            .into_any()
+                    }
+                }
+            })}
+        </Transition>
+    }
+}
+
+#[component]
+pub fn MainPage() -> impl IntoView {
+    let reload = Trigger::new();
+    // Light-phase reads still out, counted as the heavy phase counts its own
+    // (`PackageStore::in_flight`). The heavy phase reports itself by rows settling,
+    // so the spin covers the light phase alone.
+    let outstanding = RwSignal::new(0usize);
+    // One retry per read, beside the page's — the two triggers `watcher_resource`
+    // already takes. A page-wide one refetches three reads nobody asked about.
+    let packages_retry = Trigger::new();
+    let accounts_retry = Trigger::new();
+    let packages = LocalResource::new(move || {
+        reload.track();
+        packages_retry.track();
+        async move {
+            outstanding.update(|n| *n += 1);
+            let answer = commands::get_main_page_packages().await;
+            outstanding.update(|n| *n = n.saturating_sub(1));
+            answer
+        }
+    });
+    // Held here rather than inside the Accounts card, beside the page's other
+    // reads, so the page's reload reaches it and a test can hand in its own.
+    //
+    // Tested only by `the_queue_is_drawn_from_the_same_payloads_as_the_cards`. A
+    // card that built its own resource would call the real command, which has no
+    // Tauri host under test, so the card would be empty and that test would fail.
+    // Counting this fetcher's calls would not catch it: a card with its own
+    // resource does not call the test's fetcher at all.
+    let accounts = LocalResource::new(move || {
+        reload.track();
+        accounts_retry.track();
+        async move {
+            outstanding.update(|n| *n += 1);
+            let answer = commands::get_main_page_accounts().await;
+            outstanding.update(|n| *n = n.saturating_sub(1));
+            answer
+        }
+    });
+
+    view! {
+        <PageLayout
+            heading="QuiltSync"
+            page_scroll=true
+            actions=appbar_actions(move || reload.notify(), Signal::derive(move || outstanding.get() > 0))
+        >
+            <PackageStatusListener reload=reload />
+            <MainPageRegions
+                packages=packages
+                accounts=accounts
+                reload=reload
+                packages_retry=packages_retry
+                accounts_retry=accounts_retry
+            />
+        </PageLayout>
+    }
+}
+
+/// Ask the backend again when the watcher reports a package's upstream state has
+/// changed.
+///
+/// Renders nothing; it exists for the subscription, which is dropped with it. Its
+/// own component for [`AutosyncListener`](autosync)'s reason: registered once,
+/// rather than rebuilt with a payload.
+///
+/// The page read this drives is the one the list rows AND the attention queue are
+/// derived from, so a row cannot be patched in place the way v1 patches its own
+/// (`installed_packages_list.rs:427-442`) — the queue would keep the old cause.
+#[component]
+fn PackageStatusListener(reload: Trigger) -> impl IntoView {
+    let watch = StatusWatch::new(reload);
+    let listener = crate::tauri::listen::<commands::PackageStatusEvent>(
+        commands::PACKAGE_STATUS_EVENT,
+        move |event| watch.observe(&event),
+    );
+    on_cleanup(move || drop(listener));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::AccountHostData;
+    use crate::commands::MainPageFileData;
+    use crate::commands::MainPagePackageData;
+    use crate::kit::StateTone;
+    use crate::test_support::mount;
+    use crate::test_support::sleep_ms;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    /// The scenes name packages as text; the payloads carry the type.
+    fn ns(text: &str) -> Namespace {
+        Namespace::try_from(text).expect("a namespace")
+    }
+
+    /// One light-phase row, in any state the caller names. `provisional: true`
+    /// as the light phase always delivers it, and every other field empty: the
+    /// store's tests are about the signals, not about the payload's trimmings.
+    fn pkg(namespace: &str, state: PackageState) -> MainPagePackageData {
+        MainPagePackageData {
+            namespace: ns(namespace),
+            state,
+            changed_at: None,
+            bucket: None,
+            host: None,
+            provisional: true,
+            role_switch_host: None,
+        }
+    }
+
+    /// A package the watcher has paused on a conflict. `provisional: false`
+    /// because the backend sends it that way — the paused map is its own
+    /// evidence, not a guess about a remote.
+    fn conflicted(namespace: &str) -> MainPagePackageData {
+        MainPagePackageData {
+            provisional: false,
+            ..pkg(
+                namespace,
+                PackageState::PullConflict {
+                    files: vec!["a.csv".to_string()],
+                },
+            )
+        }
+    }
+
+    /// The list's own view of a light-phase payload — what `MainPageRegions`
+    /// builds beside the store it seeds from the same packages.
+    fn rows_of(packages: &[MainPagePackageData]) -> Vec<ListRowData> {
+        packages
+            .iter()
+            .map(|p| ListRowData {
+                namespace: p.namespace.clone(),
+                changed_at: p.changed_at,
+                bucket: p.bucket.clone(),
+                host: p.host.clone(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_store_holds_one_row_per_package_and_starts_them_all_provisional() {
+        let store = PackageStore::seed(&[
+            pkg("a/one", PackageState::Latest),
+            pkg("a/two", PackageState::Behind),
+        ]);
+
+        let one = store.row(&ns("a/one")).expect("seeded from this payload");
+        assert_eq!(one.state.get_untracked(), PackageState::Latest);
+        assert!(
+            one.confidence.get_untracked() == Confidence::Pending,
+            "the light phase's guess is provisional by construction"
+        );
+        assert!(store.row(&ns("b/absent")).is_none());
+        assert_eq!(store.outstanding.get_untracked(), 2, "one call per package");
+    }
+
+    #[test]
+    fn a_settled_row_leaves_the_store_still_in_flight_until_the_last_one_answers() {
+        // The zero line may not appear while any answer is outstanding (R3), and
+        // `provisional` cannot carry that: a failed refresh stays provisional forever.
+        let store = PackageStore::seed(&[
+            pkg("a/one", PackageState::Latest),
+            pkg("a/two", PackageState::Latest),
+        ]);
+        assert!(store.in_flight());
+
+        store.answered();
+        assert!(store.in_flight(), "one call is still outstanding");
+        store.answered();
+        assert!(!store.in_flight());
+    }
+
+    #[test]
+    fn a_conflict_is_settled_on_arrival_and_reaches_the_queue_unconfirmed() {
+        // `settled` drops provisional rows so the access pre-filter's guesses
+        // stay out of the queue, but a `PullConflict` is not a guess. If every
+        // light-phase row were provisional, then offline, when no heavy-phase
+        // call can answer, `settled` would be empty and an unresolved conflict
+        // would leave the queue when syncing cannot fix it.
+        //
+        // This is the offline case: no row is settled, so nothing is confirmed.
+        let light = vec![
+            conflicted("a/paused"),
+            pkg("a/cached", PackageState::Behind),
+        ];
+        let store = PackageStore::seed(&light);
+
+        let settled = store.settled(&light);
+
+        assert_eq!(settled.len(), 1, "the conflict, and only the conflict");
+        assert_eq!(settled[0].namespace.to_string(), "a/paused");
+        assert_eq!(
+            settled[0].state,
+            PackageState::PullConflict {
+                files: vec!["a.csv".to_string()]
+            },
+            "the watcher's own reading, carried through"
+        );
+    }
+
+    #[test]
+    fn settled_drops_what_the_heavy_phase_has_not_confirmed() {
+        // The access pre-filter over-reports, so its guesses must not reach the
+        // queue as denials.
+        let light = vec![
+            pkg("a/confirmed", PackageState::Latest),
+            pkg("a/guessed", PackageState::RoleDenied { role: None }),
+        ];
+        let store = PackageStore::seed(&light);
+        store
+            .row(&ns("a/confirmed"))
+            .unwrap()
+            .apply(MainPagePackageRefreshData {
+                state: PackageState::PendingChanges { files: 1 },
+                role_switch_host: None,
+                downloads: None,
+                changed_files: None,
+            });
+
+        let settled = store.settled(&light);
+        assert_eq!(settled.len(), 1, "only the confirmed one");
+        assert_eq!(settled[0].namespace.to_string(), "a/confirmed");
+        assert_eq!(
+            settled[0].state,
+            PackageState::PendingChanges { files: 1 },
+            "the heavy phase's answer, not the light phase's guess"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_reader_of_settled_re_runs_when_a_row_settles() {
+        // `settled` must read its signals with `.get()`. Its only other input is
+        // a `StoredValue`, which is not reactive, so with `get_untracked()` a
+        // `Signal::derive` over it would have no dependencies. The queue reads
+        // that derivation, so it would stay on the light phase's states and could
+        // show "All packages are up to date" above a package with local changes.
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let settled = Signal::derive(move || store.settled(&light));
+        let el = mount(move || view! { <p>{move || settled.get().len()}</p> });
+        assert_eq!(
+            el.text_content().unwrap(),
+            "0",
+            "nothing is confirmed yet (R2)"
+        );
+
+        settle(store, &ns("user/plate-07"), PackageState::Behind);
+        leptos::task::tick().await;
+
+        assert_eq!(
+            el.text_content().unwrap(),
+            "1",
+            "the settle reached the reader; `settled` still reads through .get()"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_row_reads_the_store_and_settles_in_place() {
+        // The list must keep settling exactly as it does today, with the signals
+        // now owned a level up. `PackageList` is NOT re-rendered by a settle: a
+        // row settles where it stands, through its own signals, and a settle costs
+        // nothing list-wide.
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+        assert!(el.text_content().unwrap().contains("Latest"));
+
+        store
+            .row(&ns("user/plate-07"))
+            .unwrap()
+            .apply(MainPagePackageRefreshData {
+                state: PackageState::Behind,
+                role_switch_host: None,
+                downloads: None,
+                changed_files: None,
+            });
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Not the latest"),
+            "the list's wording: {text}"
+        );
+        assert!(
+            el.query_selector("[class*=provisional]").unwrap().is_none(),
+            "settled rows are drawn solid"
+        );
+    }
+
+    fn picked(total: usize, outstanding: usize) -> crate::commands::MainPageDownloadsData {
+        crate::commands::MainPageDownloadsData {
+            scope: crate::commands::KeepingScope::IndividualFiles,
+            folders: 0,
+            total,
+            outstanding,
+            backlog: 0,
+            deleted_here: 0,
+            size: None,
+        }
+    }
+
+    /// The muted lines of the first row's tooltip, under its title.
+    fn tooltip_lines(el: &web_sys::Element) -> Vec<String> {
+        let link = el.query_selector("a").unwrap().expect("a row");
+        let surface = crate::test_support::describing_tooltip(&link).expect("the row's tooltip");
+        let lines = surface.query_selector_all("[class*=line]").unwrap();
+        (0..lines.length())
+            .map(|i| lines.item(i).unwrap().text_content().unwrap())
+            .collect()
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_settled_row_shows_its_host_and_size_on_hover() {
+        let light = vec![MainPagePackageData {
+            host: Some("quilt.test".to_string()),
+            ..pkg("user/plate-07", PackageState::Latest)
+        }];
+        let store = PackageStore::seed(&light);
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+        assert_eq!(
+            tooltip_lines(&el),
+            ["Host: quilt.test"],
+            "the host is the light phase's, before any check answers"
+        );
+
+        store
+            .row(&ns("user/plate-07"))
+            .unwrap()
+            .apply(MainPagePackageRefreshData {
+                state: PackageState::Latest,
+                role_switch_host: None,
+                downloads: Some(crate::commands::MainPageDownloadsData {
+                    deleted_here: 1,
+                    size: Some(crate::commands::PackageSize {
+                        total: 3_400_000,
+                        downloaded: 1_900_000,
+                        backlog: 0,
+                    }),
+                    ..picked(340, 328)
+                }),
+                changed_files: None,
+            });
+        leptos::task::tick().await;
+
+        assert_eq!(
+            tooltip_lines(&el),
+            [
+                "Host: quilt.test",
+                "Only the files you picked are kept",
+                "12 of 340 files \u{b7} 1.9\u{a0}MB of 3.4\u{a0}MB downloaded \u{b7} 1 deleted here",
+            ]
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_check_leaves_the_scope_and_size_out() {
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let row = store.row(&ns("user/plate-07")).unwrap();
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+
+        row.apply(MainPagePackageRefreshData {
+            state: PackageState::Latest,
+            role_switch_host: None,
+            downloads: Some(picked(340, 0)),
+            changed_files: None,
+        });
+        leptos::task::tick().await;
+        assert_eq!(tooltip_lines(&el).len(), 2, "the scope and the size");
+
+        row.mark_pending();
+        row.mark_unchecked();
+        leptos::task::tick().await;
+        assert_eq!(
+            tooltip_lines(&el),
+            Vec::<String>::new(),
+            "a failed re-check hides the earlier answer"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_settled_row_shows_what_its_check_counted() {
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+        assert!(
+            !el.text_content().unwrap().contains("files"),
+            "a provisional row has no counts"
+        );
+
+        store
+            .row(&ns("user/plate-07"))
+            .unwrap()
+            .apply(MainPagePackageRefreshData {
+                state: PackageState::Latest,
+                role_switch_host: None,
+                downloads: Some(picked(340, 328)),
+                changed_files: None,
+            });
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("12 of 340 files"), "the marker: {text}");
+        assert!(text.contains("Latest"), "beside the state label: {text}");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_row_whose_check_did_not_answer_shows_no_marker() {
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let row = store.row(&ns("user/plate-07")).unwrap();
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+        let marked = || el.text_content().unwrap().contains("of 340 files");
+
+        row.apply(MainPagePackageRefreshData {
+            state: PackageState::Latest,
+            role_switch_host: None,
+            downloads: Some(picked(340, 0)),
+            changed_files: None,
+        });
+        leptos::task::tick().await;
+        assert!(marked(), "a full pick still shows its count");
+
+        row.mark_pending();
+        row.mark_unchecked();
+        leptos::task::tick().await;
+        assert!(!marked(), "a failed re-check hides the earlier counts");
+
+        row.apply(MainPagePackageRefreshData {
+            state: PackageState::NoSession { host: None },
+            role_switch_host: None,
+            downloads: None,
+            changed_files: None,
+        });
+        leptos::task::tick().await;
+        assert!(!marked(), "a check that did not run counts nothing");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_refresh_ends_the_waiting_too() {
+        // R3 on the failure path. There is no Tauri host here, so every call the
+        // resolve fires rejects and drives `record_refresh`'s `Err` arm — which is
+        // what makes this a real test of that arm's decrement rather than of the
+        // `Ok` one's. A counter only the success path decrements would leave the
+        // queue waiting for an answer that is never coming.
+        //
+        // Driven through the page, because the page is where the calls are fired:
+        // the store is seeded and its calls sent by one resolve. That the store
+        // starts out waiting for all of them is
+        // `the_store_holds_one_row_per_package_and_starts_them_all_provisional`.
+        let payload = two_packages_all_latest();
+        let (slot, on_store) = store_slot();
+        let _el = mount_regions_reloading(
+            Ok(payload),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+
+        assert!(
+            !seeded_store(slot).in_flight(),
+            "R3: a failed refresh must end the waiting"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_list_asks_the_backend_for_nothing_of_its_own() {
+        // What re-entering the Packages view costs: nothing. `Show` rebuilds its
+        // branch on every flip, so while each row fired its own heavy-phase call
+        // every toggle back to Packages meant one network call per package —
+        // credential vending, a `/me` role query and a hash walk apiece, silently.
+        // The calls belong to the resolve now, so building the list is free.
+        let light = vec![
+            pkg("user/plate-07", PackageState::Latest),
+            pkg("user/plate-08", PackageState::Latest),
+        ];
+        let store = PackageStore::seed(&light);
+
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+        sleep_ms(50).await;
+
+        assert_eq!(
+            el.query_selector_all("a[href*=installed-package]")
+                .unwrap()
+                .length(),
+            2,
+            "the rows really were built, so the count below is not vacuous"
+        );
+        assert_eq!(
+            store.outstanding.get_untracked(),
+            2,
+            "and the list asked the backend for nothing while building them"
+        );
+    }
+
+    /// Two packages on one host, one of them stuck behind a signed-out session.
+    /// The queue therefore has something to say — `1 package needs your attention` — which
+    /// is the case the ordering test must be able to fail on: a queue that renders
+    /// nothing would leave the assertion with nothing to find between the strip
+    /// and the list.
+    ///
+    /// The `provisional: false` on each row is inert, unlike the accounts fixture
+    /// below: `PackageStore::seed` marks every row provisional by construction and
+    /// never reads this field, so a page test settles its rows with `settle_all`.
+    fn a_package_needing_attention() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: ns("user/plate-07"),
+                    state: PackageState::NoSession {
+                        host: Some("quilt.test".to_string()),
+                    },
+                    changed_at: None,
+                    bucket: None,
+                    host: Some("quilt.test".to_string()),
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: ns("user/plate-08"),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: None,
+                    host: Some("quilt.test".to_string()),
+                    provisional: false,
+                    role_switch_host: None,
+                },
+            ],
+        }
+    }
+
+    /// The host the fixture above points at, signed out, for the Accounts card.
+    /// Settled (`provisional: false`), because a provisional row spawns an
+    /// invoke that can only fail without a Tauri host.
+    fn one_signed_out_host() -> MainPageAccountsData {
+        MainPageAccountsData {
+            hosts: vec![AccountHostData {
+                host: "quilt.test".to_string(),
+                signed_in: false,
+                current_role: None,
+                roles: Vec::new(),
+                provisional: false,
+            }],
+        }
+    }
+
+    /// The page's body on two resolving reads, inside a `Router` because both
+    /// `AccountRow` and `QueueRegion` ask for `use_navigate`.
+    ///
+    /// `MainPageRegions` takes the page's resources rather than their payloads —
+    /// the strip has to be constructed exactly once, so the boundaries live inside
+    /// it — so a test hands it resources of its own. A `LocalResource` over a ready
+    /// future resolves with no Tauri host, which is what puts all three regions on
+    /// screen at once.
+    fn mount_regions(
+        packages: Result<MainPagePackagesData, String>,
+        accounts: Result<MainPageAccountsData, String>,
+    ) -> web_sys::Element {
+        mount_regions_reloading(packages, accounts, Trigger::new(), None)
+    }
+
+    /// [`mount_regions`] with the caller's own trigger, for the test that drives a
+    /// refetch, and with the store seam, for the tests that drive a settle. Both
+    /// resources track the trigger, exactly as the page's own do.
+    fn mount_regions_reloading(
+        packages: Result<MainPagePackagesData, String>,
+        accounts: Result<MainPageAccountsData, String>,
+        reload: Trigger,
+        on_store: Option<Callback<PackageStore>>,
+    ) -> web_sys::Element {
+        mount_regions_with_feed(packages, accounts, reload, on_store, Ok(no_files()), None)
+    }
+
+    /// [`mount_regions_reloading`] with the feed's answer, and a counter for how
+    /// many times the page asked for it.
+    ///
+    /// The seam is the *answer* only: the resource, the latch and the `if wanted`
+    /// guard are all the page's own, so what the counter counts is the page's gate
+    /// (R3) and not the fixture's.
+    fn mount_regions_with_feed(
+        packages: Result<MainPagePackagesData, String>,
+        accounts: Result<MainPageAccountsData, String>,
+        reload: Trigger,
+        on_store: Option<Callback<PackageStore>>,
+        files: Result<MainPageRecentFilesData, String>,
+        feed_calls: Option<Arc<AtomicUsize>>,
+    ) -> web_sys::Element {
+        forget_toolbar();
+        mount_regions_keeping_toolbar(packages, accounts, reload, on_store, files, feed_calls)
+    }
+
+    /// [`mount_regions_with_feed`] over whatever toolbar choices are stored, for
+    /// the tests that remount the page.
+    fn mount_regions_keeping_toolbar(
+        packages: Result<MainPagePackagesData, String>,
+        accounts: Result<MainPageAccountsData, String>,
+        reload: Trigger,
+        on_store: Option<Callback<PackageStore>>,
+        files: Result<MainPageRecentFilesData, String>,
+        feed_calls: Option<Arc<AtomicUsize>>,
+    ) -> web_sys::Element {
+        mount(move || {
+            let packages = LocalResource::new(move || {
+                reload.track();
+                let packages = packages.clone();
+                async move { packages }
+            });
+            let accounts = LocalResource::new(move || {
+                reload.track();
+                let accounts = accounts.clone();
+                async move { accounts }
+            });
+            let fetch_files = Callback::new(move |()| {
+                if let Some(calls) = feed_calls.as_ref() {
+                    calls.fetch_add(1, Ordering::Relaxed);
+                }
+                files.clone()
+            });
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        on_store=on_store
+                        fetch_files=Some(fetch_files)
+                    />
+                </leptos_router::components::Router>
+            }
+        })
+    }
+
+    /// [`mount_regions_with_feed`]'s shape with the feed's answer fixed to the
+    /// given files, for a test whose subject is the feed's own search. The
+    /// packages fixture is a plain two-package roster: this helper's tests care
+    /// about what the feed draws, not about the packages view.
+    fn mount_regions_with_files(files: Vec<MainPageFileData>) -> web_sys::Element {
+        mount_regions_with_feed(
+            Ok(two_packages_all_latest()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            None,
+            Ok(MainPageRecentFilesData { files }),
+            None,
+        )
+    }
+
+    /// The page on reads that never answer, so the queue/list boundary stays on
+    /// its fallback for as long as the test looks at it.
+    fn mount_regions_pending() -> web_sys::Element {
+        forget_toolbar();
+        mount_regions_pending_keeping_toolbar()
+    }
+
+    /// [`mount_regions_pending`] over whatever toolbar choices are stored.
+    fn mount_regions_pending_keeping_toolbar() -> web_sys::Element {
+        mount(|| {
+            let reload = Trigger::new();
+            let packages = LocalResource::new(|| {
+                std::future::pending::<Result<MainPagePackagesData, String>>()
+            });
+            let accounts = LocalResource::new(|| {
+                std::future::pending::<Result<MainPageAccountsData, String>>()
+            });
+            // Pending too, so the strip is on its skeletons as the app's is
+            // before its reads answer, rather than on the failure a read with
+            // no Tauri host gives at once.
+            let watcher: WatcherRead = || Box::pin(std::future::pending());
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        fetch_watcher=Some(watcher)
+                    />
+                </leptos_router::components::Router>
+            }
+        })
+    }
+
+    /// A watcher with two packages waiting, one paused, and publishing on.
+    fn watcher_with_packages()
+    -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<MainPageWatcherData, String>>>>
+    {
+        use crate::commands::AutosyncStateData;
+        use crate::commands::PackageAutosyncData;
+        let at = js_sys::Date::now() + 60_000.0;
+        let package = |namespace: &str, state| PackageAutosyncData {
+            namespace: namespace.try_into().unwrap(),
+            state,
+        };
+        let data = MainPageWatcherData {
+            pull: crate::commands::ToggleStateData {
+                enabled: true,
+                activity: crate::commands::ToggleActivityData::Idle,
+                deadline: None,
+                interval_ms: 180_000.0,
+            },
+            publish: crate::commands::PublishStateData {
+                enabled: true,
+                interval_ms: 600_000.0,
+                packages: vec![
+                    package(
+                        "team/waiting-a",
+                        AutosyncStateData::Waiting {
+                            publish_at: at,
+                            changed_while_closed: true,
+                        },
+                    ),
+                    package(
+                        "team/paused",
+                        AutosyncStateData::Paused {
+                            reason: crate::commands::PausedReasonData::Diverged,
+                        },
+                    ),
+                    package(
+                        "team/waiting-b",
+                        AutosyncStateData::Waiting {
+                            publish_at: at + 1_000.0,
+                            changed_while_closed: false,
+                        },
+                    ),
+                ],
+            },
+            paused: Vec::new(),
+        };
+        Box::pin(async move { Ok(data) })
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_main_page_card_stacks_each_package_from_the_watcher() {
+        forget_toolbar();
+        let reload = Trigger::new();
+        let el = mount(move || {
+            let packages = LocalResource::new(|| {
+                std::future::pending::<Result<MainPagePackagesData, String>>()
+            });
+            let accounts = LocalResource::new(|| {
+                std::future::pending::<Result<MainPageAccountsData, String>>()
+            });
+            let watcher: WatcherRead = watcher_with_packages;
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        fetch_watcher=Some(watcher)
+                    />
+                </leptos_router::components::Router>
+            }
+        });
+        sleep_ms(50).await;
+        let read = |el: &web_sys::Element| el.text_content().unwrap();
+        let text = read(&el);
+        for name in ["team/waiting-a", "team/waiting-b", "team/paused"] {
+            assert!(text.contains(name), "{name} in the stack: {text}");
+        }
+        assert!(text.contains("Paused"), "{text}");
+        assert!(!text.contains("nothing to publish"), "{text}");
+        assert!(
+            text.contains("1 package changed while QuiltSync was closed"),
+            "{text}"
+        );
+
+        // A Refresh reads the watcher again and keeps the same card.
+        reload.notify();
+        sleep_ms(50).await;
+        let text = read(&el);
+        assert!(text.contains("team/waiting-a"), "after a re-read: {text}");
+        assert_eq!(
+            text.matches("Publish your changes").count(),
+            1,
+            "one card, not a second one: {text}"
+        );
+    }
+
+    /// The page whose packages read answers only after `delay_ms`, so a test can
+    /// act on the chrome while the queue/list boundary is still on its fallback.
+    /// The toolbar is on screen there (R2), so the toggle is reachable before the
+    /// first resolve lands — which is the cold-load half of the case
+    /// [`a_refetch_taken_on_the_feed_still_answers_for_every_package`] covers on
+    /// the Refresh path.
+    fn mount_regions_slow_packages(
+        packages: MainPagePackagesData,
+        accounts: MainPageAccountsData,
+        on_store: Callback<PackageStore>,
+        delay_ms: i32,
+    ) -> web_sys::Element {
+        forget_toolbar();
+        mount(move || {
+            let reload = Trigger::new();
+            let packages = LocalResource::new(move || {
+                let packages = packages.clone();
+                async move {
+                    sleep_ms(delay_ms).await;
+                    Ok(packages)
+                }
+            });
+            let accounts = LocalResource::new(move || {
+                let accounts = accounts.clone();
+                async move { Ok(accounts) }
+            });
+            let fetch_files = Callback::new(move |()| Ok(no_files()));
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        on_store=Some(on_store)
+                        fetch_files=Some(fetch_files)
+                    />
+                </leptos_router::components::Router>
+            }
+        })
+    }
+
+    /// Two packages the heavy phase will agree with, so the queue's only remaining
+    /// line is the zero line — and the zero line is the one thing it withholds
+    /// while a call is outstanding (R3). That is what makes an unfired call
+    /// visible on screen rather than only in the store.
+    fn two_packages_all_latest() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                pkg("user/plate-07", PackageState::Latest),
+                pkg("user/plate-08", PackageState::Latest),
+            ],
+        }
+    }
+
+    /// Three packages whose payload order is neither alphabetical nor by
+    /// `changed_at`, so a test can drive either sort and tell it apart from a
+    /// no-op: the payload order below is beta, gamma, alpha, which is not the
+    /// ascending-by-name order (alpha, beta, gamma) and not the
+    /// newest-first order by `changed_at` (gamma, beta, alpha) either.
+    fn three_packages_out_of_order() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: ns("user/beta"),
+                    state: PackageState::Latest,
+                    changed_at: Some(5_000.0),
+                    bucket: None,
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: ns("user/gamma"),
+                    state: PackageState::Latest,
+                    changed_at: Some(9_000.0),
+                    bucket: None,
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: ns("user/alpha"),
+                    state: PackageState::Latest,
+                    changed_at: Some(1_000.0),
+                    bucket: None,
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+            ],
+        }
+    }
+
+    /// Two packages sharing one bucket — §3.1's default axis, and the fixture
+    /// the derived-count test needs: the heading's count has to equal this
+    /// fixture's own length, not a number typed by hand.
+    fn two_packages_in_one_bucket() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: ns("user/plate-07"),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: ns("user/plate-08"),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+            ],
+        }
+    }
+
+    /// Two packages in two different buckets — one namespace matches a search
+    /// for "alpha", the other does not, so a search can empty the second
+    /// bucket's group without touching the first.
+    fn two_packages_in_two_buckets() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: ns("user/alpha-plate"),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("first-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: ns("user/beta-plate"),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("second-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+            ],
+        }
+    }
+
+    /// Two packages in one bucket, a third alone in a second — the fixture the
+    /// derived-count test needs to prove `GroupHeading`'s count is never typed
+    /// by hand: a literal `2` passes against `two_packages_in_one_bucket`
+    /// alone, but only a real `rows.len()` gets both headings right at once,
+    /// including the count-of-one no other test in either region covers.
+    fn two_packages_in_one_bucket_and_one_in_another() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: ns("user/plate-07"),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: ns("user/plate-08"),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: ns("user/solo-plate"),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("solo-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+            ],
+        }
+    }
+
+    /// The feed's empty answer — what the page gets before anyone has installed
+    /// anything, and the default for every test whose subject is not the feed.
+    fn no_files() -> MainPageRecentFilesData {
+        MainPageRecentFilesData { files: Vec::new() }
+    }
+
+    /// One file in the feed, in a package the packages fixture also holds.
+    fn one_recent_file() -> MainPageRecentFilesData {
+        MainPageRecentFilesData {
+            files: vec![MainPageFileData {
+                path: "readings/plate-07.csv".to_string(),
+                namespace: ns("user/plate-07"),
+                changed_at: 1_700_000_000_000.0,
+                published_hash: Some("abc123".to_string()),
+            }],
+        }
+    }
+
+    /// One feed row, named after `recent_files.rs`'s own `file` test helper.
+    fn file_data(path: &str, namespace: &str, changed_at: f64) -> MainPageFileData {
+        MainPageFileData {
+            path: path.to_string(),
+            namespace: ns(namespace),
+            changed_at,
+            published_hash: Some("abc123".to_string()),
+        }
+    }
+
+    /// One option of the list toolbar's view toggle.
+    ///
+    /// `SegmentedControl` renders a `radiogroup` of `label`s, each wrapping a radio
+    /// `input` beside a `span`, with the option's own text as the input's `value` —
+    /// so the value identifies an option and the input carries the selection.
+    /// Not matched on a class: `stylance` emits the module's own identifiers
+    /// (`root`, `option`, `input`, `text`), none of which name this control.
+    fn toggle_option(el: &web_sys::Element, label: &str) -> web_sys::HtmlInputElement {
+        el.query_selector(&format!("[role=radiogroup] input[value=\"{label}\"]"))
+            .unwrap()
+            .unwrap_or_else(|| panic!("the list toolbar's `{label}` option"))
+            .dyn_into()
+            .unwrap()
+    }
+
+    /// The toolbar's search field.
+    fn search_field(el: &web_sys::Element) -> web_sys::HtmlInputElement {
+        el.query_selector("input[type=search]")
+            .unwrap()
+            .expect("the search field")
+            .dyn_into()
+            .unwrap()
+    }
+
+    /// Types into the search field the way a user does — set the property, then
+    /// fire the event the component listens for. `SearchInput` binds `on:input`
+    /// (`kit/search_input.rs:39`), so `input` is the event, not `change`.
+    fn type_search(el: &web_sys::Element, text: &str) {
+        let field = search_field(el);
+        field.set_value(text);
+        field
+            .dispatch_event(&web_sys::Event::new("input").unwrap())
+            .unwrap();
+    }
+
+    /// A `<select>` in the toolbar, found by its `aria-label` rather than by
+    /// position. `Select` puts `aria-label` on the `<select>` element itself,
+    /// taken from `Naming::Prefix(name)` (`kit/select.rs:45`), so this is the
+    /// only other selector in this file that could match one — `host_row.rs`'s
+    /// `Role` select is the sole other `Select` on the page, and its label does
+    /// not collide with either of these.
+    fn labelled_select(el: &web_sys::Element, label: &str) -> web_sys::HtmlSelectElement {
+        el.query_selector(&format!("select[aria-label='{label}']"))
+            .unwrap()
+            .unwrap_or_else(|| panic!("a select labelled `{label}`"))
+            .dyn_into()
+            .unwrap()
+    }
+
+    fn group_select(el: &web_sys::Element) -> web_sys::HtmlSelectElement {
+        labelled_select(el, "Group")
+    }
+
+    fn sort_select(el: &web_sys::Element) -> web_sys::HtmlSelectElement {
+        labelled_select(el, "Sort")
+    }
+
+    /// `Select` binds `on:change` (`kit/select.rs:70`), which is what `accounts.rs`'s
+    /// own role-switch test drives (`accounts.rs:192`).
+    fn select_option(select: &web_sys::HtmlSelectElement, value: &str) {
+        select.set_value(value);
+        select
+            .dispatch_event(&web_sys::Event::new("change").unwrap())
+            .unwrap();
+    }
+
+    /// A `GroupHeading`'s own text, found by its title.
+    ///
+    /// `stylance` emits `<class>-<hash>` with no module prefix, so nothing on
+    /// the page has `group` in a class name — `title` and `count` are shared
+    /// with `Card` and `Dialog`. But `GroupHeading` is the only component that
+    /// renders its title in a `<span>` (`kit/group_heading.rs:8`); `Card` and
+    /// `Dialog` both use `<h2>` (`card.rs:38`, `dialog.rs:73`). So
+    /// `span[class*=title]` can only match a group heading's title, and its
+    /// `parent_element()` is the heading root, whose full text (title,
+    /// annotation, count) this returns.
+    fn heading_text(el: &web_sys::Element, title: &str) -> Option<String> {
+        let spans = el.query_selector_all("span[class*=title]").unwrap();
+        (0..spans.length())
+            .filter_map(|i| spans.item(i))
+            .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+            .find(|span| span.text_content().as_deref() == Some(title))
+            .and_then(|span| span.parent_element())
+            .and_then(|heading| heading.text_content())
+    }
+
+    /// Whether a `<button>` reading this text exists anywhere in `el`.
+    ///
+    /// Narrower than `el.text_content().contains(label)`: `CreatePackageDialog`'s
+    /// own `<h2>` title reads "Create package" too, and — unlike the toolbar's
+    /// button — it is in the DOM regardless of which view is on screen, since
+    /// `kit::Dialog` keeps one persistent element and only toggles whether it is
+    /// showing (`dialog.rs`'s `show_modal`/`close`). A button is the toolbar's own
+    /// affordance, so this is what "the toolbar carries/drops Create package"
+    /// actually means.
+    fn has_button_labelled(el: &web_sys::Element, label: &str) -> bool {
+        let buttons = el.query_selector_all("button").unwrap();
+        (0..buttons.length())
+            .filter_map(|i| buttons.item(i))
+            .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+            .any(|b| b.text_content().unwrap_or_default().contains(label))
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_packages_view_toolbar_carries_every_control() {
+        // §2's region 4: "The toolbar carries the view toggle, search, a `Group:`
+        // select, and a `Sort:` select. `Create package` sits at its right end."
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        assert!(
+            el.query_selector("input[type=search]").unwrap().is_some(),
+            "the search field"
+        );
+        let text = el.text_content().unwrap();
+        for control in ["Group:", "Sort:"] {
+            assert!(text.contains(control), "missing {control}: {text}");
+        }
+        // Not a `text.contains` check: `CreatePackageDialog`'s own `<h2>` title
+        // also reads "Create package" and is in the DOM either way (see
+        // `has_button_labelled`'s doc), so that substring is always present and
+        // would not catch the toolbar's own button going missing.
+        assert!(
+            has_button_labelled(&el, "Create package"),
+            "missing the toolbar's Create package button: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_feed_toolbar_drops_sort_and_create_and_keeps_its_own_group() {
+        // `kit/list_toolbar.rs`'s own doc: "the packages view adds Sort and Create
+        // package, the files view drops both, and Group's options differ between
+        // them." Search and the view toggle are on both.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Group:"),
+            "the feed groups too (§3.2): {text}"
+        );
+        assert!(
+            !text.contains("Sort:"),
+            "sort is the packages view's: {text}"
+        );
+        assert!(
+            !has_button_labelled(&el, "Create package"),
+            "create is the packages view's: {text}"
+        );
+        assert!(
+            el.query_selector("input[type=search]").unwrap().is_some(),
+            "search is on both views"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_feed_group_select_is_not_blank_after_a_view_switch() {
+        // A native `<select>` whose value is not among its options renders blank.
+        // One shared signal holding "Bucket" would do exactly that here, and the
+        // control would look broken rather than throw.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        assert_eq!(
+            group_select(&el).value(),
+            GROUP_NONE,
+            "the feed's own axis defaults to None (§3.2), not to the packages axis's Bucket"
+        );
+    }
+
+    /// The toolbar choices other tests stored, removed, so every test starts on
+    /// the defaults.
+    fn forget_toolbar() {
+        let storage = web_sys::window()
+            .unwrap()
+            .local_storage()
+            .unwrap()
+            .expect("a browser with storage");
+        for choice in [
+            &toolbar_memory::PACKAGES_GROUP,
+            &toolbar_memory::PACKAGES_SORT,
+            &toolbar_memory::FILES_GROUP,
+        ] {
+            drop(storage.remove_item(choice.key));
+        }
+    }
+
+    fn store_toolbar(choice: &toolbar_memory::Choice, value: &str) {
+        web_sys::window()
+            .unwrap()
+            .local_storage()
+            .unwrap()
+            .expect("a browser with storage")
+            .set_item(choice.key, value)
+            .unwrap();
+    }
+
+    /// The page as [`mount_regions`] draws it, after `unmount_earlier`, over
+    /// whatever toolbar choices are stored: the reader coming back.
+    fn remount_regions() -> web_sys::Element {
+        crate::test_support::unmount_earlier();
+        mount_regions_keeping_toolbar(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            None,
+            Ok(no_files()),
+            None,
+        )
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_toolbar_choices_survive_a_remount() {
+        let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+        select_option(&group_select(&el), GROUP_PREFIX);
+        select_option(&sort_select(&el), SORT_NAME);
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        select_option(&group_select(&el), GROUP_PACKAGE);
+        sleep_ms(20).await;
+
+        let el = remount_regions();
+        sleep_ms(50).await;
+
+        assert!(
+            toggle_option(&el, PACKAGES_VIEW).checked(),
+            "the page opens on Packages"
+        );
+        assert_eq!(
+            group_select(&el).value(),
+            GROUP_PREFIX,
+            "the group was kept"
+        );
+        assert_eq!(sort_select(&el).value(), SORT_NAME, "the sort was kept");
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        assert_eq!(
+            group_select(&el).value(),
+            GROUP_PACKAGE,
+            "the Recent files group was kept"
+        );
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_loading_frame_opens_on_the_stored_choices() {
+        forget_toolbar();
+        store_toolbar(&toolbar_memory::PACKAGES_GROUP, "prefix");
+        store_toolbar(&toolbar_memory::PACKAGES_SORT, "name");
+        let el = mount_regions_pending_keeping_toolbar();
+        sleep_ms(20).await;
+
+        assert_eq!(group_select(&el).value(), GROUP_PREFIX);
+        assert_eq!(sort_select(&el).value(), SORT_NAME);
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn an_unknown_stored_choice_opens_on_the_defaults() {
+        crate::test_support::unmount_earlier();
+        forget_toolbar();
+        // A label is not a stored name, and garbage is not either.
+        store_toolbar(&toolbar_memory::PACKAGES_GROUP, GROUP_PREFIX);
+        store_toolbar(&toolbar_memory::PACKAGES_SORT, "{not json");
+        store_toolbar(&toolbar_memory::FILES_GROUP, "");
+        let el = remount_regions();
+        sleep_ms(50).await;
+
+        assert_eq!(group_select(&el).value(), GROUP_BUCKET);
+        assert_eq!(sort_select(&el).value(), SORT_CHANGED);
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        assert_eq!(group_select(&el).value(), GROUP_NONE);
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_catalog_group_survives_a_remount() {
+        crate::test_support::unmount_earlier();
+        forget_toolbar();
+        let el = remount_regions();
+        sleep_ms(50).await;
+        select_option(&group_select(&el), GROUP_CATALOG);
+        sleep_ms(20).await;
+
+        let el = remount_regions();
+        sleep_ms(50).await;
+
+        assert_eq!(group_select(&el).value(), GROUP_CATALOG);
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_catalog_group_heads_local_only_then_no_catalog_then_each_host() {
+        let package = |name: &str, bucket: Option<&str>, host: Option<&str>| MainPagePackageData {
+            namespace: ns(name),
+            state: PackageState::Latest,
+            changed_at: None,
+            bucket: bucket.map(str::to_string),
+            host: host.map(str::to_string),
+            provisional: false,
+            role_switch_host: None,
+        };
+        let payload = MainPagePackagesData {
+            packages: vec![
+                package("user/local", None, None),
+                package("user/bare", Some("bare-bucket"), None),
+                package("user/z", Some("b"), Some("zebra.quilt.test")),
+                package("user/a", Some("b"), Some("apple.quilt.test")),
+            ],
+        };
+        let el = mount_regions(Ok(payload), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        select_option(&group_select(&el), GROUP_CATALOG);
+        sleep_ms(20).await;
+
+        // `h3` is `GroupHeading`'s; a row's tooltip has a title span too.
+        let spans = el.query_selector_all("h3 > span[class*=title]").unwrap();
+        let titles: Vec<String> = (0..spans.length())
+            .filter_map(|i| spans.item(i)?.text_content())
+            .collect();
+        assert_eq!(
+            titles,
+            vec![
+                "Local only",
+                "No catalog",
+                "apple.quilt.test",
+                "zebra.quilt.test"
+            ]
+        );
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_search_box_always_opens_empty() {
+        let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+        type_search(&el, "plate");
+        select_option(&group_select(&el), GROUP_PREFIX);
+        sleep_ms(20).await;
+
+        let el = remount_regions();
+        sleep_ms(50).await;
+
+        assert_eq!(search_field(&el).value(), "", "the search was not kept");
+        assert_eq!(
+            group_select(&el).value(),
+            GROUP_PREFIX,
+            "while the group was"
+        );
+        forget_toolbar();
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refetch_leaves_the_toolbar_exactly_as_the_reader_left_it() {
+        // R2. The signals live in `MainPageRegions`' body, outside the boundary a
+        // refetch rebuilds — the same placement rule `view_selected` follows. Inside
+        // it, pressing Refresh would clear the search box and reset the axes while
+        // the reader was reading the result.
+        let reload = Trigger::new();
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            reload,
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        type_search(&el, "plate");
+        select_option(&group_select(&el), GROUP_PREFIX);
+        select_option(&sort_select(&el), SORT_NAME);
+        sleep_ms(20).await;
+
+        reload.notify();
+        sleep_ms(50).await;
+
+        assert_eq!(search_field(&el).value(), "plate", "the query survived");
+        assert_eq!(group_select(&el).value(), GROUP_PREFIX, "the axis survived");
+        assert_eq!(sort_select(&el).value(), SORT_NAME, "the sort survived");
+    }
+
+    #[wasm_bindgen_test]
+    async fn choosing_sort_by_name_re_orders_the_rows_on_screen() {
+        let (slot, on_store) = store_slot();
+        let payload = three_packages_out_of_order();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+
+        select_option(&sort_select(&el), SORT_NAME);
+        sleep_ms(20).await;
+
+        let text = el.text_content().unwrap();
+        let a = text.find("user/alpha").expect("alpha");
+        let b = text.find("user/beta").expect("beta");
+        let c = text.find("user/gamma").expect("gamma");
+        assert!(a < b && b < c, "names ascending: {text}");
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_packages_view_opens_grouped_by_bucket_with_a_derived_count() {
+        // §3.1's default axis, and R1's rule that no count is ever written by
+        // hand: the heading's count is the length of the rows under it, always
+        // — including one. A fixture with only a count of two would pass
+        // against a literal `2`; asserting both buckets here is what makes a
+        // constant fail, and it is the only coverage in either region for a
+        // group of one.
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_one_bucket_and_one_in_another();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+
+        let team = heading_text(&el, "s3://team-bucket").expect("the team bucket heading");
+        assert!(
+            team.contains("s3://team-bucket"),
+            "the bucket heading: {team}"
+        );
+        assert!(team.contains('2'), "two rows under it: {team}");
+
+        let solo = heading_text(&el, "s3://solo-bucket").expect("the solo bucket heading");
+        assert!(
+            solo.contains("s3://solo-bucket"),
+            "the bucket heading: {solo}"
+        );
+        assert!(solo.contains('1'), "one row under it: {solo}");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_search_that_empties_a_group_removes_its_heading_too() {
+        // R4: filter, then group. A heading over zero rows would print a count
+        // the rows contradict, which is the one thing `GroupHeading` must never
+        // do.
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_two_buckets();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+        assert!(
+            el.text_content().unwrap().contains("s3://second-bucket"),
+            "present before the search — the pair to the absence assertion below"
+        );
+
+        // Matches only the package in the first bucket.
+        type_search(&el, "alpha");
+        sleep_ms(20).await;
+
+        assert!(
+            !el.text_content().unwrap().contains("s3://second-bucket"),
+            "an emptied group takes its heading with it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_bucket_whose_packages_all_share_a_denial_says_so_once_on_its_heading() {
+        // §3.1: "A shared cause annotates its bucket group, so the list explains
+        // itself without repeating an action on every row."
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_one_bucket();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        let store = seeded_store(slot);
+        for package in &payload.packages {
+            settle(
+                store,
+                &package.namespace,
+                PackageState::RoleDenied {
+                    role: Some("analyst".to_string()),
+                },
+            );
+        }
+        leptos::task::tick().await;
+
+        let heading = heading_text(&el, "s3://team-bucket").expect("the bucket heading");
+        assert!(
+            heading.contains("No access as analyst"),
+            "the heading carries the shared cause: {heading}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_bucket_whose_packages_do_not_share_a_cause_gets_no_annotation() {
+        // One denied package among several is not a property of the group, and an
+        // annotation over it would tell the reader the whole bucket is unreachable.
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_one_bucket();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        let store = seeded_store(slot);
+        settle(
+            store,
+            &payload.packages[0].namespace,
+            PackageState::RoleDenied {
+                role: Some("analyst".to_string()),
+            },
+        );
+        settle(store, &payload.packages[1].namespace, PackageState::Latest);
+        leptos::task::tick().await;
+
+        let heading = heading_text(&el, "s3://team-bucket").expect("the bucket heading");
+        assert!(
+            !heading.contains("No access"),
+            "one denial among two is not the group's cause: {heading}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_prefix_axis_never_annotates() {
+        // `GroupHeading`'s own doc: "Only the bucket axis has one: a prefix spans
+        // buckets, so no cause is a property of the group."
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_one_bucket();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        let store = seeded_store(slot);
+        for package in &payload.packages {
+            settle(
+                store,
+                &package.namespace,
+                PackageState::RoleDenied {
+                    role: Some("analyst".to_string()),
+                },
+            );
+        }
+        leptos::task::tick().await;
+
+        select_option(&group_select(&el), GROUP_PREFIX);
+        sleep_ms(20).await;
+
+        // Scoped to the heading itself, not `el`'s whole text: both fixture
+        // packages are denied in the same bucket, so the queue's own R2
+        // grouping (`queue.rs`'s `role_denied_groups`) states the identical
+        // words as its own cause row regardless of the list's own axis — a
+        // page-wide substring check would pass or fail on the queue's text,
+        // never on the list heading this test means to cover.
+        let heading = heading_text(&el, "user").expect("the prefix heading");
+        assert!(
+            !heading.contains("No access as analyst"),
+            "a prefix spans buckets, so it carries no shared cause: {heading}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn two_denials_naming_different_roles_are_not_one_shared_cause() {
+        // `group_annotation`'s equality check: an implementation that dropped
+        // it and just took the last row's words would pass every other test
+        // here. Neither role's words may appear once they disagree.
+        let (slot, on_store) = store_slot();
+        let payload = two_packages_in_one_bucket();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        let store = seeded_store(slot);
+        settle(
+            store,
+            &payload.packages[0].namespace,
+            PackageState::RoleDenied {
+                role: Some("analyst".to_string()),
+            },
+        );
+        settle(
+            store,
+            &payload.packages[1].namespace,
+            PackageState::RoleDenied {
+                role: Some("curator".to_string()),
+            },
+        );
+        leptos::task::tick().await;
+
+        let heading = heading_text(&el, "s3://team-bucket").expect("the bucket heading");
+        assert!(
+            !heading.contains("No access as analyst") && !heading.contains("No access as curator"),
+            "two denials naming different roles are not one shared cause: {heading}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_group_with_a_still_provisional_row_gets_no_annotation() {
+        // Plan 6's own reason: the light phase's access pre-filter over-reports,
+        // so a denial it guessed but the heavy phase has not yet confirmed is
+        // not a fact about the bucket. The second package's light-phase state
+        // is already `RoleDenied` — exactly what an over-reporting pre-filter
+        // would guess — and it is never settled, so `signals.provisional` stays
+        // `true`. Reusing `two_packages_in_one_bucket` (both `Latest`) would
+        // not exercise the guard at all: an unsettled `Latest` row already
+        // fails `group_annotation`'s `RoleDenied` match on its own, so the
+        // provisional check would never be reached either way.
+        let (slot, on_store) = store_slot();
+        let payload = MainPagePackagesData {
+            packages: vec![
+                MainPagePackageData {
+                    namespace: ns("user/plate-07"),
+                    state: PackageState::Latest,
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: false,
+                    role_switch_host: None,
+                },
+                MainPagePackageData {
+                    namespace: ns("user/plate-08"),
+                    state: PackageState::RoleDenied {
+                        role: Some("analyst".to_string()),
+                    },
+                    changed_at: None,
+                    bucket: Some("team-bucket".to_string()),
+                    host: None,
+                    provisional: true,
+                    role_switch_host: None,
+                },
+            ],
+        };
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        let store = seeded_store(slot);
+        settle(
+            store,
+            &payload.packages[0].namespace,
+            PackageState::RoleDenied {
+                role: Some("analyst".to_string()),
+            },
+        );
+        // `payload.packages[1]` is left provisional: no `settle` call for it,
+        // even though its light-phase guess already names the same denial.
+        leptos::task::tick().await;
+
+        let heading = heading_text(&el, "s3://team-bucket").expect("the bucket heading");
+        assert!(
+            !heading.contains("No access"),
+            "a still-provisional row is a guess, not a fact about the bucket: {heading}"
+        );
+    }
+
+    /// A slot for the store the page seeds, and the callback that fills it. An
+    /// `RwSignal` rather than an `Rc<Cell<_>>` because `Callback::new` wants a
+    /// `Send + Sync` closure.
+    fn store_slot() -> (RwSignal<Option<PackageStore>>, Callback<PackageStore>) {
+        let slot = RwSignal::new(None);
+        (slot, Callback::new(move |store| slot.set(Some(store))))
+    }
+
+    /// The store the page most recently seeded. A refetch seeds a new one, so a
+    /// test that reloads must read this again afterwards.
+    fn seeded_store(slot: RwSignal<Option<PackageStore>>) -> PackageStore {
+        slot.get_untracked().expect("the page seeded a store")
+    }
+
+    /// The heavy phase's answer for one row, as [`record_refresh`] would apply it
+    /// if there were a Tauri host to answer the call.
+    fn settle(store: PackageStore, namespace: &Namespace, state: PackageState) {
+        store
+            .row(namespace)
+            .expect("the store was seeded with this namespace")
+            .apply(MainPagePackageRefreshData {
+                state,
+                role_switch_host: None,
+                downloads: None,
+                changed_files: None,
+            });
+    }
+
+    /// Every row confirmed with exactly what the light phase guessed — the heavy
+    /// phase agreeing. The queue draws only confirmed rows (R2) and no row can
+    /// confirm itself without a Tauri host, so a page test whose subject is not
+    /// the settle still has to play that part or assert against an empty queue.
+    fn settle_all(store: PackageStore, packages: &MainPagePackagesData) {
+        for package in &packages.packages {
+            store
+                .row(&package.namespace)
+                .expect("seeded from this payload")
+                .apply(MainPagePackageRefreshData {
+                    state: package.state.clone(),
+                    role_switch_host: package.role_switch_host.clone(),
+                    downloads: None,
+                    changed_files: None,
+                });
+        }
+    }
+
+    /// The queue card's own text, or `None` when the region drew nothing.
+    ///
+    /// Scoped to the queue's section rather than taken from the whole page because
+    /// the list row below says some of the same words — `render(&state,
+    /// Site::ListRow)` gives `1 file changed` too — so an unscoped `contains` would
+    /// pass on a queue that never heard about the settle. Found by its status line's
+    /// words rather than by a class, which `stylance` hashes.
+    fn queue_text(el: &web_sys::Element) -> Option<String> {
+        let sections = el.query_selector_all("section").unwrap();
+        (0..sections.length())
+            .filter_map(|i| sections.item(i))
+            .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+            .filter_map(|section| section.text_content())
+            .find(|text| text.contains("your attention"))
+    }
+
+    /// The strip element itself, so a test can ask what is inside it rather than
+    /// only where its text falls in the document: the layout around the
+    /// Autosync card, found by its title as `queue_text` finds the queue.
+    fn strip_of(el: &web_sys::Element) -> web_sys::Element {
+        let sections = el.query_selector_all("section").unwrap();
+        (0..sections.length())
+            .filter_map(|i| sections.item(i))
+            .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+            .find(|section| {
+                section
+                    .text_content()
+                    .is_some_and(|text| text.contains("Autosync"))
+            })
+            .and_then(|card| card.parent_element())
+            .expect("the state strip")
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_queue_sits_between_the_strip_and_the_list() {
+        // Section 2's arrangement, and the reason the queue exists above the list:
+        // it is what you look at first.
+        //
+        // The word asserted for the strip is `Accounts` rather than `Autosync`:
+        // `Autosync` lives inside `AutosyncBody`, behind that card's own resource,
+        // which has no Tauri host to answer it here.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        let html = el.inner_html();
+        let strip = html.find("Accounts").expect("strip");
+        let queue = html
+            .find("All packages are up to date")
+            .or_else(|| html.find("your attention"))
+            .expect("queue");
+        let list = html.find("Packages").expect("list");
+        assert!(
+            strip < queue && queue < list,
+            "strip, then queue, then list"
+        );
+
+        // Index order alone cannot tell "between the two regions" from "a third
+        // card inside the strip" — the first occurrence of `Accounts` still
+        // precedes a queue rendered after `AccountsBody` and inside the same
+        // `div`. So ask the strip what it holds.
+        let strip = strip_of(&el).text_content().unwrap();
+        assert!(
+            strip.contains("Accounts"),
+            "the strip is what was found: {strip}"
+        );
+        assert!(
+            !strip.contains("your attention"),
+            "the queue is a region of the page, not a card in the strip: {strip}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_queue_is_drawn_from_the_same_payloads_as_the_cards() {
+        // §1, at the seam: one package read feeds the queue and the list, and one
+        // accounts read feeds the Accounts card. The queue's cause names the host
+        // the package's own state says it is signed out from, and the list still
+        // holds every row.
+        //
+        // Of the package half, the page still owns the `namespace`: `settled`
+        // carries it through from its own `light` payload with `..p.clone()`. Only
+        // the `state` is written here by `settle_all`, standing in for a heavy
+        // phase that has no Tauri host to answer it.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Signed out from quilt.test"),
+            "the queue grouped the signed-out package under its host: {text}"
+        );
+        assert!(
+            strip_of(&el).text_content().unwrap().contains("quilt.test"),
+            "and the same accounts payload drew the card"
+        );
+        assert_eq!(
+            el.query_selector_all("a[href*=installed-package]")
+                .unwrap()
+                .length(),
+            2,
+            "and the list still draws every row of the same package payload"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_queue_names_a_package_the_heavy_phase_found_changes_in() {
+        // End to end at the page level. The light phase cannot see the working
+        // tree, so only the heavy phase's answer can put this package in the
+        // queue. Without it the queue says "All packages are up to date" above a package
+        // with uncommitted changes.
+        //
+        // No state here is a shared cause, so every row that reaches the queue is
+        // a row of its own. That is the point — this test is about the state, not
+        // the grouping.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(MainPagePackagesData {
+                packages: vec![
+                    pkg("user/plate-07", PackageState::Latest),
+                    pkg("user/other", PackageState::Latest),
+                ],
+            }),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        // Every row is still provisional — the refreshes this mount fired have
+        // no Tauri host to answer them — so `settled` is empty and the region
+        // takes its `packages.is_empty()` early return. Silence for that reason,
+        // not for R3's in-flight guard, which `queue.rs`'s own tests pin: by now
+        // every one of those failed calls has decremented the counter.
+        assert!(
+            !el.text_content()
+                .unwrap()
+                .contains("All packages are up to date")
+        );
+
+        settle(
+            seeded_store(slot),
+            &ns("user/plate-07"),
+            PackageState::PendingChanges { files: 1 },
+        );
+        settle(seeded_store(slot), &ns("user/other"), PackageState::Latest);
+        leptos::task::tick().await;
+
+        let queue = queue_text(&el).expect("the queue has something to say");
+        assert!(
+            queue.contains("has 1 changed file"),
+            "the queue names it: {queue}"
+        );
+        assert!(queue.contains("Publish"), "beside its action: {queue}");
+        let text = el.text_content().unwrap();
+        assert!(
+            !text.contains("All packages are up to date"),
+            "and no longer claims otherwise: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_queue_waits_for_the_last_answer_before_it_says_all_is_well() {
+        // R3, at the page's own call site: `in_flight` is a prop like any other,
+        // and a page that wired it to a constant would pass every region-level
+        // test Task 3 wrote while still announcing an all-clear it has not earned.
+        //
+        // No fetcher seam is needed to reach that window. `outstanding` is a plain
+        // signal the store holds, so a test can put a call back in flight the way
+        // a slower row would — one row answering after the others is exactly the
+        // case R3 exists for, and R0 guarantees rows answer at different times.
+        let payload = MainPagePackagesData {
+            packages: vec![
+                pkg("user/plate-07", PackageState::Latest),
+                pkg("user/plate-08", PackageState::Latest),
+            ],
+        };
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+
+        let store = seeded_store(slot);
+        // Both rows confirmed and both Latest, so the queue derives nothing and
+        // the zero line is the only thing left for it to draw — but one answer is
+        // still outstanding, so it may not draw it yet.
+        settle_all(store, &payload);
+        store.outstanding.set(1);
+        leptos::task::tick().await;
+        let text = el.text_content().unwrap();
+        assert!(
+            !text.contains("All packages are up to date"),
+            "R3: an answer is still outstanding, so the all-clear is not a fact yet: {text}"
+        );
+
+        store.outstanding.set(0);
+        leptos::task::tick().await;
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("All packages are up to date"),
+            "and it says so the moment the last answer lands: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_queue_holds_its_line_until_every_check_has_answered() {
+        let payload = two_packages_all_latest();
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+
+        // No Tauri host, so the calls have failed; put them back in flight.
+        let store = seeded_store(slot);
+        store.outstanding.set(2);
+        leptos::task::tick().await;
+        let line = el
+            .query_selector("[class*=placeholder]")
+            .unwrap()
+            .expect("the resolved page holds the queue's line while checks are out");
+        assert_eq!(line.get_attribute("aria-busy").as_deref(), Some("true"));
+
+        settle_all(store, &payload);
+        store.outstanding.set(0);
+        leptos::task::tick().await;
+        assert!(
+            el.query_selector("[class*=placeholder]").unwrap().is_none(),
+            "the zero line replaces the placeholder, not joins it"
+        );
+        assert!(
+            el.text_content()
+                .unwrap()
+                .contains("All packages are up to date"),
+            "got: {}",
+            el.text_content().unwrap()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_page_with_no_packages_holds_no_line_open() {
+        let el = mount_regions(
+            Ok(MainPagePackagesData { packages: vec![] }),
+            Ok(one_signed_out_host()),
+        );
+        sleep_ms(50).await;
+
+        assert!(
+            el.query_selector("[class*=placeholder]").unwrap().is_none(),
+            "no packages, no placeholder"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_package_the_page_could_not_read_holds_back_the_all_clear() {
+        // The other door into a false all-clear, and the one `in_flight` alone
+        // cannot close. `outstanding` decrements on failure by design (R3), and a
+        // failed row stays provisional so R2 drops it from `settled` — so a page
+        // that could not read three of its forty-three packages arrives at
+        // "nothing is outstanding, nothing needs attention" and would announce
+        // "All packages are up to date" over three rows still drawn dashed
+        // in the list below. An unreachable host is the ordinary way to get there:
+        // `refresh_main_page_package` propagates a failure it cannot word as a
+        // state rather than degrading it, precisely so the row stays dashed.
+        //
+        // The zero line speaks for every package, so it waits for every package.
+        let payload = MainPagePackagesData {
+            packages: vec![
+                pkg("user/plate-07", PackageState::Latest),
+                pkg("user/unreachable", PackageState::Latest),
+            ],
+        };
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+
+        let store = seeded_store(slot);
+        // One answered, one whose call failed: still provisional, and no longer
+        // outstanding. That combination is the whole of this test.
+        settle(store, &ns("user/plate-07"), PackageState::Latest);
+        store.outstanding.set(0);
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            !text.contains("All packages are up to date"),
+            "one package could not be read, so the page has not earned this: {text}"
+        );
+
+        // And the moment it can be read, the sentence appears — naming both
+        // packages, not the one that happened to answer first.
+        settle(store, &ns("user/unreachable"), PackageState::Latest);
+        leptos::task::tick().await;
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("All packages are up to date"),
+            "every package accounted for, and the count matches the list: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_signed_out_answer_settles_the_row_and_offers_sign_in() {
+        // What the heavy phase answers for a signed-out host: a state, not a
+        // failure. The row settles (solid, not dashed), the list words it, the
+        // queue offers [Sign in] rather than [Try again], and the all-clear stays
+        // held back, since a signed-out package is not Latest.
+        let payload = two_packages_all_latest();
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+
+        let store = seeded_store(slot);
+        let signed_out = &payload.packages[0].namespace;
+        settle_all(store, &payload);
+        settle(
+            store,
+            signed_out,
+            PackageState::NoSession {
+                host: Some("quilt.test".to_string()),
+            },
+        );
+        leptos::task::tick().await;
+
+        assert!(
+            store.unchecked(&payload.packages).is_empty(),
+            "an answer, not a failed check"
+        );
+        let queue = queue_text(&el).expect("the queue has something to say");
+        assert!(
+            queue.contains("Signed out from quilt.test") && queue.contains("Sign in"),
+            "one cause naming the host, with its remedy: {queue}"
+        );
+        assert!(
+            !queue.contains("Couldn't check") && !queue.contains("Try again"),
+            "and not a retry that cannot succeed while signed out: {queue}"
+        );
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Signed out of quilt.test"),
+            "the list row says it in the kit's words: {text}"
+        );
+        assert!(
+            !text.contains("All packages are up to date"),
+            "and the page does not claim an all-clear over it: {text}"
+        );
+    }
+
+    /// A fresh app with no data folder: the reads say so, and the page goes to
+    /// `/setup`, replacing its entry, as v1's does, instead of drawing two
+    /// failures.
+    #[wasm_bindgen_test]
+    async fn reads_that_need_setup_go_to_setup() {
+        let window = web_sys::window().unwrap();
+        let history = window.history().unwrap();
+        let was = window.location().href().unwrap();
+        history
+            .push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some("/"))
+            .unwrap();
+        let before = history.length().unwrap();
+        let setup = r#"{"kind":"setup_required","message":"Set up"}"#.to_string();
+        let el = mount_regions(Err(setup.clone()), Err(setup));
+        sleep_ms(50).await;
+
+        let landed = window.location().pathname().unwrap();
+        let text = el.text_content().unwrap();
+        let length = history.length().unwrap();
+        history
+            .replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&was))
+            .unwrap();
+        assert_eq!(landed, "/setup");
+        assert_eq!(length, before, "the entry is replaced");
+        assert!(!text.contains(FETCH_ERROR_WORDS), "got: {text}");
+        assert!(!text.contains(ACCOUNTS_ERROR_WORDS), "got: {text}");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_packages_read_leaves_no_queue_to_claim_all_is_well() {
+        // A failed read is not an empty one: `All packages are up to date`
+        // over a fetch that never answered is a manufactured all-clear. The strip
+        // is unaffected, because it is outside that boundary.
+        let el = mount_regions(
+            Err("connection reset by peer".to_string()),
+            Ok(one_signed_out_host()),
+        );
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains(FETCH_ERROR_WORDS), "got: {text}");
+        assert!(
+            !text.contains("connection reset by peer"),
+            "the raw backend error must not reach the page: {text}"
+        );
+        assert!(
+            !text.contains("All packages are up to date"),
+            "nothing answered; the page cannot say everything is fine: {text}"
+        );
+        assert!(
+            strip_of(&el).text_content().unwrap().contains("Accounts"),
+            "and the strip still stands: it is outside that boundary"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_accounts_read_still_draws_the_queue_and_the_list() {
+        // The other direction. The queue's causes come from the packages' own
+        // states, so the signed-out package is still offered [Sign in] — and the
+        // Accounts card says it could not read, where no rows would claim no
+        // sessions and no card would claim no such card.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Err("nope".to_string()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+        let queue = queue_text(&el).expect("the queue draws without the accounts read");
+        assert!(
+            queue.contains("Signed out from quilt.test"),
+            "the package's own state says so, not the accounts read: {queue}"
+        );
+        let strip = strip_of(&el).text_content().unwrap();
+        assert!(
+            strip.contains("Accounts") && strip.contains(ACCOUNTS_ERROR_WORDS),
+            "the card keeps its title and says what happened: {strip}"
+        );
+        assert!(
+            strip.contains("Try again"),
+            "and offers the one thing that can be done: {strip}"
+        );
+        assert!(
+            !strip.contains("Signed out"),
+            "without asserting anything about the sessions it could not read: {strip}"
+        );
+        assert_eq!(
+            el.query_selector_all("a[href*=installed-package]")
+                .unwrap()
+                .length(),
+            2,
+            "the list is drawn from its own read, which answered"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refetch_rebuilds_the_queue_rather_than_reusing_it() {
+        // R6, driven through the page's own machinery: the trigger the Refresh
+        // button notifies, the resources that track it, and the `Suspend` that
+        // re-runs when they resolve. An expanded cause group re-collapses because
+        // `QueueRegion` is constructed again and builds new expander signals — a
+        // memoised subtree, or one held across the resolve, would keep the old
+        // ones and this would stay open.
+        let (slot, on_store) = store_slot();
+        let reload = Trigger::new();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            reload,
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        let expander = el
+            .query_selector("[aria-expanded]")
+            .unwrap()
+            .expect("the cause row's expander");
+        expander.dyn_ref::<web_sys::HtmlElement>().unwrap().click();
+        leptos::task::tick().await;
+        assert_eq!(
+            el.query_selector("[aria-expanded]")
+                .unwrap()
+                .unwrap()
+                .get_attribute("aria-expanded")
+                .as_deref(),
+            Some("true"),
+            "the group is open before the refetch"
+        );
+
+        reload.notify();
+        sleep_ms(50).await;
+        // The refetch re-seeds: the new store's rows are provisional again, so
+        // the heavy phase has to answer again before the queue has anything to
+        // draw. Settling here is also what keeps this test honest — a group that
+        // re-collapsed only because its row vanished would prove nothing.
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+
+        assert_eq!(
+            el.query_selector("[aria-expanded]")
+                .unwrap()
+                .expect("the cause row survives the refetch")
+                .get_attribute("aria-expanded")
+                .as_deref(),
+            Some("false"),
+            "a refetch rebuilds the region, which re-collapses the group"
+        );
+    }
+
+    #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
+    mod frame_sheet {
+        stylance::import_crate_style!(pub layout, "src/kit/page_layout.module.scss");
+    }
+
+    /// The parts above the list stay where they are while the rows scroll the
+    /// page, each band directly under the one above it.
+    #[wasm_bindgen_test]
+    async fn the_bands_stay_stacked_while_the_rows_scroll_the_page() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("../kit/page_layout.module.scss"),
+            &[
+                ("root", frame_sheet::layout::root),
+                ("main", frame_sheet::layout::main),
+            ],
+        );
+        load_module_style(
+            include_str!("main_page.module.scss"),
+            &[
+                ("list_region", style::list_region),
+                ("strip", style::strip),
+                ("queue", style::queue),
+                ("queue_scroll", style::queue_scroll),
+                ("toolbar", style::toolbar),
+            ],
+        );
+        let el = mount(|| {
+            view! {
+                <div style="--q-frame-height:560px; --q-appbar-height:48px; --q-space-5:20px; \
+                            --q-space-6:24px; --q-space-8:32px; --q-space-12:48px">
+                    <PageLayout heading="QuiltSync" page_scroll=true>
+                        <StateStrip>
+                            <div style="height:100px"></div>
+                        </StateStrip>
+                        <QueueBand>
+                            <div style="height:50px"></div>
+                        </QueueBand>
+                        <div class=style::list_region>
+                            <ToolbarBand>
+                                <div style="height:30px"></div>
+                            </ToolbarBand>
+                            <ul>
+                                {(0..60).map(|_| view! { <li style="height:40px"></li> }).collect_view()}
+                            </ul>
+                        </div>
+                    </PageLayout>
+                </div>
+            }
+        });
+        sleep_ms(50).await;
+        let find = |class: &str| -> web_sys::Element {
+            el.query_selector(&format!(".{class}"))
+                .unwrap()
+                .expect(class)
+        };
+        let frame = find(frame_sheet::layout::root);
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        assert_eq!(frame.scroll_top(), 1000, "the frame scrolls the page");
+        let top = |class: &str| find(class).get_bounding_client_rect().top();
+        let bottom = |class: &str| find(class).get_bounding_client_rect().bottom();
+        let origin = frame.get_bounding_client_rect().top();
+        assert_eq!(
+            top(style::strip) - origin,
+            48.0,
+            "the strip stays under the appbar"
+        );
+        assert_eq!(
+            top(style::queue),
+            bottom(style::strip),
+            "the queue under the strip"
+        );
+        assert_eq!(
+            top(style::toolbar),
+            bottom(style::queue),
+            "the toolbar under the queue"
+        );
+    }
+
+    /// A stuck group heading sits under the toolbar and above the rows that
+    /// scroll under it, even a row's part with a `z-index` of its own.
+    #[wasm_bindgen_test]
+    async fn a_stuck_group_heading_draws_over_its_rows() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("../kit/page_layout.module.scss"),
+            &[
+                ("root", frame_sheet::layout::root),
+                ("main", frame_sheet::layout::main),
+            ],
+        );
+        load_module_style(
+            include_str!("main_page.module.scss"),
+            &[
+                ("list_region", style::list_region),
+                ("toolbar", style::toolbar),
+            ],
+        );
+        let el = mount(|| {
+            view! {
+                <div style="position:fixed; top:0; left:0; width:800px; z-index:10; \
+                            --q-frame-height:560px; --q-appbar-height:48px; --q-space-5:20px; \
+                            --q-space-6:24px; --q-space-8:32px; --q-space-12:48px">
+                    <PageLayout heading="QuiltSync" page_scroll=true>
+                        <div class=style::list_region>
+                            <ToolbarBand>
+                                <div style="height:30px"></div>
+                            </ToolbarBand>
+                            <h3 data-group-heading style="height:30px; margin:0; background:white">"s3://bucket"</h3>
+                            <ul>
+                                {(0..60)
+                                    .map(|_| {
+                                        view! {
+                                            <li style="height:40px">
+                                                <button style="position:relative; z-index:2; \
+                                                               width:100%; height:100%">
+                                                    "row"
+                                                </button>
+                                            </li>
+                                        }
+                                    })
+                                    .collect_view()}
+                            </ul>
+                        </div>
+                    </PageLayout>
+                </div>
+            }
+        });
+        sleep_ms(50).await;
+        let frame = el
+            .query_selector(&format!(".{}", frame_sheet::layout::root))
+            .unwrap()
+            .expect("the frame");
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        let heading = el.query_selector("h3").unwrap().expect("the heading");
+        let toolbar = el
+            .query_selector(&format!(".{}", style::toolbar))
+            .unwrap()
+            .expect("the toolbar");
+        let rect = heading.get_bounding_client_rect();
+        assert_eq!(
+            rect.top(),
+            toolbar.get_bounding_client_rect().bottom(),
+            "the heading sticks under the toolbar"
+        );
+        #[allow(clippy::cast_possible_truncation, reason = "a point on screen")]
+        let hit = web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .element_from_point(
+                (rect.left() + rect.right()) as f32 / 2.0,
+                (rect.top() + rect.bottom()) as f32 / 2.0,
+            )
+            .expect("something is drawn there");
+        assert!(
+            heading.contains(Some(&hit)),
+            "the heading, not a row, is on top"
+        );
+    }
+
+    /// Bands taller than the window stack upwards from the floor, so the list
+    /// keeps a row in view and no band covers another.
+    #[wasm_bindgen_test]
+    async fn bands_taller_than_the_window_leave_the_list_in_view() {
+        use crate::test_support::load_module_style;
+        load_module_style(
+            include_str!("../kit/page_layout.module.scss"),
+            &[
+                ("root", frame_sheet::layout::root),
+                ("main", frame_sheet::layout::main),
+            ],
+        );
+        load_module_style(
+            include_str!("main_page.module.scss"),
+            &[
+                ("list_region", style::list_region),
+                ("strip", style::strip),
+                ("queue", style::queue),
+                ("queue_scroll", style::queue_scroll),
+                ("toolbar", style::toolbar),
+            ],
+        );
+        let el = mount(|| {
+            view! {
+                <div style="--q-frame-height:560px; --q-appbar-height:48px; --q-space-5:20px; \
+                            --q-space-6:24px; --q-space-8:32px; --q-space-12:48px">
+                    <PageLayout heading="QuiltSync" page_scroll=true>
+                        <StateStrip>
+                            <div style="height:400px"></div>
+                        </StateStrip>
+                        <QueueBand>
+                            <div style="height:50px"></div>
+                        </QueueBand>
+                        <div class=style::list_region>
+                            <ToolbarBand>
+                                <div style="height:30px"></div>
+                            </ToolbarBand>
+                            <ul>
+                                {(0..60)
+                                    .map(|_| view! { <li style="height:40px"></li> })
+                                    .collect_view()}
+                            </ul>
+                        </div>
+                    </PageLayout>
+                </div>
+            }
+        });
+        sleep_ms(50).await;
+        let find = |class: &str| -> web_sys::Element {
+            el.query_selector(&format!(".{class}"))
+                .unwrap()
+                .expect(class)
+        };
+        let frame = find(frame_sheet::layout::root);
+        frame.set_scroll_top(1000);
+        sleep_ms(50).await;
+        let top = |class: &str| find(class).get_bounding_client_rect().top();
+        let bottom = |class: &str| find(class).get_bounding_client_rect().bottom();
+        let origin = frame.get_bounding_client_rect().top();
+        assert_eq!(
+            bottom(style::toolbar) - origin,
+            448.0,
+            "the toolbar stops a heading and a row above the page's bottom padding"
+        );
+        assert_eq!(top(style::toolbar), bottom(style::queue));
+        assert_eq!(top(style::queue), bottom(style::strip));
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_toolbar_and_its_list_share_one_parent() {
+        // `PageLayout`'s column sets the gap between regions, so the toolbar and
+        // its list must be one child of that column. As siblings, each gets a
+        // region's gap, and the toolbar ends up further from its own list than
+        // from the queue above it.
+        //
+        // This tests the nesting only. The test harness loads no stylesheet, so
+        // `getComputedStyle` returns browser defaults and the spacing cannot be
+        // asserted: changing the wrapper to `display: contents` keeps this test
+        // green while the gap comes back. Check the spacing in the running app.
+        let (slot, on_store) = store_slot();
+        let payload = a_package_needing_attention();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+
+        let region = el
+            .query_selector("[class*=list_region]")
+            .unwrap()
+            .expect("the list region wraps the pair");
+        assert!(
+            region
+                .query_selector("input[type=search]")
+                .unwrap()
+                .is_some(),
+            "the toolbar is inside it"
+        );
+        assert!(
+            region
+                .query_selector("a[href*=namespace]")
+                .unwrap()
+                .is_some(),
+            "and so is the list it names"
+        );
+        // The toolbar sticks only inside this region, so the list it stays over
+        // has to be its sibling here, and nothing else sits between them.
+        assert_eq!(
+            region.query_selector_all(":scope > *").unwrap().length(),
+            2,
+            "toolbar then card, and nothing else"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_page_opens_on_packages_and_the_toggle_switches_to_files() {
+        // R4: no persistence, so every load opens on Packages — and the toggle
+        // really swaps the view rather than stacking a second one under it.
+        let el = mount_regions(Ok(a_package_needing_attention()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+        // Scoped to the row's own link, not the page's whole text:
+        // `CreatePackageDialog` is mounted permanently (Task 7) and its first
+        // `FormControl` caption reads "…user/plate-07." unconditionally, so an
+        // unscoped `contains` here would pass even if the page opened on the
+        // feed.
+        assert!(
+            el.query_selector("a[href*='namespace=user%2Fplate-07']")
+                .unwrap()
+                .is_some(),
+            "the packages view is the default (R4)"
+        );
+
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("No files yet"), "got: {text}");
+        assert!(
+            !text.contains("Latest"),
+            "the packages view's rows are gone, not merely hidden: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_queue_survives_a_view_switch() {
+        // The toggle is region 4's. A queue that vanished when you looked at your
+        // files would be the opposite of an attention queue.
+        //
+        // Settled first, because the queue draws only what the heavy phase
+        // confirmed (R2) and there is no Tauri host here to confirm anything.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+        let before = queue_text(&el).expect("the queue has something to say");
+
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        assert_eq!(
+            queue_text(&el).as_deref(),
+            Some(before.as_str()),
+            "the queue is untouched by the list's own toggle"
+        );
+    }
+
+    /// `MainPageSkeleton` is the page's own first paint, so `/` handing its
+    /// loading frame over to the page moves nothing: under the appbar, the same
+    /// column children in the same boxes as the page draws before its reads
+    /// answer.
+    ///
+    /// The strip's two card skeletons included. One exception, which takes no
+    /// box: the `<dialog>` is closed, so it is not laid out.
+    #[wasm_bindgen_test]
+    async fn the_skeleton_is_the_page_s_first_paint() {
+        use crate::test_support::shape;
+
+        fn column(children: &web_sys::HtmlCollection) -> Vec<String> {
+            (0..children.length())
+                .map(|i| children.item(i).unwrap())
+                .filter(|child| child.tag_name() != "DIALOG")
+                .map(|child| shape(&child))
+                .collect()
+        }
+
+        let skeleton = mount(|| {
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageSkeleton actions=().into_any() />
+                </leptos_router::components::Router>
+            }
+        });
+        let page = mount_regions_pending();
+        leptos::task::tick().await;
+
+        let main = skeleton.query_selector("main").unwrap().unwrap();
+        assert_eq!(column(&main.children()), column(&page.children()));
+        let strip = page.first_element_child().unwrap();
+        assert_eq!(
+            strip
+                .query_selector_all("[aria-busy=true]")
+                .unwrap()
+                .length(),
+            2,
+            "and the strip is on both of its cards' skeletons, not on nothing"
+        );
+    }
+
+    /// The loading frame's toolbar is inert and the page's own fallback's is
+    /// not. The frame's controls sit over signals the page does not inherit, and
+    /// its *Create package* has no dialog to open, so anything done there would
+    /// be lost; the page's fallback is over the page's signals and dialog, where
+    /// a reader may start work before the rows arrive.
+    #[wasm_bindgen_test]
+    async fn only_the_loading_frame_s_toolbar_is_inert() {
+        let frame = mount(|| {
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageSkeleton actions=().into_any() />
+                </leptos_router::components::Router>
+            }
+        });
+        let page = mount_regions_pending();
+        leptos::task::tick().await;
+
+        let search = |el: &web_sys::Element| {
+            el.query_selector("input[type=search], input")
+                .unwrap()
+                .expect("the toolbar's search")
+        };
+        assert!(
+            search(&frame).closest("[inert]").unwrap().is_some(),
+            "the frame's toolbar is out of reach"
+        );
+        assert!(
+            search(&page).closest("[inert]").unwrap().is_none(),
+            "the page's own fallback keeps it live"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_toolbar_is_on_screen_before_the_packages_read_resolves() {
+        // Chrome is never skeletonised. The toolbar renders in the queue/list
+        // boundary's fallback as well as in its resolved arm — which is what buys
+        // "on screen at first paint" without splitting a boundary the queue and
+        // the list must share.
+        let el = mount_regions_pending();
+        // One tick and no more. `mount_to` does not paint a suspense boundary's
+        // fallback synchronously — the container is still empty when it returns —
+        // so this is the first paint there is. The reads never answer, so whatever
+        // is on screen from here on is the fallback's.
+        leptos::task::tick().await;
+        let text = el.text_content().unwrap();
+        assert!(text.contains(FILES_VIEW), "the toggle is chrome: {text}");
+        assert!(
+            el.query_selector("[class*=skeleton]").unwrap().is_some(),
+            "and the read really is still pending, so the claim above is not vacuous"
+        );
+        assert!(
+            toggle_option(&el, PACKAGES_VIEW).checked(),
+            "a live control and not a skeleton of one, opened on Packages (R4)"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refetch_leaves_the_reader_where_they_were() {
+        // The view signal lives in `MainPageRegions`' body, outside the subtree a
+        // refetch rebuilds — the same placement rule the queue's expander map
+        // follows, for the opposite reason. A signal created inside the resolved
+        // subtree would send a reader of the feed back to Packages every time they
+        // pressed Refresh.
+        //
+        // `prop:checked`, not an attribute: `SegmentedControl` sets the DOM
+        // property, so the property is what the assertion reads.
+        let reload = Trigger::new();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            reload,
+            None,
+        );
+        sleep_ms(50).await;
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        assert!(toggle_option(&el, FILES_VIEW).checked(), "on the feed");
+        assert_eq!(
+            el.query_selector_all("[role=radiogroup]").unwrap().length(),
+            1,
+            "one toolbar on the page: two radio groups sharing a `name` are one \
+             group, and the second would clear the reader's selection"
+        );
+
+        reload.notify();
+        sleep_ms(50).await;
+
+        assert!(
+            toggle_option(&el, FILES_VIEW).checked(),
+            "still on the feed after a Refresh"
+        );
+        assert!(
+            el.text_content().unwrap().contains("No files yet"),
+            "and it is the feed that is drawn, not the packages view"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_feed_is_read_when_it_is_first_asked_for_and_then_kept() {
+        // R3, both halves. §5's decision 3 gives the feed a command of its own so
+        // the page pays only for the view it shows — a `LocalResource` runs its
+        // future eagerly, so what defers the read is the guard inside that future,
+        // not the resource. And the read is *kept*: gating on the view itself
+        // would refetch on every toggle and resolve the feed back to empty on the
+        // way to Packages, which is the opposite of "a second switch is instant".
+        let calls = Arc::new(AtomicUsize::new(0));
+        let reload = Trigger::new();
+        let el = mount_regions_with_feed(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            reload,
+            None,
+            Ok(one_recent_file()),
+            Some(calls.clone()),
+        );
+        sleep_ms(50).await;
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            0,
+            "the page opened on Packages and paid nothing for the feed"
+        );
+
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        assert_eq!(calls.load(Ordering::Relaxed), 1, "asked for, so read once");
+        assert!(
+            el.text_content().unwrap().contains("plate-07.csv"),
+            "got: {}",
+            el.text_content().unwrap()
+        );
+
+        toggle_option(&el, PACKAGES_VIEW).click();
+        sleep_ms(50).await;
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "kept, so a second switch is instant"
+        );
+        assert!(
+            el.text_content().unwrap().contains("plate-07.csv"),
+            "and the feed still holds what it read"
+        );
+
+        reload.notify();
+        sleep_ms(50).await;
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            2,
+            "Refresh reads it again, or the feed on screen would be stale"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_files_read_says_which_read_failed() {
+        // The two views fail over two different reads, so they cannot share one
+        // sentence: `Could not load your packages.` under the Recent files toggle
+        // is a wrong statement about what went wrong. The negative half is the
+        // point — it is what catches a later refactor collapsing the two arms back
+        // onto one helper.
+        //
+        // The packages read answers here, so the only failure on the page is the
+        // feed's, and the packages sentence has no honest way to appear.
+        let el = mount_regions_with_feed(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            None,
+            Err("connection reset by peer".to_string()),
+            None,
+        );
+        sleep_ms(50).await;
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains(FILES_FETCH_ERROR_WORDS),
+            "the feed says its own read failed: {text}"
+        );
+        assert!(
+            !text.contains(FETCH_ERROR_WORDS),
+            "and not the packages sentence, over a packages read that answered: {text}"
+        );
+        assert!(
+            !text.contains("connection reset by peer"),
+            "the raw backend error must not reach the page: {text}"
+        );
+        assert!(
+            !text.contains("No files yet"),
+            "a read that never answered is not an empty feed: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refetch_taken_on_the_feed_still_answers_for_every_package() {
+        // The heavy phase is fired by the resolve that seeded the store, not by
+        // the rows that draw it. `Show` builds exactly one branch, so a Refresh
+        // taken on Recent files builds no rows at all: while each row fired its own
+        // call, that resolve made none, `outstanding` stayed at the roster's size
+        // for as long as the reader stayed on the feed, and the queue — which sits
+        // above both views — went silent until they switched back.
+        //
+        // Read through the zero line, because that is the sentence R3 makes
+        // conditional on the count: with every row confirmed and nothing to
+        // report, an outstanding call is the only thing left that can withhold it.
+        let payload = two_packages_all_latest();
+        let (slot, on_store) = store_slot();
+        let reload = Trigger::new();
+        let el = mount_regions_reloading(
+            Ok(payload.clone()),
+            Ok(one_signed_out_host()),
+            reload,
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+        assert!(
+            el.text_content()
+                .unwrap()
+                .contains("All packages are up to date"),
+            "the queue speaks before the switch: {}",
+            el.text_content().unwrap()
+        );
+
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        reload.notify();
+        // Long enough for the new resolve's calls to be fired and to fail: there
+        // is no Tauri host, so each one drives `record_refresh`'s `Err` arm.
+        sleep_ms(50).await;
+        // The heavy phase's part, which a test has to play for the new store the
+        // refetch seeded exactly as it does for the first one.
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("All packages are up to date"),
+            "and it is still on the page after a Refresh taken on the feed: {text}"
+        );
+        assert!(
+            toggle_option(&el, FILES_VIEW).checked(),
+            "with the reader still on the feed, which is where they were"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn picking_the_feed_before_the_first_resolve_still_answers_for_every_package() {
+        // The same defect on the cold-load path. The toolbar is chrome and is on
+        // screen while the packages read is still pending (R2), so the reader can
+        // already be on Recent files by the time the resolve lands and seeds the
+        // store — and a store whose calls are fired by its rows is then seeded
+        // with a count nothing will ever give back.
+        let payload = two_packages_all_latest();
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_slow_packages(payload.clone(), one_signed_out_host(), on_store, 100);
+        leptos::task::tick().await;
+        assert!(
+            el.query_selector("[class*=skeleton]").unwrap().is_some(),
+            "the packages read really has not answered yet"
+        );
+
+        toggle_option(&el, FILES_VIEW).click();
+        // Past the read's own delay, and past its calls answering.
+        sleep_ms(250).await;
+        settle_all(seeded_store(slot), &payload);
+        leptos::task::tick().await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("All packages are up to date"),
+            "the queue arrives even though the list never drew a row: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_failed_packages_read_leaves_the_feed_reachable() {
+        // The two views are two payloads (§5's decision 3), so one read failing
+        // must not take the other view off the page. A reader on Recent files who
+        // presses Refresh into a failed packages read would otherwise lose both
+        // their feed and the toggle back to it, and be shown a sentence about
+        // packages they were not looking at.
+        let el = mount_regions_with_feed(
+            Err("connection reset by peer".to_string()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            None,
+            Ok(one_recent_file()),
+            None,
+        );
+        sleep_ms(50).await;
+        assert!(
+            el.text_content().unwrap().contains(FETCH_ERROR_WORDS),
+            "the packages arm carries the failure"
+        );
+
+        // Panics if the toolbar is not there, which is the other half of this.
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("plate-07.csv"),
+            "and the feed, whose own read answered, is still reachable: {text}"
+        );
+        assert!(
+            !text.contains(FETCH_ERROR_WORDS),
+            "without the packages sentence left standing over it: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn coming_back_to_packages_keeps_what_the_heavy_phase_confirmed() {
+        // A view switch rebuilds the rows — `Show` reconstructs its children — but
+        // it must not re-seed the store: `PackageStore::seed` runs in the `Suspend`
+        // arm above the `Show`, so what the heavy phase confirmed survives. A
+        // re-seed would put every row back to provisional and the queue back into
+        // its waiting state on nothing more than a look at the files view.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+        assert!(
+            el.query_selector("[class*=provisional]").unwrap().is_none(),
+            "every row is confirmed before the switch"
+        );
+        let queue_before = queue_text(&el).expect("the queue has something to say");
+
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        toggle_option(&el, PACKAGES_VIEW).click();
+        sleep_ms(50).await;
+
+        assert!(
+            el.query_selector("[class*=provisional]").unwrap().is_none(),
+            "and still confirmed after the round trip: the store was not re-seeded"
+        );
+        assert_eq!(
+            queue_text(&el).as_deref(),
+            Some(queue_before.as_str()),
+            "so the queue never went back to waiting"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn renders_a_packages_card() {
+        // Inside a `Router`, because `MainPage` is a routed page and its appbar asks for
+        // `use_navigate`. Mounting it bare passed only while nothing in it needed router
+        // context — a false premise that happened to hold.
+        //
+        // Awaited, because there is no Tauri host here: both of the page's reads
+        // reject, and the list region is drawn by the seam on the far side of that.
+        // So this is the whole failure path end to end — the page still draws the
+        // region, carrying the fixed sentence rather than the backend's error.
+        let el = mount(|| {
+            view! {
+                <leptos_router::components::Router>
+                    <MainPage />
+                </leptos_router::components::Router>
+            }
+        });
+        sleep_ms(200).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Packages"),
+            "expected a Packages card, got: {text}"
+        );
+        assert!(
+            text.contains(FETCH_ERROR_WORDS),
+            "and the fixed sentence for a read that failed, got: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_row_shows_the_list_wording_for_its_state() {
+        let light = vec![pkg("user/plate-07", PackageState::Behind)];
+        let store = PackageStore::seed(&light);
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Not the latest"), "got: {text}");
+        assert!(
+            !text.contains("has a newer revision"),
+            "that is the queue's wording; a list row must not use it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_row_links_to_its_own_package() {
+        let light = vec![pkg("user/plate-07", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+        let href = el
+            .query_selector("a[href*=installed-package]")
+            .unwrap()
+            .expect("the row should link to the package page")
+            .get_attribute("href")
+            .unwrap();
+        // A bare path is the bug this pins: the package page reads the namespace from the
+        // query string and reports "Invalid namespace" when it is absent.
+        assert!(
+            href.contains("namespace=user%2Fplate-07"),
+            "href must carry the namespace, got: {href}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn an_answer_whose_row_is_gone_is_dropped_and_still_counts() {
+        // What replaced the cancellation flag the row used to carry. A refetch, or
+        // a view switch, disposes the owner the previous resolve's row signals
+        // belong to, and the call that resolve fired can still answer afterwards.
+        // Writing a disposed signal is a silent no-op, so the answer needs nothing
+        // to tell it to stay quiet — but the count still has to land, or the queue
+        // waits for an answer that already came (R3).
+        let store = PackageStore::seed(&[pkg("user/a", PackageState::Latest)]);
+        let owner = Owner::new();
+        let row = owner.with(|| RowSignals::new(PackageState::Latest, None, true));
+        owner.cleanup();
+        assert!(
+            row.state.try_get_untracked().is_none(),
+            "the row really is disposed, so what follows is not vacuous"
+        );
+
+        record_refresh(
+            row,
+            store,
+            Ok(MainPagePackageRefreshData {
+                state: PackageState::Behind,
+                role_switch_host: None,
+                downloads: None,
+                changed_files: None,
+            }),
+        );
+
+        assert_eq!(
+            store.outstanding.get_untracked(),
+            0,
+            "the call answered, whatever became of the row it was for"
+        );
+    }
+
+    #[test]
+    fn an_answer_writes_its_row_and_ends_that_call_s_waiting() {
+        // The other half, so the test above cannot pass on a `record_refresh` that
+        // never writes anything at all.
+        let store = PackageStore::seed(&[pkg("user/a", PackageState::Latest)]);
+        let row = store.row(&ns("user/a")).expect("seeded");
+
+        record_refresh(
+            row,
+            store,
+            Ok(MainPagePackageRefreshData {
+                state: PackageState::Behind,
+                role_switch_host: None,
+                downloads: None,
+                changed_files: None,
+            }),
+        );
+
+        assert_eq!(store.outstanding.get_untracked(), 0);
+        assert_eq!(row.state.get_untracked(), PackageState::Behind);
+        assert!(
+            row.confidence.get_untracked() == Confidence::Settled,
+            "the heavy phase confirmed it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_provisional_row_is_marked_provisional() {
+        let light = vec![pkg("user/a", PackageState::Latest)];
+        let store = PackageStore::seed(&light);
+        let el = mount(
+            move || view! { <PackageList packages=Signal::stored(rows_of(&light)) store=store /> },
+        );
+        assert!(
+            el.query_selector("[class*=provisional]").unwrap().is_some(),
+            "the light phase's guess is drawn dashed until the heavy phase confirms it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_fetch_failure_shows_fixed_words_never_the_raw_error() {
+        let el = mount(|| render_fetch_error(Trigger::new()));
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("Could not load your packages."),
+            "got: {text}"
+        );
+        assert!(
+            !text.contains("connection reset by peer"),
+            "the raw backend error must not reach the page; got: {text}"
+        );
+    }
+
+    #[test]
+    fn apply_replaces_the_guess_and_clears_provisional() {
+        let row = RowSignals::new(PackageState::Latest, None, true);
+        row.apply(MainPagePackageRefreshData {
+            state: PackageState::PendingChanges { files: 3 },
+            role_switch_host: None,
+            downloads: None,
+            changed_files: None,
+        });
+
+        assert_eq!(
+            row.state.get_untracked(),
+            PackageState::PendingChanges { files: 3 }
+        );
+        assert!(
+            row.confidence.get_untracked() == Confidence::Settled,
+            "the heavy phase confirmed it"
+        );
+    }
+
+    #[test]
+    fn apply_clears_a_pre_filter_mark_the_refresh_did_not_confirm() {
+        // The readable-bucket list only knows buckets registered with the stack,
+        // while `set_remote` accepts any S3 bucket. Only ever ADDING the mark made
+        // such a false positive permanent for the life of the page — and since the
+        // mark suppresses the sign-in route, it left a genuinely broken row with no
+        // remedy at all. The refresh is the real call; it gets the last word.
+        let row = RowSignals::new(
+            PackageState::RoleDenied {
+                role: Some("ReadOnly".to_string()),
+            },
+            Some("quilt.test".to_string()),
+            true,
+        );
+        row.apply(MainPagePackageRefreshData {
+            state: PackageState::Latest,
+            role_switch_host: None,
+            downloads: None,
+            changed_files: None,
+        });
+
+        assert_eq!(row.state.get_untracked(), PackageState::Latest);
+        assert_eq!(row.role_switch_host.get_untracked(), None);
+    }
+
+    #[test]
+    fn apply_marks_a_row_the_pre_filter_cleared() {
+        // And the other direction: the pre-filter says nothing about writes and
+        // over-reports for unmanaged roles, so it can miss a denial the real call finds.
+        let row = RowSignals::new(PackageState::Latest, None, true);
+        row.apply(MainPagePackageRefreshData {
+            state: PackageState::RoleDenied {
+                role: Some("ReadOnly".to_string()),
+            },
+            role_switch_host: Some("quilt.test".to_string()),
+            downloads: None,
+            changed_files: None,
+        });
+
+        assert_eq!(
+            row.state.get_untracked(),
+            PackageState::RoleDenied {
+                role: Some("ReadOnly".to_string())
+            }
+        );
+        assert_eq!(
+            row.role_switch_host.get_untracked().as_deref(),
+            Some("quilt.test")
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_settled_row_is_not_drawn_provisional() {
+        let el = mount(|| {
+            view! {
+                <PackageRow
+                    namespace="user/a"
+                    href="/x"
+                    state=Signal::stored("Latest".to_string())
+                    tone=Signal::stored(StateTone::Success)
+                    provisional=false
+                />
+            }
+        });
+        assert!(
+            el.query_selector("[class*=provisional]").unwrap().is_none(),
+            "a confirmed state is drawn solid"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_row_updates_its_existing_anchor_when_state_changes() {
+        // Proves the reactive props actually update in place: the same anchor
+        // node carries the new words. It does not, on its own, prove that a
+        // *naive* re-render would have produced a different node — Step 7's
+        // bisection found tachys reconciles by structural type at a fixed
+        // position, so several naive re-render patterns left `is_same_node`
+        // true too. The real reason `state`/`tone` are `Signal`s rather than
+        // plain values is upstream: with plain values, settling one row would
+        // require re-running `PackageList` and rebuilding every row on the
+        // page. This test still matters as the direct check that the props
+        // behave reactively.
+        let state = RwSignal::new("Latest".to_string());
+        let el = mount(move || {
+            view! {
+                <PackageRow
+                    namespace="user/a"
+                    href="/x"
+                    state=state
+                    tone=Signal::stored(StateTone::Success)
+                    provisional=true
+                />
+            }
+        });
+        let before = el.query_selector("a").unwrap().expect("row anchor");
+
+        state.set("3 files changed".to_string());
+        leptos::task::tick().await;
+
+        let after = el.query_selector("a").unwrap().expect("row anchor");
+        assert!(
+            before.is_same_node(Some(&after)),
+            "the row was re-created, not updated"
+        );
+        assert!(
+            el.text_content().unwrap().contains("3 files changed"),
+            "got: {}",
+            el.text_content().unwrap()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_row_stops_being_drawn_provisional_once_it_settles() {
+        // The headline behaviour: a dashed row turns solid as the heavy phase
+        // confirms it, on the row it already is — this is what
+        // `a_settled_row_is_not_drawn_provisional` and
+        // `a_row_updates_its_existing_anchor_when_state_changes` each check
+        // half of (a fixed `provisional`, and a changing `state`) but neither
+        // drives the actual `true` -> `false` transition a user watches happen.
+        let provisional = RwSignal::new(true);
+        let el = mount(move || {
+            view! {
+                <PackageRow
+                    namespace="user/a"
+                    href="/x"
+                    state=Signal::stored("Latest".to_string())
+                    tone=Signal::stored(StateTone::Success)
+                    provisional=provisional
+                />
+            }
+        });
+        assert!(
+            el.query_selector("[class*=provisional]").unwrap().is_some(),
+            "starts dashed, as the light phase's guess"
+        );
+
+        provisional.set(false);
+        leptos::task::tick().await;
+
+        assert!(
+            el.query_selector("[class*=provisional]").unwrap().is_none(),
+            "settles to solid in place once confirmed"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn searching_narrows_the_packages_view_and_says_so_when_nothing_matches() {
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(two_packages_all_latest()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &two_packages_all_latest());
+        leptos::task::tick().await;
+
+        // The positive half: a query matching one of the two rows keeps that
+        // row and drops the other, rather than the assertion below being the
+        // test's only real claim.
+        type_search(&el, "plate-07");
+        sleep_ms(20).await;
+        assert!(
+            el.query_selector("a[href*='namespace=user%2Fplate-07']")
+                .unwrap()
+                .is_some(),
+            "the matching row stays"
+        );
+        assert!(
+            el.query_selector("a[href*='namespace=user%2Fplate-08']")
+                .unwrap()
+                .is_none(),
+            "the non-matching row is dropped"
+        );
+
+        type_search(&el, "plate-99");
+        sleep_ms(20).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("No packages match \u{201c}plate-99\u{201d}"),
+            "the gallery's own words, with the query in them: {text}"
+        );
+        assert!(
+            text.contains("Search covers the names of packages installed on this machine."),
+            "got: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_search_that_empties_the_list_does_not_touch_the_queue() {
+        // The toolbar belongs to region 4. Filtering changes what the LIST draws
+        // and nothing else — a queue that emptied when you searched would be
+        // hiding the thing the page exists to show you.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(a_package_needing_attention()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &a_package_needing_attention());
+        leptos::task::tick().await;
+        let before = queue_text(&el).expect("the queue has something to say");
+
+        type_search(&el, "matches-nothing-at-all");
+        sleep_ms(20).await;
+
+        assert_eq!(
+            queue_text(&el).as_deref(),
+            Some(before.as_str()),
+            "the queue is untouched by the list's own search"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn searching_the_feed_matches_paths_and_says_so_when_nothing_matches() {
+        // R5's other half, and the feed's own words (`gallery/recent_files.rs:263`).
+        let el = mount_regions_with_files(vec![file_data("runs/a/one.csv", "user/alpha", 1_000.0)]);
+        sleep_ms(50).await;
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        type_search(&el, "runs/a");
+        sleep_ms(20).await;
+        assert!(
+            el.text_content().unwrap().contains("one.csv"),
+            "a path match"
+        );
+
+        type_search(&el, "plate-99");
+        sleep_ms(20).await;
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("No files match \u{201c}plate-99\u{201d}"),
+            "got: {text}"
+        );
+        assert!(
+            text.contains("Files that exist only in a bucket are not included."),
+            "got: {text}"
+        );
+    }
+
+    /// One status event, carrying the two fields a refetch decision reads.
+    fn status_event(namespace: &str, fingerprint: &str) -> commands::PackageStatusEvent {
+        commands::PackageStatusEvent {
+            namespace: ns(namespace),
+            status: "behind".to_string(),
+            has_changes: false,
+            fingerprint: fingerprint.to_string(),
+        }
+    }
+
+    /// The page's exact wiring: a `StatusWatch` over the trigger a counting read
+    /// tracks. `autosync`'s `the_pages_refresh_asks_the_backend_again` pattern, for
+    /// its stated reason — a refetch's only observable is the fetch.
+    ///
+    /// The watch is built inside the mount because its `StoredValue`s need an
+    /// owner, and handed back out because it is `Copy`.
+    fn mount_status_watch() -> (StatusWatch, RwSignal<i32>) {
+        let calls = RwSignal::new(0);
+        let out: std::rc::Rc<std::cell::Cell<Option<StatusWatch>>> =
+            std::rc::Rc::new(std::cell::Cell::new(None));
+        let sink = std::rc::Rc::clone(&out);
+        mount(move || {
+            let reload = Trigger::new();
+            let packages = LocalResource::new(move || {
+                reload.track();
+                calls.update(|n| *n += 1);
+                async move {
+                    Ok::<MainPagePackagesData, String>(MainPagePackagesData { packages: vec![] })
+                }
+            });
+            sink.set(Some(StatusWatch::new(reload)));
+            view! {
+                <Transition fallback=|| ()>
+                    {move || {
+                        Suspend::new(async move {
+                            let _ = packages.await;
+                        })
+                    }}
+                </Transition>
+            }
+        });
+        (out.get().expect("the watch, built during the mount"), calls)
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_first_sighting_asks_the_backend_again() {
+        // The package payload carries no fingerprint, so there is nothing to seed
+        // the watch from: a namespace it has never seen must count as news, or the
+        // pull that completes while the page is open — the case this exists for —
+        // is exactly the one it would swallow.
+        let (watch, calls) = mount_status_watch();
+        sleep_ms(50).await;
+        let before = calls.get_untracked();
+        assert_eq!(before, 1, "the first read, before any event");
+
+        watch.observe(&status_event("user/pkg", "fp-1"));
+        sleep_ms(400).await;
+
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "a first sighting must ask the backend again"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_changed_fingerprint_asks_the_backend_again() {
+        // The bug this exists for: autopull brings a package up to date while the
+        // page is open, and the rows and the queue derived from them keep the
+        // values read at mount until something asks again.
+        let (watch, calls) = mount_status_watch();
+        sleep_ms(50).await;
+        watch.observe(&status_event("user/pkg", "fp-1"));
+        sleep_ms(400).await;
+        let before = calls.get_untracked();
+
+        watch.observe(&status_event("user/pkg", "fp-2"));
+        sleep_ms(400).await;
+
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "a changed tree must ask the backend again"
+        );
+    }
+
+    /// Why `nudge` exists beside `observe`, and the gap it closes.
+    ///
+    /// `status_fingerprint` digests the upstream state, the newer revision, the
+    /// changed paths and the ignored ones. A package can stop syncing over a tree that has moved
+    /// none of them — a workflow
+    /// rejection, a refused role — so the status stream reports the same
+    /// observation and the fingerprint rule correctly calls it old news. The
+    /// `autosync-paused` event is the only thing that says a pause happened and
+    /// it carries no fingerprint, so the page still has to ask again.
+    ///
+    /// Both halves matter: without the first the test would not prove the
+    /// fingerprint rule is what swallows the repeat, and without the second it
+    /// would not prove a nudge escapes it.
+    #[wasm_bindgen_test]
+    async fn a_nudge_asks_again_over_a_tree_the_fingerprint_says_has_not_moved() {
+        let (watch, calls) = mount_status_watch();
+        sleep_ms(50).await;
+        watch.observe(&status_event("user/pkg", "fp-1"));
+        sleep_ms(400).await;
+        let before = calls.get_untracked();
+
+        // The same observation again, which the fingerprint rule drops.
+        watch.observe(&status_event("user/pkg", "fp-1"));
+        sleep_ms(400).await;
+        assert_eq!(
+            calls.get_untracked(),
+            before,
+            "a repeated observation is not news"
+        );
+
+        // A pause over that same unchanged tree is.
+        watch.nudge();
+        sleep_ms(400).await;
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "a pause must ask again, since no fingerprint reports it"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_repeated_fingerprint_leaves_the_page_alone() {
+        // `report_status` fires per package per TICK, not per change, and carries
+        // the fingerprint precisely so a consumer can discard repeats. Acting on
+        // every event would re-run the two-phase package read — heavy phase,
+        // network and hashing — at tick rate.
+        let (watch, calls) = mount_status_watch();
+        sleep_ms(50).await;
+        watch.observe(&status_event("user/pkg", "fp-1"));
+        sleep_ms(400).await;
+        let before = calls.get_untracked();
+
+        for _ in 0..3 {
+            watch.observe(&status_event("user/pkg", "fp-1"));
+        }
+        sleep_ms(400).await;
+
+        assert_eq!(
+            calls.get_untracked(),
+            before,
+            "an unchanged tree must not rebuild the page"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn one_ticks_burst_costs_one_refetch() {
+        // A tick reports every package, so news about three of them arrives as
+        // three events a few milliseconds apart. Each restarting the read would
+        // leave the page fetching its own payload three times over.
+        let (watch, calls) = mount_status_watch();
+        sleep_ms(50).await;
+        let before = calls.get_untracked();
+
+        watch.observe(&status_event("user/a", "fp-a"));
+        watch.observe(&status_event("user/b", "fp-b"));
+        watch.observe(&status_event("user/c", "fp-c"));
+        sleep_ms(400).await;
+
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "one tick's news costs one refetch, not one per package"
+        );
+    }
+    #[wasm_bindgen_test]
+    fn unchecked_names_only_the_rows_whose_check_failed() {
+        // Three rows: confirmed, failed and still waiting. The queue waits for a
+        // row that is still waiting and reports nothing about it, while it
+        // reports a row whose call failed. Without the waiting row, the fixture
+        // could not tell those two apart.
+        let light = vec![
+            pkg("a/confirmed", PackageState::Latest),
+            pkg("a/failed", PackageState::Latest),
+            pkg("a/waiting", PackageState::Latest),
+        ];
+        let store = PackageStore::seed(&light);
+        store
+            .row(&ns("a/confirmed"))
+            .unwrap()
+            .apply(MainPagePackageRefreshData {
+                state: PackageState::Latest,
+                role_switch_host: None,
+                downloads: None,
+                changed_files: None,
+            });
+        record_refresh(
+            store.row(&ns("a/failed")).unwrap(),
+            store,
+            Err("no route to host".to_string()),
+        );
+
+        let unchecked = store.unchecked(&light);
+        assert_eq!(unchecked.len(), 1, "only the one whose check failed");
+        assert_eq!(unchecked[0].namespace.to_string(), "a/failed");
+    }
+
+    #[wasm_bindgen_test]
+    fn a_failed_check_keeps_the_cached_state_and_stays_out_of_settled() {
+        // The failure is not a state: the package is whatever the light phase
+        // said, only unwitnessed. Overwriting it would throw away the
+        // informative half, which is the argument for a cause row rather than
+        // words in the row's state label.
+        let light = vec![pkg("a/failed", PackageState::Behind)];
+        let store = PackageStore::seed(&light);
+        record_refresh(
+            store.row(&ns("a/failed")).unwrap(),
+            store,
+            Err("credential vending failed".to_string()),
+        );
+
+        assert_eq!(
+            store.row(&ns("a/failed")).unwrap().state.get_untracked(),
+            PackageState::Behind,
+            "a failed check must not overwrite what the light phase knew"
+        );
+        assert!(
+            store.settled(&light).is_empty(),
+            "and nothing unconfirmed reaches the queue as a fact (R2)"
+        );
+    }
+    /// Every button labelled `Create package`, in document order. When the roster
+    /// is empty there are two — the toolbar's and the blankslate's — and they are
+    /// told apart by that order rather than by a class: `stylance` emits
+    /// `<class>-<hash>` per module, so a `[class*=root]` selector matches several
+    /// unrelated components and would pass while asserting nothing.
+    fn create_package_buttons(el: &web_sys::Element) -> Vec<web_sys::HtmlButtonElement> {
+        let list = el.query_selector_all("button").unwrap();
+        (0..list.length())
+            .filter_map(|i| {
+                let button: web_sys::HtmlButtonElement = list.get(i)?.dyn_into().ok()?;
+                (button.text_content().unwrap_or_default().trim() == "Create package")
+                    .then_some(button)
+            })
+            .collect()
+    }
+
+    fn no_packages() -> MainPagePackagesData {
+        MainPagePackagesData {
+            packages: Vec::new(),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    async fn an_empty_roster_says_so_and_offers_the_one_thing_to_do() {
+        // `group_packages` over an empty roster yields no groups, so without an
+        // empty state the card body would be blank. The words match the gallery
+        // (`gallery/packages.rs`).
+        let el = mount_regions(Ok(no_packages()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("No packages yet"), "got: {text}");
+        assert!(
+            text.contains(
+                "A package is a folder of files that QuiltSync keeps in step with an S3 bucket.",
+            ),
+            "the gallery's own description: {text}"
+        );
+        assert_eq!(
+            create_package_buttons(&el).len(),
+            2,
+            "the toolbar's and the blankslate's own"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_roster_with_packages_draws_no_empty_state() {
+        // The absence half, paired with the presence above: an empty state that
+        // rendered over a populated list would pass any assertion that only ever
+        // looked at the empty case.
+        let el = mount_regions(Ok(two_packages_all_latest()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(!text.contains("No packages yet"), "got: {text}");
+        assert_eq!(create_package_buttons(&el).len(), 1, "only the toolbar's");
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_empty_rosters_action_opens_the_create_dialog() {
+        // The scene was drawn before plan 8 built the dialog, so its button was
+        // `|_| ()`. A blankslate whose only action does nothing is worse than
+        // none: this is the state where the user genuinely cannot proceed without
+        // it and has no way to guess what to do.
+        let el = mount_regions(Ok(no_packages()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the create dialog is mounted permanently")
+            .dyn_into::<web_sys::HtmlDialogElement>()
+            .unwrap();
+        assert!(!dialog.open(), "closed until asked for");
+
+        let buttons = create_package_buttons(&el);
+        // The precondition that makes the click below mean anything: without it
+        // `last()` is the TOOLBAR's button, which opens the same dialog, and this
+        // test would pass with no blankslate on the page at all.
+        assert_eq!(buttons.len(), 2, "the toolbar's, then the blankslate's");
+        buttons.last().expect("the blankslate's action").click();
+        leptos::task::tick().await;
+
+        assert!(dialog.open(), "the blankslate's action must open it");
+    }
+    #[wasm_bindgen_test]
+    async fn a_search_on_an_empty_roster_answers_the_search() {
+        // The half of the condition the other three do not reach: with no
+        // packages AND a query, both empties are true, and the useful answer is
+        // about what the reader just typed. Dropping the query test from the
+        // guard would put "No packages yet" over a search box with text in it.
+        let el = mount_regions(Ok(no_packages()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+        type_search(&el, "plate-07");
+        sleep_ms(20).await;
+
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("No packages match \u{201c}plate-07\u{201d}"),
+            "got: {text}"
+        );
+        assert!(
+            !text.contains("No packages yet"),
+            "and not both at once: {text}"
+        );
+    }
+    #[wasm_bindgen_test]
+    async fn the_feed_shows_its_shape_while_it_is_being_read() {
+        // With `fallback=|| ()`, Recent files shows an empty region until the
+        // read answers, and again on a Refresh during a read, because the rebuilt
+        // `Transition` has no previous body to keep. The packages view shows
+        // three skeletons in the same position, and the feed must do the same.
+        //
+        // The read never answers, as in `mount_regions_pending`, so the fallback
+        // stays on screen for the whole assertion.
+        let el = mount(|| {
+            let recent_files = LocalResource::new(|| {
+                std::future::pending::<Result<MainPageRecentFilesData, String>>()
+            });
+            files_view(
+                recent_files,
+                RwSignal::new(String::new()),
+                RwSignal::new(GROUP_NONE.to_string()),
+                Trigger::new(),
+                HashMap::new(),
+                HashMap::new(),
+                FirstLoad::new(),
+            )
+        });
+        leptos::task::tick().await;
+
+        let boxes = el.query_selector_all("[class*=skeleton]").unwrap();
+        assert!(
+            boxes.length() > 0,
+            "a region being read must show its shape, not nothing"
+        );
+    }
+    #[wasm_bindgen_test]
+    async fn the_queue_reserves_its_line_while_the_page_is_read() {
+        // The shared fallback must reserve the queue's line as well as the
+        // toolbar and row skeletons. Without it, the list starts high and jumps
+        // down when the queue arrives. The queue always renders something, even
+        // when everything is Latest, so its space can always be reserved.
+        //
+        // `[class*=placeholder]` matches only the zero line's skeleton:
+        // `skeleton` is also used by `PackageRow` and `FileRow`, so a selector on
+        // it would pass without the queue's placeholder.
+        let el = mount_regions_pending();
+        leptos::task::tick().await;
+
+        assert!(
+            el.query_selector("[class*=placeholder]").unwrap().is_some(),
+            "a page still being read must hold the queue's line open"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_reserved_line_gives_way_to_the_real_queue() {
+        // The absence half. A placeholder that outlived the read would be worse
+        // than the shift it prevents — two lines where the page has one.
+        let el = mount_regions(Ok(two_packages_all_latest()), Ok(one_signed_out_host()));
+        sleep_ms(50).await;
+
+        assert!(
+            el.query_selector("[class*=placeholder]").unwrap().is_none(),
+            "the placeholder must not survive the answer"
+        );
+    }
+    /// `aria-busy` and `disabled` on the element rather than the signal: those are
+    /// what `Button`'s `loading` produces, so an unwired prop reddens this.
+    ///
+    /// The button is raised by **the page's** in-flight state and never by its
+    /// own click, so this drives that state directly and never presses. The
+    /// regression it pins: a reload the watcher started refetched the page under
+    /// a button that said nothing was happening, because the button only knew
+    /// about presses it had seen.
+    #[wasm_bindgen_test]
+    async fn refresh_reports_a_read_nobody_pressed_for() {
+        let reload = Trigger::new();
+        let busy = RwSignal::new(false);
+        let el = mount(move || {
+            crate::components::appbar::refresh_button(move || reload.notify(), busy.into())
+        });
+
+        let button: web_sys::HtmlElement = el
+            .query_selector("button")
+            .unwrap()
+            .expect("the Refresh button")
+            .dyn_into()
+            .unwrap();
+        assert_eq!(
+            button.get_attribute("aria-busy").as_deref(),
+            Some("false"),
+            "at rest it is not busy"
+        );
+
+        // No click. This is the watcher's reload, or any other read the page
+        // started for itself.
+        busy.set(true);
+        leptos::task::tick().await;
+
+        assert_eq!(
+            button.get_attribute("aria-busy").as_deref(),
+            Some("true"),
+            "a read is out, so the button says so whoever asked for it"
+        );
+        assert!(
+            button.has_attribute("disabled"),
+            "and a second read must not be startable on top of it"
+        );
+
+        busy.set(false);
+        leptos::task::tick().await;
+
+        assert_eq!(
+            button.get_attribute("aria-busy").as_deref(),
+            Some("false"),
+            "the read answered, so the button is free again"
+        );
+    }
+
+    /// The other half: pressing it asks the page to read again. Without this the
+    /// test above passes against a button wired to nothing.
+    #[wasm_bindgen_test]
+    async fn pressing_refresh_asks_the_page_to_read_again() {
+        let reload = Trigger::new();
+        let reads = RwSignal::new(0);
+        let el = mount(move || {
+            Effect::new(move |_| {
+                reload.track();
+                reads.update(|n| *n += 1);
+            });
+            crate::components::appbar::refresh_button(
+                move || reload.notify(),
+                Signal::derive(|| false),
+            )
+        });
+        leptos::task::tick().await;
+        let before = reads.get_untracked();
+
+        let button: web_sys::HtmlElement = el
+            .query_selector("button")
+            .unwrap()
+            .expect("the Refresh button")
+            .dyn_into()
+            .unwrap();
+        button.click();
+        leptos::task::tick().await;
+
+        assert_eq!(
+            reads.get_untracked() - before,
+            1,
+            "a press notifies the page's reload trigger exactly once"
+        );
+    }
+
+    /// Pins which trigger a card's retry notifies. The resources here are the test's,
+    /// so `MainPage`'s own definitions are out of scope.
+    #[wasm_bindgen_test]
+    async fn one_cards_retry_does_not_refetch_the_others() {
+        let package_reads = RwSignal::new(0);
+        let account_reads = RwSignal::new(0);
+        let reload = Trigger::new();
+        let packages_retry = Trigger::new();
+        let accounts_retry = Trigger::new();
+
+        let el = mount(move || {
+            let packages = LocalResource::new(move || {
+                reload.track();
+                packages_retry.track();
+                package_reads.update(|n| *n += 1);
+                async { Ok(two_packages_all_latest()) }
+            });
+            let accounts = LocalResource::new(move || {
+                reload.track();
+                accounts_retry.track();
+                account_reads.update(|n| *n += 1);
+                async { Err::<MainPageAccountsData, String>("nope".to_string()) }
+            });
+            // The queue calls `use_navigate`, which panics outside a `Router`. The
+            // panic lands in a spawned task, not this test, and leaves the runtime
+            // broken for whichever test runs next.
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        packages_retry=packages_retry
+                        accounts_retry=accounts_retry
+                    />
+                </leptos_router::components::Router>
+            }
+        });
+        sleep_ms(50).await;
+        let (packages_before, accounts_before) =
+            (package_reads.get_untracked(), account_reads.get_untracked());
+
+        // By card, not position: both strip reads fail without a Tauri host.
+        let cards = strip_of(&el).query_selector_all("section").unwrap();
+        let accounts_card: web_sys::Element = (0..cards.length())
+            .filter_map(|i| cards.get(i))
+            .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+            .find(|card| {
+                card.text_content()
+                    .is_some_and(|text| text.contains(ACCOUNTS_ERROR_WORDS))
+            })
+            .expect("the Accounts card, which failed");
+        let retry: web_sys::HtmlElement = accounts_card
+            .query_selector("button")
+            .unwrap()
+            .expect("its Try again")
+            .dyn_into()
+            .unwrap();
+        retry.click();
+        sleep_ms(200).await;
+
+        assert_eq!(
+            account_reads.get_untracked() - accounts_before,
+            1,
+            "the card that failed reads again"
+        );
+        assert_eq!(
+            package_reads.get_untracked(),
+            packages_before,
+            "and nothing else does"
+        );
+    }
+
+    /// The `li` drawn for one row, found by the text it carries. Hands back the
+    /// element, since node identity is what the two tests below assert.
+    fn row_li(el: &web_sys::Element, needle: &str) -> web_sys::Element {
+        let items = el.query_selector_all("li").unwrap();
+        for i in 0..items.length() {
+            let item: web_sys::Element = items.item(i).unwrap().dyn_into().unwrap();
+            if item.text_content().unwrap_or_default().contains(needle) {
+                return item;
+            }
+        }
+        panic!("no row carrying {needle}");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_narrowing_search_moves_the_row_it_leaves_standing_rather_than_rebuilding_it() {
+        // Dropping the row ABOVE the survivor is what tells the two diffs apart:
+        // a positional diff patches `plate-07`'s node into `plate-08` and
+        // discards `plate-08`'s own, rebuilding a row the search kept.
+        let (slot, on_store) = store_slot();
+        let el = mount_regions_reloading(
+            Ok(two_packages_all_latest()),
+            Ok(one_signed_out_host()),
+            Trigger::new(),
+            Some(on_store),
+        );
+        sleep_ms(50).await;
+        settle_all(seeded_store(slot), &two_packages_all_latest());
+        leptos::task::tick().await;
+
+        let before = row_li(&el, "plate-08");
+        type_search(&el, "plate-08");
+        sleep_ms(20).await;
+
+        let after = row_li(&el, "plate-08");
+        assert!(
+            before.is_same_node(Some(&after)),
+            "the surviving row keeps its node"
+        );
+        assert_eq!(
+            el.query_selector_all("li").unwrap().length(),
+            1,
+            "and the row that stopped matching is gone"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_narrowing_feed_search_moves_the_row_it_leaves_standing_too() {
+        // The feed's half, keyed on namespace and path together.
+        let el = mount_regions_with_files(vec![
+            file_data("runs/a/one.csv", "user/alpha", 1_000.0),
+            file_data("runs/b/two.csv", "user/alpha", 2_000.0),
+        ]);
+        sleep_ms(50).await;
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        let before = row_li(&el, "two.csv");
+        type_search(&el, "two.csv");
+        sleep_ms(20).await;
+
+        let after = row_li(&el, "two.csv");
+        assert!(
+            before.is_same_node(Some(&after)),
+            "the surviving row keeps its node"
+        );
+    }
+}

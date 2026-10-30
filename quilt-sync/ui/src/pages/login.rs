@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_navigate, use_query_map};
+use leptos_router::hooks::use_navigate;
 use wasm_bindgen::JsCast;
 
 use crate::commands::{self, LoginData};
@@ -13,7 +13,7 @@ use crate::components::{Layout, Notification, Spinner};
 pub fn Login() -> impl IntoView {
     let notification = RwSignal::new(None);
 
-    let query = use_query_map();
+    let query = crate::routes::use_query();
     let data = LocalResource::new(move || {
         let host = query.read().get("host").unwrap_or_default();
         let back = query.read().get("back").unwrap_or_default();
@@ -79,7 +79,7 @@ fn LoginContent(data: LoginData, notification: RwSignal<Option<Notification>>) -
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     let target = if back.is_empty() {
-                        "/installed-packages-list".to_string()
+                        "/".to_string()
                     } else {
                         back
                     };

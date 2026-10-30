@@ -1,0 +1,209 @@
+//! One host in the Accounts card.
+//!
+//! Roles are per-host (`switch_role(host, role_name)`); there is no global role,
+//! so this row is where a role is read and changed. The switcher appears only
+//! where there is a choice, matching `role_switch_host`, which is `Some` exactly
+//! when the user holds more than one role at that host.
+
+use leptos::ev::MouseEvent;
+use leptos::prelude::*;
+
+use crate::kit::Button;
+use crate::kit::Naming;
+use crate::kit::Select;
+use crate::kit::SkeletonText;
+
+stylance::import_crate_style!(style, "src/kit/host_row.module.scss");
+
+#[component]
+pub fn HostRow(
+    #[prop(into)] host: String,
+    /// The active role. Empty means the role query failed — the session is fine,
+    /// it simply cannot be named, so the row says so rather than showing a blank.
+    role: RwSignal<String>,
+    /// Every role held at this host. One or none means no switcher: a select with
+    /// a single option is a dead control.
+    #[prop(optional)]
+    roles: Vec<String>,
+    #[prop(optional)] signed_out: bool,
+    /// The role has not been asked for yet — the light phase named the session,
+    /// the heavy one has not answered. Draws the sub-line with a dashed rule and
+    /// settles to solid when the real role arrives.
+    ///
+    /// **Dashed rather than dimmed**, the same choice [`StateLabel`](super::StateLabel)
+    /// makes and for the same reason: this sub-line is already the muted step, and any
+    /// opacity low enough to read as provisional takes it under AA, while a dashed rule
+    /// costs no contrast at all. A row waiting for its role is still saying something
+    /// true, so making it harder to read in order to say "not final" trades the wrong
+    /// thing.
+    ///
+    /// Read once, at build time, like `role` and `roles` — a row that settles is
+    /// rebuilt, never poked. See `pages/main_page/accounts.rs`'s module doc.
+    #[prop(optional, into)]
+    provisional: MaybeProp<bool>,
+    on_sign_in: impl Fn(MouseEvent) + 'static,
+    /// Draws *Sign out* beside the role, for a signed-in host. Settings passes
+    /// it and the main page does not: the main page offers what is encouraged,
+    /// Settings holds what is rare or destructive.
+    #[prop(optional)]
+    on_sign_out: Option<Callback<()>>,
+    /// The page's lock is held: the switcher and *Sign out* take no choice
+    /// until it is free, rather than accept one the page would drop.
+    #[prop(optional, into)]
+    locked: MaybeProp<bool>,
+) -> impl IntoView {
+    let locked = Signal::derive(move || locked.get().unwrap_or(false));
+    let switchable = roles.len() > 1;
+    let waiting = provisional.get_untracked().unwrap_or(false);
+
+    // Exactly one sub-line, always present. Signed out outranks the role, because
+    // a role means nothing without a session; a role not yet asked for outranks
+    // every reading of the role itself, because there is nothing yet to read.
+    let sub = if signed_out {
+        Some(view! { <span class=style::warning>"Signed out"</span> }.into_any())
+    } else if waiting {
+        Some(view! { "Checking role\u{2026}" }.into_any())
+    } else if switchable {
+        // The role is shown by the switcher itself, so repeating it here would
+        // say the same thing twice.
+        None
+    } else if role.get_untracked().is_empty() {
+        Some(view! { "Role unavailable" }.into_any())
+    } else {
+        Some(view! { {move || format!("Role: {}", role.get())} }.into_any())
+    };
+
+    // Ellipsised by the stylesheet, so the whole value rides in `title`.
+    let full_host = host.clone();
+    view! {
+        <div class=style::root>
+            <span class=style::text>
+                <span class=style::host title=full_host>{host}</span>
+                {sub
+                    .map(|line| {
+                        let class = if waiting {
+                            format!("{} {}", style::sub, style::provisional)
+                        } else {
+                            style::sub.to_string()
+                        };
+                        view! { <span class=class>{line}</span> }
+                    })}
+            </span>
+            <span class=style::trailing>
+                {if signed_out {
+                    // A signed-out host has no role to pick, so the only
+                    // affordance is getting the session back.
+                    view! { <Button on_click=on_sign_in>"Sign in"</Button> }.into_any()
+                } else {
+                    let switcher = switchable
+                        .then(|| {
+                            view! {
+                                <Select
+                                    naming=Naming::Prefix("Role".to_string())
+                                    options=roles
+                                    selected=role
+                                    disabled=locked
+                                />
+                            }
+                        });
+                    let sign_out = on_sign_out
+                        .map(|sign_out| {
+                            view! {
+                                <Button disabled=locked on_click=move |_| sign_out.run(())>
+                                    "Sign out"
+                                </Button>
+                            }
+                        });
+                    view! { {switcher} {sign_out} }.into_any()
+                }}
+            </span>
+        </div>
+    }
+}
+
+/// A host row's geometry, while the sessions are still being read: the host's
+/// line and the role's, from the row's own classes, so it is as tall as a row
+/// that settles into it.
+///
+/// No trailing slot. What goes there — a role select, a sign-in button, nothing
+/// — is the answer being waited for, and the row centres it on the text, which
+/// is the taller of the two either way.
+#[component]
+pub fn HostRowSkeleton() -> impl IntoView {
+    view! {
+        <div class=style::root aria-hidden="true">
+            <span class=style::text>
+                <span class=style::host>
+                    <SkeletonText width="45%" />
+                </span>
+                <span class=style::sub>
+                    <SkeletonText width="30%" />
+                </span>
+            </span>
+        </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::mount;
+    use wasm_bindgen_test::*;
+
+    /// Sign out is drawn only where a caller asks for it, and never for a
+    /// signed-out host, which has nothing to sign out of.
+    #[wasm_bindgen_test]
+    fn sign_out_is_drawn_only_when_asked() {
+        let saying =
+            |el: &web_sys::Element| el.text_content().unwrap_or_default().contains("Sign out");
+        let plain = mount(|| {
+            view! { <HostRow host="quilt.test" role=RwSignal::new("analyst".to_string()) on_sign_in=|_| {} /> }
+        });
+        assert!(!saying(&plain), "the main page's row has none");
+        let settings = mount(|| {
+            view! {
+                <HostRow
+                    host="quilt.test"
+                    role=RwSignal::new("analyst".to_string())
+                    on_sign_in=|_| {}
+                    on_sign_out=Callback::new(|()| ())
+                />
+            }
+        });
+        assert!(saying(&settings));
+        let gone = mount(|| {
+            view! {
+                <HostRow
+                    host="quilt.test"
+                    role=RwSignal::new(String::new())
+                    signed_out=true
+                    on_sign_in=|_| {}
+                    on_sign_out=Callback::new(|()| ())
+                />
+            }
+        });
+        assert!(!saying(&gone));
+    }
+
+    /// A catalog host is a domain, and a long one truncates.
+    #[wasm_bindgen_test]
+    fn the_truncating_host_carries_its_whole_value() {
+        let el = mount(|| {
+            view! {
+                <HostRow
+                    host="a-very-long-catalog-hostname.quilt.test"
+                    role=RwSignal::new("analyst".to_string())
+                    on_sign_in=|_| {}
+                />
+            }
+        });
+        let span = el
+            .query_selector("[class*=host]")
+            .unwrap()
+            .expect("the host");
+        assert_eq!(
+            span.get_attribute("title").as_deref(),
+            Some("a-very-long-catalog-hostname.quilt.test"),
+        );
+    }
+}

@@ -2,11 +2,46 @@
      Follow keepachangelog.com format.
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
-     Use alpha pre-release versions (e.g. v0.1.1-alpha1) instead of [Unreleased]
-     to keep changelog in sync with Cargo.toml version.
+     Head unreleased changes with the Cargo.toml version: `-dev`, no date
+     (e.g. [v0.4.2-dev]), not [Unreleased]. If the cycle needs a bigger bump,
+     rename both. The first PR to change the crate after a release opens the
+     next patch `-dev` version and heading; the release PR drops `-dev` and
+     adds the date.
+     Describe the change since the last release, not each PR: when a PR makes
+     an unreleased entry stale, rewrite it in place and append the PR link.
+     Work no user can reach yet gets one "Under the hood" line, not a feature
+     entry; it earns a real entry once reachable, even behind a switch.
+     Never edit released sections.
 -->
 <!-- markdownlint-disable MD013 -->
 # Changelog
+
+## [v0.4.3] - 2026-10-22
+
+### Added
+
+- `S3PackageUri::to_copy_string` writes the full address for copying: the whole hash and every fragment value escaped, so a pasted address parses back the same (<https://github.com/quiltdata/quilt-rs/pull/1171>)
+
+## [v0.4.2] - 2026-10-02
+
+### Added
+
+- `fixtures::one_host()` and `fixtures::another_host()` (`test-support` feature) return two different hosts, for tests that need them (<https://github.com/quiltdata/quilt-rs/pull/1041>)
+
+### Changed
+
+- `fixtures::host()` (`test-support` feature) returns `quilt.test` instead of `test.quilt.dev`. Names under `.test` never resolve, so a test can't reach a real Quilt stack (<https://github.com/quiltdata/quilt-rs/pull/1041>)
+
+## [v0.4.1] - 2026-09-18
+
+### Added
+
+- `Namespace::prefix()` and `Namespace::name()` lend the halves the type already validated. The struct had no `impl` block at all, so a caller wanting either had to split `Display`'s output — the split `try_from` has already done and already rejected a second slash for (<https://github.com/quiltdata/quilt-rs/pull/946>)
+- `Namespace` derives `Hash`, so it can key a map. A caller with a namespace per row previously had to key by a string spelling of it (<https://github.com/quiltdata/quilt-rs/pull/946>)
+
+### Fixed
+
+- `S3PackageUri::display` now escapes the characters a fragment is built from — `&`, `=`, `#`, `+` and `%` — in the namespace, path, catalog and tag, so an address round-trips through `try_from` whatever those values hold. It wrote every value raw while the parse side reads the fragment with `form_urlencoded`, so a logical key holding `&` came back truncated and the rest of it was read as a parameter the caller never wrote. `/` is still written literally: these addresses are read and pasted by hand, and `package=user%2Fplate-07` would be a worse answer than the bug (<https://github.com/quiltdata/quilt-rs/pull/953>)
 
 ## [v0.4.0] - 2026-07-22
 

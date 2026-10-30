@@ -16,19 +16,28 @@
 
 mod auth;
 mod commit_data;
+mod main_page;
 mod package_data;
+mod package_entries;
 mod package_list;
 mod package_ops;
+mod package_page;
+mod quit;
 mod settings;
 mod system;
+mod toast;
 
 pub use auth::*;
 pub use commit_data::*;
+pub use main_page::*;
 pub use package_data::*;
 pub use package_list::*;
 pub use package_ops::*;
+pub use package_page::*;
+pub use quit::*;
 pub use settings::*;
 pub use system::*;
+pub use toast::*;
 
 #[cfg(test)]
 mod role_switch_chain;

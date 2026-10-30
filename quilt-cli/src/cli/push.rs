@@ -1,11 +1,16 @@
+use quilt_rs::InstalledPackage;
 use quilt_rs::PushOutcome;
+use quilt_rs::Pushed;
 use quilt_rs::io::remote::HostConfig;
+use quilt_rs::io::remote::Remote;
 use quilt_rs::io::remote::WorkflowIntent;
+use quilt_rs::io::storage::Storage;
 use quilt_uri::Host;
 use quilt_uri::Namespace;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
+use crate::cli::output::Render;
 use crate::cli::output::Std;
 
 #[derive(Debug)]
@@ -19,22 +24,44 @@ pub struct Input {
     pub workflow: WorkflowIntent,
 }
 
+/// `None` when there was no pending commit and nothing was pushed.
 #[derive(Debug)]
 pub struct Output {
-    pub hash: String,
-    pub certified_latest: bool,
+    pub outcome: Option<PushOutcome>,
 }
 
 impl std::fmt::Display for Output {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, r#"New revision "{}" pushed"#, self.hash)?;
-        if !self.certified_latest {
+        let Some(outcome) = &self.outcome else {
+            return write!(f, "Nothing to push");
+        };
+        write!(f, r#"New revision "{}" pushed"#, outcome.manifest_uri.hash)?;
+        if !outcome.certified_latest {
             write!(
                 f,
                 "\nWarning: could not update latest — remote has newer changes"
             )?;
         }
         Ok(())
+    }
+}
+
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        // The same shape when nothing was pushed: no revision was pushed or
+        // certified.
+        let Some(outcome) = &self.outcome else {
+            return serde_json::json!({
+                "hash": null,
+                "manifest_uri": null,
+                "certified_latest": null,
+            });
+        };
+        serde_json::json!({
+            "hash": &outcome.manifest_uri.hash,
+            "manifest_uri": outcome.manifest_uri.to_string(),
+            "certified_latest": outcome.certified_latest,
+        })
     }
 }
 
@@ -49,33 +76,42 @@ async fn push_package(
     bucket: Option<String>,
     origin: Option<Host>,
     workflow: WorkflowIntent,
-) -> Result<PushOutcome, Error> {
+) -> Result<Pushed, Error> {
     match local_domain.get_installed_package(&namespace).await? {
         Some(installed_package) => {
-            // If bucket/origin provided, set remote before pushing.
-            // Safe: push() reads lineage fresh from disk, so it sees the
-            // remote_uri written by set_remote() — no caching in between.
-            // Note: clap enforces that bucket and origin are always provided
-            // together via `requires` constraints.
-            if let (Some(bucket), Some(origin)) = (bucket, origin) {
-                let outcome = installed_package
-                    .set_remote(bucket, Some(origin), workflow)
-                    .await?;
-                // The remote's default workflow could not be resolved on the
-                // best-effort BucketDefault path: the push proceeds without a
-                // workflow stamp, but tell the user why rather than leaving it
-                // silent. Warnings go to stderr so the success output on stdout
-                // stays machine-parseable; the exit status is unchanged.
-                if let Some(reason) = outcome.resolution_warning {
-                    eprintln!(
-                        "warning: couldn't resolve the bucket's default workflow ({reason}); pushing without a workflow"
-                    );
-                }
-            }
-            Ok(installed_package.push(host_config).await?)
+            set_remote_and_push(&installed_package, host_config, bucket, origin, workflow).await
         }
         None => Err(Error::NamespaceNotFound(namespace)),
     }
+}
+
+/// Sets the remote first when `bucket` is given, with or without a catalog
+/// host, then pushes.
+async fn set_remote_and_push<S: Storage + Clone + Sync, R: Remote>(
+    installed_package: &InstalledPackage<S, R>,
+    host_config: Option<HostConfig>,
+    bucket: Option<String>,
+    origin: Option<Host>,
+    workflow: WorkflowIntent,
+) -> Result<Pushed, Error> {
+    // Safe: push() reads lineage fresh from disk, so it sees the remote_uri
+    // written by set_remote() — no caching in between.
+    if let Some(bucket) = bucket {
+        let outcome = installed_package
+            .set_remote(bucket, origin, workflow)
+            .await?;
+        // The remote's default workflow could not be resolved on the
+        // best-effort BucketDefault path: the push proceeds without a
+        // workflow stamp, but tell the user why rather than leaving it
+        // silent. Warnings go to stderr so the success output on stdout
+        // stays machine-parseable; the exit status is unchanged.
+        if let Some(reason) = outcome.resolution_warning {
+            eprintln!(
+                "warning: couldn't resolve the bucket's default workflow ({reason}); pushing without a workflow"
+            );
+        }
+    }
+    Ok(installed_package.push(host_config).await?)
 }
 
 pub async fn model(
@@ -97,10 +133,11 @@ pub async fn model(
         workflow,
     )
     .await?;
-    Ok(Output {
-        hash: outcome.manifest_uri.hash,
-        certified_latest: outcome.certified_latest,
-    })
+    let outcome = match outcome {
+        Pushed::NothingToPush => None,
+        Pushed::Uploaded(outcome) => Some(outcome),
+    };
+    Ok(Output { outcome })
 }
 
 #[cfg(test)]
@@ -192,21 +229,21 @@ mod tests {
 
         // A brand-new local package: a commit will be stamped below, and only
         // then is the remote attached, mirroring `create → commit → set-remote`.
-        let lineage_json = format!(
-            r#"{{
-                "packages": {{
-                    "reference/push-gate": {{
-                        "commit": null,
-                        "remote": null,
-                        "base_hash": "",
-                        "latest_hash": "",
-                        "paths": {{}}
-                    }}
-                }},
-                "home": "{}"
-            }}"#,
-            home_dir.path().display()
-        );
+        // Built as JSON, not formatted in: a Windows path's backslashes
+        // would be escapes inside a JSON string.
+        let lineage_json = serde_json::json!({
+            "packages": {
+                "reference/push-gate": {
+                    "commit": null,
+                    "remote": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": &home,
+        })
+        .to_string();
         storage
             .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
             .await?;
@@ -227,9 +264,10 @@ mod tests {
                 namespace.clone(),
             ),
             paths,
-            remote,
+            remote: std::sync::Arc::new(remote),
             storage,
             namespace: namespace.clone(),
+            state_store: None,
         };
 
         // Commit valid under v1: the `gate` workflow (which declares no
@@ -252,9 +290,14 @@ mod tests {
             .await?;
 
         // Attach the governed bucket `b` now, first-push (no remote hash yet),
-        // so push skips the remote-manifest browse and reaches the gate.
+        // so push skips the remote-manifest browse and reaches the gate. The
+        // config has no default workflow, so the recommit is told `gate`.
         package
-            .set_remote("b".to_string(), None, WorkflowIntent::BucketDefault)
+            .set_remote(
+                "b".to_string(),
+                None,
+                WorkflowIntent::Named("gate".to_string()),
+            )
             .await?;
 
         // The bucket owner tightens the *current* config: `gate` now requires an
@@ -303,33 +346,101 @@ mod tests {
         Ok(())
     }
 
-    /// Verifies that push command returns error when there are no commits:
-    ///   * installs a package but makes no commits
-    ///   * attempts to push without commits
+    /// `quilt push --bucket b` with no `--host` gives a local-only package a
+    /// remote with no catalog, and pushes it there.
+    #[test(tokio::test)]
+    async fn test_first_push_with_bucket_and_no_host() -> Result<(), Error> {
+        use quilt_rs::InstalledPackage;
+        use quilt_rs::io::remote::mocks::MockRemote;
+        use quilt_rs::lineage::DomainLineageIo;
+        use quilt_rs::lineage::Home;
+        use quilt_rs::lineage::PackageLineageIo;
+        use quilt_rs::paths::DomainPaths;
+        use tempfile::TempDir;
+
+        let home_dir = TempDir::new()?;
+        let paths_dir = TempDir::new()?;
+        let storage = LocalStorage::new();
+        let namespace: Namespace = ("local", "only").into();
+        let home = Home::new(home_dir.path().to_path_buf());
+        let paths = DomainPaths::new(paths_dir.path().to_path_buf());
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+        let lineage_json = serde_json::json!({
+            "packages": {
+                "local/only": {
+                    "commit": null,
+                    "remote": null,
+                    "base_hash": "",
+                    "latest_hash": "",
+                    "paths": {}
+                }
+            },
+            "home": &home,
+        })
+        .to_string();
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(
+                DomainLineageIo::new(paths.lineage()),
+                namespace.clone(),
+            ),
+            paths,
+            remote: std::sync::Arc::new(MockRemote::default()),
+            storage,
+            namespace: namespace.clone(),
+            state_store: None,
+        };
+        package
+            .commit("first".to_string(), UserMeta::Keep, None, None)
+            .await?;
+
+        let Pushed::Uploaded(outcome) = set_remote_and_push(
+            &package,
+            None,
+            Some("b".to_string()),
+            None,
+            WorkflowIntent::BucketDefault,
+        )
+        .await?
+        else {
+            return Err(Error::Test("the commit must be pushed".to_string()));
+        };
+
+        let lineage = package.lineage().await?;
+        let remote_uri = lineage.remote_uri.expect("the push sets the remote");
+        assert_eq!(remote_uri.bucket, "b");
+        assert_eq!(remote_uri.origin, None);
+        assert_eq!(remote_uri.hash, outcome.manifest_uri.hash);
+        assert_eq!(outcome.manifest_uri.origin, None);
+
+        Ok(())
+    }
+
+    /// A push with no commit has nothing to push, and succeeds saying so.
     #[test(tokio::test)]
     async fn live_no_commit() -> Result<(), Error> {
         let uri = pkg::URI;
         let (m, _, _temp_dir) = install_package_into_temp_dir(uri).await?;
 
-        if let Std::Err(error_str) = command(
-            m,
-            Input {
+        let output = m
+            .push(Input {
                 namespace: pkg::NAMESPACE.into(),
                 host_config: None,
                 bucket: None,
                 origin: None,
                 workflow: WorkflowIntent::BucketDefault,
-            },
-        )
-        .await
-        {
-            assert_eq!(
-                error_str.to_string(),
-                "quilt_rs error: Push error: No commits to push"
-            );
-        } else {
-            return Err(Error::Test("Expected no changes error".to_string()));
-        }
+            })
+            .await?;
+
+        assert_eq!(output.to_string(), "Nothing to push");
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"hash":null,"manifest_uri":null,"certified_latest":null}"#
+        );
 
         Ok(())
     }
@@ -342,7 +453,7 @@ mod tests {
     /// 5. Revert e0-0.txt content, commit with different message and meta
     /// 6. Push and verify final expected top hash matches original: 4076eb7774f5159aab212302288a2a2a9e59fab69cf4e41e827072fee80fabb4
     #[test(tokio::test)]
-    async fn live_push_sha256_checksum() -> Result<(), Error> {
+    async fn live_write_push_sha256_checksum() -> Result<(), Error> {
         let namespace: Namespace = ("quilt_rs", "test").into();
         let uri = "quilt+s3://data-yaml-spec-tests#package=quilt_rs/test";
         let host_config = Some(HostConfig::default_sha256_chunked());
@@ -391,7 +502,7 @@ mod tests {
             .await?;
 
         assert_eq!(
-            first_push_output.hash,
+            first_push_output.outcome.unwrap().manifest_uri.hash,
             "c8027e8697016feb74b8ea523ca55934243653b890b94d64166ef2664a71ebab",
             "First push top hash should match expected value"
         );
@@ -425,7 +536,7 @@ mod tests {
             .await?;
 
         assert_eq!(
-            final_push_output.hash,
+            final_push_output.outcome.unwrap().manifest_uri.hash,
             "4076eb7774f5159aab212302288a2a2a9e59fab69cf4e41e827072fee80fabb4",
             "Final push top hash should match original expected value"
         );
@@ -436,7 +547,7 @@ mod tests {
     /// Integration test: create local package → set bucket → push to S3 → verify lineage.
     /// Uses fiskus-us-east-1 with a dedicated namespace (no catalog — local AWS creds).
     #[test(tokio::test)]
-    async fn live_push_local_package_bucket_only() -> Result<(), Error> {
+    async fn live_write_push_local_package_bucket_only() -> Result<(), Error> {
         use crate::cli::create;
         use crate::cli::status;
         use quilt_rs::lineage::UpstreamState;
@@ -499,7 +610,7 @@ mod tests {
             .await?;
 
         assert!(
-            !push_output.hash.is_empty(),
+            !push_output.outcome.unwrap().manifest_uri.hash.is_empty(),
             "Push should return a non-empty hash"
         );
 
@@ -524,6 +635,7 @@ mod tests {
             .status(status::Input {
                 namespace: namespace.clone(),
                 host_config,
+                list_ignored: false,
             })
             .await?;
         assert_eq!(
@@ -543,7 +655,7 @@ mod tests {
     /// 5. Revert 1.txt content, commit with different message and meta
     /// 6. Push and verify final expected top hash matches original: b427c3867bce2445a988f69f43ad3998237d2fedf6f5e678822acd1a1e8f580a
     #[test(tokio::test)]
-    async fn live_push_crc64_checksum() -> Result<(), Error> {
+    async fn live_write_push_crc64_checksum() -> Result<(), Error> {
         let namespace: Namespace = ("crc64", "s3").into();
         let uri = "quilt+s3://fiskus-us-east-1#package=crc64/s3";
         let host_config = Some(HostConfig::default_crc64());
@@ -592,7 +704,7 @@ mod tests {
             .await?;
 
         assert_eq!(
-            first_push_output.hash,
+            first_push_output.outcome.unwrap().manifest_uri.hash,
             "8c9beced00f51cb100da861e62688e71f77a692a1c71bce422e329706ede6e63",
             "First push top hash should match expected value"
         );
@@ -629,11 +741,32 @@ mod tests {
             .await?;
 
         assert_eq!(
-            final_push_output.hash,
+            final_push_output.outcome.unwrap().manifest_uri.hash,
             "b427c3867bce2445a988f69f43ad3998237d2fedf6f5e678822acd1a1e8f580a",
             "Final push top hash should match original expected value"
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn json_carries_hash_uri_and_certification() {
+        let hash = "0123456789abcdef";
+        let output = Output {
+            outcome: Some(PushOutcome {
+                manifest_uri: quilt_uri::ManifestUri {
+                    origin: None,
+                    bucket: "bucket".to_string(),
+                    namespace: ("demo", "sales").into(),
+                    hash: hash.to_string(),
+                },
+                certified_latest: false,
+            }),
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"hash":"0123456789abcdef","manifest_uri":"quilt+s3://bucket#package=demo/sales@0123456789abcdef","certified_latest":false}"#
+        );
     }
 }

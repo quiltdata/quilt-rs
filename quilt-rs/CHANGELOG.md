@@ -3,17 +3,285 @@
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
      Put quilt-uri updates under `### quilt-uri` section.
-     Use alpha pre-release versions (e.g. v0.27.2-alpha1) instead of [Unreleased]
-     to keep changelog in sync with Cargo.toml version.
+     Between releases a cross-crate line names the upstream -dev version and
+     compares against main; the release PR points it at the released tag.
+     Head unreleased changes with the Cargo.toml version: `-dev`, no date
+     (e.g. [v0.39.2-dev]), not [Unreleased]. If the cycle needs a bigger bump,
+     rename both. The first PR to change the crate after a release opens the
+     next patch `-dev` version and heading; the release PR drops `-dev` and
+     adds the date.
+     Describe the change since the last release, not each PR: when a PR makes
+     an unreleased entry stale, rewrite it in place and append the PR link.
+     Work no user can reach yet gets one "Under the hood" line, not a feature
+     entry; it earns a real entry once reachable, even behind a switch.
+     Never edit released sections.
 -->
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
-## [v0.35.1-alpha1] - 2026-08-07
+## [v0.51.0] - 2026-10-29
+
+### Changed
+
+- **Breaking:** a file pinned to an S3 version whose bytes do not match the hash the package records is reported as a hash mismatch, not as gone from the bucket. `InstallPathError` has a new `HashMismatch` variant, and `InstallPathsReport` and `KeepReport` a new `hash_mismatch` field
+  - <https://github.com/quiltdata/quilt-rs/issues/1246>
+  - <https://github.com/quiltdata/quilt-rs/pull/1254>
+
+### Fixed
+
+- Reset to latest discards a pending local commit even when its base is already latest (<https://github.com/quiltdata/quilt-rs/pull/1197>)
+- On Windows, files in folders get logical keys with `/`, not `\` (<https://github.com/quiltdata/quilt-rs/pull/1253>)
+- Status and `checksum::calculate_hash` give local files a percent-encoded `file://` physical key, like every other local key (<https://github.com/quiltdata/quilt-rs/pull/1255>)
+
+## [v0.50.0] - 2026-10-28
+
+### Added
+
+- `SyncScope::Folders` keeps every file under chosen folders, including files added there later. A folder with a `..` part is refused with `LineageError::FolderOutsidePackage` (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+- `InstalledPackage::keep` stores what a package keeps and downloads the files it is missing; `InstalledPackage::kept` reads the setting and how much is left to download; `InstalledPackage::backlog` lists those files (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+
+### Changed
+
+- **Breaking:** pull, push, commit and publish report when there is nothing to do instead of failing. `InstalledPackage::pull` returns `flow::Pulled` (`UpToDate` or `Applied`), `push` returns `Pushed` (`NothingToPush` or `Uploaded`), `commit` returns `flow::Committed` (`NothingToCommit` or `Recorded`), and `PublishOutcome` gains `NothingToPublish`, so `PublishOutcome::push` returns an `Option`. `PackageOpError::AlreadyUpToDate` is removed
+  - <https://github.com/quiltdata/quilt-rs/pull/1227>
+  - <https://github.com/quiltdata/quilt-rs/pull/1230>
+  - <https://github.com/quiltdata/quilt-rs/pull/1242>
+- **Breaking:** `install_paths` installs the paths not yet tracked and lists the others in `InstallPathsReport::already_installed`, instead of refusing the whole call. `InstallPathError::AlreadyInstalled` is removed, and `flow::install_paths` returns `(PackageLineage, InstallPathsReport)` (<https://github.com/quiltdata/quilt-rs/pull/1239>)
+- **Breaking:** `SyncScope` is no longer `Copy`, and `covers_untracked` takes the path it asks about (<https://github.com/quiltdata/quilt-rs/pull/1229>)
+
+## [v0.49.0] - 2026-10-26
+
+### Added
+
+- `InstalledPackage::change_catalog` adds, changes or removes the catalog of a package's remote, keeping its bucket, remote hash and commits, also once the package is published (<https://github.com/quiltdata/quilt-rs/pull/1211>)
+- `Error::is_ambient_session_absent` says the AWS credentials on this computer, used for a bucket with no catalog, were missing or refused (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+
+### Changed
+
+- **Breaking:** `InstalledPackage::state` reads a remote with no catalog on the AWS credentials on this computer instead of answering `Unknown`. `PackageLineage::misconfigured_remote` is removed (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+- **Breaking:** `Remote::published_revisions` takes `Option<&Host>`. With no catalog it lists the package's revisions from the bucket, so `InstalledPackage::revision_history` and `remove_revisions` know which revisions are published (<https://github.com/quiltdata/quilt-rs/pull/1212>)
+- With no catalog, AWS credentials that are missing or unusable, including an expired SSO sign-in, are `LoginError::NoSession(None)` (<https://github.com/quiltdata/quilt-rs/pull/1193>)
+
+### Fixed
+
+- `InstalledPackage::set_remote` with no host stamps the chosen or the bucket's default workflow on a pending commit instead of dropping it (<https://github.com/quiltdata/quilt-rs/pull/1209>)
+- After the AWS credentials on this computer were missing or refused, the next call reads `~/.aws` again
+  - <https://github.com/quiltdata/quilt-rs/pull/1193>
+  - <https://github.com/quiltdata/quilt-rs/pull/1202>
+
+## [v0.48.0] - 2026-10-23
+
+### Added
+
+- `auth::lock_host` takes a host's auth lock (`DomainPaths::auth_lock`), which every token refresh holds. Hold it too when removing the host's auth directory (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+### Changed
+
+- **Breaking:** a `Storage` implementation must provide `create_private_dir` and `write_private_byte_stream` (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+### Fixed
+
+- On Unix the auth store is readable by its owner alone: directories are 0700 and token files 0600. A store an earlier version left open is closed at its next write (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- Two processes refreshing one host's tokens, such as the CLI and QuiltSync, take turns on a lock, so neither loses the login (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+- Callers that stop waiting for a lock held by another process no longer use up blocking threads (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+## [v0.47.0] - 2026-10-22
+
+### Added
+
+- `InstalledPackage::status_with_downloads` returns the status and a `lineage::DownloadCounts`: how many of the current revision's files, and how many bytes, are still to download
+  - <https://github.com/quiltdata/quilt-rs/pull/1172>
+  - <https://github.com/quiltdata/quilt-rs/pull/1178>
+
+### quilt-uri
+
+- Updated [from v0.4.2 to v0.4.3](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.2...quilt-uri/v0.4.3) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
+## [v0.46.0] - 2026-10-21
+
+### Changed
+
+- **Breaking:** `Error::Yaml` wraps the error of `serde-saphyr` 2.0 instead of 1.x (<https://github.com/quiltdata/quilt-rs/pull/1166>)
+
+## [v0.45.0] - 2026-10-20
+
+### Added
+
+- Ignore rules come in three layers: the built-in `quiltignore::DEFAULT_RULES` (dot-folders, OS and editor clutter, secrets, caches, `node_modules/`), the user-wide `.quiltignore` at `DomainPaths::user_quiltignore`, and the package's `.quiltignore`. As in git, a stronger layer can bring a path back with `!pattern`. The first two layers hide new files only. `quiltignore::Rules` applies them, and `quiltignore::IgnoredBy` names the rule that matched and where it came from
+  - <https://github.com/quiltdata/quilt-rs/pull/1143>
+  - <https://github.com/quiltdata/quilt-rs/pull/1150>
+- `flow::stop_ignoring` and `flow::preview_stop_ignoring`, also on `InstalledPackage`, bring an ignored file or folder back for one package or for all, and count the files that adds (<https://github.com/quiltdata/quilt-rs/pull/1147>)
+- `LocalDomain::set_default_rules`, `quiltignore::default_rules` and `quiltignore::set_default_rules` read and set which built-in rules are off for every package, and `quiltignore::remove_lines` takes lines out of a rules file (<https://github.com/quiltdata/quilt-rs/pull/1149>)
+- `state_store::PackageStateStore`: an optional SQLite store at `DomainPaths::state_db` for the desktop app's per-package state, such as each package's last-change time. The CLI does not use it (<https://github.com/quiltdata/quilt-rs/pull/1134>)
+- `flow::status_cached` hashes only the files that changed since the last walk, but hashes every file once a day and when the state store cannot be read. `LocalDomain::with_state_store` turns it on; without a store, as in the CLI, every file is hashed as before. `file_stamp` reads the file stamps it compares, and tells whether a folder is on a local volume or holds a network or FUSE mount
+  - <https://github.com/quiltdata/quilt-rs/pull/1144>
+  - <https://github.com/quiltdata/quilt-rs/pull/1145>
+- `LockedPackage::status_from_walk` builds a status from an earlier walk's changes and the remote's current `latest`, and `InstalledPackageStatus` is `Clone` (<https://github.com/quiltdata/quilt-rs/pull/1145>)
+
+### Changed
+
+- **Breaking:** `InstalledPackageStatus` has a new field, `ignored_dirs`, and both `ignored_files` and `ignored_dirs` carry a `quiltignore::IgnoredBy` instead of the pattern string. `flow::status` and `flow::status_cached` take `&DomainPaths`
+  - <https://github.com/quiltdata/quilt-rs/pull/1136>
+  - <https://github.com/quiltdata/quilt-rs/pull/1143>
+- **Breaking:** `InstalledPackageStatus::most_recent_mtime` and `InstalledPackageStatus::working_tree_quiet` are removed (<https://github.com/quiltdata/quilt-rs/pull/1134>)
+- **Breaking:** `InstalledPackage` has a new public field, `state_store` (<https://github.com/quiltdata/quilt-rs/pull/1144>)
+- **Breaking:** `LocalDomain::create_package` and `flow::create` also return a `flow::LeftOut`: what the ignore rules kept out of the source folder (<https://github.com/quiltdata/quilt-rs/pull/1158>)
+- The status walk is faster: it reads the package folder in one blocking task (<https://github.com/quiltdata/quilt-rs/pull/1144>)
+
+### Fixed
+
+- A pull no longer overwrites an ignored local file at a path the remote adds or changes: it stops with a conflict (<https://github.com/quiltdata/quilt-rs/pull/1143>)
+
+## [v0.44.0] - 2026-10-13
+
+### Added
+
+- `LocalDomain::measure_storage` returns a `StorageSize`: how many bytes `.quilt/` holds and how much `gc` would free. `flow::gc_estimate` returns the freeable part alone; it deletes nothing and takes no package locks (<https://github.com/quiltdata/quilt-rs/pull/1099>)
+
+### Changed
+
+- **Breaking:** workflow config is parsed with `serde-saphyr` instead of the deprecated `serde_yaml`. `Error::Yaml` wraps `serde_saphyr::Error`, and `WorkflowsConfig::from_yaml` takes a `&serde_json::Value` (<https://github.com/quiltdata/quilt-rs/pull/1110>)
+- **Breaking:** `InstalledPackageStatus` has a new `latest_hash` field: the remote's `latest` hash the status was computed against (<https://github.com/quiltdata/quilt-rs/pull/1102>)
+
+## [v0.43.0] - 2026-10-09
+
+### Added
+
+- `InstalledPackage::pull_verdict` returns only the pull dry run's verdict, without collecting the paths (<https://github.com/quiltdata/quilt-rs/pull/1094>)
+
+### Changed
+
+- **Breaking:** `PullPreview` has new `changed`, `removed` and `latest_hash` fields: the paths the newer revision changes and removes, and its hash (<https://github.com/quiltdata/quilt-rs/pull/1094>)
+
+## [v0.42.1] - 2026-10-06
+
+### Added
+
+- `logging::directives` turns a `QUILT_LOG` value into `tracing` directives: a level such as `debug` puts quilt's crates at that level and dependencies at `warn`, a value with `=` is kept as given, and anything else, such as `debgu`, is an `InvalidLogFilter` error (<https://github.com/quiltdata/quilt-rs/pull/1067>, <https://github.com/quiltdata/quilt-rs/pull/1068>)
+- `flow::format_bytes` formats a size the way QuiltSync does, for example `630.2 kB` (<https://github.com/quiltdata/quilt-rs/pull/1051>, <https://github.com/quiltdata/quilt-rs/pull/1072>)
+
+### Changed
+
+- `GcReport` and `RemovalReport` round sizes the way QuiltSync does, and go up to EB (<https://github.com/quiltdata/quilt-rs/pull/1072>)
+
+## [v0.42.0] - 2026-10-02
+
+### Added
+
+- `InstalledPackage::state` checks a package's remote and working tree and returns a `PackageStateReport` with the state front ends show: `Latest`, `PendingCommit`, `PendingChanges`, `Behind`, `Diverged`, `Unpublished`, `NoRemote` or `Unknown`. `PackageState::resolve` derives that state from an `UpstreamState`, `InstalledPackageStatus::latest_refreshed` says whether a status read the remote's `latest` tip or fell back to the last-known one, and `PackageLineage::misconfigured_remote` says whether a remote has a bucket but no catalog host (<https://github.com/quiltdata/quilt-rs/pull/1032>)
+- `LocalDomain::gc` deletes the objects no installed manifest uses, the `packages/` manifest cache and `staging/`, and returns a `flow::GcReport` whose `Display` is the sentence to show a user. While another writer holds a package it deletes nothing and returns `Error::PackageBusy` (<https://github.com/quiltdata/quilt-rs/pull/1030>)
+- `LocalDomain::uninstall_package_pruning` uninstalls a package and deletes the objects that only its manifests used, returning a `flow::Pruned` (<https://github.com/quiltdata/quilt-rs/pull/1040>)
+- `InstalledPackage::remove_revisions` deletes chosen installed revisions and the objects only they used, and returns a `flow::RemovalReport`. It refuses a protected revision (current, latest, base, unpushed or not listed by the registry) with `Error::RevisionNotRemovable`. `flow::protection` says which revisions are kept and why, and `InstalledPackage::revision_usage` measures what removing revisions frees (<https://github.com/quiltdata/quilt-rs/pull/1043>)
+- `DomainPaths::installed_dir`, `locks_dir` and `cached_manifests_root` return the `installed/`, `locks/` and `packages/` directories (<https://github.com/quiltdata/quilt-rs/pull/1030>)
+
+### Changed
+
+- **Breaking:** `Error` has new variants, `PackageBusy`, `PruneFailed` and `RevisionNotRemovable`, so an exhaustive `match` on it needs new arms (<https://github.com/quiltdata/quilt-rs/pull/1030>, <https://github.com/quiltdata/quilt-rs/pull/1040>, <https://github.com/quiltdata/quilt-rs/pull/1043>)
+
+### quilt-uri
+
+- Updated [from v0.4.1 to v0.4.2](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.1...quilt-uri/v0.4.2) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
+## [v0.41.0] - 2026-09-30
+
+### Added
+
+- `InstalledPackage::lock` and `InstalledPackage::try_lock` take the package's lock and return a `LockedPackage` whose writers run under it. `lock` waits for a writer in any process; `try_lock` returns `None` while one holds the lock. `on_package_lock_wait` sets a hook that runs each time a writer has to wait (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- `LocalDomain::overwrite_home` and `DomainLineageIo::overwrite_home` set the home even while packages are installed (<https://github.com/quiltdata/quilt-rs/pull/1025>)
+
+### Changed
+
+- **Breaking:** `Storage` has two new required methods, `lock_exclusive` and `try_lock_exclusive`, which return a `LockGuard`. `LocalStorage` and `MockStorage` implement them; an implementation outside this crate must add them (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- **Breaking:** `InstalledPackage::publish` no longer takes a status; pass one to `LockedPackage::publish` instead (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- **Breaking:** `DomainLineageIo::write_package_lineage` is removed. Use `DomainLineageIo::update` or `update_package_lineage`, which change `data.json` under a lock (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- **Breaking:** `LocalDomain::set_home` and `DomainLineageIo::set_home` refuse a different home while packages are installed, with the new `LineageError::HomeInUse`. An exhaustive `match` on `LineageError` needs a new arm. `set_home` and `overwrite_home` create the home folder if it is missing (<https://github.com/quiltdata/quilt-rs/pull/1025>)
+
+### Fixed
+
+- Operations on one package no longer drop each other's changes to `.quilt/data.json`. Each writer holds the package's lock from read to write, across processes; writers of different packages still run in parallel (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- S3 calls time out after 60 seconds with no response instead of hanging forever; slow transfers that keep moving are not cut off (<https://github.com/quiltdata/quilt-rs/pull/1021>)
+
+## [v0.40.0] - 2026-09-28
+
+### Added
+
+- `InstalledPackage::current_revision(&lineage)` returns the revision the lineage snapshot selects: its hash, when this copy obtained it, and its message. It returns `None` when the lineage has no current hash. It reads only that one manifest, so a damaged older manifest does not break it (<https://github.com/quiltdata/quilt-rs/pull/978>)
+- `InstalledPackage::revision_count` and `flow::count_revisions` count the revisions this copy holds without parsing any manifest, so a damaged manifest is still counted (<https://github.com/quiltdata/quilt-rs/pull/982>)
+- `InstalledPackage::revision_history(&lineage)` returns the revisions as `flow::HistoryEntry` values. Each has a `published` flag: whether the registry of the lineage's remote lists that revision. It is one registry query per package. A package with no remote, or a remote with no catalog host, makes no remote call and marks every entry unpublished (<https://github.com/quiltdata/quilt-rs/pull/982>)
+- `Remote::published_revisions` and `Auth::package_revisions` list the revision hashes a registry has for a package, reading every page of its GraphQL `package.revisions`. A package never pushed lists nothing (<https://github.com/quiltdata/quilt-rs/pull/982>, <https://github.com/quiltdata/quilt-rs/pull/986>)
+- `InstalledPackage::manifest_from_lineage(&lineage)` is public: the manifest the lineage snapshot selects (<https://github.com/quiltdata/quilt-rs/pull/986>)
+- `InstalledPackage::resolve_comparison(&lineage)` and `flow::compare_for_resolve` compare this copy's revision with the published `latest`: the published revision's message, the files that differ by content hash, and how many pending revisions the registry does not list. `latest` is read fresh, not taken from the lineage. With no catalog host nothing is asked and every pending revision counts (<https://github.com/quiltdata/quilt-rs/pull/994>)
+
+### Changed
+
+- **Breaking:** `Remote` has a new required method, `published_revisions`, with no default. `RemoteS3` and `MockRemote` implement it; an implementation outside this crate must add it (<https://github.com/quiltdata/quilt-rs/pull/982>)
+- **Breaking:** `InstalledPackage::install_paths` returns `flow::InstallPathsReport` (`paths`, as before, plus `skipped`), and `flow::install_paths` returns `(PackageLineage, Vec<PathBuf>)`. See the unversioned-bucket fix below (<https://github.com/quiltdata/quilt-rs/pull/991>)
+- **Breaking:** `InstallPathError` has three new variants, so an exhaustive `match` outside this crate needs new arms. `NotInRevision` replaces `ManifestError::Table` ("path \"<path>\" not found") for a path with no row in the revision being installed; its message is "<path> is not in the package's current revision". `LocalFileExists` and `ContentMismatch` are described under Fixed (<https://github.com/quiltdata/quilt-rs/pull/986>, <https://github.com/quiltdata/quilt-rs/pull/991>, <https://github.com/quiltdata/quilt-rs/pull/998>)
+
+### Fixed
+
+- On a bucket without versioning, `flow::install_paths` and `InstalledPackage::install_paths` check fetched bytes against the row's hash before storing them. A `physical_key` without `versionId` names the object as it is now. Once a later revision replaced it, installing an older revision stored the later bytes under the older row, the untouched file read as modified, and a retry took the same bytes from the store. Now a row that does not verify is skipped and reported in `skipped`; every other row is installed. The pull's reconcile cannot apply part of a revision, so it refuses with `InstallPathError::ContentMismatch`. Versioned buckets pin every key and are not affected (<https://github.com/quiltdata/quilt-rs/pull/991>)
+- `flow::install_paths` and `InstalledPackage::install_paths` refuse to install over an untracked file already in the working folder, with `InstallPathError::LocalFileExists` naming the paths. Only tracked paths were checked before, so a new uncommitted file was silently replaced. The check runs before the fetch and again just before the first file is moved into place, so a refusal leaves nothing half-installed (<https://github.com/quiltdata/quilt-rs/pull/986>)
+- `flow::list_revisions` and `InstalledPackage::revisions` skip hidden files in the installed-manifests directory, such as a `.tmp-<uuid>` from an interrupted write or `.DS_Store`. They were read as manifests: one that did not parse failed the listing, and one that did was listed as a revision (<https://github.com/quiltdata/quilt-rs/pull/982>)
+
+## [v0.39.1] - 2026-09-18
+
+### quilt-uri
+
+- Updated [from v0.4.0 to v0.4.1](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.0...quilt-uri/v0.4.1) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
+## [v0.39.0] - 2026-09-15
+
+### Fixed
+
+- A pull no longer disturbs a process that has a package file open. The working-tree write was a copy onto the destination, which truncates the file and refills it — so a reader that had the file memory-mapped died with `SIGBUS` when it read past the new end, and one reloading mid-write could see a half-written file. Mapping package files is ordinary practice (HDF5, Zarr, Arrow, `numpy` `mmap_mode`), so a pull arriving mid-analysis could take the analysis down with it. Writes now complete in a staging file under `.quilt/` and are renamed into place, so a file holds one revision's bytes or the other's and never a prefix of either (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- An interrupted pull is retryable instead of permanently stuck. The apply deleted every path it was about to update and then re-fetched it, so a failure in between — a dropped connection, a credential expiring, a kill, power loss — left those paths gone from the working tree *and* dropped from tracking. The retry read the gap as a local delete against a remote modification, which is a true conflict, and refused; every later attempt reached the same verdict, leaving no way out but editing `data.json` by hand. The apply now fetches and stages the whole update before writing any of it, then writes over the live files and deletes what the new revision drops. Interrupted before the writes — which is where nearly all of the time goes — the working tree is untouched and a retry is an ordinary update (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- A pull no longer reports a conflict between a local edit and a remote change that are byte-identical. The two were compared by hash, and a hash carries the algorithm that produced it: the local side is computed in the algorithm the host declares while the remote's is whatever wrote it, so identical content compared unequal whenever the two disagreed, and the pull blocked on a file that needed no resolution at all. The comparison now re-derives the local hash in the remote row's own algorithm (<https://github.com/quiltdata/quilt-rs/pull/921>)
+
+### Changed
+
+- **Breaking:** `flow::classify_pull` takes a fourth argument, `&Reconciled`, produced by the new `flow::identical_to_latest`. Callers run the pass and hand it the result. The pass is what makes a byte-identical local edit comparable against a remote row in a different checksum algorithm, and carrying its result in a type only it can construct means a caller cannot classify without it — an empty set would silently restore the old, wrong comparison (<https://github.com/quiltdata/quilt-rs/pull/921>)
+
+## [v0.38.0] - 2026-09-11
+
+### Changed
+
+- **Breaking:** `LoginError::RequiredRegistryUrl` is now `LoginError::NoRegistryUrl`, and renders as `<host> does not advertise a registry URL in its config.json`. It describes a *deployment* that is misconfigured, not a caller who is signed out — signing in cannot change it (<https://github.com/quiltdata/quilt-rs/pull/867>)
+- **Breaking:** `LoginError::Required` is now `LoginError::NoSession`, and renders as `No session for <host>` rather than `Login required`. The variant named a remedy, so every consumer inherited a decision it never made — the desktop navigated away from a half-typed commit because the *name* said an action was needed. Errors describe the state; the surface picks the response. New `Error::is_session_absent()` covers both routes to that state — a credential refused before it was issued, and one issued and then rejected — because a caller choosing what to show does not care which it got (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
+### Fixed
+
+- `Error::is_access_denied` now answers true for any 403 that is not a credential failure, not only for the `AccessDenied` code. S3 refuses under several codes — `KMS.AccessDeniedException` for an object whose key the role cannot use, `AllAccessDisabled` for an account-level block — and every one but `AccessDenied` fell through to the caller's operation kind, where a consumer reads it as a transport fault rather than a refusal. `InvalidAccessKeyId`, `ExpiredToken`, `InvalidToken` and `InvalidClientTokenId` still classify as credential failures, so a re-vend is still offered where it helps. The trade is stated at `classify_s3_error`: a 403 that is not about access, such as `RequestTimeTooSkewed`, is now named a denial rather than a generic failure — both are wrong about the cause, and only one sends a caller round the re-login loop (<https://github.com/quiltdata/quilt-rs/pull/881>)
+- A vend that never happens is now reported as a dead session too. `InvalidCredentials` (v0.36.0) covers a credential S3 *rejects*, which names a code in its response; a provider that refuses to vend at all fails before any request is signed, so it comes back as a code-less dispatch failure that no caller could tell from a transport fault. Recovered at every vending call site — existence checks, object reads, URL resolution, and the four upload legs (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
+## [v0.37.0] - 2026-09-08
+
+### Added
+
+- `flow::PullReport` names what a pull applied: the files it wrote, rewrote and deleted, the ones the revision added and left on the remote, and the newest revision's message. Grouping contract in [`docs/architecture.md`](../docs/architecture.md) (<https://github.com/quiltdata/quilt-rs/pull/898>)
+- `flow::PullPreview` pairs a dry run's `PullOutcome` with the paths the pending revision adds, so a caller can name incoming files before pulling (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+### Changed
+
+- **Breaking:** `flow::pull_package` returns `(PackageLineage, PullReport)` and `InstalledPackage::pull` returns `PullReport`, where both returned the lineage alone. `InstalledPackage::pull_outcome` returns `flow::PullPreview` instead of `flow::PullOutcome`; the verdict is its `outcome` field (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+## [v0.36.0] - 2026-09-02
 
 ### Added
 
 - `LocalDomain::get_lineage` reads the whole lineage record in one go, for callers that want every installed package at once — `list_installed_packages` plus `InstalledPackage::lineage` per package re-reads and re-parses that record once per package (<https://github.com/quiltdata/quilt-rs/pull/846>)
+- `flow::list_revisions` and `InstalledPackage::revisions` list the revisions a working copy holds, newest first, as `flow::Revision` values carrying the top-hash, the commit message, and when this copy obtained the revision — a manifest records no commit time of its own, so for a fetched revision that is the fetch time (<https://github.com/quiltdata/quilt-rs/pull/849>)
+- `S3ErrorKind::InvalidCredentials` separates S3 rejecting the credentials from `AccessDenied`. `Error::is_invalid_credentials()` returns `true` for that case; `Error::s3_host()` returns the deployment a request was for, or `None` for a bare bucket. Together they tell "sign in again" from "retry later": retrying a rejected credential never succeeds. Two limits: the distinction needs an error code, so a 403 carrying none — what a HEAD request gets, since it has no response body — still classifies as `AccessDenied`; and `InstalledPackage::status` degrades a rejected credential to stale lineage along with genuinely offline errors, so a caller of that method never sees it (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- `InstalledPackage::undo_commit` discards a package's newest local commit and restores the one before it — available while the pending-commit chain still records a parent, which is until the first push. Contract in [`docs/architecture.md`](../docs/architecture.md) (<https://github.com/quiltdata/quilt-rs/pull/860>)
+- `DEFAULT_HOME_DIR_NAME` is public, naming the directory QuiltSync keeps working copies in, so another caller can default to the same place (<https://github.com/quiltdata/quilt-rs/pull/848>)
+
+### Changed
+
+- **Breaking:** two exhaustive error enums gained a variant, so an exhaustive `match` over either needs a new arm — `S3ErrorKind::InvalidCredentials` (<https://github.com/quiltdata/quilt-rs/pull/861>) and `PackageOpError::Undo` (<https://github.com/quiltdata/quilt-rs/pull/860>)
+
+### Fixed
+
+- `set_home` repairs a lineage record whose home is missing or empty instead of failing to read it (<https://github.com/quiltdata/quilt-rs/pull/848>)
 
 ## [v0.35.0] - 2026-08-07
 

@@ -1,0 +1,64 @@
+/*
+ * Countdown — a determinate ring driven entirely by CSS.
+ *
+ * There is no JavaScript timer. A negative `animation-delay` seeds the animation
+ * to a known position, so the only thing Rust supplies is the cycle length and
+ * how far into it we already are; CSS advances it from there at the display's
+ * refresh rate, on the compositor, with nothing to dispose of.
+ *
+ * It also self-corrects across a sleep, because a CSS animation is positioned by
+ * the document timeline rather than by counting frames — the drift that a
+ * decrementing JS counter suffers cannot happen here.
+ *
+ * The arc fills toward the event rather than draining away from it: this is a
+ * recurring cycle, so filling-and-resetting reads as "coming round again", which
+ * is what autosync does. A draining ring would read as a deadline being missed.
+ */
+
+.root {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  /* Start the sweep at twelve o'clock. SVG arcs begin at three. */
+  transform: rotate(-90deg);
+}
+
+.track {
+  stroke: var(--q-bgColor-accent-muted);
+}
+
+/* `--cd-circumference` is set by the component so the keyframes and the dash
+ * array cannot disagree — the geometry lives in one place, in Rust. */
+.arc {
+  stroke: var(--q-bgColor-accent-emphasis);
+  stroke-dasharray: var(--cd-circumference);
+  animation: countdown-sweep var(--cd-duration) linear var(--cd-delay) 1 forwards;
+}
+
+.repeat {
+  animation-iteration-count: infinite;
+}
+
+@keyframes countdown-sweep {
+  from {
+    stroke-dashoffset: var(--cd-circumference);
+  }
+
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/*
+ * A continuously sweeping ring is motion. Stopping the animation leaves the arc
+ * at the position Rust seeded it to — a static snapshot of current progress,
+ * still informative, that updates whenever the deadline changes. That is a
+ * degradation of resolution, not of meaning.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .arc {
+    animation: none;
+    stroke-dashoffset: var(--cd-seeded-offset);
+  }
+}

@@ -1,0 +1,123 @@
+/*
+ * EntryGroup. A sticky heading over its rows.
+ */
+
+.root {
+  /* Same as the rows it holds: a group is only correct in a block parent
+   * without this, and the list it lives in is a flex column. */
+  width: 100%;
+  min-width: 0;
+}
+
+/* Sticky under whatever the page holds above the list (`--pinned-bottom`, set
+ * where the page scrolls as one), or at the top of a list that scrolls in a box
+ * of its own, so the folder you are reading inside stays named while you move
+ * through it. It stays only while its own rows are in view.
+ *
+ * It costs 29px against a 32px row, which at the height floor is most of a row
+ * per heading — the reason collapsing by default is still an open question. */
+.head {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: var(--q-space-2);
+  padding: var(--q-space-1) var(--q-space-3);
+  background: var(--q-bgColor-inset);
+  border-bottom: 1px solid var(--q-borderColor-muted);
+  position: sticky;
+  top: var(--pinned-bottom, 0px);
+  /* Above the rows it scrolls over, and below the overlay that opens from one. */
+  z-index: 1;
+}
+
+/* A row's checkbox has a `z-index` of its own. Isolated, each row stacks it
+ * inside itself, and the heading draws over the rows it scrolls over. */
+.head ~ * {
+  isolation: isolate;
+}
+
+/* The gutter's width exactly, and the same value the rows leave empty after
+ * their box, so a file's name starts directly under its folder's. */
+.disclose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--q-entry-gutter, 16px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--q-fgColor-muted);
+  cursor: pointer;
+}
+
+.disclose svg {
+  width: 12px;
+  height: 12px;
+}
+
+.disclose:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+}
+
+/* A box-shaped hole, matching the rows'. A group with nothing to select still
+ * has to start its disclosure and name on the same x as one that has. */
+.nobox {
+  flex: 0 0 17px;
+}
+
+/* The hole with the rows' check in it (`have_mark`): every row under the
+ * heading is here. Drawn exactly as a row's, muted, because a summary of a
+ * subset is bookkeeping and the Success tone's tick is the package's alone. A
+ * statement and never a control — no hit target of its own. */
+.nobox.mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--q-fgColor-muted);
+  pointer-events: none;
+}
+
+.mark svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Monospace, because it is a path fragment and the rows under it are paths too.
+ * If the rows ever stop being monospace, this follows them — two typefaces
+ * alternating down one list is worse than either. */
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--q-font-mono);
+  font-size: var(--q-text-body);
+}
+
+/* A closed group holding a row that differs. A dot in the rows' mark colour,
+ * small and quiet: information, never a control.
+ *
+ * It is also what a pointer rests on for its tooltip, and 6px is a target only
+ * a steady hand finds. So the box is 16px and the dot is drawn in its middle:
+ * the padding takes no paint, and the negative margin hands the same 5px back,
+ * so the heading's spacing is what it was before the dot could be hovered. */
+.differs {
+  box-sizing: content-box;
+  flex: 0 0 6px;
+  height: 6px;
+  padding: 5px;
+  margin: -5px;
+  border-radius: 50%;
+  background: var(--q-fgColor-danger);
+  background-clip: content-box;
+}
+
+/* Neither upper-cased nor tracked — it is a number, and spacing digits apart
+ * makes them read as separate figures. */
+.count {
+  margin-left: auto;
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+  font-variant-numeric: tabular-nums;
+}

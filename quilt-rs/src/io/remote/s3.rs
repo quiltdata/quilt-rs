@@ -3,6 +3,8 @@ use std::collections::hash_map::Entry;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
@@ -13,6 +15,7 @@ use aws_sdk_s3::error::ProvideErrorMetadata;
 use aws_sdk_s3::error::SdkError;
 use aws_sdk_s3::primitives::ByteStream;
 use aws_types::region::Region;
+use tokio::sync::Mutex as AsyncMutex;
 use tracing::debug;
 use tracing::info;
 use tracing::trace;
@@ -35,14 +38,28 @@ use crate::io::remote::describe_sdk_error;
 use crate::io::remote::host::fetch_host_config;
 use crate::io::remote::object::multipart_upload_and_sha256_chunksum;
 use crate::io::remote::object::put_and_request_checksum;
+use crate::io::remote::recover_absent_session;
 use crate::io::storage::LocalStorage;
 use crate::io::storage::auth::OAuthClient;
 use crate::object_hash::ObjectHash;
 use crate::paths::DomainPaths;
 use quilt_uri::Host;
+use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
+use crate::io::manifest::bytestream_to_string;
 use crate::io::remote::RemoteObjectStream;
+use quilt_uri::Tag;
+use quilt_uri::paths::tag_key;
+
+mod response_timeout;
+
+/// A key under `prefix` names a revision when it is a timestamp: not
+/// `latest`, which only names one of them, as the registry lists them.
+fn is_revision_pointer(key: &str, prefix: &str) -> bool {
+    key.strip_prefix(prefix)
+        .is_some_and(|name| matches!(name.parse(), Ok(Tag::Timestamp(_))))
+}
 
 /// S3's HEAD-bucket endpoint returns `x-amz-bucket-region` for any bucket
 /// that exists and is addressable, regardless of permissions. A missing
@@ -60,34 +77,150 @@ async fn find_bucket_region(client: &impl HttpClient, bucket: &str) -> Res<Strin
     Ok(region.to_str()?.into())
 }
 
-/// Map an AWS error onto a typed kind. Keyed on the *code* wherever there is
-/// one, never on the HTTP status alone: `ExpiredToken` and
-/// `InvalidAccessKeyId` are also 403 but call for a credential re-vend, not a
-/// role switch.
+/// Error codes for keys AWS refused: unknown, expired or not matching their
+/// secret. Read off S3's answer, and off STS's inside a credential provider.
+const CREDENTIAL_REJECTED: [&str; 5] = [
+    "InvalidAccessKeyId",
+    "ExpiredToken",
+    "InvalidToken",
+    "InvalidClientTokenId",
+    "SignatureDoesNotMatch",
+];
+
+/// Map an AWS error onto a typed kind.
 ///
-/// The one exception is a 403 that names no code at all. `HeadObject` is why
-/// that case exists: a HEAD response carries no body, so S3 has nowhere to
-/// put the `<Code>AccessDenied</Code>` document every other operation
-/// returns, and the SDK has no code to hand us. Reading the status is safe
-/// *because* the code is absent — a 403 that did name itself never reaches
-/// that arm.
+/// The codes that must NOT read as a role denial are named first, because the
+/// arm below them treats any remaining 403 as one. `ExpiredToken` and
+/// `InvalidAccessKeyId` are 403 too and call for a credential re-vend, not a
+/// role switch, so their arm has to win.
 ///
-/// Only a genuine denial changes the kind. Everything else is handed to
-/// `fallback`, so a call site keeps the operation-specific kind it would
-/// have produced anyway — a failed put stays [`S3ErrorKind::PutObject`]
-/// rather than collapsing into an undiagnosable [`S3ErrorKind::Raw`].
+/// After those, a 403 is a refusal whatever it called itself. `AccessDenied`
+/// is the common shape but not the only one — `KMS.AccessDeniedException` for
+/// an object encrypted under a key the role cannot use, `AllAccessDisabled`
+/// for an account-level block — and a bodyless 403 names nothing at all
+/// (`HeadObject`: a HEAD response carries no payload, so S3 has nowhere to put
+/// the `<Code>AccessDenied</Code>` document every other operation returns).
+/// Keying on the code alone left every one of those untyped, and an untyped
+/// denial reaches the user as "sign in again", whose re-vend hands back the
+/// same denied role — the unrecoverable loop `RoleDenied` exists to prevent
+/// (`commands/package_list.rs`, `commands/main_page.rs`).
+///
+/// The trade this makes: a 403 that is not really about access — a badly
+/// skewed clock answers `RequestTimeTooSkewed` — is now named as a denial
+/// rather than as a generic failure. Both are wrong about the cause; only one
+/// of them sends the user round the re-login loop.
+///
+/// Only a denial, a credential failure or a missing object changes the kind.
+/// Everything else is handed to `fallback`, so a call site keeps the
+/// operation-specific kind it would have produced anyway — a failed put stays
+/// [`S3ErrorKind::PutObject`] rather than collapsing into an undiagnosable
+/// [`S3ErrorKind::Raw`].
 pub(super) fn classify_s3_error(
     code: Option<&str>,
     status: Option<u16>,
     described: &str,
     fallback: fn(String) -> S3ErrorKind,
 ) -> S3ErrorKind {
-    match (code, status) {
-        (Some("AccessDenied"), _) | (None, Some(403)) => {
-            S3ErrorKind::AccessDenied(described.to_string())
+    match code {
+        Some(code) if CREDENTIAL_REJECTED.contains(&code) => {
+            S3ErrorKind::InvalidCredentials(described.to_string())
         }
+        // Only codes meaning a missing *object* belong here. `push` reads
+        // `is_not_found` on a package's `latest` tag as "no revisions yet, so
+        // this is a first push" (flow/push.rs), so a code that means a missing
+        // bucket would send it to write into one that does not exist.
+        Some("NoSuchKey" | "NotFound") => S3ErrorKind::NotFound(described.to_string()),
+        Some("AccessDenied") => S3ErrorKind::AccessDenied(described.to_string()),
+        _ if status == Some(403) => S3ErrorKind::AccessDenied(described.to_string()),
         _ => fallback(described.to_string()),
     }
+}
+
+/// Our error for a failed AWS call: a refused vend re-raised as `NoSession`
+/// (see [`recover_absent_session`]), anything else classified as S3 trouble.
+/// The wrap chain goes to the log, not the message.
+///
+/// Every vending path uses this — unlike a denial, a missing session means the
+/// same thing on all of them.
+pub(super) fn s3_error_or_session_loss<E>(
+    err: SdkError<E>,
+    host: Option<&Host>,
+    fallback: fn(String) -> S3ErrorKind,
+) -> Error
+where
+    E: ProvideErrorMetadata + std::error::Error + Send + Sync + 'static,
+{
+    if let Some(login) = recover_absent_session(&err) {
+        warn!(
+            host = ?host,
+            "❌ Signed out — the credential provider refused: {}",
+            describe_sdk_error(err)
+        );
+        return login;
+    }
+    if host.is_none() && ambient_credentials_failed(&err) {
+        warn!(
+            "❌ The AWS credentials on this computer are not usable: {}",
+            describe_sdk_error(err)
+        );
+        return Error::Login(LoginError::NoSession(None));
+    }
+    Error::S3(S3Error {
+        host: host.cloned(),
+        kind: classify_sdk_error(err, fallback),
+    })
+}
+
+/// What `aws-config` says when an SSO profile with an `sso-session` has no
+/// cached token, or one that expired and cannot be refreshed: `aws sso login`
+/// is the remedy.
+const SSO_TOKEN_UNUSABLE: [&str; 2] = [
+    "failed to load the cached SSO token",
+    "the SSO token has expired",
+];
+
+/// The SDK's default chain (`~/.aws`, env vars, SSO, instance metadata)
+/// found no credentials, or a profile it cannot use. Not a provider that timed
+/// out or failed, such as SSO or assume-role offline: that may work next time.
+/// The SDK wraps it as a dispatch failure, so, like [`recover_absent_session`],
+/// this walks `source()`.
+fn ambient_credentials_failed(err: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(err);
+    let mut loading_credentials = false;
+    while let Some(e) = current {
+        // Not the first `CredentialsError` alone: a role profile whose source
+        // has no credentials wraps "not loaded" in a provider error.
+        if matches!(
+            e.downcast_ref::<CredentialsError>(),
+            Some(
+                CredentialsError::CredentialsNotLoaded(_)
+                    | CredentialsError::InvalidConfiguration(_)
+            )
+        ) {
+            return true;
+        }
+        // An SSO profile with no usable sign-in. The SDK's error types for it
+        // are private, so its words are matched; a test pins them.
+        let words = e.to_string();
+        if SSO_TOKEN_UNUSABLE.iter().any(|w| words.contains(w)) {
+            return true;
+        }
+        loading_credentials |= e.is::<CredentialsError>();
+        // While loading credentials: a file that is not there (a legacy SSO
+        // profile's cached token), the SSO portal refusing the sign-in, or STS
+        // refusing an assume-role profile's source keys.
+        if loading_credentials
+            && (e
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+                || words.contains("UnauthorizedException")
+                || CREDENTIAL_REJECTED.iter().any(|code| words.contains(code)))
+        {
+            return true;
+        }
+        current = e.source();
+    }
+    false
 }
 
 /// Classify an `SdkError` straight off an AWS call.
@@ -110,7 +243,11 @@ where
     classify_s3_error(code.as_deref(), status, &describe_sdk_error(err), fallback)
 }
 
-async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<RemoteObjectStream> {
+async fn get_object_stream(
+    client: &aws_sdk_s3::Client,
+    s3_uri: &S3Uri,
+    host: Option<&Host>,
+) -> Res<RemoteObjectStream> {
     let result = client.get_object().bucket(&s3_uri.bucket).key(&s3_uri.key);
     let result = match &s3_uri.version {
         Some(version) => result.version_id(version),
@@ -118,10 +255,14 @@ async fn get_object_stream(client: &aws_sdk_s3::Client, s3_uri: &S3Uri) -> Res<R
     };
 
     let result = result.send().await.map_err(|err| match &err {
-        SdkError::ServiceError(svc) if svc.err().is_no_such_key() => {
-            Error::S3(S3Error::new(S3ErrorKind::NotFound(s3_uri.to_string())))
-        }
-        _ => Error::S3(S3Error::new(classify_sdk_error(err, S3ErrorKind::Raw))),
+        SdkError::ServiceError(svc) if svc.err().is_no_such_key() => Error::S3(S3Error {
+            host: host.cloned(),
+            kind: S3ErrorKind::NotFound(s3_uri.to_string()),
+        }),
+        // The host separates a deployment session, whose remedy is signing in,
+        // from ambient `~/.aws` credentials, whose remedy is `~/.aws` or `aws sso login`. A `None`
+        // here is read downstream as the latter.
+        _ => s3_error_or_session_loss(err, host, S3ErrorKind::Raw),
     })?;
     let uri_versioned = S3Uri {
         version: result.version_id,
@@ -188,6 +329,12 @@ pub struct RemoteS3 {
     auth: auth::Auth,
     http: crate::io::remote::client::ReqwestClient,
     s3: RwLock<HashMap<CredsRef, aws_sdk_s3::Client>>,
+    /// One construction lock per credentials key, so concurrent misses build
+    /// one client instead of N. Held across the build, which awaits.
+    client_locks: RwLock<HashMap<CredsRef, Arc<AsyncMutex<()>>>>,
+    /// Bumped by every invalidation, so a builder that started before one
+    /// cannot write its pre-invalidation client back.
+    client_cache_generation: AtomicU64,
     regions: RwLock<HashMap<String, Region>>,
 }
 
@@ -197,26 +344,11 @@ impl RemoteS3 {
         RemoteS3 {
             http: crate::io::remote::client::ReqwestClient::new(),
             s3: RwLock::new(HashMap::new()),
+            client_locks: RwLock::new(HashMap::new()),
+            client_cache_generation: AtomicU64::new(0),
             regions: RwLock::new(HashMap::new()),
             auth: auth::Auth::new(paths, Arc::new(storage)),
         }
-    }
-
-    pub fn try_clone(&self) -> Res<Self> {
-        let s3 = match self.s3.read() {
-            Ok(s3) => s3.clone(),
-            Err(_) => return Err(Error::S3(S3Error::new(S3ErrorKind::RemoteInit))),
-        };
-        let regions = match self.regions.read() {
-            Ok(regions) => regions.clone(),
-            Err(_) => return Err(Error::S3(S3Error::new(S3ErrorKind::RemoteInit))),
-        };
-        Ok(RemoteS3 {
-            http: self.http.clone(),
-            s3: RwLock::new(s3),
-            regions: RwLock::new(regions),
-            auth: self.auth.clone(),
-        })
     }
 
     pub async fn login(&self, host: &Host, refresh_token: String) -> Res {
@@ -300,8 +432,10 @@ impl RemoteS3 {
     }
 
     /// `aws_config::defaults` already applies 3-attempt standard retry
-    /// (exponential backoff + jitter) and a 3.1 s connect timeout; no
-    /// read/operation timeout so slow multipart uploads aren't cut off.
+    /// (exponential backoff + jitter) and a 3.1 s connect timeout. On top,
+    /// [`response_timeout::s3_client`] fails a call when S3 stays silent for
+    /// 60 s after the request is sent. There is no overall operation timeout,
+    /// so a slow upload or download that keeps moving is never cut off.
     ///
     /// For the `Some(host)` branch, credential freshness is handled by
     /// [`QuiltCredentialsProvider`] on every S3 request — the cached
@@ -329,6 +463,32 @@ impl RemoteS3 {
             return Ok(client);
         }
 
+        // Cache misses for the same principal can arrive together when a package
+        // opens. Share one construction lock across every cloned RemoteS3 handle,
+        // then recheck the shared cache after waiting.
+        let client_lock = {
+            let mut locks = self
+                .client_locks
+                .write()
+                .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
+            locks
+                .entry(creds_ref.clone())
+                .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+                .clone()
+        };
+        let _client_guard = client_lock.lock().await;
+        if let Some(client) = self
+            .s3
+            .read()
+            .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?
+            .get(&creds_ref)
+            .cloned()
+        {
+            info!("✔️ Using cached S3 client for region {:?}", region);
+            return Ok(client);
+        }
+        let cache_generation = self.client_cache_generation.load(Ordering::SeqCst);
+
         // `debug`, and worth reading as a signal rather than noise: a *new* client
         // per fetch means the client cache is not being hit, which is TLS and config
         // work repeated for nothing. The line stays so that stays visible.
@@ -343,7 +503,7 @@ impl RemoteS3 {
 
                 // Check if we have valid credentials
                 if config.credentials_provider().is_none() {
-                    return Err(Error::Login(LoginError::Required(None)));
+                    return Err(Error::Login(LoginError::NoSession(None)));
                 }
                 config
             }
@@ -366,15 +526,31 @@ impl RemoteS3 {
                     .await
             }
         };
-        let client = aws_sdk_s3::Client::new(&config);
+        let client = response_timeout::s3_client(&config);
         // The construction is already announced above; this only says it finished.
         trace!("✔️ created new S3 client for region {:?}", region);
 
-        // Cache the new client
+        self.cache_client_if_current(creds_ref, client, cache_generation)
+    }
+
+    fn cache_client_if_current(
+        &self,
+        creds_ref: CredsRef,
+        client: aws_sdk_s3::Client,
+        cache_generation: u64,
+    ) -> Res<aws_sdk_s3::Client> {
         let mut map = self
             .s3
             .write()
             .map_err(|e| S3Error::new(S3ErrorKind::PoisonLock(e.to_string())))?;
+
+        // Invalidation takes this same write lock before advancing the
+        // generation. If it ran while the async client was being built, the
+        // client may serve its already in-flight caller but must not repopulate
+        // the shared cache with pre-invalidation state.
+        if self.client_cache_generation.load(Ordering::SeqCst) != cache_generation {
+            return Ok(client);
+        }
 
         match map.entry(creds_ref) {
             Entry::Occupied(mut entry) => {
@@ -399,6 +575,26 @@ impl RemoteS3 {
     /// holds only public HEAD-bucket region lookups — no credentials — so
     /// it never goes stale on logout.
     pub fn clear_client_cache(&self, host: Option<&Host>) {
+        match host {
+            Some(host) => self.retain_clients(|creds_ref| creds_ref.host.as_ref() != Some(host)),
+            None => self.retain_clients(|_| false),
+        }
+    }
+
+    /// After the AWS credentials on this computer were missing or refused,
+    /// drop the clients that use them. A client reads `~/.aws` once and keeps
+    /// the keys it was given, so only a new one sees a fixed file.
+    ///
+    /// A denial with no host counts too: a HEAD has no body, so bad keys there
+    /// are a bare 403, and a rebuilt client is cheap.
+    fn forget_ambient_clients_on(&self, err: Error) -> Error {
+        if err.is_ambient_session_absent() || (err.is_access_denied() && err.s3_host().is_none()) {
+            self.retain_clients(|creds_ref| creds_ref.host.is_some());
+        }
+        err
+    }
+
+    fn retain_clients(&self, keep: impl Fn(&CredsRef) -> bool) {
         // On a poisoned lock, recover the guard and clear anyway: dropping
         // stale clients on logout is the safe outcome, never leaving
         // credentials cached.
@@ -406,10 +602,56 @@ impl RemoteS3 {
             Ok(map) => map,
             Err(poisoned) => poisoned.into_inner(),
         };
-        match host {
-            Some(host) => map.retain(|creds_ref, _| creds_ref.host.as_ref() != Some(host)),
-            None => map.clear(),
+        self.client_cache_generation.fetch_add(1, Ordering::SeqCst);
+        map.retain(|creds_ref, _| keep(creds_ref));
+        // Keep the per-principal construction locks for the lifetime of this
+        // shared cache. Removing one during invalidation would let a request
+        // already holding the old lock race a later miss holding a newly
+        // created lock; the pre-invalidation request could then overwrite the
+        // fresh client. The key space is bounded by the hosts and regions used
+        // by this RemoteS3 instance.
+    }
+
+    /// [`Remote::published_revisions`] with no catalog: the timestamped
+    /// pointers under `.quilt/named_packages/<namespace>/`, listed page by
+    /// page on this computer's AWS credentials, then each one read. A pointer
+    /// gone before it is read is no longer a revision.
+    async fn bucket_revisions(&self, bucket: &str, namespace: &Namespace) -> Res<Vec<String>> {
+        let client = self.get_client_for_bucket(None, bucket).await?;
+        let prefix = tag_key(namespace, "");
+        let mut pages = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(&prefix)
+            .delimiter("/")
+            .into_paginator()
+            .send();
+        let mut pointers = Vec::new();
+        while let Some(page) = pages.next().await {
+            let page =
+                page.map_err(|err| s3_error_or_session_loss(err, None, S3ErrorKind::ListObjects))?;
+            pointers.extend(
+                page.contents()
+                    .iter()
+                    .filter_map(|object| object.key())
+                    .filter(|key| is_revision_pointer(key, &prefix))
+                    .map(|key| S3Uri {
+                        bucket: bucket.to_string(),
+                        key: key.to_string(),
+                        version: None,
+                    }),
+            );
         }
+
+        let mut hashes = Vec::new();
+        for pointer in pointers {
+            match get_object_stream(&client, &pointer, None).await {
+                Ok(stream) => hashes.push(bytestream_to_string(stream.body).await?),
+                Err(e) if e.is_not_found() => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(hashes)
     }
 
     async fn get_client_for_bucket(
@@ -421,7 +663,7 @@ impl RemoteS3 {
         self.get_client_for_region(host, region)
             .await
             .map_err(|e| match e {
-                Error::Login(LoginError::Required(_)) | Error::S3(_) => e,
+                Error::Login(LoginError::NoSession(_)) | Error::S3(_) => e,
                 _ => Error::S3(S3Error {
                     host: host.cloned(),
                     kind: S3ErrorKind::Client(e.to_string()),
@@ -458,10 +700,11 @@ impl Remote for RemoteS3 {
             // Anything else stays a plain existence failure.
             Err(err) => {
                 warn!("❌ Failed to check object existence at {}: {}", s3_uri, err);
-                Err(Error::S3(S3Error {
-                    host: host.cloned(),
-                    kind: classify_sdk_error(err, S3ErrorKind::Exists),
-                }))
+                Err(self.forget_ambient_clients_on(s3_error_or_session_loss(
+                    err,
+                    host,
+                    S3ErrorKind::Exists,
+                )))
             }
         }
     }
@@ -476,7 +719,10 @@ impl Remote for RemoteS3 {
             host, s3_uri
         );
         let client = self.get_client_for_bucket(host, &s3_uri.bucket).await?;
-        match get_object_stream(&client, s3_uri).await {
+        match get_object_stream(&client, s3_uri, host)
+            .await
+            .map_err(|e| self.forget_ambient_clients_on(e))
+        {
             Ok(stream) => {
                 debug!("✔️ Created stream for object {}", s3_uri);
                 Ok(stream)
@@ -490,6 +736,14 @@ impl Remote for RemoteS3 {
             // on — that the active role, not the session, is the problem.
             Err(e) if e.is_access_denied() => {
                 warn!("❌ Access denied reading {}: {}", s3_uri, e);
+                Err(e)
+            }
+            // A rejected credential says the session is dead, not that this
+            // read failed: autosync raises the login affordance on it rather
+            // than backing off. Re-wrapped, it is indistinguishable from a
+            // network fault.
+            Err(e) if e.is_session_absent() => {
+                warn!("❌ Credentials rejected reading {}: {}", s3_uri, e);
                 Err(e)
             }
             Err(e) => {
@@ -519,10 +773,11 @@ impl Remote for RemoteS3 {
             // A denial is typed distinctly so the push path can say "this role
             // cannot write here"; anything else stays a plain put failure.
             .map_err(|err| {
-                Error::S3(S3Error {
-                    host: host.cloned(),
-                    kind: classify_sdk_error(err, S3ErrorKind::PutObject),
-                })
+                self.forget_ambient_clients_on(s3_error_or_session_loss(
+                    err,
+                    host,
+                    S3ErrorKind::PutObject,
+                ))
             })?;
 
         Ok(())
@@ -542,10 +797,11 @@ impl Remote for RemoteS3 {
             }),
             // Same reasoning as [`Remote::exists`]: only a genuine denial
             // changes the kind, everything else stays a resolve failure.
-            Err(err) => Err(Error::S3(S3Error {
-                host: host.cloned(),
-                kind: classify_sdk_error(err, S3ErrorKind::ResolveUrl),
-            })),
+            Err(err) => Err(self.forget_ambient_clients_on(s3_error_or_session_loss(
+                err,
+                host,
+                S3ErrorKind::ResolveUrl,
+            ))),
         }
     }
 
@@ -563,10 +819,18 @@ impl Remote for RemoteS3 {
             .await?;
 
         if host_config.checksums == HostChecksums::Sha256Chunked && size != 0 {
-            multipart_upload_and_sha256_chunksum(client, source_path, dest_uri, size).await
+            multipart_upload_and_sha256_chunksum(
+                client,
+                source_path,
+                dest_uri,
+                size,
+                host_config.host.as_ref(),
+            )
+            .await
         } else {
             put_and_request_checksum(client, source_path, dest_uri, host_config).await
         }
+        .map_err(|e| self.forget_ambient_clients_on(e))
     }
 
     async fn host_config(&self, host: Option<&Host>) -> Res<HostConfig> {
@@ -578,6 +842,25 @@ impl Remote for RemoteS3 {
         Ok(())
     }
 
+    async fn published_revisions(
+        &self,
+        host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<String>> {
+        match host {
+            Some(host) => {
+                self.auth
+                    .package_revisions(&self.http, host, bucket, namespace)
+                    .await
+            }
+            None => self
+                .bucket_revisions(bucket, namespace)
+                .await
+                .map_err(|e| self.forget_ambient_clients_on(e)),
+        }
+    }
+
     fn clear_client_cache(&self, host: Option<&Host>) {
         RemoteS3::clear_client_cache(self, host);
     }
@@ -586,6 +869,7 @@ impl Remote for RemoteS3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
     use test_log::test;
 
     use std::io::Write;
@@ -602,7 +886,7 @@ mod tests {
     use crate::paths::DomainPaths;
 
     #[test(tokio::test)]
-    async fn live_multipart_upload() -> Res<()> {
+    async fn live_write_multipart_upload() -> Res<()> {
         // Create a temporary file with the test content
         let mut temp_file = NamedTempFile::new()?;
         temp_file.write_all(less_than_8mb())?;
@@ -644,8 +928,48 @@ mod tests {
         Ok(())
     }
 
+    /// With no catalog, the fixture package's revisions come from its
+    /// pointers in the bucket: the old revision and the latest one.
     #[test(tokio::test)]
-    async fn live_zero_bytes_upload() -> Res<()> {
+    async fn live_bucket_revisions() -> Res<()> {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+
+        let hashes = remote
+            .published_revisions(None, "data-yaml-spec-tests", &("scale", "10u").into())
+            .await?;
+
+        for hash in [
+            "f8216f57739c9824f22f1f7a1f8ded59fd50791c92bf9c317d06376811ecbfef",
+            "ae239090f2a01de382e8af719fe4a451ef1d1fa4a3ef7b21c6b36513d42c6630",
+        ] {
+            assert!(hashes.iter().any(|h| h == hash), "{hash} in {hashes:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn only_timestamp_pointers_are_revisions() {
+        let prefix = ".quilt/named_packages/team/data/";
+        assert!(is_revision_pointer(
+            ".quilt/named_packages/team/data/1758500000",
+            prefix
+        ));
+        assert!(!is_revision_pointer(
+            ".quilt/named_packages/team/data/latest",
+            prefix
+        ));
+        assert!(!is_revision_pointer(
+            ".quilt/named_packages/team/data/notes.txt",
+            prefix
+        ));
+        assert!(!is_revision_pointer(
+            ".quilt/named_packages/team/other/1758500000",
+            prefix
+        ));
+    }
+
+    #[test(tokio::test)]
+    async fn live_write_zero_bytes_upload() -> Res<()> {
         // Create a temporary file with zero bytes
         let mut temp_file = NamedTempFile::new()?;
         temp_file.write_all(zero_bytes())?;
@@ -689,7 +1013,7 @@ mod tests {
     }
 
     #[test(tokio::test)]
-    async fn live_crc64_upload() -> Res<()> {
+    async fn live_write_crc64_upload() -> Res<()> {
         // Read the fixture file content
         let fixture_path = std::path::Path::new("fixtures/user-settings.mkfg");
         let file_content = std::fs::read(fixture_path)?;
@@ -794,11 +1118,18 @@ mod tests {
         );
     }
 
-    /// Both of these are also HTTP 403, which is exactly why we key on the
-    /// code: they mean "re-vend credentials", not "wrong role".
+    /// Credential failures are also HTTP 403, which is exactly why we key on
+    /// the code: they mean "re-vend credentials", not "wrong role".
     #[test]
-    fn expired_credential_codes_do_not_classify_as_access_denied() {
-        for code in ["ExpiredToken", "InvalidAccessKeyId"] {
+    fn credential_codes_classify_as_invalid_credentials() {
+        for code in [
+            "ExpiredToken",
+            "InvalidAccessKeyId",
+            "InvalidToken",
+            "InvalidClientTokenId",
+            // A wrong secret key: the request was not signed by the key it names.
+            "SignatureDoesNotMatch",
+        ] {
             let err = classify_s3_error(
                 Some(code),
                 Some(403),
@@ -809,7 +1140,47 @@ mod tests {
                 !S3Error::new(err).is_access_denied(),
                 "{code} must not be read as a role denial"
             );
+            let err = classify_s3_error(
+                Some(code),
+                Some(403),
+                &format!("{code}: nope"),
+                S3ErrorKind::Raw,
+            );
+            assert!(
+                S3Error::new(err).is_invalid_credentials(),
+                "{code} must be shown as a credential failure"
+            );
         }
+    }
+
+    /// A bucket that is not there is not "the object is not there".
+    ///
+    /// `push` reads `is_not_found` on the `latest` tag as "first push for this
+    /// package"; classifying `NoSuchBucket` as `NotFound` would make a
+    /// misspelled bucket take that branch instead of failing.
+    #[test]
+    fn missing_bucket_does_not_classify_as_not_found() {
+        let err = classify_s3_error(
+            Some("NoSuchBucket"),
+            Some(404),
+            "NoSuchBucket: no-such-bucket",
+            S3ErrorKind::Raw,
+        );
+        assert!(
+            !S3Error::new(err).is_not_found(),
+            "a missing bucket must not read as a missing object"
+        );
+    }
+
+    #[test]
+    fn missing_objects_classify_as_not_found() {
+        let err = classify_s3_error(
+            Some("NoSuchKey"),
+            Some(404),
+            "NoSuchKey: missing",
+            S3ErrorKind::GetObject,
+        );
+        assert_eq!(err, S3ErrorKind::NotFound("NoSuchKey: missing".to_string()));
     }
 
     #[test]
@@ -856,8 +1227,54 @@ mod tests {
         );
     }
 
-    /// The status arm is narrow on purpose: only 403, and only when nothing
-    /// named itself. A bodyless 404 or 500 keeps the call site's own kind.
+    /// A refusal that names a code we do not recognise is still a refusal.
+    ///
+    /// `AccessDenied` is not the only 403 S3 sends for "this role cannot have
+    /// it": a bucket whose objects are encrypted under a key the role cannot
+    /// use answers `KMS.AccessDeniedException`, and an account-level block
+    /// answers `AllAccessDisabled`. Both used to fall through to the caller's
+    /// fallback kind, which `is_access_denied` reads as false — so v1 drops the
+    /// row to `UpstreamState::Error` ("sign in again"), and re-vending hands
+    /// back the same denied role. That is the loop `RoleDenied` exists to stop.
+    #[test]
+    fn a_403_naming_an_unrecognised_code_classifies_as_access_denied() {
+        for code in [
+            "KMS.AccessDeniedException",
+            "AllAccessDisabled",
+            "AccountProblem",
+            "InvalidPayer",
+        ] {
+            let described = format!("{code}: forbidden");
+            let err =
+                classify_s3_error(Some(code), Some(403), &described, S3ErrorKind::ListObjects);
+            assert_eq!(
+                err,
+                S3ErrorKind::AccessDenied(described.clone()),
+                "{code} is a refusal, not a generic {:?} failure",
+                S3ErrorKind::ListObjects(String::new())
+            );
+        }
+    }
+
+    /// The widening stops at the credential codes: those are 403 too, and they
+    /// are the ones a re-vend does fix, so they must not be swept into a role
+    /// denial by the status arm sitting below them.
+    #[test]
+    fn a_credential_code_outranks_the_403_status_arm() {
+        for code in [
+            "ExpiredToken",
+            "InvalidAccessKeyId",
+            "InvalidToken",
+            "InvalidClientTokenId",
+        ] {
+            let described = format!("{code}: nope");
+            let err = classify_s3_error(Some(code), Some(403), &described, S3ErrorKind::Raw);
+            assert_eq!(err, S3ErrorKind::InvalidCredentials(described));
+        }
+    }
+
+    /// The status arm is narrow on purpose: only 403. A 404 or 500 keeps the
+    /// call site's own kind whether or not it named a code.
     #[test]
     fn other_bodyless_statuses_keep_the_callers_fallback_kind() {
         for status in [404u16, 500, 503] {
@@ -873,8 +1290,12 @@ mod tests {
     /// Answer every connection with the same canned HTTP response, so an
     /// `aws_sdk_s3::Client` pointed at the returned address gets a real S3
     /// error document off the wire instead of a hand-built `SdkError`.
+    ///
+    /// The whole request is read before answering. Answering after the first
+    /// `read` raced the client: when the body had not arrived yet, the socket
+    /// closed under the client's body write, and the client saw a broken pipe
+    /// instead of the response.
     async fn spawn_canned_s3_endpoint(response: Vec<u8>) -> std::net::SocketAddr {
-        use tokio::io::AsyncReadExt;
         use tokio::io::AsyncWriteExt;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -883,14 +1304,53 @@ mod tests {
             while let Ok((mut stream, _)) = listener.accept().await {
                 let response = response.clone();
                 tokio::spawn(async move {
-                    let mut buf = [0u8; 8192];
-                    let _ = stream.read(&mut buf).await;
+                    if read_http_request(&mut stream).await.is_err() {
+                        return;
+                    }
                     let _ = stream.write_all(&response).await;
                     let _ = stream.shutdown().await;
                 });
             }
         });
         addr
+    }
+
+    /// Read one HTTP/1.1 request: the headers, then `Content-Length` bytes of
+    /// body. The SDK frames every request the stub sees that way, a bodiless
+    /// one included.
+    pub(super) async fn read_http_request(
+        stream: &mut tokio::net::TcpStream,
+    ) -> std::io::Result<()> {
+        use tokio::io::AsyncReadExt;
+
+        let mut request = Vec::new();
+        let mut buf = [0u8; 8192];
+        let header_end = loop {
+            if let Some(i) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                break i + 4;
+            }
+            let n = stream.read(&mut buf).await?;
+            if n == 0 {
+                return Err(std::io::ErrorKind::UnexpectedEof.into());
+            }
+            request.extend_from_slice(&buf[..n]);
+        };
+        let body_len = String::from_utf8_lossy(&request[..header_end])
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())?
+            })
+            .unwrap_or(0);
+        while request.len() < header_end + body_len {
+            let n = stream.read(&mut buf).await?;
+            if n == 0 {
+                return Err(std::io::ErrorKind::UnexpectedEof.into());
+            }
+            request.extend_from_slice(&buf[..n]);
+        }
+        Ok(())
     }
 
     /// The bucket every access-denied test addresses; the stub endpoint
@@ -1104,10 +1564,8 @@ mod tests {
     /// keeps the rest; `clear_client_cache(None)` empties the whole cache.
     #[test]
     fn test_clear_client_cache_filters_by_host() {
-        use std::str::FromStr;
-
-        let host_a = Host::from_str("a.example.com").unwrap();
-        let host_b = Host::from_str("b.example.com").unwrap();
+        let host_a = fixtures::one_host();
+        let host_b = fixtures::another_host();
 
         let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
 
@@ -1150,6 +1608,153 @@ mod tests {
         assert!(remote.s3.read().unwrap().is_empty());
     }
 
+    /// A host-less call that found the AWS credentials on this computer
+    /// unusable drops the host-less clients, so a fixed `~/.aws` is read by
+    /// the next call. Deployment clients and other failures keep the cache.
+    #[test]
+    fn an_ambient_credentials_failure_drops_the_host_less_clients() {
+        let host = fixtures::host();
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let fill = || {
+            let mut map = remote.s3.write().unwrap();
+            for host in [Some(host.clone()), None] {
+                map.insert(
+                    CredsRef {
+                        region: Region::new("us-east-1"),
+                        host,
+                    },
+                    dummy_client("us-east-1"),
+                );
+            }
+        };
+        let hosts = || {
+            let map = remote.s3.read().unwrap();
+            let mut hosts: Vec<_> = map.keys().map(|k| k.host.clone()).collect();
+            hosts.sort_by_key(|h| h.as_ref().map(ToString::to_string));
+            hosts
+        };
+
+        fill();
+        let failed = Error::S3(S3Error::new(S3ErrorKind::GetObject("boom".to_string())));
+        remote.forget_ambient_clients_on(failed);
+        assert_eq!(
+            hosts(),
+            vec![None, Some(host.clone())],
+            "an outage keeps them"
+        );
+
+        let refused = Error::S3(S3Error::new(S3ErrorKind::InvalidCredentials(
+            "refused".to_string(),
+        )));
+        remote.forget_ambient_clients_on(refused);
+        assert_eq!(hosts(), vec![Some(host.clone())]);
+
+        // A HEAD has no body, so bad keys there are a bare 403: a denial that
+        // cannot be told from a missing permission.
+        fill();
+        remote.forget_ambient_clients_on(Error::S3(S3Error::new(S3ErrorKind::AccessDenied(
+            "HTTP 403".to_string(),
+        ))));
+        assert_eq!(hosts(), vec![Some(host.clone())]);
+        // A deployment's denial is about its role, not keys on this computer.
+        let denied = Error::S3(S3Error {
+            host: Some(host.clone()),
+            kind: S3ErrorKind::AccessDenied("HTTP 403".to_string()),
+        });
+        fill();
+        assert!(remote.forget_ambient_clients_on(denied).is_access_denied());
+        assert_eq!(hosts(), vec![None, Some(host.clone())]);
+
+        fill();
+        let missing = Error::Login(LoginError::NoSession(None));
+        remote.forget_ambient_clients_on(missing);
+        assert_eq!(hosts(), vec![Some(host.clone())]);
+    }
+
+    /// Every `InstalledPackage` a domain hands out must reach *the* caches,
+    /// not a copy of them. A per-package copy starts empty, discards whatever
+    /// it builds, and — the part that matters beyond wasted work — puts the
+    /// clients holding vended STS credentials outside the reach of the
+    /// `clear_client_cache` that logout depends on.
+    ///
+    /// Asserted through the domain rather than on a clone helper, so it holds
+    /// for *every* cache on the remote and cannot pass while one is left
+    /// behind.
+    #[test]
+    fn packages_share_the_domain_caches() {
+        use crate::local_domain::LocalDomain;
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let domain = LocalDomain::new(temp.path());
+        let first = domain.create_installed_package(("acme", "demo").into());
+        let second = domain.create_installed_package(("acme", "other").into());
+
+        let key = CredsRef {
+            region: Region::new("us-east-1"),
+            host: None,
+        };
+        first
+            .remote
+            .s3
+            .write()
+            .unwrap()
+            .insert(key.clone(), dummy_client("us-east-1"));
+        first
+            .remote
+            .regions
+            .write()
+            .unwrap()
+            .insert("some-bucket".to_string(), Region::new("us-east-1"));
+
+        assert!(
+            second.remote.s3.read().unwrap().contains_key(&key),
+            "a client built by one package must be visible to the next"
+        );
+        assert!(
+            second
+                .remote
+                .regions
+                .read()
+                .unwrap()
+                .contains_key("some-bucket"),
+            "a region resolved by one package must be visible to the next"
+        );
+        assert!(
+            domain.get_remote().s3.read().unwrap().contains_key(&key),
+            "and to the domain the packages came from"
+        );
+
+        // The reason this matters on logout: the flush must reach what the
+        // packages built, not just what the domain built itself.
+        domain.get_remote().clear_client_cache(None);
+        assert!(
+            first.remote.s3.read().unwrap().is_empty(),
+            "clear_client_cache must reach clients cached through a package"
+        );
+    }
+
+    #[test]
+    fn invalidation_rejects_a_client_built_by_an_older_generation() {
+        let remote = RemoteS3::new(DomainPaths::default(), LocalStorage::new());
+        let key = CredsRef {
+            region: Region::new("us-east-1"),
+            host: None,
+        };
+        let stale_generation = remote.client_cache_generation.load(Ordering::SeqCst);
+
+        remote.clear_client_cache(None);
+        remote
+            .cache_client_if_current(key.clone(), dummy_client("us-east-1"), stale_generation)
+            .unwrap();
+        assert!(!remote.s3.read().unwrap().contains_key(&key));
+
+        let current_generation = remote.client_cache_generation.load(Ordering::SeqCst);
+        remote
+            .cache_client_if_current(key.clone(), dummy_client("us-east-1"), current_generation)
+            .unwrap();
+        assert!(remote.s3.read().unwrap().contains_key(&key));
+    }
+
     /// Never called: compiling these calls is the proof that the three
     /// networked role delegations exist on `RemoteS3` with these shapes.
     /// They cannot be driven here — each one talks to a registry.
@@ -1157,6 +1762,9 @@ mod tests {
         let _: RoleInfo = remote.refresh_roles(host).await?;
         let _: RoleInfo = remote.switch_role(host, "ReadOnly").await?;
         let _: Vec<String> = remote.readable_buckets(host).await?;
+        let _: Vec<String> = remote
+            .published_revisions(Some(host), "bucket", &("team", "dataset").into())
+            .await?;
         Ok(())
     }
 
@@ -1166,8 +1774,6 @@ mod tests {
     /// it is the one we can actually drive.
     #[test(tokio::test)]
     async fn remote_exposes_the_role_api() -> Res<()> {
-        use std::str::FromStr;
-
         use tempfile::TempDir;
 
         let _ = role_api_shapes;
@@ -1177,7 +1783,7 @@ mod tests {
             DomainPaths::new(temp.path().to_path_buf()),
             LocalStorage::new(),
         );
-        let host = Host::from_str("catalog.example.com").unwrap();
+        let host = fixtures::host();
 
         remote.expire_credentials(&host).await?;
         Ok(())
@@ -1189,8 +1795,6 @@ mod tests {
     /// credential fields map correctly to the SDK ones.
     #[test(tokio::test)]
     async fn test_quilt_credentials_provider_returns_stored_creds() -> Res<()> {
-        use std::str::FromStr;
-
         use tempfile::TempDir;
 
         use crate::io::storage::auth::AuthIo;
@@ -1199,7 +1803,7 @@ mod tests {
         let temp = TempDir::new()?;
         let paths = DomainPaths::new(temp.path().to_path_buf());
         let storage = Arc::new(LocalStorage::new());
-        let host = Host::from_str("catalog.example.com").unwrap();
+        let host = fixtures::host();
 
         let stored = QuiltCreds {
             access_key: "AKIAEXAMPLE".to_string(),
@@ -1239,7 +1843,7 @@ mod tests {
         ) -> Res<T> {
             if url.ends_with("/config.json") {
                 let body = serde_json::json!({
-                    "registryUrl": "https://registry.example.com",
+                    "registryUrl": "https://registry.quilt.test",
                 });
                 return Ok(serde_json::from_value(body)?);
             }
@@ -1292,8 +1896,6 @@ mod tests {
     /// not the stale on-disk ones.
     #[test(tokio::test)]
     async fn test_quilt_credentials_provider_refreshes_when_expired() -> Res<()> {
-        use std::str::FromStr;
-
         use tempfile::TempDir;
 
         use crate::io::storage::auth::AuthIo;
@@ -1303,7 +1905,7 @@ mod tests {
         let temp = TempDir::new()?;
         let paths = DomainPaths::new(temp.path().to_path_buf());
         let storage = Arc::new(LocalStorage::new());
-        let host = Host::from_str("catalog.example.com").unwrap();
+        let host = fixtures::host();
 
         let auth_io = AuthIo::new(Arc::clone(&storage), paths.auth_host(&host));
         // Expired credentials — force the refresh path.
@@ -1336,6 +1938,282 @@ mod tests {
         assert_eq!(sdk_creds.access_key_id(), "REFRESHED");
         assert_eq!(sdk_creds.secret_access_key(), "refreshed-secret");
         assert_eq!(sdk_creds.session_token(), Some("refreshed-session"));
+        Ok(())
+    }
+
+    /// Behavioural on purpose: what the recovery depends on is the SDK keeping
+    /// our boxed error reachable through `source()`, which only a real call can
+    /// show. A shape assertion would pass over a severed chain.
+    #[test(tokio::test)]
+    async fn an_absent_session_survives_the_sdk_wrap() -> Res<()> {
+        use tempfile::TempDir;
+
+        // An empty domain: no tokens on disk, so the provider has nothing to
+        // refresh from and refuses with `LoginError::NoSession`.
+        let temp = TempDir::new()?;
+        let paths = DomainPaths::new(temp.path().to_path_buf());
+        let storage = Arc::new(LocalStorage::new());
+        let host = fixtures::host();
+
+        let provider = QuiltCredentialsProvider {
+            auth: auth::Auth::new(paths, storage),
+            http: crate::io::remote::client::ReqwestClient::new(),
+            host: host.clone(),
+        };
+
+        let config = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(provider)
+            .load()
+            .await;
+        let client = aws_sdk_s3::Client::new(&config);
+
+        let err = client
+            .head_object()
+            .bucket("bucket")
+            .key("key")
+            .send()
+            .await
+            .expect_err("an unauthenticated vend cannot produce a response");
+
+        let recovered =
+            recover_absent_session(&err).expect("the absent session must survive the SDK wrap");
+        assert_eq!(
+            recovered.to_string(),
+            format!("No session for {host}"),
+            "recovered the wrong error out of the chain"
+        );
+
+        // And the call-site helper must hand back the typed error rather than
+        // classifying it as storage trouble — the whole point of the fix.
+        assert!(
+            matches!(
+                s3_error_or_session_loss(err, Some(&host), S3ErrorKind::Exists),
+                Error::Login(LoginError::NoSession(Some(h))) if h == host
+            ),
+            "the call-site helper classified a signed-out session as an S3 error"
+        );
+        Ok(())
+    }
+
+    #[derive(Debug)]
+    struct Failing(fn() -> CredentialsError);
+    impl ProvideCredentials for Failing {
+        fn provide_credentials<'a>(&'a self) -> future::ProvideCredentials<'a>
+        where
+            Self: 'a,
+        {
+            future::ProvideCredentials::ready(Err((self.0)()))
+        }
+    }
+
+    /// A call whose credential provider fails with `error`, as classified for
+    /// `host`.
+    async fn classified(error: fn() -> CredentialsError, host: Option<&Host>) -> Error {
+        let config = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Failing(error))
+            .load()
+            .await;
+        let err = aws_sdk_s3::Client::new(&config)
+            .head_object()
+            .bucket("bucket")
+            .key("key")
+            .send()
+            .await
+            .expect_err("no credentials, so no request");
+        s3_error_or_session_loss(err, host, S3ErrorKind::Exists)
+    }
+
+    fn host_less_absent(err: &Error) -> bool {
+        matches!(err, Error::Login(LoginError::NoSession(None)))
+    }
+
+    /// The machine's own credential chain finding nothing is a host-less
+    /// absent session, not an outage: without this, a status read on a bare
+    /// bucket swallows it and answers "unreachable" from the last-known tip.
+    #[test(tokio::test)]
+    async fn an_empty_ambient_chain_is_a_host_less_absent_session() {
+        let not_loaded = || CredentialsError::not_loaded("no credentials found in chain");
+        assert!(
+            host_less_absent(&classified(not_loaded, None).await),
+            "an empty ambient chain was classified as storage trouble"
+        );
+        // A deployment's provider reports its own `NoSession`; a bare
+        // credentials error there stays what it was.
+        assert!(
+            matches!(
+                classified(not_loaded, Some(&fixtures::host())).await,
+                Error::S3(_)
+            ),
+            "a deployment's credentials error was retyped as host-less"
+        );
+        // A broken profile is as unusable as a missing one.
+        assert!(host_less_absent(
+            &classified(
+                || CredentialsError::invalid_configuration("bad profile"),
+                None
+            )
+            .await
+        ));
+        // A role profile whose source has none wraps "not loaded".
+        assert!(host_less_absent(
+            &classified(
+                || {
+                    CredentialsError::provider_error(CredentialsError::not_loaded(
+                        "no source credentials",
+                    ))
+                },
+                None
+            )
+            .await
+        ));
+    }
+
+    /// A provider's own call refused: the SSO portal refusing the sign-in (a
+    /// legacy profile's expired token, which the SDK does not check itself),
+    /// or STS refusing an assume-role profile's source keys. A provider that
+    /// timed out or failed (SSO or assume-role, offline) may work next time:
+    /// an outage, so the read falls back to the tip.
+    #[test(tokio::test)]
+    async fn a_refused_provider_call_is_unusable_and_a_failed_one_an_outage() {
+        let refused: [fn() -> CredentialsError; 3] = [
+            || {
+                CredentialsError::provider_error(std::io::Error::other(
+                    "UnauthorizedException: Session token not found or invalid",
+                ))
+            },
+            || {
+                CredentialsError::provider_error(std::io::Error::other(
+                    "InvalidClientTokenId: The security token included in the request is invalid",
+                ))
+            },
+            || {
+                CredentialsError::provider_error(std::io::Error::other(
+                    "ExpiredToken: The security token included in the request is expired",
+                ))
+            },
+        ];
+        for error in refused {
+            let err = classified(error, None).await;
+            assert!(host_less_absent(&err), "{err}");
+        }
+
+        let transient: [fn() -> CredentialsError; 2] = [
+            || CredentialsError::provider_timed_out(std::time::Duration::from_secs(5)),
+            || CredentialsError::provider_error("sso portal unreachable"),
+        ];
+        for error in transient {
+            assert!(
+                matches!(classified(error, None).await, Error::S3(_)),
+                "a transient provider failure was read as unusable credentials"
+            );
+        }
+    }
+
+    /// An SSO profile with no cached token, or an expired one, is unusable
+    /// until `aws sso login`. Through the real default chain, on a fake home,
+    /// so an SDK that rewords these errors fails here.
+    #[test(tokio::test)]
+    async fn an_sso_profile_without_a_usable_token_is_a_host_less_absent_session() -> Res<()> {
+        use aws_types::os_shim_internal::Env;
+        use aws_types::os_shim_internal::Fs;
+
+        const CONFIG: &str = "[profile default]
+sso_session = dev
+sso_account_id = 123456789012
+sso_role_name = Reader
+
+[sso-session dev]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+";
+        // `sha1("dev")`: the cache file the SDK reads for this session.
+        const CACHE: &str = "/home/me/.aws/sso/cache/34c6fceca75e456f25e7e99531e2425c6c1de443.json";
+        const EXPIRED: &str = r#"{"accessToken": "token", "expiresAt": "2020-01-01T00:00:00Z", "region": "us-east-1", "startUrl": "https://example.awsapps.com/start"}"#;
+
+        // A legacy profile names the start URL itself, with no `sso-session`.
+        const LEGACY: &str = "[profile default]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+sso_account_id = 123456789012
+sso_role_name = Reader
+";
+        for files in [
+            vec![("/home/me/.aws/config", CONFIG)],
+            vec![("/home/me/.aws/config", CONFIG), (CACHE, EXPIRED)],
+            vec![("/home/me/.aws/config", LEGACY)],
+        ] {
+            let config = aws_config::defaults(BehaviorVersion::latest())
+                .region(Region::new("us-east-1"))
+                .env(Env::from_slice(&[
+                    ("HOME", "/home/me"),
+                    ("AWS_EC2_METADATA_DISABLED", "true"),
+                ]))
+                .fs(Fs::from_slice(&files))
+                .load()
+                .await;
+            let err = aws_sdk_s3::Client::new(&config)
+                .head_object()
+                .bucket("bucket")
+                .key("key")
+                .send()
+                .await
+                .expect_err("no usable SSO token, so no request");
+            let described = aws_smithy_types::error::display::DisplayErrorContext(&err).to_string();
+            assert!(
+                matches!(
+                    s3_error_or_session_loss(err, None, S3ErrorKind::Exists),
+                    Error::Login(LoginError::NoSession(None))
+                ),
+                "{} file(s): {described}",
+                files.len()
+            );
+        }
+        Ok(())
+    }
+
+    /// The negative half: a dispatch failure with no absent session behind it
+    /// must keep its operation-specific S3 kind. Without this, the recovery
+    /// could type every transport fault as "signed out" and pass the test
+    /// above while making the classification strictly worse.
+    #[test(tokio::test)]
+    async fn a_plain_transport_failure_stays_an_s3_error() -> Res<()> {
+        let host = fixtures::host();
+        let config = aws_config::defaults(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .credentials_provider(Credentials::for_tests())
+            // A port nothing listens on: the request is dispatched with valid
+            // credentials and fails in transport, so the chain carries no
+            // error of ours.
+            .endpoint_url("http://127.0.0.1:1")
+            .retry_config(aws_config::retry::RetryConfig::disabled())
+            .load()
+            .await;
+        let client = aws_sdk_s3::Client::new(&config);
+
+        let err = client
+            .head_object()
+            .bucket("bucket")
+            .key("key")
+            .send()
+            .await
+            .expect_err("nothing is listening on that port");
+
+        assert!(
+            recover_absent_session(&err).is_none(),
+            "a transport fault was mistaken for an absent session"
+        );
+        assert!(
+            matches!(
+                s3_error_or_session_loss(err, Some(&host), S3ErrorKind::Exists),
+                Error::S3(S3Error {
+                    kind: S3ErrorKind::Exists(_),
+                    ..
+                })
+            ),
+            "a transport fault lost its operation-specific kind"
+        );
         Ok(())
     }
 }

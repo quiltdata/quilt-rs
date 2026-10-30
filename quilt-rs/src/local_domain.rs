@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use tracing::{debug, info, trace, warn};
 
+use crate::Error;
+use crate::InstallPackageError;
 use crate::Res;
 use crate::flow;
 use crate::installed_package::InstalledPackage;
@@ -19,12 +21,18 @@ use crate::lineage::DomainLineage;
 use crate::lineage::Home;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
+use crate::package_lock;
 use crate::paths;
+use crate::state_store::PackageStateStore;
 use quilt_uri::ManifestUri;
 use quilt_uri::Namespace;
 
 /// This is the entrypoint for the lib.
 /// All the work you can do with packages is done through calling `LocalDomain` methods.
+///
+/// Cheap to clone: a clone shares the remote and works on the same
+/// directory, so a caller holding the domain behind a mutex can clone it and
+/// release the mutex before a writer that waits on a package's lock.
 #[derive(Debug)]
 pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     paths: paths::DomainPaths,
@@ -34,6 +42,20 @@ pub struct LocalDomain<S: Storage = LocalStorage, R: Remote = RemoteS3> {
     /// handle, release the mutex, and only then await a network round trip.
     /// See [`LocalDomain::remote_handle`].
     remote: Arc<R>,
+    /// Handed to every package; see [`LocalDomain::with_state_store`].
+    state_store: Option<Arc<PackageStateStore>>,
+}
+
+impl<S: Storage + Clone, R: Remote> Clone for LocalDomain<S, R> {
+    fn clone(&self) -> Self {
+        Self {
+            paths: self.paths.clone(),
+            lineage: self.lineage.clone(),
+            storage: self.storage.clone(),
+            remote: Arc::clone(&self.remote),
+            state_store: self.state_store.clone(),
+        }
+    }
 }
 
 impl LocalDomain {
@@ -68,7 +90,49 @@ impl LocalDomain {
             lineage,
             storage,
             remote,
+            state_store: None,
         }
+    }
+}
+
+impl<S: Storage + Clone + Sync, R: Remote> LocalDomain<S, R> {
+    /// A domain over `paths` with the given storage and remote, for tests
+    /// that drive it against a mock.
+    #[cfg(test)]
+    pub(crate) fn with_parts(paths: paths::DomainPaths, storage: S, remote: Arc<R>) -> Self {
+        Self {
+            lineage: lineage::DomainLineageIo::new(paths.lineage()),
+            paths,
+            storage,
+            remote,
+            state_store: None,
+        }
+    }
+
+    /// The domain with its packages' walks using `store`'s stat cache. Only
+    /// the desktop app opens a store.
+    #[must_use]
+    pub fn with_state_store(mut self, store: Arc<PackageStateStore>) -> Self {
+        self.state_store = Some(store);
+        self
+    }
+
+    /// The user-wide ignore rules file, which every package reads below its
+    /// own `.quiltignore`.
+    #[must_use]
+    pub fn user_quiltignore(&self) -> std::path::PathBuf {
+        self.paths.user_quiltignore()
+    }
+
+    /// [`crate::quiltignore::set_default_rules`] on the user-wide file, holding
+    /// its lock so *Stop ignoring* for all packages never writes between the
+    /// read and the write.
+    pub async fn set_default_rules(&self, off: &[&str]) -> Res {
+        let _held = self
+            .storage
+            .lock_exclusive(self.paths.user_quiltignore_lock())
+            .await?;
+        crate::quiltignore::set_default_rules(&self.paths.user_quiltignore(), off)
     }
 
     pub async fn get_home(&self) -> Res<Home> {
@@ -76,9 +140,18 @@ impl LocalDomain {
         Ok(lineage.home)
     }
 
+    /// See [`lineage::DomainLineageIo::set_home`]: creates the home folder,
+    /// and refuses a new home while packages are installed.
     pub async fn set_home(&self, dir: impl AsRef<Path>) -> Res<Home> {
         info!("Setting home directory to {}", dir.as_ref().display());
         Ok(self.lineage.set_home(&self.storage, dir).await?.home)
+    }
+
+    /// [`LocalDomain::set_home`] even while packages are installed: they then
+    /// point at empty folders under the new home.
+    pub async fn overwrite_home(&self, dir: impl AsRef<Path>) -> Res<Home> {
+        info!("Overwriting home directory with {}", dir.as_ref().display());
+        Ok(self.lineage.overwrite_home(&self.storage, dir).await?.home)
     }
 
     pub async fn scaffold_paths_for_installing(&self, namespace: &Namespace) -> Res {
@@ -107,20 +180,27 @@ impl LocalDomain {
             .inspect_err(|e| warn!("Failed to browse manifest {}: {}", uri.hash, e))
     }
 
-    pub fn create_installed_package(&self, namespace: Namespace) -> Res<InstalledPackage> {
+    /// Every package shares *this* domain's remote — the same client,
+    /// region and credential caches, not a snapshot. A per-package copy
+    /// would start empty and discard whatever it built, and logout could
+    /// not reach the clients it is required to drop.
+    #[must_use]
+    pub fn create_installed_package(&self, namespace: Namespace) -> InstalledPackage<S, R> {
         // TODO: seems like you can use PackageLineage as an argument instead of namespace
-        Ok(InstalledPackage {
+        InstalledPackage {
             lineage: self.lineage.create_package_lineage(namespace.clone()),
             namespace,
             paths: self.paths.clone(),
-            remote: self.remote.try_clone()?,
+            remote: Arc::clone(&self.remote),
             storage: self.storage.clone(),
-        })
+            state_store: self.state_store.clone(),
+        }
     }
 
-    pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage> {
+    pub async fn install_package(&self, manifest_uri: &ManifestUri) -> Res<InstalledPackage<S, R>> {
         info!("Installing package: {}", manifest_uri.namespace);
         debug!("Installing from manifest: {}", manifest_uri.display());
+        let _held = package_lock::lock(&self.storage, &self.paths, &manifest_uri.namespace).await?;
 
         debug!("Preparing paths for installation");
         self.scaffold_paths_for_caching(&manifest_uri.bucket)
@@ -142,10 +222,11 @@ impl LocalDomain {
         .await?;
 
         debug!("Updating domain lineage");
-        self.lineage.write(&self.storage, lineage).await?;
+        self.insert_package(lineage, &manifest_uri.namespace)
+            .await?;
 
         info!("Successfully installed package: {}", manifest_uri.namespace);
-        self.create_installed_package(manifest_uri.namespace.clone())
+        Ok(self.create_installed_package(manifest_uri.namespace.clone()))
     }
 
     pub async fn create_package(
@@ -153,12 +234,13 @@ impl LocalDomain {
         namespace: Namespace,
         source: Option<PathBuf>,
         message: Option<String>,
-    ) -> Res<InstalledPackage> {
+    ) -> Res<(InstalledPackage<S, R>, flow::LeftOut)> {
         info!("Creating package: {}", namespace);
+        let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
 
         let lineage: DomainLineage = self.lineage.read(&self.storage).await?;
 
-        let lineage = flow::create(
+        let (lineage, left_out) = flow::create(
             lineage,
             &self.paths,
             &self.storage,
@@ -168,33 +250,120 @@ impl LocalDomain {
         )
         .await?;
 
-        self.lineage.write(&self.storage, lineage).await?;
+        self.insert_package(lineage, &namespace).await?;
 
         info!("Successfully created package: {}", namespace);
-        self.create_installed_package(namespace)
+        Ok((self.create_installed_package(namespace), left_out))
     }
 
     pub async fn uninstall_package(&self, namespace: Namespace) -> Res<()> {
         info!("Uninstalling package: {}", namespace);
+        let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
+        self.uninstall_locked(&namespace).await
+    }
 
+    /// Uninstall, then delete the package's objects that no other installed
+    /// manifest uses — every revision's. Nothing else: other unused objects,
+    /// the manifest cache and staging stay for [`Self::gc`].
+    ///
+    /// The uninstall stands whatever the prune finds. Another package busy
+    /// in another writer keeps the objects, answered as
+    /// [`flow::Pruned::Busy`]; a manifest that can't be read keeps them too,
+    /// as [`Error::PruneFailed`]. So does one of the package's own manifests
+    /// or objects that can't be read: the package is still removed, and what
+    /// was read is still pruned.
+    pub async fn uninstall_package_pruning(&self, namespace: Namespace) -> Res<flow::Pruned> {
+        info!("Uninstalling package and its objects: {}", namespace);
+        let (candidates, unread) = {
+            let _held = package_lock::lock(&self.storage, &self.paths, &namespace).await?;
+            let found = flow::package_objects(&self.paths, &self.storage, &namespace).await?;
+            self.uninstall_locked(&namespace).await?;
+            found
+        };
+        // The package's own lock is released above: the prune try-locks
+        // every package, this one among them.
+        let prune = async {
+            let lineage = self
+                .lineage
+                .read(&self.storage)
+                .await
+                .map_err(|err| (err, None))?;
+            let pruned = flow::prune(&self.paths, &self.storage, &lineage, candidates)
+                .await
+                .map_err(|err| (err, None))?;
+            // Some of its files could not be counted, so not all went. The
+            // read error goes first, since once the manifests are gone no
+            // retry can show it, and a busy package that kept the rest is
+            // named beside it.
+            match (unread, pruned) {
+                (None, pruned) => Ok(pruned),
+                (Some(err), flow::Pruned::Busy(busy)) => Err((err, Some(busy))),
+                (Some(err), flow::Pruned::Freed(_)) => Err((err, None)),
+            }
+        };
+        prune
+            .await
+            .map_err(|(err, busy)| Error::PruneFailed(namespace, Box::new(err), busy))
+    }
+
+    /// Uninstall `namespace`, whose lock the caller holds.
+    async fn uninstall_locked(&self, namespace: &Namespace) -> Res<()> {
         debug!("Preparing paths for uninstallation");
-        self.scaffold_paths_for_installing(&namespace).await?;
+        self.scaffold_paths_for_installing(namespace).await?;
 
         debug!("Reading current lineage state");
         let lineage = self.lineage.read(&self.storage).await?;
 
         debug!("Executing package uninstallation flow");
-        let lineage =
-            flow::uninstall_package(lineage, &self.paths, &self.storage, namespace.clone()).await?;
+        // It removes the entry from this copy; the splice below removes it
+        // from the record as it is now.
+        flow::uninstall_package(lineage, &self.paths, &self.storage, namespace.clone()).await?;
 
         debug!("Updating domain lineage after uninstallation");
-        self.lineage.write(&self.storage, lineage).await?;
+        self.lineage
+            .update_package_lineage(&self.storage, namespace, |entry| {
+                *entry = None;
+                Ok(())
+            })
+            .await?;
 
         info!("Successfully uninstalled package: {}", namespace);
         Ok(())
     }
 
-    pub async fn list_installed_packages(&self) -> Res<Vec<InstalledPackage>> {
+    /// Delete what `.quilt/` holds for nothing: objects no installed
+    /// manifest uses, the remote-manifest cache and stranded staging dirs.
+    /// See [`flow::gc`]; a package busy in another writer stops it with
+    /// [`Error::PackageBusy`] and nothing deleted.
+    pub async fn gc(&self) -> Res<flow::GcReport> {
+        let lineage = self.lineage.read(&self.storage).await?;
+        flow::gc(&self.paths, &self.storage, &lineage).await
+    }
+
+    /// How much `.quilt/` holds, and what [`Self::gc`] would free now. See
+    /// [`flow::measure_storage`]: it takes no package locks, deletes nothing,
+    /// and its freeable part is an estimate that gc's report makes exact.
+    pub async fn measure_storage(&self) -> Res<flow::StorageSize> {
+        flow::measure_storage(&self.paths, &self.storage).await
+    }
+
+    /// Splices the one entry an install or a create made into the record as
+    /// it is now, leaving every other package's entry as another writer may
+    /// have changed it meanwhile. The caller holds the package's lock.
+    async fn insert_package(&self, made: DomainLineage, namespace: &Namespace) -> Res {
+        let mut made = made;
+        let entry = made.packages.remove(namespace).ok_or_else(|| {
+            Error::InstallPackage(InstallPackageError::NotInstalled(namespace.clone()))
+        })?;
+        self.lineage
+            .update_package_lineage(&self.storage, namespace, |current| {
+                *current = Some(entry);
+                Ok(())
+            })
+            .await
+    }
+
+    pub async fn list_installed_packages(&self) -> Res<Vec<InstalledPackage<S, R>>> {
         // A pair of lines for a lookup that runs on every tick. The count is the
         // only part worth keeping, and only when it is surprising — so both go to
         // `trace` and the status line reports what was found.
@@ -205,7 +374,7 @@ impl LocalDomain {
         trace!("Found {} installed packages", namespaces.len());
         let mut packages = Vec::with_capacity(namespaces.len());
         for namespace in namespaces {
-            packages.push(self.create_installed_package(namespace)?);
+            packages.push(self.create_installed_package(namespace));
         }
         Ok(packages)
     }
@@ -225,12 +394,12 @@ impl LocalDomain {
     pub async fn get_installed_package(
         &self,
         namespace: &Namespace,
-    ) -> Res<Option<InstalledPackage>> {
+    ) -> Res<Option<InstalledPackage<S, R>>> {
         trace!("Looking up installed package: {}", namespace);
         let lineage = self.lineage.read(&self.storage).await?;
         if lineage.packages.contains_key(namespace) {
             trace!("Found installed package: {}", namespace);
-            Ok(Some(self.create_installed_package(namespace.to_owned())?))
+            Ok(Some(self.create_installed_package(namespace.to_owned())))
         } else {
             debug!("Package not found: {}", namespace);
             Ok(None)
@@ -257,6 +426,31 @@ mod tests {
     use test_log::test;
 
     use crate::lineage::PackageLineage;
+
+    /// Setting the built-in rules waits for the user-wide file's lock, which
+    /// *Stop ignoring* for all packages holds across its read and write.
+    #[test(tokio::test)]
+    async fn set_default_rules_waits_for_the_user_rules_lock() -> Res<()> {
+        let temp_dir = TempDir::new()?;
+        let domain = LocalDomain::new(temp_dir.path());
+        let held = domain
+            .storage
+            .lock_exclusive(domain.paths.user_quiltignore_lock())
+            .await?;
+        let writer = {
+            let domain = domain.clone();
+            tokio::spawn(async move { domain.set_default_rules(&[".env"]).await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!domain.user_quiltignore().exists(), "it waited");
+        drop(held);
+        writer.await.expect("the writer ran")?;
+        assert_eq!(
+            std::fs::read_to_string(domain.user_quiltignore())?,
+            "!.env\n"
+        );
+        Ok(())
+    }
 
     #[test(tokio::test)]
     async fn test_list_installed_packages() -> Res<()> {

@@ -94,10 +94,15 @@ pub async fn collect(
 /// Reads the pre-built zip file at `zip_path`, attaches it to the Sentry
 /// event, and sets metadata extras from `metadata.json` inside the zip.
 ///
+/// `message` is what the user wrote about the problem. It travels as the
+/// `user_message` extra, next to the metadata on the event page. The SDK has no
+/// user-feedback call, and the event message stays fixed so every report still
+/// lands in one issue. A message that is empty once trimmed is sent as no message.
+///
 /// Returns an error if the Sentry client is not initialized (e.g. DSN not
 /// configured or offline), so callers can inform the user instead of
 /// silently pretending the report was sent.
-pub fn send_crash_report(zip_path: &Path) -> Result<(), Error> {
+pub fn send_crash_report(zip_path: &Path, message: Option<&str>) -> Result<(), Error> {
     if sentry::Hub::current().client().is_none() {
         return Err(Error::General(
             "Sentry is not initialized — crash report was not sent".to_string(),
@@ -106,6 +111,7 @@ pub fn send_crash_report(zip_path: &Path) -> Result<(), Error> {
 
     let zip_bytes = std::fs::read(zip_path)?;
     let metadata = read_metadata_from_zip(&zip_bytes);
+    let message = message.map(str::trim).filter(|m| !m.is_empty());
 
     sentry::with_scope(
         |scope| {
@@ -121,6 +127,9 @@ pub fn send_crash_report(zip_path: &Path) -> Result<(), Error> {
                     "authenticated_hosts",
                     serde_json::json!(m.authenticated_hosts),
                 );
+            }
+            if let Some(message) = message {
+                scope.set_extra("user_message", message.into());
             }
 
             scope.add_attachment(Attachment {
@@ -226,7 +235,7 @@ mod tests {
         let mut entries = BTreeMap::new();
         for i in 0..archive.len() {
             let mut file = archive.by_index(i).expect("entry by index");
-            let name = file.name().to_string();
+            let name = file.name().expect("entry name").to_string();
             let mut buf = Vec::new();
             file.read_to_end(&mut buf).expect("read entry");
             entries.insert(name, buf);
@@ -260,31 +269,31 @@ mod tests {
         let domain_paths = DomainPaths::new(data_tmp.path().to_path_buf());
         write_file(&domain_paths.lineage(), data_json);
 
-        let demo_host = "demo.quiltdata.com";
-        let open_host = "open.quiltdata.com";
-        let demo_client = br#"{"client_id":"abc"}"#;
-        let open_client = br#"{"client_id":"def"}"#;
+        let one_host = "one.quilt.test";
+        let another_host = "another.quilt.test";
+        let one_client = br#"{"client_id":"abc"}"#;
+        let another_client = br#"{"client_id":"def"}"#;
         write_file(
             &data_tmp
                 .path()
                 .join(quilt::paths::AUTH_DIR)
-                .join(demo_host)
+                .join(one_host)
                 .join(quilt::paths::AUTH_CLIENT),
-            demo_client,
+            one_client,
         );
         write_file(
             &data_tmp
                 .path()
                 .join(quilt::paths::AUTH_DIR)
-                .join(open_host)
+                .join(another_host)
                 .join(quilt::paths::AUTH_CLIENT),
-            open_client,
+            another_client,
         );
 
         let info = make_info(
             data_tmp.path().to_path_buf(),
             logs_tmp.path().to_path_buf(),
-            vec![demo_host.to_string(), open_host.to_string()],
+            vec![one_host.to_string(), another_host.to_string()],
         );
 
         let zip_path = save_diagnostic_zip(&info).expect("save zip");
@@ -293,15 +302,15 @@ mod tests {
 
         let entries = read_zip_entries(&zip_path);
 
-        let demo_entry = format!("auth/{demo_host}/client.json");
-        let open_entry = format!("auth/{open_host}/client.json");
+        let one_entry = format!("auth/{one_host}/client.json");
+        let another_entry = format!("auth/{another_host}/client.json");
         let expected_names: Vec<&str> = vec![
             "metadata.json",
             "logs/quiltsync.log",
             "logs/quiltsync.log.1",
             "data.json",
-            &demo_entry,
-            &open_entry,
+            &one_entry,
+            &another_entry,
         ];
         let actual_names: Vec<&str> = entries.keys().map(String::as_str).collect();
         for name in &expected_names {
@@ -319,8 +328,8 @@ mod tests {
         assert_eq!(entries["logs/quiltsync.log"], current_log);
         assert_eq!(entries["logs/quiltsync.log.1"], rotated_log);
         assert_eq!(entries["data.json"], data_json);
-        assert_eq!(entries[&demo_entry], demo_client);
-        assert_eq!(entries[&open_entry], open_client);
+        assert_eq!(entries[&one_entry], one_client);
+        assert_eq!(entries[&another_entry], another_client);
 
         let parsed: DiagnosticMetadata =
             serde_json::from_slice(&entries["metadata.json"]).expect("parse metadata.json");
@@ -352,7 +361,7 @@ mod tests {
 
         let parsed: DiagnosticMetadata =
             serde_json::from_slice(&entries["metadata.json"]).expect("parse metadata.json");
-        assert!(parsed.authenticated_hosts.is_empty());
+        assert_eq!(parsed.authenticated_hosts, [] as [String; 0]);
         assert_eq!(parsed, DiagnosticMetadata::from_info(&info));
     }
 
@@ -392,6 +401,65 @@ mod tests {
         let parsed: DiagnosticMetadata =
             serde_json::from_slice(legacy).expect("an export predating the field must still parse");
         assert_eq!(parsed.install_id, None);
+    }
+
+    /// Send a report through a capturing Sentry client and return the one event
+    /// it produced, plus the names of the files attached to it.
+    fn send_and_capture(message: Option<&str>) -> (sentry::protocol::Event<'static>, Vec<String>) {
+        let data_tmp = TempDir::new().expect("data tempdir");
+        let logs_tmp = TempDir::new().expect("logs tempdir");
+        let info = make_info(
+            data_tmp.path().to_path_buf(),
+            logs_tmp.path().to_path_buf(),
+            Vec::new(),
+        );
+        let zip_path = save_diagnostic_zip(&info).expect("save zip");
+
+        let envelopes = sentry::test::with_captured_envelopes(|| {
+            send_crash_report(&zip_path, message).expect("send report");
+        });
+        assert_eq!(envelopes.len(), 1, "one report, one envelope");
+
+        let mut event = None;
+        let mut attachments = Vec::new();
+        for item in envelopes[0].items() {
+            match item {
+                sentry::protocol::EnvelopeItem::Event(e) => event = Some(*e.clone()),
+                sentry::protocol::EnvelopeItem::Attachment(a) => {
+                    attachments.push(a.filename.clone());
+                }
+                _ => {}
+            }
+        }
+        (event.expect("the envelope carries an event"), attachments)
+    }
+
+    #[test]
+    fn a_report_carries_what_the_user_wrote() {
+        let (event, attachments) =
+            send_and_capture(Some("  Sync stopped after I renamed a folder.\n"));
+
+        assert_eq!(
+            event.extra.get("user_message"),
+            Some(&"Sync stopped after I renamed a folder.".into()),
+        );
+        assert_eq!(event.message.as_deref(), Some("User crash report"));
+        assert_eq!(event.extra.get("app_version"), Some(&"0.17.1-test".into()));
+        assert_eq!(attachments, ["quiltsync-diagnostic.zip"]);
+    }
+
+    /// No message, and a message that is only whitespace, both send the report
+    /// as it was before the field existed: no `user_message` at all.
+    #[test]
+    fn a_report_without_a_message_sends_as_before() {
+        for message in [None, Some(""), Some(" \n\t ")] {
+            let (event, attachments) = send_and_capture(message);
+
+            assert_eq!(event.extra.get("user_message"), None, "for {message:?}");
+            assert_eq!(event.message.as_deref(), Some("User crash report"));
+            assert_eq!(event.extra.get("app_version"), Some(&"0.17.1-test".into()));
+            assert_eq!(attachments, ["quiltsync-diagnostic.zip"]);
+        }
     }
 
     #[test]

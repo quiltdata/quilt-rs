@@ -19,18 +19,14 @@ use super::registry::RemoteTokens;
 use crate::Error;
 use crate::Res;
 use crate::io::remote::client::HttpClient;
-use quilt_uri::Host;
+use quilt_uri::fixtures;
 
 pub(super) const ACCESS_TOKEN: &str = "test-access-token";
 pub(super) const REFRESH_TOKEN: &str = "test-refresh-token";
 pub(super) const TIMESTAMP: i64 = 1_708_444_800;
 
-pub(super) fn get_host() -> Host {
-    "test.quilt.dev".parse().unwrap()
-}
-
 pub(super) fn get_registry() -> String {
-    "registry-test.quilt.dev".to_string()
+    "registry.quilt.test".to_string()
 }
 
 pub(super) fn get_registry_host() -> url::Host {
@@ -49,6 +45,16 @@ pub(super) struct GraphQlTestHttpClient {
     pub(super) top_level_error: Option<String>,
     pub(super) switch_result: serde_json::Value,
     pub(super) buckets: Vec<&'static str>,
+    /// The package's timestamped pointers, oldest first, for the `package`
+    /// query: `None` is no such package (`package: null`), and a `None` slot
+    /// is a pointer that vanished before it resolved — counted in `total`,
+    /// dropped from its page, as the registry's resolver does.
+    pub(super) package_revisions: Option<Vec<Option<String>>>,
+    /// The first page that answers `package: null`, standing in for a
+    /// package deleted between pages of one listing.
+    pub(super) package_gone_from_page: Option<u64>,
+    /// Every `package` query's variables, in order.
+    pub(super) package_queries_seen: StdMutex<Vec<serde_json::Value>>,
     /// How many leading `/graphql` calls answer HTTP 401 before the endpoint
     /// starts working. Stands in for a session revoked server-side while the
     /// access token is still unexpired locally, so nothing on the client
@@ -73,6 +79,9 @@ impl Default for GraphQlTestHttpClient {
                 "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
             }),
             buckets: vec!["bucket-a", "bucket-b"],
+            package_revisions: None,
+            package_gone_from_page: None,
+            package_queries_seen: StdMutex::new(Vec::new()),
             graphql_fail_first_n: 0,
             tokens_seen: StdMutex::new(Vec::new()),
             token_calls: AtomicUsize::new(0),
@@ -90,6 +99,34 @@ impl GraphQlTestHttpClient {
             "roles": [{"name": "ReadWrite"}, {"name": "ReadOnly"}],
         })
     }
+
+    /// One page of `package { revisions { total page { hash } } }`.
+    fn package_payload(&self, variables: &serde_json::Value) -> serde_json::Value {
+        self.package_queries_seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(variables.clone());
+        let Some(slots) = &self.package_revisions else {
+            return serde_json::Value::Null;
+        };
+        let number = variables["number"].as_u64().expect("number");
+        if self
+            .package_gone_from_page
+            .is_some_and(|gone| number >= gone)
+        {
+            return serde_json::Value::Null;
+        }
+        let number = usize::try_from(number).unwrap();
+        let per_page = usize::try_from(variables["perPage"].as_u64().expect("perPage")).unwrap();
+        let page = slots
+            .iter()
+            .skip((number - 1) * per_page)
+            .take(per_page)
+            .flatten()
+            .map(|hash| serde_json::json!({"hash": hash}))
+            .collect::<Vec<_>>();
+        serde_json::json!({"revisions": {"total": slots.len(), "page": page}})
+    }
 }
 
 #[async_trait]
@@ -99,7 +136,7 @@ impl HttpClient for GraphQlTestHttpClient {
         url: &str,
         _auth_token: Option<&str>,
     ) -> Res<T> {
-        assert_eq!(url, format!("https://{}/config.json", get_host()));
+        assert_eq!(url, format!("https://{}/config.json", fixtures::host()));
         let config = QuiltStackConfig {
             registry_url: format!("https://{}", get_registry()).parse()?,
         };
@@ -117,7 +154,7 @@ impl HttpClient for GraphQlTestHttpClient {
         url: &str,
         form_data: &HashMap<String, String>,
     ) -> Res<T> {
-        assert_eq!(url, connect_token_url(&get_host()));
+        assert_eq!(url, connect_token_url(&fixtures::host()));
         assert_eq!(form_data.get("refresh_token").unwrap(), REFRESH_TOKEN);
         self.token_calls.fetch_add(1, Ordering::SeqCst);
 
@@ -169,12 +206,12 @@ impl HttpClient for GraphQlTestHttpClient {
             }))?);
         }
 
-        let query = serde_json::to_value(body)?["query"]
-            .as_str()
-            .expect("query field")
-            .to_string();
+        let body = serde_json::to_value(body)?;
+        let query = body["query"].as_str().expect("query field").to_string();
 
-        let data = if query.contains("switchRole") {
+        let data = if query.contains("package(") {
+            serde_json::json!({"package": self.package_payload(&body["variables"])})
+        } else if query.contains("switchRole") {
             serde_json::json!({"switchRole": self.switch_result})
         } else if query.contains("buckets") {
             serde_json::json!({
@@ -195,7 +232,7 @@ impl HttpClient for GraphQlTestHttpClient {
 pub(super) const AUTH_CODE: &str = "test-auth-code";
 pub(super) const CODE_VERIFIER: &str = "test-code-verifier-that-is-at-least-43-characters-long";
 pub(super) const CLIENT_ID: &str = "test-client-id";
-pub(super) const REDIRECT_URI: &str = "quilt://auth/callback?host=test.quilt.dev";
+pub(super) const REDIRECT_URI: &str = "quilt://auth/callback?host=quilt.test";
 
 pub(super) const REFRESHED_ACCESS_TOKEN: &str = "refreshed-access-token";
 
@@ -211,7 +248,7 @@ impl HttpClient for TestHttpClient {
         let registry = get_registry();
 
         match url {
-            u if u == format!("https://{}/config.json", get_host()) => {
+            u if u == format!("https://{}/config.json", fixtures::host()) => {
                 let config = QuiltStackConfig {
                     registry_url: format!("https://{registry}").parse()?,
                 };
@@ -294,7 +331,7 @@ impl HttpClient for OAuthTestHttpClient {
         let registry = get_registry();
 
         match url {
-            u if u == format!("https://{}/config.json", get_host()) => {
+            u if u == format!("https://{}/config.json", fixtures::host()) => {
                 let config = QuiltStackConfig {
                     registry_url: format!("https://{registry}").parse()?,
                 };
@@ -323,7 +360,7 @@ impl HttpClient for OAuthTestHttpClient {
         url: &str,
         form_data: &HashMap<String, String>,
     ) -> Res<T> {
-        assert_eq!(url, connect_token_url(&get_host()));
+        assert_eq!(url, connect_token_url(&fixtures::host()));
 
         let tokens = match form_data.get("grant_type").map(String::as_str) {
             Some("authorization_code") => {
@@ -356,7 +393,7 @@ impl HttpClient for OAuthTestHttpClient {
         url: &str,
         body: &B,
     ) -> Res<T> {
-        assert_eq!(url, connect_register_url(&get_host()));
+        assert_eq!(url, connect_register_url(&fixtures::host()));
         let json = serde_json::to_value(body)?;
         assert_eq!(json["client_name"], "QuiltSync");
         assert_eq!(json["token_endpoint_auth_method"], "none");

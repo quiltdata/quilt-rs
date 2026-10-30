@@ -50,11 +50,13 @@ fn scope_saved_message(pending: usize) -> String {
 }
 
 /// The scope band. `entire_package` is the package's standing choice; picking a
-/// scope writes it through and moves no bytes.
+/// scope writes it through and moves no bytes. Kept folders, which this screen
+/// cannot set, select neither radio, and picking one replaces them.
 #[component]
 pub(super) fn SyncScopeBand(
     namespace: String,
     entire_package: bool,
+    keeps_folders: bool,
     /// Whether a status banner sits above. Must be the **same** value the
     /// entries toolbar gets: both bands are sticky, and they derive their
     /// offsets from it — if they disagree, whichever sticks higher covers the
@@ -73,16 +75,18 @@ pub(super) fn SyncScopeBand(
     } else {
         "qui-entries-toolbar qui-sync-scope"
     };
-    let whole = RwSignal::new(entire_package);
+    // `None` while folders are kept: neither radio is the standing choice.
+    let whole = RwSignal::new((!keeps_folders).then_some(entire_package));
     let busy = RwSignal::new(false);
 
     let on_pick = std::rc::Rc::new(move |want_whole: bool| {
-        if busy.get_untracked() || whole.get_untracked() == want_whole {
+        let prior = whole.get_untracked();
+        if busy.get_untracked() || prior == Some(want_whole) {
             return;
         }
         busy.set(true);
         ui_locked.set(true);
-        whole.set(want_whole);
+        whole.set(Some(want_whole));
         let ns = namespace.clone();
         // Storing the scope is the whole of it. Fetching the backlog is the
         // toolbar's `Download all files` button, one deliberate press away —
@@ -93,7 +97,12 @@ pub(super) fn SyncScopeBand(
         // outstanding, press this" rather than a claim with no way to resolve
         // it. Switching *out* likewise touches no files.
         leptos::task::spawn_local(async move {
-            let stored = commands::package_set_sync_scope(ns, want_whole).await;
+            let scope = if want_whole {
+                commands::KeepingScope::EntirePackage
+            } else {
+                commands::KeepingScope::IndividualFiles
+            };
+            let stored = commands::package_set_sync_scope(ns, scope, Vec::new()).await;
             busy.set(false);
             ui_locked.set(false);
             match stored {
@@ -103,7 +112,7 @@ pub(super) fn SyncScopeBand(
                     }
                 }
                 Err(e) => {
-                    whole.set(!want_whole);
+                    whole.set(prior);
                     notification.set(Some(Notification::Error(e)));
                 }
             }
@@ -120,7 +129,7 @@ pub(super) fn SyncScopeBand(
                     <input
                         type="radio"
                         name="sync-scope"
-                        prop:checked=move || !whole.get()
+                        prop:checked=move || { whole.get() == Some(false) }
                         prop:disabled=move || busy.get()
                         on:change=move |_| pick_narrow(false)
                     />
@@ -130,7 +139,7 @@ pub(super) fn SyncScopeBand(
                     <input
                         type="radio"
                         name="sync-scope"
-                        prop:checked=move || whole.get()
+                        prop:checked=move || { whole.get() == Some(true) }
                         prop:disabled=move || busy.get()
                         on:change=move |_| pick_whole(true)
                     />
@@ -252,5 +261,34 @@ mod tests {
 
         let many = scope_saved_message(7);
         assert!(many.contains("7 files already listed"), "plural: {many:?}");
+    }
+
+    /// Kept folders are neither of this band's scopes, so neither radio says
+    /// it is the standing one.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn kept_folders_check_neither_radio() {
+        use leptos::prelude::*;
+        use wasm_bindgen::JsCast;
+
+        let el = crate::test_support::mount(|| {
+            view! {
+                <super::SyncScopeBand
+                    namespace="team/dataset".to_string()
+                    entire_package=false
+                    keeps_folders=true
+                    with_status=false
+                    pending=0
+                    notification=RwSignal::new(None)
+                    ui_locked=RwSignal::new(false)
+                    refetch=Trigger::new()
+                />
+            }
+        });
+        let radios = el.query_selector_all("input[type=radio]").unwrap();
+        assert_eq!(radios.length(), 2);
+        for i in 0..radios.length() {
+            let radio: web_sys::HtmlInputElement = radios.item(i).unwrap().unchecked_into();
+            assert!(!radio.checked());
+        }
     }
 }

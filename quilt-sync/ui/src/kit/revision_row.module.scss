@@ -1,0 +1,106 @@
+/*
+ * RevisionRow. A message over a time.
+ *
+ * Two lines and not one: a commit message is unbounded and a time is not, so
+ * putting them on one line would spend the message's width on a value that never
+ * needs it.
+ */
+
+/* `width` and not just `max-width`. A `PaneSection` lays its children out with
+ * `align-items: flex-start`, so a child is sized to its content and a long
+ * message grows the row past the pane instead of ellipsising inside it — which
+ * is invisible in a wide cell and immediate at the pane's 320px. */
+.root {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-2);
+  min-width: 0;
+  width: 100%;
+}
+
+/* The message over the time, beside the glyph rather than under it: a list of
+ * these is a column, and a time indented to clear an icon reads as a second
+ * kind of row. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+/* Quiet, and the same size as the text it stands beside. It states a fact about
+ * the revision, not a status the page is asking anyone to act on — the `2px`
+ * lifts it onto the message's baseline. */
+.glyph {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  color: var(--q-fgColor-muted);
+}
+
+/* Ellipsised rather than wrapped. A revisions list is a column of these, and one
+ * four-line message in it would push the rest out of the overlay — so the whole
+ * value rides in `title` instead. */
+.message {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--q-text-body);
+}
+
+.empty {
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+  font-style: italic;
+}
+
+.when {
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+}
+
+/* The catalog link. Muted until it is pointed at: it is one action among rows
+ * that are mostly read, and a column of accent glyphs would be the column of
+ * accent links again. `flex: none` so an ellipsising message gives up its width
+ * first and the icon is never pushed out of a 320px pane; the `2px` sits it on
+ * the message's line, as `.glyph` does. */
+.open {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  width: 16px;
+  height: 16px;
+  color: var(--q-fgColor-muted);
+}
+
+.open svg {
+  width: 16px;
+  height: 16px;
+}
+
+.open:hover {
+  color: var(--q-fgColor-accent);
+}
+
+.open:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+  border-radius: var(--q-radius);
+}
+
+/* A short tag can carry a sentence behind it; the cursor says so. */
+.detail[title] {
+  cursor: help;
+}
+
+/* The row's action: a 24px button centred on the message's 20px line, and
+ * never squeezed by an ellipsising message. */
+.trailing {
+  display: inline-flex;
+  flex: none;
+  margin-top: -2px;
+}

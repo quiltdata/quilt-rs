@@ -1,0 +1,268 @@
+//! The whole installed-package page, composed from the three regions.
+//!
+//! Not a fourth copy of anything: `PackageHeaderRegion`, `FilePaneRegion` and
+//! `ContextPaneRegion` are the same code their own scenes draw, so this page and
+//! those scenes cannot disagree about what a region is.
+//!
+//! # What this answers that the scenes cannot
+//!
+//! **How the page spends its height.** Every region scene was framed at a width
+//! and given as much height as it wanted. The design's central bet is that two
+//! panes buy enough horizontal room to be worth a header and two control rows
+//! above them, and §9 records that bet as *unsolved*: measured at the floor when
+//! the layout was first drawn, four rows of list survived, which is what v1
+//! manages. Nothing has re-measured it since the regions were built.
+//!
+//! The first two cells are that measurement, at 1024×560, `tauri.conf.json`'s
+//! `minWidth`/`minHeight` when it was taken (the minimum width is now 640, which
+//! the last three cells measure), with and without the footer — because the
+//! footer is the difference between the resting page and the page you are
+//! actually picking files on.
+//!
+//! # What it measured, at 1024x560
+//!
+//! **The vertical bet is won, and by more than the doc expected.**
+//!
+//! | | design §1, first drawn | measured here |
+//! |---|---:|---:|
+//! | list, nothing ticked | 193px · 4 rows | **269px · 8 rows** |
+//! | list, three ticked | — | **220px · 6 rows** |
+//! | at the 900px default | — | 609px · 19 rows |
+//!
+//! Measured before the cells drew `PageLayout`'s banner row, which the app
+//! always fills and so always lays out, empty or not. It costs each list here
+//! 16px, which is what the app was already paying. Measured, too, while the
+//! rows scrolled in a box of their own; they now scroll the page, under the
+//! same parts.
+//!
+//! v1 manages about four at the same window. The difference is not layout
+//! cleverness: **the header came in at 60px against the 108 §1 budgeted**,
+//! because the built header is two lines — a `BackLink` over one 32px row — and
+//! the bucket it used to carry moved into the context pane. §9's own number,
+//! 264px and five rows, turns out to describe the resting state rather than the
+//! selecting one, and to be about right for it.
+//!
+//! `PageLayout`'s `main` ends with `padding-block-end: space-8`, which now
+//! shows only at the end of the list.
+//!
+//! # The rows scroll the page
+//!
+//! Everything else on this page has a height of its own: the appbar is 48, the
+//! header is its three lines, the search row and the toolbar are what they are.
+//! The list is as long as the package, so its rows scroll the page, and the
+//! wheel moves them wherever the pointer is. The appbar, the header and the
+//! file pane's search and toolbar stay in place above them, with the page's own
+//! bands and classes; folder headings stick under the toolbar, and the footer
+//! to the window's bottom edge. Wide, the context pane stays beside the rows.
+//!
+//! # One primary per screen
+//!
+//! The header's action is the way *into* a mode, so while the mode is on screen
+//! it hides. Resolve is the case: entering leaves `Share mine` as
+//! the page's one primary, and the pane's `BackLink` closes the mode and brings
+//! the header's `Resolve` back with it. The two read as one control in two
+//! states rather than as two controls, and the header keeps `Open folder`, the
+//! `[⋯]` and the Danger state label that says what is wrong. Settled 2026-09-19;
+//! it is also what settles what the resolve pane's exit is.
+//!
+//! **Both ends are drawn, two cells apart rather than one click apart.** The
+//! pane is the app's own `ResolvePane`, and its exit is a `BackLink` because
+//! leaving the mode is a navigation — the page drops `?resolve=1` and the
+//! router redraws it — so in a gallery, which has no router, it is an anchor
+//! that does nothing — pointed at this cell's own
+//! window, because an anchor aimed anywhere further away scrolls, and a link
+//! that says it does nothing must not move the page. The same way the revisions
+//! surface's catalog links have no browser to open. The last cell is the mode
+//! open and its header without a primary; the other four are the same page with
+//! `Resolve` back on the header.
+//!
+//! The same rule has a second instance this page does **not** resolve: with
+//! files ticked, the header's `Get latest` and the footer's `[Download N]` are
+//! both primary. They are different verbs on different objects — the package and
+//! the rows you picked — and each is the primary of its own region, so they are
+//! left alone and named here rather than quietly changed.
+//!
+//! # The narrow arrangement is the shell's own decision
+//!
+//! §1 stacks the panes below ~800px, context above files, because the region
+//! with no bound on its length goes last. Drawn here as a **container query** on
+//! the shell rather than a viewport media query: what decides the arrangement is
+//! the room the shell has, not the window's width, and in a gallery cell those
+//! are different numbers. The real page can keep the same rule.
+//!
+//! Stacked, the pane takes the whole column and its three sections sit **side
+//! by side** as three columns rather than one under the other, with no divider
+//! between them. It is the same trade the page makes one level up — horizontal
+//! room is what this arrangement has and vertical room is what it lacks — and
+//! it keeps the pane one section tall before the first file. It scrolls away
+//! with the page; only the header and the file pane's search and toolbar stay.
+//!
+//! # At 640, the window's narrowest
+//!
+//! Stacked, as at 760. Nothing scrolls sideways, the header stays one line with
+//! its location group as icons, so a long namespace ellipsises beside them, and
+//! the file rows cut their names, not the size column. A section's action that
+//! does not fit beside its label wraps under it.
+//!
+//! Resolve mode is the costly one: its pane is a column of choices, not three
+//! sections side by side, so stacked above the files it fills the window and
+//! the marked rows are a scroll away.
+//!
+//! The context pane comes first in the DOM, so reading and focus order is
+//! context, then files, at every width. Wide, `order` draws the files on the
+//! leading side; stacked, the order resets and what you see is DOM order.
+
+use leptos::context::Provider;
+use leptos::prelude::*;
+
+use crate::Cell;
+use crate::Scene;
+use crate::gallery::context_pane::ContextPaneRegion;
+use crate::gallery::file_pane::FilePaneRegion;
+use crate::gallery::package_header::PackageHeaderRegion;
+use crate::kit::Button;
+use crate::kit::DiffersId;
+use crate::kit::PackageState;
+use crate::kit::PageLayout;
+use crate::kit::icons;
+use crate::pages::{PackageHeaderBand, package_page_class, package_shell_class};
+
+/// The appbar is untouched by this page — §1, no omnibar and no breadcrumb.
+pub(crate) fn appbar_actions() -> AnyView {
+    view! {
+        <Button leading_visual=icons::sync() on_click=|_| ()>
+            "Refresh"
+        </Button>
+        <Button leading_visual=icons::gear() on_click=|_| ()>
+            "Settings"
+        </Button>
+    }
+    .into_any()
+}
+
+/// One page, at one window size.
+fn page(
+    width: u32,
+    height: u32,
+    state: PackageState,
+    name: &'static str,
+    ticked: usize,
+    resolving: bool,
+) -> AnyView {
+    let publish_choice = RwSignal::new(0_usize);
+    let scope = RwSignal::new("pick".to_string());
+    let differs = if width < 800 {
+        "resolve-differing-narrow"
+    } else {
+        "resolve-differing-page"
+    };
+
+    view! {
+        <div
+            id=name
+            class="g-window"
+            style=format!("width:{width}px; --q-frame-height:{height}px; max-width:100%")
+        >
+            // The banner's row, empty, as the app always fills that slot: without
+            // it the page here sat 16px higher than the page the app draws.
+            <PageLayout
+                heading="QuiltSync"
+                banner=().into_any()
+                actions=appbar_actions()
+                page_scroll=true
+            >
+                <div class=package_page_class()>
+                    <PackageHeaderBand>
+                        <PackageHeaderRegion
+                            state=state
+                            publish_choice=publish_choice
+                            action_open=resolving
+                        />
+                    </PackageHeaderBand>
+                    // The pane's sentence and the rows it describes, under one id
+                    // of their own: the context pane's scene draws the same pane.
+                    // Only the resolve frames draw either, one per width, so the
+                    // frames of a width can share it.
+                    <Provider value=DiffersId(differs)>
+                        <div class=package_shell_class()>
+                            <ContextPaneRegion
+                                resolving=resolving
+                                scope=scope
+                                exit=format!("#{name}")
+                            />
+                            <FilePaneRegion name=name ticked=ticked marked=resolving />
+                        </div>
+                    </Provider>
+                </div>
+            </PageLayout>
+        </div>
+    }
+    .into_any()
+}
+
+const NOTE: &str = "The page at 1024×560, the floor it was designed at, which is where the vertical bet \
+    is settled. It is won: 269px of list resting and 220 with the footer up — eight rows \
+    and six, against the four §1 measured when the layout was first drawn and the four v1 \
+    manages. The header is what paid for it, at 60px against the 108 budgeted. The third \
+    cell is the 900px default for comparison, the fourth is 760px wide where the shell \
+    stacks itself, and the fifth is resolve mode, the app's own resolve pane beside the \
+    marked rows, so the rows and the sentence naming them are finally on screen together. \
+    The last three are the window's narrowest, 640 wide: resting, picking files and \
+    resolving.";
+
+/// Shared by [`InstalledPackageScene`] and [`SelectingScene`], so the frame
+/// reads the same wherever it is drawn.
+const SELECTING: &str = "1024×560 — three ticked, and the footer has taken its 49px";
+
+/// The busiest of the five frames on its own, for the gallery's overview: three
+/// files ticked at the window's floor, so the header, both panes and the footer
+/// are all competing for the same 560px.
+///
+/// Its ids are the same ones [`InstalledPackageScene`]'s copy carries. The two
+/// are never mounted together: the overview mounts no gallery section.
+#[component]
+pub fn SelectingScene() -> impl IntoView {
+    view! {
+        <Scene
+            title="The installed package page, picking files"
+            note="Three files ticked at 1024×560, with the footer up. The \
+                  busiest this page gets: 220px of list, six rows."
+        >
+            <Cell full=true label=SELECTING>
+                {page(1024, 560, PackageState::Behind, "page-selecting", 3, false)}
+            </Cell>
+        </Scene>
+    }
+}
+
+#[component]
+pub fn InstalledPackageScene() -> impl IntoView {
+    view! {
+        <Scene title="The installed package page" note=NOTE>
+            <Cell full=true label="1024×560 — nothing ticked">
+                {page(1024, 560, PackageState::Behind, "page-floor", 0, false)}
+            </Cell>
+            <Cell full=true label=SELECTING>
+                {page(1024, 560, PackageState::Behind, "page-selecting", 3, false)}
+            </Cell>
+            <Cell full=true label="1024×900 — the default window, for what the floor costs">
+                {page(1024, 900, PackageState::Behind, "page-default", 0, false)}
+            </Cell>
+            <Cell full=true label="760×560 — the shell stacks itself, context above files">
+                {page(760, 560, PackageState::Behind, "page-narrow", 0, false)}
+            </Cell>
+            <Cell full=true label="1024×560 — resolve mode: the pane swapped, the rows marked, no primary in the header">
+                {page(1024, 560, PackageState::Diverged, "page-resolve", 0, true)}
+            </Cell>
+            <Cell full=true label="640×560 — the window's narrowest, stacked">
+                {page(640, 560, PackageState::Behind, "page-640", 0, false)}
+            </Cell>
+            <Cell full=true label="640×560 — three ticked, the footer up">
+                {page(640, 560, PackageState::Behind, "page-640-selecting", 3, false)}
+            </Cell>
+            <Cell full=true label="640×560 — resolve mode">
+                {page(640, 560, PackageState::Diverged, "page-640-resolve", 0, true)}
+            </Cell>
+        </Scene>
+    }
+}

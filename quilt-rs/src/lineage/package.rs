@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::path::PathBuf;
 
 use multihash::Multihash;
@@ -87,12 +88,14 @@ pub struct CommitState {
 /// future [`pull`](crate::flow::pull) is allowed to fetch, so it outlives the
 /// operation that reads it. See `model/ctx/sync/node.md#sync-scope`.
 ///
-/// Nothing in quilt-rs reads the stored value — `pull` takes the scope as an
-/// argument from its caller, because this engine also backs the `quilt` CLI,
-/// which has no such setting and must not have its behaviour changed by state
-/// the desktop app wrote. The field lives here because a package's lineage is
-/// the only per-package store; its reader is the desktop app.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+/// [`pull`](crate::flow::pull) takes the scope as an argument from its
+/// caller, the `quilt` CLI or the desktop app, which passes the one stored
+/// here. [`keep`](crate::InstalledPackage::keep), `kept` and the download
+/// backlog read the stored value.
+///
+/// A value this version does not know reads as [`Self::IndividualFiles`], the
+/// scope that fetches the least, so a later scope never fails the load.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncScope {
     /// Sparse checkout: only already-tracked paths are fetched, and a path
@@ -102,29 +105,106 @@ pub enum SyncScope {
     /// The whole package: a pull additionally fetches paths present in
     /// `latest` that were never tracked here.
     EntirePackage,
+    /// Every file under these folders: a pull additionally fetches the paths
+    /// under them. Build it with [`Self::folders`], which keeps one form for
+    /// one setting.
+    Folders(Vec<String>),
+}
+
+impl<'de> Deserialize<'de> for SyncScope {
+    fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        enum Known {
+            IndividualFiles,
+            EntirePackage,
+            Folders(Vec<String>),
+        }
+        let value = serde_json::Value::deserialize(deserializer)?;
+        Ok(match serde_json::from_value(value) {
+            Ok(Known::EntirePackage) => Self::EntirePackage,
+            Ok(Known::Folders(folders)) => Self::folders(folders).unwrap_or_default(),
+            Ok(Known::IndividualFiles) | Err(_) => Self::IndividualFiles,
+        })
+    }
 }
 
 impl SyncScope {
+    /// The scope that keeps every file under `folders`, each a path from the
+    /// package root.
+    ///
+    /// A `\` reads as `/`. Folders are stored without a leading `./` or `/`
+    /// or a trailing `/`, sorted, with duplicates and folders inside another
+    /// kept folder dropped.
+    /// A list that names the root (`.`, `./`, `/` or an empty string) is the
+    /// entire package, and an empty list keeps individual files. A folder
+    /// with a `..` part is refused: a folder is a path inside the package.
+    pub fn folders<S: AsRef<str>>(folders: impl IntoIterator<Item = S>) -> Res<Self> {
+        let mut kept: Vec<String> = Vec::new();
+        let mut root = false;
+        for folder in folders {
+            // Either separator, so a Windows path reads the same.
+            let parts: Vec<&str> = folder
+                .as_ref()
+                .split(['/', '\\'])
+                .filter(|part| !part.is_empty() && *part != ".")
+                .collect();
+            if parts.contains(&"..") {
+                return Err(LineageError::FolderOutsidePackage(folder.as_ref().to_string()).into());
+            }
+            if parts.is_empty() {
+                root = true;
+            }
+            kept.push(parts.join("/"));
+        }
+        if root {
+            return Ok(Self::EntirePackage);
+        }
+        kept.sort();
+        kept.dedup();
+        // Sorted, a folder comes after any folder that holds it.
+        let mut outer: Vec<String> = Vec::new();
+        for folder in kept {
+            if !outer.iter().any(|kept| holds(kept, &folder)) {
+                outer.push(folder);
+            }
+        }
+        Ok(if outer.is_empty() {
+            Self::IndividualFiles
+        } else {
+            Self::Folders(outer)
+        })
+    }
+
     /// Whether this is the scope a package has when nothing asked otherwise.
     ///
     /// Exists for `skip_serializing_if`: a package nobody opted in keeps a
     /// byte-identical `data.json`, so enabling the feature does not rewrite
     /// the key into every installed package's record.
     #[must_use]
-    #[allow(
-        clippy::trivially_copy_pass_by_ref,
-        reason = "serde's skip_serializing_if always hands the predicate a reference"
-    )]
     fn is_default(&self) -> bool {
         matches!(self, Self::IndividualFiles)
     }
 
-    /// Whether a pull under this scope may fetch paths it does not already
-    /// track.
+    /// Whether a pull under this scope may fetch `path` when this copy does
+    /// not track it. A folder covers the paths under it on a folder boundary:
+    /// `data/raw` covers `data/raw/a.csv` and not `data/raw2/a.csv`, nor a file
+    /// named `data/raw`.
     #[must_use]
-    pub fn covers_untracked(self) -> bool {
-        matches!(self, Self::EntirePackage)
+    pub fn covers_untracked(&self, path: &Path) -> bool {
+        match self {
+            Self::IndividualFiles => false,
+            Self::EntirePackage => true,
+            Self::Folders(folders) => folders
+                .iter()
+                .any(|folder| path.starts_with(folder) && path != Path::new(folder)),
+        }
     }
+}
+
+/// Whether `inner` is `outer` or a folder under it.
+fn holds(outer: &str, inner: &str) -> bool {
+    Path::new(inner).starts_with(outer)
 }
 
 /// Stores lineage (installation/modification history) of the package read from `data.json` file
@@ -263,6 +343,7 @@ impl From<ManifestUri> for PackageLineage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     #[test]
     fn test_default_is_local() {
@@ -299,7 +380,7 @@ mod tests {
                 hash: String::new(),
                 bucket: String::new(),
                 namespace: ("foo", "bar").into(),
-                origin: Some("catalog.dev".parse().unwrap()),
+                origin: Some(fixtures::host()),
             }),
             latest_hash: "abc".to_string(),
             ..PackageLineage::default()
@@ -314,7 +395,7 @@ mod tests {
                 hash: String::new(),
                 bucket: "test-bucket".to_string(),
                 namespace: ("foo", "bar").into(),
-                origin: Some("catalog.dev".parse().unwrap()),
+                origin: Some(fixtures::host()),
             }),
             latest_hash: "abc".to_string(),
             ..PackageLineage::default()
@@ -329,6 +410,107 @@ mod tests {
             lineage.remote(),
             Err(Error::Lineage(LineageError::NoRemote))
         ));
+    }
+
+    fn folders(list: &[&str]) -> SyncScope {
+        SyncScope::Folders(list.iter().map(ToString::to_string).collect())
+    }
+
+    #[test]
+    fn folders_are_stored_in_one_form() {
+        assert_eq!(
+            SyncScope::folders([
+                "./results/",
+                "data/raw",
+                "/data/raw/",
+                "data//raw",
+                ".\\data\\raw\\"
+            ])
+            .unwrap(),
+            folders(&["data/raw", "results"])
+        );
+        assert_eq!(
+            SyncScope::folders([".\\data\\"]).unwrap(),
+            folders(&["data"])
+        );
+    }
+
+    #[test]
+    fn a_folder_inside_a_kept_folder_is_dropped() {
+        assert_eq!(
+            SyncScope::folders(["data/raw/x", "data-x", "data", "data2/a"]).unwrap(),
+            folders(&["data", "data-x", "data2/a"])
+        );
+    }
+
+    #[test]
+    fn a_list_naming_the_root_is_the_entire_package() {
+        for root in [".", "./", "/", "", ".\\"] {
+            assert_eq!(
+                SyncScope::folders(["data", root]).unwrap(),
+                SyncScope::EntirePackage,
+                "{root:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_folder_reaching_outside_the_package_is_refused() {
+        for folder in ["data/../results", "..", "../data", "data\\..\\results"] {
+            assert!(
+                matches!(
+                    SyncScope::folders(["data", folder]),
+                    Err(Error::Lineage(LineageError::FolderOutsidePackage(ref named))) if named == folder
+                ),
+                "{folder}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_folders_keep_individual_files() {
+        assert_eq!(
+            SyncScope::folders(Vec::<String>::new()).unwrap(),
+            SyncScope::IndividualFiles
+        );
+    }
+
+    #[test]
+    fn a_folder_covers_paths_on_a_folder_boundary() {
+        let scope = folders(&["data/raw"]);
+        assert!(scope.covers_untracked(Path::new("data/raw/a.csv")));
+        assert!(scope.covers_untracked(Path::new("data/raw/x/b.csv")));
+        assert!(!scope.covers_untracked(Path::new("data/raw2/a.csv")));
+        assert!(!scope.covers_untracked(Path::new("data/a.csv")));
+
+        let data = folders(&["data"]);
+        assert!(data.covers_untracked(Path::new("data/a.csv")));
+        assert!(
+            !data.covers_untracked(Path::new("data")),
+            "a file named like the folder is not in it"
+        );
+    }
+
+    #[test]
+    fn folders_round_trip_through_the_record() {
+        let lineage = PackageLineage {
+            sync_scope: folders(&["data/raw", "results"]),
+            ..PackageLineage::default()
+        };
+        let json = serde_json::to_string(&lineage).unwrap();
+        assert!(
+            json.contains(r#""sync_scope":{"folders":["data/raw","results"]}"#),
+            "{json}"
+        );
+        let parsed: PackageLineage = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.sync_scope, folders(&["data/raw", "results"]));
+    }
+
+    #[test]
+    fn a_stored_folder_list_is_read_in_its_one_form() {
+        let json = r#"{"commit":null,"base_hash":"","latest_hash":"","paths":{},"sync_scope":{"folders":["./"]}}"#;
+        let lineage: PackageLineage = serde_json::from_str(json).unwrap();
+        assert_eq!(lineage.sync_scope, SyncScope::EntirePackage);
     }
 
     #[test]

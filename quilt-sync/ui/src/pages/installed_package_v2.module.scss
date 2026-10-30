@@ -1,0 +1,90 @@
+/* The page scrolls as one: the header, the file pane's search and toolbar, and
+ * the context pane beside them stay in place while the file rows scroll the
+ * frame under them. A sticky part stays only inside its parent's box, so each
+ * one's parent runs to the end of the list. */
+.page {
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+  gap: var(--q-space-3);
+  flex: 1;
+}
+
+.shell {
+  display: flex;
+  gap: var(--q-space-3);
+  flex: 1;
+}
+
+/* The header's band, under the appbar and any banner. It stops high enough to
+ * leave the floor in view under the file toolbar, and a header taller than that
+ * goes up under the appbar instead. It reaches up over `.main`'s top padding
+ * and paints it, so rows never show through the gap, and it sits at the same
+ * place stuck or not. */
+[data-page-scroll] .header {
+  position: sticky;
+  top: min(
+    var(--pinned-top),
+    var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar) - var(--pinned-header)
+  );
+  z-index: 1;
+  margin-top: calc(-1 * var(--q-space-5));
+  padding-top: var(--q-space-5);
+  background: var(--q-bgColor-page);
+}
+
+/* The context pane comes first in the DOM, so reading and focus order is
+ * context, then files. While the two share a row, `order` puts the files on the
+ * leading side. */
+.shell > aside {
+  order: 1;
+}
+
+/* Beside the files, the pane stays under the header while the rows scroll, as
+ * far down as the shell's gap, and scrolls on its own when it is taller than
+ * the room under the header. */
+[data-page-scroll] .shell > aside {
+  position: sticky;
+  top: calc(
+    min(
+      var(--pinned-top) + var(--pinned-header),
+      var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar)
+    ) +
+      var(--q-space-3)
+  );
+  align-self: flex-start;
+  max-height: calc(
+    var(--pinned-frame) -
+      min(
+        var(--pinned-top) + var(--pinned-header),
+        var(--pinned-frame) - var(--pinned-floor) - var(--pinned-toolbar)
+      ) -
+      2 * var(--q-space-3)
+  );
+  overflow-y: auto;
+}
+
+/* Below ~800 the context pane goes above the files and scrolls away with the
+ * page. That is DOM order, so `order` resets and nothing is reversed: a
+ * reversed column overflows upwards, past the appbar, where no scroll
+ * reaches. */
+@container (max-width: 800px) {
+  .shell {
+    flex-direction: column;
+  }
+
+  .shell > aside {
+    order: 0;
+  }
+
+  [data-page-scroll] .shell > aside {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
+.identity {
+  margin: 0;
+  font-size: var(--q-text-title);
+}

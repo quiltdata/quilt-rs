@@ -10,12 +10,18 @@ use quilt_uri::Namespace;
 use crate::Error;
 use crate::autopull::PausedReason;
 use crate::autopull::WatcherInner;
+use crate::autopull::activity::ActivityOp;
+use crate::autopull::last_change::LastChange;
+use crate::autopull::last_change::PendingCommit;
+use crate::autopull::pull_toast;
 use crate::autopull::reporter::LoginBlock;
 use crate::autopull::reporter::PackageStatusEvent;
-use crate::autopull::reporter::clean_uptodate_fingerprint;
+use crate::autopull::reporter::ignored_fingerprint;
+use crate::autopull::reporter::settled_fingerprint;
 use crate::autopull::reporter::status_fingerprint;
+use crate::autopull::status::SyncTrayAggregator;
+use crate::autopull::watched::WatchedWalks;
 use crate::commands::RoleCache;
-use crate::experimental_settings::resolve_sync_scope;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::publish_settings::PublishSettings;
@@ -32,12 +38,22 @@ pub(crate) struct RefreshOutcome {
     /// pull success, on quiet-window deferral, and on any no-action
     /// tick. `run_once` reads this to call `report_published`.
     pub published: Option<String>,
+    /// What a successful pull brought — `None` on every other path, exactly
+    /// as `published` is `None` on every path but a publish. The pull side of
+    /// the pair `published`'s own comment implied and the tick could not give:
+    /// a pull's only outward sign was a status string.
+    pub pulled: Option<quilt::flow::PullReport>,
     /// Fingerprint of the observation this outcome reports, put on the
     /// emitted `PackageStatusEvent` so a repeated no-action tick — the same
     /// observation re-reported — collides with the last and is skipped by the
     /// consumer. Set from the observed status, except the mutation-success
-    /// paths, which reach a settled `UpToDate` tree (`clean_uptodate_fingerprint`).
+    /// paths, which reach a settled `UpToDate` tree (`settled_fingerprint`).
     pub fingerprint: String,
+    /// When this package's quiet window expires, set **only** by the deferral
+    /// branch. Every other outcome leaves it `None`, and `run_once` reads that
+    /// as "not waiting" and clears any recorded arm time — so one decision
+    /// covers both directions.
+    pub publish_arm_at: Option<SystemTime>,
 }
 
 impl RefreshOutcome {
@@ -51,7 +67,30 @@ impl RefreshOutcome {
             upstream,
             has_changes,
             published: None,
+            pulled: None,
             fingerprint,
+            publish_arm_at: None,
+        }
+    }
+
+    /// An outcome that reports the observed tree and says when publishing will
+    /// become possible.
+    fn deferred(
+        upstream: quilt::lineage::UpstreamState,
+        has_changes: bool,
+        fingerprint: String,
+        arm_at: SystemTime,
+    ) -> Self {
+        Self {
+            upstream,
+            has_changes,
+            published: None,
+            // Nothing was pulled: this arm reports a tree it only observed, and
+            // says when publishing becomes possible. `main` added the field in
+            // `e4cd6ea` while this constructor lived only on this branch.
+            pulled: None,
+            fingerprint,
+            publish_arm_at: Some(arm_at),
         }
     }
 }
@@ -77,6 +116,11 @@ fn login_episode(
         LoginBlock::Began
     }
 }
+
+/// Why a package with no catalog cannot sync: there is no deployment to sign in
+/// to, only `~/.aws` to fix or `aws sso login` to run.
+const AMBIENT_CREDENTIALS_UNUSABLE: &str =
+    "AWS credentials on this computer aren't usable — update ~/.aws or run aws sso login";
 
 #[derive(Debug)]
 pub(crate) enum WatchError {
@@ -122,9 +166,6 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
                 Err(WatchError::Conflict(PausedReason::Other(msg.clone())))
             }
         }
-        // A pull that raced another pull and found nothing to do. Benign:
-        // the namespace is already at `latest`, so keep syncing quietly.
-        Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::AlreadyUpToDate)) => Ok(()),
         Error::Quilt(quilt::Error::PackageOp(
             quilt::PackageOpError::Push(msg)
             | quilt::PackageOpError::Commit(msg)
@@ -135,8 +176,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         // apply). Map it to the same `PullConflict` pause the dry-run path
         // produces so both routes agree on the reason the UI renders.
         Error::Quilt(quilt::Error::PackageOp(quilt::PackageOpError::PullConflict(conflicts))) => {
-            let files = conflicts.iter().map(|p| p.display().to_string()).collect();
-            Err(WatchError::Conflict(PausedReason::PullConflict(files)))
+            Err(WatchError::Conflict(PausedReason::pull_conflict(conflicts)))
         }
         // Workflow rejection (commit- or push-side): user-actionable, so
         // pause rather than retry. Bind the inner `WorkflowValidationError`
@@ -167,10 +207,15 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
         _ if err.is_access_denied() => Err(WatchError::Conflict(PausedReason::RoleDenied {
             role: String::new(),
         })),
+        // Must precede the `S3(_)` arm, which would take it: a rejected
+        // credential is an `Error::S3`, and retrying one never succeeds. It is
+        // the fact the `Login` arm below carries, reached when S3 answers 403
+        // with a credential code rather than the provider refusing to vend.
+        _ if err.is_invalid_credentials() => Err(WatchError::LoginRequired(err.s3_host().cloned())),
         Error::Quilt(quilt::Error::Reqwest(_) | quilt::Error::Io(_) | quilt::Error::S3(_)) => {
             Err(WatchError::Transient(err))
         }
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
+        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
             Err(WatchError::LoginRequired(host.clone()))
         }
         _ => Err(WatchError::Conflict(PausedReason::Other(err.to_string()))),
@@ -183,7 +228,7 @@ pub(crate) fn classify_sync_err(err: Error) -> Result<(), WatchError> {
 // `Transient`.
 fn classify_transient_or_login(err: Error) -> WatchError {
     match &err {
-        Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
+        Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
             WatchError::LoginRequired(host.clone())
         }
         // A denial is neither a broken session nor a blip: the credentials
@@ -194,6 +239,11 @@ fn classify_transient_or_login(err: Error) -> WatchError {
         _ if err.is_access_denied() => WatchError::Conflict(PausedReason::RoleDenied {
             role: String::new(),
         }),
+        // Must precede the `Transient` default, which would take it: retrying a
+        // rejected credential never succeeds. It is the fact the `Login` arm
+        // above carries, reached when S3 answers 403 with a credential code
+        // rather than the provider refusing to vend.
+        _ if err.is_invalid_credentials() => WatchError::LoginRequired(err.s3_host().cloned()),
         _ => WatchError::Transient(err),
     }
 }
@@ -238,21 +288,75 @@ fn role_denied_summary(role: &str) -> String {
     }
 }
 
+/// Was this verdict computed over a tree that held still?
+///
+/// Mid-apply the working tree carries the paths written so far while the
+/// persisted lineage still names the old base, so a walk reports exactly those
+/// paths as changed on **both** sides — conflicts that were never real. Pausing
+/// on one stops background sync for the package and tells the user something
+/// untrue, so a verdict reached while the package was being written is
+/// discarded and the next tick judges a settled tree instead.
+///
+/// Asking only "is a write running *now*" is not enough: a short apply can
+/// overlap the walk and finish before the question is asked, and that case is
+/// the worse one — the pull's own success path has already cleared its pause,
+/// so the fictitious one installed after it does not self-heal. So the epoch is
+/// sampled before the walk and compared here: a verdict is trusted only if no
+/// write is running *and* none started across the span.
+///
+/// Observed as a hand-pressed pull racing the tick: the conflict list was the
+/// contiguous manifest-order run of paths the apply had rewritten by that
+/// instant, minus the one row that had not changed between the two revisions
+/// and so was never rewritten.
+fn verdict_held_still(
+    aggregator: &SyncTrayAggregator,
+    namespace: &Namespace,
+    epoch_before: u64,
+) -> bool {
+    if aggregator.is_applying(namespace) {
+        debug!("autosync: {namespace} is being written — discarding the conflict verdict");
+        return false;
+    }
+    if aggregator.apply_epoch(namespace) != epoch_before {
+        debug!("autosync: {namespace} was written while the verdict was computed — discarding it");
+        return false;
+    }
+    true
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "one tick's inputs, each read from a different source; bundling them \
               would invent a struct that exists only to satisfy the count"
+)]
+// 106 lines, and it crossed the limit in the merge that brought
+// `feat/main-page-v2-tokens` together with main: this branch added the publish
+// deferral's arm time, main added the apply-epoch sampling and the verdict gate,
+// and neither alone was over.
+//
+// Not split, because the split is worse than the length. The body is two
+// mutually exclusive branches over ONE observation — `status`, `upstream`,
+// `has_changes`, `fingerprint` — so a helper for either branch takes ten
+// parameters where the parent takes nine, and trades this lint for
+// `too_many_arguments`. The honest fix is to give that observation a type and
+// pass one value; that is a design change and does not belong in a merge.
+#[allow(
+    clippy::too_many_lines,
+    reason = "two exclusive branches over one observation; see the note above"
 )]
 pub(crate) async fn refresh_then_maybe_sync(
     model: &impl QuiltModel,
     namespace: &Namespace,
     lineage: &quilt::lineage::PackageLineage,
     publish: &PublishSettings,
-    quiet_window: Duration,
+    last_change: &LastChange,
+    walks: &WatchedWalks,
+    wait: Duration,
     pull_enabled: bool,
     push_enabled: bool,
     scope: SyncScope,
-) -> Result<RefreshOutcome, WatchError> {
+    aggregator: &SyncTrayAggregator,
+) -> Result<Option<RefreshOutcome>, WatchError> {
     let installed = model
         .get_installed_package(namespace)
         .await
@@ -263,15 +367,73 @@ pub(crate) async fn refresh_then_maybe_sync(
             )))
         })?;
 
-    // `status` does the cheap tag refresh; an expired token surfaces here.
-    let status = model
-        .get_installed_package_status(&installed, None)
+    // The whole refresh, from the status read through the pull or the
+    // publish, runs under the package's lock, so the classify reads the
+    // entry the write replaces. A download, a hand-pressed action or the CLI
+    // holding it means the package is mid-write: skip it with no pause and no
+    // backoff, and classify it afresh next tick. Never wait: the tick runs
+    // packages one after another, and a wait here would stall them all.
+    let Some(locked) = model
+        .try_lock_package(&installed)
         .await
-        .map_err(classify_transient_or_login)?;
+        .map_err(WatchError::Transient)?
+    else {
+        info!("autosync: namespace={namespace} is being written, syncing next tick");
+        return Ok(None);
+    };
+
+    // Sampled before the walk, compared at the conflict gate: a write that
+    // starts and finishes inside the span below is invisible to a "running
+    // now?" question asked afterwards.
+    let epoch_before = aggregator.apply_epoch(namespace);
+
+    // `status` does the cheap tag refresh; an expired token surfaces here. A
+    // walk the folder watcher vouches for stands in for the working-tree walk.
+    // Only a check that can't publish reuses a walk: a publish acts on what
+    // the tree holds under the lock, and an event can still be in the
+    // debounce.
+    let may_publish = push_enabled
+        && (lineage.commit.is_some()
+            || crate::autopull::publish_deadline(last_change.get(namespace).await, wait)
+                .is_some_and(|at| at <= SystemTime::now()));
+    let kept = if may_publish {
+        None
+    } else {
+        walks.reusable(namespace)
+    };
+    let reused = match kept {
+        Some((walk, walked_lineage, walked)) => model
+            .locked_package_status_from_walk(&locked, &walked_lineage, walked)
+            .await
+            .map_err(classify_transient_or_login)?
+            // A signal during the remote's answer makes the walk old news.
+            .filter(|_| walks.still_current(namespace, walk)),
+        None => None,
+    };
+    let reused_walk = reused.is_some();
+    let status = match reused {
+        Some(status) => status,
+        None => walk_locked(model, &locked, walks, namespace, lineage).await?,
+    };
     let upstream = status.upstream_state;
     let has_changes = !status.changes.is_empty();
     // Observed-tree fingerprint, taken before the publish path consumes `status`.
     let fingerprint = status_fingerprint(&status);
+    // A publish or pull leaves ignored files alone, so the settled tree keeps these.
+    let ignored = ignored_fingerprint(&status);
+    let home = if last_change.first_walk_pending(namespace) {
+        installed.package_home().await.ok()
+    } else {
+        None
+    };
+    let changed_at = last_change
+        .observe(
+            namespace,
+            home.as_deref(),
+            &status,
+            PendingCommit::of(lineage),
+        )
+        .await;
     // `lineage` comes from `run_once`'s skip-filter read — re-reading it
     // here would cost an extra trait call per tick and open a narrow
     // race window where a commit landing between the two reads would
@@ -309,8 +471,10 @@ pub(crate) async fn refresh_then_maybe_sync(
         // per Behind tick with a race window between them. Have `flow::pull`
         // return the `PullOutcome` it already computes and route on the pull
         // result alone — same outcome-based routing, half the work.
+        // The verdict alone: the tick routes on it and leaves the paths the
+        // revision brings to the surfaces that report them.
         let outcome = model
-            .package_pull_outcome(&installed)
+            .locked_package_pull_verdict(&locked)
             .await
             .map_err(classify_transient_or_login)?;
         // Post-pull `has_changes`, read from the dry-run outcome we just
@@ -321,37 +485,88 @@ pub(crate) async fn refresh_then_maybe_sync(
         // (all-empty lists ⇒ clean tree after apply). Residual: changes made
         // DURING the pull are still invisible until the next tick — inherent
         // to a dry-run-then-apply split, not fixed here.
-        let kept_changes = match &outcome {
+        let kept_paths: BTreeSet<std::path::PathBuf> = match &outcome {
             PullOutcome::KeepsLocalChanges {
                 added,
                 modified,
                 removed,
-            } => !(added.is_empty() && modified.is_empty() && removed.is_empty()),
-            _ => false,
+            } => added
+                .iter()
+                .chain(modified)
+                .chain(removed)
+                .cloned()
+                .collect(),
+            _ => BTreeSet::new(),
         };
+        let kept_changes = !kept_paths.is_empty();
         match outcome {
             PullOutcome::Blocked { conflicts } => {
-                let files = conflicts.iter().map(|p| p.display().to_string()).collect();
-                return Err(WatchError::Conflict(PausedReason::PullConflict(files)));
+                if !verdict_held_still(aggregator, namespace, epoch_before) {
+                    return Ok(Some(RefreshOutcome::observed(
+                        upstream,
+                        has_changes,
+                        fingerprint,
+                    )));
+                }
+                return Err(WatchError::Conflict(PausedReason::pull_conflict(
+                    &conflicts,
+                )));
             }
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. } => {
-                return match model.package_pull(&installed, None, scope).await {
-                    Ok(_) => {
+                // Bracket only this call. The classify above reads — it
+                // resolves `latest` and fetches a manifest — so a flag that
+                // spanned the whole tick would report an apply when no working
+                // file is at risk, and the quit prompt reading it would become
+                // routine enough to dismiss unread.
+                let applied = {
+                    let _applying = aggregator.apply_guard(namespace);
+                    // The activity line spans the transfer and nothing else: the check never shows.
+                    let _activity = aggregator.activity_guard(ActivityOp::Pull, namespace);
+                    model.locked_package_pull(&locked, None, scope).await
+                };
+                return match applied {
+                    // A pull that raced another pull and found nothing to do.
+                    // The namespace is already at `latest`, so keep syncing
+                    // quietly.
+                    Ok(quilt::flow::Pulled::UpToDate) => Ok(Some(RefreshOutcome::observed(
+                        upstream,
+                        has_changes,
+                        fingerprint,
+                    ))),
+                    Ok(quilt::flow::Pulled::Applied(report)) => {
                         info!("autosync: pulled namespace={namespace}");
+                        if kept_changes {
+                            match model.locked_package_status(&locked, None).await {
+                                Ok(after) => {
+                                    last_change
+                                        .on_pulled(namespace, &status, &after, &kept_paths)
+                                        .await;
+                                }
+                                Err(err) => warn!(
+                                    "autosync: walk after the pull of {namespace} failed: {err}"
+                                ),
+                            }
+                        }
                         // Kept work leaves a dirty tree: `UpToDate` +
                         // `kept_changes` is the intended post-pull state.
                         // `kept_changes` comes from the outcome (post-pull
                         // truth), not the pre-pull `has_changes`.
-                        Ok(RefreshOutcome::observed(
-                            quilt::lineage::UpstreamState::UpToDate,
-                            kept_changes,
-                            clean_uptodate_fingerprint(),
-                        ))
+                        // The revision the pull reached is `latest` now.
+                        let fingerprint = settled_fingerprint(&report.manifest_uri.hash, &ignored);
+                        Ok(Some(RefreshOutcome {
+                            pulled: Some(report),
+                            ..RefreshOutcome::observed(
+                                quilt::lineage::UpstreamState::UpToDate,
+                                kept_changes,
+                                fingerprint,
+                            )
+                        }))
                     }
                     // Nothing was applied on the error path, so the pre-pull
                     // `has_changes` still describes the tree.
-                    Err(err) => classify_sync_err(err)
-                        .map(|()| RefreshOutcome::observed(upstream, has_changes, fingerprint)),
+                    Err(err) => classify_sync_err(err).map(|()| {
+                        Some(RefreshOutcome::observed(upstream, has_changes, fingerprint))
+                    }),
                 };
             }
             // Race: tip moved back to up-to-date between status and classify.
@@ -369,37 +584,147 @@ pub(crate) async fn refresh_then_maybe_sync(
         )
         && (has_changes || has_pending_commit);
     if publish_eligible {
-        let now = SystemTime::now();
-        if !status.working_tree_quiet(now, quiet_window) {
-            info!("autosync: namespace={namespace} working tree not quiet, deferring");
-            return Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint));
+        // A pending commit with no changes has no last-change time, so it
+        // publishes now.
+        if let Some(at) =
+            crate::autopull::publish_deadline(changed_at, wait).filter(|at| *at > SystemTime::now())
+        {
+            info!("autosync: namespace={namespace} changed less than the wait ago, deferring");
+            return Ok(Some(RefreshOutcome::deferred(
+                upstream,
+                has_changes,
+                fingerprint,
+                at,
+            )));
         }
-        // `publish_with_settings` is shared with the manual one-click
-        // Publish command in `commands.rs`, so a change to publish
-        // settings (new placeholder, new field) applies identically
-        // regardless of who triggered the publish.
-        return match model::publish_with_settings(model, namespace, publish, status).await {
-            Ok((_, message)) => {
+        // The wait can end while `latest` is fetched for a kept walk, and a
+        // publish acts on the tree under the lock: walk it now. A different
+        // tree is a new change, with a wait of its own.
+        let status = if reused_walk {
+            let fresh = walk_locked(model, &locked, walks, namespace, lineage).await?;
+            let fresh_fingerprint = status_fingerprint(&fresh);
+            if fresh_fingerprint != fingerprint {
+                let changed_at = last_change
+                    .observe(namespace, None, &fresh, PendingCommit::of(lineage))
+                    .await;
+                let has_changes = !fresh.changes.is_empty();
+                return Ok(Some(
+                    match crate::autopull::publish_deadline(changed_at, wait) {
+                        Some(at) => RefreshOutcome::deferred(
+                            fresh.upstream_state,
+                            has_changes,
+                            fresh_fingerprint,
+                            at,
+                        ),
+                        None => RefreshOutcome::observed(
+                            fresh.upstream_state,
+                            has_changes,
+                            fresh_fingerprint,
+                        ),
+                    },
+                ));
+            }
+            fresh
+        } else {
+            status
+        };
+        // `publish_locked_with_settings` is the manual one-click Publish
+        // command's path too, so a change to publish settings (new
+        // placeholder, new field) applies identically regardless of who
+        // triggered the publish; only autosync keeps the head's task. It
+        // publishes on the held lock and reuses `status`, walked under it.
+        let published = {
+            // The activity line spans the transfer and nothing else: the check never shows.
+            let _activity = aggregator.activity_guard(ActivityOp::Publish, namespace);
+            model::publish_locked_with_settings(
+                model,
+                &locked,
+                &installed,
+                publish,
+                status,
+                model::HeadTask::Keep,
+            )
+            .await
+        };
+        return match published {
+            // No new hash and no pending commit: nothing is left to publish,
+            // and nothing to say. The observed state stays.
+            Ok((quilt::PublishOutcome::NothingToPublish, _)) => {
+                info!("autosync: nothing to publish namespace={namespace}");
+                last_change.on_published(namespace).await;
+                Ok(Some(RefreshOutcome::observed(
+                    upstream,
+                    has_changes,
+                    fingerprint,
+                )))
+            }
+            Ok((outcome, message)) => {
                 info!("autosync: published namespace={namespace}");
-                Ok(RefreshOutcome {
+                last_change.on_published(namespace).await;
+                // The pushed revision is `latest` only when it was certified;
+                // otherwise the next tick reads whatever is, and differs.
+                let push = outcome.push().expect("a publish that did something pushed");
+                let latest = if push.certified_latest {
+                    push.manifest_uri.hash.as_str()
+                } else {
+                    ""
+                };
+                Ok(Some(RefreshOutcome {
                     upstream: quilt::lineage::UpstreamState::UpToDate,
                     has_changes: false,
                     published: Some(message),
-                    fingerprint: clean_uptodate_fingerprint(),
-                })
+                    pulled: None,
+                    fingerprint: settled_fingerprint(latest, &ignored),
+                    publish_arm_at: None,
+                }))
             }
-            Err(err) => classify_sync_err(err)
-                .map(|()| RefreshOutcome::observed(upstream, has_changes, fingerprint)),
+            Err(err) => {
+                // The commit may have landed before the push failed; it is the
+                // app's own, so the retry keeps the package's time.
+                let commit = model
+                    .get_installed_package_lineage(&installed)
+                    .await
+                    .map_or(PendingCommit::Unknown, |l| PendingCommit::of(&l));
+                last_change.on_own_commit(namespace, commit);
+                classify_sync_err(err)
+                    .map(|()| Some(RefreshOutcome::observed(upstream, has_changes, fingerprint)))
+            }
         };
     }
 
-    Ok(RefreshOutcome::observed(upstream, has_changes, fingerprint))
+    Ok(Some(RefreshOutcome::observed(
+        upstream,
+        has_changes,
+        fingerprint,
+    )))
 }
 
-#[derive(Debug, Clone, Copy)]
+/// A status walk under the held lock, kept for later checks when the watcher
+/// vouches for the package.
+async fn walk_locked<M: QuiltModel>(
+    model: &M,
+    locked: &M::Locked,
+    walks: &WatchedWalks,
+    namespace: &Namespace,
+    lineage: &quilt::lineage::PackageLineage,
+) -> Result<quilt::lineage::InstalledPackageStatus, WatchError> {
+    let start = walks.begin(namespace);
+    let status = model
+        .locked_package_status(locked, None)
+        .await
+        .map_err(classify_transient_or_login)?;
+    // `lineage` was read before the lock. Had it changed since, the kept walk
+    // only fails to match, and the next tick walks.
+    walks.record(namespace, start, lineage.clone(), &status);
+    Ok(status)
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct BackoffState {
     pub next_attempt: Instant,
     pub consecutive_failures: u32,
+    /// What the last attempt failed on, for the Autosync card.
+    pub error: String,
 }
 
 // 2, 4, 8, 16, 32, 64 s, then capped.
@@ -420,11 +745,14 @@ fn bump_backoff(
     backoff: &mut BTreeMap<Namespace, BackoffState>,
     namespace: &Namespace,
     now: Instant,
+    error: String,
 ) {
     let entry = backoff.entry(namespace.clone()).or_insert(BackoffState {
         next_attempt: now,
         consecutive_failures: 0,
+        error: String::new(),
     });
+    entry.error = error;
     entry.consecutive_failures = entry.consecutive_failures.saturating_add(1);
     entry.next_attempt = now + backoff_duration(entry.consecutive_failures);
 }
@@ -435,6 +763,25 @@ pub(crate) async fn run_once(
     roles: &RoleCache,
     inner: &WatcherInner,
 ) -> Result<(), Error> {
+    // Arm the next deadline before doing any work, so a running tick shows the
+    // tick after it. The loop arms `now + cadence` and then sleeps `cadence`, so
+    // when this runs the old deadline is already now, and it stays in the past
+    // while this tick runs (one network round trip per package). A card that
+    // reads a past deadline waits `REFETCH_DUE_FLOOR`, reads the same deadline
+    // again, and restarts its countdown ring from zero each time.
+    //
+    // The new deadline is early by this tick's duration. `kit/countdown.rs`
+    // accepts that: a ring that stays full for a few seconds is correct, and one
+    // that restarts from zero is not.
+    //
+    // Before the cheap pre-check below, not after: the loop arms unconditionally
+    // today, and whether a disabled direction should advertise a deadline at all
+    // is a different question from when the arming happens.
+    {
+        let cadence = crate::autopull::pull_cadence(&inner.settings.read().await.pull);
+        crate::autopull::arm_next_pull(inner, cadence).await;
+    }
+
     // Cheap pre-check: if both directions are off we have nothing to
     // do. Per-direction gating lives inside `refresh_then_maybe_sync`
     // so a single-direction config (pull only / push only) still
@@ -464,189 +811,339 @@ pub(crate) async fn run_once(
         .write()
         .await
         .retain(|ns, _| current.contains(ns));
+    inner
+        .clocks
+        .publish_waiting
+        .write()
+        .await
+        .retain(|ns| current.contains(ns));
     inner.aggregator.retain_namespaces(&current);
 
     // Snapshot publish settings once per tick so we don't reacquire the
-    // RwLock per package. Same lifetime for `quiet_window`.
-    //
-    // `quiet_window` is the constant `push.idle_timeout_secs`. It does
-    // not depend on window mode anymore — that coupling was the bug.
-    // The sleep loop in `Watcher::spawn` still reads
-    // `cadence_for_mode(&settings.pull, mode)`, so pull frequency and
-    // push quiet window can be tuned independently.
+    // RwLock per package. Same lifetime for `wait`, which is
+    // `push.idle_timeout_secs`, tuned apart from the pull cadence.
     let publish = inner.publish_settings.read().await.clone();
-    // One read per tick, not per package. The gate is what makes a package's
-    // standing scope apply to background pulls at all — a scope honoured only
-    // by the Pull button would miss the case the feature exists for.
-    let experimental = inner.experimental.read().await.clone();
-    let quiet_window = {
+    let wait = {
         let settings = inner.settings.read().await;
         Duration::from_secs(settings.push.idle_timeout_secs)
     };
 
+    let run = PassSettings {
+        publish,
+        wait,
+        pull_enabled,
+        push_enabled,
+        tasks: inner.tasks.settings().await,
+    };
     let now = Instant::now();
     for pkg in packages {
-        let namespace = pkg.namespace.clone();
-
-        // Skip Local / misconfigured packages without a network round-trip.
-        let lineage = match model.get_installed_package_lineage(&pkg).await {
-            Ok(l) => l,
-            Err(err) => {
-                warn!("autosync: lineage read failed for {namespace}: {err}");
-                continue;
-            }
-        };
-        let Some(remote) = lineage.remote_uri.as_ref() else {
-            continue;
-        };
-        // The origin is what makes every outcome below attributable: the loop
-        // declines to work on a package without one, so `report_*` can require a
-        // host rather than accept an absent one.
-        let Some(origin) = remote.origin.as_ref() else {
-            continue;
-        };
-        if remote.bucket.is_empty() {
-            continue;
-        }
-
-        if inner.paused.read().await.contains_key(&namespace) {
-            continue;
-        }
-        if !is_backoff_due(&*inner.backoff.read().await, &namespace, now) {
-            continue;
-        }
-
-        match refresh_then_maybe_sync(
-            model,
-            &namespace,
-            &lineage,
-            &publish,
-            quiet_window,
-            pull_enabled,
-            push_enabled,
-            resolve_sync_scope(lineage.sync_scope, &experimental),
-        )
-        .await
+        let pass = sync_package(model, roles, inner, &pkg, &run, now).await;
+        if let Some(tasks) = run.tasks.as_ref()
+            && matches!(pass, Pass::Done | Pass::LeftToTasks)
         {
-            Ok(outcome) => {
-                inner.backoff.write().await.remove(&namespace);
-                inner.login_blocked.write().await.remove(&namespace);
-                if let Some(message) = outcome.published.as_deref() {
-                    inner.reporter.report_published(&namespace, origin, message);
-                }
-                inner.reporter.report_status(
-                    &namespace,
-                    PackageStatusEvent {
-                        namespace: namespace.to_string(),
-                        status: outcome.upstream.to_string(),
-                        has_changes: outcome.has_changes,
-                        fingerprint: outcome.fingerprint,
-                    },
-                );
-                inner.aggregator.clear_error(&namespace);
-                inner
-                    .aggregator
-                    .note_status(&namespace, outcome.has_changes);
-            }
-            Err(WatchError::LoginRequired(host)) => {
-                // Backoff until the user re-auths; the Ok arm clears it.
-                bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
-                // The episode is per *deployment*, not per package: one expired
-                // session blocks every package on that host, and they arrive one
-                // per loop iteration. Asking whether any other namespace is
-                // already blocked on this host — before inserting this one — is
-                // what makes it countable once.
-                let block = {
-                    let mut blocked = inner.login_blocked.write().await;
-                    let block = login_episode(&blocked, host.as_ref());
-                    blocked.insert(namespace.clone(), host.clone());
-                    block
-                };
-                inner.reporter.report_login_required(host.as_ref(), block);
-                inner.aggregator.note_login_required(&namespace, host);
-            }
-            Err(WatchError::Conflict(reason)) => {
-                // Only a `RoleDenied` needs this, and only it pays for it:
-                // the lookup is cached per host and the namespace is about
-                // to be paused, so a denied host costs at most one `/me`
-                // per role switch — not one per tick.
-                let reason = name_denied_role(model, roles, Some(origin), reason).await;
-                inner
-                    .paused
-                    .write()
-                    .await
-                    .insert(namespace.clone(), reason.clone());
-                inner
-                    .reporter
-                    .report_paused(&namespace, origin, reason.clone());
-                // Heuristic status from the refusal reason — flow::pull /
-                // flow::publish don't expose the post-attempt state
-                // directly. The string `"error"` is **reserved** for "we
-                // couldn't talk to the remote" — the UI renders a Login
-                // affordance on that one. Surface autosync refusals as
-                // `"paused"` so the row banner is neutral, and let the UI
-                // pull the message out of the `autosync-paused` event the
-                // reporter emits.
-                let (status, has_changes) = match reason {
-                    PausedReason::PendingChanges => ("behind", true),
-                    PausedReason::PendingCommit => ("ahead", false),
-                    PausedReason::Diverged => ("diverged", false),
-                    PausedReason::PullConflict(ref files) => {
-                        warn!("autosync: paused namespace={namespace} pull conflict={files:?}");
-                        ("paused", true)
-                    }
-                    PausedReason::RoleDenied { ref role } => {
-                        warn!(
-                            "autosync: paused namespace={namespace} access denied for role={role}"
-                        );
-                        ("paused", false)
-                    }
-                    PausedReason::Other(ref msg) => {
-                        warn!("autosync: paused namespace={namespace} error={msg}");
-                        ("paused", false)
-                    }
-                };
-                inner.reporter.report_status(
-                    &namespace,
-                    PackageStatusEvent {
-                        namespace: namespace.to_string(),
-                        status: status.to_string(),
-                        has_changes,
-                        // No `InstalledPackageStatus` here — this is a
-                        // heuristic status from a refusal reason. A stable
-                        // digest of what it reports is enough: a package stuck
-                        // paused re-emits the same reason every tick, so the
-                        // same `(status, has_changes)` yields the same
-                        // fingerprint and the consumer skips the repeat. The
-                        // paused *detail* (which files) rides the separate
-                        // `autosync-paused` event, not this one.
-                        fingerprint: format!("{status};{has_changes}"),
-                    },
-                );
-                let aggregator_message = match &reason {
-                    PausedReason::PendingChanges => "pending changes".to_string(),
-                    PausedReason::PendingCommit => "pending commits".to_string(),
-                    PausedReason::Diverged => "diverged".to_string(),
-                    PausedReason::PullConflict(_) => "pull conflict".to_string(),
-                    PausedReason::RoleDenied { role } => role_denied_summary(role),
-                    PausedReason::Other(msg) => msg.clone(),
-                };
-                inner
-                    .aggregator
-                    .note_paused(&namespace, &aggregator_message);
-                inner.aggregator.note_status(&namespace, has_changes);
-            }
-            Err(WatchError::Transient(err)) => {
-                bump_backoff(&mut *inner.backoff.write().await, &namespace, now);
-                warn!("autosync: transient error for {namespace}: {err}");
-                // Transient: don't touch the aggregator's error map — a
-                // network blip should not flip the tray to Error. The
-                // next tick either clears or escalates.
-            }
+            crate::tasks::check(model, &inner.tasks, tasks, &pkg).await;
+        }
+    }
+    inner.reschedule_publish();
+
+    Ok(())
+}
+
+/// The settings one pass reads, snapshot once.
+pub(crate) struct PassSettings {
+    pub publish: PublishSettings,
+    pub wait: Duration,
+    pub pull_enabled: bool,
+    pub push_enabled: bool,
+    /// `None` while tasks are off.
+    pub tasks: Option<crate::tasks::settings::TaskSettings>,
+}
+
+/// What [`sync_package`] did with a package.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Pass {
+    /// It can't be synced now: no remote, no bucket, paused, in backoff, held
+    /// by a task run, or its lineage could not be read.
+    Skipped,
+    /// Another writer holds it.
+    Busy,
+    /// Its head is this desktop's own task claim with no run alive, which only
+    /// the task check may publish.
+    LeftToTasks,
+    /// It was observed, and pulled, published, deferred or paused.
+    Done,
+}
+
+/// One package's pass: refresh, then pull, publish or pause. The check runs
+/// it over every package, the publish timer over one whose deadline came.
+#[allow(clippy::too_many_lines, reason = "cohesive autosync pass sequence")]
+pub(crate) async fn sync_package(
+    model: &impl QuiltModel,
+    roles: &RoleCache,
+    inner: &WatcherInner,
+    pkg: &quilt::InstalledPackage,
+    run: &PassSettings,
+    now: Instant,
+) -> Pass {
+    let namespace = pkg.namespace.clone();
+
+    // A run's last revision must follow its claim with nothing between.
+    if inner.tasks.holds(&namespace) {
+        return Pass::Skipped;
+    }
+
+    // Skip Local packages without a network round-trip.
+    let lineage = match model.get_installed_package_lineage(pkg).await {
+        Ok(l) => l,
+        Err(err) => {
+            warn!("autosync: lineage read failed for {namespace}: {err}");
+            return Pass::Skipped;
+        }
+    };
+    let Some(remote) = lineage.remote_uri.as_ref() else {
+        return Pass::Skipped;
+    };
+    if remote.bucket.is_empty() {
+        return Pass::Skipped;
+    }
+    // `None` for a package with no catalog, which syncs on this computer's AWS
+    // credentials.
+    let origin = remote.origin.as_ref();
+
+    if inner.paused.read().await.contains_key(&namespace) {
+        return Pass::Skipped;
+    }
+    if !is_backoff_due(&*inner.backoff.read().await, &namespace, now) {
+        return Pass::Skipped;
+    }
+    if let Some(tasks) = run.tasks.as_ref()
+        && inner.tasks.awaits_sweep(model, tasks, pkg).await
+    {
+        return Pass::LeftToTasks;
+    }
+
+    let result = refresh_then_maybe_sync(
+        model,
+        &namespace,
+        &lineage,
+        &run.publish,
+        &inner.last_change,
+        &inner.walks,
+        run.wait,
+        run.pull_enabled,
+        run.push_enabled,
+        lineage.sync_scope.clone(),
+        &inner.aggregator,
+    )
+    .await;
+    // Another writer holds the package: nothing was observed, so nothing
+    // is reported, and its pause, backoff and arm time stand as they were.
+    let result = match result {
+        Ok(None) => return Pass::Busy,
+        Ok(Some(outcome)) => Ok(outcome),
+        Err(err) => Err(err),
+    };
+
+    // One place decides whether this namespace counts down. A deferral does,
+    // and so does a pull that kept local changes: their publish is due now.
+    // A publish, a pause, a login block and a transient failure all mean it is
+    // not waiting, and a stale deadline would have the card count down to a
+    // moment with no meaning.
+    {
+        let mut waiting = inner.clocks.publish_waiting.write().await;
+        if result.as_ref().is_ok_and(|o| {
+            o.publish_arm_at.is_some() || (run.push_enabled && o.pulled.is_some() && o.has_changes)
+        }) {
+            waiting.insert(namespace.clone());
+        } else {
+            waiting.remove(&namespace);
         }
     }
 
-    Ok(())
+    match result {
+        Ok(outcome) => {
+            inner.backoff.write().await.remove(&namespace);
+            inner.login_blocked.write().await.remove(&namespace);
+            if let Some(message) = outcome.published.as_deref() {
+                inner.reporter.report_published(&namespace, origin, message);
+            }
+            // What the pull brought, if it brought anything. `None` from
+            // `report_toast` is the metadata-only revision: hashes advanced
+            // and no file moved, and an entry that stands until dismissed
+            // must not say nothing.
+            if let Some(report) = outcome.pulled.as_ref()
+                && let Some(toast) = pull_toast::report_toast(&namespace, report)
+            {
+                inner.reporter.report_pulled(&namespace, toast);
+            }
+            inner.reporter.report_status(
+                &namespace,
+                PackageStatusEvent {
+                    namespace: namespace.clone(),
+                    status: outcome.upstream.to_string(),
+                    has_changes: outcome.has_changes,
+                    fingerprint: outcome.fingerprint,
+                },
+            );
+            inner.aggregator.clear_error(&namespace);
+            inner
+                .aggregator
+                .note_status(&namespace, outcome.has_changes);
+        }
+        Err(WatchError::LoginRequired(host)) => {
+            // A refusal the old catalog gave is not this package's any more;
+            // the next pass asks the new one. See `WatcherInner::refusals`.
+            let _gate = inner.refusals.lock().await;
+            if catalog_changed(model, pkg, origin).await {
+                inner.reporter.report_autosync_changed();
+                return Pass::Done;
+            }
+            // Backoff until the user re-auths; the Ok arm clears it. With no
+            // host the failing call ran on this computer's AWS credentials.
+            let error = host.as_ref().map_or_else(
+                || AMBIENT_CREDENTIALS_UNUSABLE.to_string(),
+                |host| format!("Sign in to {host}"),
+            );
+            bump_backoff(&mut *inner.backoff.write().await, &namespace, now, error);
+            // The episode is per *deployment*, not per package: one expired
+            // session blocks every package on that host, and they arrive one
+            // per loop iteration. Asking whether any other namespace is
+            // already blocked on this host — before inserting this one — is
+            // what makes it countable once.
+            let block = {
+                let mut blocked = inner.login_blocked.write().await;
+                let block = login_episode(&blocked, host.as_ref());
+                blocked.insert(namespace.clone(), host.clone());
+                block
+            };
+            inner.reporter.report_login_required(host.as_ref(), block);
+            inner.aggregator.note_login_required(&namespace, host);
+        }
+        Err(WatchError::Conflict(reason)) => {
+            // Only a `RoleDenied` needs this, and only it pays for it:
+            // the lookup is cached per host and the namespace is about
+            // to be paused, so a denied host costs at most one `/me`
+            // per role switch — not one per tick.
+            let reason = name_denied_role(model, roles, origin, reason).await;
+            let _gate = inner.refusals.lock().await;
+            if catalog_changed(model, pkg, origin).await {
+                inner.reporter.report_autosync_changed();
+                return Pass::Done;
+            }
+            pause(inner, &namespace, origin, reason).await;
+        }
+        Err(WatchError::Transient(err)) => {
+            // Its retry delay was the old catalog's, if the catalog changed.
+            let _gate = inner.refusals.lock().await;
+            if catalog_changed(model, pkg, origin).await {
+                inner.reporter.report_autosync_changed();
+                return Pass::Done;
+            }
+            bump_backoff(
+                &mut *inner.backoff.write().await,
+                &namespace,
+                now,
+                err.to_string(),
+            );
+            warn!("autosync: transient error for {namespace}: {err}");
+            // Transient: don't touch the aggregator's error map — a
+            // network blip should not flip the tray to Error. The
+            // next tick either clears or escalates.
+        }
+    }
+    inner.reporter.report_autosync_changed();
+    Pass::Done
+}
+
+/// Whether the package's catalog is no longer `origin`, the one this pass
+/// read at its start. A lineage that cannot be read now changed nothing.
+async fn catalog_changed(
+    model: &impl QuiltModel,
+    pkg: &quilt::InstalledPackage,
+    origin: Option<&Host>,
+) -> bool {
+    model
+        .get_installed_package_lineage(pkg)
+        .await
+        .ok()
+        .and_then(|lineage| lineage.remote_uri)
+        .is_some_and(|remote| remote.origin.as_ref() != origin)
+}
+
+/// Pause `namespace` for `reason` and announce it: the paused map the tick
+/// skips on and the pages read, the `autosync-paused` event, a heuristic
+/// status event, and the tray.
+///
+/// The one place a pause is recorded, whether the tick hit the refusal or a
+/// hand-pressed pull did (see [`Watcher::pause`](crate::autopull::Watcher::pause)).
+/// `origin` is the package's catalog, `None` for a package with no catalog.
+pub(crate) async fn pause(
+    inner: &WatcherInner,
+    namespace: &Namespace,
+    origin: Option<&Host>,
+    reason: PausedReason,
+) {
+    inner
+        .paused
+        .write()
+        .await
+        .insert(namespace.clone(), reason.clone());
+    inner
+        .reporter
+        .report_paused(namespace, origin, reason.clone());
+    inner.reporter.report_autosync_changed();
+    // Heuristic status from the refusal reason — flow::pull /
+    // flow::publish don't expose the post-attempt state
+    // directly. The string `"error"` is **reserved** for "we
+    // couldn't talk to the remote" — the UI renders a Login
+    // affordance on that one. Surface autosync refusals as
+    // `"paused"` so the row banner is neutral, and let the UI
+    // pull the message out of the `autosync-paused` event the
+    // reporter emits.
+    let (status, has_changes) = match reason {
+        PausedReason::PendingChanges => ("behind", true),
+        PausedReason::PendingCommit => ("ahead", false),
+        PausedReason::Diverged => ("diverged", false),
+        PausedReason::PullConflict(ref files) => {
+            warn!("autosync: paused namespace={namespace} pull conflict={files:?}");
+            ("paused", true)
+        }
+        PausedReason::RoleDenied { ref role } => {
+            warn!("autosync: paused namespace={namespace} access denied for role={role}");
+            ("paused", false)
+        }
+        PausedReason::Other(ref msg) => {
+            warn!("autosync: paused namespace={namespace} error={msg}");
+            ("paused", false)
+        }
+    };
+    inner.reporter.report_status(
+        namespace,
+        PackageStatusEvent {
+            namespace: namespace.clone(),
+            status: status.to_string(),
+            has_changes,
+            // No `InstalledPackageStatus` here — this is a
+            // heuristic status from a refusal reason. A stable
+            // digest of what it reports is enough: a package stuck
+            // paused re-emits the same reason every tick, so the
+            // same `(status, has_changes)` yields the same
+            // fingerprint and the consumer skips the repeat. The
+            // paused *detail* (which files) rides the separate
+            // `autosync-paused` event, not this one.
+            fingerprint: format!("{status};{has_changes}"),
+        },
+    );
+    let aggregator_message = match &reason {
+        PausedReason::PendingChanges => "pending changes".to_string(),
+        PausedReason::PendingCommit => "pending commits".to_string(),
+        PausedReason::Diverged => "diverged".to_string(),
+        PausedReason::PullConflict(_) => "pull conflict".to_string(),
+        PausedReason::RoleDenied { role } => role_denied_summary(role),
+        PausedReason::Other(msg) => msg.clone(),
+    };
+    inner.aggregator.note_paused(namespace, &aggregator_message);
+    inner.aggregator.note_status(namespace, has_changes);
 }
 
 #[cfg(test)]

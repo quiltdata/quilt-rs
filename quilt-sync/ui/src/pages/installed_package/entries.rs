@@ -217,6 +217,7 @@ pub(super) fn EntryRow(
         status,
         junky_pattern,
         ignored_by,
+        folder,
         namespace,
     } = entry;
 
@@ -287,7 +288,7 @@ pub(super) fn EntryRow(
         let uri = uri_for_open.clone();
         let notification = notification;
         leptos::task::spawn_local(async move {
-            match commands::open_in_default_application(ns, path, uri).await {
+            match commands::open_in_default_application(ns.to_string(), path, uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -303,7 +304,7 @@ pub(super) fn EntryRow(
         let uri = uri_for_reveal.clone();
         let notification = notification;
         leptos::task::spawn_local(async move {
-            match commands::reveal_in_file_browser(ns, path, uri).await {
+            match commands::reveal_in_file_browser(ns.to_string(), path, uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -324,11 +325,11 @@ pub(super) fn EntryRow(
     };
 
     let ns_for_ignore = namespace.clone();
-    let path_for_ignore = filename;
+    let path_for_ignore = filename.clone();
     let on_ignore = move |_| {
         if let Some(pattern) = junky_pattern.clone() {
             show_ignore_popup.set(Some(IgnorePopupData {
-                namespace: ns_for_ignore.clone(),
+                namespace: ns_for_ignore.to_string(),
                 path: path_for_ignore.clone(),
                 suggested_pattern: pattern,
                 uri: uri_for_ignore.clone(),
@@ -337,10 +338,13 @@ pub(super) fn EntryRow(
     };
 
     let ns_for_unignore = namespace;
+    let pattern = ignored_by.map(|by| by.pattern);
     let on_unignore = move |_| {
-        if let Some(pattern) = ignored_by.clone() {
+        if let Some(pattern) = pattern.clone() {
             show_unignore_popup.set(Some(UnignorePopupData {
-                namespace: ns_for_unignore.clone(),
+                namespace: ns_for_unignore.to_string(),
+                path: filename.clone(),
+                folder,
                 pattern,
                 uri: uri_for_unignore.clone(),
             }));
@@ -415,18 +419,10 @@ pub(super) fn EntryRow(
 #[cfg(test)]
 mod tests {
     use super::EntriesToolbar;
+    use crate::test_support::mount;
     use leptos::prelude::*;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::wasm_bindgen_test;
-
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
-    }
 
     /// The toolbar's header checkbox in one selection state. `indeterminate` is a
     /// DOM *property* with no attribute form, so it can only be checked against a

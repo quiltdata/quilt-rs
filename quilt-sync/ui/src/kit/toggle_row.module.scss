@@ -1,0 +1,123 @@
+/*
+ * ToggleRow. A checkbox, a label with a sub-label, and a trailing slot for a
+ * countdown or an idle note.
+ *
+ * Only the left part is a `<label>`; the trailing slot is its sibling. Browsers
+ * do forward a label click to a checkbox — unlike a select — so wrapping the
+ * whole row would have worked, but then clicking the countdown or "nothing to
+ * publish" would flip the setting. Those are information, not controls.
+ *
+ * The label still fills everything up to the trailing slot, so the target stays
+ * generous. Hover feedback lives on the label too, so the inert area does not
+ * highlight the checkbox either.
+ */
+
+.root {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--q-space-2);
+  padding: var(--q-space-2) 0;
+}
+
+.root.disabled {
+  color: var(--q-fgColor-disabled);
+}
+
+/* The clickable part: indicator plus text, filling the row up to the trailing
+ * slot. */
+.main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--q-space-2);
+  /* A zero basis, so the row's wrap (for `.detail`) never drops the trailing
+   * slot under the words; with one growing item the widths are as before. */
+  flex: 1 1 0;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.root.disabled .main {
+  cursor: not-allowed;
+}
+
+/* The box is a `Checkbox`; only the things that are this row's business are
+ * set here, through the `data-` hook it renders for exactly this. Its own class
+ * names are hashed per module and are not ours to target. */
+.main [data-q-checkbox] {
+  margin-top: 1px;
+}
+
+/* Hover feedback belongs to the label, not the row: hovering the inert trailing
+ * slot must not suggest the checkbox is about to change. The `Checkbox` lights
+ * up when the box itself is hovered; this extends it to the words. */
+.main:hover [data-q-checkbox] {
+  border-color: var(--q-fgColor-muted);
+}
+
+.root.disabled .main:hover [data-q-checkbox] {
+  border-color: var(--q-borderColor-muted);
+}
+
+.text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.label {
+  display: block;
+}
+
+.sublabel {
+  display: block;
+  margin-top: 1px;
+  color: var(--q-fgColor-muted);
+  /* A sentence, not a label: the same measure as a banner's message. */
+  max-width: 70ch;
+}
+
+.root.disabled .sublabel {
+  color: var(--q-fgColor-disabled);
+}
+
+/* Inert by design — outside the label, so clicking it does nothing, and the
+ * cursor says so. Never shrinks: a countdown that reflows as its digits change is
+ * worse than one that is simply wide enough, and tabular figures stop the digits
+ * jittering. */
+.trailing {
+  flex: none;
+  cursor: default;
+  padding-left: var(--q-space-2);
+  color: var(--q-fgColor-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.root.disabled .trailing {
+  color: var(--q-fgColor-disabled);
+}
+
+/* `ToggleRowSkeleton`. Not a control yet, so no pointer; the box's placeholder takes
+ * the offset `Checkbox` takes above, so it sits where the box will. */
+.skeleton .main {
+  cursor: default;
+}
+
+.box_slot {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* A row of its own under the words, lined up with them: the box's 17px and the
+ * gap. Only a row with a detail wraps. */
+.detail {
+  flex-basis: 100%;
+  min-width: 0;
+  padding-left: calc(17px + var(--q-space-2));
+}
+
+/* A detail with nothing in it, such as an error that is not showing, takes no
+ * line and no gap. */
+.detail:not(:has(*)) {
+  display: none;
+}

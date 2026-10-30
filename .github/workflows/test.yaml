@@ -1,0 +1,534 @@
+name: Test
+
+# Every job's work is a `just` recipe, so `just ci` runs the same checks
+# locally. This file holds only triggers, setup and secrets.
+
+on:
+  # Toolchain canary: `rust-toolchain.toml` floats on `stable` and
+  # `setup-rust-dev` inherits it, so every run resolves a fresh compiler.
+  # Without a schedule, a new release is first seen when it breaks some PR.
+  schedule:
+    # Off the hour: scheduled runs on the hour contend for runners.
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+  push:
+    # Only `main`: a pull request branch already runs on `pull_request`, and
+    # a `push` run too would test every commit there twice. The merge queue
+    # has already tested each commit here, but this run stays: rust-cache
+    # saves only from `main`, so it keeps every job's cache warm, and runner
+    # minutes cost nothing on a public repository.
+    branches: [main]
+  pull_request:
+  # The merge queue tests `main` plus a pull request on a temporary branch
+  # before `main` moves, with every job on every OS.
+  merge_group:
+
+# Read-only: third-party actions run with this token.
+permissions:
+  contents: read
+
+concurrency:
+  # `event_name` so a scheduled run and a push to main cannot cancel each other.
+  # Each merge queue entry has its own branch, so entries never cancel each other.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  # Steps without credentials skip the IMDS probe, so a test that reaches for
+  # AWS fails with a credentials error in a moment, rather than timing out
+  # against an endpoint the runner does not have.
+  AWS_EC2_METADATA_DISABLED: true
+
+jobs:
+  changes:
+    name: changes
+    # Which jobs a pull request needs, by the files it changes. Every other
+    # event, the merge queue included, runs every job. A job left out shows as skipped.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # The filter lists a pull request's files through the API.
+    permissions:
+      pull-requests: read
+    outputs:
+      md: ${{ github.event_name != 'pull_request' || steps.filter.outputs.md == 'true' }}
+      crates: ${{ github.event_name != 'pull_request' || steps.filter.outputs.crates == 'true' }}
+      sync: ${{ github.event_name != 'pull_request' || steps.filter.outputs.sync == 'true' }}
+      ui: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ui == 'true' }}
+    steps:
+      # Pinned by commit: it is third-party code. A rename counts at both its
+      # old and new path. `some-with-excludes`: a file counts when it matches a
+      # pattern and none of the `!` ones.
+      - name: List the jobs to run
+        id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          predicate-quantifier: some-with-excludes
+          filters: |
+            md:
+              - "**/*.md"
+              - .rumdl.toml
+              - justfile
+              - .github/workflows/test.yaml
+            # Cargo forbids dependency cycles, so no other crate depends on QuiltSync.
+            crates:
+              - "**"
+              - "!**/*.md"
+              - "!quilt-sync/**"
+            # QuiltSync's backend builds on every crate but the UI.
+            sync:
+              - "**"
+              - "!**/*.md"
+            # The UI, its path dependencies (`cargo metadata`: only quilt-uri),
+            # the workspace files, and the recipes and CI files it runs with.
+            ui:
+              - quilt-sync/ui/**
+              - quilt-uri/**
+              - Cargo.toml
+              - Cargo.lock
+              - rust-toolchain.toml
+              - clippy.toml
+              - .cargo/**
+              - .config/nextest.toml
+              - justfile
+              - test.just
+              - .github/workflows/test.yaml
+              - .github/actions/**
+              - "!**/*.md"
+
+  markdown:
+    name: markdown
+    needs: changes
+    if: needs.changes.outputs.md == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # The project's own action downloads the release binary and checks its
+      # sha256. Pinned by commit: it is third-party code. It installs the
+      # latest rumdl, as a local `cargo install rumdl` does.
+      - name: Install rumdl
+        uses: rvben/rumdl@1e0f1d13c87418c31e0d59dacddd98f27a02efcc # v0.3.2
+        with:
+          install-only: true
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Lint markdown files
+        run: just lint-md
+
+  crates:
+    name: crates
+    # The crates published to crates.io: quilt-rs, quilt-uri and quilt-cli.
+    # Both QuiltSync crates are `publish = false`. This runner has no Tauri
+    # system libraries, so it cannot build `quilt-sync`; `quilt-sync-ui` is
+    # tested in the `frontend` jobs.
+    needs: changes
+    if: needs.changes.outputs.crates == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # The crates above, for the recipes' cargo commands.
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust for development
+        uses: ./.github/actions/setup-rust-dev
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install cargo-nextest and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest,just
+
+      - name: Format, lint and wasm check
+        run: just check wasm-check
+
+      # Split in two so a fork pull request is not a different, quieter run of
+      # the same step. Everything that needs no credentials runs everywhere;
+      # the fixture tests are their own step, skipped where GitHub withholds
+      # secrets. With `live-writes`, the selections partition the suite — none
+      # overlaps.
+      - name: Test
+        run: just test no-aws
+
+      - name: Test (live AWS fixtures)
+        # Secrets reach a pull request only from a branch in this repository —
+        # a platform rule, so this is a skip, not a failure.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: just test live
+        env:
+          # The tests that write to S3 run in `live-writes`.
+          LIVE: test(/::live_/) and not test(/::live_write_/)
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Test doctests
+        run: just test doc
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  crates-cross-platform:
+    name: crates (${{ matrix.platform }})
+    # The tests of `crates` on the other OSes. Pull requests test on Linux
+    # only, to stay fast; the merge queue runs these before a merge.
+    if: github.event_name != 'pull_request'
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-15, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
+    env:
+      # Same crates as `crates`, for the reason given there.
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
+    # Bash on Windows too: `just` runs recipe lines with `sh`, which Git Bash
+    # puts on the PATH.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust for testing
+        uses: ./.github/actions/setup-rust-minimal
+        with:
+          components: clippy
+
+      - name: Install cargo-nextest and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest,just
+
+      # The only lint of code built for this OS alone. Linux cannot lint it
+      # for the other target: aws-lc-rs compiles C for the target it builds.
+      - name: Lint
+        run: just clippy
+
+      # `--no-fail-fast`, and every step runs after a failure: one run should
+      # list every failure, not just the first.
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: just test no-aws --no-fail-fast
+
+      - name: Test (live AWS fixtures)
+        # Same rule as in `crates`.
+        if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+        run: just test live --no-fail-fast
+        env:
+          # The tests that write to S3 run in `live-writes`.
+          LIVE: test(/::live_/) and not test(/::live_write_/)
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  live-writes:
+    name: live writes (${{ matrix.platform }})
+    # The `live_write_*` tests, which write to S3: some push a shared fixture
+    # package and then restore it, so two at once would see each other's
+    # in-between revisions. The group is shared by every run of every
+    # workflow, so only one of these jobs runs at a time; the queue keeps every
+    # waiting job, where the default would cancel all but the newest.
+    concurrency:
+      group: live-s3-writes
+      cancel-in-progress: false
+      queue: max
+    needs: changes
+    # Same rule as the live step in `crates`. Windows not on pull requests,
+    # as in `crates-cross-platform`. No macOS: it shares Linux's Unix
+    # semantics, and every leg here waits for the one before it.
+    if: needs.changes.outputs.crates == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ github.event_name != 'pull_request' && fromJSON('["ubuntu-24.04", "windows-latest"]') || fromJSON('["ubuntu-24.04"]') }}
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
+    env:
+      # Same crates as `crates`, for the reason given there.
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust for testing
+        uses: ./.github/actions/setup-rust-minimal
+
+      - name: Install cargo-nextest and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest,just
+
+      - name: Test (live AWS fixture writes)
+        run: just test live --no-fail-fast
+        env:
+          LIVE: test(/::live_write_/)
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  cargo-deny:
+    name: cargo-deny
+    needs: changes
+    if: needs.changes.outputs.crates == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # A prebuilt binary, not EmbarkStudios/cargo-deny-action: that action builds
+      # a Docker image from Docker Hub, and anonymous pulls hit its rate limit.
+      - name: Install cargo-deny and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny,just
+
+      - name: cargo deny check
+        run: just deny
+
+  quilt-sync:
+    name: quilt-sync
+    # QuiltSync's backend, on every change but a markdown-only one: it builds
+    # on every crate but the UI.
+    needs: changes
+    if: needs.changes.outputs.sync == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # QuiltSync's backend, for the recipes' cargo commands.
+      SCOPE: -p quilt-sync --all-targets
+      # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install Ubuntu dependencies
+        uses: ./.github/actions/install-ubuntu-deps
+
+      - name: Setup Rust for development
+        uses: ./.github/actions/setup-rust-dev
+
+      - name: Install cargo-nextest and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest,just
+
+      - name: Format and lint
+        run: just check
+
+      # Two steps, for the reason given in `crates`.
+      - name: Test
+        run: just test no-aws
+        env:
+          RUST_LOG: debug
+
+      - name: Test (live AWS fixtures)
+        # Same rule as in `crates`.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: just test live
+        env:
+          RUST_LOG: debug
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  quilt-sync-cross-platform:
+    name: quilt-sync (${{ matrix.platform }})
+    # The tests of `quilt-sync` on the other OSes, not on pull requests, as
+    # in `crates-cross-platform`. Holds the only clippy run of the backend for
+    # these OSes.
+    if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        platform: [macos-15, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 30
+    env:
+      # Same crate as `quilt-sync`.
+      SCOPE: -p quilt-sync --all-targets
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust for testing
+        uses: ./.github/actions/setup-rust-minimal
+        with:
+          targets: ${{ matrix.platform == 'macos-15' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          components: clippy
+
+      - name: Install cargo-nextest and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest,just
+
+      - name: Lint
+        run: just clippy
+
+      # Runs after a lint failure too, so one run lists both.
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: just test no-aws
+
+  # `quilt-sync-ui` runs in three parallel jobs, when a pull request changes it
+  # or anything it builds from.
+  frontend-lint:
+    name: frontend lint
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust-dev
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install cargo-nextest and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest,just
+
+      - name: Format and lint
+        run: just check
+        env:
+          # The frontend is built for wasm.
+          SCOPE: --target wasm32-unknown-unknown -p quilt-sync-ui --all-targets
+
+      # This crate has tests for two targets, and neither harness runs the
+      # other's: `wasm-bindgen-test-runner` runs only `#[wasm_bindgen_test]`, and
+      # libtest runs only `#[test]`. `frontend wasm tests` runs the wasm tests;
+      # this step runs the host tests. Without it, no `#[test]` in this crate
+      # runs in CI.
+      #
+      # DOM tests cannot run here, because `mount_to` and similar helpers are
+      # wasm-bindgen bindings into JS. Pure-logic tests could move to wasm
+      # instead. Once v1 is deleted only about twenty host tests remain, and
+      # converting them and removing this step becomes the cheaper option.
+      #
+      # `--lib --bins`, not `--bin quilt-sync-ui`: most of the tests are in the
+      # library target, and `--bin` alone runs only the few in the binary.
+      - name: Test (host target)
+        run: just test no-aws
+        env:
+          SCOPE: -p quilt-sync-ui --lib --bins
+
+  frontend-wasm-tests:
+    name: frontend wasm tests
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # Smaller binaries make the build and wasm-bindgen faster; debugging is done locally.
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust-dev
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      # The runner must match the `wasm-bindgen` library in Cargo.lock: the two
+      # refuse to work together across versions.
+      - name: Determine wasm-bindgen version
+        id: wasm-bindgen-version
+        run: cargo metadata --format-version 1 --locked | jq -r '"version=" + (.packages[] | select(.name == "wasm-bindgen") | .version)' >> "$GITHUB_OUTPUT"
+
+      - name: Install wasm-bindgen-cli
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.wasm-bindgen-version.outputs.version }}
+
+      # Headless Firefox and geckodriver come with the runner image.
+      - name: Test (wasm)
+        run: just test frontend
+
+  frontend-build:
+    name: frontend build
+    needs: changes
+    if: needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust-dev
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Trunk's pre_build hook bundles the JSON editor with npm.
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: 'npm'
+          cache-dependency-path: 'quilt-sync/ui/package-lock.json'
+
+      - name: Install trunk and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk,just
+
+      # Trunk's pre_build hook shells out to `stylance` (quilt-sync/ui/Trunk.toml).
+      # Pinned to the `stylance` library version in quilt-sync/ui/Cargo.toml: the
+      # CLI generates the hashed class names the library resolves, so a skew
+      # between them breaks styling silently rather than loudly.
+      - name: Install stylance
+        uses: taiki-e/install-action@v2
+        with:
+          tool: stylance-cli@0.8.4
+
+      - name: Build
+        run: just release-build
+
+  checks:
+    name: all checks
+    # The one check the branch rules require. A skipped matrix job reports
+    # under its unexpanded name, so requiring each job by name would block
+    # every pull request; this job passes on both pull requests and the merge
+    # queue. A skipped job counts as passed.
+    needs:
+      - changes
+      - markdown
+      - crates
+      - crates-cross-platform
+      - live-writes
+      - cargo-deny
+      - quilt-sync
+      - quilt-sync-cross-platform
+      - frontend-lint
+      - frontend-wasm-tests
+      - frontend-build
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fail if any job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

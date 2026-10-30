@@ -2,6 +2,7 @@ use quilt_uri::Host;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
+use crate::cli::output::Render;
 use crate::cli::output::Std;
 
 #[derive(Debug)]
@@ -22,6 +23,12 @@ impl std::fmt::Display for Output {
     }
 }
 
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({ "host": self.host.to_string() })
+    }
+}
+
 pub async fn command(m: impl Commands, args: Input) -> Std {
     Std::from_result(m.login(args).await)
 }
@@ -38,16 +45,27 @@ pub async fn model(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
-    use std::str::FromStr;
     use test_log::test;
+
+    use crate::cli::output::Render;
 
     #[test]
     fn test_output_display() {
-        let host = Host::from_str("example.com").unwrap();
+        let host = fixtures::host();
         let output = Output { host };
 
         let display_string = format!("{output}");
-        assert_eq!(display_string, "Successfully logged in to example.com");
+        assert_eq!(display_string, "Successfully logged in to quilt.test");
+    }
+
+    #[test]
+    fn json_carries_the_host() {
+        let output = Output {
+            host: fixtures::host(),
+        };
+
+        assert_eq!(output.to_json().to_string(), r#"{"host":"quilt.test"}"#);
     }
 }

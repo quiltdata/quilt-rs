@@ -1,0 +1,235 @@
+// The header over the cards, at the cards' own gap.
+//
+// The bottom padding is the page's own because it scrolls past `PageLayout`'s
+// column: that column is held to the window's height so a list can scroll
+// inside it, and its bottom padding stays at the window's edge. Settings is
+// taller than the window, so without this the last card touches the bottom.
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-4);
+  padding-bottom: var(--q-space-8);
+}
+
+// A test handle that adds no box, so the card inside it is the layout's grid
+// cell and stretches to its row like the others.
+.slot {
+  display: contents;
+}
+
+.quiet {
+  margin: 0;
+  color: var(--q-fgColor-muted);
+}
+
+// As `FormControl`'s label, for a control that is not in one.
+.field_name {
+  display: block;
+  margin: 0 0 var(--q-space-1);
+  font-weight: 600;
+}
+
+// As `FormControl`'s error.
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: var(--q-space-1) 0 0;
+  color: var(--q-fgColor-danger);
+}
+
+.error svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin-top: 3px;
+}
+
+// A row's own control at its trailing end, its *Saved* note before it.
+.control {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-2);
+}
+
+// Empty until a row saves, and never moves the row: the trailing slot is
+// already sized by the row.
+.saved {
+  color: var(--q-fgColor-muted);
+}
+
+// The card's buttons, under its rows. No rule above them: they belong to
+// the card, not to the row before. Doubled to outrank Card's rule between
+// its children.
+.card_actions.card_actions {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 0;
+}
+
+// A card's opening sentence, spaced from the first row as the rows are from
+// each other.
+.lead {
+  margin: 0;
+  padding-bottom: var(--q-space-2);
+  color: var(--q-fgColor-muted);
+}
+
+// A placeholder, as typed in the template.
+.code {
+  font-family: var(--q-font-mono);
+}
+
+// A value the reader typed, such as a long template: wrapped, even inside a
+// word, rather than pushing the card wider.
+.long {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+// The stored metadata's tree, at the row's full width.
+.json {
+  width: 100%;
+  min-width: 0;
+}
+
+// A name over its value, and an action at the trailing end, centred on the
+// two lines.
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-3);
+  padding: var(--q-space-2) 0;
+}
+
+.row_text {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.row_name {
+  font-weight: 600;
+}
+
+.row_value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--q-space-3);
+  min-width: 0;
+}
+
+.row_note {
+  color: var(--q-fgColor-muted);
+  max-width: 70ch;
+}
+
+.row_action {
+  flex: none;
+  color: var(--q-fgColor-muted);
+}
+
+// A path is one line, cut at the end; its title holds the rest.
+.path {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--q-font-mono);
+}
+
+.freed {
+  color: var(--q-fgColor-muted);
+}
+
+.sent_list {
+  margin: 0;
+  padding-left: var(--q-space-5);
+  color: var(--q-fgColor-muted);
+}
+
+// One version in Release notes.
+.release + .release {
+  margin-top: var(--q-space-4);
+}
+
+.release_body {
+  margin: var(--q-space-2) 0 0;
+  white-space: pre-wrap;
+  font: inherit;
+}
+
+// The built-in rules in the popup, a group at a time.
+.rule_group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.rules {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rules li {
+  padding: 2px 0;
+}
+
+.rule {
+  display: flex;
+  align-items: baseline;
+  gap: var(--q-space-2);
+  cursor: pointer;
+}
+
+// The stored agents, one to a line.
+.agents {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+// A command, such as a long path, wraps anywhere rather than widening the
+// card.
+.command {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--q-font-mono);
+}
+
+// One agent's fields in the popup.
+.agent_fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+  // A fieldset holds its content's width unless told otherwise.
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--q-space-3);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+}
+
+.agent_fields textarea {
+  overflow-wrap: anywhere;
+}
+
+// A fixed width, so it breaks only part of the border: in the fieldset's
+// column layout a legend can stretch across all of it.
+.agent_legend {
+  width: 48px;
+  padding: 0 var(--q-space-1);
+  font-weight: 600;
+}

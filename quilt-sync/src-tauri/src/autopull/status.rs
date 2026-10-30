@@ -11,6 +11,9 @@ use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::watch;
 
+use crate::autopull::activity::ActivityOp;
+use crate::autopull::activity::AutopullActivity;
+
 /// App-wide autosync state, folded across namespaces. Pushed to the
 /// tray via a `tokio::sync::watch` channel owned by the watcher.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +67,71 @@ pub struct SyncTrayAggregator {
     /// True while a tick is in flight. Surfaced as `TrayMode::Syncing`
     /// when no errors / paused entries dominate.
     tick_in_progress: AtomicBool,
+    /// Namespaces with a pull applying — writing working files — right now.
+    /// Narrower than `tick_in_progress`, which also spans the read-only
+    /// classify and manifest fetch, and deliberately absent from the tray
+    /// mode: its readers are the quit prompt and the tick's pause gate, and
+    /// neither should act when nothing is at risk.
+    ///
+    /// Per-namespace rather than a flag, because the two readers ask different
+    /// questions: the prompt asks whether *anything* is being written, the
+    /// tick asks about the one package it just classified.
+    ///
+    /// Counted, not a set: a manual pull and the tick's can write the same
+    /// package at once — nothing serializes them — and with one entry apiece
+    /// whichever finished first would clear a mark the other still needed.
+    ///
+    /// Each entry also carries an **epoch**, bumped whenever a write starts,
+    /// and the entry outlives the writes it counted. "Is one running now?" is
+    /// not enough for a reader that has to judge work it did *earlier*: a
+    /// short apply can overlap that work and finish before the question is
+    /// asked. Comparing epochs across the span answers "did one happen?".
+    applying: Mutex<BTreeMap<Namespace, ApplyState>>,
+    /// The tick's transfer, if any; its own channel so it never touches the tray mode.
+    activity: watch::Sender<Option<AutopullActivity>>,
+}
+
+/// Marks a namespace as being written until dropped — on return, on `?`, or on
+/// unwind.
+pub struct ApplyGuard<'a> {
+    applying: &'a Mutex<BTreeMap<Namespace, ApplyState>>,
+    namespace: Namespace,
+}
+
+/// Names the transfer in flight until dropped — on return, on `?`, or on
+/// unwind.
+///
+/// One slot, cleared on drop: safe because only the tick takes it, and the tick
+/// runs one package at a time.
+pub struct ActivityGuard<'a> {
+    activity: &'a watch::Sender<Option<AutopullActivity>>,
+}
+
+impl Drop for ActivityGuard<'_> {
+    fn drop(&mut self) {
+        self.activity.send_replace(None);
+    }
+}
+
+impl Drop for ApplyGuard<'_> {
+    fn drop(&mut self) {
+        let mut applying = self.applying.lock().expect("aggregator lock");
+        if let Some(state) = applying.get_mut(&self.namespace) {
+            state.active = state.active.saturating_sub(1);
+        }
+        // The entry stays: its epoch is the record that a write happened, which
+        // a reader judging earlier work still needs. It is swept when the
+        // package stops being tracked — see `retain_namespaces` — so the map
+        // follows the installed set rather than every namespace ever written.
+    }
+}
+
+/// Per-namespace write tracking: how many writes are in flight, and how many
+/// have ever started.
+#[derive(Default)]
+struct ApplyState {
+    active: usize,
+    epoch: u64,
 }
 
 #[derive(Default)]
@@ -80,7 +148,85 @@ impl SyncTrayAggregator {
             tx,
             state: Mutex::new(AggregatorState::default()),
             tick_in_progress: AtomicBool::new(false),
+            applying: Mutex::new(BTreeMap::new()),
+            activity: watch::channel(None).0,
         }
+    }
+
+    /// Whether *any* package is being written right now — the quit prompt's
+    /// question. Synchronous, because its caller is a menu/window event
+    /// handler that cannot await.
+    pub fn apply_in_progress(&self) -> bool {
+        self.applying
+            .lock()
+            .expect("aggregator lock")
+            .values()
+            .any(|state| state.active > 0)
+    }
+
+    /// Whether *this* package is being written right now — the tick's
+    /// question, asked of the namespace whose verdict it is about to act on.
+    pub fn is_applying(&self, namespace: &Namespace) -> bool {
+        self.applying
+            .lock()
+            .expect("aggregator lock")
+            .get(namespace)
+            .is_some_and(|state| state.active > 0)
+    }
+
+    /// How many writes to this package have ever started. Sample it before the
+    /// work whose result depends on a still tree, compare it after: unchanged
+    /// *and* nothing running now is the only case where nothing wrote
+    /// underneath you.
+    pub fn apply_epoch(&self, namespace: &Namespace) -> u64 {
+        self.applying
+            .lock()
+            .expect("aggregator lock")
+            .get(namespace)
+            .map_or(0, |state| state.epoch)
+    }
+
+    /// Bracket the apply for as long as the guard lives. A guard rather than a
+    /// pair of calls because the clear has to survive an unwind: a flag left
+    /// set would prompt on every quit thereafter, which is a worse failure than
+    /// never prompting at all.
+    ///
+    /// No `publish()`: this flag is deliberately not part of the tray mode —
+    /// adding it would change what the icon shows for a reason that has nothing
+    /// to do with the icon.
+    pub fn apply_guard(&self, namespace: &Namespace) -> ApplyGuard<'_> {
+        {
+            let mut applying = self.applying.lock().expect("aggregator lock");
+            let state = applying.entry(namespace.clone()).or_default();
+            state.active += 1;
+            state.epoch += 1;
+        }
+        ApplyGuard {
+            applying: &self.applying,
+            namespace: namespace.clone(),
+        }
+    }
+
+    /// Name the transfer while the guard lives, so the clear survives `?`, early
+    /// return and unwind.
+    pub fn activity_guard(&self, op: ActivityOp, namespace: &Namespace) -> ActivityGuard<'_> {
+        self.activity.send_replace(Some(AutopullActivity {
+            op,
+            namespace: namespace.clone(),
+        }));
+        ActivityGuard {
+            activity: &self.activity,
+        }
+    }
+
+    /// The transfer running now, for a reader that mounts mid-transfer.
+    pub fn activity(&self) -> Option<AutopullActivity> {
+        self.activity.borrow().clone()
+    }
+
+    /// Follow the activity: every set and every clear.
+    pub fn subscribe_activity(&self) -> watch::Receiver<Option<AutopullActivity>> {
+        self.activity.subscribe()
     }
 
     pub fn note_tick_started(&self) {
@@ -116,6 +262,17 @@ impl SyncTrayAggregator {
         self.publish();
     }
 
+    /// The packages the last walk of each found changes in.
+    pub fn namespaces_with_changes(&self) -> std::collections::BTreeSet<Namespace> {
+        let state = self.state.lock().expect("aggregator lock");
+        state
+            .dirty
+            .iter()
+            .filter(|(_, dirty)| **dirty)
+            .map(|(ns, _)| ns.clone())
+            .collect()
+    }
+
     pub fn note_paused(&self, ns: &Namespace, message: &str) {
         self.upsert_error(ns, ErrorKind::Paused, message.to_string());
     }
@@ -123,7 +280,8 @@ impl SyncTrayAggregator {
     pub fn note_login_required(&self, ns: &Namespace, host: Option<Host>) {
         let message = match host {
             Some(h) => format!("Login required for {h}"),
-            None => "Login required".to_string(),
+            // No host: the call ran on this computer's AWS credentials.
+            None => "AWS credentials on this computer aren't usable".to_string(),
         };
         self.upsert_error(ns, ErrorKind::Hard, message);
     }
@@ -162,6 +320,16 @@ impl SyncTrayAggregator {
             state.errors.retain(|ns, _| keep.contains(ns));
             state.dirty.retain(|ns, _| keep.contains(ns));
         }
+        // Apply history goes the same way, except never while a write is in
+        // flight: an entry is kept past its guard so the epoch survives, but a
+        // package the user has uninstalled has no reader left. A pruned epoch
+        // reads as 0, which fails any comparison against a sampled non-zero
+        // one — so the sweep can only ever make a reader distrust a verdict,
+        // never trust a stale one.
+        self.applying
+            .lock()
+            .expect("aggregator lock")
+            .retain(|ns, state| state.active > 0 || keep.contains(ns));
         self.publish();
     }
 
@@ -212,8 +380,8 @@ impl SyncTrayAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
-    use quilt_uri::Host;
     use quilt_uri::Namespace;
     use tokio::sync::watch;
 
@@ -277,11 +445,11 @@ mod tests {
     fn note_login_required_promotes_mode_to_error() {
         let (agg, rx) = new_aggregator();
         let ns: Namespace = ("acme", "demo").into();
-        let host: Host = "catalog.dev".parse().unwrap();
+        let host = fixtures::host();
         agg.note_login_required(&ns, Some(host));
         let after = rx.borrow().clone();
         assert_eq!(after.mode, TrayMode::Error);
-        assert!(after.error.as_deref().unwrap().contains("catalog.dev"));
+        assert!(after.error.as_deref().unwrap().contains("quilt.test"));
     }
 
     #[test]
@@ -368,6 +536,39 @@ mod tests {
         );
     }
 
+    // The apply epoch has to outlive the guard that bumped it, so entries are
+    // not removed when a write finishes. That is not a licence to keep them
+    // forever: a package the user uninstalls should take its entry with it,
+    // the same way its error and dirty entries go.
+    #[test]
+    fn retain_namespaces_drops_a_finished_apply_but_keeps_one_still_writing() {
+        use std::collections::BTreeSet;
+
+        let (agg, _rx) = new_aggregator();
+        let gone: Namespace = ("acme", "uninstalled").into();
+        let writing: Namespace = ("acme", "mid-write").into();
+
+        drop(agg.apply_guard(&gone));
+        let _in_flight = agg.apply_guard(&writing);
+        assert_ne!(
+            agg.apply_epoch(&gone),
+            0,
+            "the finished write left its epoch"
+        );
+
+        agg.retain_namespaces(&BTreeSet::from([writing.clone()]));
+
+        assert_eq!(
+            agg.apply_epoch(&gone),
+            0,
+            "an uninstalled package must not keep its apply history"
+        );
+        assert!(
+            agg.is_applying(&writing),
+            "a write still in flight must survive the sweep"
+        );
+    }
+
     #[test]
     fn retain_namespaces_drops_orphan_errors_and_dirty() {
         use std::collections::BTreeSet;
@@ -398,5 +599,71 @@ mod tests {
             after.pending_changes, 1,
             "orphan dirty entries must be dropped on reconciliation",
         );
+    }
+
+    #[test]
+    fn the_activity_guard_holds_the_activity_until_dropped() {
+        let (agg, _rx) = new_aggregator();
+        let ns: Namespace = ("a", "b").into();
+        assert_eq!(agg.activity(), None);
+
+        let guard = agg.activity_guard(ActivityOp::Pull, &ns);
+        assert_eq!(
+            agg.activity(),
+            Some(AutopullActivity {
+                op: ActivityOp::Pull,
+                namespace: ns.clone(),
+            })
+        );
+
+        drop(guard);
+        assert_eq!(agg.activity(), None);
+    }
+
+    #[test]
+    fn a_subscriber_sees_the_set_and_the_clear() {
+        let (agg, _rx) = new_aggregator();
+        let ns: Namespace = ("a", "b").into();
+        let mut activity = agg.subscribe_activity();
+
+        let guard = agg.activity_guard(ActivityOp::Publish, &ns);
+        assert!(activity.has_changed().unwrap(), "the set is seen");
+        assert_eq!(
+            activity.borrow_and_update().as_ref().map(|a| a.op),
+            Some(ActivityOp::Publish)
+        );
+
+        drop(guard);
+        assert!(activity.has_changed().unwrap(), "the clear is seen");
+        assert_eq!(*activity.borrow_and_update(), None);
+    }
+
+    #[test]
+    fn the_activity_is_not_part_of_the_tray_mode() {
+        let (agg, mut rx) = new_aggregator();
+        let ns: Namespace = ("a", "b").into();
+        rx.borrow_and_update();
+
+        let _guard = agg.activity_guard(ActivityOp::Pull, &ns);
+
+        assert!(
+            !rx.has_changed().unwrap(),
+            "taking the guard must not publish the tray status"
+        );
+        assert_eq!(rx.borrow().mode, TrayMode::Idle);
+    }
+
+    #[test]
+    fn the_activity_clears_on_unwind() {
+        let (agg, _rx) = new_aggregator();
+        let ns: Namespace = ("a", "b").into();
+
+        let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = agg.activity_guard(ActivityOp::Pull, &ns);
+            panic!("the transfer blew up");
+        }));
+
+        assert!(unwound.is_err());
+        assert_eq!(agg.activity(), None);
     }
 }

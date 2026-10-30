@@ -39,6 +39,13 @@ impl S3Error {
     pub fn is_access_denied(&self) -> bool {
         matches!(self.kind, S3ErrorKind::AccessDenied(_))
     }
+
+    /// True when the S3 service rejected the credentials themselves rather
+    /// than the active role's access to an object.
+    #[must_use]
+    pub fn is_invalid_credentials(&self) -> bool {
+        matches!(self.kind, S3ErrorKind::InvalidCredentials(_))
+    }
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -76,11 +83,11 @@ pub enum S3ErrorKind {
     #[error("S3 access denied: {0}")]
     AccessDenied(String),
 
+    #[error("Invalid AWS credentials: {0}")]
+    InvalidCredentials(String),
+
     #[error("S3 error: {0}")]
     Raw(String),
-
-    #[error("Failed to initialize S3 Remote")]
-    RemoteInit,
 
     #[error("Object key expected to be present")]
     ObjectKey,
@@ -136,8 +143,42 @@ pub enum InstallPathError {
     #[error("Failed to install path: {}", .0.display())]
     Install(PathBuf),
 
-    #[error("Some paths are already installed")]
-    AlreadyInstalled,
+    /// The path has no row in the revision being installed. Reachable when a
+    /// download waited out a pull that moved the package to a revision
+    /// without it.
+    #[error("{} is not in the package's current revision", .0.display())]
+    NotInRevision(PathBuf),
+
+    #[error(
+        "A local file is already at {}",
+        .0.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+    )]
+    LocalFileExists(Vec<PathBuf>),
+
+    /// The remote returned bytes that do not hash to a row whose
+    /// `physical_key` carries no `versionId`: it names whatever the object is
+    /// now, and a later revision has replaced it, so this revision's content
+    /// is no longer on the remote.
+    ///
+    /// Raised only where a partial apply would be wrong, the pull's reconcile.
+    /// `install_paths` skips such a row and reports it instead.
+    #[error(
+        "The remote no longer holds this revision's content for {}: the object it points to has been replaced",
+        .0.display()
+    )]
+    ContentMismatch(PathBuf),
+
+    /// The remote returned bytes that do not hash to a row whose
+    /// `physical_key` carries a `versionId`. That version's bytes cannot have
+    /// changed, so the hash the row records is wrong.
+    ///
+    /// Raised only where a partial apply would be wrong, the pull's reconcile.
+    /// `install_paths` leaves such a row out and reports it instead.
+    #[error(
+        "The package records a hash for {} that its file does not match: the package may be corrupt",
+        .0.display()
+    )]
+    HashMismatch(PathBuf),
 
     #[error("Failed to uninstall path: {}", .0.display())]
     Uninstall(PathBuf),
@@ -186,6 +227,21 @@ pub enum LineageError {
 
     #[error("Operation requires a remote origin, but this is a local-only package")]
     NoRemote,
+
+    /// The home can't move while packages are installed: their working
+    /// folders live under the current one.
+    #[error(
+        "Cannot change the home: {installed} {} installed in {}",
+        if *installed == 1 { "package is" } else { "packages are" },
+        home.display()
+    )]
+    HomeInUse { home: PathBuf, installed: usize },
+
+    /// A folder to keep reaches outside the package through `..`.
+    #[error(
+        "Folder {0:?} is not inside the package: name it from the package root, without \"..\""
+    )]
+    FolderOutsidePackage(String),
 }
 
 #[derive(Error, Debug, PartialEq)]
@@ -211,11 +267,17 @@ pub enum RemoteCatalogError {
 
 #[derive(Error, Debug, PartialEq)]
 pub enum LoginError {
-    #[error("Login required{}", .0.as_ref().map_or(String::new(), |h| format!(": {h}")))]
-    Required(Option<Host>),
+    /// No usable session for this deployment; `None` when the call carried no
+    /// deployment — a bare bucket on ambient AWS credentials.
+    ///
+    /// Names the state, not a remedy: each surface answers it differently.
+    #[error("No session{}", .0.as_ref().map_or(String::new(), |h| format!(" for {h}")))]
+    NoSession(Option<Host>),
 
-    #[error("Failed to get registry URL from {0}. Does {0}/config.json have it?")]
-    RequiredRegistryUrl(Host),
+    /// The deployment answered but its `config.json` names no registry. A
+    /// misconfiguration, not a missing session: signing in cannot change it.
+    #[error("{0} does not advertise a registry URL in its config.json")]
+    NoRegistryUrl(Host),
 }
 
 #[derive(Error, Debug)]
@@ -266,14 +328,14 @@ pub enum PackageOpError {
     #[error("Publish error: {0}")]
     Publish(String),
 
+    #[error("Undo error: {0}")]
+    Undo(String),
+
     #[error("General error regarding package: {0}")]
     Package(String),
 
     #[error("Pull blocked by conflicting local changes: {0:?}")]
     PullConflict(Vec<PathBuf>),
-
-    #[error("package is already up-to-date")]
-    AlreadyUpToDate,
 }
 
 /// The error type for this library
@@ -315,8 +377,33 @@ pub enum Error {
     #[error(transparent)]
     PackageOp(#[from] PackageOpError),
 
+    /// Another writer holds this package's lock, so a domain-wide sweep
+    /// that needs every package still would be unsafe to start.
+    #[error("{0} is busy in another quilt process; try again once it finishes")]
+    PackageBusy(Namespace),
+
+    /// A pruning uninstall removed the package, then failed before it had
+    /// deleted every object it meant to: it could not prove them unused, so
+    /// deleted none, or a deletion failed part way.
+    /// The third field is a package that was busy as well, which kept the
+    /// files that could be counted.
+    #[error(
+        "Uninstalled {0}, but not all of its downloaded files were deleted: {1}{busy}",
+        busy = kept_by_busy(.2.as_ref())
+    )]
+    PruneFailed(Namespace, Box<Error>, Option<Namespace>),
+
     #[error("Reqwest error: {0}")]
     Reqwest(#[from] reqwest::Error),
+
+    /// A revision asked to be removed is protected, or this copy does not
+    /// hold it. Nothing was removed.
+    #[error("Can't remove revision {hash} of {namespace}: {why}")]
+    RevisionNotRemovable {
+        namespace: Namespace,
+        hash: String,
+        why: String,
+    },
 
     #[error(transparent)]
     Role(#[from] RoleError),
@@ -349,7 +436,7 @@ pub enum Error {
     WorkflowValidation(#[from] WorkflowValidationError),
 
     #[error("YAML error: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] serde_saphyr::Error),
 }
 
 /// Map a workflow config error onto the existing `Error` variants so the
@@ -399,6 +486,52 @@ impl Error {
     pub fn is_access_denied(&self) -> bool {
         matches!(self, Error::S3(s3) if s3.is_access_denied())
     }
+
+    /// Returns `true` if S3 rejected the credentials themselves.
+    ///
+    /// Distinct from [`Error::is_access_denied`]: that one means the session is
+    /// healthy and the active role cannot reach the object, this one means the
+    /// session is not healthy. Callers that back off on storage failures must
+    /// check this first — retrying a rejected credential never succeeds.
+    #[must_use]
+    pub fn is_invalid_credentials(&self) -> bool {
+        matches!(self, Error::S3(s3) if s3.is_invalid_credentials())
+    }
+
+    /// No usable session, by either route — refused before issue
+    /// ([`LoginError::NoSession`]) or issued and rejected
+    /// ([`S3ErrorKind::InvalidCredentials`]). One predicate because callers act
+    /// on the state; which route it took is where the failure was noticed.
+    #[must_use]
+    pub fn is_session_absent(&self) -> bool {
+        self.is_invalid_credentials() || matches!(self, Error::Login(LoginError::NoSession(_)))
+    }
+
+    /// No usable session and no deployment to sign in to: the AWS credentials
+    /// on this computer, used for a bucket with no catalog, were missing or
+    /// refused. The remedy is `~/.aws` or `aws sso login`, not a sign-in.
+    #[must_use]
+    pub fn is_ambient_session_absent(&self) -> bool {
+        match self {
+            Error::Login(LoginError::NoSession(host)) => host.is_none(),
+            Error::S3(s3) => s3.is_invalid_credentials() && s3.host.is_none(),
+            _ => false,
+        }
+    }
+
+    /// The deployment this request was for, if any.
+    ///
+    /// `None` for a bare S3 bucket reached with ambient credentials, and for
+    /// errors that are not S3 errors. What that absence *means* is the
+    /// caller's to decide: paired with [`Error::is_invalid_credentials`] it
+    /// says there is no stack to sign back in to.
+    #[must_use]
+    pub fn s3_host(&self) -> Option<&quilt_uri::Host> {
+        match self {
+            Error::S3(s3) => s3.host.as_ref(),
+            _ => None,
+        }
+    }
 }
 
 // Compose `?` across two From hops: external error → focused enum → Error.
@@ -426,5 +559,40 @@ impl From<byte_stream::error::Error> for Error {
 impl From<StripPrefixError> for Error {
     fn from(err: StripPrefixError) -> Self {
         Error::Fs(FsError::PathPrefixNotFound(err))
+    }
+}
+
+/// The tail [`Error::PruneFailed`] adds when a busy package kept the rest.
+fn kept_by_busy(busy: Option<&Namespace>) -> String {
+    busy.map(|namespace| format!("; {namespace} is busy, so the rest were kept too"))
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use quilt_uri::fixtures;
+
+    #[test]
+    fn an_ambient_session_is_absent_only_without_a_host() {
+        let invalid = |host| {
+            Error::S3(S3Error {
+                host,
+                kind: S3ErrorKind::InvalidCredentials("refused".to_string()),
+            })
+        };
+        assert!(Error::Login(LoginError::NoSession(None)).is_ambient_session_absent());
+        assert!(invalid(None).is_ambient_session_absent());
+
+        assert!(
+            !Error::Login(LoginError::NoSession(Some(fixtures::host())))
+                .is_ambient_session_absent()
+        );
+        assert!(!invalid(Some(fixtures::host())).is_ambient_session_absent());
+        assert!(
+            !Error::S3(S3Error::new(S3ErrorKind::AccessDenied("no".to_string())))
+                .is_ambient_session_absent()
+        );
     }
 }

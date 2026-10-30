@@ -6,7 +6,6 @@ mod sync_scope;
 mod toolbar;
 
 use leptos::prelude::*;
-use leptos_router::hooks::use_query_map;
 
 use content::InstalledPackageContent;
 use selection::RemoteSelection;
@@ -47,7 +46,7 @@ fn warrants_paused_banner(reason: &str) -> bool {
     reason = "declarative Leptos view; length is markup, not logic complexity"
 )]
 pub fn InstalledPackage() -> impl IntoView {
-    let query = use_query_map();
+    let query = crate::routes::use_query();
 
     // Version-mismatch banner inputs from the deep-link navigation (Task 5).
     // The requested revision's own remote (bucket + catalog) travels alongside
@@ -133,7 +132,7 @@ pub fn InstalledPackage() -> impl IntoView {
             return;
         }
         let current = query.read_untracked().get("namespace").unwrap_or_default();
-        if ev.namespace == current {
+        if ev.namespace.to_string() == current {
             paused_event.set(Some(ev));
         }
     });
@@ -153,7 +152,7 @@ pub fn InstalledPackage() -> impl IntoView {
         if let Some(entry) = snapshot
             .paused
             .into_iter()
-            .find(|p| p.namespace == current && warrants_paused_banner(&p.reason))
+            .find(|p| p.namespace.to_string() == current && warrants_paused_banner(&p.reason))
         {
             // Don't overwrite a fresher value the live listener may have
             // already set between listener registration and now.
@@ -176,7 +175,7 @@ pub fn InstalledPackage() -> impl IntoView {
     Effect::new(move |_| {
         let Some(ev) = event_holder.get() else { return };
         let current = query.read().get("namespace").unwrap_or_default();
-        if ev.namespace != current {
+        if ev.namespace.to_string() != current {
             return;
         }
         if !is_new_observation(last_fingerprint.get_untracked().as_deref(), &ev) {
@@ -235,10 +234,10 @@ pub fn InstalledPackage() -> impl IntoView {
                             let ns = d.namespace.clone();
                             let breadcrumbs = vec![
                                 BreadcrumbItem::Link(BreadcrumbLink {
-                                    href: "/installed-packages-list".to_string(),
+                                    href: "/".to_string(),
                                     title: String::new(),
                                 }),
-                                BreadcrumbItem::Current(ns),
+                                BreadcrumbItem::Current(ns.to_string()),
                             ];
                             let actions = build_toolbar_actions(
                                 &d,
@@ -280,6 +279,7 @@ pub fn InstalledPackage() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::warrants_paused_banner;
+    use quilt_uri::Namespace;
 
     #[test]
     fn message_bearing_reasons_get_the_dedicated_banner() {
@@ -298,33 +298,30 @@ mod tests {
         assert!(!warrants_paused_banner("pendingCommit"));
     }
 
-    // NOTE: `#[wasm_bindgen_test]`, not `#[test]` — the wasm runner never
-    // collects a plain `#[test]` (the ones above compile but do not run).
     use super::{PackageStatusEvent, is_new_observation};
-    use wasm_bindgen_test::wasm_bindgen_test;
 
     fn ev(fingerprint: &str) -> PackageStatusEvent {
         PackageStatusEvent {
-            namespace: "acme/demo".to_string(),
+            namespace: Namespace::try_from("acme/demo").expect("a namespace"),
             status: "up_to_date".to_string(),
             has_changes: false,
             fingerprint: fingerprint.to_string(),
         }
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn first_event_is_a_new_observation() {
         // Nothing acted on yet — the first event always refetches.
         assert!(is_new_observation(None, &ev("up_to_date;")));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn same_fingerprint_holds_still() {
         // A no-op tick re-reports the same observation — the page must not act.
         assert!(!is_new_observation(Some("up_to_date;"), &ev("up_to_date;")));
     }
 
-    #[wasm_bindgen_test]
+    #[test]
     fn changed_fingerprint_is_a_new_observation() {
         // A real change (a modified path enters the digest) → refetch.
         assert!(is_new_observation(

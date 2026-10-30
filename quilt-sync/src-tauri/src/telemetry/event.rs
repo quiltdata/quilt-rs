@@ -69,32 +69,27 @@ pub struct LoginEvent {
     pub flow: LoginFlow,
 }
 
-/// Something autosync did on its own, against a deployment it is **known** to
-/// have.
+/// Something autosync did on its own, on a package with a remote.
 ///
-/// The host is required here where a manual package operation's is optional, and
-/// the loop is why: it skips any package whose lineage carries no origin before
-/// doing any work, so every outcome it reports is about a package with a remote.
-/// That is the proof a required host needs — the tightening the previous change
-/// left open for the manual paths, available here for free.
+/// The host is the package's catalog, absent for a package with a bucket and no
+/// catalog.
 #[derive(Debug, Clone, Serialize)]
 pub struct AutosyncEvent {
-    pub host: Host,
+    pub host: Option<Host>,
 }
 
-/// Autosync stopping on a package, and the kind of thing that stopped it.
+/// Autosync stopping on a package, and the kind of thing that stopped it. The
+/// host is as in [`AutosyncEvent`].
 #[derive(Debug, Clone, Serialize)]
 pub struct AutosyncPausedEvent {
-    pub host: Host,
+    pub host: Option<Host>,
     pub reason: PausedKind,
 }
 
 /// Autosync stopping because the session expired.
 ///
-/// The one autosync payload whose host is optional, and not for the usual
-/// reason: the refusal itself carries the host only when the failing call knew
-/// which one it was talking to, so an absent host here means the engine could not
-/// name the deployment, not that there wasn't one.
+/// The host is the one the refusal named: absent when the failing call ran on
+/// this computer's AWS credentials, which no catalog vends.
 #[derive(Debug, Clone, Serialize)]
 pub struct AutosyncAuthEvent {
     pub host: Option<Host>,
@@ -170,7 +165,7 @@ pub enum Failure {
 
 /// Why an operation was refused, coarsely — never the error's contents.
 ///
-/// Nine categories over thirty-odd error variants, and the grain is chosen so
+/// Eleven categories over thirty-odd error variants, and the grain is chosen so
 /// each one answers *who acts*: the user, their administrator, or nobody.
 /// Anything that cannot be placed stays a fault, deliberately: a misfiled refusal
 /// is noise in one report, a misfiled fault is a bug nobody sees.
@@ -199,6 +194,11 @@ pub enum RefusalKind {
     /// The network gave no verdict. Reporting these would fill the issue list with
     /// other people's tunnels — the same reasoning the delivery rule uses.
     Unreachable,
+    /// Another writer holds what the operation needs, so it stopped before
+    /// touching anything. The user's to resolve by waiting and trying again.
+    Busy,
+    /// The user typed a package name the name format refuses. Theirs to retype.
+    InvalidName,
 }
 
 impl From<&crate::error::Error> for Failure {
@@ -213,6 +213,7 @@ impl From<&crate::error::Error> for Failure {
             E::TauriUi(TauriUiError::UserCancelled) => Self::Refusal(RefusalKind::Cancelled),
             E::FsOpen(FsOpenError::PathNotFound(_)) => Self::Refusal(RefusalKind::Missing),
             E::Telemetry(TelemetryError::SendTimeout(_)) => Self::Refusal(RefusalKind::Unreachable),
+            E::PackageName(_) => Self::Refusal(RefusalKind::InvalidName),
 
             E::Quilt(err) => Self::from(err),
 
@@ -221,7 +222,9 @@ impl From<&crate::error::Error> for Failure {
             // cannot silently inherit this answer. Each is either the UI handing the
             // backend something it should not have, the OS refusing us, or an opaque
             // string that would need a variant of its own before it could be placed.
-            E::TauriUi(TauriUiError::Tauri(_) | TauriUiError::Window)
+            E::TauriUi(
+                TauriUiError::Tauri(_) | TauriUiError::Window | TauriUiError::Clipboard(_),
+            )
             | E::FsOpen(FsOpenError::Open(_) | FsOpenError::Zip(_))
             | E::Telemetry(TelemetryError::Mixpanel(_) | TelemetryError::Serialize(_))
             | E::Route(
@@ -253,7 +256,7 @@ impl From<&crate::quilt::Error> for Failure {
         match err {
             // Credentials or tokens that cannot be read or renewed all resolve the
             // same way, whatever broke: log in again.
-            E::Auth(_, _) | E::Login(LoginError::Required(_)) => {
+            E::Auth(_, _) | E::Login(LoginError::NoSession(_)) => {
                 Self::Refusal(RefusalKind::LoginRequired)
             }
             E::Role(RoleError::NotAuthenticated(_)) => Self::Refusal(RefusalKind::LoginRequired),
@@ -276,7 +279,7 @@ impl From<&crate::quilt::Error> for Failure {
                 | WorkflowValidationError::UnsupportedMetaSchema { .. }
                 | WorkflowValidationError::InvalidHandlePattern { .. },
             )
-            | E::Login(LoginError::RequiredRegistryUrl(_))
+            | E::Login(LoginError::NoRegistryUrl(_))
             | E::RemoteCatalog(
                 RemoteCatalogError::Workflow(_)
                 | RemoteCatalogError::InvalidWorkflowsConfig(_)
@@ -288,8 +291,7 @@ impl From<&crate::quilt::Error> for Failure {
                 Self::Refusal(RefusalKind::PullConflict)
             }
 
-            E::PackageOp(PackageOpError::AlreadyUpToDate)
-            | E::InstallPackage(
+            E::InstallPackage(
                 InstallPackageError::AlreadyInstalled(_) | InstallPackageError::NotInstalled(_),
             ) => Self::Refusal(RefusalKind::AlreadySettled),
 
@@ -301,13 +303,31 @@ impl From<&crate::quilt::Error> for Failure {
 
             E::Fs(_) | E::Io(_) if err.is_not_found() => Self::Refusal(RefusalKind::Missing),
 
+            E::PackageBusy(_) => Self::Refusal(RefusalKind::Busy),
+
+            // The page offered a revision this copy no longer holds, or one that
+            // became protected since the list was drawn: either way the
+            // revision the user meant is no longer there to remove.
+            E::RevisionNotRemovable { .. } => Self::Refusal(RefusalKind::Missing),
+
+            // The uninstall happened; what kept the objects is the failure.
+            E::PruneFailed(_, inner, _) => Self::from(inner.as_ref()),
+
             // The remaining opaque-string and mechanical variants. Ours, or
             // unclassifiable without giving them variants first — which is the same
             // answer, since an unclassifiable failure must stay visible.
+            // `Undo` sits here on the same reasoning, and with a caveat: every
+            // undo refusal is a precondition the user can act on (nothing to
+            // undo, a dirty tree, a chain already consumed by pushing), so none
+            // of them is really ours. It is unreachable from this surface today
+            // — undo is CLI-only, with no IPC behind it — and giving it a
+            // refusal kind means widening the telemetry vocabulary, which
+            // belongs with the surface that first drives it rather than here.
             E::PackageOp(
                 PackageOpError::Commit(_)
                 | PackageOpError::Push(_)
                 | PackageOpError::Publish(_)
+                | PackageOpError::Undo(_)
                 | PackageOpError::Package(_),
             )
             | E::Role(RoleError::GraphQl(_))
@@ -411,6 +431,11 @@ pub enum MixpanelEvent {
     PackageDirOpened(PackageFileEvent),
     FileRevealed(PackageFileEvent),
     DefaultApplicationOpened(PackageFileEvent),
+    /// A file's `quilt+s3` address put on the clipboard.
+    FileUriCopied(PackageFileEvent),
+    /// A package's own `quilt+s3` address put on the clipboard, from the
+    /// package page's header. Apart from `file_uri_copied`, which counts files.
+    PackageUriCopied(PackageFileEvent),
 
     // ── autosync: the engine acting with no user present ──
     /// A publish the loop completed on its own. Deliberately *not*
@@ -477,10 +502,12 @@ impl MixpanelEvent {
 
             Self::PackageDirOpened(e)
             | Self::FileRevealed(e)
-            | Self::DefaultApplicationOpened(e) => e.host.as_ref(),
+            | Self::DefaultApplicationOpened(e)
+            | Self::FileUriCopied(e)
+            | Self::PackageUriCopied(e) => e.host.as_ref(),
 
-            Self::AutosyncPublished(e) => Some(&e.host),
-            Self::AutosyncPaused(e) => Some(&e.host),
+            Self::AutosyncPublished(e) => e.host.as_ref(),
+            Self::AutosyncPaused(e) => e.host.as_ref(),
             Self::AutosyncLoginRequired(e) => e.host.as_ref(),
 
             Self::RoleSwitched(e) | Self::OAuthLoginInitiated(e) | Self::AuthErased(e) => {
@@ -567,6 +594,37 @@ mod tests {
             Some(RefusalKind::Missing),
             "a missing path is the user's to resolve, not a crash"
         );
+    }
+
+    /// A sweep that stops because another process holds a package's lock
+    /// deleted nothing and did nothing wrong: waiting is the fix, and it is the
+    /// user's to make.
+    #[test]
+    fn a_busy_package_is_a_refusal() {
+        let err = Error::Quilt(quilt::Error::PackageBusy(("acme", "demo").into()));
+
+        assert_eq!(refusal(&err), Some(RefusalKind::Busy));
+    }
+
+    /// A typed name the format refuses is the user's to retype, not a bug.
+    #[test]
+    fn a_refused_package_name_is_a_refusal() {
+        let err = Error::PackageName("team/a b".to_string());
+
+        assert_eq!(refusal(&err), Some(RefusalKind::InvalidName));
+    }
+
+    /// A removal asked for a revision that is protected now, or gone: the list
+    /// it came from was stale, which is nobody's bug.
+    #[test]
+    fn a_revision_no_longer_removable_is_a_refusal() {
+        let err = Error::Quilt(quilt::Error::RevisionNotRemovable {
+            namespace: ("acme", "demo").into(),
+            hash: "abc".into(),
+            why: "this copy does not hold it".into(),
+        });
+
+        assert_eq!(refusal(&err), Some(RefusalKind::Missing));
     }
 
     /// The property that makes the refusal series comparable: `action` is exactly

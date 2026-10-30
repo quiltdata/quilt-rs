@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
-use std::collections::HashSet;
-use std::collections::hash_map::RandomState;
+use std::path::Path;
 use std::path::PathBuf;
 
 use tokio_stream::StreamExt;
@@ -11,11 +10,13 @@ use url::Url;
 use crate::Error;
 use crate::InstallPathError;
 use crate::Res;
-use crate::error::ManifestError;
+use crate::checksum::refresh_hash;
+use crate::error::PackageOpError;
 use crate::io::manifest::RowsStream;
 use crate::io::manifest::build_manifest_from_rows_stream;
 use crate::io::remote::Remote;
 use crate::io::storage::Storage;
+use crate::lineage::LineagePaths;
 use crate::lineage::PackageLineage;
 use crate::lineage::PathState;
 use crate::manifest::Manifest;
@@ -25,28 +26,225 @@ use quilt_uri::Host;
 use quilt_uri::Namespace;
 use quilt_uri::S3Uri;
 
+/// What [`InstalledPackage::install_paths`](crate::InstalledPackage::install_paths)
+/// did: the paths the copy now tracks, and the requested ones it left out.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InstallPathsReport {
+    /// Every path the lineage tracks after the install, as before.
+    pub paths: LineagePaths,
+    /// Requested paths whose bytes the remote no longer holds, so they were
+    /// neither placed nor tracked: a bare `physical_key` on an unversioned
+    /// bucket whose object a later revision replaced.
+    pub skipped: Vec<PathBuf>,
+    /// Requested paths whose `physical_key` names an exact version whose bytes
+    /// do not hash to the row, so the hash the package records is wrong. Left
+    /// out like [`skipped`](Self::skipped) ones.
+    pub hash_mismatch: Vec<PathBuf>,
+    /// Requested paths the copy already tracked, so they were left as they
+    /// are and not written: the working file may hold edits not yet committed.
+    pub already_installed: Vec<PathBuf>,
+}
+
+/// Why fetched bytes were not stored: they do not hash to the row.
+enum Mismatch {
+    /// The `physical_key` has no `versionId`, or the `null` one S3 writes while
+    /// versioning is suspended, so a later revision may have replaced the
+    /// object it names.
+    Replaced,
+    /// The `physical_key` names an exact version, whose bytes cannot have
+    /// changed, so the hash the row records is wrong.
+    WrongHash,
+}
+
+impl Mismatch {
+    /// The error an apply that cannot leave the row out refuses with.
+    fn refusal(&self, path: PathBuf) -> InstallPathError {
+        match self {
+            Mismatch::Replaced => InstallPathError::ContentMismatch(path),
+            Mismatch::WrongHash => InstallPathError::HashMismatch(path),
+        }
+    }
+}
+
+/// Fetches a row's object into the store, but only if the bytes are the row's.
+/// Returns the [`Mismatch`], and leaves the store as it was, when they are not.
+///
+/// The store is content-addressed by the row's hash and trusted on every later
+/// read, so what lands there must be verified first: a `physical_key` without a
+/// `versionId` names whatever the object is *now*, and once a later revision has
+/// replaced it the remote returns that revision's bytes. Filed unverified they
+/// read as a local modification nobody made, and a retry would take them from
+/// the store as a cache hit. So the fetch lands in this apply's staging
+/// directory and moves into the store only once it hashes to the row.
 async fn cache_immutable_object(
     storage: &impl Storage,
     remote: &impl Remote,
     host: Option<&Host>,
     object_dest: &PathBuf,
-    uri: &S3Uri,
-) -> Res {
-    let stream = remote.get_object_stream(host, uri).await?;
-    storage.write_byte_stream(object_dest, stream.body).await
+    row: &ManifestRow,
+    run_staging: &Path,
+) -> Res<Option<Mismatch>> {
+    let uri: S3Uri = row.physical_key.parse()?;
+    let stream = remote.get_object_stream(host, &uri).await?;
+    let fetched = run_staging.join(uuid::Uuid::new_v4().to_string());
+    storage.write_byte_stream(&fetched, stream.body).await?;
+    if let Some(computed) = refresh_hash(storage, &fetched, row.clone()).await? {
+        debug!(
+            "❌ Fetched bytes for {} do not match its row: expected {}, computed {}",
+            row.logical_key.display(),
+            serde_json::to_string(&row.hash).unwrap_or_default(),
+            serde_json::to_string(&computed.hash).unwrap_or_default(),
+        );
+        storage.remove_file(&fetched).await?;
+        return Ok(Some(match uri.version.as_deref() {
+            Some(version) if version != "null" => Mismatch::WrongHash,
+            _ => Mismatch::Replaced,
+        }));
+    }
+    storage.rename(&fetched, object_dest).await?;
+    Ok(None)
 }
 
-async fn create_mutable_copy(
+/// Copies an object out of the store into this apply's staging directory,
+/// returning where it landed. Nothing in the working tree moves.
+///
+/// Staged rather than copied straight onto the destination because a copy
+/// truncates the target and refills it: a kill mid-write would leave a tracked
+/// path holding neither revision — present, matching no manifest row, and
+/// readable by a retry only as a conflict.
+async fn stage_object(
     storage: &impl Storage,
-    immutable_source: &PathBuf,
-    mutable_target: &PathBuf,
+    immutable_source: &Path,
+    run_staging: &Path,
+) -> Res<PathBuf> {
+    // Unique per file: two files in one apply must never stage over each other.
+    let staged = run_staging.join(uuid::Uuid::new_v4().to_string());
+    storage.copy(&immutable_source, &staged).await?;
+    Ok(staged)
+}
+
+/// Moves a staged file onto its working-tree destination, atomically.
+///
+/// The rename is the only step that touches the working tree, and it is a
+/// metadata operation: the path holds the old bytes or the new ones, never a
+/// prefix of either. `.quilt/` and the working tree share the domain root, so
+/// this stays within one filesystem; a package directory mounted from another
+/// would fail here, which is the gap the invariant names rather than papers
+/// over with a copy fallback that would reintroduce the hole.
+async fn commit_staged(
+    storage: &impl Storage,
+    staged: &Path,
+    mutable_target: &Path,
 ) -> Res<chrono::DateTime<chrono::Utc>> {
-    let parent_dir = mutable_target.parent();
-    if let Some(parent) = parent_dir {
+    if let Some(parent) = mutable_target.parent() {
         storage.create_dir_all(parent).await?;
     }
-    storage.copy(&immutable_source, &mutable_target).await?;
+    storage.rename(staged, &mutable_target).await?;
     storage.modified_timestamp(&mutable_target).await
+}
+
+/// Places every staged file where nothing is, or none of them: anything already
+/// at a destination is a file this copy does not track, the user's own, and it
+/// must survive.
+///
+/// Every destination is checked before the first rename, so a refusal places
+/// nothing. The rename replaces what it finds, so a file created during the
+/// renames themselves, a window of milliseconds, is not caught.
+async fn place_where_absent(
+    storage: &(impl Storage + Sync),
+    staged: &[(PathBuf, PathBuf, ManifestRow)],
+    lineage: &mut PackageLineage,
+) -> Res {
+    let mut existing = Vec::new();
+    for (_, working_dest, row) in staged {
+        if storage.exists(working_dest).await {
+            existing.push(row.logical_key.clone());
+        }
+    }
+    if !existing.is_empty() {
+        debug!("❌ Local files appeared while the paths were being staged");
+        return Err(Error::InstallPath(InstallPathError::LocalFileExists(
+            existing,
+        )));
+    }
+    for (staged_path, working_dest, row) in staged {
+        let last_modified = commit_staged(storage, staged_path, working_dest).await?;
+        lineage.paths.insert(
+            row.logical_key.clone(),
+            PathState {
+                timestamp: last_modified,
+                hash: row.hash.clone().into(),
+            },
+        );
+        debug!("✔️ Swapped in {}", working_dest.display());
+    }
+    Ok(())
+}
+
+/// Renames each staged file onto its destination, refusing to overwrite one a
+/// caller asked to protect that no longer holds the content it was verified at.
+/// [`Protect::Absent`] places files by [`place_where_absent`] instead.
+///
+/// The re-check is what keeps the guarantee honest once the whole touch set is
+/// staged before anything is written: a caller's verification now happens a
+/// whole fetch earlier than the write it licenses, and an edit landing in that
+/// gap would otherwise be overwritten in silence. Checked immediately before
+/// each rename, the exposure is back to the two syscalls between them.
+///
+/// Fail-safe in the same direction as the conflict rule: a file that cannot be
+/// read is treated as changed, so the worst case is a retryable refusal rather
+/// than lost work.
+async fn swap_staged_into_place(
+    storage: &(impl Storage + Sync),
+    staged: &[(PathBuf, PathBuf, ManifestRow)],
+    protect: &Protect<'_>,
+    lineage: &mut PackageLineage,
+) -> Res {
+    if let Protect::Absent = protect {
+        return place_where_absent(storage, staged, lineage).await;
+    }
+    for (staged_path, working_dest, row) in staged {
+        if let Protect::BaseContent(expected) = protect {
+            // An untracked path with nothing on disk has nothing to lose. A
+            // file at an untracked path may also already hold the incoming
+            // bytes, as an interrupted pull leaves it; anything else at one
+            // `base` never had is the user's own.
+            let tracked = lineage.paths.contains_key(&row.logical_key);
+            let holds = |expected: ManifestRow| async move {
+                matches!(
+                    refresh_hash(storage, working_dest, expected).await,
+                    Ok(None)
+                )
+            };
+            let unchanged =
+                if !tracked && (!storage.exists(working_dest).await || holds(row.clone()).await) {
+                    true
+                } else if let Some(base_row) = expected.get(&row.logical_key) {
+                    holds((*base_row).clone()).await
+                } else {
+                    tracked
+                };
+            if !unchanged {
+                debug!(
+                    "❌ {} changed while the revision was being staged",
+                    row.logical_key.display()
+                );
+                return Err(Error::PackageOp(PackageOpError::PullConflict(vec![
+                    row.logical_key.clone(),
+                ])));
+            }
+        }
+        let last_modified = commit_staged(storage, staged_path, working_dest).await?;
+        lineage.paths.insert(
+            row.logical_key.clone(),
+            PathState {
+                timestamp: last_modified,
+                hash: row.hash.clone().into(),
+            },
+        );
+        debug!("✔️ Swapped in {}", working_dest.display());
+    }
+    Ok(())
 }
 
 async fn stream_remote_with_installed_rows(
@@ -70,7 +268,144 @@ async fn stream_remote_with_installed_rows(
         })
 }
 
-/// Installs paths to already existing manifest (provided as an argument to this function).
+/// What a caller forbids the apply to overwrite.
+///
+/// The check has to happen immediately before each rename, not once up front:
+/// staging the whole touch set puts the whole fetch between a caller's
+/// verification and the write it licensed, and a background pull running while
+/// someone works is ordinary rather than exotic. But it cannot simply live
+/// inside the install, because [`reset_to_latest`](super::reset_to_latest)
+/// shares this primitive precisely to *discard* local work. So the caller says
+/// which it is, by name.
+pub(crate) enum Protect<'a> {
+    /// Replace a working file only while it still holds the content its row
+    /// names. Anything else is an edit that landed after the caller checked,
+    /// and overwriting it would lose work that was never committed and cannot
+    /// be recovered — there is no reflog. A destination with no row here, such
+    /// as a path the new revision adds, is written only where nothing is or
+    /// where the file already holds the incoming bytes.
+    BaseContent(&'a BTreeMap<PathBuf, ManifestRow>),
+    /// Overwrite whatever is there. Discarding local work is the operation, so
+    /// there is nothing to protect.
+    Nothing,
+    /// Replace nothing: refuse a destination that exists. Anything there is a
+    /// file this copy does not track — the user's own, never committed — and
+    /// writing over it would lose it just as surely as an edit to a tracked one.
+    /// See [`place_where_absent`].
+    Absent,
+}
+
+/// What an apply does with a row whose fetched bytes do not hash to it. On an
+/// unversioned bucket a later put may have replaced the key, so the remote no
+/// longer holds that revision's content; for a key pinned to its version, the
+/// hash the row records is wrong.
+pub(crate) enum OnMismatch {
+    /// Fail the whole apply with [`InstallPathError::ContentMismatch`] or
+    /// [`InstallPathError::HashMismatch`] and place nothing. The reconcile
+    /// needs this: it applies a whole revision, and the lineage it saves on
+    /// success names the new base, so a path it left out would be recorded at
+    /// a row its working file does not hold.
+    Refuse,
+    /// Leave the row out, install every row that verifies, and report the ones
+    /// left out. The user's download: an unversioned bucket should degrade to
+    /// the files it still holds rather than fail them all.
+    Skip,
+}
+
+/// Refuses the whole call if any requested path already has a file in the
+/// working folder.
+///
+/// A path this copy does not track can still hold the user's own new file, and
+/// that is uncommitted work too.
+async fn refuse_existing_working_files(
+    storage: &impl Storage,
+    working_dir: &Path,
+    entries_paths: &[&PathBuf],
+) -> Res {
+    debug!("🔍 Checking for local files at the requested paths");
+    let mut existing = Vec::new();
+    for path in entries_paths {
+        if storage.exists(working_dir.join(path)).await {
+            existing.push((*path).clone());
+        }
+    }
+    if !existing.is_empty() {
+        debug!("❌ Found local files at requested paths");
+        return Err(Error::InstallPath(InstallPathError::LocalFileExists(
+            existing,
+        )));
+    }
+    Ok(())
+}
+
+/// Installs paths this copy does not already hold. A path it already tracks is
+/// left as it is and reported in
+/// [`already_installed`](InstallPathsReport::already_installed). The whole call
+/// is refused if an untracked path already has a file in the working folder.
+///
+/// Returns the new lineage and the report. Its `skipped` paths are rows whose
+/// bytes the remote no longer holds, and its `hash_mismatch` paths are rows
+/// whose recorded hash their pinned version does not match (see
+/// [`OnMismatch::Skip`]). Either is neither placed nor tracked, and nothing of
+/// it enters the object store, so asking for it again fetches afresh.
+///
+/// This is the verb a user reaches, directly or through
+/// [`InstalledPackage::install_paths`](crate::InstalledPackage::install_paths).
+/// Writing over a path someone is editing loses work that was never committed
+/// and cannot be recovered, so a tracked path is never written here. The
+/// reconcile, whose paths are known to carry no local edit, uses
+/// [`install_paths_over`] instead — a separate entry point rather than a flag
+/// on this one, so that overwriting is something a caller *chooses by name*
+/// and cannot reach from outside this crate at all.
+#[allow(clippy::too_many_arguments)]
+pub async fn install_paths(
+    lineage: PackageLineage,
+    manifest: &mut Manifest,
+    paths: &DomainPaths,
+    working_dir: PathBuf,
+    namespace: Namespace,
+    storage: &(impl Storage + Sync),
+    remote: &impl Remote,
+    entries_paths: &[&PathBuf],
+) -> Res<(PackageLineage, InstallPathsReport)> {
+    let (already_installed, untracked): (Vec<&PathBuf>, Vec<&PathBuf>) = entries_paths
+        .iter()
+        .partition(|path| lineage.paths.contains_key(**path));
+    refuse_existing_working_files(storage, &working_dir, &untracked).await?;
+    // Checked up front so a refusal fetches nothing, and again at placement
+    // (`Protect::Absent`) because a file can appear during the fetch.
+    let (lineage, report) = install_paths_over(
+        lineage,
+        manifest,
+        paths,
+        working_dir,
+        namespace,
+        storage,
+        remote,
+        &untracked,
+        &Protect::Absent,
+        OnMismatch::Skip,
+    )
+    .await?;
+    let report = InstallPathsReport {
+        already_installed: already_installed.into_iter().cloned().collect(),
+        ..report
+    };
+    Ok((lineage, report))
+}
+
+/// Installs paths **over** whatever the working tree already holds for them.
+/// Its report never lists `already_installed` paths.
+///
+/// `pub(crate)` on purpose: the only caller entitled to this is the reconcile
+/// in [`apply_latest_update`](super::apply_update), whose touch set excludes
+/// every path the user has touched, so no local edit is ever at stake. Nothing
+/// outside this crate can reach it, which is what makes "only the reconcile may
+/// install over a tracked path" a fact about the code rather than a convention
+/// callers have to keep.
+///
+/// Each write lands whole, and the whole touch set is staged before any of it
+/// is swapped in — see [`stage_object`] and [`commit_staged`].
 ///
 /// Rows go into the installed manifest **verbatim** — `physical_key` is never
 /// rewritten to the `file://` object-store location, despite the `place` value
@@ -88,7 +423,7 @@ async fn stream_remote_with_installed_rows(
 // TODO: `working_dir` is in `paths` already, and we pass namespace anyway
 //       so we can remove working_dir from the arguments
 #[allow(clippy::too_many_arguments)]
-pub async fn install_paths(
+pub(crate) async fn install_paths_over(
     mut lineage: PackageLineage,
     manifest: &mut Manifest,
     paths: &DomainPaths,
@@ -97,10 +432,16 @@ pub async fn install_paths(
     storage: &(impl Storage + Sync),
     remote: &impl Remote,
     entries_paths: &[&PathBuf],
-) -> Res<PackageLineage> {
+    protect: &Protect<'_>,
+    on_mismatch: OnMismatch,
+) -> Res<(PackageLineage, InstallPathsReport)> {
     if entries_paths.is_empty() {
         info!("No paths to install");
-        return Ok(lineage);
+        let report = InstallPathsReport {
+            paths: lineage.paths.clone(),
+            ..InstallPathsReport::default()
+        };
+        return Ok((lineage, report));
     }
 
     let remote_uri = lineage.remote()?.clone();
@@ -110,19 +451,6 @@ pub async fn install_paths(
         entries_paths.len(),
         namespace
     );
-
-    debug!("🔍 Checking for already installed paths");
-    // TODO: what happens if paths are already installed? Ignore, or error?
-    // Fail early if path is already installed
-    if !lineage
-        .paths
-        .keys()
-        .collect::<HashSet<&PathBuf, RandomState>>()
-        .is_disjoint(&entries_paths.iter().copied().collect::<HashSet<_>>())
-    {
-        debug!("❌ Found paths that are already installed");
-        return Err(Error::InstallPath(InstallPathError::AlreadyInstalled));
-    }
 
     // for each path in entries_paths:
     //   get entry from installed manifest
@@ -136,71 +464,121 @@ pub async fn install_paths(
     //   add installed package entry:
     //     remote: RemoteManifest
     let mut entries = BTreeMap::new();
+    let mut skipped = Vec::new();
+    let mut hash_mismatch = Vec::new();
+    // Outside the tree the status walk reads: a staging file beside the working
+    // file would be reported as a new file, committed if a commit landed in the
+    // window, and left as a permanent stray by a kill. One subdirectory per
+    // apply, so a failure can drop exactly its own staged files without
+    // touching a concurrent apply's.
+    let run_staging = paths.staging_dir().join(uuid::Uuid::new_v4().to_string());
+    storage.create_dir_all(&run_staging).await?;
+    // Fetching and staging, as one fallible phase. Every `?` in here — a
+    // missing manifest row, a failed fetch, an unparseable physical key, a
+    // relative object path — lands on the single cleanup below, so none of them
+    // can strand the staged set. Scoping it this way rather than sweeping after
+    // each call is what makes "no error leaks a staging directory" a property of
+    // the shape instead of a list of call sites to remember.
+    let staging: Res<Vec<(PathBuf, PathBuf, ManifestRow)>> = async {
+        let mut staged: Vec<(PathBuf, PathBuf, ManifestRow)> = Vec::new();
 
-    for path in entries_paths {
-        // TODO: Consider using a hashmap or treemap for manifest.rows
-        let row = manifest
-            .get_record(path)
-            .ok_or(ManifestError::Table(format!(
-                "path \"{}\" not found",
-                path.display()
-            )))?;
+        for path in entries_paths {
+            // TODO: Consider using a hashmap or treemap for manifest.rows
+            let row = manifest.get_record(path).ok_or_else(|| {
+                Error::InstallPath(InstallPathError::NotInRevision((*path).clone()))
+            })?;
 
-        let object_dest = paths.object(row.hash.digest());
+            let object_dest = paths.object(row.hash.digest());
 
-        if storage.exists(&object_dest).await {
-            debug!("✔️ Object already in cache: {}", object_dest.display());
-        } else {
-            cache_immutable_object(
+            if storage.exists(&object_dest).await {
+                debug!("✔️ Object already in cache: {}", object_dest.display());
+            } else if let Some(mismatch) = cache_immutable_object(
                 storage,
                 remote,
                 remote_uri.origin.as_ref(),
                 &object_dest,
-                &row.physical_key.parse()?,
+                row,
+                &run_staging,
             )
-            .await?;
-            debug!("✔️ Cached object: {}", object_dest.display());
+            .await?
+            {
+                let path = row.logical_key.clone();
+                match (&on_mismatch, mismatch) {
+                    (OnMismatch::Refuse, m) => return Err(Error::InstallPath(m.refusal(path))),
+                    (OnMismatch::Skip, Mismatch::Replaced) => skipped.push(path),
+                    (OnMismatch::Skip, Mismatch::WrongHash) => hash_mismatch.push(path),
+                }
+                continue;
+            } else {
+                debug!("✔️ Cached object: {}", object_dest.display());
+            }
+
+            // Diagnostic only: the `file://` URL the row *would* carry if rows were
+            // rewritten to the object store (they are not — see above). Logged and
+            // discarded; the error arm still asserts `object_dest` is absolute.
+            let place = Url::from_file_path(&object_dest)
+                .map_err(|()| Error::InstallPath(InstallPathError::Install(object_dest.clone())))?
+                .to_string();
+            debug!(
+                "✔️ Path {} converted to a `place` {}",
+                object_dest.display(),
+                place
+            );
+            // The row goes in unchanged — `physical_key` and all.
+            entries.insert(row.logical_key.clone(), row.clone());
+
+            // Staged, not written: the working tree stays wholly at its current
+            // revision until every file is ready.
+            let staged_path = stage_object(storage, &object_dest, &run_staging).await?;
+            staged.push((staged_path, working_dir.join(&row.logical_key), row.clone()));
+            debug!("✔️ Staged {}", row.logical_key.display());
         }
-
-        // Diagnostic only: the `file://` URL the row *would* carry if rows were
-        // rewritten to the object store (they are not — see above). Logged and
-        // discarded; the error arm still asserts `object_dest` is absolute.
-        let place = Url::from_file_path(&object_dest)
-            .map_err(|()| Error::InstallPath(InstallPathError::Install(object_dest.clone())))?
-            .to_string();
-        debug!(
-            "✔️ Path {} converted to a `place` {}",
-            object_dest.display(),
-            place
-        );
-        // The row goes in unchanged — `physical_key` and all.
-        entries.insert(row.logical_key.clone(), row.clone());
-
-        let working_dest = working_dir.join(&row.logical_key);
-        let last_modified = create_mutable_copy(storage, &object_dest, &working_dest).await?;
-        debug!(
-            "✔️ Created mutable copy at {} for {}",
-            last_modified,
-            working_dest.display()
-        );
-
-        lineage.paths.insert(
-            row.logical_key.clone(),
-            PathState {
-                timestamp: last_modified,
-                hash: row.hash.clone().into(),
-            },
-        );
-        debug!("✔️ Added {}  to lineage paths ", row.logical_key.display());
+        Ok(staged)
     }
+    .await;
+    let staged = match staging {
+        Ok(staged) => staged,
+        Err(err) => {
+            let _ = storage.remove_dir_all(&run_staging).await;
+            return Err(err);
+        }
+    };
+
+    // The swap. Everything above this line is fetching and copying, and none of
+    // it touched the working tree: interrupted anywhere earlier — which is where
+    // essentially all of the time goes — the tree is still wholly at `base` and
+    // a retry is an ordinary update with nothing to reconcile. From here it is
+    // renames only, milliseconds, and an interruption inside them leaves the
+    // mixed tree the invariant is written to survive.
+    //
+    // Not a transaction: the renames are atomic one at a time and not as a set.
+    debug!("⏳ Swapping {} staged files into place", staged.len());
+    let swapped = swap_staged_into_place(storage, &staged, protect, &mut lineage).await;
+    // On every path out, not only the successful one: the renames empty this
+    // directory when they all land, but any error above leaves the whole staged
+    // set behind, and at one object apiece that accumulates across retries. A
+    // kill still strands one, which no sweep collects yet.
+    let _ = storage.remove_dir_all(&run_staging).await;
+    swapped?;
 
     debug!("⏳ Building manifest with installed rows");
     let stream = stream_remote_with_installed_rows(manifest, entries).await;
     let dest_dir = paths.installed_manifests_dir(&namespace);
     build_manifest_from_rows_stream(storage, dest_dir, manifest.header.clone(), stream).await?;
 
-    info!("✔️ Successfully installed {} paths", entries_paths.len());
-    Ok(lineage)
+    info!(
+        "✔️ Installed {} paths, skipped {}, hash mismatch {}",
+        entries_paths.len() - skipped.len() - hash_mismatch.len(),
+        skipped.len(),
+        hash_mismatch.len()
+    );
+    let report = InstallPathsReport {
+        paths: lineage.paths.clone(),
+        skipped,
+        hash_mismatch,
+        already_installed: Vec::new(),
+    };
+    Ok((lineage, report))
 }
 
 #[cfg(test)]
@@ -214,10 +592,18 @@ mod tests {
 
     use crate::fixtures;
     use crate::io::remote::mocks::MockRemote;
+    use crate::io::storage::StorageExt;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Home;
     use crate::paths;
     use quilt_uri::ManifestUri;
+
+    /// The SHA-256 multihash of `body`. A fetched object is verified against
+    /// its row, so a row the test downloads must name its body's real hash.
+    fn sha256_of(body: &[u8]) -> multihash::Multihash<256> {
+        use sha2::Digest;
+        multihash::Multihash::wrap(0x12, &sha2::Sha256::digest(body)).unwrap()
+    }
 
     // Verify installing the path that is already fetched to the `.quilt/objects`
     // Practically it is useful when we try to install identical files. Then we can re-use cache (because files are located by hash).
@@ -263,7 +649,7 @@ mod tests {
         // We deal with cached file, so remote is "empty" and doesn't make any HTTP calls,
         // since it doesn't throw "key not found"
         let remote = MockRemote::default();
-        let lineage = install_paths(
+        let (lineage, _) = install_paths(
             lineage,
             &mut manifest,
             domain_paths,
@@ -317,8 +703,8 @@ mod tests {
             .put_object(None, &remote_object_uri, Vec::new())
             .await?;
 
-        // Create the manifest with a single remote row with a random hash
-        let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x12, b"anything")?;
+        // Create the manifest with a single remote row naming that object's hash
+        let hash = sha256_of(b"");
         let mut manifest = Manifest::default();
         manifest
             .insert_record(ManifestRow {
@@ -332,7 +718,7 @@ mod tests {
         assert!(lineage.paths.is_empty());
 
         // Perform the installation
-        let lineage = install_paths(
+        let (lineage, _) = install_paths(
             lineage,
             &mut manifest,
             domain_paths,
@@ -380,7 +766,7 @@ mod tests {
         let row_2 = ManifestRow {
             logical_key: PathBuf::from("b/b"),
             physical_key: "s3://bucket/foo/bar".to_string(),
-            hash: multihash::Multihash::wrap(0x12, b"two")?.try_into()?,
+            hash: sha256_of(b"two").try_into()?,
             ..ManifestRow::default()
         };
         let row_3 = ManifestRow {
@@ -392,7 +778,7 @@ mod tests {
         let row_4 = ManifestRow {
             logical_key: PathBuf::from("d/d/d/d"),
             physical_key: "s3://bucket/foo/baz".to_string(),
-            hash: multihash::Multihash::wrap(0x12, b"four")?.try_into()?,
+            hash: sha256_of(b"four").try_into()?,
             ..ManifestRow::default()
         };
         let mut manifest = Manifest::default();
@@ -417,11 +803,11 @@ mod tests {
         let remote = MockRemote::default();
         let remote_object_uri_2 = S3Uri::from_str(&row_2.physical_key)?;
         remote
-            .put_object(None, &remote_object_uri_2, Vec::new())
+            .put_object(None, &remote_object_uri_2, b"two".to_vec())
             .await?;
         let remote_object_uri_4 = S3Uri::from_str(&row_4.physical_key)?;
         remote
-            .put_object(None, &remote_object_uri_4, Vec::new())
+            .put_object(None, &remote_object_uri_4, b"four".to_vec())
             .await?;
 
         let entries_paths = vec![
@@ -434,7 +820,7 @@ mod tests {
         // Lineage does not track anything before the installation
         assert!(lineage.paths.is_empty());
 
-        let lineage = install_paths(
+        let (lineage, _) = install_paths(
             lineage,
             &mut manifest,
             domain_paths,
@@ -491,9 +877,11 @@ mod tests {
             &entries_paths,
         )
         .await;
+        // What the user reads when a download waited out a pull that dropped
+        // the path: it names the path and says why, with no table jargon.
         assert_eq!(
             lineage.unwrap_err().to_string(),
-            r#"Table error: path "z/z" not found"#
+            "z/z is not in the package's current revision"
         );
         Ok(())
     }
@@ -521,7 +909,8 @@ mod tests {
         for i in 0..2048 {
             let path = PathBuf::from(format!("path_{i}.txt"));
             let place = format!("s3://bucket/path_{i}.txt");
-            let hash = multihash::Multihash::wrap(0x12, format!("hash_{i}").as_bytes())?;
+            let body = format!("body_{i}").into_bytes();
+            let hash = sha256_of(&body);
 
             let row = ManifestRow {
                 logical_key: path.clone(),
@@ -535,7 +924,7 @@ mod tests {
 
             // Simulate remote objects
             let remote_uri = S3Uri::from_str(&place)?;
-            remote.put_object(None, &remote_uri, Vec::new()).await?;
+            remote.put_object(None, &remote_uri, body).await?;
         }
 
         // Create references for the function call
@@ -549,7 +938,7 @@ mod tests {
 
         assert!(lineage.paths.is_empty());
 
-        let lineage = install_paths(
+        let (lineage, _) = install_paths(
             lineage,
             &mut manifest,
             domain_paths,
@@ -575,6 +964,241 @@ mod tests {
         Ok(())
     }
 
-    // TODO: fail if path is already installed
+    /// A file the user created at a requested path is uncommitted work: writing
+    /// the remote file over it would lose it with nothing to recover it from.
+    #[test(tokio::test)]
+    async fn an_untracked_local_file_at_a_requested_path_is_refused() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
+
+        let namespace = Namespace::from(("foo", "bar"));
+        let package_home = paths::package_home(&home, &namespace);
+
+        let remote = MockRemote::default();
+        let storage = MockStorage::default();
+        let requested = PathBuf::from("a/a");
+        let entries_paths = vec![&requested];
+
+        domain_paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+
+        let remote_file_url = "s3://any/valid-url.md".to_string();
+        remote
+            .put_object(
+                None,
+                &S3Uri::from_str(&remote_file_url)?,
+                b"remote bytes".to_vec(),
+            )
+            .await?;
+        let hash: multihash::Multihash<256> = multihash::Multihash::wrap(0x12, b"anything")?;
+        let mut manifest = Manifest::default();
+        manifest
+            .insert_record(ManifestRow {
+                logical_key: requested.clone(),
+                hash: hash.try_into()?,
+                physical_key: remote_file_url,
+                ..ManifestRow::default()
+            })
+            .await?;
+
+        // The user's own new file, not in `lineage.paths`
+        let users_file = package_home.join(&requested);
+        storage
+            .write_byte_stream(&users_file, ByteStream::from_static(b"users new file"))
+            .await?;
+        let lineage = PackageLineage {
+            remote_uri: Some(ManifestUri::default()),
+            ..PackageLineage::default()
+        };
+
+        let result = install_paths(
+            lineage,
+            &mut manifest,
+            domain_paths,
+            package_home.clone(),
+            namespace,
+            &storage,
+            &remote,
+            &entries_paths,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(Error::InstallPath(InstallPathError::LocalFileExists(ref p))) if p == &vec![requested.clone()]
+        ));
+        assert_eq!(storage.read_bytes(&users_file).await?, b"users new file");
+        // Refused before fetching anything
+        assert!(!storage.exists(domain_paths.object(hash.digest())).await);
+
+        Ok(())
+    }
+
+    /// A tracked path may hold edits, so it is left as it is and reported,
+    /// and the other requested paths install.
+    #[test(tokio::test)]
+    async fn a_tracked_path_is_reported_and_the_rest_install() -> Res {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (domain_paths, _temp_dir2) = &DomainPaths::from_temp_dir()?;
+        let namespace = Namespace::from(("foo", "bar"));
+        let package_home = paths::package_home(&home, &namespace);
+        let storage = MockStorage::default();
+
+        let mut manifest = fixtures::manifest_with_objects_all_sizes::manifest().await?;
+        let new_path = PathBuf::from("less-then-8mb.txt");
+        let hash: multihash::Multihash<256> =
+            manifest.get_record(&new_path).unwrap().hash.clone().into();
+        storage
+            .write_byte_stream(
+                home.join(domain_paths.object(hash.digest())),
+                ByteStream::default(),
+            )
+            .await?;
+
+        let tracked = PathBuf::from("a/a");
+        let edited_file = package_home.join(&tracked);
+        storage
+            .write_byte_stream(&edited_file, ByteStream::from_static(b"users edit"))
+            .await?;
+        let mut lineage = PackageLineage {
+            remote_uri: Some(ManifestUri::default()),
+            ..PackageLineage::default()
+        };
+        lineage.paths.insert(tracked.clone(), PathState::default());
+
+        let (lineage, report) = install_paths(
+            lineage,
+            &mut manifest,
+            domain_paths,
+            package_home.clone(),
+            namespace,
+            &storage,
+            &MockRemote::default(),
+            &[&tracked, &new_path],
+        )
+        .await?;
+
+        assert_eq!(report.already_installed, vec![tracked.clone()]);
+        assert_eq!(report.skipped, Vec::<PathBuf>::new());
+        assert!(lineage.paths.contains_key(&new_path));
+        assert!(storage.exists(&package_home.join(&new_path)).await);
+        assert_eq!(storage.read_bytes(&edited_file).await?, b"users edit");
+
+        Ok(())
+    }
+
+    /// Every requested path tracked: nothing is fetched and the call succeeds.
+    #[test(tokio::test)]
+    async fn only_tracked_paths_succeed_and_fetch_nothing() -> Res {
+        let (domain_paths, _temp_dir) = &DomainPaths::from_temp_dir()?;
+        let storage = MockStorage::default();
+        let tracked = PathBuf::from("a/a");
+        let mut lineage = PackageLineage {
+            remote_uri: Some(ManifestUri::default()),
+            ..PackageLineage::default()
+        };
+        lineage.paths.insert(tracked.clone(), PathState::default());
+
+        // The manifest has no row for the path, so a fetch would fail
+        let (lineage, report) = install_paths(
+            lineage.clone(),
+            &mut Manifest::default(),
+            domain_paths,
+            PathBuf::from("work"),
+            Namespace::from(("foo", "bar")),
+            &storage,
+            &MockRemote::default(),
+            &[&tracked],
+        )
+        .await?;
+
+        assert_eq!(report.already_installed, vec![tracked]);
+        assert_eq!(report.paths, lineage.paths);
+        assert_eq!(lineage.paths.len(), 1);
+
+        Ok(())
+    }
+
+    fn row(key: &str) -> Res<ManifestRow> {
+        Ok(ManifestRow {
+            logical_key: PathBuf::from(key),
+            hash: multihash::Multihash::wrap(0x12, b"anything")?.try_into()?,
+            ..ManifestRow::default()
+        })
+    }
+
+    /// Two staged files, for `work/a` and `work/sub/b` (a new directory).
+    async fn two_staged(storage: &MockStorage) -> Res<Vec<(PathBuf, PathBuf, ManifestRow)>> {
+        let staged = vec![
+            (
+                PathBuf::from("staging/1"),
+                PathBuf::from("work/a"),
+                row("a")?,
+            ),
+            (
+                PathBuf::from("staging/2"),
+                PathBuf::from("work/sub/b"),
+                row("sub/b")?,
+            ),
+        ];
+        for (staged_path, _, _) in &staged {
+            storage
+                .write_byte_stream(staged_path, ByteStream::from_static(b"remote bytes"))
+                .await?;
+        }
+        Ok(staged)
+    }
+
+    /// The user's file at the second destination, as if created after the fetch.
+    async fn users_file_at_second(storage: &MockStorage) -> Res<PathBuf> {
+        let users_file = PathBuf::from("work/sub/b");
+        storage
+            .write_byte_stream(&users_file, ByteStream::from_static(b"users new file"))
+            .await?;
+        Ok(users_file)
+    }
+
+    #[test(tokio::test)]
+    async fn every_file_is_placed_where_nothing_is() -> Res {
+        let storage = MockStorage::default();
+        let staged = two_staged(&storage).await?;
+        let mut lineage = PackageLineage::default();
+
+        swap_staged_into_place(&storage, &staged, &Protect::Absent, &mut lineage).await?;
+
+        assert_eq!(storage.read_bytes("work/a").await?, b"remote bytes");
+        assert_eq!(storage.read_bytes("work/sub/b").await?, b"remote bytes");
+        assert_eq!(
+            lineage.paths.keys().collect::<Vec<_>>(),
+            [&PathBuf::from("a"), &PathBuf::from("sub/b")]
+        );
+
+        Ok(())
+    }
+
+    /// A file created after the download, before placing: every path is
+    /// checked before the first rename, so nothing is placed and it survives.
+    #[test(tokio::test)]
+    async fn a_local_file_that_appeared_after_the_download_refuses_before_any_rename() -> Res {
+        let storage = MockStorage::default();
+        let staged = two_staged(&storage).await?;
+        let users_file = users_file_at_second(&storage).await?;
+        let mut lineage = PackageLineage::default();
+
+        let result =
+            swap_staged_into_place(&storage, &staged, &Protect::Absent, &mut lineage).await;
+
+        assert!(matches!(
+            result,
+            Err(Error::InstallPath(InstallPathError::LocalFileExists(ref p))) if p == &vec![PathBuf::from("sub/b")]
+        ));
+        assert_eq!(storage.read_bytes(&users_file).await?, b"users new file");
+        assert!(!storage.exists("work/a").await, "nothing is renamed");
+        assert!(lineage.paths.is_empty());
+
+        Ok(())
+    }
+
     // TODO: fail if manifest entry has invalid URL
 }

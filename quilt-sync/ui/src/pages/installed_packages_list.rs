@@ -6,7 +6,7 @@ use leptos::prelude::*;
 
 use crate::commands::{
     self, AUTOSYNC_PAUSED_EVENT, AUTOSYNC_PUBLISHED_EVENT, PACKAGE_STATUS_EVENT, PackageItemData,
-    PackageStatusEvent, PausedEvent, PublishedEvent, PullCheck, PullOutcome,
+    PackageStatusEvent, PausedEvent, PublishedEvent, PullCheck, PullOutcome, PullPreview,
 };
 use crate::components::buttons;
 use crate::components::layout::BreadcrumbItem;
@@ -16,6 +16,7 @@ use crate::components::{
 use crate::tauri as tauri_bridge;
 use crate::util;
 use crate::util::make_action;
+use quilt_uri::S3PackageUri;
 
 /// Latest `package-status-changed` event received from the backend.
 ///
@@ -89,7 +90,9 @@ fn hint_lines(
         return vec![if has_host {
             "Unable to check remote status — sign in again".to_string()
         } else {
-            "No remote configured".to_string()
+            // A bucket with no catalog, read on this computer's AWS credentials.
+            // `error` covers any failure, so this suggests rather than diagnoses.
+            "Unable to check remote status — check the AWS credentials in ~/.aws or run aws sso login".to_string()
         }];
     }
     Vec::new()
@@ -127,7 +130,10 @@ fn paused_toast(reason: &str, namespace: &str, message: Option<&str>) -> Option<
 fn pull_popover(check: &PullCheck) -> Option<String> {
     match check {
         PullCheck::Failed => Some("Couldn't check for updates.".to_string()),
-        PullCheck::Ready(PullOutcome::Blocked { conflicts }) => Some(format!(
+        PullCheck::Ready(PullPreview {
+            outcome: PullOutcome::Blocked { conflicts },
+            ..
+        }) => Some(format!(
             "Resolve conflicts in {} via commit \u{2192} merge",
             conflicts.join(", ")
         )),
@@ -144,13 +150,18 @@ fn pull_popover(check: &PullCheck) -> Option<String> {
 /// The state flag (`has_changes`) and the affordance gate (`no_access`) are
 /// kept as separate terms for exactly this reason — deriving one from the
 /// other collapses a case where they must disagree.
-fn publish_affordance(status: &str, has_changes: bool, has_origin: bool, no_access: bool) -> bool {
+fn publish_affordance(status: &str, has_changes: bool, has_bucket: bool, no_access: bool) -> bool {
     if no_access {
         return false;
     }
-    let publishable_status = status == "ahead" || (status == "local" && has_origin);
-    let up_to_date_with_changes = status == "up_to_date" && has_changes && has_origin;
+    let publishable_status = status == "ahead" || (status == "local" && has_bucket);
+    let up_to_date_with_changes = status == "up_to_date" && has_changes && has_bucket;
     publishable_status || up_to_date_with_changes
+}
+
+/// Whether the row offers *Set remote*: only while the package has no bucket.
+fn offers_set_remote(uri: Option<&S3PackageUri>) -> bool {
+    !util::has_bucket(uri)
 }
 
 // ── Installed Packages List page ──
@@ -179,14 +190,15 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // so each row re-reads its `paused_reason` from the backend.
     let listener = tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
         let is_paused = ev.status == "paused";
-        let was_paused = paused_seen.with_untracked(|seen| seen.contains(&ev.namespace));
+        let was_paused =
+            paused_seen.with_untracked(|seen| seen.contains(&ev.namespace.to_string()));
         if is_paused != was_paused {
             let ns = ev.namespace.clone();
             paused_seen.update(|seen| {
                 if is_paused {
-                    seen.insert(ns);
+                    seen.insert(ns.to_string());
                 } else {
-                    seen.remove(&ns);
+                    seen.remove(&ns.to_string());
                 }
             });
             refetch.notify();
@@ -220,7 +232,8 @@ pub fn InstalledPackagesList() -> impl IntoView {
         // diverged) are already legible from the per-row status string;
         // `other` and `pullConflict` carry information it drops, so only
         // those toast (see `paused_toast`).
-        let Some(msg) = paused_toast(&ev.reason, &ev.namespace, ev.message.as_deref()) else {
+        let Some(msg) = paused_toast(&ev.reason, &ev.namespace.to_string(), ev.message.as_deref())
+        else {
             return;
         };
         notification.set(Some(Notification::Error(msg)));
@@ -384,7 +397,7 @@ fn PackageItem(
 
     let ns = data.namespace.clone();
     leptos::task::spawn_local(async move {
-        let result = commands::refresh_package_status(ns).await;
+        let result = commands::refresh_package_status(ns.to_string()).await;
         if cancelled_flag.load(Ordering::Relaxed) {
             return;
         }
@@ -441,12 +454,9 @@ fn PackageItem(
         }
     });
 
-    let pkg_href = format!(
-        "/installed-package?namespace={}&filter=unmodified",
-        data.namespace
-    );
+    let pkg_href = crate::routes::package_page_href(&data.namespace);
 
-    let namespace_display = data.namespace.clone();
+    let namespace_display = data.namespace.to_string();
     let remote_display = data.remote_display.clone();
 
     // Attention hint lines under the URI. Red state and the lines are both
@@ -495,8 +505,8 @@ fn PackageItem(
         let is_behind = is_behind_now.get();
         async move {
             if is_behind {
-                match commands::package_pull_outcome(ns).await {
-                    Ok(outcome) => PullCheck::Ready(outcome),
+                match commands::package_pull_outcome(ns.to_string()).await {
+                    Ok(preview) => PullCheck::Ready(preview),
                     Err(_) => PullCheck::Failed,
                 }
             } else {
@@ -505,6 +515,13 @@ fn PackageItem(
         }
     });
     let pull_check = Signal::derive(move || pull_outcome_res.get().unwrap_or(PullCheck::Loading));
+    // What the incoming revision brings, from the dry run that already gates
+    // Pull on this row. Two names: the line shares its width with the
+    // namespace and the URI.
+    let incoming = Signal::derive(move || match pull_check.get() {
+        PullCheck::Ready(preview) => util::incoming_files(&preview.added, 2),
+        PullCheck::Loading | PullCheck::Failed => None,
+    });
 
     // Build menu buttons
     let menu = build_package_menu(
@@ -535,9 +552,16 @@ fn PackageItem(
                         {uri}
                     </span>
                 })}
-                {move || hint.get().into_iter().map(|line| view! {
-                    <span class="item-error-hint">{line}</span>
+                // One line with an ellipsis, so the title keeps the whole remedy.
+                {move || hint.get().into_iter().map(|line| {
+                    let title = line.clone();
+                    view! { <span class="item-error-hint" title=title>{line}</span> }
                 }).collect::<Vec<_>>()}
+                // Neutral, not the error hint: a package with a newer revision
+                // is not a fault, and the hint slot reddens the whole row.
+                {move || incoming.get().map(|line| view! {
+                    <span class="item-note">{line}</span>
+                })}
             </a>
             <Show when=move || refreshing.get()>
                 <div class="q-spinner-inline" />
@@ -621,7 +645,8 @@ fn build_package_menu(
     let current_host = origin_host.clone();
     let current_bucket = data.uri.as_ref().and_then(util::bucket_str);
     let has_origin = origin_url.is_some();
-    let remote_configured = current_host.is_some() && current_bucket.is_some();
+    let has_bucket = util::has_bucket(data.uri.as_ref());
+    let set_remote = offers_set_remote(data.uri.as_ref());
 
     // ── Open in file browser ──
     let ns_for_open = namespace.clone();
@@ -630,7 +655,7 @@ fn build_package_menu(
         let ns = ns_for_open.clone();
         let uri = uri_for_open.clone();
         leptos::task::spawn_local(async move {
-            match commands::open_in_file_browser(ns, uri).await {
+            match commands::open_in_file_browser(ns.to_string(), uri).await {
                 Ok(msg) => notification.set(Some(Notification::Success(msg))),
                 Err(e) => notification.set(Some(Notification::Error(e))),
             }
@@ -655,7 +680,9 @@ fn build_package_menu(
         let uri = uri_for_uninstall.clone();
         ui_locked.set(true);
         leptos::task::spawn_local(async move {
-            match commands::package_uninstall(ns, uri).await {
+            // v1 keeps the downloaded files: only the v2 confirmation
+            // offers to delete them.
+            match commands::package_uninstall(ns.to_string(), uri, false).await {
                 Ok(msg) => {
                     ui_locked.set(false);
                     notification.set(Some(Notification::Success(msg)));
@@ -677,7 +704,7 @@ fn build_package_menu(
         move || {
             let ns = ns_for_publish.clone();
             let uri = uri_for_publish.clone();
-            async move { commands::package_publish(ns, uri).await }
+            async move { commands::package_publish(ns.to_string(), uri).await }
         },
         notification,
         Some(ui_locked),
@@ -691,7 +718,7 @@ fn build_package_menu(
         move || {
             let ns = ns_for_pull.clone();
             let uri = uri_for_pull.clone();
-            async move { commands::package_pull(ns, uri).await }
+            async move { commands::package_pull(ns.to_string(), uri).await }
         },
         notification,
         Some(ui_locked),
@@ -707,7 +734,7 @@ fn build_package_menu(
     let current_bucket_for_popup = current_bucket.clone();
     let has_local_commit_for_popup = data.has_local_commit;
     let login_href = origin_host.as_ref().map(|host| {
-        let back_encoded = urlencoding::encode("/installed-packages-list");
+        let back_encoded = urlencoding::encode("/");
         format!("/login?host={host}&back={back_encoded}")
     });
 
@@ -730,10 +757,10 @@ fn build_package_menu(
         <li class="menu-item menu-divider"></li>
 
         // Publish: commit (if needed) + push in one click.
-        // Gated on having a remote origin, and on there being something to ship
+        // Gated on having a bucket, and on there being something to ship
         // (either uncommitted changes or a pending commit).
         <Show when=move || {
-            publish_affordance(&status.get(), has_changes.get(), has_origin, access.no_access.get())
+            publish_affordance(&status.get(), has_changes.get(), has_bucket, access.no_access.get())
         }>
             <li class="menu-item">
                 <buttons::Publish
@@ -783,13 +810,13 @@ fn build_package_menu(
         </Show>
 
         // Error actions
-        // Host or bucket missing → Set Remote (warning palette, always visible)
-        {(!remote_configured).then(|| view! {
+        // Bucket missing → Set Remote (warning palette, always visible)
+        {set_remote.then(|| view! {
             <li class="menu-item menu-divider"></li>
             <li class="menu-item">
                 <buttons::SetRemote
                     on_click=move |_| show_set_remote_popup.set(Some(SetRemotePopupData {
-                        namespace: ns_for_set_remote.clone(),
+                        namespace: ns_for_set_remote.to_string(),
                         current_host: current_host_for_popup.clone(),
                         current_bucket: current_bucket_for_popup.clone(),
                         has_local_commit: has_local_commit_for_popup,
@@ -931,11 +958,25 @@ fn CreatePackagePopup(
 
 #[cfg(test)]
 mod tests {
+
+    /// A resolved dry run that adds nothing — for the cases under test, where
+    /// the verdict is the subject and the incoming files are not.
+    use crate::commands::PullPreview;
+
+    fn ready(outcome: PullOutcome) -> PullPreview {
+        PullPreview {
+            outcome,
+            added: Vec::new(),
+            changed: Vec::new(),
+            removed: Vec::new(),
+            latest_hash: None,
+        }
+    }
     use leptos::prelude::*;
 
     use super::{
-        AccessSignals, PAUSED_GUIDANCE, PullCheck, PullOutcome, hint_lines, paused_toast,
-        publish_affordance, pull_conflict_hint, pull_popover,
+        AccessSignals, PAUSED_GUIDANCE, PullCheck, PullOutcome, hint_lines, offers_set_remote,
+        paused_toast, publish_affordance, pull_conflict_hint, pull_popover,
     };
 
     /// A row seeded by the pre-filter as denied.
@@ -945,7 +986,7 @@ mod tests {
             reason: RwSignal::new(Some(
                 "Current role ReadOnly has no access to this bucket".to_string(),
             )),
-            role_switch_host: RwSignal::new(Some("acme.quilt.dev".to_string())),
+            role_switch_host: RwSignal::new(Some("quilt.test".to_string())),
         }
     }
 
@@ -981,7 +1022,7 @@ mod tests {
         access.apply(
             true,
             Some("Current role ReadOnly has no access to this bucket".to_string()),
-            Some("acme.quilt.dev".to_string()),
+            Some("quilt.test".to_string()),
         );
 
         assert!(access.no_access.get_untracked());
@@ -1008,11 +1049,48 @@ mod tests {
         );
     }
 
+    /// A remote just set with a bucket and no catalog is `local` until its
+    /// first push, and the row offers Publish for it.
+    #[test]
+    fn a_local_row_with_a_bucket_and_no_catalog_offers_publish() {
+        let uri: quilt_uri::S3PackageUri = "quilt+s3://data-bucket#package=team/survey"
+            .parse()
+            .unwrap();
+        assert!(publish_affordance(
+            "local",
+            false,
+            crate::util::has_bucket(Some(&uri)),
+            false
+        ));
+        assert!(!publish_affordance(
+            "local",
+            false,
+            crate::util::has_bucket(None),
+            false
+        ));
+    }
+
+    /// *Set remote* is for a package with no bucket. A bucket with no catalog
+    /// is a configured remote, and once published its bucket is fixed.
+    #[test]
+    fn set_remote_is_offered_only_without_a_bucket() {
+        let catalog_less: quilt_uri::S3PackageUri = "quilt+s3://data-bucket#package=team/survey"
+            .parse()
+            .unwrap();
+        let with_catalog: quilt_uri::S3PackageUri =
+            "quilt+s3://data-bucket#package=team/survey&catalog=quilt.test"
+                .parse()
+                .unwrap();
+        assert!(offers_set_remote(None));
+        assert!(!offers_set_remote(Some(&catalog_less)));
+        assert!(!offers_set_remote(Some(&with_catalog)));
+    }
+
     #[test]
     fn blocked_popover_names_conflicts_and_resolution_path() {
-        let check = PullCheck::Ready(PullOutcome::Blocked {
+        let check = PullCheck::Ready(ready(PullOutcome::Blocked {
             conflicts: vec!["a.txt".to_string(), "b.txt".to_string()],
-        });
+        }));
         assert_eq!(
             pull_popover(&check),
             Some("Resolve conflicts in a.txt, b.txt via commit \u{2192} merge".to_string())
@@ -1033,15 +1111,15 @@ mod tests {
     fn non_blocking_checks_have_no_popover() {
         assert_eq!(pull_popover(&PullCheck::Loading), None);
         assert_eq!(
-            pull_popover(&PullCheck::Ready(PullOutcome::CleanUpdate)),
+            pull_popover(&PullCheck::Ready(ready(PullOutcome::CleanUpdate))),
             None
         );
         assert_eq!(
-            pull_popover(&PullCheck::Ready(PullOutcome::KeepsLocalChanges {
+            pull_popover(&PullCheck::Ready(ready(PullOutcome::KeepsLocalChanges {
                 added: vec!["a.txt".to_string()],
                 modified: vec![],
                 removed: vec![],
-            })),
+            }))),
             None
         );
     }
@@ -1131,6 +1209,14 @@ mod tests {
                 PAUSED_GUIDANCE.to_string(),
                 "workflow rejected metadata".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn error_without_a_host_points_at_the_credentials_file() {
+        assert_eq!(
+            hint_lines("error", false, None, None, None),
+            vec!["Unable to check remote status — check the AWS credentials in ~/.aws or run aws sso login".to_string()]
         );
     }
 
@@ -1240,17 +1326,15 @@ mod tests {
     }
 
     #[test]
-    fn error_without_host_reports_no_remote() {
-        assert_eq!(
-            hint_lines("error", false, None, None, None),
-            vec!["No remote configured".to_string()]
-        );
-    }
-
-    #[test]
     fn healthy_row_has_no_hint() {
-        assert!(hint_lines("up_to_date", true, None, None, None).is_empty());
-        assert!(hint_lines("ahead", false, None, None, None).is_empty());
+        assert_eq!(
+            hint_lines("up_to_date", true, None, None, None),
+            [] as [String; 0]
+        );
+        assert_eq!(
+            hint_lines("ahead", false, None, None, None),
+            [] as [String; 0]
+        );
     }
 
     #[test]

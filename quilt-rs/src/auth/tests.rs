@@ -16,13 +16,14 @@ use super::registry::QuiltStackConfig;
 use super::registry::RemoteCredentials;
 use super::test_utils::*;
 use crate::io::storage::mocks::MockStorage;
+use quilt_uri::fixtures;
 
 #[test(tokio::test)]
 async fn test_auth_refresh_credentials() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let credentials = auth
         .refresh_credentials(&TestHttpClient, &host, ACCESS_TOKEN)
@@ -56,7 +57,7 @@ async fn test_login_oauth() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths, storage);
-    let host = get_host();
+    let host = fixtures::host();
 
     let params = OAuthParams {
         code: AUTH_CODE.to_string(),
@@ -75,7 +76,7 @@ async fn test_get_credentials_or_refresh_with_expired_token() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     // Seed an expired access token and a stored OAuth client.
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
@@ -113,7 +114,7 @@ async fn test_get_credentials_or_refresh_with_expired_token() -> Res {
 }
 
 /// `get_credentials_or_refresh` classifies an absent token file as
-/// "login required" rather than letting it surface as a storage error.
+/// "no session" rather than letting it surface as a storage error.
 /// Guards the token-read arm, which the shared `valid_access_token`
 /// helper must not be allowed to short-circuit.
 #[test(tokio::test)]
@@ -121,14 +122,14 @@ async fn test_get_credentials_or_refresh_without_tokens_requires_login() -> Res 
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths, storage);
-    let host = get_host();
+    let host = fixtures::host();
 
     let result = auth
         .get_credentials_or_refresh(&OAuthTestHttpClient::default(), &host)
         .await;
 
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(Some(ref h)))) if *h == host),
+        matches!(result, Err(Error::Login(LoginError::NoSession(Some(ref h)))) if *h == host),
         "expected LoginRequired naming the host, got: {result:?}"
     );
     Ok(())
@@ -139,7 +140,7 @@ async fn test_get_or_register_client() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths, storage);
-    let host = get_host();
+    let host = fixtures::host();
 
     // First call registers via DCR
     let client = auth
@@ -155,7 +156,7 @@ async fn test_get_or_register_client() -> Res {
     assert_eq!(client2.client_id, "test-dcr-client-id");
 
     // Third call with different redirect_uri re-registers
-    let new_redirect = "quilt://auth/callback?host=other.quilt.dev";
+    let new_redirect = "quilt://auth/callback?host=quilt.test&v=2";
     let client3 = auth
         .get_or_register_client(&OAuthTestHttpClient::default(), &host, new_redirect)
         .await?;
@@ -193,7 +194,7 @@ impl HttpClient for RetryMockClient {
         _auth_token: Option<&str>,
     ) -> Res<T> {
         let registry = get_registry();
-        if url == format!("https://{}/config.json", get_host()) {
+        if url == format!("https://{}/config.json", fixtures::host()) {
             let config = QuiltStackConfig {
                 registry_url: format!("https://{registry}").parse()?,
             };
@@ -224,7 +225,7 @@ impl HttpClient for RetryMockClient {
         url: &str,
         form_data: &HashMap<String, String>,
     ) -> Res<T> {
-        assert_eq!(url, connect_token_url(&get_host()));
+        assert_eq!(url, connect_token_url(&fixtures::host()));
         let n = self.token_calls.fetch_add(1, Ordering::SeqCst);
         if n < self.token_fail_first_n {
             return Err(reqwest_error_with_status(401).await);
@@ -287,7 +288,7 @@ async fn test_credentials_transient_401_recovers_via_force_token_refresh() -> Re
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
     seed_fresh_tokens(&storage, &paths, &host).await;
 
     let client = RetryMockClient::new(/*cred_fail=*/ 1, /*token_fail=*/ 0);
@@ -314,14 +315,14 @@ async fn test_credentials_persistent_401_maps_to_login_required() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
     seed_fresh_tokens(&storage, &paths, &host).await;
 
     let client = RetryMockClient::new(/*cred_fail=*/ usize::MAX, /*token_fail=*/ 0);
     let result = auth.get_credentials_or_refresh(&client, &host).await;
 
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
         "expected LoginRequired after persistent 4xx, got: {result:?}"
     );
     assert_eq!(
@@ -340,7 +341,7 @@ async fn test_token_refresh_transient_401_recovers() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     // Seed *expired* tokens so the proactive refresh path is taken.
     let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
@@ -490,7 +491,7 @@ async fn test_auth_refresh_is_single_flight_across_concurrent_callers() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
     seed_expired_creds_fresh_tokens(&auth_io).await?;
@@ -539,7 +540,7 @@ async fn switch_role_waits_for_an_in_flight_vend_before_flushing() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
     seed_expired_creds_fresh_tokens(&auth_io).await?;
@@ -595,8 +596,8 @@ async fn test_auth_refresh_lock_is_per_host() -> Res {
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
 
-    let host_a: Host = "a.quilt.dev".parse().unwrap();
-    let host_b: Host = "b.quilt.dev".parse().unwrap();
+    let host_a = fixtures::one_host();
+    let host_b = fixtures::another_host();
 
     // Seed each host separately; they live under distinct paths.
     seed_expired_creds_fresh_tokens(&AuthIo::new(storage.clone(), paths.auth_host(&host_a)))
@@ -655,13 +656,118 @@ async fn test_auth_refresh_lock_is_per_host() -> Res {
     Ok(())
 }
 
+/// Another process sharing the store refreshes the same host. A refresh here
+/// waits for its lock, then uses the tokens it rotated rather than present the
+/// refresh token it retired.
+#[test(tokio::test)]
+async fn a_refresh_waits_for_another_process_and_uses_the_tokens_it_rotated() -> Res {
+    use crate::io::storage::lock::tests::OtherProcess;
+
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths.clone(), storage.clone());
+    let host = fixtures::host();
+
+    let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
+    auth_io
+        .write_tokens(&Tokens {
+            access_token: "expired-access-token".to_string(),
+            refresh_token: REFRESH_TOKEN.to_string(),
+            expires_at: chrono::Utc::now() - chrono::Duration::seconds(300),
+        })
+        .await?;
+    auth_io
+        .write_client(&OAuthClient {
+            client_id: CLIENT_ID.to_string(),
+            redirect_uri: REDIRECT_URI.to_string(),
+        })
+        .await?;
+
+    let other = OtherProcess::holding(&paths.auth_lock(&host)).await?;
+
+    let client = Arc::new(RetryMockClient::new(0, 0));
+    let refresh = tokio::spawn({
+        let (auth, client, host) = (auth.clone(), client.clone(), host.clone());
+        async move { auth.get_credentials_or_refresh(&*client, &host).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !refresh.is_finished(),
+        "the refresh must wait while another process holds the host's lock"
+    );
+
+    // What the other process writes before it lets go.
+    auth_io
+        .write_tokens(&Tokens {
+            access_token: "rotated-access-token".to_string(),
+            refresh_token: "rotated-refresh-token".to_string(),
+            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+        })
+        .await?;
+    other.release()?;
+
+    tokio::time::timeout(std::time::Duration::from_secs(30), refresh)
+        .await
+        .expect("the refresh goes ahead once the other process lets go")
+        .unwrap()?;
+    assert_eq!(
+        client.token_calls.load(Ordering::SeqCst),
+        0,
+        "the rotated tokens are fresh, so nothing is refreshed again"
+    );
+    let tokens = auth_io.read_tokens().await?.expect("tokens");
+    assert_eq!(tokens.refresh_token, "rotated-refresh-token");
+    Ok(())
+}
+
+/// A host with no session is answered without writing to the store.
+#[test(tokio::test)]
+async fn a_host_with_no_session_leaves_the_store_untouched() -> Res {
+    let storage = Arc::new(MockStorage::default());
+    let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
+    let auth = Auth::new(paths.clone(), storage.clone());
+    let host = fixtures::host();
+
+    auth.expire_credentials(&host).await?;
+    let result = auth
+        .get_credentials_or_refresh(&OAuthTestHttpClient::default(), &host)
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(Error::Login(LoginError::NoSession(_)))
+    ));
+    assert!(!paths.auth_dir().exists(), "nothing was created");
+    Ok(())
+}
+
+/// The lock and the directories it lives in are their owner's alone.
+#[test(tokio::test)]
+#[cfg(unix)]
+async fn the_host_lock_is_owner_only() -> Res {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let data_dir = tempfile::tempdir()?;
+    let paths = DomainPaths::new(data_dir.path().to_path_buf());
+    let host = fixtures::host();
+
+    let _held = lock_host(&LocalStorage::new(), &paths, &host).await?;
+
+    assert_eq!(mode(&paths.auth_dir()), 0o700, ".auth/");
+    assert_eq!(mode(&paths.auth_locks_dir()), 0o700, ".locks/");
+    assert_eq!(mode(&paths.auth_lock(&host)), 0o600, "the lock file");
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn test_refresh_lock_map_sweeps_dead_entries() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths, storage);
 
-    let host: Host = "x.quilt.dev".parse().unwrap();
+    let host = fixtures::host();
 
     // First lookup inserts a live Weak.
     let arc1 = auth.refresh_lock_for(&host);
@@ -707,7 +813,7 @@ async fn auth_with_cached_credentials()
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
     auth_io
@@ -982,7 +1088,7 @@ async fn refresh_roles_maps_a_persistent_401_to_login_required() -> Res {
     let result = auth.refresh_roles(&client, &host).await;
 
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
         "expected LoginRequired after a persistent 401, got: {result:?}"
     );
     assert_eq!(
@@ -1000,7 +1106,7 @@ async fn refresh_roles_maps_a_persistent_401_to_login_required() -> Res {
 /// A registry answers a refused session on the role surface in the body —
 /// `200 {"data":{"me":null}}` — not with a status code. That is the same
 /// "log in again" answer a 401 carries, so it must take the same route:
-/// force-refresh, retry once, then report login required. Left unclassified
+/// force-refresh, retry once, then report the session as absent. Left unclassified
 /// it is a permanent failure nothing routes anywhere, and the role switcher
 /// silently renders nothing.
 #[test(tokio::test)]
@@ -1014,7 +1120,7 @@ async fn refresh_roles_maps_a_persistently_null_me_to_login_required() -> Res {
     let result = auth.refresh_roles(&client, &host).await;
 
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
         "expected LoginRequired after a persistently null `me`, got: {result:?}"
     );
     assert_eq!(
@@ -1035,7 +1141,7 @@ async fn refresh_roles_maps_a_persistently_null_me_to_login_required() -> Res {
 }
 
 /// Same contract on the mutation: a switch attempted against a dead session
-/// reports "login required", not a raw HTTP failure.
+/// reports "no session", not a raw HTTP failure.
 #[test(tokio::test)]
 async fn switch_role_maps_a_persistent_401_to_login_required() -> Res {
     let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
@@ -1047,7 +1153,7 @@ async fn switch_role_maps_a_persistent_401_to_login_required() -> Res {
     let result = auth.switch_role(&client, &host, "ReadOnly").await;
 
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
         "expected LoginRequired after a persistent 401, got: {result:?}"
     );
     Ok(())
@@ -1062,7 +1168,7 @@ async fn expire_credentials_waits_for_an_in_flight_vend() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let auth_io = AuthIo::new(storage, paths.auth_host(&host));
     seed_expired_creds_fresh_tokens(&auth_io).await?;
@@ -1125,12 +1231,52 @@ async fn readable_buckets_returns_the_role_scoped_list() -> Res {
     Ok(())
 }
 
+/// The listing rides the role surface's retry: a revoked token is
+/// force-refreshed once and the listing asked again, and a refusal that
+/// outlives the retry is a missing session, not a bare transport error.
+#[test(tokio::test)]
+async fn package_revisions_recovers_from_a_revoked_token_by_forcing_a_refresh() -> Res {
+    let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient {
+        package_revisions: Some(vec![Some("only-hash".to_string())]),
+        graphql_fail_first_n: 1,
+        ..GraphQlTestHttpClient::default()
+    };
+
+    let hashes = auth
+        .package_revisions(&client, &host, "bucket", &("team", "dataset").into())
+        .await?;
+
+    assert_eq!(hashes, vec!["only-hash"]);
+    assert_eq!(client.token_calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[test(tokio::test)]
+async fn package_revisions_maps_a_persistent_401_to_login_required() -> Res {
+    let (auth, _storage, _paths, host) = auth_with_cached_credentials().await?;
+    let client = GraphQlTestHttpClient {
+        graphql_fail_first_n: usize::MAX,
+        ..GraphQlTestHttpClient::default()
+    };
+
+    let result = auth
+        .package_revisions(&client, &host, "bucket", &("team", "dataset").into())
+        .await;
+
+    assert!(
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
+        "expected LoginRequired after a persistent 401, got: {result:?}"
+    );
+    Ok(())
+}
+
 #[test(tokio::test)]
 async fn expire_credentials_forces_a_revend_without_touching_tokens() -> Res {
     let storage = Arc::new(MockStorage::default());
     let paths = DomainPaths::new(storage.temp_dir.path().to_path_buf());
     let auth = Auth::new(paths.clone(), storage.clone());
-    let host = get_host();
+    let host = fixtures::host();
 
     let auth_io = AuthIo::new(storage.clone(), paths.auth_host(&host));
     auth_io

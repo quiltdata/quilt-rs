@@ -12,7 +12,16 @@ runs:
     - name: Setup Rust
       uses: moonrepo/setup-rust@v1
       with:
-        cache-base: main
-        cache-target: debug
+        # Its cache is one per OS, shared by every job. rust-cache below keeps one per job.
+        cache: false
         inherit-toolchain: true
         targets: ${{ inputs.targets }}
+
+    - name: Cache Rust build
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        # rust-cache adds the job id and the runner's OS to the key; the workflow
+        # keeps apart jobs of one id in two workflows.
+        key: ${{ github.workflow }}-debug
+        # Pull requests restore main's caches and never write their own.
+        save-if: ${{ github.ref == 'refs/heads/main' }}

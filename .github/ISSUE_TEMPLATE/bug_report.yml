@@ -44,6 +44,7 @@ body:
     attributes:
       label: Logs
       description: >
-        Optional. `RUST_LOG=debug` output helps. Check for credentials before
-        pasting.
+        Optional. For the CLI, run the command with `QUILT_LOG=debug` and
+        paste what it prints to stderr. For QuiltSync, attach the logs from
+        Settings, Diagnostics. Check for credentials before pasting.
       render: text

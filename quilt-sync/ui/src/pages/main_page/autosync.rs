@@ -1,0 +1,920 @@
+//! The Autosync card: the state strip's first region on real data.
+//!
+//! # Nothing here is a reactive prop
+//!
+//! The body is rendered inside its resource's `Transition`, so a refetch rebuilds
+//! it with plain values — the same shape `MainPage` already uses for
+//! `PackageList`. That is deliberate rather than lazy. `ToggleRow.trailing` is an
+//! `Option<AnyView>` evaluated once, and threading a signal into it would run
+//! into Leptos's `#[component]` wrapping its body in `untrack_with_diagnostics`,
+//! so a signal read deferred into a nested component is untracked. Rebuilding
+//! also re-seeds the ring's CSS animation from the new deadline, which is exactly
+//! what should happen when a new deadline arrives.
+//!
+//! # The words are the caller's
+//!
+//! §2: the wire carries a discriminator and the vocabulary lives in the UI.
+//! `Countdown` renders nothing for an absent deadline *so that* the caller
+//! supplies its own idle text — `nothing to publish` belongs to the publish
+//! toggle, not to a clock.
+
+use std::future::Future;
+use std::time::Duration;
+
+use leptos::prelude::*;
+
+use super::package_autosync::PublishCard;
+use super::package_autosync::publish_detail;
+use super::package_autosync::publish_trailing;
+use crate::commands;
+use crate::commands::AutosyncStateData;
+use crate::commands::MainPageWatcherData;
+use crate::commands::ToggleActivityData;
+use crate::commands::ToggleStateData;
+use crate::kit::Card;
+use crate::kit::Countdown;
+use crate::kit::ToggleRow;
+use crate::kit::ToggleRowSkeleton;
+
+/// An interval in the shortest honest form: `30s`, `5 min`.
+///
+/// §1 — derived from the value, never sent as words. Whole minutes read as
+/// minutes because that is how the quiet window is set; anything else reads as
+/// seconds rather than inventing `1 min 30s`.
+fn human_interval(ms: f64) -> String {
+    let secs = ms / 1000.0;
+    if secs >= 60.0 && (secs % 60.0).abs() < f64::EPSILON {
+        format!("{} min", secs / 60.0)
+    } else {
+        format!("{secs}s")
+    }
+}
+
+/// The shortest wait this card will schedule for a deadline still ahead of it.
+///
+/// Protects against a deadline a few milliseconds out: waking for it schedules a
+/// refetch that can beat the watcher to the lock and read the same deadline back.
+/// Two seconds bounds that, and costs nothing — a ring that sits full for up to two
+/// seconds of a thirty-second cycle is what `kit/countdown.rs` already documents as
+/// truthful: *"A full ring means 'due', not 'fired'"*.
+const REFETCH_FLOOR: Duration = Duration::from_secs(2);
+
+/// The wait for a deadline that has already passed.
+///
+/// Protects against something different, and longer-lived: `next_pull_at` is armed
+/// *before* the loop sleeps, so it names the moment the sleep ends — the moment the
+/// tick starts. For the whole of that tick (a status walk with a network round trip
+/// per package) the recorded deadline is in the past, and nothing will move it. At
+/// `REFETCH_FLOOR` the card would refetch every two seconds for the length of the
+/// tick, and every refetch rebuilds the body, re-mounts the ring's svg and re-seeds
+/// its CSS animation — a ring restarting from zero over and over, where sitting
+/// full is the truthful drawing. A past deadline is *due*, not imminent, so waiting
+/// longer for it costs nothing: `visibilitychange` still beats this, and a tick that
+/// finishes arms a fresh deadline the next wake reads.
+const REFETCH_DUE_FLOOR: Duration = Duration::from_secs(10);
+
+/// The longest wait this card will schedule.
+///
+/// Not a policy — a guard against two panics. `set_timeout_with_handle` converts
+/// the delay to `i32` milliseconds (`duration.as_millis().try_into().unwrap_throw()`)
+/// and throws above ~24.9 days, and `Duration::from_secs_f64` panics on a
+/// non-finite argument; either takes the page down. A deadline further out than a
+/// day is also one the visibility listener beats, so waking early costs nothing.
+const REFETCH_CEILING: Duration = Duration::from_hours(24);
+
+/// How long to wait before asking the backend for a fresh deadline.
+///
+/// `None` when nothing is counting down: an idle or paused toggle has no moment
+/// worth waking for, and polling one would be a timer where the design has none.
+///
+/// Which floor applies depends on whether the deadline is merely imminent or
+/// already due — see the two constants for what each protects against.
+///
+/// Total, and deliberately so — a panic in wasm takes the page, and every argument
+/// that could cause one is bounded here. `Duration::from_secs_f64` panics on a
+/// negative, NaN, or infinite argument; `set_timeout_with_handle` throws on a delay
+/// that does not fit `i32` milliseconds. The floors and the ceiling between them
+/// leave nothing outside `[2s, 24h]`.
+///
+/// The order is load-bearing: `f64::max` returns the non-NaN operand, so the floor
+/// absorbs NaN first. `f64::clamp` would not do — it returns NaN for a NaN
+/// receiver, reinstating the panic the floor exists to prevent. NaN is not `<= 0.0`
+/// either, so it takes the imminent branch and lands on `REFETCH_FLOOR` — a floor
+/// still, which is all totality asks.
+fn delay_until(deadline: Option<f64>, now: f64) -> Option<Duration> {
+    let remaining_secs = (deadline? - now) / 1000.0;
+    let floor = if remaining_secs <= 0.0 {
+        REFETCH_DUE_FLOOR
+    } else {
+        REFETCH_FLOOR
+    };
+    Some(Duration::from_secs_f64(
+        remaining_secs
+            .max(floor.as_secs_f64())
+            .min(REFETCH_CEILING.as_secs_f64()),
+    ))
+}
+
+/// The pull's trailing slot: a ring while the next check counts down,
+/// `not checking` while the toggle is off.
+fn pull_trailing(toggle: &ToggleStateData, title: String) -> AnyView {
+    match toggle.activity {
+        ToggleActivityData::Armed => view! {
+            <Countdown
+                deadline=toggle.deadline
+                interval=toggle.interval_ms
+                title=title
+                repeat=true
+            />
+        }
+        .into_any(),
+        ToggleActivityData::Idle => view! { "not checking" }.into_any(),
+    }
+}
+
+/// The soonest moment the payload goes stale: the next check, or a package's
+/// deadline or next try still ahead. A deadline already past is left to the
+/// watcher's change event.
+fn next_deadline(data: &MainPageWatcherData, now: f64) -> Option<f64> {
+    let packages = data
+        .publish
+        .packages
+        .iter()
+        .filter_map(|p| match p.state {
+            AutosyncStateData::Waiting { publish_at, .. } => Some(publish_at),
+            AutosyncStateData::Retrying { next_try_at, .. } => Some(next_try_at),
+            _ => None,
+        })
+        .filter(|at| *at > now);
+    data.pull
+        .deadline
+        .into_iter()
+        .chain(packages)
+        .min_by(f64::total_cmp)
+}
+
+/// The card, on one payload. Split from [`AutosyncCard`] so it can be tested
+/// without a Tauri host.
+#[component]
+fn AutosyncBody(data: MainPageWatcherData, reload: Trigger) -> impl IntoView {
+    // The SETTING, which stays true while paused. Local signals because
+    // `ToggleRow` writes them on change; the payload is the source of truth and
+    // a refetch rebuilds this component with it.
+    let pull_checked = RwSignal::new(data.pull.enabled);
+    let publish_checked = RwSignal::new(data.publish.enabled);
+    let pull_every = human_interval(data.pull.interval_ms);
+    let publish_after = human_interval(data.publish.interval_ms);
+    let card = PublishCard::from_payload(&data.publish);
+
+    // The only clock in this card. Not an interval: `Countdown` draws itself from
+    // CSS and needs a correct deadline, not a tick — so the single thing the UI
+    // must do is ask again when the earliest deadline expires.
+    //
+    // One `set_timeout` per body, and a body is rebuilt per payload, so the
+    // handle's lifetime is the deadline's lifetime. `on_cleanup` clears it when the
+    // payload is replaced or the page unmounts — the same shape
+    // `components/set_remote_popup.rs` uses for its debounce.
+    let now = js_sys::Date::now();
+    let armed = next_deadline(&data, now);
+    let timer: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
+    if let Some(delay) = delay_until(armed, now)
+        && let Ok(handle) = set_timeout_with_handle(move || reload.notify(), delay)
+    {
+        timer.set_value(Some(handle));
+    }
+    on_cleanup(move || {
+        if let Some(Some(handle)) = timer.try_get_value() {
+            handle.clear();
+        }
+    });
+
+    // Write, then ask again. The off->on edge clears the paused set, so the
+    // payload after a write differs by more than the bit that was flipped.
+    let write = move |pull: Option<bool>, push: Option<bool>| {
+        leptos::task::spawn_local(async move {
+            if let Err(err) = commands::set_autosync_direction(pull, push).await {
+                web_sys::console::error_1(&format!("set_autosync_direction failed: {err}").into());
+            }
+            reload.notify();
+        });
+    };
+
+    // `ToggleRow` owns the `on:change`, so the change is observed through the
+    // signal rather than a handler. What the backend last heard, seeded from the
+    // payload: an effect runs once on mount, and writing back the value it just
+    // read would be a write per render.
+    let pull_written = StoredValue::new(data.pull.enabled);
+    let publish_written = StoredValue::new(data.publish.enabled);
+    Effect::new(move |_| {
+        let enabled = pull_checked.get();
+        if pull_written.get_value() != enabled {
+            pull_written.set_value(enabled);
+            write(Some(enabled), None);
+        }
+    });
+    Effect::new(move |_| {
+        let enabled = publish_checked.get();
+        if publish_written.get_value() != enabled {
+            publish_written.set_value(enabled);
+            write(None, Some(enabled));
+        }
+    });
+
+    view! {
+        <Card title="Autosync">
+            <ToggleRow
+                label="Get new revisions"
+                // "keeping any local changes", not the old "when nothing is
+                // changed here": local work does NOT stop a pull. `tick.rs:349`
+                // routes on the `PullOutcome` rather than clean-versus-dirty, so
+                // a `Behind` tree with non-conflicting local work pulls and the
+                // work survives; only a real conflict pauses, and that is what
+                // the row's own `Sync paused` is for. The old clause described
+                // the behaviour the comment there records replacing.
+                sublabel=format!("Every {pull_every}, keeping any local changes")
+                checked=pull_checked
+                trailing=pull_trailing(
+                    &data.pull,
+                    format!("Checks for new revisions every {pull_every}"),
+                )
+            />
+            <ToggleRow
+                label="Publish your changes"
+                // A bare duration reads as a countdown someone is narrating;
+                // this is a rule. "Inactivity" names the condition in one word,
+                // and "After" rather than "Every" because it is not periodic —
+                // sitting idle for twenty minutes with changes pending yields
+                // one publish, not four.
+                sublabel=format!("After {publish_after} of inactivity")
+                checked=publish_checked
+                trailing=publish_trailing(
+                    &card,
+                    data.publish.interval_ms,
+                    // Matches the sublabel above rather than restating the rule a
+                    // second way: two phrasings of one condition is how they
+                    // drift apart.
+                    &format!("Publishes after {publish_after} of inactivity"),
+                )
+                detail=view! { {publish_detail(&card)} }.into_any()
+            />
+        </Card>
+    }
+}
+
+/// The card before its read answers: its title, which is known, and the two
+/// toggles as [`ToggleRowSkeleton`]s, so it is the height of the card that
+/// replaces it. Busy, so a screen reader hears the rows arrive.
+pub(super) fn autosync_skeleton() -> AnyView {
+    view! {
+        <Card title="Autosync" busy=true>
+            <ToggleRowSkeleton />
+            <ToggleRowSkeleton />
+        </Card>
+    }
+    .into_any()
+}
+
+/// Refetch when the window becomes visible again, when the watcher says a
+/// package's state may have changed, and when a transfer starts or ends.
+///
+/// Split into its own component so it can be mounted alone in a test, and kept out
+/// of [`AutosyncBody`] because the body is replaced on every payload while this
+/// should be registered once.
+///
+/// `visibilitychange` is fired at the document and bubbles, so a window listener
+/// sees it. The guard matters: it fires on becoming hidden too, and refetching then
+/// would wake a backgrounded page to read a clock nobody is looking at.
+#[component]
+fn AutosyncListener(reload: Trigger) -> impl IntoView {
+    let handle = window_event_listener(leptos::ev::visibilitychange, move |_| {
+        if !document().hidden() {
+            reload.notify();
+        }
+    });
+    // Read again once the listener is live: a change between the first read
+    // and the registration fired unheard.
+    let changed = crate::tauri::listen_then::<serde::de::IgnoredAny>(
+        commands::AUTOSYNC_CHANGED_EVENT,
+        move |_| reload.notify(),
+        move || reload.notify(),
+    );
+    let activity = crate::tauri::listen::<serde::de::IgnoredAny>(
+        commands::AUTOPULL_ACTIVITY_EVENT,
+        move |_| reload.notify(),
+    );
+    on_cleanup(move || {
+        handle.remove();
+        drop(changed);
+        drop(activity);
+    });
+}
+
+/// The card's payload resource, and the two triggers that refetch it.
+///
+/// A free function rather than a line inside [`AutosyncCard`] because the fetch is
+/// the only observable a refetch has — with the fetcher as a parameter a test can
+/// mount this exact wiring and count the calls. `AutosyncCard` passes the real
+/// command.
+///
+/// Two triggers, not one. `reload` is the card's own: the expiring deadline, the
+/// visibility listener, a toggle write. `refresh` is the page's, so the appbar's
+/// Refresh button reaches this card too — without it a Refresh updates the package
+/// rows and leaves the card asserting `Paused` beside rows that have just stopped
+/// being conflicted, and a paused card has no deadline, so its own trigger has
+/// nothing scheduled to correct it.
+pub(super) fn watcher_resource<Fut>(
+    reload: Trigger,
+    refresh: Trigger,
+    fetch: impl Fn() -> Fut + 'static,
+) -> LocalResource<Result<MainPageWatcherData, String>>
+where
+    Fut: Future<Output = Result<MainPageWatcherData, String>> + 'static,
+{
+    LocalResource::new(move || {
+        reload.track();
+        refresh.track();
+        fetch()
+    })
+}
+
+/// The card and its payload.
+///
+/// [`autosync_skeleton`] until the first answer. The read is a memory read
+/// (three `RwLock`s the watcher already holds), but it is still a round trip
+/// behind the page's first paint, and a strip that drew nothing until then
+/// arrived by pushing the queue and the list down under the reader. A
+/// `Transition`, so a refetch keeps the last card rather than the skeleton. A
+/// failed fetch draws the failure card and logs: asserting anything about
+/// autosync on the strength of a failed read would be the manufactured state
+/// plan 2's final review removed from the row path.
+#[component]
+pub fn AutosyncCard(
+    /// Notified when a deadline expires, when the window becomes visible again, and
+    /// after a toggle write.
+    reload: Trigger,
+    /// Held by the page, not by this card: the queue joins against the same payload
+    /// for a pause's message, and a second resource would be a second read of one
+    /// question — the reason the accounts read sits up there too.
+    watcher: LocalResource<Result<MainPageWatcherData, String>>,
+) -> impl IntoView {
+    view! {
+        <AutosyncListener reload=reload />
+        <Transition fallback=autosync_skeleton>
+            {move || Suspend::new(async move {
+                match watcher.await {
+                    Ok(data) => view! { <AutosyncBody data=data reload=reload /> }.into_any(),
+                    Err(err) => {
+                        // An absent card claims this machine has no autosync, which
+                        // is a stronger statement than the failed read supports.
+                        web_sys::console::error_1(
+                            &format!("get_main_page_watcher failed: {err}").into(),
+                        );
+                        super::fetch_error_card("Autosync", super::AUTOSYNC_ERROR_WORDS, reload)
+                    }
+                }
+            })}
+        </Transition>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::mount;
+    use crate::test_support::sleep_ms;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    use crate::commands::PackageAutosyncData;
+    use crate::commands::PausedReasonData;
+    use crate::commands::PublishStateData;
+
+    fn publish(enabled: bool, packages: Vec<(&str, AutosyncStateData)>) -> PublishStateData {
+        PublishStateData {
+            enabled,
+            interval_ms: 300_000.0,
+            packages: packages
+                .into_iter()
+                .map(|(namespace, state)| PackageAutosyncData {
+                    namespace: namespace.try_into().unwrap(),
+                    state,
+                })
+                .collect(),
+        }
+    }
+
+    fn waiting_in_ms(ms: f64, changed_while_closed: bool) -> AutosyncStateData {
+        AutosyncStateData::Waiting {
+            publish_at: js_sys::Date::now() + ms,
+            changed_while_closed,
+        }
+    }
+
+    fn pull_idle() -> ToggleStateData {
+        ToggleStateData {
+            enabled: true,
+            activity: ToggleActivityData::Idle,
+            deadline: None,
+            interval_ms: 60_000.0,
+        }
+    }
+
+    /// Pull armed `ms` from now, publish with nothing to do.
+    fn armed_in_ms(ms: f64) -> MainPageWatcherData {
+        MainPageWatcherData {
+            pull: ToggleStateData {
+                enabled: true,
+                activity: ToggleActivityData::Armed,
+                deadline: Some(js_sys::Date::now() + ms),
+                interval_ms: 60_000.0,
+            },
+            publish: publish(true, vec![]),
+            paused: Vec::new(),
+        }
+    }
+
+    fn with_packages(
+        enabled: bool,
+        packages: Vec<(&str, AutosyncStateData)>,
+    ) -> MainPageWatcherData {
+        MainPageWatcherData {
+            publish: publish(enabled, packages),
+            ..armed_in_ms(23_000.0)
+        }
+    }
+
+    /// Pull counting down, publish with nothing to do — the ordinary steady state.
+    /// How many countdown rings the card draws.
+    ///
+    /// Found by the ring's own track circle rather than by a role: the svg is
+    /// hidden from the accessibility tree (`kit/countdown.rs`), and `svg` alone
+    /// would also match the glyph a `Paused` `StateLabel` draws into the same
+    /// trailing slot.
+    fn rings(el: &web_sys::Element) -> u32 {
+        el.query_selector_all("[class*=trailing] circle[class*=track]")
+            .unwrap()
+            .length()
+    }
+
+    fn armed_payload() -> MainPageWatcherData {
+        armed_in_ms(23_000.0)
+    }
+
+    /// One paused package and no clock running: nothing schedules a refetch.
+    fn paused_payload() -> MainPageWatcherData {
+        MainPageWatcherData {
+            pull: pull_idle(),
+            publish: publish(
+                true,
+                vec![(
+                    "team/plate-07",
+                    AutosyncStateData::Paused {
+                        reason: PausedReasonData::Diverged,
+                    },
+                )],
+            ),
+            paused: Vec::new(),
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn an_armed_toggle_draws_a_ring() {
+        // `Countdown` draws an `aria-hidden` svg into the row's trailing slot —
+        // the slot is the selector, the ring carrying no role of its own (see
+        // `kit/countdown.rs`). A toggle that is armed and draws no ring is the
+        // countdown silently missing, which is what this pins.
+        let el = mount(|| view! { <AutosyncBody data=armed_payload() reload=Trigger::new() /> });
+        assert_eq!(rings(&el), 1, "one ring: pull is armed, publish is idle");
+    }
+
+    #[wasm_bindgen_test]
+    fn a_paused_package_sits_beside_a_waiting_one_and_offers_nothing_to_press() {
+        // §5: the card REPORTS, the queue acts. Every `PausedReason` is user-fixable
+        // and its fix is already some queue row's action, so there is no [Resume]
+        // here or anywhere.
+        let data = with_packages(
+            true,
+            vec![
+                (
+                    "team/plate-07",
+                    AutosyncStateData::Paused {
+                        reason: PausedReasonData::Diverged,
+                    },
+                ),
+                ("team/plate-08", waiting_in_ms(60_000.0, false)),
+            ],
+        );
+        let el = mount(move || view! { <AutosyncBody data=data.clone() reload=Trigger::new() /> });
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Paused"), "got: {text}");
+        assert!(text.contains("team/plate-07"), "got: {text}");
+        assert!(text.contains("team/plate-08"), "got: {text}");
+        assert!(!text.contains("nothing to publish"), "got: {text}");
+        assert_eq!(rings(&el), 2, "the pull's ring and the waiting package's");
+        assert!(!text.to_lowercase().contains("resume"), "got: {text}");
+    }
+
+    #[wasm_bindgen_test]
+    fn publishing_off_reads_off_whatever_the_packages_hold() {
+        let data = with_packages(false, vec![("team/a", AutosyncStateData::Off)]);
+        let el = mount(move || view! { <AutosyncBody data=data.clone() reload=Trigger::new() /> });
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Off"), "got: {text}");
+        assert!(!text.contains("team/a"), "got: {text}");
+        assert_eq!(rings(&el), 1, "only the pull's ring");
+    }
+
+    #[wasm_bindgen_test]
+    fn the_stack_names_three_and_counts_the_rest() {
+        let data = with_packages(
+            true,
+            (1..=5)
+                .map(|i| {
+                    (
+                        ["team/a", "team/b", "team/c", "team/d", "team/e"][i - 1],
+                        waiting_in_ms(f64::from(u32::try_from(i).unwrap()) * 60_000.0, false),
+                    )
+                })
+                .collect(),
+        );
+        let el = mount(move || view! { <AutosyncBody data=data.clone() reload=Trigger::new() /> });
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains("team/a") && text.contains("team/c"),
+            "got: {text}"
+        );
+        assert!(!text.contains("team/d"), "got: {text}");
+        assert!(text.contains("and 2 more"), "got: {text}");
+        assert_eq!(rings(&el), 4, "the pull's ring and three waits");
+    }
+
+    #[wasm_bindgen_test]
+    fn the_launch_line_counts_only_proved_changes() {
+        let data = with_packages(
+            true,
+            vec![
+                ("team/a", waiting_in_ms(60_000.0, true)),
+                ("team/b", waiting_in_ms(90_000.0, false)),
+            ],
+        );
+        let el = mount(move || view! { <AutosyncBody data=data.clone() reload=Trigger::new() /> });
+        let text = el.text_content().unwrap();
+        assert!(
+            text.contains(
+                "1 package changed while QuiltSync was closed; its wait started at launch."
+            ),
+            "got: {text}"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn an_idle_publish_says_what_it_is_waiting_for() {
+        // A blank would leave the user guessing between broken, working, and nothing
+        // to do — the gallery scene's own note. `Countdown` renders nothing for a
+        // `None` deadline precisely so the caller supplies its own words.
+        let el = mount(|| view! { <AutosyncBody data=armed_payload() reload=Trigger::new() /> });
+        assert!(
+            el.text_content().unwrap().contains("nothing to publish"),
+            "got: {}",
+            el.text_content().unwrap()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn both_directions_are_named_and_their_intervals_are_derived() {
+        // §1: the number is derived from the value it describes, never sent as
+        // words. 60_000 ms is "1 min"; 300_000 ms is "5 min".
+        let el = mount(|| view! { <AutosyncBody data=armed_payload() reload=Trigger::new() /> });
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Get new revisions"), "got: {text}");
+        assert!(text.contains("Publish your changes"), "got: {text}");
+        assert!(text.contains("Every 1 min"), "got: {text}");
+        assert!(text.contains("After 5 min of inactivity"), "got: {text}");
+    }
+
+    #[wasm_bindgen_test]
+    fn the_checkbox_shows_the_setting_not_the_activity() {
+        // §4.2: `enabled` is the SETTING and stays true while paused — what stopped
+        // is the machinery. A card that unchecked itself on a pause would tell the
+        // user they had turned something off.
+        let el = mount(|| view! { <AutosyncBody data=paused_payload() reload=Trigger::new() /> });
+        let boxes = el.query_selector_all("input[type=checkbox]").unwrap();
+        assert_eq!(boxes.length(), 2);
+        for i in 0..boxes.length() {
+            let input: web_sys::HtmlInputElement = boxes.item(i).unwrap().dyn_into().unwrap();
+            assert!(input.checked(), "checkbox {i} must follow `enabled`");
+        }
+    }
+
+    #[test]
+    fn thirty_seconds_reads_as_seconds_and_five_minutes_as_minutes() {
+        assert_eq!(human_interval(30_000.0), "30s");
+        assert_eq!(human_interval(300_000.0), "5 min");
+        assert_eq!(human_interval(90_000.0), "90s");
+    }
+
+    #[test]
+    fn the_payload_goes_stale_at_its_soonest_deadline_still_ahead() {
+        let data = MainPageWatcherData {
+            pull: ToggleStateData {
+                deadline: Some(5_000.0),
+                activity: ToggleActivityData::Armed,
+                ..pull_idle()
+            },
+            publish: publish(
+                true,
+                vec![
+                    (
+                        "team/due",
+                        AutosyncStateData::Waiting {
+                            publish_at: 500.0,
+                            changed_while_closed: false,
+                        },
+                    ),
+                    (
+                        "team/next",
+                        AutosyncStateData::Retrying {
+                            error: String::new(),
+                            next_try_at: 3_000.0,
+                        },
+                    ),
+                ],
+            ),
+            paused: Vec::new(),
+        };
+        assert_eq!(next_deadline(&data, 1_000.0), Some(3_000.0));
+        assert_eq!(next_deadline(&paused_payload(), 1_000.0), None);
+    }
+
+    #[test]
+    fn nothing_counting_down_wakes_for_nothing() {
+        // No deadline means no moment worth waking for. An idle or paused toggle
+        // must not schedule a poll.
+        assert_eq!(delay_until(None, 1_000.0), None);
+    }
+
+    #[test]
+    fn a_future_deadline_waits_for_it() {
+        assert_eq!(
+            delay_until(Some(31_000.0), 1_000.0),
+            Some(Duration::from_secs(30))
+        );
+    }
+
+    #[test]
+    fn a_deadline_about_to_arrive_waits_the_imminent_floor() {
+        // Still ahead, but not worth a wake of its own: the refetch would race the
+        // watcher's tick to the lock and read the same deadline back.
+        // One of these two names the constant and one pins its value, so changing
+        // `REFETCH_FLOOR` cannot pass unnoticed.
+        assert_eq!(
+            delay_until(Some(60_100.0), 60_000.0),
+            Some(Duration::from_secs(2))
+        );
+        assert_eq!(delay_until(Some(60_500.0), 60_000.0), Some(REFETCH_FLOOR));
+    }
+
+    #[test]
+    fn a_deadline_already_past_waits_the_due_floor_not_the_imminent_one() {
+        // A deadline already past is not one about to arrive. `next_pull_at` is
+        // armed before the loop sleeps, so it stays in the past for the whole of
+        // the tick that follows — a status walk with a network round trip per
+        // package — and nothing moves it in the meantime. At the imminent floor
+        // the card would refetch every two seconds for the length of that tick,
+        // re-seeding the ring's animation each time, where `Countdown`'s own doc
+        // says sitting full is the truthful drawing: "A wake-up that sits at full
+        // for a few seconds is therefore truthful rather than broken."
+        // The deadline exactly at `now` is due, not imminent — it has arrived.
+        // One of these two names the constant and one pins its value, so changing
+        // `REFETCH_DUE_FLOOR` cannot pass unnoticed.
+        assert_eq!(
+            delay_until(Some(0.0), 60_000.0),
+            Some(Duration::from_secs(10))
+        );
+        assert_eq!(
+            delay_until(Some(60_000.0), 60_000.0),
+            Some(REFETCH_DUE_FLOOR)
+        );
+    }
+
+    #[test]
+    fn a_nonsense_deadline_waits_the_floor_rather_than_panicking() {
+        // `Duration::from_secs_f64` panics on a negative or NaN argument, and a
+        // panic in wasm takes the whole page.
+        assert_eq!(delay_until(Some(f64::NAN), 1_000.0), Some(REFETCH_FLOOR));
+    }
+
+    #[test]
+    fn a_deadline_too_far_out_waits_the_ceiling_rather_than_throwing() {
+        // Two panics live above the floor: `Duration::from_secs_f64` panics on a
+        // non-finite argument, and `set_timeout_with_handle` converts the delay to
+        // `i32` milliseconds and throws above ~24.9 days.
+        assert_eq!(delay_until(Some(f64::INFINITY), 0.0), Some(REFETCH_CEILING));
+        // The reachable one, and the reason this is not exotic: a well-formed
+        // deadline a month out needs no corruption, only a large `interval_ms`.
+        assert_eq!(
+            delay_until(Some(30.0 * 24.0 * 60.0 * 60.0 * 1000.0), 0.0),
+            Some(REFETCH_CEILING)
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn an_expiring_deadline_asks_the_backend_again() {
+        // The end-to-end property, and the one the pure function cannot show: the
+        // scheduled wake actually notifies. Mount a body whose deadline has all
+        // but arrived, sleep past the wake the floor holds it to, and assert the
+        // trigger fired exactly once.
+        //
+        // `AutosyncBody` takes the trigger as a prop so this test can watch it;
+        // the card owns the resource and passes its own.
+        let fired = RwSignal::new(0);
+        let reload = Trigger::new();
+        Effect::new(move |_| {
+            reload.track();
+            fired.update(|n| *n += 1);
+        });
+        // 500ms, not 30: comfortably inside `REFETCH_FLOOR`, and comfortably
+        // ahead of the clock `delay_until` reads a moment later, so the body takes
+        // the imminent branch even if the runtime stalls between building this
+        // payload and mounting it. A deadline that had slipped into the past would
+        // take the due branch and wait `REFETCH_DUE_FLOOR` instead.
+        let el = mount(move || {
+            view! { <AutosyncBody data=armed_in_ms(500.0) reload=reload /> }
+        });
+        // Let the effect's own first, unprompted run land before counting, and
+        // pin it — otherwise a delta of one could be that run and no wake at all.
+        sleep_ms(50).await;
+        let before = fired.get_untracked();
+        assert_eq!(before, 1, "the effect's first run, before any wake");
+        // 2500ms: an absolute bound, not a multiple of anything. Long enough for
+        // a wake held to `REFETCH_FLOOR`, short enough that a spin shows up as
+        // more than one.
+        sleep_ms(2_500).await;
+        assert_eq!(
+            fired.get_untracked() - before,
+            1,
+            "the deadline must schedule exactly one refetch, not zero and not a spin"
+        );
+        drop(el);
+    }
+
+    #[wasm_bindgen_test]
+    async fn flipping_a_toggle_asks_the_backend_again() {
+        // The write and the refetch are one gesture: the off->on edge clears the
+        // paused set, so the payload after a write differs by more than the bit the
+        // user flipped. A card that wrote without refetching would keep showing
+        // `Paused` on a toggle that had just cleared every pause.
+        //
+        // `paused_payload` has no deadline, so nothing here is scheduled: the only
+        // thing that can notify `reload` in this test is the flip.
+        let fired = RwSignal::new(0);
+        let reload = Trigger::new();
+        Effect::new(move |_| {
+            reload.track();
+            fired.update(|n| *n += 1);
+        });
+        let el = mount(move || view! { <AutosyncBody data=paused_payload() reload=reload /> });
+        // Let the effect queue drain — the test's own effect and the body's two
+        // write guards all run once at mount — and pin the baseline, so a stale
+        // read cannot pass for the flip's notify.
+        sleep_ms(50).await;
+        let before = fired.get_untracked();
+        assert_eq!(
+            before, 1,
+            "the effect's first run; mounting must not write anything back"
+        );
+        let input: web_sys::HtmlInputElement = el
+            .query_selector("input[type=checkbox]")
+            .unwrap()
+            .expect("the pull toggle")
+            .dyn_into()
+            .unwrap();
+        input.click();
+        // 200ms: an absolute bound, not a multiple of any constant this file reads.
+        // There is no Tauri bridge here, so the write resolves as `Err` at once and
+        // only the notify that follows it is under test.
+        sleep_ms(200).await;
+        assert_eq!(
+            fired.get_untracked() - before,
+            1,
+            "flipping a toggle must write and then ask for the payload again"
+        );
+        drop(el);
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_pages_refresh_asks_the_backend_again() {
+        // The appbar's Refresh notifies `MainPage`'s trigger, which is this card's
+        // `refresh` prop. Without that wiring a Refresh updates the package rows
+        // and leaves the card asserting `Paused` beside rows that have just
+        // stopped being conflicted — and a paused payload carries no deadline, so
+        // the card's own trigger has nothing scheduled to correct it.
+        //
+        // The fetch is the only observable a refetch has, which is why
+        // `watcher_resource` takes its fetcher: this mounts the card's exact
+        // wiring with a counting one.
+        let calls = RwSignal::new(0);
+        let reload = Trigger::new();
+        let refresh = Trigger::new();
+        let _el = mount(move || {
+            let watcher = watcher_resource(reload, refresh, move || {
+                calls.update(|n| *n += 1);
+                async move { Ok(armed_payload()) }
+            });
+            view! {
+                <Transition fallback=|| ()>
+                    {move || Suspend::new(async move {
+                        let _ = watcher.await;
+                    })}
+                </Transition>
+            }
+        });
+        // Let the first fetch land and pin the baseline, so a stale read cannot
+        // pass for the refresh's own.
+        sleep_ms(50).await;
+        let before = calls.get_untracked();
+        assert_eq!(before, 1, "the resource's first fetch, before any refresh");
+        refresh.notify();
+        // 200ms: an absolute bound, not a multiple of any constant this file
+        // reads. Nothing else here can fetch — the payload is idle-and-armed but
+        // no body is mounted to schedule a wake from it.
+        sleep_ms(200).await;
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "the page's Refresh must refetch the card, exactly once"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn becoming_visible_again_asks_the_backend_again() {
+        // A slept machine wakes with a deadline many ticks old. The CSS ring is
+        // correctly placed for the deadline it was seeded with — which is the
+        // wrong deadline — so the fix is to refetch, not to count elapsed ticks.
+        let fired = RwSignal::new(0);
+        let reload = Trigger::new();
+        Effect::new(move |_| {
+            reload.track();
+            fired.update(|n| *n += 1);
+        });
+        let _el = mount(move || view! { <AutosyncListener reload=reload /> });
+        sleep_ms(50).await;
+        let before = fired.get_untracked();
+        assert_eq!(before, 1, "the effect's first run, before any event");
+        let event = web_sys::Event::new("visibilitychange").unwrap();
+        window().dispatch_event(&event).unwrap();
+        sleep_ms(50).await;
+        assert_eq!(fired.get_untracked() - before, 1);
+    }
+    /// An absent card claims this machine has no autosync.
+    #[wasm_bindgen_test]
+    async fn a_failed_read_draws_the_card_and_says_so() {
+        let reload = Trigger::new();
+        let refresh = Trigger::new();
+        let el = mount(move || {
+            let watcher = watcher_resource(reload, refresh, || async {
+                Err::<MainPageWatcherData, String>("nope".to_string())
+            });
+            view! { <AutosyncCard reload=reload watcher=watcher /> }
+        });
+        sleep_ms(50).await;
+
+        let text = el.text_content().unwrap();
+        assert!(text.contains("Autosync"), "the title stays: {text}");
+        assert!(text.contains("Could not load autosync."), "{text}");
+        assert!(text.contains("Try again"), "{text}");
+    }
+
+    /// The call count is the retry's only observable.
+    #[wasm_bindgen_test]
+    async fn try_again_reads_again() {
+        let calls = RwSignal::new(0);
+        let reload = Trigger::new();
+        let refresh = Trigger::new();
+        let el = mount(move || {
+            let watcher = watcher_resource(reload, refresh, move || {
+                calls.update(|n| *n += 1);
+                async { Err::<MainPageWatcherData, String>("nope".to_string()) }
+            });
+            view! { <AutosyncCard reload=reload watcher=watcher /> }
+        });
+        sleep_ms(50).await;
+        let before = calls.get_untracked();
+        assert_eq!(before, 1, "the first read, which failed");
+
+        let button: web_sys::HtmlElement = el
+            .query_selector("button")
+            .unwrap()
+            .expect("Try again")
+            .dyn_into()
+            .unwrap();
+        button.click();
+        sleep_ms(200).await;
+
+        assert_eq!(
+            calls.get_untracked() - before,
+            1,
+            "Try again has to read again, exactly once"
+        );
+    }
+}

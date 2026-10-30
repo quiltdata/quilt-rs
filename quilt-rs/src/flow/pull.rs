@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -8,10 +10,14 @@ use crate::Res;
 use crate::checksum::refresh_hash;
 use crate::error::PackageOpError;
 use crate::flow;
+use crate::flow::Applied;
+use crate::flow::LocalWork;
 use crate::flow::PullOutcome;
 use crate::flow::apply_latest_update;
-use crate::flow::classify_pull;
-use crate::flow::remote_delta;
+use crate::flow::classify_pull_with_delta;
+use crate::flow::identical_to_latest;
+use crate::flow::pull_delta;
+use crate::flow::pull_outcome::RemoteChange;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::HostConfig;
 use crate::io::remote::Remote;
@@ -56,11 +62,11 @@ pub struct PullSnapshot {
 /// tag move between them.
 ///
 /// Returns the lineage with a refreshed `latest_hash` alongside the snapshot.
+/// The snapshot is `None` when the resolved `latest` already equals
+/// `base_hash`: there is nothing to pull, and no fetch or walk is paid for.
 ///
 /// # Errors
-/// Returns [`PackageOpError::AlreadyUpToDate`] when the resolved `latest`
-/// already equals `base_hash` (no fetch or walk is paid for in that case).
-/// Otherwise propagates tag-resolution, manifest-fetch, and status-walk errors.
+/// Propagates tag-resolution, manifest-fetch, and status-walk errors.
 pub async fn snapshot_for_pull(
     mut lineage: PackageLineage,
     base_manifest: &Manifest,
@@ -69,7 +75,7 @@ pub async fn snapshot_for_pull(
     remote: &impl Remote,
     package_home: impl AsRef<Path>,
     host_config: HostConfig,
-) -> Res<(PackageLineage, PullSnapshot)> {
+) -> Res<(PackageLineage, Option<PullSnapshot>)> {
     // The ONE tag read. Its result both refreshes the lineage and names the
     // manifest to fetch — mirroring `refresh_latest_hash`'s requirement of a
     // remote (`remote()?` errors for a local-only package).
@@ -81,7 +87,7 @@ pub async fn snapshot_for_pull(
     // Short-circuit before paying for the manifest fetch or the walk: if the
     // resolved `latest` is the base we already have, there is nothing to pull.
     if latest.hash == lineage.base_hash {
-        return Err(PackageOpError::AlreadyUpToDate.into());
+        return Ok((lineage, None));
     }
 
     // Fetch + cache + parse the `latest` manifest.
@@ -89,17 +95,131 @@ pub async fn snapshot_for_pull(
 
     // THE WALK, last — so `status` reflects the tree as of just before the
     // caller classifies and applies.
-    let (lineage, status) =
-        flow::status(lineage, storage, base_manifest, package_home, host_config).await?;
+    let (lineage, status) = flow::status(
+        lineage,
+        storage,
+        paths,
+        base_manifest,
+        package_home,
+        host_config,
+    )
+    .await?;
 
     Ok((
         lineage,
-        PullSnapshot {
+        Some(PullSnapshot {
             status,
             latest,
             latest_manifest,
-        },
+        }),
     ))
+}
+
+/// What a pull did: nothing, because `latest` is already the base, or a
+/// [`PullReport`] of what it applied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
+pub enum Pulled {
+    UpToDate,
+    Applied(PullReport),
+}
+
+/// What a pull applied, grouped by what happened to *this copy* rather than by
+/// the shape of the remote's diff — under a sparse
+/// [`SyncScope`] those differ, and the difference is the part worth reporting.
+///
+/// Three dispositions deliberately appear in no group, because nothing moved:
+/// a path changed on both sides to the same result (trivially resolved), a
+/// tracked path the user had edited (their work is kept, the remote's version
+/// not applied), and a metadata-only revision (an empty touch set). A `Blocked`
+/// pull produces no report at all — it applies nothing.
+///
+/// It describes a **span**, not a revision: a pull advances `base` straight to
+/// `latest`, so one report can cover several revisions, and `message` is the
+/// newest one's only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PullReport {
+    /// The revision the pull advanced to.
+    pub manifest_uri: ManifestUri,
+    /// Added by the remote and fetched — whole-package or folders scope only,
+    /// since an added path is never already tracked.
+    pub added: Vec<PathBuf>,
+    /// Added by the remote and left on it — any scope but the whole package.
+    pub added_not_fetched: Vec<PathBuf>,
+    /// A tracked path the remote changed, rewritten from `latest`.
+    pub updated: Vec<PathBuf>,
+    /// A tracked path the remote dropped, deleted from the working tree.
+    pub removed: Vec<PathBuf>,
+    /// The newest revision's own message, empty treated as absent.
+    pub message: Option<String>,
+}
+
+impl PullReport {
+    /// Whether anything at all moved or is newly listed. False for a
+    /// metadata-only revision, whose hashes advance and whose files do not.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.added.is_empty()
+            && self.added_not_fetched.is_empty()
+            && self.updated.is_empty()
+            && self.removed.is_empty()
+    }
+}
+
+/// Build the report from the delta and from [`Applied`](crate::flow::Applied) —
+/// no extra I/O, both are in hand.
+///
+/// The touch set is not a substitute: it is what a pull *proposes* to move, and
+/// a touched path this copy does not track is never uninstalled. Reading the
+/// writes and deletions themselves is what makes every group true.
+fn report_of(
+    manifest_uri: ManifestUri,
+    delta: &BTreeMap<PathBuf, RemoteChange>,
+    applied: &Applied,
+    locally_changed: &ChangeSet,
+    message: Option<String>,
+) -> PullReport {
+    let installed: BTreeSet<&PathBuf> = applied.installed.iter().collect();
+    let replaced: BTreeSet<&PathBuf> = applied.replaced.iter().collect();
+    let uninstalled: BTreeSet<&PathBuf> = applied.uninstalled.iter().collect();
+    let mut report = PullReport {
+        manifest_uri,
+        added: Vec::new(),
+        added_not_fetched: Vec::new(),
+        updated: Vec::new(),
+        removed: Vec::new(),
+        // An empty message is absent, which the desktop already assumes
+        // elsewhere: `ManifestHeader::default` writes `Some(String::new())`.
+        message: message.filter(|m| !m.is_empty()),
+    };
+    // Over the delta, so the report is ordered by path and names only what the
+    // remote changed.
+    for (path, change) in delta {
+        match (installed.contains(path), uninstalled.contains(path)) {
+            // Written: an *update* if it replaced a file this copy already
+            // held, an *addition* if it went where there was nothing. Read from
+            // `applied.replaced` rather than from a preceding delete — the
+            // apply writes over the live file now and never deletes first, so
+            // "was also uninstalled" would say `added` for every update. Under
+            // whole-package scope a remote-modified path this copy never
+            // checked out is fetched here too, and it is an addition to this
+            // working tree whatever the remote called it.
+            (true, _) if replaced.contains(path) => report.updated.push(path.clone()),
+            (true, _) => report.added.push(path.clone()),
+            // Deleted with no replacement: absent from `latest`.
+            (false, true) => report.removed.push(path.clone()),
+            // Nothing moved, so the file on disk is already right — the
+            // user's edit was kept, both sides agree, or this copy does not
+            // track the path. Only an addition still on the remote is worth
+            // saying, and a path the user added identically is not one.
+            (false, false) => {
+                if matches!(change, RemoteChange::Added(_)) && !locally_changed.contains_key(path) {
+                    report.added_not_fetched.push(path.clone());
+                }
+            }
+        }
+    }
+    report
 }
 
 /// Which of the remote's changed paths this pull will actually apply.
@@ -110,7 +230,8 @@ pub async fn snapshot_for_pull(
 ///
 /// - the scope decides whether a path this copy does not track is in play at
 ///   all — sparse checkout under [`SyncScope::IndividualFiles`], everything the
-///   remote touched under [`SyncScope::EntirePackage`], which is what lets a
+///   remote touched under [`SyncScope::EntirePackage`], and what it touched
+///   under a kept folder under [`SyncScope::Folders`], which is what lets a
 ///   remote *addition* be fetched;
 /// - a path the user changed locally is dropped under **either** scope. The
 ///   classifier has already blocked the pull if that change disagrees with the
@@ -121,11 +242,11 @@ fn touch_set(
     remote_changed: impl IntoIterator<Item = PathBuf>,
     tracked: &LineagePaths,
     locally_changed: &ChangeSet,
-    scope: SyncScope,
+    scope: &SyncScope,
 ) -> Vec<PathBuf> {
     remote_changed
         .into_iter()
-        .filter(|p| scope.covers_untracked() || tracked.contains_key(p))
+        .filter(|p| tracked.contains_key(p) || scope.covers_untracked(p))
         .filter(|p| !locally_changed.contains_key(p))
         .collect()
 }
@@ -140,9 +261,8 @@ fn touch_set(
 /// [`snapshot_for_pull`], which does all network *before* the status walk, so
 /// `snapshot.status` is the freshest possible input to classification.
 ///
-/// `scope` is the caller's, never read from the lineage: this engine also backs
-/// the `quilt` CLI, which passes [`SyncScope::IndividualFiles`] and so keeps
-/// sparse-checkout behaviour whatever a desktop app wrote to `data.json`.
+/// `scope` is the caller's, never read from the lineage, so a caller can still
+/// choose. The `quilt` CLI and the desktop app both pass the stored one.
 #[allow(clippy::too_many_arguments)]
 pub async fn pull_package(
     lineage: PackageLineage,
@@ -154,7 +274,7 @@ pub async fn pull_package(
     snapshot: PullSnapshot,
     namespace: Namespace,
     scope: SyncScope,
-) -> Res<PackageLineage> {
+) -> Res<(PackageLineage, Pulled)> {
     info!("⏳ Starting pull for package {namespace} (scope={scope:?})");
 
     if lineage.commit.is_some() {
@@ -174,16 +294,41 @@ pub async fn pull_package(
     // It stays as a guard for hand-built snapshots (tests) and any future
     // caller that constructs the snapshot differently.
     if lineage.base_hash == lineage.latest_hash {
-        error!("❌ Package is already up-to-date");
-        return Err(PackageOpError::AlreadyUpToDate.into());
+        info!("✔️ Package is already up to date");
+        return Ok((lineage, Pulled::UpToDate));
     }
 
     // `manifest` is the installed (base) manifest the caller passed in;
     // `snapshot` carries the already-fetched `latest` and its manifest.
-    let outcome = classify_pull(&snapshot.status, manifest, &snapshot.latest_manifest);
+    //
+    // The reconciling pass runs first: where a local change and `latest`'s row
+    // carry different checksum algorithms, their digests cannot be compared,
+    // and only re-hashing the working file in `latest`'s algorithm can tell an
+    // edit that landed `latest`'s own content from a genuine disagreement.
+    // Hashes nothing when the algorithms already agree.
+    let identical = identical_to_latest(
+        storage,
+        &working_dir,
+        &snapshot.status,
+        &lineage.paths,
+        manifest,
+        &snapshot.latest_manifest,
+    )
+    .await?;
+    // Built once: the classifier reads it for conflicts, and the touch set
+    // below is derived from it.
+    let delta = pull_delta(manifest, &snapshot.latest_manifest);
+    let outcome = classify_pull_with_delta(
+        &snapshot.status,
+        manifest,
+        &snapshot.latest_manifest,
+        &identical,
+        &delta,
+    );
     match &outcome {
         PullOutcome::UpToDate => {
-            return Err(PackageOpError::AlreadyUpToDate.into());
+            info!("✔️ Package is already up to date");
+            return Ok((lineage, Pulled::UpToDate));
         }
         PullOutcome::Blocked { conflicts } => {
             error!("❌ Pull blocked by conflicts: {conflicts:?}");
@@ -198,26 +343,48 @@ pub async fn pull_package(
     // edited after the walk is absent from `status.changes` and — if
     // remote-changed — lands in the touch-set. Re-checking the base content at
     // the destruction site turns such a raced edit into a `PullConflict`
-    // instead of a silent overwrite. The residual window shrinks to the
-    // verify→unlink syscalls (per file, microseconds). The one case still not
-    // covered is an editor writing through an already-open fd *during* the
-    // apply; that is addressed by the displace-don't-delete design in the
-    // transactional-apply follow-up (the `apply_update.rs` TODO).
+    // instead of a silent overwrite.
     //
-    // TODO: this second `remote_delta` pass re-derives the partition
-    // `classify_pull` just computed and discarded, and the blanket skip of
-    // user-touched paths is correct only because classify already `Blocked`
-    // every disagreeing both-changed path. Have the classifier return the
-    // per-path disposition (or the delta) so the two derivations cannot
-    // silently desynchronize.
+    // This pass is the fail-fast half: it checks every touched path before any
+    // work starts, so drift aborts the pull before a byte is fetched. It is not
+    // the half that makes the write safe. The apply stages the whole touch set
+    // before it writes any of it, so a verdict reached here licenses a write a
+    // whole fetch later — and a background pull running while someone works is
+    // ordinary. The apply re-checks each destination against the row captured
+    // here immediately before replacing it (`LocalWork::Protect`), which is what
+    // shrinks the residual window back to the two syscalls between the check and
+    // the rename — also the window an editor could save into.
     //
+    // Outside that window, an editor with the file open picks the new content up
+    // cleanly (checked against nvim and GNOME Text Editor): editors read and
+    // close rather than holding the descriptor, so their change detection
+    // re-opens by path and lands on the renamed-in inode. The rename matters
+    // here for what it rules out — a reload can never catch a half-written
+    // file, which the previous copy-onto-the-destination allowed.
+    //
+    // A descriptor genuinely held across the write (a tail, an mmap) keeps
+    // reading the old inode until it closes. And an editor with *unsaved*
+    // changes can still save over the content just pulled, since an unsaved
+    // buffer is not a local change on disk and does not keep the path out of
+    // the touch set. Bounded rather than silent either way: such a save
+    // re-lands `base`'s bytes, the path reports as locally modified from then
+    // on, and a pull puts it back.
+    //
+    // TODO: the blanket skip of user-touched paths is correct only because
+    // classify already `Blocked` every disagreeing both-changed path. Have the
+    // classifier return the per-path disposition so the touch set cannot
+    // silently desynchronize from it.
+    //
+    // `delta` is kept whole rather than reduced to its keys: the per-path
+    // disposition is what the report is made of, and discarding it here was why
+    // a caller could learn that a package advanced but never what changed
+    // inside it.
     let touched = touch_set(
-        remote_delta(manifest, &snapshot.latest_manifest).into_keys(),
+        delta.keys().cloned(),
         &lineage.paths,
         &snapshot.status.changes,
-        scope,
+        &scope,
     );
-
     // Verify-before-uninstall. For every touched path, confirm the working-tree
     // file still holds the BASE content the classifier assumed — the row in
     // `manifest` (the installed/base manifest), whose self-describing
@@ -270,7 +437,8 @@ pub async fn pull_package(
         return Err(PackageOpError::PullConflict(drifted).into());
     }
 
-    let lineage = apply_latest_update(
+    let latest = snapshot.latest.clone();
+    let (lineage, applied) = apply_latest_update(
         lineage,
         manifest,
         paths,
@@ -280,11 +448,23 @@ pub async fn pull_package(
         namespace,
         snapshot.latest,
         &touched,
+        // The verify pass above checked every one of these against its base
+        // row; the apply re-checks each immediately before overwriting it,
+        // because staging puts the whole fetch in between.
+        &LocalWork::Protect,
     )
     .await?;
 
+    let report = report_of(
+        latest,
+        &delta,
+        &applied,
+        &snapshot.status.changes,
+        snapshot.latest_manifest.header.message.clone(),
+    );
+
     info!("✔️ Successfully pulled (surgical), outcome={outcome:?}");
-    Ok(lineage)
+    Ok((lineage, Pulled::Applied(report)))
 }
 
 #[cfg(test)]
@@ -297,6 +477,10 @@ mod tests {
     use aws_sdk_s3::primitives::ByteStream;
     use multihash::Multihash;
 
+    use crate::checksum::calculate_hash;
+    use crate::flow::classify_pull;
+    use crate::flow::remote_delta;
+    use crate::io::remote::HostChecksums;
     use crate::io::remote::HostConfig;
     use crate::io::remote::mocks::MockRemote;
     use crate::io::storage::StorageExt;
@@ -304,6 +488,7 @@ mod tests {
     use crate::lineage::Change;
     use crate::lineage::CommitState;
     use crate::lineage::PathState;
+    use crate::lineage::UpstreamState;
     use crate::manifest::ManifestRow;
     use crate::object_hash::Hash;
     use crate::object_hash::Sha256Hash;
@@ -325,6 +510,292 @@ mod tests {
             size: hash_seed.len() as u64,
             meta: None,
         }
+    }
+
+    fn hash_of(seed: &[u8]) -> crate::object_hash::ObjectHash {
+        Multihash::<256>::wrap(0x12, seed)
+            .unwrap()
+            .try_into()
+            .unwrap()
+    }
+
+    fn uri() -> ManifestUri {
+        ManifestUri {
+            bucket: "b".to_string(),
+            namespace: ("acme", "demo").into(),
+            hash: "h".to_string(),
+            origin: None,
+        }
+    }
+
+    fn paths(names: &[&str]) -> Vec<PathBuf> {
+        names.iter().map(PathBuf::from).collect()
+    }
+
+    fn applied(installed: &[&str], replaced: &[&str], uninstalled: &[&str]) -> Applied {
+        Applied {
+            installed: paths(installed),
+            replaced: paths(replaced),
+            uninstalled: paths(uninstalled),
+        }
+    }
+
+    /// The whole of the grouping: which write or deletion lands in which group.
+    /// Read from the apply, so each group states something that happened.
+    #[test]
+    fn report_groups_by_what_happened_to_this_copy() {
+        let delta = BTreeMap::from([
+            (
+                PathBuf::from("fetched.csv"),
+                RemoteChange::Added(hash_of(b"a")),
+            ),
+            (
+                PathBuf::from("listed.csv"),
+                RemoteChange::Added(hash_of(b"b")),
+            ),
+            (
+                PathBuf::from("changed.csv"),
+                RemoteChange::Modified(hash_of(b"c")),
+            ),
+            (PathBuf::from("dropped.csv"), RemoteChange::Removed),
+        ]);
+        // `changed.csv` was tracked, so the write replaced a file already
+        // here; `fetched.csv` was written where there was nothing;
+        // `dropped.csv` was deleted with no replacement; `listed.csv` was left
+        // on the remote.
+        let applied = applied(
+            &["fetched.csv", "changed.csv"],
+            &["changed.csv"],
+            &["dropped.csv"],
+        );
+
+        let report = report_of(
+            uri(),
+            &delta,
+            &applied,
+            &ChangeSet::new(),
+            Some("a message".to_owned()),
+        );
+
+        assert_eq!(report.added, paths(&["fetched.csv"]));
+        assert_eq!(report.added_not_fetched, paths(&["listed.csv"]));
+        assert_eq!(report.updated, paths(&["changed.csv"]));
+        assert_eq!(report.removed, paths(&["dropped.csv"]));
+        assert_eq!(report.message.as_deref(), Some("a message"));
+        assert!(!report.is_empty());
+    }
+
+    /// The Example's interrupted instance, retried — the claim the whole change
+    /// rests on, and the one thing the two halves never checked together.
+    ///
+    /// The tree an interrupted apply leaves: one file already holding
+    /// `latest`'s content, two still at `base`'s, `base` still naming the old
+    /// revision. On the retry the written file reads as a *local modification*,
+    /// because its content no longer matches the row this copy started from.
+    /// The Example claims two things about that tree: nothing is refused, and
+    /// nothing is fetched twice. Both are asserted here, on a package whose
+    /// rows are in the algorithm this host does not declare — the combination
+    /// that made the incident unrecoverable rather than merely broken.
+    #[test(tokio::test)]
+    async fn the_interrupted_tree_retries_cleanly() -> Res {
+        let storage = MockStorage::default();
+        let working_dir = PathBuf::from("/wd");
+        let written = PathBuf::from("done.csv");
+        let pending = [PathBuf::from("todo-1.csv"), PathBuf::from("todo-2.csv")];
+
+        // The file the interrupted apply managed to write: it holds exactly
+        // what `latest` holds.
+        storage
+            .write_byte_stream(
+                working_dir.join(&written),
+                ByteStream::from_static(b"latest content for done.csv"),
+            )
+            .await?;
+        let crc64 = HostConfig {
+            checksums: HostChecksums::Crc64,
+            host: None,
+        };
+        let sha_chunked = HostConfig {
+            checksums: HostChecksums::Sha256Chunked,
+            host: None,
+        };
+        // The package's rows are CRC64; this host declares SHA-256-chunked, so
+        // the status walk hashed the written file into the host's algorithm.
+        let latest_row =
+            calculate_hash(&storage, &working_dir.join(&written), &written, &crc64).await?;
+        let local_row = calculate_hash(
+            &storage,
+            &working_dir.join(&written),
+            &written,
+            &sha_chunked,
+        )
+        .await?;
+
+        let base = manifest_of(vec![
+            row("done.csv", b"base-done"),
+            row("todo-1.csv", b"base-1"),
+            row("todo-2.csv", b"base-2"),
+        ]);
+        let latest = manifest_of(vec![
+            latest_row,
+            row("todo-1.csv", b"latest-1"),
+            row("todo-2.csv", b"latest-2"),
+        ]);
+
+        // The retry's status: only the written file looks changed.
+        let status = InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            ChangeSet::from([(written.clone(), Change::Modified(local_row))]),
+        );
+
+        let identical = identical_to_latest(
+            &storage,
+            &working_dir,
+            &status,
+            &LineagePaths::new(),
+            &base,
+            &latest,
+        )
+        .await?;
+        assert!(
+            identical.contains(&written),
+            "the file the interrupted apply wrote already holds latest's content"
+        );
+
+        // Nothing is refused.
+        assert_eq!(
+            classify_pull(&status, &base, &latest, &identical),
+            PullOutcome::KeepsLocalChanges {
+                added: vec![],
+                modified: vec![],
+                removed: vec![],
+            },
+            "the interrupted tree must retry, not block"
+        );
+
+        // Nothing is fetched twice: the written file is out of the touch set,
+        // the two still at `base` are in it.
+        let tracked: LineagePaths = [&written, &pending[0], &pending[1]]
+            .into_iter()
+            .map(|p| (p.clone(), PathState::default()))
+            .collect();
+        let touched = touch_set(
+            remote_delta(&base, &latest).into_keys(),
+            &tracked,
+            &status.changes,
+            &SyncScope::IndividualFiles,
+        );
+        assert_eq!(
+            touched,
+            vec![pending[0].clone(), pending[1].clone()],
+            "the already-written file must not be fetched again"
+        );
+        Ok(())
+    }
+
+    /// The touch set says what a pull *proposed* to move; only the apply knows
+    /// what it did. Under whole-package scope the touch set covers untracked
+    /// paths, and `apply_latest_update` then skips the ones with no file to
+    /// delete — so a report read from the touch set claimed a deletion that
+    /// never happened, and called a first fetch an update.
+    #[test]
+    fn untracked_paths_are_reported_by_what_the_apply_did() {
+        let delta = BTreeMap::from([
+            (PathBuf::from("never-had.csv"), RemoteChange::Removed),
+            (
+                PathBuf::from("first-fetch.csv"),
+                RemoteChange::Modified(hash_of(b"m")),
+            ),
+        ]);
+        // Both are in the touch set under whole-package scope. Neither was
+        // tracked, so neither is uninstalled; the one still in `latest` is
+        // written.
+        let applied = applied(&["first-fetch.csv"], &[], &[]);
+
+        let report = report_of(uri(), &delta, &applied, &ChangeSet::new(), None);
+
+        assert!(
+            report.removed.is_empty(),
+            "a path with no local file was reported as removed: {report:?}"
+        );
+        assert_eq!(
+            report.added,
+            paths(&["first-fetch.csv"]),
+            "a first fetch is new to this copy, not an update"
+        );
+        assert!(report.updated.is_empty(), "nothing was overwritten");
+    }
+
+    /// The dispositions that must produce **nothing**, because nothing moved.
+    /// Reporting any of them would tell the user a file changed when it did not.
+    #[test]
+    fn nothing_moved_means_nothing_reported() {
+        let nothing = Applied::default();
+
+        // A tracked path the remote changed and the user had also edited: the
+        // touch set drops it, their work is kept, the remote's version is not
+        // applied — so it is neither "updated" nor a skip notice.
+        let kept = BTreeMap::from([(
+            PathBuf::from("mine.csv"),
+            RemoteChange::Modified(hash_of(b"x")),
+        )]);
+        let report = report_of(uri(), &kept, &nothing, &ChangeSet::new(), None);
+        assert!(
+            report.is_empty(),
+            "kept local work was reported: {report:?}"
+        );
+
+        // A path removed on both sides — trivially resolved, never touched.
+        let both_removed = BTreeMap::from([(PathBuf::from("gone.csv"), RemoteChange::Removed)]);
+        let report = report_of(uri(), &both_removed, &nothing, &ChangeSet::new(), None);
+        assert!(
+            report.is_empty(),
+            "a both-removed path was reported: {report:?}"
+        );
+
+        // A path both sides added with the same content: the classifier lets
+        // the pull through, and the file is already on disk. Calling it "not
+        // downloaded" would send the user looking for something they have.
+        let both_added = BTreeMap::from([(
+            PathBuf::from("same.csv"),
+            RemoteChange::Added(hash_of(b"same")),
+        )]);
+        let locally = ChangeSet::from([(
+            PathBuf::from("same.csv"),
+            Change::Added(ManifestRow::default()),
+        )]);
+        let report = report_of(uri(), &both_added, &nothing, &locally, None);
+        assert!(
+            report.is_empty(),
+            "a path the user already has was reported as outstanding: {report:?}"
+        );
+
+        // A metadata-only revision: identical rows, so an empty delta and
+        // nothing applied. The hashes advance and no file moved.
+        let report = report_of(
+            uri(),
+            &BTreeMap::new(),
+            &nothing,
+            &ChangeSet::new(),
+            Some("retagged".to_owned()),
+        );
+        assert!(report.is_empty(), "a metadata-only revision named files");
+        // Its message still travels — it is the only thing that changed.
+        assert_eq!(report.message.as_deref(), Some("retagged"));
+    }
+
+    /// `ManifestHeader::default` writes `Some(String::new())`, which the desktop
+    /// already treats as absent elsewhere.
+    #[test]
+    fn an_empty_message_is_absent() {
+        let report = report_of(
+            uri(),
+            &BTreeMap::new(),
+            &Applied::default(),
+            &ChangeSet::new(),
+            Some(String::new()),
+        );
+        assert_eq!(report.message, None);
     }
 
     fn manifest_of(rows: Vec<ManifestRow>) -> Manifest {
@@ -376,8 +847,8 @@ mod tests {
             ..InstalledPackageStatus::default()
         };
         // Identical base (the `manifest` arg) and latest manifests → the
-        // classifier returns `UpToDate`, which pull maps to `AlreadyUpToDate`.
-        let error = pull_package(
+        // classifier returns `UpToDate`, which pull passes on as `Pulled::UpToDate`.
+        let (_, pulled) = pull_package(
             lineage,
             &mut Manifest::default(),
             &DomainPaths::default(),
@@ -388,16 +859,14 @@ mod tests {
             Namespace::default(),
             SyncScope::IndividualFiles,
         )
-        .await;
+        .await
+        .unwrap();
         // Reaches the up-to-date branch (guard relaxed), not "pending changes".
-        assert!(matches!(
-            error.unwrap_err(),
-            crate::Error::PackageOp(PackageOpError::AlreadyUpToDate)
-        ));
+        assert_eq!(pulled, Pulled::UpToDate);
     }
 
     // The ctor short-circuits when the resolved `latest` tag already equals
-    // `base_hash`: it returns `AlreadyUpToDate` WITHOUT fetching the manifest.
+    // `base_hash`: it returns no snapshot WITHOUT fetching the manifest.
     #[test(tokio::test)]
     async fn snapshot_short_circuits_when_latest_equals_base() {
         let storage = MockStorage::default();
@@ -424,7 +893,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = snapshot_for_pull(
+        let (lineage, snapshot) = snapshot_for_pull(
             lineage,
             &Manifest::default(),
             &DomainPaths::default(),
@@ -433,12 +902,11 @@ mod tests {
             PathBuf::default(),
             HostConfig::default(),
         )
-        .await;
+        .await
+        .unwrap();
 
-        assert!(matches!(
-            result.unwrap_err(),
-            crate::Error::PackageOp(PackageOpError::AlreadyUpToDate)
-        ));
+        assert!(snapshot.is_none());
+        assert_eq!(lineage.latest_hash, base);
         // The manifest was never fetched — the short-circuit fired first.
         let manifest_uri = format!("s3://{bucket}/.quilt/packages/{base}");
         assert_eq!(remote.get_object_count(&manifest_uri), 0);
@@ -514,7 +982,7 @@ mod tests {
             latest_hash: "a".to_string(),
             ..PackageLineage::default()
         };
-        let error = pull_package(
+        let (_, pulled) = pull_package(
             lineage,
             &mut Manifest::default(),
             &DomainPaths::default(),
@@ -525,11 +993,9 @@ mod tests {
             Namespace::default(),
             SyncScope::IndividualFiles,
         )
-        .await;
-        assert!(matches!(
-            error.unwrap_err(),
-            crate::Error::PackageOp(PackageOpError::AlreadyUpToDate)
-        ));
+        .await
+        .unwrap();
+        assert_eq!(pulled, Pulled::UpToDate);
     }
 
     // Verify-before-uninstall closes the walk→apply TOCTOU window. The walk saw
@@ -675,15 +1141,37 @@ mod tests {
                 remote_changed(),
                 &tracked,
                 &none,
-                SyncScope::IndividualFiles
+                &SyncScope::IndividualFiles
             ),
             vec![PathBuf::from("have.csv")],
             "sparse checkout leaves a path it does not track"
         );
         assert_eq!(
-            touch_set(remote_changed(), &tracked, &none, SyncScope::EntirePackage),
+            touch_set(remote_changed(), &tracked, &none, &SyncScope::EntirePackage),
             vec![PathBuf::from("have.csv"), PathBuf::from("added.csv")],
             "whole-package scope takes it"
+        );
+    }
+
+    /// Under folders scope a remote addition is taken when it sits under a kept
+    /// folder, and only on a folder boundary.
+    #[test]
+    fn a_remote_added_path_is_taken_under_a_kept_folder() {
+        let remote_changed = vec![
+            PathBuf::from("have.csv"),
+            PathBuf::from("qc/summary.csv"),
+            PathBuf::from("qc2/notes.txt"),
+        ];
+        let tracked = tracked_map(["have.csv"]);
+
+        assert_eq!(
+            touch_set(
+                remote_changed,
+                &tracked,
+                &ChangeSet::new(),
+                &SyncScope::folders(["qc"]).unwrap()
+            ),
+            vec![PathBuf::from("have.csv"), PathBuf::from("qc/summary.csv")],
         );
     }
 
@@ -697,9 +1185,12 @@ mod tests {
         let tracked = tracked_map(["something-else.csv"]);
         let none = ChangeSet::new();
 
-        assert!(touch_set(never.clone(), &tracked, &none, SyncScope::IndividualFiles).is_empty());
         assert_eq!(
-            touch_set(never.clone(), &tracked, &none, SyncScope::EntirePackage),
+            touch_set(never.clone(), &tracked, &none, &SyncScope::IndividualFiles),
+            [] as [PathBuf; 0]
+        );
+        assert_eq!(
+            touch_set(never.clone(), &tracked, &none, &SyncScope::EntirePackage),
             never
         );
     }
@@ -719,7 +1210,7 @@ mod tests {
 
         for scope in [SyncScope::IndividualFiles, SyncScope::EntirePackage] {
             assert!(
-                touch_set(remote_changed(), &tracked, &mine, scope).is_empty(),
+                touch_set(remote_changed(), &tracked, &mine, &scope).is_empty(),
                 "{scope:?} must not overwrite the user's own change"
             );
         }
@@ -787,7 +1278,7 @@ mod tests {
         };
 
         let mut base = base;
-        let lineage = pull_package(
+        let (lineage, _report) = pull_package(
             lineage,
             &mut base,
             &paths,
@@ -881,7 +1372,7 @@ mod tests {
         };
 
         let mut base = base;
-        let lineage = pull_package(
+        let (lineage, _report) = pull_package(
             lineage,
             &mut base,
             &paths,

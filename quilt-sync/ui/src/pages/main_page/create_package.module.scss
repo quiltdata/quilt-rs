@@ -1,0 +1,11 @@
+/* The "Folder to add" row: a disabled field beside its Browse button.
+ *
+ * This is the one thing gallery/forms.rs's CreateForm reaches `.g-inline` for, and
+ * `.g-inline` lives in `_chrome.scss`, which app.scss never links — gallery and app
+ * share `modules`, and only the gallery adds `chrome`. Unstyled in the app bundle,
+ * Browse would stack under the field instead of sitting beside it. */
+.folder_row {
+  display: flex;
+  gap: var(--q-space-2);
+  flex-wrap: wrap;
+}

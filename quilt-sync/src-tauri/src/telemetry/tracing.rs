@@ -1,12 +1,22 @@
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
+use sentry::integrations::tracing::{BreadcrumbLayer, ErrorLayer};
 use tempfile::TempDir;
+use tracing::{Level, Subscriber};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{EnvFilter, filter::LevelFilter};
+use tracing_subscriber::{
+    EnvFilter, Layer,
+    filter::{FilterExt, LevelFilter, filter_fn},
+    registry::LookupSpan,
+};
+
+use quilt_rs::logging::LOG_ENV;
 
 use crate::Result;
+use crate::log_settings::{LogLevel, LogSettings};
 use crate::telemetry::prelude::*;
 
 /// What the **log file** keeps.
@@ -21,7 +31,7 @@ use crate::telemetry::prelude::*;
 /// diagnostic export, so it can afford detail the other sink cannot.
 const FILE_DIRECTIVES: &str = "quilt_sync=debug,quilt_rs=debug,quilt_uri=debug,warn";
 
-/// What the **crash reporter** receives, as breadcrumbs and structured logs.
+/// What the **crash reporter** receives, as breadcrumbs and error events.
 ///
 /// A level lower than the file's, deliberately: this leaves the machine and is
 /// billed per event, and `debug` is where paths and package names appear. So the
@@ -29,13 +39,9 @@ const FILE_DIRECTIVES: &str = "quilt_sync=debug,quilt_rs=debug,quilt_uri=debug,w
 /// each sink filters for itself.
 const CRASH_SINK_DIRECTIVES: &str = "quilt_sync=info,quilt_rs=info,warn";
 
-/// The variable a developer can raise either sink with.
-///
-/// Not the escape hatch for a *user*: an app launched from the OS shell inherits no
-/// terminal environment, so "set a variable and reproduce it" is not an instruction
-/// anyone can follow. That is why the defaults above have to be right on their own,
-/// and why the user-facing control belongs in the app rather than here.
-const LOG_ENV: &str = "QUILTSYNC_LOG";
+/// The most the crash reporter receives, whatever [`LOG_ENV`] says: `debug` is
+/// where paths and package names appear, and this sink leaves the machine.
+const CRASH_SINK_CEILING: LevelFilter = LevelFilter::INFO;
 
 pub enum LogsDir {
     Permanent(PathBuf),
@@ -55,11 +61,27 @@ impl LogsDir {
 ///
 /// The guard is the load-bearing half: writes are handed to a background thread so
 /// a log line never blocks the thread that emitted it, and **dropping the guard
-/// stops that thread**. Held for the life of the process, or logging quietly ends
-/// after startup.
+/// stops that thread**. Held until [`Self::shutdown`], or logging ends wherever it
+/// was dropped.
 pub struct Logging {
     pub dir: LogsDir,
-    _writer: Option<WorkerGuard>,
+    writer: Mutex<Option<WorkerGuard>>,
+}
+
+impl Logging {
+    /// Stop the non-blocking writer and wait for its queue to drain.
+    ///
+    /// The `Mutex` is what lets a `&self` in shared state give the guard up. Take
+    /// it out before dropping: the drop blocks until the worker drains, so holding
+    /// the lock across it would stall a command handler behind a quit. Idempotent.
+    pub fn shutdown(&self) {
+        let writer = self
+            .writer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(writer);
+    }
 }
 
 fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
@@ -74,7 +96,8 @@ fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
     Ok(LogsDir::Permanent(logs_dir))
 }
 
-/// Build a filter from `directives`, or from [`LOG_ENV`] when it is set.
+/// Build a filter from [`LOG_ENV`] when it is set, else from the `saved` choice,
+/// else from `directives`.
 ///
 /// The whole comma-separated list is parsed at once. Parsing it as a *single*
 /// directive is what broke this the first time: a list is not a directive, so the
@@ -90,7 +113,7 @@ fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
 /// The variable **replaces** rather than extends, which is a correctness
 /// requirement and not only a legibility one. Adding the defaults *after* an
 /// override is how this first went wrong: a later directive supersedes an earlier
-/// one for the same target, so `QUILTSYNC_LOG=quilt_sync=trace` lost to the
+/// one for the same target, so `quilt_sync=trace` from the variable lost to the
 /// built-in `quilt_sync=debug` and the override was silently ignored. Replacing
 /// cannot lose that way, and a developer has one string to read instead of a merge
 /// to work out.
@@ -98,30 +121,51 @@ fn get_logs_dir(base_path: &Path) -> Result<LogsDir> {
 /// A narrow override is therefore genuinely narrow: it drops the trailing
 /// dependency floor along with everything else, which is ordinary `RUST_LOG`
 /// behaviour and what someone naming a single target is asking for.
-fn filter(directives: &str) -> EnvFilter {
-    let from_env = std::env::var(LOG_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty());
-
-    build_filter(from_env.as_deref(), directives)
+fn filter(saved: LogLevel, directives: &str) -> EnvFilter {
+    build_filter(std::env::var(LOG_ENV).ok().as_deref(), saved, directives)
 }
 
 /// The half of [`filter`] that does not read the environment, so the precedence
 /// rule above can be tested without mutating process-global state from a test that
 /// runs in parallel with every other one.
-fn build_filter(from_env: Option<&str>, directives: &str) -> EnvFilter {
+///
+/// The value goes through the CLI's rule (`quilt_rs::logging::directives`): a
+/// bare level puts our crates at it and dependencies at `warn`. An empty or
+/// invalid value counts as unset; [`init_tracing`] reports an invalid one.
+/// Each source replaces the ones below it; nothing is merged.
+fn build_filter(from_env: Option<&str>, saved: LogLevel, directives: &str) -> EnvFilter {
+    let chosen = from_env
+        .and_then(|value| quilt_rs::logging::directives(value).ok().flatten())
+        .or_else(|| saved.directives());
     EnvFilter::builder()
         .with_default_directive(LevelFilter::WARN.into())
-        .parse_lossy(from_env.unwrap_or(directives))
+        .parse_lossy(chosen.as_deref().unwrap_or(directives))
 }
 
 pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
     let dir = get_logs_dir(base_path)?;
-    let writer = init_tracing(&dir);
+    let writer = init_tracing(&dir, LogSettings::load(base_path));
     Ok(Logging {
         dir,
-        _writer: writer,
+        writer: Mutex::new(writer),
     })
+}
+
+/// The crash reporter's layer: `error` events become Sentry events, and `warn`
+/// and `info` events become the breadcrumbs sent with them.
+///
+/// A function rather than a binding, because its type depends on the subscriber
+/// it joins, and the two arms of [`init_tracing`] build different ones.
+fn crash_sink<S>(directives: EnvFilter) -> impl Layer<S>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    BreadcrumbLayer::new()
+        .with_filter(filter_fn(|metadata| {
+            matches!(*metadata.level(), Level::WARN | Level::INFO)
+        }))
+        .and_then(ErrorLayer::new().with_filter(LevelFilter::ERROR))
+        .with_filter(directives.and(CRASH_SINK_CEILING))
 }
 
 /// Install the subscriber, with a filter per sink.
@@ -136,7 +180,12 @@ pub fn init_file_logging(base_path: &Path) -> Result<Logging> {
 /// Returns the writer guard, or `None` when no file could be opened — in which case
 /// the crash sink is still installed. Previously a failed appender installed *no
 /// subscriber at all*, so the error explaining why went nowhere.
-fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
+fn init_tracing(
+    logs_dir: &LogsDir,
+    settings: std::result::Result<LogSettings, crate::Error>,
+) -> Option<WorkerGuard> {
+    let saved = settings.as_ref().map(|s| s.level).unwrap_or_default();
+
     let appender = rolling::RollingFileAppender::builder()
         .rotation(rolling::Rotation::DAILY)
         .filename_prefix("quilt-sync")
@@ -150,10 +199,6 @@ fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
         .build(logs_dir.path())
         .ok();
 
-    // The crash-sink layer is written out in both arms rather than shared. Its type
-    // is parameterised by the subscriber it composes with, so the two arms want
-    // different instantiations — a binding or a closure would fix it to whichever
-    // arm was built first.
     let guard = if let Some(appender) = appender {
         // Non-blocking, so a log line costs the emitting thread a channel send
         // rather than a file write — the appender is otherwise synchronous, and
@@ -165,22 +210,30 @@ fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
             // support archive as escape sequences.
             .with_ansi(false)
             .with_writer(writer)
-            .with_filter(filter(FILE_DIRECTIVES));
+            .with_filter(filter(saved, FILE_DIRECTIVES));
 
         tracing_subscriber::registry()
             .with(file)
-            .with(sentry::integrations::tracing::layer().with_filter(filter(CRASH_SINK_DIRECTIVES)))
+            .with(crash_sink(filter(saved, CRASH_SINK_DIRECTIVES)))
             .init();
         Some(guard)
     } else {
         tracing_subscriber::registry()
-            .with(sentry::integrations::tracing::layer().with_filter(filter(CRASH_SINK_DIRECTIVES)))
+            .with(crash_sink(filter(saved, CRASH_SINK_DIRECTIVES)))
             .init();
         None
     };
 
     // Reported *after* the subscriber exists, or it goes nowhere — which is what
     // used to happen.
+    if let Err(err) = settings {
+        error!("Failed to load log settings, using defaults: {err}");
+    }
+    if let Ok(value) = std::env::var(LOG_ENV)
+        && let Err(invalid) = quilt_rs::logging::directives(&value)
+    {
+        error!("Ignoring {LOG_ENV}: {invalid}");
+    }
     match logs_dir {
         LogsDir::Temporary(_) => error!(
             "Failed to create permanent logs directory, using temporary directory: {}",
@@ -198,7 +251,40 @@ fn init_tracing(logs_dir: &LogsDir) -> Option<WorkerGuard> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+
+    /// Under the most verbose saved level, the crash reporter sends one event per
+    /// `error`, carrying the `warn` and `info` lines before it as breadcrumbs, and
+    /// nothing below `info`.
+    #[test]
+    fn the_crash_sink_sends_errors_with_breadcrumbs_and_nothing_below_info() {
+        let subscriber = tracing_subscriber::registry().with(crash_sink(build_filter(
+            None,
+            LogLevel::Trace,
+            CRASH_SINK_DIRECTIVES,
+        )));
+        let events = sentry::test::with_captured_events(|| {
+            ::tracing::subscriber::with_default(subscriber, || {
+                ::tracing::trace!("a trace line");
+                ::tracing::debug!("a debug line");
+                ::tracing::info!("an info line");
+                ::tracing::warn!("a warn line");
+                ::tracing::error!("an error line");
+            });
+        });
+
+        assert_eq!(events.len(), 1, "one error, one event: {events:?}");
+        let event = &events[0];
+        assert_eq!(event.level, sentry::Level::Error);
+        let breadcrumbs: Vec<_> = event
+            .breadcrumbs
+            .iter()
+            .filter_map(|b| b.message.as_deref())
+            .collect();
+        assert_eq!(breadcrumbs, ["an info line", "a warn line"]);
+    }
 
     /// Both sinks' directives parse, and the app's own crates are held above the
     /// dependency floor in each. A typo here would silently degrade to `warn` and
@@ -232,14 +318,22 @@ mod tests {
         use tracing_subscriber::Layer;
         use tracing_subscriber::registry::Registry;
 
-        let file = Layer::<Registry>::max_level_hint(&filter(FILE_DIRECTIVES));
+        let file = Layer::<Registry>::max_level_hint(&build_filter(
+            None,
+            LogLevel::Default,
+            FILE_DIRECTIVES,
+        ));
         assert_eq!(
             file,
             Some(LevelFilter::DEBUG),
             "the file filter admits {file:?}, so the log will be near-empty again"
         );
 
-        let crash = Layer::<Registry>::max_level_hint(&filter(CRASH_SINK_DIRECTIVES));
+        let crash = Layer::<Registry>::max_level_hint(&build_filter(
+            None,
+            LogLevel::Default,
+            CRASH_SINK_DIRECTIVES,
+        ));
         assert_eq!(
             crash,
             Some(LevelFilter::INFO),
@@ -262,7 +356,8 @@ mod tests {
     /// decision, so it cannot see an outvoted directive.
     #[test]
     fn an_override_beats_a_default_for_the_same_target() {
-        let rendered = build_filter(Some("quilt_sync=trace"), FILE_DIRECTIVES).to_string();
+        let rendered =
+            build_filter(Some("quilt_sync=trace"), LogLevel::Default, FILE_DIRECTIVES).to_string();
 
         assert!(
             rendered.contains("quilt_sync=trace"),
@@ -274,19 +369,80 @@ mod tests {
         );
     }
 
-    /// An empty or absent override leaves the defaults intact, so the mechanism that
+    /// A bare level goes through the CLI's rule: our crates at it, the rest at
+    /// `warn`.
+    #[test]
+    fn a_bare_level_raises_our_crates() {
+        let rendered = build_filter(Some("trace"), LogLevel::Default, FILE_DIRECTIVES).to_string();
+        assert!(rendered.contains("quilt_sync=trace"), "{rendered:?}");
+    }
+
+    /// The crash reporter never admits `debug`, however loud the variable, and a
+    /// quieter value still quiets it.
+    #[test]
+    fn the_crash_sink_is_capped_at_info() {
+        use tracing_subscriber::layer::Filter;
+        use tracing_subscriber::registry::Registry;
+
+        for (value, level) in [
+            ("trace", LevelFilter::INFO),
+            ("quilt_sync=trace", LevelFilter::INFO),
+            ("error", LevelFilter::ERROR),
+        ] {
+            let crash = build_filter(Some(value), LogLevel::Default, CRASH_SINK_DIRECTIVES)
+                .and(CRASH_SINK_CEILING);
+            assert_eq!(
+                Filter::<Registry>::max_level_hint(&crash),
+                Some(level),
+                "{value:?}"
+            );
+        }
+    }
+
+    /// An empty, absent or invalid override leaves the defaults intact, so the mechanism that
     /// makes the override narrow cannot narrow anything by accident.
     #[test]
     fn no_override_leaves_the_defaults_alone() {
-        for override_ in [None, Some(""), Some("   ")] {
-            let rendered =
-                build_filter(override_.filter(|v| !v.trim().is_empty()), FILE_DIRECTIVES)
-                    .to_string();
+        for override_ in [None, Some(""), Some("   "), Some("debgu")] {
+            let rendered = build_filter(override_, LogLevel::Default, FILE_DIRECTIVES).to_string();
             assert!(
                 rendered.contains("quilt_sync=debug"),
                 "{override_:?} cost the file filter the app's own crate: {rendered:?}"
             );
         }
+    }
+
+    /// The saved choice replaces the built-in filters, and a valid variable
+    /// replaces the saved choice. An invalid one is ignored, so the saved choice
+    /// still applies.
+    #[test]
+    fn the_variable_beats_the_saved_choice_which_beats_the_defaults() {
+        for (from_env, wanted) in [
+            (None, "quilt_sync=trace"),
+            (Some("debgu"), "quilt_sync=trace"),
+            (Some("quilt_rs=info"), "quilt_rs=info"),
+        ] {
+            let rendered = build_filter(from_env, LogLevel::Trace, FILE_DIRECTIVES).to_string();
+            assert!(rendered.contains(wanted), "{from_env:?}: {rendered:?}");
+            assert!(
+                !rendered.contains("quilt_sync=debug"),
+                "{from_env:?} merged the defaults in: {rendered:?}"
+            );
+        }
+    }
+
+    /// A loud saved choice does not reach the crash reporter either.
+    #[test]
+    fn the_crash_sink_stays_capped_whatever_is_saved() {
+        use tracing_subscriber::layer::Filter;
+        use tracing_subscriber::registry::Registry;
+
+        let crash =
+            build_filter(None, LogLevel::Trace, CRASH_SINK_DIRECTIVES).and(CRASH_SINK_CEILING);
+        assert_eq!(
+            Filter::<Registry>::max_level_hint(&crash),
+            Some(LevelFilter::INFO)
+        );
     }
 
     /// The file keeps more than the crash reporter, which is the point of filtering
@@ -308,5 +464,79 @@ mod tests {
         let dir = get_logs_dir(&base).expect("a logs dir either way");
 
         assert!(dir.path().exists(), "the chosen directory must exist");
+    }
+
+    /// A writer slow enough that the worker falls behind.
+    ///
+    /// Over the real file appender it never does — formatting an event costs the
+    /// emitting thread about what a small write costs the worker — so a drain test
+    /// written against that appender passes whether or not anything drained.
+    struct SlowWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for SlowWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            self.0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// [`Logging::shutdown`] returns only once the queue is empty. Delete the call
+    /// and this fails with the buffer all but empty.
+    ///
+    /// The subscriber is local, not global: the global slot is process-wide and
+    /// every other test in this file would contend for it.
+    #[test]
+    fn shutdown_waits_for_the_writer_to_drain() {
+        // Enough that the worker is certainly behind, few enough that draining
+        // stays inside the appender's own one-second cap on the shutdown wait.
+        const LINES: usize = 100;
+
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let (writer, guard) = tracing_appender::non_blocking(SlowWriter(Arc::clone(&written)));
+        let logging = Logging {
+            dir: LogsDir::Temporary(TempDir::new().expect("tempdir")),
+            writer: Mutex::new(Some(guard)),
+        };
+
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(writer),
+        );
+        ::tracing::subscriber::with_default(subscriber, || {
+            for line in 0..LINES {
+                error!("line {line}");
+            }
+        });
+
+        logging.shutdown();
+
+        let kept = |written: &Mutex<Vec<u8>>| {
+            String::from_utf8_lossy(
+                &written
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            )
+            .lines()
+            .count()
+        };
+        assert_eq!(
+            kept(&written),
+            LINES,
+            "the tail was lost: {} of {LINES} lines reached the writer",
+            kept(&written)
+        );
+
+        // `take` leaves nothing for a second call to drop.
+        logging.shutdown();
+        assert_eq!(kept(&written), LINES, "a second shutdown lost lines");
     }
 }

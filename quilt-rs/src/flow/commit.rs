@@ -26,6 +26,7 @@ use crate::lineage::PathState;
 use crate::manifest::Manifest;
 use crate::manifest::ManifestHeader;
 use crate::manifest::ManifestRow;
+use crate::manifest::TopHasher;
 use crate::manifest::Workflow;
 use crate::paths::DomainPaths;
 use crate::workflow::EntryView;
@@ -163,15 +164,35 @@ pub enum UserMeta {
     Set(serde_json::Value),
 }
 
+/// What a commit did: nothing, because the new top hash is the current
+/// revision's, or the [`CommitState`] of the revision it recorded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Committed {
+    NothingToCommit,
+    Recorded(CommitState),
+}
+
+impl Committed {
+    /// The recorded revision's top hash, `None` when nothing was committed.
+    #[must_use]
+    pub fn hash(&self) -> Option<&str> {
+        match self {
+            Self::NothingToCommit => None,
+            Self::Recorded(commit) => Some(&commit.hash),
+        }
+    }
+}
+
 /// Commit new commit with new `message`, `user_meta` and all changes got from calling `flow::status`
 ///
 /// `user_meta` selects the new revision's package-level metadata — see
 /// [`UserMeta`]: `Keep` inherits the previous revision's, `Clear` removes it,
 /// `Set` replaces it.
 ///
-/// On `Ok`, the returned `CommitState` is also stored in `lineage.commit` —
-/// callers that need the new top hash should read it from the tuple rather
-/// than unwrapping `lineage.commit`.
+/// When the new top hash equals the current revision's (the pending commit's
+/// if there is one, else the installed one's), nothing is written or validated and
+/// `lineage.commit` stays as it was. Otherwise the recorded `CommitState` is
+/// also stored in `lineage.commit`.
 // TODO: move `working_dir` to `paths`, and `paths` to `storage`
 #[allow(clippy::too_many_arguments)]
 #[allow(
@@ -191,7 +212,7 @@ pub async fn commit_package(
     message: String,
     user_meta: UserMeta,
     workflow: Option<Workflow>,
-) -> Res<(PackageLineage, CommitState)> {
+) -> Res<(PackageLineage, Committed)> {
     info!(
         r#"⏳ Starting commit with message "{}" and user_meta `{:?}`"#,
         message, user_meta
@@ -304,6 +325,13 @@ pub async fn commit_package(
     let all_rows =
         collect_local_with_changes(manifest, removed_keys, modified_keys, new_files).await;
 
+    // Before the workflow gate, so an unchanged revision is not validated again.
+    let new_top_hash = top_hash(&header, &all_rows)?;
+    if lineage.current_hash() == Some(new_top_hash.as_str()) {
+        info!("✔️ Nothing to commit: the top hash is still {new_top_hash}");
+        return Ok((lineage, Committed::NothingToCommit));
+    }
+
     // The workflow quality gate: reject before any manifest is written, so a
     // rejected revision is never committed. Vacuously passes for an ungoverned
     // bucket (the header carries no workflow).
@@ -348,7 +376,19 @@ pub async fn commit_package(
         "✔️ Successfully committed changes with hash: {}",
         commit.hash
     );
-    Ok((lineage, commit))
+    Ok((lineage, Committed::Recorded(commit)))
+}
+
+fn top_hash(header: &ManifestHeader, rows: &StreamRowsChunk) -> Res<String> {
+    let mut top_hasher = TopHasher::new();
+    top_hasher.append_header(header)?;
+    for row in rows {
+        match row {
+            Ok(row) => top_hasher.append(row)?,
+            Err(err) => return Err(Error::Manifest(ManifestError::Table(err.to_string()))),
+        }
+    }
+    Ok(top_hasher.finalize())
 }
 
 #[cfg(test)]
@@ -387,7 +427,7 @@ mod tests {
     /// and must reject *before* any manifest is written — nothing is committed.
     #[test(tokio::test)]
     async fn test_commit_rejected_by_workflow_writes_nothing() -> Res {
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let namespace: Namespace = ("foo", "bar").into();
         let config_uri: S3Uri = "s3://b/.quilt/workflows/config.yml".parse()?;
         let workflow = Workflow {
@@ -427,7 +467,7 @@ mod tests {
             Some(workflow.clone()),
         )
         .await?;
-        let would_be_hash = ok_commit.hash;
+        let would_be_hash = ok_commit.hash().unwrap().to_string();
 
         // The governed config: the `gate` workflow's metadata_schema requires
         // an `owner`, which the committed metadata does not provide.
@@ -484,7 +524,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_commit_empty() -> Res {
         let storage = MockStorage::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
         let (_lineage, commit) = commit_package(
@@ -508,7 +548,7 @@ mod tests {
                 .exists(&paths.installed_manifest(&("foo", "bar").into(), hash))
                 .await
         );
-        assert_eq!(commit.hash, hash);
+        assert_eq!(commit.hash(), Some(hash));
         Ok(())
     }
 
@@ -519,7 +559,7 @@ mod tests {
         passed_meta: UserMeta,
     ) -> Res<String> {
         let storage = MockStorage::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (_lineage, commit) = commit_package(
             PackageLineage::default(),
             &mut manifest_with_meta(initial_meta),
@@ -535,7 +575,7 @@ mod tests {
             None,
         )
         .await?;
-        Ok(commit.hash)
+        Ok(commit.hash().unwrap().to_string())
     }
 
     /// `Keep` carries the previous revision's package-level metadata forward:
@@ -580,7 +620,7 @@ mod tests {
             serde_json::Value::String("ipsum".to_string()),
         );
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let lineage = PackageLineage::default();
         assert!(lineage.commit.is_none());
         let (_lineage, commit) = commit_package(
@@ -604,7 +644,7 @@ mod tests {
                 .exists(&paths.installed_manifest(&("foo", "bar").into(), hash))
                 .await
         );
-        assert_eq!(commit.hash, hash);
+        assert_eq!(commit.hash(), Some(hash));
         Ok(())
     }
 
@@ -643,7 +683,7 @@ mod tests {
             "Initial lineage doesn't have testing path"
         );
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (lineage, commit) = commit_package(
             lineage,
             &mut manifest,
@@ -673,7 +713,7 @@ mod tests {
                 .await,
             "Registry doesn't have installed package with a new hash"
         );
-        assert_eq!(commit.hash, hash);
+        assert_eq!(commit.hash(), Some(hash));
 
         Ok(())
     }
@@ -692,7 +732,10 @@ mod tests {
 
         let storage = MockStorage::default();
         storage
-            .write_byte_stream(PathBuf::from("/working-dir/foo"), ByteStream::default())
+            .write_byte_stream(
+                std::path::absolute("/working-dir/foo")?,
+                ByteStream::default(),
+            )
             .await?;
 
         let status = InstalledPackageStatus {
@@ -712,7 +755,7 @@ mod tests {
             "Initial lineage has path, but shouldn't because we test _new_ file"
         );
 
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         let (lineage, commit) = commit_package(
             lineage,
             &mut manifest,
@@ -720,7 +763,7 @@ mod tests {
             &storage,
             &MockRemote::default(),
             None,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
@@ -739,7 +782,7 @@ mod tests {
             "Registry doesn't have installed path"
         );
         assert_eq!(
-            commit.hash,
+            commit.hash().unwrap(),
             "e8fc7ccb96e87acd4ca02123e0c658ad92cdb2cc2822103d4f5bac79254cca08"
         );
 
@@ -766,7 +809,7 @@ mod tests {
         let hash = added_file.hash.clone();
 
         let storage = MockStorage::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         storage
             .write_byte_stream(
                 PathBuf::from("one/two two/three three three/READ ME.md"),
@@ -824,7 +867,7 @@ mod tests {
     #[test(tokio::test)]
     async fn test_modifying_and_commit() -> Res {
         let storage = MockStorage::default();
-        let paths = DomainPaths::new(PathBuf::from("/foo"));
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
         storage
             .write_byte_stream(
                 PathBuf::from("/working-dir/one/two two/three three three/READ ME.md"),
@@ -878,7 +921,7 @@ mod tests {
             &storage,
             &MockRemote::default(),
             None,
-            PathBuf::from("/working-dir"),
+            std::path::absolute("/working-dir")?,
             status,
             ("foo", "bar").into(),
             String::from("Initial"),
@@ -904,10 +947,178 @@ mod tests {
             "Registry doesn't have installed path"
         );
         assert_eq!(
-            commit.hash,
+            commit.hash().unwrap(),
             "39bbc9a95f787cd938fb5830abe5e25408f0aac4000528b8717130be5f7bc2b3"
         );
 
+        Ok(())
+    }
+
+    /// Commit with no file changes on top of `lineage`, whose current
+    /// revision is the manifest stored under `hash`.
+    async fn commit_unchanged(
+        storage: &MockStorage,
+        remote: &MockRemote,
+        lineage: PackageLineage,
+        hash: &str,
+        message: &str,
+        workflow: Option<Workflow>,
+    ) -> Res<(PackageLineage, Committed)> {
+        let paths = DomainPaths::new(std::path::absolute("/foo")?);
+        let namespace: Namespace = ("foo", "bar").into();
+        let mut manifest =
+            Manifest::from_path(storage, &paths.installed_manifest(&namespace, hash)).await?;
+        commit_package(
+            lineage,
+            &mut manifest,
+            &paths,
+            storage,
+            remote,
+            None,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            namespace,
+            message.to_string(),
+            UserMeta::Keep,
+            workflow,
+        )
+        .await
+    }
+
+    /// A first commit of "msg", so the next commit has a revision to compare
+    /// against. Returns its lineage, with the commit pending, and its hash.
+    async fn first_commit(
+        storage: &MockStorage,
+        remote: &MockRemote,
+        workflow: Option<Workflow>,
+    ) -> Res<(PackageLineage, String)> {
+        let (lineage, committed) = commit_package(
+            PackageLineage::default(),
+            &mut Manifest::default(),
+            &DomainPaths::new(std::path::absolute("/foo")?),
+            storage,
+            remote,
+            None,
+            PathBuf::default(),
+            InstalledPackageStatus::default(),
+            ("foo", "bar").into(),
+            "msg".to_string(),
+            UserMeta::Clear,
+            workflow,
+        )
+        .await?;
+        let hash = committed.hash().unwrap().to_string();
+        Ok((lineage, hash))
+    }
+
+    /// No file changes and the same message and metadata as the installed
+    /// revision: the hash is the same, so nothing is committed.
+    #[test(tokio::test)]
+    async fn same_hash_on_the_base_commits_nothing() -> Res {
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        let (mut lineage, hash) = first_commit(&storage, &remote, None).await?;
+        lineage.commit = None;
+        lineage.base_hash.clone_from(&hash);
+
+        let (lineage, committed) =
+            commit_unchanged(&storage, &remote, lineage, &hash, "msg", None).await?;
+
+        assert_eq!(committed, Committed::NothingToCommit);
+        assert!(lineage.commit.is_none());
+        Ok(())
+    }
+
+    /// The same on top of a pending commit: it stays the one pending commit.
+    #[test(tokio::test)]
+    async fn same_hash_on_a_pending_commit_commits_nothing() -> Res {
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        let (lineage, hash) = first_commit(&storage, &remote, None).await?;
+        let pending = lineage.commit.clone();
+
+        let (lineage, committed) =
+            commit_unchanged(&storage, &remote, lineage, &hash, "msg", None).await?;
+
+        assert_eq!(committed, Committed::NothingToCommit);
+        assert_eq!(lineage.commit, pending);
+        Ok(())
+    }
+
+    /// A new message makes a new hash, so it is a real commit.
+    #[test(tokio::test)]
+    async fn a_new_message_on_the_base_commits() -> Res {
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        let (mut lineage, hash) = first_commit(&storage, &remote, None).await?;
+        lineage.commit = None;
+        lineage.base_hash.clone_from(&hash);
+
+        let (lineage, committed) =
+            commit_unchanged(&storage, &remote, lineage, &hash, "new msg", None).await?;
+
+        let new_hash = committed.hash().expect("a new message is a commit");
+        assert_ne!(new_hash, hash);
+        assert_eq!(lineage.commit.unwrap().hash, new_hash);
+        Ok(())
+    }
+
+    /// The same on top of a pending commit: the new commit follows it.
+    #[test(tokio::test)]
+    async fn a_new_message_on_a_pending_commit_commits() -> Res {
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        let (lineage, hash) = first_commit(&storage, &remote, None).await?;
+
+        let (lineage, committed) =
+            commit_unchanged(&storage, &remote, lineage, &hash, "new msg", None).await?;
+
+        let commit = lineage.commit.unwrap();
+        assert_eq!(committed.hash(), Some(commit.hash.as_str()));
+        assert_eq!(commit.prev_hashes, vec![hash]);
+        Ok(())
+    }
+
+    /// An unchanged revision is not validated again: the check runs before
+    /// the workflow gate, so a config the gate can no longer read is not
+    /// fetched.
+    #[test(tokio::test)]
+    async fn same_hash_skips_the_workflow_gate() -> Res {
+        let config_uri: S3Uri = "s3://b/.quilt/workflows/config.yml".parse()?;
+        let workflow = Workflow {
+            config: config_uri.clone(),
+            id: Some(WorkflowId {
+                id: "gate".to_string(),
+                schemas: BTreeMap::new(),
+            }),
+        };
+        let storage = MockStorage::default();
+        let remote = MockRemote::default();
+        remote
+            .put_object(
+                None,
+                &config_uri,
+                b"version: \"1\"\nworkflows:\n  gate:\n    name: Gate\n".to_vec(),
+            )
+            .await?;
+        let (lineage, hash) = first_commit(&storage, &remote, Some(workflow.clone())).await?;
+
+        let empty_remote = MockRemote::default();
+        let (_lineage, committed) = commit_unchanged(
+            &storage,
+            &empty_remote,
+            lineage,
+            &hash,
+            "msg",
+            Some(workflow),
+        )
+        .await?;
+
+        assert_eq!(committed, Committed::NothingToCommit);
+        assert_eq!(
+            empty_remote.get_object_count(config_uri.to_string().as_str()),
+            0
+        );
         Ok(())
     }
 }

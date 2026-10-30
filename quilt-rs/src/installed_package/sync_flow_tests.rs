@@ -3,11 +3,13 @@
 use std::future::Future;
 
 use super::*;
+use quilt_uri::fixtures;
 
 use test_log::test;
 
 use aws_sdk_s3::primitives::ByteStream;
 
+use crate::flow::PullOutcome;
 use crate::io::remote::mocks::MockRemote;
 use crate::io::storage::StorageExt;
 use crate::lineage::DomainLineageIo;
@@ -40,7 +42,7 @@ async fn test_spamming_commit_writes() -> Res {
                         "bucket": "bucket",
                         "namespace": "test/history",
                         "hash": "{}",
-                        "catalog": "test.quilt.dev"
+                        "catalog": "quilt.test"
                     }},
                     "base_hash": "{}",
                     "latest_hash": "{}",
@@ -69,9 +71,10 @@ async fn test_spamming_commit_writes() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     // Make 10 commits with different content
@@ -85,7 +88,7 @@ async fn test_spamming_commit_writes() -> Res {
                 None,
             )
             .await?;
-        expected_hashes.insert(i, commit.hash);
+        expected_hashes.insert(i, commit.hash().unwrap().to_string());
     }
 
     // Remove last, cause it's the "current" hash, not a part of `prev_hashes`
@@ -202,12 +205,17 @@ async fn test_certify_latest_pushes_pending_commit_then_tags() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
-    package.certify_latest().await?;
+    // Certify pushes the pending commit under the lock it already holds; a
+    // push that took the package's lock again would wait on itself forever.
+    tokio::time::timeout(std::time::Duration::from_secs(30), package.certify_latest())
+        .await
+        .expect("certify must not wait on its own lock")?;
 
     // Remote `latest` now points at the user's revision (L), not the
     // teammate's (N) and not the install-time hash (I).
@@ -291,9 +299,10 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
     package.certify_latest().await?;
@@ -328,6 +337,90 @@ async fn test_certify_latest_skips_push_when_no_pending_commit() -> Res {
     assert_eq!(lineage.base_hash, pushed_hash);
     assert_eq!(lineage.latest_hash, pushed_hash);
     assert!(lineage.commit.is_none());
+
+    Ok(())
+}
+
+/// A package with no pending commit, its remote set or not.
+async fn package_without_commit(
+    remote: serde_json::Value,
+) -> Res<(
+    InstalledPackage<LocalStorage, MockRemote>,
+    Vec<tempfile::TempDir>,
+)> {
+    let (home, temp_dir1) = Home::from_temp_dir()?;
+    let (paths, temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let namespace: Namespace = ("test", "nothing_to_push").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    let lineage_json = serde_json::json!({
+        "packages": {
+            "test/nothing_to_push": {
+                "commit": null,
+                "remote": remote,
+                "base_hash": "BASE_HASH",
+                "latest_hash": "BASE_HASH",
+                "paths": {}
+            }
+        },
+        "home": home.as_ref(),
+    });
+    storage
+        .write_byte_stream(
+            &paths.lineage(),
+            lineage_json.to_string().into_bytes().into(),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(MockRemote::default()),
+        storage,
+        namespace,
+        state_store: None,
+    };
+    Ok((package, vec![temp_dir1, temp_dir2]))
+}
+
+/// With no pending commit there is nothing to push: the push succeeds with
+/// `Pushed::NothingToPush` and writes nothing, here or on the remote.
+#[test(tokio::test)]
+async fn test_push_without_commit_has_nothing_to_push() -> Res {
+    let (package, _temp_dirs) = package_without_commit(serde_json::json!({
+        "bucket": "bkt",
+        "namespace": "test/nothing_to_push",
+        "hash": "BASE_HASH",
+    }))
+    .await?;
+    let lineage_before = package.lineage().await?;
+
+    let pushed = package.push(None).await?;
+
+    assert_eq!(pushed, Pushed::NothingToPush);
+    assert_eq!(package.lineage().await?, lineage_before);
+    let latest_tag = S3Uri::try_from("s3://bkt/.quilt/named_packages/test/nothing_to_push/latest")?;
+    assert!(!package.remote.exists(None, &latest_tag).await?);
+
+    Ok(())
+}
+
+/// A package with no remote still fails to push, commit or not: that is a
+/// setup problem, not nothing to do.
+#[test(tokio::test)]
+async fn test_push_without_remote_fails() -> Res {
+    let (package, _temp_dirs) = package_without_commit(serde_json::Value::Null).await?;
+
+    let err = package.push(None).await.unwrap_err();
+
+    assert!(
+        err.to_string().contains("No remote configured"),
+        "got: {err}"
+    );
 
     Ok(())
 }
@@ -395,9 +488,10 @@ async fn test_manifest_recovery_from_corruption() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage: storage.clone(),
         namespace,
+        state_store: None,
     };
 
     // This should succeed by recovering from cache despite corrupted installed manifest
@@ -422,25 +516,27 @@ async fn test_manifest_recovery_from_corruption() -> Res {
 }
 
 /// A remote that always returns `LoginRequired`, simulating a logged-out user.
-struct LoggedOutRemote;
+/// Refuses with the route where S3 rejected an issued credential, rather than
+/// the provider refusing to vend. `status()` must treat both as a dead session.
+struct RejectedCredentialRemote;
 
-impl crate::io::remote::Remote for LoggedOutRemote {
+impl crate::io::remote::Remote for RejectedCredentialRemote {
     fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
-        std::future::ready(Err(Error::Login(LoginError::Required(None))))
+        std::future::ready(Err(rejected_credential()))
     }
     fn get_object_stream(
         &self,
         _host: Option<&Host>,
         _s3_uri: &S3Uri,
     ) -> impl Future<Output = Res<crate::io::remote::RemoteObjectStream>> {
-        std::future::ready(Err(Error::Login(LoginError::Required(None))))
+        std::future::ready(Err(rejected_credential()))
     }
     fn resolve_url(
         &self,
         _host: Option<&Host>,
         _s3_uri: &S3Uri,
     ) -> impl Future<Output = Res<S3Uri>> {
-        std::future::ready(Err(Error::Login(LoginError::Required(None))))
+        std::future::ready(Err(rejected_credential()))
     }
     fn put_object(
         &self,
@@ -448,7 +544,70 @@ impl crate::io::remote::Remote for LoggedOutRemote {
         _s3_uri: &S3Uri,
         _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
     ) -> impl Future<Output = Res> {
-        std::future::ready(Err(Error::Login(LoginError::Required(None))))
+        std::future::ready(Err(rejected_credential()))
+    }
+    fn upload_file(
+        &self,
+        _host_config: &crate::io::remote::HostConfig,
+        _source_path: impl AsRef<std::path::Path>,
+        _dest_uri: &S3Uri,
+        _size: u64,
+    ) -> impl Future<Output = Res<(S3Uri, crate::object_hash::ObjectHash)>> {
+        std::future::ready(Err(rejected_credential()))
+    }
+    fn host_config(
+        &self,
+        _host: Option<&Host>,
+    ) -> impl Future<Output = Res<crate::io::remote::HostConfig>> {
+        std::future::ready(Err(rejected_credential()))
+    }
+    fn verify_bucket(&self, _bucket: &str) -> impl Future<Output = Res> {
+        std::future::ready(Err(rejected_credential()))
+    }
+    fn published_revisions(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        std::future::ready(Err(rejected_credential()))
+    }
+}
+
+fn rejected_credential() -> Error {
+    Error::S3(crate::error::S3Error {
+        host: Some(fixtures::host()),
+        kind: crate::error::S3ErrorKind::InvalidCredentials("ExpiredToken: nope".to_string()),
+    })
+}
+
+pub(super) struct LoggedOutRemote;
+
+impl crate::io::remote::Remote for LoggedOutRemote {
+    fn exists(&self, _host: Option<&Host>, _s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
+    }
+    fn get_object_stream(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+    ) -> impl Future<Output = Res<crate::io::remote::RemoteObjectStream>> {
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
+    }
+    fn resolve_url(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+    ) -> impl Future<Output = Res<S3Uri>> {
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
+    }
+    fn put_object(
+        &self,
+        _host: Option<&Host>,
+        _s3_uri: &S3Uri,
+        _contents: impl Into<aws_sdk_s3::primitives::ByteStream>,
+    ) -> impl Future<Output = Res> {
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
     fn upload_file(
         &self,
@@ -457,7 +616,7 @@ impl crate::io::remote::Remote for LoggedOutRemote {
         _dest_uri: &S3Uri,
         _size: u64,
     ) -> impl Future<Output = Res<(S3Uri, ObjectHash)>> {
-        std::future::ready(Err(Error::Login(LoginError::Required(None))))
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
     }
     fn host_config(
         &self,
@@ -468,12 +627,20 @@ impl crate::io::remote::Remote for LoggedOutRemote {
     fn verify_bucket(&self, _bucket: &str) -> impl Future<Output = Res> {
         std::future::ready(Ok(()))
     }
+    fn published_revisions(
+        &self,
+        _host: Option<&Host>,
+        _bucket: &str,
+        _namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        std::future::ready(Err(Error::Login(LoginError::NoSession(None))))
+    }
 }
 
 /// A remote that refuses every read with `AccessDenied`, simulating a role
 /// that cannot reach the bucket. Distinct from [`LoggedOutRemote`]: the
 /// credentials are valid, the request arrived, and it was refused.
-struct DeniedRemote;
+pub(super) struct DeniedRemote;
 
 impl crate::io::remote::Remote for DeniedRemote {
     fn exists(&self, _host: Option<&Host>, s3_uri: &S3Uri) -> impl Future<Output = Res<bool>> {
@@ -519,6 +686,19 @@ impl crate::io::remote::Remote for DeniedRemote {
     fn verify_bucket(&self, _bucket: &str) -> impl Future<Output = Res> {
         std::future::ready(Ok(()))
     }
+    fn published_revisions(
+        &self,
+        _host: Option<&Host>,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> impl Future<Output = Res<Vec<String>>> {
+        let pointers = S3Uri {
+            bucket: bucket.to_string(),
+            key: crate::paths::tag_key(namespace, ""),
+            version: None,
+        };
+        std::future::ready(Err(denied(&pointers)))
+    }
 }
 
 fn denied(s3_uri: &S3Uri) -> Error {
@@ -555,7 +735,7 @@ async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res
                     "bucket": "locked",
                     "namespace": "test/denied",
                     "hash": "{installed_hash}",
-                    "origin": "nightly.quilttest.com"
+                    "origin": "quilt.test"
                 }},
                 "base_hash": "{installed_hash}",
                 "latest_hash": "{installed_hash}",
@@ -579,9 +759,10 @@ async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote: DeniedRemote,
+        remote: std::sync::Arc::new(DeniedRemote),
         storage,
         namespace,
+        state_store: None,
     };
 
     let result = package.status(None).await;
@@ -592,6 +773,69 @@ async fn test_status_propagates_access_denied_from_the_latest_hash_read() -> Res
     assert!(
         err.is_access_denied(),
         "the denial must survive as a typed denial, not a warning: {err}"
+    );
+
+    Ok(())
+}
+
+/// The other route to a dead session, asserted through `status()` itself.
+///
+/// **Does not isolate the guarded arm.** This stub refuses every read, and both
+/// the tag refresh and the manifest read go through `get_object_stream`, so the
+/// error also reaches the caller via the manifest `?`. It pins the end-to-end
+/// claim — a rejected credential leaves `status()` as a session failure — not
+/// the specific arm that stops the swallow-and-continue fallback. Isolating
+/// that needs a stub that refuses the tag read and serves the manifest.
+#[test(tokio::test)]
+async fn test_status_propagates_a_rejected_credential() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+
+    let storage = LocalStorage::new();
+    let namespace: Namespace = ("test", "rejectedcred").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    // Package with remote configured but never pushed (empty hash)
+    let lineage_json = r#"{
+        "packages": {
+            "test/rejectedcred": {
+                "commit": null,
+                "remote": {
+                    "bucket": "my-bucket",
+                    "namespace": "test/rejectedcred",
+                    "hash": "",
+                    "origin": "quilt.test"
+                },
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {}
+            }
+        },
+        "home": "/tmp/working_dir"
+    }"#;
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(RejectedCredentialRemote),
+        storage,
+        namespace,
+        state_store: None,
+    };
+
+    // The seam a mocked status call hides: the swallow-and-continue arm
+    // below must not take this, or a dead session reports as a healthy package.
+    let result = package.status(None).await;
+    assert!(
+        result.as_ref().is_err_and(Error::is_session_absent),
+        "Expected LoginRequired error, got: {result:?}"
     );
 
     Ok(())
@@ -618,7 +862,7 @@ async fn test_status_propagates_login_required() -> Res {
                     "bucket": "my-bucket",
                     "namespace": "test/needslogin",
                     "hash": "",
-                    "origin": "nightly.quilttest.com"
+                    "origin": "quilt.test"
                 },
                 "base_hash": "",
                 "latest_hash": "",
@@ -635,15 +879,16 @@ async fn test_status_propagates_login_required() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote: LoggedOutRemote,
+        remote: std::sync::Arc::new(LoggedOutRemote),
         storage,
         namespace,
+        state_store: None,
     };
 
     // status() should propagate LoginRequired so the UI can show a Login button
     let result = package.status(None).await;
     assert!(
-        matches!(result, Err(Error::Login(LoginError::Required(_)))),
+        matches!(result, Err(Error::Login(LoginError::NoSession(_)))),
         "Expected LoginRequired error, got: {result:?}"
     );
 
@@ -656,7 +901,7 @@ async fn test_status_propagates_login_required() -> Res {
 /// prior `status` call would persist the refreshed `latest_hash`, so
 /// disk was reliably fresh when `pull` ran. Without that persist,
 /// the disk-stale `latest_hash` always equalled `base_hash` and
-/// pull short-circuited with "already up-to-date" — both the
+/// pull short-circuited as up to date — both the
 /// autosync watcher's pull branch and the manual Pull button were
 /// affected.
 #[test(tokio::test)]
@@ -686,16 +931,16 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
                         "bucket": "{bucket}",
                         "namespace": "test/pull_refresh",
                         "hash": "{install_hash}",
-                        "catalog": "test.quilt.dev"
+                        "catalog": "quilt.test"
                     }},
                     "base_hash": "{install_hash}",
                     "latest_hash": "{install_hash}",
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -726,37 +971,111 @@ async fn test_pull_refreshes_latest_hash_when_remote_moved() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
-    // Pull will eventually fail downstream — we have not staged the
-    // manifest at `new_hash`, so `cache_remote_manifest` will return a
-    // NotFound — but the *specific* error we are guarding against is
-    // "package is already up-to-date". Any other failure mode proves
-    // the refresh-then-check path ran.
-    let err = package
+    // Pull fails downstream — we have not staged the manifest at
+    // `new_hash`, so `cache_remote_manifest` returns a NotFound. An up-to-date
+    // short-circuit would have returned `Ok`, so the error proves the
+    // refresh-then-check path ran.
+    package
         .pull(None, SyncScope::IndividualFiles)
         .await
         .expect_err("pull should fail downstream on the missing NEW_HASH manifest");
-    let msg = err.to_string();
-    assert!(
-        !msg.contains("already up-to-date"),
-        "pull must refresh latest_hash before the up-to-date guard; got: {msg}"
-    );
 
     Ok(())
 }
 
-/// `pull_outcome` is the network-light dry-run the watcher/UI call before
-/// routing a pull. A `Behind` package whose `latest` manifest is fetchable and
-/// drops a tracked path (with no local changes) classifies as a clean surgical
-/// update — never `UpToDate`.
+/// A pull whose remote `latest` is the base it already has succeeds with
+/// `Pulled::UpToDate`, and still writes the `latest_hash` the tag read
+/// refreshed — here a stale tip the tag has since moved back from.
 #[test(tokio::test)]
-async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
+async fn test_pull_up_to_date_returns_up_to_date_and_writes_latest_hash() -> Res {
     let (home, _temp_dir1) = Home::from_temp_dir()?;
     let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "pull_up_to_date").into();
+    let bucket = "bkt";
+    let base_hash = "BASE_HASH";
+    let stale_hash = "STALE_HASH";
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/pull_up_to_date": {{
+                    "commit": null,
+                    "remote": {{
+                        "bucket": "{bucket}",
+                        "namespace": "test/pull_up_to_date",
+                        "hash": "{base_hash}",
+                        "catalog": "quilt.test"
+                    }},
+                    "base_hash": "{base_hash}",
+                    "latest_hash": "{stale_hash}",
+                    "paths": {{}}
+                }}
+            }},
+            "home": {}
+        }}"#,
+        serde_json::to_string(&home)?,
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+    storage
+        .write_byte_stream(
+            paths.installed_manifest(&namespace, base_hash),
+            ByteStream::from_static(br#"{"version": "v0"}"#),
+        )
+        .await?;
+    remote
+        .put_object(
+            None,
+            &S3Uri::try_from(
+                format!("s3://{bucket}/.quilt/named_packages/test/pull_up_to_date/latest").as_str(),
+            )?,
+            base_hash.as_bytes().to_vec(),
+        )
+        .await?;
+
+    let domain_lineage_io = DomainLineageIo::new(paths.lineage());
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(remote),
+        storage,
+        namespace,
+        state_store: None,
+    };
+
+    let pulled = package.pull(None, SyncScope::IndividualFiles).await?;
+    assert_eq!(pulled, crate::flow::Pulled::UpToDate);
+
+    let lineage = package.lineage().await?;
+    assert_eq!(lineage.latest_hash, base_hash);
+
+    Ok(())
+}
+
+/// A `Behind` package: installed at `INSTALL_HASH` with one tracked `a.txt`,
+/// while the remote `latest` tag has moved to `NEW_HASH`, whose manifest is
+/// `latest_manifest`. No local changes.
+async fn behind_package(
+    latest_manifest: &str,
+) -> Res<(
+    InstalledPackage<LocalStorage, MockRemote>,
+    (tempfile::TempDir, tempfile::TempDir),
+)> {
+    let (home, temp_dir1) = Home::from_temp_dir()?;
+    let (paths, temp_dir2) = DomainPaths::from_temp_dir()?;
     let storage = LocalStorage::new();
     let remote = MockRemote::default();
     let namespace: Namespace = ("test", "pull_outcome").into();
@@ -781,34 +1100,26 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
                         "bucket": "{bucket}",
                         "namespace": "test/pull_outcome",
                         "hash": "{install_hash}",
-                        "catalog": "test.quilt.dev"
+                        "catalog": "quilt.test"
                     }},
                     "base_hash": "{install_hash}",
                     "latest_hash": "{install_hash}",
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
         .await?;
 
-    // Installed (base) manifest with one tracked row so the `base → latest`
-    // delta is non-empty.
-    let base_manifest = concat!(
-        "{\"version\":\"v0\",\"message\":\"\",\"user_meta\":null}\n",
-        "{\"logical_key\":\"a.txt\",\"physical_keys\":[\"s3://bkt/a.txt\"],",
-        "\"hash\":{\"type\":\"sha2-256-chunked\",",
-        "\"value\":\"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=\"},",
-        "\"size\":0,\"meta\":null}\n",
-    );
+    // Installed (base) manifest with one tracked row.
     storage
         .write_byte_stream(
             paths.installed_manifest(&namespace, install_hash),
-            ByteStream::from(base_manifest.as_bytes().to_vec()),
+            ByteStream::from(BASE_MANIFEST.as_bytes().to_vec()),
         )
         .await?;
 
@@ -822,15 +1133,11 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
             new_hash.as_bytes().to_vec(),
         )
         .await?;
-
-    // The `latest` manifest is fetchable and drops `a.txt` (remote removal),
-    // so the delta is non-empty and — with no local changes — resolves to a
-    // clean surgical update.
     remote
         .put_object(
             None,
             &S3Uri::try_from(format!("s3://{bucket}/.quilt/packages/{new_hash}").as_str())?,
-            b"{\"version\":\"v0\"}".to_vec(),
+            latest_manifest.as_bytes().to_vec(),
         )
         .await?;
 
@@ -838,19 +1145,236 @@ async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
+    Ok((package, (temp_dir1, temp_dir2)))
+}
 
-    let outcome = package.pull_outcome(None).await?;
+/// What every early return of the dry run answers: nothing to pull, no paths,
+/// and no newer revision to name.
+fn empty_up_to_date() -> flow::PullPreview {
+    flow::PullPreview {
+        outcome: PullOutcome::UpToDate,
+        added: vec![],
+        changed: vec![],
+        removed: vec![],
+        latest_hash: None,
+    }
+}
+
+/// The installed manifest [`behind_package`] starts from: one row, `a.txt`.
+const BASE_MANIFEST: &str = concat!(
+    "{\"version\":\"v0\",\"message\":\"\",\"user_meta\":null}\n",
+    "{\"logical_key\":\"a.txt\",\"physical_keys\":[\"s3://bkt/a.txt\"],",
+    "\"hash\":{\"type\":\"sha2-256-chunked\",",
+    "\"value\":\"47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=\"},",
+    "\"size\":0,\"meta\":null}\n",
+);
+
+/// `pull_outcome` is the network-light dry-run the watcher/UI call before
+/// routing a pull. A `Behind` package whose `latest` manifest is fetchable and
+/// drops a tracked path (with no local changes) classifies as a clean surgical
+/// update — never `UpToDate` — and names the dropped path and the newer
+/// revision's hash.
+#[test(tokio::test)]
+async fn test_pull_outcome_behind_returns_non_up_to_date() -> Res {
+    // The `latest` manifest drops `a.txt` (remote removal), so the delta is
+    // non-empty and — with no local changes — resolves to a clean surgical
+    // update.
+    let (package, _temp_dirs) = behind_package("{\"version\":\"v0\"}").await?;
+
+    let preview = package.pull_outcome(None).await?;
     assert!(
         matches!(
-            outcome,
+            preview.outcome,
             PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. }
         ),
-        "expected a non-up-to-date outcome, got: {outcome:?}"
+        "expected a non-up-to-date outcome, got: {:?}",
+        preview.outcome
     );
+    assert_eq!(preview.added, [] as [PathBuf; 0]);
+    assert_eq!(preview.changed, [] as [PathBuf; 0]);
+    assert_eq!(preview.removed, vec![PathBuf::from("a.txt")]);
+    assert_eq!(preview.latest_hash.as_deref(), Some("NEW_HASH"));
+
+    Ok(())
+}
+
+/// The verdict-only dry run answers what the full one does, for the same
+/// package, without the incoming paths.
+#[test(tokio::test)]
+async fn test_pull_verdict_matches_the_full_dry_run() -> Res {
+    let (package, _temp_dirs) = behind_package("{\"version\":\"v0\"}").await?;
+
+    let preview = package.pull_outcome(None).await?;
+    assert_eq!(preview.removed, vec![PathBuf::from("a.txt")]);
+    assert_eq!(package.pull_verdict(None).await?, preview.outcome);
+
+    Ok(())
+}
+
+/// A newer revision that changed only the header still has a hash to link to,
+/// though it brings no paths.
+#[test(tokio::test)]
+async fn test_pull_outcome_metadata_only_names_the_hash_and_no_paths() -> Res {
+    let latest = BASE_MANIFEST.replacen(
+        "\"message\":\"\"",
+        "\"message\":\"newer revision message\"",
+        1,
+    );
+    let (package, _temp_dirs) = behind_package(&latest).await?;
+
+    assert_eq!(
+        package.pull_outcome(None).await?,
+        flow::PullPreview {
+            outcome: PullOutcome::CleanUpdate,
+            added: vec![],
+            changed: vec![],
+            removed: vec![],
+            latest_hash: Some("NEW_HASH".to_string()),
+        }
+    );
+
+    Ok(())
+}
+
+/// The status walk hides a new `.env` by default, but a revision that adds
+/// `.env` would still write over it. Both the dry run and the pull treat it as
+/// a conflict, and the local bytes stay as they were.
+#[test(tokio::test)]
+async fn test_ignored_local_file_blocks_a_pull_that_adds_it() -> Res {
+    // `.env` gets the same (empty-content) row as `a.txt`, and the remote
+    // holds those bytes, so nothing but the conflict check stops the fetch.
+    let latest = format!(
+        "{BASE_MANIFEST}{}",
+        BASE_MANIFEST
+            .lines()
+            .nth(1)
+            .unwrap()
+            .replace("a.txt", ".env")
+    );
+    let (package, _temp_dirs) = behind_package(&latest).await?;
+    package
+        .remote
+        .put_object(None, &S3Uri::try_from("s3://bkt/.env")?, Vec::new())
+        .await?;
+    let local = package.package_home().await?.join(".env");
+    package
+        .storage
+        .write_byte_stream(&local, b"SECRET=local".to_vec().into())
+        .await?;
+
+    let preview = package.pull_outcome(None).await?;
+    assert_eq!(
+        preview.outcome,
+        PullOutcome::Blocked {
+            conflicts: vec![PathBuf::from(".env")]
+        }
+    );
+
+    let err = package
+        .pull(None, SyncScope::EntirePackage)
+        .await
+        .expect_err("a pull that would replace an ignored local file must not run");
+    assert!(
+        matches!(&err, Error::PackageOp(PackageOpError::PullConflict(paths)) if paths == &vec![PathBuf::from(".env")]),
+        "expected a conflict on .env, got: {err:?}"
+    );
+    assert_eq!(tokio::fs::read(&local).await?, b"SECRET=local");
+
+    Ok(())
+}
+
+/// The retry of a pull interrupted after it wrote `.env`: the file holds the
+/// incoming bytes but is not tracked, so the walk lists it as ignored. The
+/// retry finishes and tracks it.
+#[test(tokio::test)]
+async fn test_ignored_local_file_with_latest_bytes_does_not_block_a_pull() -> Res {
+    let latest = format!(
+        "{BASE_MANIFEST}{}",
+        BASE_MANIFEST
+            .lines()
+            .nth(1)
+            .unwrap()
+            .replace("a.txt", ".env")
+    );
+    let (package, _temp_dirs) = behind_package(&latest).await?;
+    package
+        .remote
+        .put_object(None, &S3Uri::try_from("s3://bkt/.env")?, Vec::new())
+        .await?;
+    // The row's hash is that of empty content.
+    let local = package.package_home().await?.join(".env");
+    package
+        .storage
+        .write_byte_stream(&local, Vec::new().into())
+        .await?;
+
+    assert!(matches!(
+        package.pull_outcome(None).await?.outcome,
+        PullOutcome::CleanUpdate | PullOutcome::KeepsLocalChanges { .. }
+    ));
+    package.pull(None, SyncScope::EntirePackage).await?;
+    assert!(
+        package
+            .lineage()
+            .await?
+            .paths
+            .contains_key(&PathBuf::from(".env"))
+    );
+
+    Ok(())
+}
+
+/// The walk skips `node_modules/` whole, so a local file in it is listed
+/// nowhere. A revision adding a different file at that path still blocks,
+/// before anything is written, and the local bytes stay.
+#[test(tokio::test)]
+async fn test_file_in_a_skipped_folder_blocks_a_pull_that_adds_it() -> Res {
+    let latest = format!(
+        "{BASE_MANIFEST}{}",
+        BASE_MANIFEST
+            .lines()
+            .nth(1)
+            .unwrap()
+            .replace("a.txt", "node_modules/item.json")
+    );
+    let (package, _temp_dirs) = behind_package(&latest).await?;
+    package
+        .remote
+        .put_object(
+            None,
+            &S3Uri::try_from("s3://bkt/node_modules/item.json")?,
+            Vec::new(),
+        )
+        .await?;
+    let local = package.package_home().await?.join("node_modules/item.json");
+    package
+        .storage
+        .write_byte_stream(&local, b"{\"local\":true}".to_vec().into())
+        .await?;
+
+    let status = package.status(None).await?;
+    assert!(status.changes.is_empty() && status.ignored_files.is_empty());
+
+    assert_eq!(
+        package.pull_outcome(None).await?.outcome,
+        PullOutcome::Blocked {
+            conflicts: vec![PathBuf::from("node_modules/item.json")]
+        }
+    );
+    let err = package
+        .pull(None, SyncScope::EntirePackage)
+        .await
+        .expect_err("a pull that would replace a local file must not run");
+    assert!(
+        matches!(&err, Error::PackageOp(PackageOpError::PullConflict(paths)) if paths == &vec![PathBuf::from("node_modules/item.json")]),
+        "expected a conflict on node_modules/item.json, got: {err:?}"
+    );
+    assert_eq!(tokio::fs::read(&local).await?, b"{\"local\":true}");
 
     Ok(())
 }
@@ -881,9 +1405,9 @@ async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -893,15 +1417,13 @@ async fn test_pull_outcome_local_no_remote_is_up_to_date() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
-    assert!(matches!(
-        package.pull_outcome(None).await?,
-        PullOutcome::UpToDate
-    ));
+    assert_eq!(package.pull_outcome(None).await?, empty_up_to_date());
 
     Ok(())
 }
@@ -939,16 +1461,16 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
                         "bucket": "{bucket}",
                         "namespace": "test/diverged_hash",
                         "hash": "{remote_hash}",
-                        "catalog": "test.quilt.dev"
+                        "catalog": "quilt.test"
                     }},
                     "base_hash": "{base_hash}",
                     "latest_hash": "{latest_hash}",
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -967,15 +1489,13 @@ async fn test_pull_outcome_diverged_by_hash_is_up_to_date_no_network() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
-    assert!(matches!(
-        package.pull_outcome(None).await?,
-        PullOutcome::UpToDate
-    ));
+    assert_eq!(package.pull_outcome(None).await?, empty_up_to_date());
 
     // No `latest` tag was resolved — the divergence was decided from lineage
     // alone, with zero remote calls.
@@ -1014,16 +1534,16 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
                         "bucket": "{bucket}",
                         "namespace": "test/never_pushed",
                         "hash": "",
-                        "catalog": "test.quilt.dev"
+                        "catalog": "quilt.test"
                     }},
                     "base_hash": "",
                     "latest_hash": "",
                     "paths": {{}}
                 }}
             }},
-            "home": "{}"
+            "home": {}
         }}"#,
-        home.as_ref().display(),
+        serde_json::to_string(&home)?,
     );
     storage
         .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
@@ -1033,15 +1553,483 @@ async fn test_pull_outcome_never_pushed_remote_is_up_to_date() -> Res {
     let package = InstalledPackage {
         lineage: PackageLineageIo::new(domain_lineage_io, namespace.clone()),
         paths,
-        remote,
+        remote: std::sync::Arc::new(remote),
         storage,
         namespace,
+        state_store: None,
     };
 
-    assert!(matches!(
-        package.pull_outcome(None).await?,
-        PullOutcome::UpToDate
-    ));
+    assert_eq!(package.pull_outcome(None).await?, empty_up_to_date());
 
+    Ok(())
+}
+
+/// `latest_refreshed` says whether `status` read the remote's `latest` tip
+/// this call, or fell back to the last-known one. A caller that shows the
+/// status as fresh needs it: the fallback is silent, only a warning in the log.
+#[test(tokio::test)]
+async fn test_status_reports_whether_the_latest_tip_was_read() -> Res {
+    async fn status_with(
+        tag: Option<&str>,
+        commit_json: &str,
+        remote_json: &str,
+        latest_hash: &str,
+    ) -> Res<InstalledPackageStatus> {
+        let (home, _temp_dir1) = Home::from_temp_dir()?;
+        let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+        let storage = LocalStorage::new();
+        let remote = MockRemote::default();
+        let namespace: Namespace = ("test", "refreshed").into();
+        let hash = "abcdef";
+
+        paths
+            .scaffold_for_installing(&storage, &home, &namespace)
+            .await?;
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "test/refreshed": {{
+                        "commit": {commit_json},
+                        "remote": {remote_json},
+                        "base_hash": "{hash}",
+                        "latest_hash": "{latest_hash}",
+                        "paths": {{}}
+                    }}
+                }},
+                "home": {}
+            }}"#,
+            serde_json::to_string(&home)?,
+        );
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+        storage
+            .write_byte_stream(
+                paths.installed_manifest(&namespace, hash),
+                ByteStream::from_static(br#"{"version": "v0"}"#),
+            )
+            .await?;
+        if let Some(tag) = tag {
+            remote
+                .put_object(
+                    None,
+                    &S3Uri::try_from("s3://bkt/.quilt/named_packages/test/refreshed/latest")?,
+                    tag.as_bytes().to_vec(),
+                )
+                .await?;
+        }
+
+        let package = InstalledPackage {
+            lineage: PackageLineageIo::new(
+                DomainLineageIo::new(paths.lineage()),
+                namespace.clone(),
+            ),
+            paths,
+            remote: std::sync::Arc::new(remote),
+            storage,
+            namespace,
+            state_store: None,
+        };
+        package.status(None).await
+    }
+
+    let remote_json = r#"{
+        "bucket": "bkt",
+        "namespace": "test/refreshed",
+        "hash": "abcdef",
+        "catalog": "quilt.test"
+    }"#;
+
+    let reached = status_with(Some("abcdef"), "null", remote_json, "abcdef").await?;
+    assert!(reached.latest_refreshed, "the tip was read this call");
+    assert_eq!(reached.upstream_state, UpstreamState::UpToDate);
+
+    // No `latest` tag to read: the refresh fails, is swallowed, and the
+    // verdict comes from the last-known tip.
+    let unreachable = status_with(None, "null", remote_json, "abcdef").await?;
+    assert!(!unreachable.latest_refreshed, "the tip was not read");
+    assert_eq!(unreachable.upstream_state, UpstreamState::UpToDate);
+
+    // No `latest` tag, and none ever seen: the remote was read and says the
+    // package was never published, which is a fresh answer, not an outage.
+    let committed_json = r#"{
+        "timestamp": "2024-01-01T00:00:00Z",
+        "hash": "abcdef",
+        "prev_hashes": []
+    }"#;
+    let unpublished_json = r#"{
+        "bucket": "bkt",
+        "namespace": "test/refreshed",
+        "hash": "",
+        "catalog": "quilt.test"
+    }"#;
+    let unpublished = status_with(None, committed_json, unpublished_json, "").await?;
+    assert!(unpublished.latest_refreshed, "the missing tag was read");
+    assert_eq!(unpublished.upstream_state, UpstreamState::Local);
+
+    let local = status_with(None, "null", "null", "abcdef").await?;
+    assert!(!local.latest_refreshed, "no remote, nothing to read");
+
+    Ok(())
+}
+
+/// The package's state, and how many times its `latest` tag was read.
+async fn state_with(
+    tag: Option<&str>,
+    remote_json: &str,
+) -> Res<(crate::lineage::PackageStateReport, usize)> {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "state").into();
+    let hash = "abcdef";
+    let tag_uri = "s3://bkt/.quilt/named_packages/test/state/latest";
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    let lineage_json = format!(
+        r#"{{
+            "packages": {{
+                "test/state": {{
+                    "commit": null,
+                    "remote": {remote_json},
+                    "base_hash": "{hash}",
+                    "latest_hash": "{hash}",
+                    "paths": {{}}
+                }}
+            }},
+            "home": {}
+        }}"#,
+        serde_json::to_string(&home)?,
+    );
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+    storage
+        .write_byte_stream(
+            paths.installed_manifest(&namespace, hash),
+            ByteStream::from_static(br#"{"version": "v0"}"#),
+        )
+        .await?;
+    if let Some(tag) = tag {
+        remote
+            .put_object(None, &S3Uri::try_from(tag_uri)?, tag.as_bytes().to_vec())
+            .await?;
+    }
+
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(remote),
+        storage,
+        namespace,
+        state_store: None,
+    };
+    let report = package.state().await?;
+    Ok((report, package.remote.get_object_count(tag_uri)))
+}
+
+/// `state` asks the remote only when there is something to ask, and resolves
+/// what it learns through `PackageState::resolve`.
+#[test(tokio::test)]
+async fn test_state_short_circuits_and_resolves_the_status() -> Res {
+    use crate::lineage::PackageState;
+    use crate::lineage::PackageStateReport;
+
+    let (latest, reads) = state_with(
+        Some("abcdef"),
+        r#"{
+            "bucket": "bkt",
+            "namespace": "test/state",
+            "hash": "abcdef",
+            "origin": "quilt.test"
+        }"#,
+    )
+    .await?;
+    assert_eq!(
+        latest,
+        PackageStateReport {
+            state: PackageState::Latest,
+            upstream_state: UpstreamState::UpToDate,
+            changed_files: Some(0),
+            latest_refreshed: true,
+        }
+    );
+    assert_eq!(reads, 1, "the tip was read");
+
+    // No catalog host: read on the machine's own AWS credentials, like any
+    // other remote.
+    let (catalog_less, reads) = state_with(
+        Some("abcdef"),
+        r#"{
+            "bucket": "bkt",
+            "namespace": "test/state",
+            "hash": "abcdef"
+        }"#,
+    )
+    .await?;
+    assert_eq!(
+        catalog_less,
+        PackageStateReport {
+            state: PackageState::Latest,
+            upstream_state: UpstreamState::UpToDate,
+            changed_files: Some(0),
+            latest_refreshed: true,
+        }
+    );
+    assert_eq!(reads, 1, "a remote with no catalog is asked too");
+
+    // No remote: resolved from lineage, the working tree not walked.
+    let (local, _) = state_with(None, "null").await?;
+    assert_eq!(
+        local,
+        PackageStateReport {
+            state: PackageState::NoRemote,
+            upstream_state: UpstreamState::Local,
+            changed_files: None,
+            latest_refreshed: false,
+        }
+    );
+
+    Ok(())
+}
+
+/// A kept walk's changes come back under the remote's `latest` read now, and
+/// only while the lineage is the one the walk read.
+#[test(tokio::test)]
+async fn test_status_from_walk_keeps_the_changes_under_a_fresh_tip() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let remote = MockRemote::default();
+    let namespace: Namespace = ("test", "kept").into();
+    let latest = S3Uri::try_from("s3://bkt/.quilt/named_packages/test/kept/latest")?;
+    let write_lineage = async |commit_json: &str| -> Res {
+        let lineage_json = format!(
+            r#"{{
+                "packages": {{
+                    "test/kept": {{
+                        "commit": {commit_json},
+                        "remote": {{
+                            "bucket": "bkt",
+                            "namespace": "test/kept",
+                            "hash": "abcdef",
+                            "catalog": "quilt.test"
+                        }},
+                        "base_hash": "abcdef",
+                        "latest_hash": "abcdef",
+                        "paths": {{}}
+                    }}
+                }},
+                "home": {}
+            }}"#,
+            serde_json::to_string(&home)?,
+        );
+        storage
+            .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+            .await?;
+        Ok(())
+    };
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    write_lineage("null").await?;
+    storage
+        .write_byte_stream(
+            paths.installed_manifest(&namespace, "abcdef"),
+            ByteStream::from_static(br#"{"version": "v0"}"#),
+        )
+        .await?;
+    remote.put_object(None, &latest, b"abcdef".to_vec()).await?;
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        paths: paths.clone(),
+        remote: std::sync::Arc::new(remote),
+        storage: storage.clone(),
+        namespace: namespace.clone(),
+        state_store: None,
+    };
+    let package_home = package.package_home().await?;
+    std::fs::write(package_home.join("new.txt"), b"new")?;
+
+    let walked_lineage = package.lineage().await?;
+    let walked = package.status(None).await?;
+    assert_eq!(walked.upstream_state, UpstreamState::UpToDate);
+    assert_eq!(walked.changes.len(), 1);
+
+    package
+        .remote
+        .put_object(None, &latest, b"fedcba".to_vec())
+        .await?;
+    let kept = package
+        .status_from_walk(&walked_lineage, walked.clone())
+        .await?
+        .expect("the lineage is the walked one");
+    assert_eq!(kept.upstream_state, UpstreamState::Behind);
+    assert_eq!(kept.latest_hash, "fedcba");
+    assert!(kept.latest_refreshed);
+    assert_eq!(kept.changes, walked.changes);
+
+    write_lineage(
+        r#"{
+            "timestamp": "2024-01-01T00:00:00Z",
+            "hash": "123456",
+            "prev_hashes": []
+        }"#,
+    )
+    .await?;
+    assert!(
+        package
+            .status_from_walk(&walked_lineage, walked)
+            .await?
+            .is_none(),
+        "a commit since the walk needs a new walk"
+    );
+    Ok(())
+}
+
+/// The counts come from the manifest the status read: a listed file this copy
+/// does not track is still to download, at the size its row records.
+#[test(tokio::test)]
+async fn test_status_with_downloads_counts_the_current_revision() -> Res {
+    let (package, _temp_dirs) = behind_package(BASE_MANIFEST).await?;
+
+    let (status, counts) = package.status_with_downloads(None).await?;
+
+    assert_eq!(status.upstream_state, UpstreamState::Behind);
+    assert_eq!(
+        counts,
+        crate::lineage::DownloadCounts {
+            scope: SyncScope::IndividualFiles,
+            listed: 1,
+            outstanding: 1,
+            backlog: 0,
+            deleted_here: 0,
+            size: Some(crate::lineage::DownloadSize {
+                listed: 0,
+                outstanding: 0,
+                backlog: 0,
+            }),
+        }
+    );
+
+    Ok(())
+}
+
+/// A file in a folder keeps a `/` key all the way out: in the committed
+/// manifest, in the pushed one, and in the S3 key its object goes to. On
+/// Windows the walk finds `data\raw\a.csv`, so this is where a separator
+/// leak would show. Keys are compared as text: Windows paths treat both
+/// separators as one, so a `PathBuf` comparison would pass either way.
+#[test(tokio::test)]
+async fn test_commit_and_push_key_a_file_in_a_folder_with_slashes() -> Res {
+    let (home, _temp_dir1) = Home::from_temp_dir()?;
+    let (paths, _temp_dir2) = DomainPaths::from_temp_dir()?;
+    let storage = LocalStorage::new();
+    let namespace: Namespace = ("test", "slash").into();
+
+    paths
+        .scaffold_for_installing(&storage, &home, &namespace)
+        .await?;
+    let lineage_json = serde_json::json!({
+        "packages": {
+            "test/slash": {
+                "commit": null,
+                "remote": null,
+                "base_hash": "",
+                "latest_hash": "",
+                "paths": {}
+            }
+        },
+        "home": &home,
+    })
+    .to_string();
+    storage
+        .write_byte_stream(&paths.lineage(), lineage_json.as_bytes().to_vec().into())
+        .await?;
+    let package = InstalledPackage {
+        lineage: PackageLineageIo::new(DomainLineageIo::new(paths.lineage()), namespace.clone()),
+        paths,
+        remote: std::sync::Arc::new(MockRemote::default()),
+        storage,
+        namespace,
+        state_store: None,
+    };
+    // The walk lists folders itself, so on Windows it finds `data\raw\a.csv`.
+    let file = package.package_home().await?.join("data/raw/a.csv");
+    package
+        .storage
+        .write_byte_stream(&file, ByteStream::from_static(b"a,b\n"))
+        .await?;
+
+    package
+        .commit("add".to_string(), UserMeta::Clear, None, None)
+        .await?;
+    let manifest = package.manifest().await?;
+    // The mock remote hashes an upload's source, the committed object, from
+    // its own storage, so the object is copied there.
+    let object = url::Url::parse(&manifest.rows[0].physical_key)?
+        .to_file_path()
+        .expect("a local object");
+    package
+        .remote
+        .storage
+        .write_byte_stream(&object, ByteStream::from_static(b"a,b\n"))
+        .await?;
+    let committed: Vec<String> = manifest
+        .rows
+        .iter()
+        .map(|row| row.logical_key.to_str().expect("UTF-8").to_string())
+        .collect();
+    assert_eq!(committed, ["data/raw/a.csv"]);
+
+    // Created, committed, then given a bucket, as `quilt create`, `commit`
+    // and `set-remote` do it.
+    package
+        .set_remote(
+            "b".to_string(),
+            None,
+            crate::io::remote::WorkflowIntent::BucketDefault,
+        )
+        .await?;
+
+    let Pushed::Uploaded(outcome) = package.push(None).await? else {
+        panic!("expected the commit to be pushed");
+    };
+    let pushed_uri =
+        S3Uri::try_from(format!("s3://b/.quilt/packages/{}", outcome.manifest_uri.hash).as_str())?;
+    let body = package
+        .remote
+        .get_object_stream(None, &pushed_uri)
+        .await?
+        .body
+        .collect()
+        .await?
+        .to_vec();
+    let rows: Vec<(String, String)> = String::from_utf8(body)
+        .expect("UTF-8")
+        .lines()
+        .skip(1)
+        .map(|line| {
+            let row: serde_json::Value = serde_json::from_str(line).expect("a JSON row");
+            (
+                row["logical_key"].as_str().expect("a key").to_string(),
+                row["physical_keys"][0]
+                    .as_str()
+                    .expect("a place")
+                    .to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [(
+            "data/raw/a.csv".to_string(),
+            "s3://b/test/slash/data/raw/a.csv?versionId=version".to_string()
+        )]
+    );
     Ok(())
 }

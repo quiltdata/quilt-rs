@@ -10,26 +10,16 @@ use crate::model;
 use crate::quilt;
 use crate::routes;
 
+use super::package_entries::{EntryCounts, EntryList, InstalledPackageEntryData, entry_list};
 use super::package_list::denied_mark;
 
 // ── Installed Package data for Leptos UI ──
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct InstalledPackageEntryData {
-    pub filename: String,
-    pub size: u64,
-    pub status: String,
-    pub junky_pattern: Option<String>,
-    pub ignored_by: Option<String>,
-    pub namespace: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)]
 pub struct InstalledPackageData {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub uri: Option<quilt_uri::S3PackageUri>,
     pub status: String,
     /// The currently-installed revision's top-hash (the `remote` hash of the
@@ -55,7 +45,15 @@ pub struct InstalledPackageData {
     /// must state the fact and must **not** offer Login: signing in again
     /// re-vends the same denied role, which is the loop this replaces.
     pub no_access_reason: Option<String>,
+    /// Sorted by path, then capped at [`super::package_entries::ENTRIES_CAP`].
     pub entries: Vec<InstalledPackageEntryData>,
+    /// Whole-package facet counts; `counts.all + counts.ignored == total`.
+    pub counts: EntryCounts,
+    /// Every entry the package has, ignored ones included, before the cap.
+    pub total: usize,
+    /// Whether the cap dropped entries: `total > entries.len()`. Set here so
+    /// the UI never infers truncation from a length.
+    pub truncated: bool,
     pub has_remote_entries: bool,
     pub ignored_count: usize,
     pub unmodified_count: usize,
@@ -65,6 +63,9 @@ pub struct InstalledPackageData {
     /// the whole package. Reported raw — the screen renders the choice, and
     /// `entire_package_sync_enabled` decides whether it may be shown at all.
     pub syncs_entire_package: bool,
+    /// Whether the scope keeps chosen folders, which this screen cannot set:
+    /// neither of its scopes is the standing one.
+    pub keeps_folders: bool,
     /// Whether the experiment that offers the scope control is on. `false`
     /// means the screen renders exactly as it did before the feature existed,
     /// whatever `syncs_entire_package` says.
@@ -113,116 +114,50 @@ async fn get_installed_package_data_from_model(
     }
 
     let mut no_access_reason = None;
-    let pkg_status = if lineage.remote_uri.is_none() || origin_host.is_some() {
-        match m
-            .get_installed_package_status(&installed_package, None)
-            .await
-        {
-            Ok(s) => s,
-            // A denial is not a broken session: the credentials vended, and
-            // the active role simply cannot read this bucket. Collapsing it
-            // into the synthetic error status makes the page say "sign in
-            // again", and the re-vend hands back the same denied role — the
-            // unrecoverable loop this page must not reproduce. State the
-            // fact instead, and keep the entries: they come from the cached
-            // manifest and the working tree, neither of which was refused.
-            Err(err) if err.is_access_denied() => {
-                no_access_reason = denied_mark(m, roles, origin_host).await.reason;
-                match m.recompute_local_status(&installed_package, None).await {
-                    Ok(status) => status,
-                    Err(err) => {
-                        tracing::warn!("Failed to recompute local status: {err}");
-                        quilt::lineage::InstalledPackageStatus::error()
-                    }
+    let pkg_status = match m
+        .get_installed_package_status(&installed_package, None)
+        .await
+    {
+        Ok(s) => s,
+        // A denial is not a broken session: the credentials vended, and
+        // the active role simply cannot read this bucket. Collapsing it
+        // into the synthetic error status makes the page say "sign in
+        // again", and the re-vend hands back the same denied role — the
+        // unrecoverable loop this page must not reproduce. State the
+        // fact instead, and keep the entries: they come from the cached
+        // manifest and the working tree, neither of which was refused.
+        Err(err) if err.is_access_denied() => {
+            no_access_reason = denied_mark(m, roles, origin_host).await.reason;
+            match m.recompute_local_status(&installed_package, None).await {
+                Ok(status) => status,
+                Err(err) => {
+                    tracing::warn!("Failed to recompute local status: {err}");
+                    quilt::lineage::InstalledPackageStatus::error()
                 }
             }
-            Err(err) => {
-                tracing::warn!("Failed to get package status: {err}");
-                quilt::lineage::InstalledPackageStatus::error()
-            }
         }
-    } else {
-        quilt::lineage::InstalledPackageStatus::error()
+        Err(err) => {
+            tracing::warn!("Failed to get package status: {err}");
+            quilt::lineage::InstalledPackageStatus::error()
+        }
     };
 
     let modified_entries = &pkg_status.changes;
     let installed_paths = &lineage.paths;
     let manifest_entries = m.get_installed_package_records(&installed_package).await?;
 
-    let junky_map: std::collections::HashMap<_, _> = pkg_status
-        .junky_changes
-        .iter()
-        .map(|(p, pat)| (p.clone(), pat.clone()))
-        .collect();
-
-    let mut entries_list = Vec::new();
-    for (filename, change) in modified_entries {
-        let (status_str, size) = match change {
-            quilt::lineage::Change::Added(r) => ("added", r.size),
-            quilt::lineage::Change::Modified(r) => ("modified", r.size),
-            quilt::lineage::Change::Removed(r) => ("deleted", r.size),
-        };
-        entries_list.push(InstalledPackageEntryData {
-            filename: filename.display().to_string(),
-            size,
-            status: status_str.to_string(),
-            junky_pattern: junky_map.get(filename).cloned(),
-            ignored_by: None,
-            namespace: namespace.to_string(),
-        });
-        if entries_list.len() > 1000 {
-            break;
-        }
-    }
-    for filename in installed_paths.keys() {
-        if modified_entries.contains_key(filename) {
-            continue;
-        }
-        if let Some(row) = manifest_entries.get(filename) {
-            entries_list.push(InstalledPackageEntryData {
-                filename: filename.display().to_string(),
-                size: row.size,
-                status: "pristine".to_string(),
-                junky_pattern: None,
-                ignored_by: None,
-                namespace: namespace.to_string(),
-            });
-        }
-        if entries_list.len() > 1000 {
-            break;
-        }
-    }
-    for (filename, row) in &manifest_entries {
-        if installed_paths.contains_key(filename) || modified_entries.contains_key(filename) {
-            continue;
-        }
-        entries_list.push(InstalledPackageEntryData {
-            filename: filename.display().to_string(),
-            size: row.size,
-            status: "remote".to_string(),
-            junky_pattern: None,
-            ignored_by: None,
-            namespace: namespace.to_string(),
-        });
-        if entries_list.len() > 1000 {
-            break;
-        }
-    }
-    for (filename, pattern, size) in &pkg_status.ignored_files {
-        entries_list.push(InstalledPackageEntryData {
-            filename: filename.display().to_string(),
-            size: *size,
-            status: "pristine".to_string(),
-            junky_pattern: None,
-            ignored_by: Some(pattern.clone()),
-            namespace: namespace.to_string(),
-        });
-        if entries_list.len() > 1000 {
-            break;
-        }
-    }
-
-    entries_list.sort_by(|a, b| a.filename.cmp(&b.filename));
+    let EntryList {
+        entries: entries_list,
+        counts,
+        total,
+        truncated,
+    } = entry_list(
+        namespace,
+        &pkg_status,
+        installed_paths,
+        &manifest_entries,
+        false,
+    );
 
     // Compute counts from the full source data, not the capped entries_list,
     // so the filter toolbar is shown even when the list is truncated.
@@ -256,7 +191,7 @@ async fn get_installed_package_data_from_model(
     let has_local_commit = lineage.commit.is_some();
 
     Ok(InstalledPackageData {
-        namespace: namespace.to_string(),
+        namespace: namespace.clone(),
         uri: typed_uri,
         status: status_str.to_string(),
         installed_hash,
@@ -265,12 +200,16 @@ async fn get_installed_package_data_from_model(
         has_local_commit,
         no_access_reason,
         entries: entries_list,
+        counts,
+        total,
+        truncated,
         has_remote_entries,
         ignored_count,
         unmodified_count,
         filter_unmodified: filter.unmodified,
         filter_ignored: filter.ignored,
-        syncs_entire_package: lineage.sync_scope.covers_untracked(),
+        syncs_entire_package: lineage.sync_scope == quilt::lineage::SyncScope::EntirePackage,
+        keeps_folders: matches!(lineage.sync_scope, quilt::lineage::SyncScope::Folders(_)),
         entire_package_sync_enabled: experimental.entire_package_sync,
     })
 }
@@ -300,6 +239,7 @@ pub async fn get_installed_package_data(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     use crate::commands::test_support::*;
     use crate::model::mocks;
@@ -327,12 +267,12 @@ mod tests {
         .await
         .map_err(|e| e.to_string())?;
 
-        assert_eq!(data.namespace, "foo/bar");
+        assert_eq!(data.namespace.to_string(), "foo/bar");
         let uri = data.uri.as_ref().expect("URI present");
         assert_eq!(uri.bucket, "quilt-example");
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         // Mock has one record "NAME" — should appear as an entry
         assert!(!data.entries.is_empty());
@@ -376,6 +316,16 @@ mod tests {
                     "abcdef".to_string(),
                 ))
             });
+        // Read on the machine's own AWS credentials, like any other remote.
+        model
+            .expect_get_installed_package_status()
+            .times(1)
+            .returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::Behind,
+                    quilt::lineage::ChangeSet::new(),
+                ))
+            });
         model
             .expect_get_installed_package_records()
             .returning(|_| Ok(std::collections::BTreeMap::new()));
@@ -394,7 +344,7 @@ mod tests {
         .await
         .map_err(|e| e.to_string())?;
 
-        assert_eq!(data.status, "error");
+        assert_eq!(data.status, "behind");
         // URI is exposed (so the Set Remote popup can pre-fill bucket)
         // but its catalog is unset.
         let uri = data.uri.as_ref().expect("URI present");
@@ -443,7 +393,7 @@ mod tests {
         assert_eq!(data.status, "error");
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         Ok(())
     }
@@ -567,7 +517,7 @@ mod tests {
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
                 let uri = quilt_uri::ManifestUri {
-                    origin: Some("test.quilt.dev".parse().unwrap()),
+                    origin: Some(fixtures::host()),
                     bucket: "test".to_string(),
                     namespace: pkg.namespace.clone(),
                     hash: String::new(),
@@ -602,7 +552,7 @@ mod tests {
         // Has origin for Push button and disabled Catalog button.
         assert_eq!(
             catalog_host(data.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         Ok(())
     }
@@ -708,6 +658,295 @@ mod tests {
         // has no on-disk lineage file backing it, so reading its manifest
         // fails and the best-effort fallback yields `None`.
         assert_eq!(data.installed_message, None);
+        Ok(())
+    }
+
+    /// A package's files by class, each a list of logical paths. The fixture
+    /// places each class where the page read finds it: changes in the status,
+    /// downloaded files in lineage paths and the manifest, not-downloaded ones
+    /// in the manifest only, ignored ones in the local walk.
+    #[derive(Default)]
+    struct Files {
+        added: Vec<String>,
+        modified: Vec<String>,
+        deleted: Vec<String>,
+        pristine: Vec<String>,
+        remote: Vec<String>,
+        ignored: Vec<String>,
+    }
+
+    fn numbered(prefix: &str, n: usize) -> Vec<String> {
+        (0..n).map(|i| format!("{prefix}{i:04}")).collect()
+    }
+
+    async fn read_package(files: Files) -> Result<InstalledPackageData, String> {
+        use std::path::PathBuf;
+
+        let row = |path: &String| quilt::manifest::ManifestRow {
+            logical_key: PathBuf::from(path),
+            size: 1,
+            ..Default::default()
+        };
+        let mut changes = quilt::lineage::ChangeSet::new();
+        for path in &files.added {
+            changes.insert(path.into(), quilt::lineage::Change::Added(row(path)));
+        }
+        for path in &files.modified {
+            changes.insert(path.into(), quilt::lineage::Change::Modified(row(path)));
+        }
+        for path in &files.deleted {
+            changes.insert(path.into(), quilt::lineage::Change::Removed(row(path)));
+        }
+        let mut status = quilt::lineage::InstalledPackageStatus::new(
+            quilt::lineage::UpstreamState::UpToDate,
+            changes,
+        );
+        status.ignored_files = files
+            .ignored
+            .iter()
+            .map(|path| {
+                (
+                    path.into(),
+                    quilt::quiltignore::IgnoredBy {
+                        pattern: "*.tmp".to_string(),
+                        source: quilt::quiltignore::RuleSource::Default,
+                    },
+                    1,
+                )
+            })
+            .collect();
+
+        let downloaded: Vec<&String> = files
+            .modified
+            .iter()
+            .chain(&files.deleted)
+            .chain(&files.pristine)
+            .collect();
+        let paths: quilt::lineage::LineagePaths = downloaded
+            .iter()
+            .map(|path| (PathBuf::from(path), quilt::lineage::PathState::default()))
+            .collect();
+        let records: std::collections::BTreeMap<PathBuf, quilt::manifest::ManifestRow> = downloaded
+            .into_iter()
+            .chain(&files.remote)
+            .map(|path| (PathBuf::from(path), row(path)))
+            .collect();
+
+        let mut model = mocks::create();
+        model
+            .expect_get_installed_package()
+            .returning(|_| Ok(Some(make_installed_package(("foo", "bar")))));
+        model
+            .expect_get_installed_package_lineage()
+            .returning(move |pkg| {
+                let mut lineage = quilt::lineage::PackageLineage::from_remote(
+                    make_manifest_uri(&pkg.namespace.to_string()),
+                    "abcdef".to_string(),
+                );
+                lineage.paths = paths.clone();
+                Ok(lineage)
+            });
+        model
+            .expect_get_installed_package_status()
+            .return_once(move |_, _| Ok(status));
+        model
+            .expect_get_installed_package_records()
+            .return_once(move |_| Ok(records));
+
+        get_installed_package_data_from_model(
+            &model,
+            &ExperimentalSettings::default(),
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &("foo", "bar").into(),
+            routes::EntriesFilter::default(),
+        )
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    async fn read_remote_only(n: usize) -> Result<InstalledPackageData, String> {
+        read_package(Files {
+            remote: numbered("f", n),
+            ..Files::default()
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn under_the_cap_every_file_is_listed() -> Result<(), String> {
+        let data = read_remote_only(999).await?;
+        assert_eq!(data.entries.len(), 999);
+        assert_eq!(data.total, 999);
+        assert!(!data.truncated);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn exactly_the_cap_is_not_truncated() -> Result<(), String> {
+        let data = read_remote_only(1000).await?;
+        assert_eq!(data.entries.len(), 1000);
+        assert_eq!(data.total, 1000);
+        assert!(!data.truncated, "nothing was dropped at exactly 1000");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn one_over_the_cap_drops_one_file() -> Result<(), String> {
+        let data = read_remote_only(1001).await?;
+        assert_eq!(data.entries.len(), 1000);
+        assert_eq!(data.total, 1001);
+        assert!(data.truncated);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn two_over_the_cap_drops_two_files() -> Result<(), String> {
+        let data = read_remote_only(1002).await?;
+        assert_eq!(data.entries.len(), 1000);
+        assert_eq!(data.total, 1002);
+        assert!(data.truncated);
+        assert_eq!(
+            data.entries.last().map(|e| e.filename.as_str()),
+            Some("f0999"),
+            "the kept rows are the first 1000 paths"
+        );
+        Ok(())
+    }
+
+    /// v1 filled the list class by class, changes first, so a package over
+    /// the cap listed its changed files and dropped paths that sort before
+    /// them. The cap now keeps the first 1000 paths, whatever their class.
+    #[tokio::test]
+    async fn the_cap_keeps_the_first_paths_whatever_their_class() -> Result<(), String> {
+        let data = read_package(Files {
+            added: numbered("z/added-", 300),
+            modified: numbered("y/modified-", 200),
+            deleted: numbered("x/deleted-", 200),
+            remote: numbered("a/remote-", 700),
+            ignored: numbered("b/ignored-", 10),
+            pristine: numbered("c/pristine-", 10),
+        })
+        .await?;
+
+        let kept: Vec<&str> = data.entries.iter().map(|e| e.filename.as_str()).collect();
+        assert_eq!(kept.len(), 1000);
+        assert_eq!(kept.first(), Some(&"a/remote-0000"));
+        assert_eq!(kept[699], "a/remote-0699");
+        assert_eq!(kept[700], "b/ignored-0000");
+        assert_eq!(kept[710], "c/pristine-0000");
+        assert_eq!(kept[720], "x/deleted-0000");
+        assert_eq!(kept[920], "y/modified-0000");
+        assert_eq!(kept.last(), Some(&"y/modified-0079"));
+        assert!(
+            !kept.iter().any(|f| f.starts_with("z/")),
+            "every added file sorts past the cap"
+        );
+        assert_eq!(data.total, 1420);
+        assert!(data.truncated);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn counts_cover_the_whole_package_when_the_list_is_cut() -> Result<(), String> {
+        let data = read_package(Files {
+            added: numbered("z/added-", 300),
+            modified: numbered("y/modified-", 200),
+            deleted: numbered("x/deleted-", 200),
+            remote: numbered("a/remote-", 700),
+            ignored: numbered("b/ignored-", 10),
+            pristine: numbered("c/pristine-", 10),
+        })
+        .await?;
+
+        assert!(data.truncated);
+        assert_eq!(
+            data.counts,
+            EntryCounts {
+                all: 1410,
+                changed: 700,
+                not_downloaded: 700,
+                ignored: 10,
+                ignored_folders: 0,
+                deleted: 200,
+            }
+        );
+        assert_eq!(data.total, data.counts.all + data.counts.ignored);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn counts_split_the_package_into_disjoint_facets() -> Result<(), String> {
+        let data = read_package(Files {
+            added: numbered("added-", 1),
+            modified: numbered("modified-", 2),
+            deleted: numbered("deleted-", 3),
+            pristine: numbered("pristine-", 4),
+            remote: numbered("remote-", 5),
+            ignored: numbered("ignored-", 6),
+        })
+        .await?;
+
+        assert_eq!(
+            data.counts,
+            EntryCounts {
+                all: 15,
+                changed: 6,
+                not_downloaded: 5,
+                ignored: 6,
+                ignored_folders: 0,
+                deleted: 3,
+            }
+        );
+        assert_eq!(data.total, 21);
+        assert!(!data.truncated);
+        Ok(())
+    }
+
+    /// v1 reads the same payload. Its own counts keep their meaning:
+    /// unmodified is pristine plus not downloaded.
+    #[tokio::test]
+    async fn v1_counts_survive_the_cap() -> Result<(), String> {
+        let data = read_package(Files {
+            added: numbered("z/added-", 300),
+            modified: numbered("y/modified-", 200),
+            deleted: numbered("x/deleted-", 200),
+            remote: numbered("a/remote-", 700),
+            ignored: numbered("b/ignored-", 10),
+            pristine: numbered("c/pristine-", 10),
+        })
+        .await?;
+
+        assert_eq!(data.ignored_count, 10);
+        assert_eq!(data.unmodified_count, 710);
+        assert!(data.has_remote_entries);
+        Ok(())
+    }
+
+    /// Anchored identically in the UI's `entry_counts_wire_form_is_verbatim`.
+    #[test]
+    fn entry_counts_wire_form_is_verbatim() {
+        let counts = EntryCounts {
+            all: 1410,
+            changed: 700,
+            not_downloaded: 700,
+            ignored: 10,
+            ignored_folders: 2,
+            deleted: 200,
+        };
+        assert_eq!(
+            serde_json::to_string(&counts).unwrap(),
+            r#"{"all":1410,"changed":700,"notDownloaded":700,"ignored":10,"ignoredFolders":2,"deleted":200}"#,
+        );
+    }
+
+    #[tokio::test]
+    async fn the_cap_crosses_the_wire_as_total_and_truncated() -> Result<(), String> {
+        let data = read_remote_only(1001).await?;
+        let wire = serde_json::to_value(&data).map_err(|e| e.to_string())?;
+        assert_eq!(wire["total"], 1001);
+        assert_eq!(wire["truncated"], true);
+        assert_eq!(wire["counts"]["notDownloaded"], 1001);
         Ok(())
     }
 

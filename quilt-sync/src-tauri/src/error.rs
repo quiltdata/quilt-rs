@@ -12,6 +12,9 @@ pub enum TauriUiError {
     #[error("Window not found")]
     Window,
 
+    #[error("Clipboard unavailable: {0}")]
+    Clipboard(#[from] tauri_plugin_clipboard_manager::Error),
+
     #[error("User cancelled operation")]
     UserCancelled,
 }
@@ -121,6 +124,9 @@ pub enum Error {
     #[error("General error: {0}")]
     General(String),
 
+    #[error("Package name must be prefix/name, using only letters, digits, _ and -; got: {0}")]
+    PackageName(String),
+
     #[error("Test failed: {0}")]
     Test(String),
 }
@@ -195,14 +201,68 @@ impl Error {
         matches!(self, Error::Quilt(err) if err.is_access_denied())
     }
 
-    /// Serialize actionable errors as JSON so the frontend can parse and react
-    /// (e.g. redirect to `/login` or `/setup`). Falls back to `Display` for
-    /// all other errors.
+    /// This error in the words a user should read: the domain error's own
+    /// message, without the `Quilt error:` wrapper that [`Display`] adds.
+    ///
+    /// The wrapper says which of this crate's error variants the failure
+    /// arrived in, which is a fact about the codebase rather than about what
+    /// went wrong, and it reads as noise in front of a sentence the domain
+    /// already worded. The autosync pause path drops it by binding the inner
+    /// error per arm (`autopull/tick.rs`) and asserts it never reaches the
+    /// tray; this is the same removal for a caller holding only the outer
+    /// error.
+    ///
+    /// [`Display`]: std::fmt::Display
+    #[must_use]
+    pub fn user_facing(&self) -> String {
+        match self {
+            Error::Quilt(inner) => inner.to_string(),
+            other => other.to_string(),
+        }
+    }
+
+    /// True when S3 rejected the credentials themselves.
+    ///
+    /// The counterpart to [`Error::is_access_denied`]: that one says the
+    /// session is healthy and the role is not allowed, this one says the
+    /// session is not healthy. The watcher must not back this off — retrying a
+    /// rejected credential never succeeds — so it routes to the same
+    /// login-required affordance a refused vend does.
+    #[must_use]
+    pub fn is_invalid_credentials(&self) -> bool {
+        matches!(self, Error::Quilt(err) if err.is_invalid_credentials())
+    }
+
+    /// True when there is no usable session, by either route — see
+    /// [`quilt::Error::is_session_absent`]. This is the predicate a surface
+    /// should branch on when deciding what to show; the narrower
+    /// [`Error::is_invalid_credentials`] exists for the watcher, which counts
+    /// episodes and wants only the rejected-credential route.
+    #[must_use]
+    pub fn is_session_absent(&self) -> bool {
+        matches!(self, Error::Quilt(err) if err.is_session_absent())
+    }
+
+    /// The deployment this request was for, if any. `None` for a bare S3
+    /// bucket reached with ambient credentials, and for non-S3 errors.
+    #[must_use]
+    pub fn s3_host(&self) -> Option<&quilt_uri::Host> {
+        match self {
+            Error::Quilt(err) => err.s3_host(),
+            _ => None,
+        }
+    }
+
+    /// Serialize a recognized state as JSON for the frontend; `Display`
+    /// otherwise.
+    ///
+    /// Kinds name the state, never the action — which response it deserves is
+    /// the receiving surface's call.
     pub fn to_frontend_string(&self) -> String {
         match self {
-            Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(host))) => {
+            Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(host))) => {
                 let mut json = serde_json::json!({
-                    "kind": "login_required",
+                    "kind": "session_absent",
                     "message": self.to_string(),
                 });
                 if let Some(h) = host {
@@ -210,10 +270,16 @@ impl Error {
                 }
                 json.to_string()
             }
-            Error::Quilt(quilt::Error::Login(quilt::LoginError::RequiredRegistryUrl(host))) => {
+            // Not `session_absent`: the deployment answered, so no session is
+            // missing and a sign-in cannot help. Unmatched by the router,
+            // which renders it in place.
+            Error::Quilt(quilt::Error::Login(quilt::LoginError::NoRegistryUrl(host))) => {
                 serde_json::json!({
-                    "kind": "login_required",
-                    "message": self.to_string(),
+                    "kind": "registry_url_missing",
+                    "message": format!(
+                        "{host} is not configured as a Quilt deployment — its config.json \
+                         names no registry. Whoever administers it will need to fix that."
+                    ),
                     "host": host.to_string(),
                 })
                 .to_string()
@@ -225,9 +291,47 @@ impl Error {
                 "message": self.to_string(),
             })
             .to_string(),
+            Error::Quilt(quilt::Error::S3(error)) => s3_error_to_frontend(error),
             _ => self.to_string(),
         }
     }
+}
+
+fn s3_error_to_frontend(error: &quilt::S3Error) -> String {
+    let (kind, message) = match &error.kind {
+        quilt::S3ErrorKind::InvalidCredentials(_) if error.host.is_none() => (
+            "credentials_invalid",
+            "AWS credentials in ~/.aws/credentials are invalid. Please update your credentials."
+                .to_string(),
+        ),
+        // Same state as a refused vend, so the same kind. Only user-initiated
+        // commands reach this; autosync reports on its own event channel.
+        quilt::S3ErrorKind::InvalidCredentials(_) => (
+            "session_absent",
+            format!(
+                "Your session for {} has expired. Please sign in again.",
+                error.host.as_ref().expect("host checked above")
+            ),
+        ),
+        quilt::S3ErrorKind::NotFound(_) => (
+            "not_found",
+            "Package not found: the requested version or object does not exist.".to_string(),
+        ),
+        quilt::S3ErrorKind::AccessDenied(_) => (
+            "access_denied",
+            "The active role does not have access to this object.".to_string(),
+        ),
+        _ => return error.to_string(),
+    };
+
+    let mut response = serde_json::json!({
+        "kind": kind,
+        "message": message,
+    });
+    if let Some(host) = &error.host {
+        response["host"] = serde_json::Value::String(host.to_string());
+    }
+    response.to_string()
 }
 
 impl From<Error> for String {
@@ -238,25 +342,64 @@ impl From<Error> for String {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
+    use quilt_uri::fixtures;
 
     use super::*;
 
     #[test]
-    fn to_frontend_string_login_required_with_host() {
-        let host = quilt_uri::Host::from_str("catalog.dev").unwrap();
-        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(Some(host))));
-        let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "login_required");
-        assert_eq!(json["host"], "catalog.dev");
-        assert!(json["message"].as_str().unwrap().contains("Login required"));
+    fn user_facing_drops_the_quilt_wrapper_and_keeps_the_sentence() {
+        // With `to_string()`, the create dialog would read "Failed to create
+        // package: Quilt error: The package proj/process is already installed."
+        // Only the last part is useful to the user.
+        let err = Error::Quilt(quilt::Error::InstallPackage(
+            quilt::InstallPackageError::AlreadyInstalled(quilt_uri::Namespace::from((
+                "proj", "process",
+            ))),
+        ));
+        let inner = "The package proj/process is already installed";
+        assert!(
+            err.to_string().starts_with("Quilt error:"),
+            "the wrapper is what Display adds: {err}"
+        );
+        assert!(
+            !err.user_facing().contains("Quilt error:"),
+            "and what this drops: {}",
+            err.user_facing()
+        );
+        assert!(
+            err.user_facing().contains(inner),
+            "the sentence survives: {}",
+            err.user_facing()
+        );
     }
 
     #[test]
-    fn to_frontend_string_login_required_no_host() {
-        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::Required(None)));
+    fn user_facing_leaves_a_non_quilt_error_alone() {
+        // Only the `Quilt` wrapper is framing. The others name a foreign error's
+        // domain — "Filesystem error:" in front of an `io::Error` is the context
+        // that says which subsystem failed, and dropping it would lose it.
+        let err = Error::FS(std::io::Error::other("disk fell off"));
+        assert_eq!(err.user_facing(), err.to_string());
+        assert!(err.user_facing().starts_with("Filesystem error:"));
+    }
+
+    #[test]
+    fn to_frontend_string_session_absent_with_host() {
+        let host = fixtures::host();
+        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(Some(
+            host,
+        ))));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "login_required");
+        assert_eq!(json["kind"], "session_absent");
+        assert_eq!(json["host"], "quilt.test");
+        assert!(json["message"].as_str().unwrap().contains("No session"));
+    }
+
+    #[test]
+    fn to_frontend_string_session_absent_no_host() {
+        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::NoSession(None)));
+        let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
+        assert_eq!(json["kind"], "session_absent");
         assert!(
             json.get("host").is_none(),
             "host should be absent when None"
@@ -264,14 +407,29 @@ mod tests {
     }
 
     #[test]
-    fn to_frontend_string_login_required_registry_url() {
-        let host = quilt_uri::Host::from_str("catalog.dev").unwrap();
-        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::RequiredRegistryUrl(
-            host,
-        )));
+    /// A deployment whose `config.json` names no registry is misconfigured, not
+    /// signed out. It must not borrow `session_absent`, which the router
+    /// answers by navigating to `/login` — a page that cannot fix a config
+    /// file, for a problem the user has no way to act on.
+    fn to_frontend_string_missing_registry_is_not_a_dead_session() {
+        let host = fixtures::host();
+        let err = Error::Quilt(quilt::Error::Login(quilt::LoginError::NoRegistryUrl(host)));
         let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
-        assert_eq!(json["kind"], "login_required");
-        assert_eq!(json["host"], "catalog.dev");
+        assert_eq!(json["kind"], "registry_url_missing");
+        assert_ne!(
+            json["kind"], "session_absent",
+            "a misconfiguration must not route the user to sign in"
+        );
+        assert_eq!(json["host"], "quilt.test");
+        let message = json["message"].as_str().unwrap();
+        assert!(
+            message.contains("quilt.test"),
+            "must name the host: {message}"
+        );
+        assert!(
+            !message.contains("sign in"),
+            "there is nothing to sign in to: {message}"
+        );
     }
 
     #[test]
@@ -291,5 +449,59 @@ mod tests {
         let result = err.to_frontend_string();
         assert_eq!(result, "General error: something broke");
         assert!(serde_json::from_str::<serde_json::Value>(&result).is_err());
+    }
+
+    #[test]
+    fn to_frontend_string_invalid_local_credentials_is_actionable() {
+        let err = Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::InvalidCredentials(
+                "InvalidAccessKeyId: raw SDK details".to_string(),
+            ),
+        )));
+        let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
+        assert_eq!(json["kind"], "credentials_invalid");
+        assert_eq!(
+            json["message"],
+            "AWS credentials in ~/.aws/credentials are invalid. Please update your credentials."
+        );
+        assert!(!json["message"].as_str().unwrap().contains("raw SDK"));
+    }
+
+    /// A stale session on a deployment routes to the kind the frontend already
+    /// navigates on, and carries the host it needs to build `/login?host=…`.
+    /// Reporting it as its own kind would render a page telling the user to sign
+    /// in with no way to do so.
+    #[test]
+    fn to_frontend_string_expired_session_sends_the_user_to_login() {
+        let host = fixtures::host();
+        let err = Error::Quilt(quilt::Error::S3(quilt::S3Error {
+            host: Some(host.clone()),
+            kind: quilt::S3ErrorKind::InvalidCredentials(
+                "ExpiredToken: raw SDK details".to_string(),
+            ),
+        }));
+
+        let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
+        assert_eq!(json["kind"], "session_absent");
+        assert_eq!(json["host"], host.to_string());
+        assert_eq!(
+            json["message"],
+            format!("Your session for {host} has expired. Please sign in again.")
+        );
+        assert!(!json["message"].as_str().unwrap().contains("raw SDK"));
+    }
+
+    #[test]
+    fn to_frontend_string_missing_object_is_actionable() {
+        let err = Error::Quilt(quilt::Error::S3(quilt::S3Error::new(
+            quilt::S3ErrorKind::NotFound("NoSuchKey: raw SDK details".to_string()),
+        )));
+        let json: serde_json::Value = serde_json::from_str(&err.to_frontend_string()).unwrap();
+        assert_eq!(json["kind"], "not_found");
+        assert_eq!(
+            json["message"],
+            "Package not found: the requested version or object does not exist."
+        );
+        assert!(!json["message"].as_str().unwrap().contains("raw SDK"));
     }
 }

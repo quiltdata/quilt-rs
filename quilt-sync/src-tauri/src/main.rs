@@ -4,6 +4,9 @@
 // trips `items_after_statements` on leading `use`s/items in test fns. Enforce
 // the lint in production; allow it only under `cfg(test)`.
 #![cfg_attr(test, allow(clippy::items_after_statements))]
+// A spawned task run's `Send` check nests the ACP client over quilt-rs's
+// package reads, deeper than the default limit of 128.
+#![recursion_limit = "256"]
 
 use std::sync::Arc;
 
@@ -18,24 +21,28 @@ mod autopull;
 mod changelog;
 mod commands;
 mod commit_message;
+mod design_settings;
 mod env;
 mod error;
 mod experimental_settings;
 mod fswatcher;
+mod log_settings;
 mod model;
 mod notify;
 mod oauth;
 mod publish_settings;
 mod quilt;
+mod quit;
 mod routes;
+mod tasks;
 mod telemetry;
+mod toast;
 mod tray;
 mod uri;
 
 use app::App;
 use autopull::StatusReporter;
 use autopull::Watcher;
-use autopull::WindowMode;
 use autopull::reporter::TauriEventReporter;
 use error::Error;
 use model::Model;
@@ -60,6 +67,7 @@ fn main() {
                 error!("{}", err);
             }
         }))
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -82,12 +90,11 @@ fn main() {
                 Some(telemetry::Buffer::new(&data_dir)),
             );
 
-            // This is for runtime registering
+            // Registers the schemes from tauri.conf.json at runtime. macOS
+            // takes them from the bundle's Info.plist, so this only logs there.
             #[cfg(desktop)]
-            for scheme in ["quilt+s3", "quilt"] {
-                if let Err(err) = app.deep_link().register(scheme) {
-                    error!("Failed to register deep link for {}: {}", scheme, err);
-                }
+            if let Err(err) = app.deep_link().register_all() {
+                error!("Failed to register deep link schemes: {}", err);
             }
 
             let logging = telemetry::Telemetry::init_file_logging(&data_dir)?;
@@ -130,15 +137,24 @@ fn main() {
                     fswatcher::FsWatcherSettings::default(),
                 ))
             });
-            let window_mode = autopull::create_window_mode();
 
-            app.manage(Model::create(data_dir));
+            // Only the app opens the package state store; the CLI never does.
+            // One store for the last-change times and the walks' stat cache.
+            let state_store = std::sync::Arc::new(quilt::state_store::PackageStateStore::new(
+                quilt::paths::DomainPaths::new(data_dir.clone()).state_db(),
+            ));
+            let last_change =
+                autopull::last_change::LastChange::shared(std::sync::Arc::clone(&state_store));
+            app.manage(Model::create_with_state_store(data_dir, state_store));
             app.manage(commands::WorkflowRulesCache::default());
             app.manage(commands::RoleCache::default());
             app.manage(sync::Mutex::new(app.handle().clone()));
             app.manage(App::new(package_info, logging));
             app.manage(telemetry);
             app.manage(oauth::OAuthState::default());
+            app.manage(toast::ToastCenter::new(Box::new(
+                toast::TauriToastEmitter::new(app.handle().clone()),
+            )));
             // The watcher reads `Model` via `app_handle.state::<Model>()`
             // so it can spawn after `Model` is registered above.
             // Telemetry wraps the UI reporter rather than replacing it: the
@@ -152,22 +168,22 @@ fn main() {
             let (watcher, status_rx) = Watcher::spawn(
                 app.handle().clone(),
                 autosync_settings.clone(),
-                window_mode.clone(),
                 publish_settings.clone(),
-                experimental_settings.clone(),
                 reporter.clone(),
+                last_change,
             );
-            fswatcher::spawn(app.handle(), fswatcher_settings.clone(), &reporter);
+            autopull::activity::spawn_forwarder(app.handle().clone(), watcher.subscribe_activity());
             app.manage(publish_settings);
             app.manage(autosync_settings);
-            app.manage(fswatcher_settings);
             app.manage(experimental_settings);
-            app.manage(window_mode);
             app.manage(watcher);
+            // After the watcher is managed: the reactor reads its shared state.
+            fswatcher::spawn(app.handle(), fswatcher_settings.clone(), &reporter);
+            app.manage(fswatcher_settings);
+            app.manage(quit::QuitGate::default());
 
             // The tray controller needs the autosync settings (for
-            // close_to_tray) and the window-mode state — both are now
-            // in `app.state::<...>()`.
+            // close_to_tray), now in `app.state::<...>()`.
             match tray::TrayController::install(app.handle(), status_rx) {
                 Ok(controller) => {
                     app.manage(controller);
@@ -182,26 +198,6 @@ fn main() {
             uri::setup_deep_link_handler(app.handle());
 
             Ok(())
-        })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::Focused(focused) = event {
-                // If the window is hidden, leave window_mode at
-                // WindowMode::Closed — a focus event during the
-                // hide-to-tray transition would otherwise overwrite it.
-                if !window.is_visible().unwrap_or(true) {
-                    return;
-                }
-                let mode = if *focused {
-                    WindowMode::Focused
-                } else {
-                    WindowMode::Unfocused
-                };
-                let handle = window.app_handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    let watcher = handle.state::<Watcher>();
-                    watcher.set_window_mode(mode).await;
-                });
-            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::certify_latest,
@@ -223,6 +219,8 @@ fn main() {
             commands::debug_logs,
             commands::open_data_dir,
             commands::open_home_dir,
+            commands::run_gc,
+            commands::measure_storage,
             commands::collect_diagnostic_logs,
             commands::send_crash_report,
             commands::login,
@@ -230,6 +228,8 @@ fn main() {
             commands::open_directory_picker,
             commands::open_in_default_application,
             commands::open_in_file_browser,
+            commands::copy_to_clipboard,
+            commands::package_file_path,
             commands::open_in_web_browser,
             commands::package_commit,
             commands::package_commit_and_push,
@@ -241,24 +241,60 @@ fn main() {
             commands::package_push,
             commands::update_publish_settings,
             commands::update_autosync_settings,
+            commands::set_autosync_direction,
+            commands::patch_autosync_settings,
             commands::get_autosync_snapshot,
+            commands::get_autopull_activity,
+            commands::get_toasts,
+            commands::dismiss_toast,
             commands::update_fswatcher_settings,
+            commands::set_default_ignore_rules,
+            commands::open_user_ignore_rules,
+            commands::update_log_settings,
             commands::update_experimental_settings,
+            commands::update_task_settings,
+            commands::update_design_settings,
+            commands::get_main_page_packages,
+            commands::get_main_page_recent_files,
+            commands::get_main_page_accounts,
+            commands::refresh_main_page_account,
+            commands::refresh_main_page_package,
+            commands::get_main_page_watcher,
+            commands::get_package_page_data,
+            commands::get_revision_history,
+            commands::remove_revisions,
+            commands::package_download_backlog,
             commands::refresh_package_status,
             commands::package_uninstall,
             commands::reset_local,
+            commands::undo_commit,
             commands::reveal_in_file_browser,
             commands::set_remote,
+            commands::change_catalog,
             commands::package_create,
             commands::setup,
             commands::add_to_quiltignore,
             commands::test_quiltignore_pattern,
+            commands::stop_ignoring_preview,
+            commands::stop_ignoring,
             commands::handle_remote_package,
             commands::get_revision_message,
             commands::check_for_update,
             commands::download_and_install_update,
             commands::report_ui_panic,
+            commands::quit_prompt_shown,
+            commands::quit_confirm,
+            commands::quit_cancel,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Runs after every plugin's exit hook, so a plugin's own exit-time
+            // logging still reaches the file. A drop hosted in a plugin would not.
+            if matches!(event, tauri::RunEvent::Exit)
+                && let Some(app) = app_handle.try_state::<App>()
+            {
+                app.logging.shutdown();
+            }
+        });
 }

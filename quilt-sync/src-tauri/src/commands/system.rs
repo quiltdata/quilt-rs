@@ -1,5 +1,5 @@
 //! OS-integration commands: setup, directory pickers, file browser,
-//! diagnostics, and auto-update.
+//! diagnostics, local storage cleanup, and auto-update.
 
 use std::fs;
 use std::path::PathBuf;
@@ -8,6 +8,7 @@ use quilt_uri::S3PackageUri;
 use rfd::FileDialog;
 use serde::Serialize;
 use tauri::Manager;
+use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync;
 
@@ -25,7 +26,7 @@ use crate::telemetry::{MixpanelEvent, prelude::*};
 fn get_default_home_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
     let path_resolver = app_handle.path();
     let user_home = path_resolver.home_dir()?;
-    Ok(user_home.join("QuiltSync"))
+    Ok(user_home.join(quilt::DEFAULT_HOME_DIR_NAME))
 }
 
 // ── Setup data for Leptos UI ──
@@ -51,7 +52,7 @@ fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<PathBu
     let paths = app_handle.path();
     let home_dir = paths.home_dir()?;
 
-    let canonical_home = home_dir.join("QuiltSync");
+    let canonical_home = home_dir.join(quilt::DEFAULT_HOME_DIR_NAME);
     let canonical_home_already_exists = canonical_home.exists();
 
     if !canonical_home_already_exists && let Err(e) = fs::create_dir_all(&canonical_home) {
@@ -203,6 +204,69 @@ pub async fn open_data_dir(
         .map(open_data_dir_command(&app_handle), msg_ok, msg_err)
 }
 
+/// What Free up space freed: the report's sentence, and its bytes for a
+/// page that already shows a measured size.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FreedSpace {
+    pub message: String,
+    pub freed_bytes: u64,
+}
+
+async fn run_gc_command(m: &impl QuiltModel) -> Result<FreedSpace, String> {
+    // Made before the sweep so its line logs first, as everywhere else; the
+    // success message is the report's own sentence, known only once it ends.
+    let notify = Notify::new("Freeing up space".to_string());
+    let result = m.gc().await;
+    let freed_bytes = result
+        .as_ref()
+        .map(|report| report.bytes)
+        .unwrap_or_default();
+    let msg_ok = result.as_ref().map(ToString::to_string).unwrap_or_default();
+    let msg_err = |err: &Error| format!("Failed to free up space: {}", err.user_facing());
+
+    notify
+        .map(result, msg_ok, msg_err)
+        .map(|message| FreedSpace {
+            message,
+            freed_bytes,
+        })
+}
+
+/// Delete what the domain holds for nothing, answering with what was freed.
+#[tauri::command]
+pub async fn run_gc(m: tauri::State<'_, model::Model>) -> Result<FreedSpace, String> {
+    run_gc_command(&*m).await
+}
+
+/// How much local storage holds, and how much Free up space would free.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageSize {
+    pub total_bytes: u64,
+    /// An estimate: Free up space's own report is the exact answer.
+    pub freeable_bytes: u64,
+}
+
+async fn measure_storage_command(m: &impl QuiltModel) -> Result<StorageSize, String> {
+    debug!("Measuring local storage");
+    let size = m
+        .measure_storage()
+        .await
+        .map_err(|err| format!("Failed to measure local storage: {}", err.user_facing()))?;
+    Ok(StorageSize {
+        total_bytes: size.total_bytes,
+        freeable_bytes: size.freeable.bytes,
+    })
+}
+
+/// Measure local storage without deleting anything or taking package locks;
+/// run only when the user asks.
+#[tauri::command]
+pub async fn measure_storage(m: tauri::State<'_, model::Model>) -> Result<StorageSize, String> {
+    measure_storage_command(&*m).await
+}
+
 async fn collect_diagnostic_logs_command(
     app_handle: &tauri::AppHandle,
     m: &model::Model,
@@ -241,6 +305,7 @@ pub async fn collect_diagnostic_logs(
 #[tauri::command]
 pub async fn send_crash_report(
     zip_path: String,
+    message: Option<String>,
     tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
     let zip_path = PathBuf::from(zip_path);
@@ -252,11 +317,12 @@ pub async fn send_crash_report(
     let msg_ok = "Successfully sent crash report".to_string();
     let msg_err = |err: &Error| format!("Failed to send crash report: {err}");
 
-    let result =
-        tokio::task::spawn_blocking(move || diagnostics::send_crash_report(zip_path.as_path()))
-            .await
-            .map_err(|e| Error::General(e.to_string()))
-            .and_then(|r| r);
+    let result = tokio::task::spawn_blocking(move || {
+        diagnostics::send_crash_report(zip_path.as_path(), message.as_deref())
+    })
+    .await
+    .map_err(|e| Error::General(e.to_string()))
+    .and_then(|r| r);
 
     Notify::new(msg_init)
         .on_success(&tracing, MixpanelEvent::CrashReportSent)
@@ -362,6 +428,47 @@ pub async fn open_in_default_application(
         )
 }
 
+/// Where a package's file is on disk: the package's home joined with its
+/// path inside the package, as opening the file resolves it, so the two cannot
+/// disagree. Fails, as opening does, for a file that is not there.
+async fn package_file_path_command(
+    m: &impl QuiltModel,
+    namespace: &str,
+    path: &str,
+) -> Result<PathBuf, Error> {
+    let namespace = quilt_uri::Namespace::try_from(namespace)?;
+    m.file_path(&namespace, &PathBuf::from(path)).await
+}
+
+/// The absolute path of one of a package's files, for the file pane's *Copy
+/// path*: a `New` file has no `quilt+s3` address that resolves, so the reader
+/// gets where it is on this computer instead. Reads nothing but the package's
+/// home, and reports nothing: the copy that follows is the event.
+#[tauri::command]
+pub async fn package_file_path(
+    m: tauri::State<'_, model::Model>,
+    namespace: String,
+    path: String,
+) -> Result<String, String> {
+    package_file_path_command(&*m, &namespace, &path)
+        .await
+        .map(|p| p.display().to_string())
+        .map_err(|err| err.to_string())
+}
+
+/// `url` as the log may hold it. A `mailto:` keeps its address and drops the
+/// rest: its subject and body can carry what the user wrote about a problem,
+/// and the logs are what a later report sends.
+fn loggable_url(url: &str) -> &str {
+    let is_mail = url
+        .get(..7)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("mailto:"));
+    match url.split_once('?') {
+        Some((address, _)) if is_mail => address,
+        _ => url,
+    }
+}
+
 fn open_in_web_browser_command(url: &str) -> Result<(), Error> {
     model::open_in_web_browser(url)?;
     Ok(())
@@ -376,8 +483,9 @@ pub async fn open_in_web_browser(
     // catalog links, documentation, a local directory and `mailto:` alike, so its
     // URL's host is not necessarily a Quilt deployment — and `host` means the
     // deployment an event concerns, never a hostname that appeared nearby.
-    let msg_init = format!("Opening URL {url}");
-    let msg_ok = format!("Successfully opened {url}");
+    let shown = loggable_url(&url);
+    let msg_init = format!("Opening URL {shown}");
+    let msg_ok = format!("Successfully opened {shown}");
     let msg_err = |err: &Error| format!("Failed to open URL: {err}");
 
     Notify::new(msg_init)
@@ -385,13 +493,55 @@ pub async fn open_in_web_browser(
         .map(open_in_web_browser_command(&url), msg_ok, msg_err)
 }
 
-async fn setup_command(m: &model::Model, directory: &str) -> Result<quilt::lineage::Home, Error> {
-    if let Err(err) = fs::create_dir_all(directory)
-        && err.kind() != std::io::ErrorKind::AlreadyExists
-    {
-        return Err(Error::from(err));
-    }
+fn copy_to_clipboard_command(app: &tauri::AppHandle, text: &str) -> Result<(), Error> {
+    app.clipboard()
+        .write_text(text)
+        .map_err(crate::error::TauriUiError::from)?;
+    Ok(())
+}
 
+/// Put `text` on the system clipboard.
+///
+/// The text, not the thing it describes: the caller decides what a copy *means*
+/// — the `quilt+s3` address of a file or of a package — and this command decides
+/// nothing about it. `uri` is for the event alone and never reaches the
+/// clipboard, which is why the two are separate arguments rather than one that
+/// gets rendered here: a `uri` with no path is a package's, and counts apart
+/// from files.
+///
+/// Through the backend rather than `navigator.clipboard`, so it does not depend
+/// on a webview setting that differs per platform: on Linux and Windows the DOM
+/// API is gated behind wry's `clipboard` attribute, which Tauri leaves off and
+/// exposes only on a builder this app does not call — its window comes from
+/// `tauri.conf.json`.
+#[tauri::command]
+pub async fn copy_to_clipboard(
+    app: tauri::AppHandle,
+    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    text: String,
+    uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    let msg_init = format!("Copying to clipboard: {text}");
+    let msg_ok = "Successfully copied to clipboard".to_string();
+    let msg_err = |err: &Error| format!("Failed to copy to clipboard: {err}");
+
+    Notify::new(msg_init)
+        .on_success(&tracing, copied_event(uri.as_ref()))
+        .map(copy_to_clipboard_command(&app, &text), msg_ok, msg_err)
+}
+
+/// A package's address when `uri` names no file, a file's otherwise.
+fn copied_event(uri: Option<&S3PackageUri>) -> MixpanelEvent {
+    let event = PackageFileEvent::for_uri(uri);
+    if uri.is_some_and(|u| u.path.is_none()) {
+        MixpanelEvent::PackageUriCopied(event)
+    } else {
+        MixpanelEvent::FileUriCopied(event)
+    }
+}
+
+/// Stores `directory` as the home. quilt-rs creates the folder.
+async fn setup_command(m: &model::Model, directory: &str) -> Result<quilt::lineage::Home, Error> {
     m.set_home(&directory).await
 }
 
@@ -419,13 +569,21 @@ pub struct UpdateInfo {
 
 #[tauri::command]
 pub async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    match updater.check().await {
+    // The UI ignores a failed check so users are not nagged on every launch,
+    // which leaves the log as the only place the failure shows.
+    let checked = match app.updater() {
+        Ok(updater) => updater.check().await,
+        Err(e) => Err(e),
+    };
+    match checked {
         Ok(Some(update)) => Ok(Some(UpdateInfo {
             version: update.version.clone(),
         })),
         Ok(None) => Ok(None),
-        Err(e) => Err(e.to_string()),
+        Err(e) => {
+            warn!("update check failed: {e}");
+            Err(e.to_string())
+        }
     }
 }
 
@@ -489,6 +647,183 @@ pub fn report_ui_panic(message: String, tracing: tauri::State<'_, crate::telemet
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The first-run pick creates the folder it picks and stores it as the
+    /// home, so the first install has somewhere to go.
+    #[tokio::test]
+    async fn setup_creates_the_picked_folder_and_stores_it() {
+        let domain = tempfile::tempdir().expect("temp domain");
+        let parent = tempfile::tempdir().expect("temp parent");
+        let picked = parent.path().join("not/yet/there");
+        let m = model::Model::create(domain.path());
+
+        let home = setup_command(&m, picked.to_str().expect("utf-8 path"))
+            .await
+            .expect("setup succeeds");
+
+        assert_eq!(home.as_ref(), &picked);
+        assert!(picked.is_dir());
+    }
+
+    /// A package's address counts apart from a file's: the header's copy
+    /// names no file, the file rows' copies do.
+    #[test]
+    fn a_package_copy_is_not_a_file_copy() {
+        let package: S3PackageUri = "quilt+s3://b#package=user/p&catalog=quilt.test"
+            .parse()
+            .unwrap();
+        let file = S3PackageUri {
+            path: Some("a.csv".into()),
+            ..package.clone()
+        };
+        assert!(matches!(
+            copied_event(Some(&package)),
+            MixpanelEvent::PackageUriCopied(_)
+        ));
+        assert!(matches!(
+            copied_event(Some(&file)),
+            MixpanelEvent::FileUriCopied(_)
+        ));
+        assert!(matches!(
+            copied_event(None),
+            MixpanelEvent::FileUriCopied(_)
+        ));
+    }
+
+    /// *Copy path* asks where the file is, and gets the path opening the file
+    /// would open: the package's home joined with its path inside it.
+    #[tokio::test]
+    async fn a_package_file_s_path_is_where_opening_it_would_look() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_file_path()
+            .withf(|ns, path| ns.to_string() == "team/plate" && path == &PathBuf::from("raw/a.csv"))
+            .returning(|_, path| Ok(PathBuf::from("/Users/me/QuiltSync/team/plate").join(path)));
+
+        let found = package_file_path_command(&m, "team/plate", "raw/a.csv")
+            .await
+            .expect("a file that is there has a path");
+
+        assert_eq!(
+            found,
+            PathBuf::from("/Users/me/QuiltSync/team/plate/raw/a.csv")
+        );
+    }
+
+    /// A file that is not there has no path to copy, and says why, as opening
+    /// it would.
+    #[tokio::test]
+    async fn a_missing_file_has_no_path_to_copy() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_file_path().returning(|_, path| {
+            Err(Error::FsOpen(crate::error::FsOpenError::PathNotFound(
+                path.clone(),
+            )))
+        });
+
+        assert!(
+            package_file_path_command(&m, "team/plate", "raw/gone.csv")
+                .await
+                .is_err()
+        );
+    }
+
+    /// A mail link's subject and body stay out of the log; other URLs are
+    /// logged whole.
+    #[test]
+    fn a_mail_link_is_logged_without_its_text() {
+        assert_eq!(
+            loggable_url("mailto:support@quilt.bio?subject=Issue&body=Autosync%20stopped"),
+            "mailto:support@quilt.bio"
+        );
+        assert_eq!(
+            loggable_url("MAILTO:support@quilt.bio?body=x"),
+            "MAILTO:support@quilt.bio"
+        );
+        assert_eq!(
+            loggable_url("https://open.quiltdata.com/b/x?tab=y"),
+            "https://open.quiltdata.com/b/x?tab=y"
+        );
+    }
+
+    /// The answer says what the sweep freed, in the report's own words and bytes.
+    #[tokio::test]
+    async fn freeing_up_space_answers_with_what_it_freed() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_gc().returning(|| {
+            Ok(quilt::flow::GcReport {
+                objects: 6,
+                cached_manifests: 2,
+                staging: 0,
+                bytes: 630_200,
+            })
+        });
+
+        assert_eq!(
+            run_gc_command(&m).await,
+            Ok(FreedSpace {
+                message: "Freed 630.2 kB: 6 objects, 2 cached manifests".to_string(),
+                freed_bytes: 630_200,
+            })
+        );
+    }
+
+    /// A package busy elsewhere stops the sweep, and the message names it.
+    #[tokio::test]
+    async fn freeing_up_space_while_a_package_is_busy_says_which() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_gc()
+            .returning(|| Err(quilt::Error::PackageBusy(("acme", "demo").into()).into()));
+
+        assert_eq!(
+            run_gc_command(&m).await,
+            Err(
+                "Failed to free up space: acme/demo is busy in another quilt process; \
+                 try again once it finishes"
+                    .to_string()
+            )
+        );
+    }
+
+    /// Measuring answers with the total and the estimate's bytes.
+    #[tokio::test]
+    async fn measuring_storage_answers_with_the_total_and_what_can_be_freed() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_measure_storage().returning(|| {
+            Ok(quilt::flow::StorageSize {
+                total_bytes: 3_200_000,
+                freeable: quilt::flow::GcReport {
+                    objects: 6,
+                    cached_manifests: 2,
+                    staging: 0,
+                    bytes: 1_100_000,
+                },
+            })
+        });
+
+        assert_eq!(
+            measure_storage_command(&m).await,
+            Ok(StorageSize {
+                total_bytes: 3_200_000,
+                freeable_bytes: 1_100_000,
+            })
+        );
+    }
+
+    /// A failed walk says what failed, in the user's words.
+    #[tokio::test]
+    async fn measuring_storage_that_fails_says_so() {
+        let mut m = model::MockQuiltModel::new();
+        m.expect_measure_storage()
+            .returning(|| Err(quilt::Error::Io(std::io::Error::other("disk gone")).into()));
+
+        let Err(message) = measure_storage_command(&m).await else {
+            panic!("a failed walk is an error");
+        };
+        assert!(
+            message.starts_with("Failed to measure local storage: "),
+            "{message}"
+        );
+    }
 
     /// A short message is passed through untouched — the common case, and the one a
     /// reader of the issue title needs to be exact.

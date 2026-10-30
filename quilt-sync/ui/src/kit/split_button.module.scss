@@ -1,0 +1,134 @@
+/*
+ * SplitButton. A command's face joined to the caret that offers its
+ * alternatives.
+ *
+ * The two halves must read as ONE control, which is the whole reason this is a
+ * component and not two buttons with a small gap: the inner corners square off
+ * and the shared edge is one border, not two stacked.
+ *
+ * The caret is drawn by this component, so it carries a real class. The face is
+ * a `Button`, whose element and hashed class belong to another module — its two
+ * inner corners are the one thing reached structurally, with `> button`. That
+ * selector is confined to geometry, and both files are kit components in this
+ * directory that change together.
+ */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+
+  /* The pair is one control, so a long face label shrinks rather than pushing
+   * the caret out of the row. */
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* ── the face ─────────────────────────────────────────────────────────────
+ * Square the edge that meets the caret. Everything else about it — variant,
+ * height, padding, the loading spinner — stays `Button`'s.
+ */
+.root > button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* ── the caret ────────────────────────────────────────────────────────────
+ * `-1px` so the halves share one border rather than stacking two, which at 1px
+ * each would read as a seam twice as heavy as the outer edge.
+ */
+.caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--q-control-height);
+  min-height: var(--q-control-height);
+  margin-left: -1px;
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: 0 var(--q-radius) var(--q-radius) 0;
+  background: var(--q-bgColor-default);
+  color: var(--q-fgColor-default);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.caret svg {
+  width: 15px;
+  height: 15px;
+}
+
+.caret:hover:not(:disabled) {
+  background: var(--q-overlay-hover);
+  border-color: var(--q-borderColor-emphasis);
+}
+
+.caret:active:not(:disabled) {
+  background: var(--q-overlay-active);
+
+  /* Matches `Button`'s press: geometry, untransitioned. */
+  transform: translate(1px, 1px);
+}
+
+.caret:disabled {
+  cursor: not-allowed;
+  color: var(--q-fgColor-disabled);
+  border-color: var(--q-borderColor-muted);
+  background: var(--q-overlay-hover);
+}
+
+/* The focus ring is the global one. It has to sit above the face, or the shared
+ * edge clips the half of it that falls on the seam. */
+.caret:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── primary ──────────────────────────────────────────────────────────────
+ * Restated from `Button`'s primary rather than shared, because `IconButton` has
+ * no primary variant and adding one that only this would use is the worse
+ * trade. These name the same two accent tokens and nothing else, so they move
+ * when `Button`'s do.
+ */
+.primary {
+  background: var(--q-bgColor-accent-emphasis);
+  border-color: var(--q-bgColor-accent-emphasis);
+  color: var(--q-fgColor-onEmphasis);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--q-bgColor-accent-emphasis-hover);
+  border-color: var(--q-bgColor-accent-emphasis-hover);
+}
+
+.primary:active:not(:disabled) {
+  /* Light's accent cannot go darker than rest, so the press is carried by
+   * geometry and a darker border rather than by fill. */
+  background: var(--q-bgColor-accent-emphasis);
+  border-color: var(--q-fgColor-default);
+  transform: translate(1px, 1px);
+}
+
+.primary:disabled {
+  background: var(--q-overlay-selected);
+  border-color: var(--q-borderColor-muted);
+  color: var(--q-fgColor-disabled);
+}
+
+/* ── the seam, on primary ─────────────────────────────────────────────────
+ * The caret's left border IS the shared edge. On the default variant it is
+ * `borderColor-default` and visible; on primary the rules above paint the
+ * border the same navy as the fill, so the two halves fused into one slab with
+ * a chevron floating at the end of it.
+ *
+ * `overlay-onBrand-active` is the kit's light ink for a control sitting on the
+ * accent ground — white alpha, stated once because that ground does not flip
+ * with the theme, which is why this needs no dark-mode counterpart.
+ *
+ * Restated across hover and press because both of those set `border-color`
+ * wholesale and would otherwise take the seam with them.
+ */
+.primary,
+.primary:hover:not(:disabled),
+.primary:active:not(:disabled) {
+  border-left-color: var(--q-overlay-onBrand-active);
+}

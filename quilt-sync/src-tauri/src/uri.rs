@@ -100,6 +100,24 @@ fn parse_auth_params(url: &Url) -> Result<AuthParams> {
     })
 }
 
+/// Where a deep-link login lands when the callback names a page, and where it
+/// lands when it does not.
+///
+/// The default is `/`, which renders whichever main page the reader has switched
+/// on. Naming a specific page here would land half the readers on the other one.
+/// An unreadable redirect gets the same default rather than an error: the login
+/// itself succeeded, and dropping the user nowhere is worse than dropping them
+/// home.
+fn landing_after_login(redirect: Option<&str>) -> routes::Paths {
+    redirect
+        .and_then(|r| {
+            r.parse::<routes::Paths>()
+                .map_err(|err| warn!("Failed to parse redirect '{}': {}", r, err))
+                .ok()
+        })
+        .unwrap_or(routes::Paths::Home)
+}
+
 /// Handle `quilt://auth/callback?code=...&host=...&redirect=...` deep link
 #[allow(
     clippy::too_many_lines,
@@ -112,15 +130,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
     let host = auth_params.host.clone();
     let host_str = host.to_string();
     let state = auth_params.state;
-    let redirect_path: routes::Paths = auth_params
-        .redirect
-        .as_deref()
-        .and_then(|r| {
-            r.parse::<routes::Paths>()
-                .map_err(|err| warn!("Failed to parse redirect '{}': {}", r, err))
-                .ok()
-        })
-        .unwrap_or(routes::Paths::InstalledPackagesList);
+    let redirect_path = landing_after_login(auth_params.redirect.as_deref());
 
     tauri::async_runtime::spawn(async move {
         let oauth_state = handle.state::<OAuthState>();
@@ -344,23 +354,23 @@ mod tests {
     #[test]
     fn test_parse_auth_params() {
         let url =
-            Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev&state=xyz").unwrap();
+            Url::parse("quilt://auth/callback?code=ABC123&host=quilt.test&state=xyz").unwrap();
         let params = parse_auth_params(&url).unwrap();
         assert_eq!(params.code, "ABC123");
         assert_eq!(params.state, "xyz");
-        assert_eq!(params.host.to_string(), "test.quilt.dev");
+        assert_eq!(params.host.to_string(), "quilt.test");
         assert_eq!(params.redirect, None);
     }
 
     #[test]
     fn test_parse_auth_params_with_redirect() {
         let url = Url::parse(
-            "quilt://auth/callback?code=ABC123&host=test.quilt.dev&state=xyz&redirect=https%3A%2F%2Flocalhost%3A1234%2Fremote-package"
+            "quilt://auth/callback?code=ABC123&host=quilt.test&state=xyz&redirect=https%3A%2F%2Flocalhost%3A1234%2Fremote-package"
         ).unwrap();
         let params = parse_auth_params(&url).unwrap();
         assert_eq!(params.code, "ABC123");
         assert_eq!(params.state, "xyz");
-        assert_eq!(params.host.to_string(), "test.quilt.dev");
+        assert_eq!(params.host.to_string(), "quilt.test");
         assert_eq!(
             params.redirect.as_deref(),
             Some("https://localhost:1234/remote-package")
@@ -369,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_parse_auth_params_missing_code() {
-        let url = Url::parse("quilt://auth/callback?host=test.quilt.dev&state=xyz").unwrap();
+        let url = Url::parse("quilt://auth/callback?host=quilt.test&state=xyz").unwrap();
         let result = parse_auth_params(&url);
         assert!(result.is_err());
     }
@@ -383,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_parse_auth_params_missing_state() {
-        let url = Url::parse("quilt://auth/callback?code=ABC123&host=test.quilt.dev").unwrap();
+        let url = Url::parse("quilt://auth/callback?code=ABC123&host=quilt.test").unwrap();
         let result = parse_auth_params(&url);
         assert!(result.is_err());
     }
@@ -413,5 +423,56 @@ mod tests {
         let url = Url::parse("quilt://auth/callback?error=server_error").unwrap();
         let err = parse_auth_params(&url).unwrap_err();
         assert!(err.to_string().contains("server_error"));
+    }
+
+    #[test]
+    fn a_callback_with_no_redirect_lands_home() {
+        assert_eq!(landing_after_login(None), routes::Paths::Home);
+    }
+
+    #[test]
+    fn a_callback_that_names_a_page_lands_there() {
+        assert_eq!(
+            landing_after_login(Some("/settings")),
+            routes::Paths::Settings
+        );
+    }
+
+    /// The addresses the package and commit pages send as `back`.
+    #[test]
+    fn a_login_from_a_package_or_commit_page_lands_there() {
+        assert_eq!(
+            landing_after_login(Some(
+                "/installed-package?namespace=org%2Fpkg&filter=unmodified"
+            )),
+            routes::Paths::InstalledPackage(
+                ("org", "pkg").into(),
+                routes::EntriesFilter::for_installed_package()
+            )
+        );
+        // A deep link's warning rides along in `back`; the page still parses.
+        assert_eq!(
+            landing_after_login(Some(
+                "/installed-package?namespace=org%2Fpkg&filter=unmodified&mismatch=abc&mrbucket=b"
+            )),
+            routes::Paths::InstalledPackage(
+                ("org", "pkg").into(),
+                routes::EntriesFilter::for_installed_package()
+            )
+        );
+        assert_eq!(
+            landing_after_login(Some("/commit?namespace=org%2Fpkg")),
+            routes::Paths::Commit(("org", "pkg").into(), routes::EntriesFilter::default())
+        );
+    }
+
+    #[test]
+    fn an_unreadable_redirect_lands_home_rather_than_nowhere() {
+        // The login succeeded by this point, so there is no failure to report to
+        // the user — only a choice of page.
+        assert_eq!(
+            landing_after_login(Some("/not-a-page")),
+            routes::Paths::Home
+        );
     }
 }

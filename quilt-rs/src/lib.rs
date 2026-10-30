@@ -18,15 +18,20 @@ pub mod flow;
 pub mod auth;
 pub mod checksum;
 pub mod error;
+pub mod file_stamp;
 mod installed_package;
 pub mod io;
 pub mod junk;
 pub mod lineage;
 mod local_domain;
+pub mod logging;
 pub mod manifest;
 pub mod object_hash;
+mod package_lock;
 pub mod paths;
 pub mod quiltignore;
+pub mod stat_cache;
+pub mod state_store;
 
 pub mod workflow;
 
@@ -49,10 +54,15 @@ pub use error::RoleError;
 pub use error::S3Error;
 pub use error::S3ErrorKind;
 pub use installed_package::InstalledPackage;
+pub use installed_package::KeepReport;
+pub use installed_package::LockedPackage;
 pub use installed_package::PublishOutcome;
 pub use installed_package::PushOutcome;
+pub use installed_package::Pushed;
 pub use installed_package::SetRemoteOutcome;
+pub use lineage::DEFAULT_HOME_DIR_NAME;
 pub use local_domain::LocalDomain;
+pub use package_lock::on_package_lock_wait;
 pub use workflow::WorkflowValidationError;
 
 pub type Res<T = ()> = std::result::Result<T, Error>;

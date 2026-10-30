@@ -1,0 +1,9 @@
+// The row's geometry is `kit::PageHeader`'s.
+
+// The test's handle on the state's own action, and nothing else. `contents`
+// rather than a default `inline`: this is an attribute hook, so it must not
+// become a flex item of the actions and put a line box between the row and the
+// button it holds.
+.action_slot {
+  display: contents;
+}

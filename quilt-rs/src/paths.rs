@@ -18,6 +18,9 @@ use quilt_uri::Namespace;
 pub const AUTH_CLIENT: &str = "client.json";
 pub const AUTH_CREDENTIALS: &str = "credentials.json";
 pub const AUTH_DIR: &str = ".auth";
+/// Beside the host directories rather than in them, so a logout that removes
+/// a host's directory never removes a lock someone holds.
+const AUTH_LOCKS_DIR: &str = ".locks";
 pub const AUTH_TOKENS: &str = "tokens.json";
 
 /// Name of the `.quilt` directory that holds Quilt's bookkeeping inside a
@@ -38,6 +41,7 @@ pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
         for entry in entries.flatten() {
             if entry.file_type().is_ok_and(|t| t.is_dir())
                 && let Some(name) = entry.file_name().to_str()
+                && name != AUTH_LOCKS_DIR
             {
                 hosts.push(name.to_string());
             }
@@ -51,16 +55,49 @@ pub fn list_auth_hosts(data_dir: &Path) -> Vec<String> {
 // `dot_quilt_dir()`, so `DOT_QUILT_DIR` stays the single source of the prefix
 // and a rename propagates without touching these.
 const LINEAGE_FILE: &str = "data.json";
+const STATE_DB_FILE: &str = "state.db";
+const LOCKS_DIR: &str = "locks";
 
 const INSTALLED_DIR: &str = "installed";
 // Local cache directory under `<data_dir>/.quilt`. Distinct from the S3 key
 // prefix of the same name in `quilt-uri::paths` — sharing the literal
 // value today is incidental, the two contracts can evolve independently.
 const MANIFEST_DIR: &str = "packages";
-const OBJECTS_DIR: &str = "objects";
+pub(crate) const OBJECTS_DIR: &str = "objects";
 
 pub use quilt_uri::paths::get_manifest_key;
 pub use quilt_uri::paths::tag_key;
+
+/// The logical key of the file or folder at `relative`, a path under a
+/// package home: its parts joined with `/` on every OS, as quilt3 keys
+/// them. On Windows the path itself separates them with `\\`.
+#[must_use]
+pub(crate) fn logical_key(relative: &Path) -> PathBuf {
+    let mut key = std::ffi::OsString::new();
+    for (n, component) in relative.components().enumerate() {
+        if n > 0 {
+            key.push("/");
+        }
+        key.push(component.as_os_str());
+    }
+    PathBuf::from(key)
+}
+
+/// The `file://` URL of `path`, made absolute first: percent-encoded, with
+/// `/` separators and, on Windows, the drive (`file:///C:/...`), as quilt3
+/// writes one with `PurePath.as_uri()`.
+pub(crate) fn file_url(path: &Path) -> Res<String> {
+    let absolute = std::path::absolute(path)?;
+    url::Url::from_file_path(&absolute)
+        .map(|url| url.to_string())
+        .map_err(|()| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{} has no file URL", absolute.display()),
+            )
+            .into()
+        })
+}
 
 /// Path to the package home directory within the home directory
 #[must_use]
@@ -88,16 +125,50 @@ impl DomainPaths {
     }
 
     #[must_use]
+    pub fn auth_dir(&self) -> PathBuf {
+        self.root_dir.join(AUTH_DIR)
+    }
+
+    #[must_use]
     pub fn auth_host(&self, host: &Host) -> PathBuf {
-        self.root_dir
-            .join(AUTH_DIR)
-            .join(PathBuf::from(host.to_string()))
+        self.auth_dir().join(PathBuf::from(host.to_string()))
+    }
+
+    #[must_use]
+    pub fn auth_locks_dir(&self) -> PathBuf {
+        self.auth_dir().join(AUTH_LOCKS_DIR)
+    }
+
+    /// The auth lock, held while the host's tokens are refreshed or its
+    /// directory removed; see `docs/artifacts.md`. Named by the host alone, so
+    /// any host name that fits a directory name fits it too.
+    #[must_use]
+    pub fn auth_lock(&self, host: &Host) -> PathBuf {
+        self.auth_locks_dir().join(host.to_string())
     }
 
     /// Path to the `.quilt` bookkeeping directory under the root.
     #[must_use]
     pub fn dot_quilt_dir(&self) -> PathBuf {
         self.root_dir.join(DOT_QUILT_DIR)
+    }
+
+    /// The package state store, under `.quilt/`. Optional: see
+    /// [`crate::state_store::PackageStateStore`].
+    #[must_use]
+    pub fn state_db(&self) -> PathBuf {
+        self.dot_quilt_dir().join(STATE_DB_FILE)
+    }
+
+    /// Directory for files staged mid-write, under `.quilt/`.
+    ///
+    /// Outside the working tree on purpose: the status walk has no built-in
+    /// exclusion, so anything staged beside its destination would read as a new
+    /// file. Under the domain root, so a rename from here into the working tree
+    /// stays on one filesystem.
+    #[must_use]
+    pub fn staging_dir(&self) -> PathBuf {
+        self.dot_quilt_dir().join("staging")
     }
 
     /// Path to the installed manifest.
@@ -116,9 +187,26 @@ impl DomainPaths {
     /// Directory for storing installed manifests
     #[must_use]
     pub fn installed_manifests_dir(&self, namespace: &Namespace) -> PathBuf {
-        self.dot_quilt_dir()
-            .join(INSTALLED_DIR)
-            .join(namespace.to_string())
+        self.installed_dir().join(namespace.to_string())
+    }
+
+    /// Directory holding every package's installed manifests,
+    /// `installed/<owner>/<name>/<hash>`.
+    #[must_use]
+    pub fn installed_dir(&self) -> PathBuf {
+        self.dot_quilt_dir().join(INSTALLED_DIR)
+    }
+
+    /// Directory holding the package lock files, `locks/<owner>/<name>.lock`.
+    #[must_use]
+    pub fn locks_dir(&self) -> PathBuf {
+        self.dot_quilt_dir().join(LOCKS_DIR)
+    }
+
+    /// Directory of the remote-manifest cache, `packages/<bucket>/<hash>`.
+    #[must_use]
+    pub fn cached_manifests_root(&self) -> PathBuf {
+        self.dot_quilt_dir().join(MANIFEST_DIR)
     }
 
     /// Path to the lineage file
@@ -127,19 +215,23 @@ impl DomainPaths {
         self.dot_quilt_dir().join(LINEAGE_FILE)
     }
 
+    /// The package's lock file, `.quilt/locks/<owner>/<name>.lock`; see
+    /// [`InstalledPackage::lock`](crate::InstalledPackage::lock).
+    #[must_use]
+    pub fn package_lock(&self, namespace: &Namespace) -> PathBuf {
+        self.locks_dir().join(format!("{namespace}.lock"))
+    }
+
     /// Path to the manifest cached in semi-temporary directory
     #[must_use]
     pub fn cached_manifest(&self, uri: &ManifestUri) -> PathBuf {
-        self.dot_quilt_dir()
-            .join(MANIFEST_DIR)
-            .join(&uri.bucket)
-            .join(&uri.hash)
+        self.cached_manifests_dir(&uri.bucket).join(&uri.hash)
     }
 
     /// Directory for storing cached manifests for a bucket
     #[must_use]
     pub fn cached_manifests_dir(&self, bucket: &str) -> PathBuf {
-        self.dot_quilt_dir().join(MANIFEST_DIR).join(bucket)
+        self.cached_manifests_root().join(bucket)
     }
 
     /// Directory for storing pristine hashed files
@@ -154,12 +246,26 @@ impl DomainPaths {
         self.objects_dir().join(hex::encode(hash))
     }
 
+    /// User-wide ignore rules, shared by `QuiltSync` and the CLI. They apply
+    /// to every package, below each package's own `.quiltignore`.
+    #[must_use]
+    pub fn user_quiltignore(&self) -> PathBuf {
+        self.root_dir.join(".quiltignore")
+    }
+
+    /// Held by every writer of [`Self::user_quiltignore`] across its read and
+    /// its write, so two writers never lose each other's lines.
+    #[must_use]
+    pub fn user_quiltignore_lock(&self) -> PathBuf {
+        self.locks_dir().join("user-quiltignore.lock")
+    }
+
     /// What directories are essential when we initiate `LocalDomain`
     fn required(&self) -> Vec<PathBuf> {
         vec![
-            self.dot_quilt_dir().join(INSTALLED_DIR),
+            self.installed_dir(),
             self.objects_dir(),
-            self.dot_quilt_dir().join(MANIFEST_DIR),
+            self.cached_manifests_root(),
         ]
     }
 
@@ -236,6 +342,7 @@ async fn scaffold_paths(storage: &impl Storage, paths: Vec<PathBuf>) -> Res {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     use test_log::test;
 
@@ -262,7 +369,7 @@ mod tests {
     fn test_domain_paths_layout() {
         let paths = DomainPaths::new(PathBuf::from("foo/bar"));
         let namespace = Namespace::from(("test", "package"));
-        let host: Host = "example.com".parse().unwrap();
+        let host = fixtures::host();
         let manifest_uri = ManifestUri {
             bucket: "my-bucket".to_string(),
             namespace: namespace.clone(),
@@ -272,6 +379,11 @@ mod tests {
 
         assert_eq!(paths.dot_quilt_dir(), PathBuf::from("foo/bar/.quilt"));
         assert_eq!(paths.lineage(), PathBuf::from("foo/bar/.quilt/data.json"));
+        assert_eq!(paths.state_db(), PathBuf::from("foo/bar/.quilt/state.db"));
+        assert_eq!(
+            paths.package_lock(&("acme", "demo").into()),
+            PathBuf::from("foo/bar/.quilt/locks/acme/demo.lock")
+        );
         assert_eq!(
             paths.installed_manifests_dir(&namespace),
             PathBuf::from("foo/bar/.quilt/installed/test/package"),
@@ -290,13 +402,40 @@ mod tests {
         );
         assert_eq!(paths.objects_dir(), PathBuf::from("foo/bar/.quilt/objects"));
         assert_eq!(
+            paths.installed_dir(),
+            PathBuf::from("foo/bar/.quilt/installed")
+        );
+        assert_eq!(paths.locks_dir(), PathBuf::from("foo/bar/.quilt/locks"));
+        assert_eq!(
+            paths.cached_manifests_root(),
+            PathBuf::from("foo/bar/.quilt/packages")
+        );
+        assert_eq!(
             paths.object(&[0xde, 0xad, 0xbe, 0xef]),
             PathBuf::from("foo/bar/.quilt/objects/deadbeef"),
         );
         assert_eq!(
             paths.auth_host(&host),
-            PathBuf::from("foo/bar/.auth/example.com"),
+            PathBuf::from("foo/bar/.auth/quilt.test"),
         );
+        // A contract other clients lock by too: docs/artifacts.md.
+        assert_eq!(
+            paths.auth_lock(&host),
+            PathBuf::from("foo/bar/.auth/.locks/quilt.test"),
+        );
+    }
+
+    /// The directory of auth locks beside the hosts is not a host.
+    #[test]
+    fn the_lock_directory_is_not_an_authenticated_host() -> Res {
+        let data_dir = tempfile::tempdir()?;
+        let paths = DomainPaths::new(data_dir.path().to_path_buf());
+        let host = fixtures::host();
+        std::fs::create_dir_all(paths.auth_host(&host))?;
+        std::fs::create_dir_all(paths.auth_locks_dir())?;
+
+        assert_eq!(list_auth_hosts(data_dir.path()), vec![host.to_string()]);
+        Ok(())
     }
 
     #[test]

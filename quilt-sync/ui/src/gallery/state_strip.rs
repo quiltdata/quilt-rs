@@ -1,0 +1,256 @@
+//! The state strip — the two cards at the top of the new main page, composed as
+//! the page composes them.
+//!
+//! This is the first time the design is visible as a *region* rather than as a
+//! list of controls, so it is where region-level mistakes show up: whether the
+//! two cards balance, whether the sub-labels crowd, and how tall the strip is —
+//! which matters because every pixel here is a pixel the attention queue and the
+//! package list do not get.
+
+use leptos::prelude::*;
+
+use crate::Scene;
+use crate::gallery::queue::row;
+use crate::kit::AttentionQueue;
+use crate::kit::Card;
+use crate::kit::Countdown;
+use crate::kit::HostRow;
+use crate::kit::LoadFailure;
+use crate::kit::PackageState;
+use crate::kit::StateLabel;
+use crate::kit::StateTone;
+use crate::kit::ToggleRow;
+use crate::kit::ZeroLine;
+use quilt_sync_ui::pages::StateStrip;
+
+fn in_secs(secs: f64) -> Signal<Option<f64>> {
+    let at = js_sys::Date::now() + secs * 1000.0;
+    Signal::derive(move || Some(at))
+}
+
+#[component]
+pub fn StateStripScene() -> impl IntoView {
+    view! {
+        <Scene
+            title="Scene · state strip"
+            note="Both cards at page width, wrapping with no breakpoint. Pull always has a \
+                  next tick so it always counts down; publish only counts when changes are \
+                  pending, and otherwise says so — a blank would leave the user guessing \
+                  between broken, working, and nothing to do. The countdown is live."
+        >
+            <StateStripRegion />
+        </Scene>
+    }
+}
+
+/// The region itself, so the whole-page scene composes this code rather than a copy of
+/// it. Two mockups of one region drift the first time either is edited.
+/// Both strip reads failing at once — the state the page had no drawing for at all.
+#[component]
+pub fn StripErrorScene() -> impl IntoView {
+    view! {
+        <Scene
+            title="Scene · a strip that could not load"
+            note="Each card keeps its title and says what it could not read, because a card \
+                  that is not drawn says something too: that this machine has no autosync, \
+                  and that there are no sessions. Try again re-reads that card alone. \
+                  \
+                  Both at once is the worst case for height, which is why they are shown \
+                  together: it is the one arrangement where the strip says nothing useful \
+                  and still costs the queue its space."
+        >
+            <StateStrip>
+                <Card title="Autosync">
+                    <LoadFailure
+                        words="Could not load autosync."
+                        on_retry=Callback::new(|()| ())
+                    />
+                </Card>
+                <Card title="Accounts">
+                    <LoadFailure
+                        words="Could not load your accounts."
+                        on_retry=Callback::new(|()| ())
+                    />
+                </Card>
+            </StateStrip>
+        </Scene>
+    }
+}
+
+#[component]
+pub fn StateStripRegion() -> impl IntoView {
+    let pull = RwSignal::new(true);
+    let publish = RwSignal::new(true);
+    let role = RwSignal::new("analyst".to_string());
+    let out_role = RwSignal::new("analyst".to_string());
+
+    view! {
+        // The page's own strip, so the gallery stacks it where the page does.
+        <StateStrip>
+                <Card title="Autosync">
+                    <ToggleRow
+                        label="Get new revisions"
+                        sublabel="Every 30s, keeping any local changes"
+                        checked=pull
+                        trailing=view! {
+                            <Countdown
+                                deadline=in_secs(23.0)
+                                interval=30_000.0
+                                title="Checks for new revisions every 30 seconds"
+                                repeat=true
+                            />
+                        }
+                            .into_any()
+                    />
+                    <ToggleRow
+                        label="Publish your changes"
+                        sublabel="After 5 min of inactivity"
+                        checked=publish
+                        trailing=view! { "nothing to publish" }.into_any()
+                    />
+                </Card>
+
+                <Card title="Accounts">
+                    <HostRow
+                        host="open.quiltdata.com"
+                        role=role
+                        roles=vec![
+                            "analyst".to_string(),
+                            "bench-scientist".to_string(),
+                            "admin".to_string(),
+                        ]
+                        on_sign_in=|_| ()
+                    />
+                    <HostRow
+                        host="custom.registry.io"
+                        role=out_role
+                        signed_out=true
+                        on_sign_in=|_| ()
+                    />
+                </Card>
+            </StateStrip>
+    }
+}
+
+/// The paused case. Two scenes, because the interesting thing is the difference
+/// between them — and neither one has a `[Resume]` button, which is the correction.
+///
+/// # Every pause reason is the user's to fix
+///
+/// All six `PausedReason` variants require an action, and every one already has a
+/// queue row that carries it:
+///
+/// | Reason | Queue row | Remedy |
+/// |---|---|---|
+/// | `PendingChanges` | `has N changed files` | `Publish` |
+/// | `PendingCommit` | `has a revision it has not published` | `Publish` |
+/// | `Diverged` | `changed in both places` | `Resolve` |
+/// | `PullConflict(files)` | `has conflicts in N files` | `Publish` |
+/// | `RoleDenied { role }` | `cannot be read as analyst` | points at Accounts |
+/// | `Other(msg)` | the message | whatever it names |
+///
+/// `RoleDenied` says outright that *"retrying cannot help — the role has to change
+/// first"*, and `Other` is documented as non-transient. So there is no reason for which
+/// "resume" is the fix, and a `Resume` control would offer to retry something that
+/// will pause again on the next tick.
+///
+/// It follows that **a pause is never its own queue row.** It is a consequence of a
+/// state the queue already lists, and listing consequences beside causes would count
+/// the same packages twice — including in the region's own header count.
+#[component]
+pub fn PausedScene() -> impl IntoView {
+    view! { <PausedWithReason /> <PausedStale /> }
+}
+
+/// The paused label used in both scenes, so the two cannot drift apart on the one
+/// thing they are being compared on.
+fn paused() -> AnyView {
+    view! { <StateLabel tone=StateTone::Attention>"Paused"</StateLabel> }.into_any()
+}
+
+#[component]
+fn PausedWithReason() -> impl IntoView {
+    let pull = RwSignal::new(true);
+    let publish = RwSignal::new(true);
+
+    view! {
+        <Scene
+            title="Scene · paused, with a reason"
+            note="The ordinary case, and there is no [Resume] anywhere in it. The card \
+                  reports that publishing is on and not operating; the queue explains why \
+                  and carries the fix. Publish those two files and the pause clears as a \
+                  side effect, because committing is one of the seven sites that call \
+                  `clear_paused`. Adding a paused row to the queue would count the same \
+                  packages twice, including in the header count."
+        >
+            <StateStrip>
+                <Card title="Autosync">
+                    <ToggleRow
+                        label="Get new revisions"
+                        sublabel="Every 30s, keeping any local changes"
+                        checked=pull
+                        trailing=view! {
+                            <Countdown
+                                deadline=in_secs(23.0)
+                                interval=30_000.0
+                                title="Checks for new revisions every 30 seconds"
+                                repeat=true
+                            />
+                        }
+                            .into_any()
+                    />
+                    // Checked and enabled, and both matter. The setting is on — what
+                    // stopped is the machinery — and flipping it off and on is one of only
+                    // three ways to clear the pause today, so disabling it would remove the
+                    // user's only lever.
+                    <ToggleRow
+                        label="Publish your changes"
+                        sublabel="After 5 min of inactivity"
+                        checked=publish
+                        trailing=paused()
+                    />
+                </Card>
+            </StateStrip>
+            <AttentionQueue text="1 package needs your attention">
+                <li>{row("user/package-b", &PackageState::PendingChanges { files: 2 })}</li>
+            </AttentionQueue>
+        </Scene>
+    }
+}
+
+#[component]
+fn PausedStale() -> impl IntoView {
+    let stale_pull = RwSignal::new(true);
+    let stale_publish = RwSignal::new(true);
+
+    view! {
+        <Scene
+            title="Scene · paused with nothing to fix — the 2026-07-11 bug"
+            note="The failure state: the card says paused and the queue says all \
+                  packages are up to date. The 2026-07-11 support bundle showed this: all 13 packages \
+                  fully synced while the pause stayed in memory, and only restarting the \
+                  app cleared it. It does not clear by itself, because autopull's tick \
+                  skips any namespace already in the paused set. This state should not be \
+                  reachable, so the scene has no button to leave it: a button here would \
+                  make a backend defect look like a feature."
+        >
+            <StateStrip>
+                <Card title="Autosync">
+                    <ToggleRow
+                        label="Get new revisions"
+                        sublabel="Every 30s, keeping any local changes"
+                        checked=stale_pull
+                        trailing=paused()
+                    />
+                    <ToggleRow
+                        label="Publish your changes"
+                        sublabel="After 5 min of inactivity"
+                        checked=stale_publish
+                        trailing=paused()
+                    />
+                </Card>
+            </StateStrip>
+            <ZeroLine text="All packages are up to date" />
+        </Scene>
+    }
+}

@@ -2,12 +2,14 @@ use leptos::prelude::*;
 
 use super::{ButtonKind, IconLink};
 
+use quilt_uri::Namespace;
+
 const KIND: ButtonKind = ButtonKind::Merge;
 
 #[component]
 #[allow(clippy::needless_pass_by_value)]
-pub fn Merge(namespace: String, #[prop(optional)] small: bool) -> impl IntoView {
-    let href = format!("/merge?namespace={namespace}");
+pub fn Merge(namespace: Namespace, #[prop(optional)] small: bool) -> impl IntoView {
+    let href = crate::routes::merge_href(&namespace);
 
     view! {
         <IconLink href=href icon=KIND.icon() small=small primary=true>
@@ -19,31 +21,27 @@ pub fn Merge(namespace: String, #[prop(optional)] small: bool) -> impl IntoView 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wasm_bindgen::JsCast;
+    use crate::test_support::mount;
     use wasm_bindgen_test::*;
 
-    fn mount<N: IntoView + 'static>(f: impl FnOnce() -> N + 'static) -> web_sys::Element {
-        let doc = web_sys::window().unwrap().document().unwrap();
-        let container: web_sys::HtmlElement =
-            doc.create_element("div").unwrap().dyn_into().unwrap();
-        doc.body().unwrap().append_child(&container).unwrap();
-        leptos::mount::mount_to(container.clone(), f).forget();
-        container.into()
+    /// The scenes name packages as text; the payloads carry the type.
+    fn ns(text: &str) -> Namespace {
+        Namespace::try_from(text).expect("a namespace")
     }
 
     #[wasm_bindgen_test]
     fn builds_href_from_namespace() {
-        let el = mount(|| view! { <Merge namespace="user/pkg".to_string() /> });
+        let el = mount(|| view! { <Merge namespace=ns("user/pkg") /> });
         let link = el.query_selector("a").unwrap().unwrap();
         assert_eq!(
             link.get_attribute("href").unwrap(),
-            "/merge?namespace=user/pkg"
+            "/merge?namespace=user%2Fpkg"
         );
     }
 
     #[wasm_bindgen_test]
     fn uses_merge_icon_and_label() {
-        let el = mount(|| view! { <Merge namespace="a/b".to_string() /> });
+        let el = mount(|| view! { <Merge namespace=ns("a/b") /> });
         let icon = el.query_selector("img.qui-icon").unwrap().unwrap();
         assert_eq!(
             icon.get_attribute("src").unwrap(),
@@ -54,7 +52,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn is_primary() {
-        let el = mount(|| view! { <Merge namespace="a/b".to_string() /> });
+        let el = mount(|| view! { <Merge namespace=ns("a/b") /> });
         let link = el.query_selector("a").unwrap().unwrap();
         assert!(link.class_list().contains("primary"));
     }

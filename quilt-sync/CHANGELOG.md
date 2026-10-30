@@ -3,11 +3,498 @@
      Use GitHub autolinks for PR references.
      Use nested lists when there are multiple PR links.
      Put quilt-rs and quilt-uri updates under their respective `###` section.
-     Use alpha pre-release versions (e.g. v0.13.2-alpha1) instead of [Unreleased]
-     to keep changelog in sync with Cargo.toml version.
+     Between releases a cross-crate line names the upstream -dev version and
+     compares against main; the release PR points it at the released tag.
+     Head unreleased changes with the Cargo.toml version: `-dev`, no date
+     (e.g. [v0.22.4-dev]), not [Unreleased]. If the cycle needs a bigger bump,
+     rename both. The first PR to change the crate after a release opens the
+     next patch `-dev` version and heading; the release PR drops `-dev` and
+     adds the date.
+     Describe the change since the last release, not each PR: when a PR makes
+     an unreleased entry stale, rewrite it in place and append the PR link.
+     Work no user can reach yet gets one "Under the hood" line, not a feature
+     entry; it earns a real entry once reachable, even behind a switch.
+     Never edit released sections.
 -->
 <!-- markdownlint-disable MD013 -->
 # Changelog
+
+## [v0.26.1] - 2026-10-29
+
+### Fixed
+
+- When a file's bytes do not match the hash the package records, QuiltSync says so and warns that the package may be corrupt, instead of saying the file is gone from the bucket
+  - <https://github.com/quiltdata/quilt-rs/issues/1246>
+  - <https://github.com/quiltdata/quilt-rs/pull/1254>
+- On Windows, files in folders are committed with `/` in their names, not `\` (<https://github.com/quiltdata/quilt-rs/pull/1253>)
+
+### quilt-rs
+
+- Updated [from v0.50.0 to v0.51.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.50.0...quilt-rs/v0.51.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.26.0] - 2026-10-28
+
+### Added
+
+- A package can keep chosen folders: QuiltSync downloads every file under them, including files added there later. `quilt keep --folder` sets them too. **New design preview**: *Keeping* has a *Folders* option, with *Change folders* to edit the list, and *Download N files* fetches the files still missing. The main page counts them in *N to download*
+  - <https://github.com/quiltdata/quilt-rs/pull/1229>
+  - <https://github.com/quiltdata/quilt-rs/pull/1245>
+  - <https://github.com/quiltdata/quilt-rs/pull/1250>
+- **Experimental**: agent tasks can be set up in Settings. With *Agent tasks* on, the Settings page has an *Agent tasks* card for choosing which buckets can ask this computer to run a task and which local agents run it. The revision a task publishes says how many files it added, changed and removed. Agents run with the PATH of your login shell, so they find your tools
+  - <https://github.com/quiltdata/quilt-rs/pull/1224>
+  - <https://github.com/quiltdata/quilt-rs/pull/1225>
+  - <https://github.com/quiltdata/quilt-rs/pull/1236>
+
+### Changed
+
+- **New design preview**: the main page and the package page scroll as one page, so the mouse wheel moves the list from anywhere in the window, while the bar, toolbar and headings stay in place. On the package page, *Download* stays at the bottom while files are ticked, and *Bucket and catalog*, *Revision* and *Keeping* sit beside the files in a wide window and above them in a narrow one
+  - <https://github.com/quiltdata/quilt-rs/pull/1223>
+  - <https://github.com/quiltdata/quilt-rs/pull/1228>
+- **New design preview**: the package page shows *Bucket and catalog* for every package, with one button to choose or change the bucket, which replaces the header's bucket buttons. *Revisions you have* is now *History* (<https://github.com/quiltdata/quilt-rs/pull/1221>)
+- The main page's *Needs your attention* is a status line with rows below it, not a card. When nothing needs you, it reads *All packages are up to date* (<https://github.com/quiltdata/quilt-rs/pull/1222>)
+- *No accounts yet*, on the main page and in Settings, says how to sign in: choose *Open in QuiltSync* on a package in the catalog (<https://github.com/quiltdata/quilt-rs/pull/1248>)
+- Group headings on the main page stand out from the rows below them (<https://github.com/quiltdata/quilt-rs/pull/1220>)
+
+### Fixed
+
+- *Pull*, *Push*, *Commit* and *Publish* with nothing to do say so, instead of failing or publishing the same revision twice
+  - <https://github.com/quiltdata/quilt-rs/pull/1227>
+  - <https://github.com/quiltdata/quilt-rs/pull/1230>
+  - <https://github.com/quiltdata/quilt-rs/pull/1242>
+
+### quilt-rs
+
+- Updated [from v0.49.0 to v0.50.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.49.0...quilt-rs/v0.50.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.25.0] - 2026-10-26
+
+### Added
+
+- A package can use a bucket with no catalog, on the AWS credentials on this computer: it shows its status, publishes from the commit page, syncs with autosync, copies its URI and marks its published revisions. A local-only package can be published to such a bucket, since the *Host* field is optional. When the credentials are missing or refused, QuiltSync says so and suggests updating `~/.aws` or running `aws sso login`
+  - <https://github.com/quiltdata/quilt-rs/pull/1193>
+  - <https://github.com/quiltdata/quilt-rs/pull/1203>
+  - <https://github.com/quiltdata/quilt-rs/pull/1207>
+  - <https://github.com/quiltdata/quilt-rs/pull/1208>
+  - <https://github.com/quiltdata/quilt-rs/pull/1209>
+  - <https://github.com/quiltdata/quilt-rs/pull/1210>
+  - <https://github.com/quiltdata/quilt-rs/pull/1212>
+- A published package's catalog can be added, changed or removed, keeping its revisions: from the *Bucket and catalog* section of the package page, or from the popup on the classic page
+  - <https://github.com/quiltdata/quilt-rs/pull/1211>
+  - <https://github.com/quiltdata/quilt-rs/pull/1213>
+  - <https://github.com/quiltdata/quilt-rs/pull/1215>
+- The main page can group packages by catalog
+  - <https://github.com/quiltdata/quilt-rs/pull/1214>
+  - <https://github.com/quiltdata/quilt-rs/pull/1217>
+
+### Changed
+
+- Under the hood, QuiltSync can run the task a package revision asks for with a local agent and publish the result as the next revision
+  - <https://github.com/quiltdata/quilt-rs/pull/1195>
+  - <https://github.com/quiltdata/quilt-rs/pull/1198>
+  - <https://github.com/quiltdata/quilt-rs/pull/1199>
+  - <https://github.com/quiltdata/quilt-rs/pull/1201>
+  - <https://github.com/quiltdata/quilt-rs/pull/1204>
+  - <https://github.com/quiltdata/quilt-rs/pull/1206>
+
+### Removed
+
+- QuiltSync no longer claims `quilt+file://` links, which it never handled (<https://github.com/quiltdata/quilt-rs/pull/1216>)
+
+### quilt-rs
+
+- Updated [from v0.48.0 to v0.49.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.48.0...quilt-rs/v0.49.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.24.0] - 2026-10-23
+
+### Changed
+
+- QuiltSync opens in the new design. To go back to the classic one, turn off **New design** in Settings (<https://github.com/quiltdata/quilt-rs/pull/1189>)
+- The revision page's header has the package page's *Open folder*, *Open in catalog* and *Copy Quilt URI* buttons (<https://github.com/quiltdata/quilt-rs/pull/1187>)
+- Copying a file's URI or path on the package page marks that file's row for a moment, so the page no longer jumps (<https://github.com/quiltdata/quilt-rs/pull/1182>)
+
+### Fixed
+
+- Logging out waits for a token refresh already under way, here or in the CLI, so the refresh cannot sign you back in (<https://github.com/quiltdata/quilt-rs/pull/1177>)
+
+### quilt-rs
+
+- Updated [from v0.47.0 to v0.48.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.47.0...quilt-rs/v0.48.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.23.2] - 2026-10-22
+
+### Added
+
+- **New design preview**: each package on the main page says how much of it is on disk, such as *3 to download* or *12 of 340 files*. Hovering it shows its full name, host and downloaded size
+  - <https://github.com/quiltdata/quilt-rs/pull/1172>
+  - <https://github.com/quiltdata/quilt-rs/pull/1178>
+
+### Changed
+
+- **New design preview**: the package page's header has *Open in catalog* and a button that copies the package's Quilt URI next to *Open folder* (<https://github.com/quiltdata/quilt-rs/pull/1171>)
+- **New design preview**: *Copy URI* and *Open in catalog* on a file point at the revision you have (<https://github.com/quiltdata/quilt-rs/pull/1175>)
+
+### quilt-rs
+
+- Updated [from v0.46.0 to v0.47.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.46.0...quilt-rs/v0.47.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.4.2 to v0.4.3](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.2...quilt-uri/v0.4.3) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
+## [v0.23.1] - 2026-10-21
+
+### Fixed
+
+- On macOS, **Log in with browser** returns to QuiltSync. Safari used to say the address is invalid (<https://github.com/quiltdata/quilt-rs/pull/1161>)
+- **New design preview**: *Sign in* on a package or commit page returns you to that page after you log in (<https://github.com/quiltdata/quilt-rs/pull/1164>)
+- A failed check for a new version is written to the log (<https://github.com/quiltdata/quilt-rs/pull/1163>)
+
+### quilt-rs
+
+- Updated [from v0.45.0 to v0.46.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.45.0...quilt-rs/v0.46.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.23.0] - 2026-10-20
+
+### Added
+
+- **Stop ignoring** brings an ignored file or folder back for this package or for all packages, and says how many files that adds. It used to open `.quiltignore` in an editor (<https://github.com/quiltdata/quilt-rs/pull/1147>)
+- **New design preview**: the package page lists each ignored file and folder with the rule that hid it and where the rule came from, such as *Built-in rule* or *This package's .quiltignore, line 2*. Settings has an **Ignore rules** card to open your own rules and turn built-in rules off
+  - <https://github.com/quiltdata/quilt-rs/pull/1136>
+  - <https://github.com/quiltdata/quilt-rs/pull/1149>
+  - <https://github.com/quiltdata/quilt-rs/pull/1155>
+- Creating a package from a folder says how many files and folders the ignore rules left out (<https://github.com/quiltdata/quilt-rs/pull/1158>)
+
+### Changed
+
+- New OS and editor clutter, secrets and caches (`.DS_Store`, `.git/`, `.venv/`, `.env`, `node_modules/` and similar) no longer go into a package. Files already in a package stay. Put your own rules for every package in `.quiltignore` in the app's data folder; a package's `.quiltignore` can bring a file back with `!pattern`
+  - <https://github.com/quiltdata/quilt-rs/pull/1143>
+  - <https://github.com/quiltdata/quilt-rs/pull/1150>
+- Checking for changes is faster: the app reads only the files that changed since the last check, and skips packages the folder watcher saw no change in. It checks every package when it starts, so changes made while it was closed show at once
+  - <https://github.com/quiltdata/quilt-rs/pull/1144>
+  - <https://github.com/quiltdata/quilt-rs/pull/1145>
+- **New design preview**: the main page's Autosync card shows a ring for each package with changes, soonest first, and says how many packages changed while the app was closed (<https://github.com/quiltdata/quilt-rs/pull/1156>)
+
+### Fixed
+
+- Autopublish publishes when the publish wait after the last change ends. It no longer publishes at once after you commit, turn publishing on, copy in files with old dates or reopen the app, and no longer waits for the next check
+  - <https://github.com/quiltdata/quilt-rs/pull/1134>
+  - <https://github.com/quiltdata/quilt-rs/pull/1144>
+  - <https://github.com/quiltdata/quilt-rs/pull/1151>
+- An edit, a removal or an undo shows on the main page within a few seconds (<https://github.com/quiltdata/quilt-rs/pull/1145>)
+
+### quilt-rs
+
+- Updated [from v0.44.0 to v0.45.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.44.0...quilt-rs/v0.45.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.22.12] - 2026-10-16
+
+### Added
+
+- **New design preview**: more *More actions* menus. The commit page's offers **Change bucket** (or **Show remote** once published) and **Remove**; a recent file's on the main page offers **Open file**, **Reveal in folder**, **Copy URI** and, once published, **Open in catalog**
+  - <https://github.com/quiltdata/quilt-rs/pull/1122>
+  - <https://github.com/quiltdata/quilt-rs/pull/1126>
+- **New design preview**: the Log in, Set up, Error and Page not found pages, and the page shown while a Quilt link opens, are in the new design (<https://github.com/quiltdata/quilt-rs/pull/1127>)
+
+### Changed
+
+- **New design preview**: a cut-off file or package name shows in full in the app's own tooltip on hover or keyboard focus
+  - <https://github.com/quiltdata/quilt-rs/pull/1130>
+  - <https://github.com/quiltdata/quilt-rs/pull/1132>
+- **New design preview**: a folder heading in the package page's file list reads *3 of 54* when a filter or search hides some of its files (<https://github.com/quiltdata/quilt-rs/pull/1128>)
+- **New design preview**: the main page remembers your *Group* and *Sort* choices between visits and restarts (<https://github.com/quiltdata/quilt-rs/pull/1133>)
+
+### Fixed
+
+- **Create package** refuses a name quilt3 would refuse: a name is `prefix/name` made of letters, digits, `_` and `-` (<https://github.com/quiltdata/quilt-rs/pull/1131>)
+- Opening a Quilt link that needs a sign-in opens its package after you log in with a code (<https://github.com/quiltdata/quilt-rs/pull/1127>)
+
+## [v0.22.11] - 2026-10-14
+
+### Added
+
+- **New design preview**: a file's *More actions* menu offers **Reveal in folder** on the package page, and **Open file**, **Reveal in folder** and **Copy path** on the commit page
+  - <https://github.com/quiltdata/quilt-rs/pull/1117>
+  - <https://github.com/quiltdata/quilt-rs/pull/1119>
+
+### Changed
+
+- The window can be made as narrow as 640px, down from 1024px (<https://github.com/quiltdata/quilt-rs/pull/1113>)
+- Autosync checks for new revisions once a minute by default. The interval is in whole minutes and is the same whether the window is open, in the background or closed to the tray (<https://github.com/quiltdata/quilt-rs/pull/1112>)
+- **New design preview**: Settings puts its cards in two columns on a wide window, edits your publish defaults in a popup with **Reset to defaults**, and renames Help to Troubleshooting
+  - <https://github.com/quiltdata/quilt-rs/pull/1113>
+  - <https://github.com/quiltdata/quilt-rs/pull/1116>
+  - <https://github.com/quiltdata/quilt-rs/pull/1121>
+- **New design preview**: on a wide window the commit page shows the files beside the message, workflow and metadata, and the metadata preview shows one line per field (<https://github.com/quiltdata/quilt-rs/pull/1120>)
+
+### Fixed
+
+- **New design preview**: in *Needs your attention*, a long package name no longer hides what is wrong with the package (<https://github.com/quiltdata/quilt-rs/pull/1113>)
+
+## [v0.22.10] - 2026-10-13
+
+### Added
+
+- **New design preview**: a redesigned Settings page. Settings save as you change them, **Check size** shows how much space the app uses and how much it can free, and **Report a problem** sends a message with your logs
+  - <https://github.com/quiltdata/quilt-rs/pull/1099>
+  - <https://github.com/quiltdata/quilt-rs/pull/1100>
+  - <https://github.com/quiltdata/quilt-rs/pull/1106>
+
+### Fixed
+
+- When a package is behind and the remote gets another revision, the package page shows the newest one and its incoming files, instead of the older one until you refresh (<https://github.com/quiltdata/quilt-rs/pull/1102>)
+
+### quilt-rs
+
+- Updated [from v0.43.0 to v0.44.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.43.0...quilt-rs/v0.44.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.22.9] - 2026-10-09
+
+### Added
+
+- **New design preview**: The package page shows which files a newer revision brings, and whether getting it would conflict, before you click **Get latest** (<https://github.com/quiltdata/quilt-rs/pull/1094>)
+
+### Changed
+
+- **New design preview**: on the commit page, the file list scrolls in its own box, so the title and **Publish** stay on screen. The metadata editor can be dragged taller (<https://github.com/quiltdata/quilt-rs/pull/1095>)
+
+### Fixed
+
+- **New design preview**: the package page no longer flashes its loading frame when it refreshes on its own (<https://github.com/quiltdata/quilt-rs/pull/1093>)
+
+### quilt-rs
+
+- Updated [from v0.42.1 to v0.43.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.1...quilt-rs/v0.43.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.22.8] - 2026-10-08
+
+### Changed
+
+- **New design preview**: **Publish** on the package page publishes in one click. Choose *Review before publishing…* on its button to check the message and metadata first; the button remembers the choice for each package (<https://github.com/quiltdata/quilt-rs/pull/1085>)
+- **New design preview**: *Review before publishing…* and *Create new revision* open a redesigned page with the message, workflow and metadata in one column, then the files the revision includes. Its button says how many files it publishes (<https://github.com/quiltdata/quilt-rs/pull/1090>)
+- The commit form starts from your Commit and Push defaults in Settings, so reviewing before publishing shows what Publish would send (<https://github.com/quiltdata/quilt-rs/pull/1086>)
+
+### Fixed
+
+- **New design preview**: *Download N files* in Keeping names the files it skipped because they are no longer on the remote at that revision, as the file pane's **Download** does (<https://github.com/quiltdata/quilt-rs/pull/1077>)
+
+## [v0.22.7] - 2026-10-07
+
+### Added
+
+- Settings has a log level choice. It applies after a restart, and a valid `QUILT_LOG` overrides it (<https://github.com/quiltdata/quilt-rs/pull/1074>)
+
+### Changed
+
+- The app reads its log filter from `QUILT_LOG`, with the same values as the `quilt` CLI, in place of `QUILTSYNC_LOG`. Crash reports never include `debug` or `trace` lines (<https://github.com/quiltdata/quilt-rs/pull/1073>)
+- **New design preview**: when nothing is left to download but files are deleted here, the caption above the file list says so, for example "All 1,090 files downloaded · 1 deleted here" (<https://github.com/quiltdata/quilt-rs/pull/1069>)
+- **New design preview**: *Revisions you have* shows exact sizes, such as "211.9 kB", in place of "< 1 MB" (<https://github.com/quiltdata/quilt-rs/pull/1070>)
+- **New design preview**: in Resolve mode, files that differ from the published revision are marked *Differs*, with a tooltip that explains it (<https://github.com/quiltdata/quilt-rs/pull/1075>)
+- Messages that say how much space was freed round sizes the same way as the rest of the app (<https://github.com/quiltdata/quilt-rs/pull/1072>)
+
+### Fixed
+
+- **New design preview**: packages on a host you are signed out of, or whose sign-in expired, now show "Signed out from {host}" or "Sign-in expired on {host}" with Sign in in the main page's queue, in place of "Couldn't check for new revisions" with a Try again that could not work (<https://github.com/quiltdata/quilt-rs/pull/1076>)
+
+### quilt-rs
+
+- Updated [from v0.42.0 to v0.42.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.42.0...quilt-rs/v0.42.1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.22.6] - 2026-10-02
+
+### Added
+
+- **Settings → General → Free up space** deletes downloaded files no installed package uses, cached package listings and leftovers of interrupted downloads, and says how much it freed (<https://github.com/quiltdata/quilt-rs/pull/1030>)
+- **New design preview**: *Revisions you have* on the package page removes old revisions, one at a time or all unused at once, and says how much space each frees. Revisions still needed (current, latest, base, unpushed or never published) are kept, each saying why (<https://github.com/quiltdata/quilt-rs/pull/1043>)
+- **New design preview**: **Remove** can also delete the package's downloaded files that no other installed package uses, and says how much it freed. Its confirmation now warns that commits never pushed are lost (<https://github.com/quiltdata/quilt-rs/pull/1040>)
+- **New design preview**: the package page shows the package's size beside the file count, and the **Download** buttons say how much they fetch, for example "Download 2 files · 1.5 MB" (<https://github.com/quiltdata/quilt-rs/pull/1046>)
+
+### Changed
+
+- File sizes show one decimal, for example "44.0 kB" instead of "44.00 kB" (<https://github.com/quiltdata/quilt-rs/pull/1046>)
+
+### Fixed
+
+- **New design preview**: clicking empty space in the package page's header no longer goes back to the package list (<https://github.com/quiltdata/quilt-rs/pull/1042>)
+
+### quilt-rs
+
+- Updated [from v0.41.0 to v0.42.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.41.0...quilt-rs/v0.42.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.4.1 to v0.4.2](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.1...quilt-uri/v0.4.2) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
+## [v0.22.5] - 2026-09-30
+
+### Changed
+
+- **New design preview**: the package page shows which files are downloaded. Downloaded files and fully downloaded folders get a check, and when every file is downloaded the caption above the file list says so, for example "All 1,090 files downloaded" (<https://github.com/quiltdata/quilt-rs/pull/1020>, <https://github.com/quiltdata/quilt-rs/pull/1026>)
+- **New design preview**: the main page and the package page show their outline while they load, instead of a nearly blank window (<https://github.com/quiltdata/quilt-rs/pull/1028>)
+
+### Fixed
+
+- Changes to one package no longer overwrite each other when a download, **Pull**, **Commit**, background updates or the `quilt` CLI run at once. A busy package waits; other packages are not held up (<https://github.com/quiltdata/quilt-rs/pull/1022>)
+- On the new main page, the package list no longer jumps down when **Everything is Latest** appears (<https://github.com/quiltdata/quilt-rs/pull/1019>)
+
+### quilt-rs
+
+- Updated [from v0.40.0 to v0.41.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.40.0...quilt-rs/v0.41.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.22.4] - 2026-09-28
+
+### Changed
+
+- **New main page** in Settings → Experimental is now **New design preview**: one switch for the whole redesigned QuiltSync, still off by default. If you had **New main page** on, it stays on (<https://github.com/quiltdata/quilt-rs/pull/980>, <https://github.com/quiltdata/quilt-rs/pull/983>)
+- **New design preview** now includes:
+  - The redesigned top bar on every screen. While background updates pull or publish a package, it says so: "Getting latest for team/pkg…" or "Publishing team/pkg…" (<https://github.com/quiltdata/quilt-rs/pull/984>, <https://github.com/quiltdata/quilt-rs/pull/988>, <https://github.com/quiltdata/quilt-rs/pull/1001>)
+  - The redesigned package page, with a dark color scheme. It has three updated sections: a header with the package's commands; a context pane with the revisions this computer holds, which files it keeps, and the choice between your revision and the published one when they diverged; and a file list with filters by state, search, selection and download, and a menu on each file (<https://github.com/quiltdata/quilt-rs/pull/966>, <https://github.com/quiltdata/quilt-rs/pull/970>, <https://github.com/quiltdata/quilt-rs/pull/973>, <https://github.com/quiltdata/quilt-rs/pull/978>, <https://github.com/quiltdata/quilt-rs/pull/980>, <https://github.com/quiltdata/quilt-rs/pull/981>, <https://github.com/quiltdata/quilt-rs/pull/982>, <https://github.com/quiltdata/quilt-rs/pull/983>, <https://github.com/quiltdata/quilt-rs/pull/986>, <https://github.com/quiltdata/quilt-rs/pull/993>, <https://github.com/quiltdata/quilt-rs/pull/994>, <https://github.com/quiltdata/quilt-rs/pull/995>, <https://github.com/quiltdata/quilt-rs/pull/996>, <https://github.com/quiltdata/quilt-rs/pull/997>, <https://github.com/quiltdata/quilt-rs/pull/1000>, <https://github.com/quiltdata/quilt-rs/pull/1002>, <https://github.com/quiltdata/quilt-rs/pull/1003>, <https://github.com/quiltdata/quilt-rs/pull/1010>, <https://github.com/quiltdata/quilt-rs/pull/1014>, <https://github.com/quiltdata/quilt-rs/pull/1017>)
+  - On the new main page, **Refresh** spins and is disabled while something updates in the background (<https://github.com/quiltdata/quilt-rs/pull/970>). **Recent files** grouped by package orders `acme/plate` before `acme-labs/plate` (<https://github.com/quiltdata/quilt-rs/pull/964>)
+- **Sync entire package** (Settings → Experimental) now only shows the choice on the package screen. A package already set to keep its whole contents keeps doing so, in background updates too, whether or not the experiment is on (<https://github.com/quiltdata/quilt-rs/pull/986>)
+- When setting a package's S3 bucket fails, the message names the bucket: "Could not set the remote to my-bucket: …" instead of "Failed to set remote: …" (<https://github.com/quiltdata/quilt-rs/pull/981>)
+- Under the hood, the app's interface carries a package's namespace as the validated address type rather than plain text (<https://github.com/quiltdata/quilt-rs/pull/964>)
+
+### Fixed
+
+- Downloading a package's files while that package is being pulled, by background updates or by **Pull**, no longer leaves an untouched file reading as modified. Background updates skip a package while its files download and try again on the next round. A download started during a pull, and a **Pull** pressed during a download, wait for the other to finish. If the pull moved the package to a revision without a file you asked for, the download fails with "… is not in the package's current revision" (<https://github.com/quiltdata/quilt-rs/pull/998>)
+- Downloading files from a bucket without versioning, after a later revision replaced some of them, installs the rest and skips those. Before, it placed the later revision's bytes and the untouched file read as modified. The notice after the download says how many files were skipped and names them. A `quilt+s3://` link to such a file says it is no longer on the remote instead of opening the wrong one (<https://github.com/quiltdata/quilt-rs/pull/991>)
+- Downloading a package's files no longer replaces a file of your own at the same place in the package folder. A file you created there and had not committed was overwritten and lost. Now the download stops with "A local file is already at …" and your file is left as it was (<https://github.com/quiltdata/quilt-rs/pull/986>)
+- After **Promote my revision** on the merge page, background sync resumes for that package. It used to stay stopped until QuiltSync was restarted (<https://github.com/quiltdata/quilt-rs/pull/994>)
+- A package with more than 1000 files lists its first 1000 in path order. It used to list changed files first and drop others that sort before them (<https://github.com/quiltdata/quilt-rs/pull/992>)
+- The screen a `quilt+s3://` link opens on while it installs no longer opens the link's file a second time. Its **Refresh** is unavailable, and going **Back** from the package or from Settings no longer returns to it (<https://github.com/quiltdata/quilt-rs/pull/988>)
+
+### quilt-rs
+
+- Updated [from v0.39.1 to v0.40.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.39.1...quilt-rs/v0.40.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.22.3] - 2026-09-18
+
+### Fixed
+
+- Every link to a package whose name contains `&` or `#` now carries the whole name. The name went into the address unescaped, so it ended at that character — `team/a&b` arrived as `team/a`, and anything after a `#` was dropped — on every link and redirect to a package's own page, its commit page and its merge page, from both the current main page and the new one (<https://github.com/quiltdata/quilt-rs/pull/945>)
+- Signing in through your browser returns you to the page you started from. It could only return you to a page it had a name for, and the page the app opens on was not one of them, so it always finished on the installed packages list — which shows only with **New main page** on (Settings → Experimental), where signing in from the new page landed you on the old one (<https://github.com/quiltdata/quilt-rs/pull/944>)
+- The buttons on a package's status banner keep their size when the message beside them is long. They used to be squeezed by it, narrowing as the text grew (<https://github.com/quiltdata/quilt-rs/pull/942>)
+
+### Changed
+
+- Under the hood, a package's namespace now crosses between the app's backend and its interface as the validated address type it already was, rather than being flattened to plain text on the way out. No behaviour changes and the wire format is identical (<https://github.com/quiltdata/quilt-rs/pull/946>)
+- The new main page (Settings → Experimental → **New main page**, still off by default) is polished further. The current page is unchanged by all of it:
+  - A row in **Recent files** can now copy that file's `quilt+s3` address to your clipboard, ready to paste into a terminal or a message. The button turns to a tick to confirm, and a package that lives only on your machine shows no button, since no `quilt+s3` address names it (<https://github.com/quiltdata/quilt-rs/pull/953>)
+  - A card that cannot load its own data — **Autosync**, **Accounts**, your packages, recent files — now keeps its title, says it could not load, and offers **Try again**. Each used to draw nothing, which reads as an answer: no autosync on this machine, no accounts signed in (<https://github.com/quiltdata/quilt-rs/pull/939>)
+  - Typing in the search box no longer rebuilds the whole list under it. Every row a search left standing was thrown away and built again on each keystroke; at 500 packages, eight keystrokes cost 208ms of that work and now cost 17ms (<https://github.com/quiltdata/quilt-rs/pull/949>)
+  - A screen reader can move through the page: it has a title, each card is a named region, bucket headings are headings, and package rows, file rows and the queue are lists. They were an undifferentiated run of text with nothing to navigate by (<https://github.com/quiltdata/quilt-rs/pull/935>)
+  - Four more things a screen reader was told wrongly: a Recent files row announced as a single button, hiding the package link and the three actions on it; a card of placeholders that never said it was loading; a drop-down that read its value twice; and a timestamp on an unconfirmed row dimmed below readable contrast (<https://github.com/quiltdata/quilt-rs/pull/936>)
+  - A signed-in row in **Accounts** arrives saying "Checking role…", and a screen reader is now told when the answer lands. The sub-line settled silently, leaving a reader on the provisional text with no way to learn what it became (<https://github.com/quiltdata/quilt-rs/pull/959>)
+  - The countdown ring beside a sync toggle no longer announces itself to a screen reader as a progress bar of unknown progress — a value it cannot honestly report. The toggle's own label already says the interval (<https://github.com/quiltdata/quilt-rs/pull/950>)
+  - Launching straight onto the new page with a dark desktop no longer flashes a white window first (<https://github.com/quiltdata/quilt-rs/pull/951>)
+  - A banner's close button and the search box's clear button now draw one shared mark, where each carried its own drawing of it at its own inset. Both render at the size they always have (<https://github.com/quiltdata/quilt-rs/pull/952>)
+- Under the hood, the component gallery is now arranged in tiers and holds the components, the split button, the header scene and the context pane that the installed-package page will be assembled from, each with tests of its own (<https://github.com/quiltdata/quilt-rs/pull/938>, <https://github.com/quiltdata/quilt-rs/pull/947>, <https://github.com/quiltdata/quilt-rs/pull/955>, <https://github.com/quiltdata/quilt-rs/pull/958>)
+
+### quilt-rs
+
+- Updated [from v0.39.0 to v0.39.1](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.39.0...quilt-rs/v0.39.1) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+### quilt-uri
+
+- Updated [from v0.4.0 to v0.4.1](https://github.com/quiltdata/quilt-rs/compare/quilt-uri/v0.4.0...quilt-uri/v0.4.1) (see [quilt-uri/CHANGELOG.md](../quilt-uri/CHANGELOG.md))
+
+## [v0.22.2] - 2026-09-15
+
+### Fixed
+
+- A pull that is interrupted — a dropped connection, an expired credential, a quit, power loss — can now be retried. It used to leave the package stuck for good: the files being updated were deleted before they were fetched again, so an interruption lost them from your folder and from tracking at once, and every retry read that gap as a conflict between your delete and the remote's change and refused. A pull now downloads and stages the whole update before it writes anything into your folder, so an interruption before the writes — which is where nearly all of the time goes — leaves the folder untouched and the retry is an ordinary update (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- A pull no longer disturbs a program that has a package file open. Each file is now written aside and moved into place, so a reader sees one revision's bytes or the other's and never a half-written file; a program holding the file memory-mapped, which is ordinary for HDF5, Zarr, Arrow and `numpy` `mmap_mode`, used to be killed outright by a pull arriving mid-analysis (<https://github.com/quiltdata/quilt-rs/pull/921>)
+- A pull no longer reports a conflict on a file you have edited to exactly what the incoming revision holds. The two were compared by hash without accounting for the algorithm each was computed in, so byte-identical content could compare as different and block a pull that had nothing to resolve (<https://github.com/quiltdata/quilt-rs/pull/921>)
+
+### Changed
+
+- The new main page (Settings → Experimental → **New main page**, still off by default) is polished throughout. The current page is unchanged by all of it:
+  - Each row in **Needs your attention** is now a link to the page that fixes it, and says what is wrong as a sentence: `org/dataset-c has conflicts in 2 files`, with `Publish` on the right. The buttons are gone — every one of them only opened another page — and the coloured chip that named the state is now a mark on the row's edge, since the sentence already says what the chip did (<https://github.com/quiltdata/quilt-rs/pull/940>)
+  - A paused package now says why it paused, under its row in **Needs your attention**; it used to say only `Sync paused` (<https://github.com/quiltdata/quilt-rs/pull/933>)
+  - Refresh shows that it is working, and takes no second press until it is done (<https://github.com/quiltdata/quilt-rs/pull/929>)
+  - Anything cut short to fit — a package name, a file path, a host, a group heading — shows its full value on hover (<https://github.com/quiltdata/quilt-rs/pull/930>)
+  - Buttons, drop-downs, the search box and the view switch share one height, where each used to be its own size (<https://github.com/quiltdata/quilt-rs/pull/912>)
+  - The primary button, the ticked checkboxes and the countdown ring use the top bar's navy instead of a second, nearly identical one (<https://github.com/quiltdata/quilt-rs/pull/916>)
+  - Refresh and Settings show their names beside their icons, as the current page's toolbar does (<https://github.com/quiltdata/quilt-rs/pull/919>)
+  - The Settings icon is a gear that reads as one; the old drawing looked like a sun at that size (<https://github.com/quiltdata/quilt-rs/pull/920>)
+  - Linux uses the desktop's own font instead of Roboto, and no longer flashes from one to the other while it loads (<https://github.com/quiltdata/quilt-rs/pull/918>)
+  - Native drop-down popups and scrollbars follow the light or dark theme; the current page stays light whatever the system is set to (<https://github.com/quiltdata/quilt-rs/pull/927>, <https://github.com/quiltdata/quilt-rs/pull/934>)
+  - Text fields, the search box, drop-downs and the view switch have a clearer edge, so an empty field is visible as a field on a white card (<https://github.com/quiltdata/quilt-rs/pull/924>)
+  - Keyboard focus is visible on every control: the focus ring clears the 3:1 contrast WCAG asks of it, in both themes (<https://github.com/quiltdata/quilt-rs/pull/913>)
+  - A file's age is no longer cut short to "23 hours a…", and anything older than a year reads "1 year ago" rather than a growing count of months (<https://github.com/quiltdata/quilt-rs/pull/914>)
+  - The close button on a banner and the clear button in the search box are 24px squares, the minimum the other controls already met (<https://github.com/quiltdata/quilt-rs/pull/916>)
+  - A banner's message and a toggle's sublabel wrap at a readable measure instead of running the width of the window (<https://github.com/quiltdata/quilt-rs/pull/931>)
+- Under the hood, the components the new main page is built from are now recorded as a design system and browsable on their own, which is the groundwork the page is assembled from (<https://github.com/quiltdata/quilt-rs/pull/915>, <https://github.com/quiltdata/quilt-rs/pull/917>, <https://github.com/quiltdata/quilt-rs/pull/925>, <https://github.com/quiltdata/quilt-rs/pull/926>, <https://github.com/quiltdata/quilt-rs/pull/932>)
+
+### Security
+
+- QuiltSync takes rustls 0.23.45 for [RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285), where TLS 1.3 handshake messages were accepted across encryption level boundaries. It arrives transitively through the AWS SDK's TLS stack; nothing in QuiltSync selects it (<https://github.com/quiltdata/quilt-rs/pull/923>)
+
+### quilt-rs
+
+- Updated [from v0.38.0 to v0.39.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.38.0...quilt-rs/v0.39.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.22.1] - 2026-09-11
+
+### Added
+
+- A redesigned main page, off by default and switched on under Settings → Experimental → **New main page**. It opens with what needs you: packages that are out of date, hold unpublished changes, or whose state could not be confirmed, each beside the one thing to do about it — and where a whole catalog or bucket is the cause, it is said once with a count instead of on every package. When nothing needs you, it says so in one line. Below are your packages with each one's state and when it last changed, searchable and groupable, or switched to a feed of recently changed files. Alongside: whether background syncing is running and when it will next run, switchable per direction, and the catalogs you are signed into with the role each is using. Switching it off returns you to the current page and loses nothing (<https://github.com/quiltdata/quilt-rs/pull/881>)
+- QuiltSync's window now has a minimum size of 1024×560. Below that the main page's regions cannot all fit, and the list was crushed to nothing rather than the window refusing to shrink (<https://github.com/quiltdata/quilt-rs/pull/881>)
+- The new main page follows your system's light or dark appearance. The current pages keep their own look whichever appearance your system uses (<https://github.com/quiltdata/quilt-rs/pull/881>, <https://github.com/quiltdata/quilt-rs/pull/911>)
+- QuiltSync now asks before you quit it while a package is being written. Quitting used to interrupt the write silently, leaving that package part-way between two revisions with nothing running to finish it; you now get the choice to wait or go ahead. Nothing is asked when no package is being written (<https://github.com/quiltdata/quilt-rs/pull/905>)
+
+### Fixed
+
+- A bucket your role cannot read is now recognised as a refusal however S3 phrases it, not only when it answers `AccessDenied`. A refusal that named any other reason — an object encrypted with a key your role cannot use, an account-level block — was reported as an ordinary failure, which reads as "sign in again"; signing in hands back the same role that was refused, so there was no way out of it (<https://github.com/quiltdata/quilt-rs/pull/881>)
+- The package list no longer stalls on a deployment that answers slowly. Marking a row as refused asks which role you are using, and that question had no time limit of its own: a deployment that replied to the first request and then went quiet held the main screen empty for as long as the network allowed. The row now appears as refused without naming the role (<https://github.com/quiltdata/quilt-rs/pull/881>)
+- The message shown when a package cannot be created no longer begins `Quilt error:` before the sentence that tells you what went wrong (<https://github.com/quiltdata/quilt-rs/pull/881>)
+- A package you are pulling no longer briefly reports conflicts in files that are simply being downloaded for it, and no longer stops syncing in the background as a result. Checking a package while it was being written compared the files already written against the revision they came from, and read every one of them as changed on both sides (<https://github.com/quiltdata/quilt-rs/pull/907>)
+- QuiltSync no longer works continuously while you are not using it. Checking a package reads every file in it, and that reading looked to the folder watcher like you had changed something, so each check scheduled another one. Left idle with eleven installed packages, the watcher asked to re-read a package about 240 times a minute where the sync interval calls for 14 — constant CPU and disk, and 21 times the log volume, for an app that sits in the background all day (<https://github.com/quiltdata/quilt-rs/pull/886>)
+- Files you have excluded in `.quiltignore` no longer cause a package to be re-read. A tool churning a cache directory inside a package cost a full read of that package, which then skipped the very directory it had been woken for (<https://github.com/quiltdata/quilt-rs/pull/886>)
+- A host QuiltSync cannot get credentials for at all — rather than one whose credentials S3 rejects (v0.21.2) — no longer fails with a six-line Rust error chain. It now reports as the dead session it is, so the sign-in affordance appears and background sync stops retrying it in silence (<https://github.com/quiltdata/quilt-rs/pull/867>)
+- A host that is not set up as a Quilt deployment — no registry in its `config.json` — no longer sends you to the sign-in screen, where nothing you can do would help. It says what is wrong and that an administrator needs to fix it (<https://github.com/quiltdata/quilt-rs/pull/867>)
+- The Commit page stays open when you are signed out, instead of bouncing you to the sign-in screen and discarding the message and metadata you had typed. It already worked this way for a role that cannot read the bucket; a dead session now gets the same treatment, and the Commit action is what refuses, naming the deployment to sign in to (<https://github.com/quiltdata/quilt-rs/pull/867>)
+
+### Changed
+
+- Opening QuiltSync, and returning to the package list from a package, now takes a moment to check which main page you have switched on. It used to go straight there. Nothing is lost by it and the check falls back to the current page if it fails, but there is a brief spinner where there was none (<https://github.com/quiltdata/quilt-rs/pull/881>)
+- While you are actively saving files, the packages list can now be up to one sync interval behind. A save brings the next check forward rather than adding one, so a burst of edits no longer means a burst of re-reads. Opening or moving to a page still reads fresh, and nothing is published until the folder has been quiet for the configured window either way (<https://github.com/quiltdata/quilt-rs/pull/886>)
+
+### quilt-rs
+
+- Updated [from v0.37.0 to v0.38.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.37.0...quilt-rs/v0.38.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.22.0] - 2026-09-08
+
+### Added
+
+- When a new revision arrives, a notification names the files it brought — new, updated, removed — where a background pull used to change your folder in silence. Notifications stack, each closes on its own button, and one raised while the window was shut is waiting when you open it. Under individual-file sync a revision's new files are listed rather than downloaded, and the notification says so
+  - <https://github.com/quiltdata/quilt-rs/pull/897>
+  - <https://github.com/quiltdata/quilt-rs/pull/898>
+- Before you pull, the packages list and an outdated package's banner name the files the revision would bring (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+### Changed
+
+- A manual Pull is confirmed by that report instead of "Successfully pulled package …", which said the same thing twice over. A pull with nothing to report — a revision that moved no files — still shows the line (<https://github.com/quiltdata/quilt-rs/pull/898>)
+
+### Fixed
+
+- *Save diagnostics* now includes the end of the log. The last lines of a session were dropped when the app quit — the ones covering whatever you were doing when the problem started — so the archive you send support stopped just short of the part that explains it. A crash or a force-quit still loses them (<https://github.com/quiltdata/quilt-rs/pull/883>)
+
+### quilt-rs
+
+- Updated [from v0.36.0 to v0.37.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.36.0...quilt-rs/v0.37.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
+
+## [v0.21.2] - 2026-09-02
+
+### Fixed
+
+- A credential S3 refuses is no longer reported as raw AWS error text: where the response names the cause, it is told apart from a role denial, and where the bucket was reached with your own `~/.aws` credentials it says to update that file rather than offering a sign-in that cannot help. Two paths do not benefit yet — an installed package's page and the packages list keep showing last-known state, and a push reports the rejection as a role denial (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- Background sync tells a refused credential from a network blip instead of retrying it quietly, and counts one episode per deployment rather than one per package. What you see is unchanged: the affordance still renders per package, and there is no notification (<https://github.com/quiltdata/quilt-rs/pull/861>)
+- A missing package or object now reads "Package not found: the requested version or object does not exist" instead of the AWS error text (<https://github.com/quiltdata/quilt-rs/pull/861>)
+
+### quilt-rs
+
+- Updated [from v0.35.0 to v0.36.0](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.35.0...quilt-rs/v0.36.0) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.21.1] - 2026-08-07
 

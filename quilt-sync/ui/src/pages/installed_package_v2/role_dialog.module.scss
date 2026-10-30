@@ -1,0 +1,7 @@
+// The refusal: one sentence, prose. `margin: 0` because it is a `p` and the
+// reset leaves paragraph margins alone; the fieldset's gap spaces it from the
+// select below.
+.refusal {
+  margin: 0;
+  line-height: var(--q-line-body);
+}

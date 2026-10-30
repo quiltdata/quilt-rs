@@ -38,11 +38,31 @@ impl Default for RevisionPointer {
 /// In theory namespace is just a string.
 /// But in practice we use "prefix/name".
 /// For ease of serializing/deserializing and for validation we put it to a struct.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(any(test, feature = "test-support"), derive(Default))]
 pub struct Namespace {
     prefix: String,
     name: String,
+}
+
+impl Namespace {
+    /// The half before the `/`.
+    ///
+    /// Readers group by this — a prefix spans the packages one owner or project
+    /// published — and without it they re-derive it by splitting [`Display`]'s
+    /// output, which is the one split this type exists to have already done.
+    ///
+    /// [`Display`]: std::fmt::Display
+    #[must_use]
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    /// The half after the `/`.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 impl Ord for Namespace {
@@ -282,6 +302,22 @@ impl TryFrom<&str> for S3PackageUri {
     }
 }
 
+/// The characters that would otherwise be read as fragment structure.
+///
+/// `&`, `=` and `#` delimit; `+` decodes as a space and `%` opens an escape.
+/// Everything else is left alone — `/` above all, because a namespace and a
+/// logical key are full of them and these addresses are read and pasted by
+/// hand.
+const FRAGMENT_VALUE: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
+    .add(b'&')
+    .add(b'=')
+    .add(b'#')
+    .add(b'+')
+    .add(b'%');
+
+/// [`FRAGMENT_VALUE`] and space, which would end a link pasted into a chat.
+const COPY_VALUE: &percent_encoding::AsciiSet = &FRAGMENT_VALUE.add(b' ');
+
 impl S3PackageUri {
     fn format_hash(hash: &str) -> String {
         if hash.len() <= 12 {
@@ -293,22 +329,45 @@ impl S3PackageUri {
 
     #[must_use]
     pub fn display(&self) -> String {
+        self.render(false, FRAGMENT_VALUE)
+    }
+
+    /// The address in full for copying: the whole hash, and every fragment
+    /// value escaped, spaces too, so a pasted address stays one link.
+    #[must_use]
+    pub fn to_copy_string(&self) -> String {
+        self.render(true, COPY_VALUE)
+    }
+
+    /// Each fragment value is escaped with `set`, safe to put beside the
+    /// delimiters.
+    ///
+    /// The parse side reads the fragment with `form_urlencoded`, so anything written
+    /// raw comes back changed or truncated: a logical key holding `&` ends the value
+    /// early and the rest is read as another parameter.
+    fn render(&self, full_hash: bool, set: &'static percent_encoding::AsciiSet) -> String {
+        let encode = |value: &str| percent_encoding::utf8_percent_encode(value, set).to_string();
         let hash = match &self.revision {
             RevisionPointer::Tag(Tag::Latest) => String::new(),
-            RevisionPointer::Tag(tag) => format!(":{tag}"),
-            RevisionPointer::Hash(h) => format!("@{}", Self::format_hash(h)),
+            RevisionPointer::Tag(tag) => format!(":{}", encode(&tag.to_string())),
+            RevisionPointer::Hash(h) if full_hash => format!("@{}", encode(h)),
+            RevisionPointer::Hash(h) => format!("@{}", encode(&Self::format_hash(h))),
         };
         let path_part = match &self.path {
-            Some(p) => format!("&path={}", p.display()),
+            Some(p) => format!("&path={}", encode(&p.display().to_string())),
             None => String::new(),
         };
         let catalog_part = match &self.catalog {
-            Some(p) => format!("&catalog={p}"),
+            Some(p) => format!("&catalog={}", encode(&p.to_string())),
             None => String::new(),
         };
         format!(
             "quilt+s3://{}#package={}{}{}{}",
-            self.bucket, self.namespace, hash, path_part, catalog_part
+            self.bucket,
+            encode(&self.namespace.to_string()),
+            hash,
+            path_part,
+            catalog_part
         )
     }
 
@@ -413,6 +472,46 @@ mod tests {
     use crate::fixtures;
 
     type Res<T = ()> = Result<T, UriError>;
+
+    /// The halves a reader wants, without re-splitting `Display`'s output.
+    #[test]
+    fn a_namespace_lends_its_halves() -> Res {
+        let ns: Namespace = "team/plate-07".try_into()?;
+        assert_eq!(ns.prefix(), "team");
+        assert_eq!(ns.name(), "plate-07");
+        // And the whole is still what it always was, so nothing reading the
+        // display form has to change.
+        assert_eq!(ns.to_string(), "team/plate-07");
+        Ok(())
+    }
+
+    /// A name may hold a `-`, a `.`, a `_`; only the first `/` divides, and
+    /// `try_from` has already rejected a second one. So `name()` never has to be
+    /// re-split by a caller either.
+    #[test]
+    fn only_the_first_slash_divides() -> Res {
+        let ns: Namespace = "my.team_1/plate-07.v2".try_into()?;
+        assert_eq!(ns.prefix(), "my.team_1");
+        assert_eq!(ns.name(), "plate-07.v2");
+        assert!(
+            Namespace::try_from("a/b/c").is_err(),
+            "a second / is refused"
+        );
+        Ok(())
+    }
+
+    /// `Hash`, so a caller can key a map by the package a row is about rather
+    /// than by a string spelling of it.
+    #[test]
+    fn a_namespace_can_key_a_map() -> Res {
+        use std::collections::HashMap;
+
+        let mut seen: HashMap<Namespace, u8> = HashMap::new();
+        seen.insert("team/plate-07".try_into()?, 1);
+        assert_eq!(seen.get(&Namespace::try_from("team/plate-07")?), Some(&1));
+        assert_eq!(seen.get(&Namespace::try_from("team/plate-08")?), None);
+        Ok(())
+    }
 
     #[test]
     fn test_implicit_str_parsing() -> Res {
@@ -530,7 +629,7 @@ mod tests {
     #[test]
     fn test_catalog() -> Res {
         let uri: S3PackageUri =
-            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev".parse()?;
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=quilt.test".parse()?;
         assert_eq!(
             uri,
             S3PackageUri {
@@ -555,7 +654,7 @@ mod tests {
         };
         assert_eq!(
             uri.to_string(),
-            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev"
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=quilt.test"
         );
     }
 
@@ -682,14 +781,14 @@ mod tests {
             "quilt+s3://bucket#package=foo/bar&path=read/me.md".parse()?;
         assert_eq!(
             uri_latest.display_for_host(&host)?.as_str(),
-            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
+            "https://quilt.test/b/bucket/packages/foo/bar/tree/latest/read/me.md"
         );
 
         let uri_versioned: S3PackageUri =
             "quilt+s3://bucket#package=foo/bar@AaBbCcDdEeFfGgHhJjKk&path=read/me.md".parse()?;
         assert_eq!(
             uri_versioned.display_for_host(&host)?.as_str(),
-            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/AaBbCcDdEeFfGgHhJjKk/read/me.md"
+            "https://quilt.test/b/bucket/packages/foo/bar/tree/AaBbCcDdEeFfGgHhJjKk/read/me.md"
         );
         Ok(())
     }
@@ -697,10 +796,10 @@ mod tests {
     #[test]
     fn test_display_for_catalog() -> Res {
         let uri_with_catalog: S3PackageUri =
-            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=test.quilt.dev".parse()?;
+            "quilt+s3://bucket#package=foo/bar&path=read/me.md&catalog=quilt.test".parse()?;
         assert_eq!(
             uri_with_catalog.display_for_catalog()?.as_str(),
-            "https://test.quilt.dev/b/bucket/packages/foo/bar/tree/latest/read/me.md"
+            "https://quilt.test/b/bucket/packages/foo/bar/tree/latest/read/me.md"
         );
 
         let uri_without_catalog: S3PackageUri =
@@ -923,7 +1022,7 @@ mod tests {
         };
         assert_eq!(
             timestamped.display(),
-            "quilt+s3://bucket#package=foo/bar:1697916638&catalog=test.quilt.dev"
+            "quilt+s3://bucket#package=foo/bar:1697916638&catalog=quilt.test"
         );
     }
 
@@ -1024,5 +1123,106 @@ mod tests {
         let json = serde_json::to_string(&uri).unwrap();
         let parsed: S3PackageUri = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, uri);
+    }
+
+    /// A logical key is user data and may hold anything a filesystem allows.
+    /// The fragment is read with `form_urlencoded`, so every character that
+    /// means something there has to survive the trip out and back.
+    #[test]
+    fn a_path_holding_fragment_delimiters_round_trips() {
+        for path in [
+            "a&catalog=evil.csv",
+            "plus+one.csv",
+            "a=b.csv",
+            "hash#tag.csv",
+            "already%2Fencoded.csv",
+            "with space.csv",
+            "runs/2026/plate-07/A01.fcs",
+        ] {
+            let uri = S3PackageUri {
+                catalog: None,
+                bucket: "b".to_string(),
+                namespace: ("user", "p").into(),
+                revision: RevisionPointer::Tag(Tag::Latest),
+                path: Some(PathBuf::from(path)),
+            };
+
+            let back = S3PackageUri::try_from(uri.display().as_str())
+                .unwrap_or_else(|e| panic!("{path:?} -> {} : {e}", uri.display()));
+
+            assert_eq!(back, uri, "{path:?} came back as {}", uri.display());
+        }
+    }
+
+    /// The copied form comes back whole whatever the values hold, pinned or at
+    /// latest: every delimiter and space escaped, and the hash never shortened.
+    #[test]
+    fn the_copy_string_round_trips() {
+        let hash = "0123456789abcdef".repeat(4);
+        for revision in [
+            RevisionPointer::Tag(Tag::Latest),
+            RevisionPointer::Hash(hash.clone()),
+        ] {
+            for value in [
+                "a+b",
+                "a&catalog=evil",
+                "100%",
+                "hash#tag",
+                "a=b",
+                "with space",
+            ] {
+                let uri = S3PackageUri {
+                    catalog: Some("quilt.test".parse().unwrap()),
+                    bucket: "b".to_string(),
+                    namespace: ("user", value).into(),
+                    revision: revision.clone(),
+                    path: Some(PathBuf::from(format!("dir/{value}.csv"))),
+                };
+                let copied = uri.to_copy_string();
+
+                assert!(!copied.contains(' '), "{copied}");
+                let back = S3PackageUri::try_from(copied.as_str())
+                    .unwrap_or_else(|e| panic!("{value:?} -> {copied} : {e}"));
+                assert_eq!(back, uri, "{value:?} came back from {copied}");
+            }
+        }
+    }
+
+    /// Slashes stay literal in the copied form too, and the hash is whole.
+    #[test]
+    fn the_copy_string_keeps_slashes_and_the_whole_hash() {
+        let hash = "0123456789abcdef".repeat(4);
+        let uri = S3PackageUri {
+            catalog: Some("quilt.test".parse().unwrap()),
+            bucket: "team-bucket".to_string(),
+            namespace: ("user", "plate-07").into(),
+            revision: RevisionPointer::Hash(hash.clone()),
+            path: Some(PathBuf::from("runs/a/one.csv")),
+        };
+
+        assert_eq!(
+            uri.to_copy_string(),
+            format!(
+                "quilt+s3://team-bucket#package=user/plate-07@{hash}&path=runs/a/one.csv&catalog=quilt.test"
+            )
+        );
+    }
+
+    /// The readable part stays readable: a plain address carries its slashes
+    /// literally, because these are pasted into a terminal and a chat window.
+    #[test]
+    fn an_ordinary_address_is_not_escaped() {
+        let uri = S3PackageUri {
+            catalog: None,
+            bucket: "team-bucket".to_string(),
+            namespace: ("user", "plate-07").into(),
+            revision: RevisionPointer::Tag(Tag::Latest),
+            path: Some(PathBuf::from("runs/a/one.csv")),
+        };
+
+        assert_eq!(
+            uri.display(),
+            "quilt+s3://team-bucket#package=user/plate-07&path=runs/a/one.csv"
+        );
     }
 }

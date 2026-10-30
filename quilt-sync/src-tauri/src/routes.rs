@@ -166,6 +166,9 @@ fn parse_s3_package_uri(location: &str) -> Result<quilt_uri::S3PackageUri, Error
 #[derive(Debug, PartialEq, Clone, Serialize)]
 #[serde(tag = "t", content = "c")]
 pub enum Paths {
+    /// `/`, which renders whichever main page the reader has switched on.
+    #[serde(rename = "home")]
+    Home,
     #[serde(rename = "commit")]
     Commit(quilt_uri::Namespace, EntriesFilter),
     #[serde(rename = "installed_package")]
@@ -189,6 +192,9 @@ pub enum Paths {
 impl fmt::Display for Paths {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Paths::Home => {
+                write!(f, "/")
+            }
             Paths::Commit(namespace, filter) => {
                 let filter_str = filter.to_string();
                 if filter_str.is_empty() {
@@ -265,6 +271,8 @@ fn format_namespace_filter_query(
     namespace: &quilt_uri::Namespace,
     filter: &EntriesFilter,
 ) -> String {
+    let namespace = namespace.to_string();
+    let namespace = urlencoding::encode(&namespace);
     let filter_str = filter.to_string();
     if filter_str.is_empty() {
         format!("namespace={namespace}")
@@ -276,6 +284,11 @@ fn format_namespace_filter_query(
 pub fn from_url(path: Paths, mut url: Url) -> url::Url {
     url.set_fragment(None);
     match path {
+        Paths::Home => {
+            url.set_path("/");
+            url.set_query(None);
+            url
+        }
         Paths::Commit(ref namespace, ref filter) => {
             url.set_path("/commit");
             url.set_query(Some(&format_namespace_filter_query(namespace, filter)));
@@ -307,6 +320,8 @@ pub fn from_url(path: Paths, mut url: Url) -> url::Url {
             url
         }
         Paths::Merge(namespace) => {
+            let namespace = namespace.to_string();
+            let namespace = urlencoding::encode(&namespace);
             url.set_path("/merge");
             url.set_query(Some(&format!("namespace={namespace}")));
             url
@@ -337,6 +352,9 @@ impl str::FromStr for Paths {
     fn from_str(location: &str) -> Result<Self, Self::Err> {
         let page = parse_page(location)?;
         match page.as_str() {
+            // `/` has one empty trailing segment, so this is the root and not a
+            // missing page.
+            "" => Ok(Paths::Home),
             "commit" => {
                 let namespace = parse_namespace(location)?;
                 let filter = parse_filter(location)?;
@@ -375,8 +393,7 @@ impl str::FromStr for Paths {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use quilt_uri::Host;
+    use quilt_uri::fixtures;
 
     use crate::Result;
 
@@ -387,7 +404,7 @@ mod tests {
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
-        assert_eq!(page_url_str, "http://test:1234/commit?namespace=foo/bar");
+        assert_eq!(page_url_str, "http://test:1234/commit?namespace=foo%2Fbar");
 
         let route: Paths = page_url_str.parse()?;
 
@@ -413,7 +430,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/commit?namespace=foo/bar&filter=unmodified,ignored"
+            "http://test:1234/commit?namespace=foo%2Fbar&filter=unmodified,ignored"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -431,7 +448,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/installed-package?namespace=foo/bar"
+            "http://test:1234/installed-package?namespace=foo%2Fbar"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -455,7 +472,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/installed-package?namespace=foo/bar&filter=unmodified"
+            "http://test:1234/installed-package?namespace=foo%2Fbar&filter=unmodified"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -463,6 +480,20 @@ mod tests {
             route,
             Paths::InstalledPackage(("foo", "bar").into(), filter)
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_home() -> Result<()> {
+        let page_url = from_url(Paths::Home, Url::parse("http://test:1234/settings")?);
+        let page_url_str = page_url.as_str();
+        assert_eq!(page_url_str, "http://test:1234/");
+
+        let route: Paths = page_url_str.parse()?;
+
+        assert_eq!(route, Paths::Home);
+        assert_eq!(format!("{route}"), "/");
 
         Ok(())
     }
@@ -484,9 +515,25 @@ mod tests {
         Ok(())
     }
 
+    /// A namespace holding query characters comes back whole from the page
+    /// address a login lands on.
+    #[test]
+    fn a_namespace_survives_the_page_address() -> Result<()> {
+        let namespace: quilt_uri::Namespace = ("org", "a&b#c+d").into();
+        for path in [
+            Paths::InstalledPackage(namespace.clone(), EntriesFilter::for_installed_package()),
+            Paths::Commit(namespace.clone(), EntriesFilter::default()),
+            Paths::Merge(namespace.clone()),
+        ] {
+            let page_url = from_url(path.clone(), Url::parse("http://test:1234/")?);
+            assert_eq!(page_url.as_str().parse::<Paths>()?, path);
+        }
+        Ok(())
+    }
+
     #[test]
     fn test_login() -> Result<()> {
-        let host: Host = "test.quilt.dev".parse()?;
+        let host = fixtures::host();
         let back = Paths::InstalledPackagesList.to_string();
         let page_url = from_url(
             Paths::Login(host.clone(), back.clone()),
@@ -495,7 +542,7 @@ mod tests {
         let page_url_str = page_url.as_str();
         assert_eq!(
             page_url_str,
-            "http://test:1234/login?host=test.quilt.dev&back=%2Finstalled-packages-list"
+            "http://test:1234/login?host=quilt.test&back=%2Finstalled-packages-list"
         );
 
         let route: Paths = page_url_str.parse()?;
@@ -503,7 +550,7 @@ mod tests {
         assert_eq!(route, Paths::Login(host, back));
         assert_eq!(
             format!("{route}"),
-            "/login?host=test.quilt.dev&back=%2Finstalled-packages-list"
+            "/login?host=quilt.test&back=%2Finstalled-packages-list"
         );
 
         Ok(())
@@ -511,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_login_error() -> Result<()> {
-        let host: Host = "test.quilt.dev".parse()?;
+        let host = fixtures::host();
         let title = "Login failed";
         let error = "Auth failed: invalid_grant (token expired)";
         let page_url = from_url(
@@ -519,7 +566,7 @@ mod tests {
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
-        assert!(page_url_str.starts_with("http://test:1234/error?host=test.quilt.dev&title="));
+        assert!(page_url_str.starts_with("http://test:1234/error?host=quilt.test&title="));
 
         let route: Paths = page_url_str.parse()?;
         assert_eq!(
@@ -532,7 +579,7 @@ mod tests {
 
     #[test]
     fn test_login_error_without_title_defaults_to_login_failed() -> Result<()> {
-        let host: Host = "test.quilt.dev".parse()?;
+        let host = fixtures::host();
         let error = "Auth failed";
         let url = format!(
             "http://test:1234/error?host={host}&error={}",
@@ -553,7 +600,7 @@ mod tests {
             Url::parse("http://test:1234/")?,
         );
         let page_url_str = page_url.as_str();
-        assert_eq!(page_url_str, "http://test:1234/merge?namespace=foo/bar");
+        assert_eq!(page_url_str, "http://test:1234/merge?namespace=foo%2Fbar");
 
         let route: Paths = page_url_str.parse()?;
 
@@ -616,12 +663,12 @@ mod tests {
     }
 
     #[test]
-    fn test_pathname_privacy() -> Result<()> {
+    fn test_pathname_privacy() {
         let commit_path =
             Paths::Commit(("sensitive", "namespace").into(), EntriesFilter::default());
         assert_eq!(commit_path.pathname(), "commit");
 
-        let login_path = Paths::Login("sensitive.host.com".parse()?, "/secret-page".into());
+        let login_path = Paths::Login(fixtures::host(), "/secret-page".into());
         assert_eq!(login_path.pathname(), "login");
 
         let installed_package_path =
@@ -630,6 +677,9 @@ mod tests {
 
         let list_path = Paths::InstalledPackagesList;
         assert_eq!(list_path.pathname(), "installed_packages_list");
+
+        let home_path = Paths::Home;
+        assert_eq!(home_path.pathname(), "home");
 
         let merge_path = Paths::Merge(("secret", "repo").into());
         assert_eq!(merge_path.pathname(), "merge");
@@ -645,8 +695,6 @@ mod tests {
         // But pathname() does not
         assert!(!commit_path.pathname().contains("sensitive"));
         assert!(!commit_path.pathname().contains("namespace"));
-
-        Ok(())
     }
 
     #[test]
@@ -690,9 +738,36 @@ mod tests {
         Ok(())
     }
 
+    /// The frontend percent-encodes a namespace into its hrefs
+    /// (`ui/src/routes.rs`), and one of those hrefs travels here as a `back`.
+    /// So the query this parser reads is not only the one `Display` above
+    /// writes — it is also the encoded spelling of the same address, and the
+    /// two have to mean one package.
+    #[test]
+    fn an_encoded_namespace_parses_to_the_same_package() -> Result<()> {
+        let encoded: Paths = "/installed-package?namespace=foo%2Fbar&filter=unmodified".parse()?;
+        assert_eq!(
+            encoded,
+            Paths::InstalledPackage(
+                ("foo", "bar").into(),
+                EntriesFilter::for_installed_package()
+            )
+        );
+
+        // And a namespace holding a character that would otherwise end the
+        // parameter — the defect the frontend's encoding exists for.
+        let amp: Paths = "/commit?namespace=team%2Fa%26b".parse()?;
+        assert_eq!(
+            amp,
+            Paths::Commit(("team", "a&b").into(), EntriesFilter::default())
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn test_login_with_encoded_back() -> Result<()> {
-        let host: Host = "test.quilt.dev".parse()?;
+        let host = fixtures::host();
         let back = Paths::InstalledPackage(
             ("foo", "bar").into(),
             EntriesFilter::for_installed_package(),

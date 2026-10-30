@@ -1,0 +1,12 @@
+/*
+ * TextArea. `TextInput`'s box, lines tall. Padded on every side, because the
+ * text wraps onto lines a single-line field never has. The element in the
+ * selector outranks `TextInput`'s `.root`, whichever loads last.
+ */
+
+textarea.root {
+  display: block;
+  padding: var(--q-space-2);
+  line-height: var(--q-line-body);
+  resize: vertical;
+}

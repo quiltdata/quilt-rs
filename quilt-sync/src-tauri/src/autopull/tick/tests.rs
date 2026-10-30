@@ -1,21 +1,40 @@
 use super::*;
+use quilt_uri::fixtures;
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
+use chrono::DateTime;
+use chrono::Utc;
 use tokio::sync::RwLock;
 
 use crate::autopull::AutosyncSettings;
+use crate::autopull::Clocks;
 use crate::autopull::PullSettings;
 use crate::autopull::PushSettings;
-use crate::autopull::WindowMode;
+use crate::autopull::activity::AutopullActivity;
+use crate::autopull::last_change::LastChange;
 use crate::autopull::reporter::LogReporter;
 use crate::autopull::reporter::test_support::RecordingReporter;
-use crate::experimental_settings::ExperimentalSettings;
 use crate::model::MockQuiltModel;
 use crate::quilt::lineage::SyncScope;
 use crate::quilt::lineage::UpstreamState;
 
+/// A pull that advanced to `uri` and moved nothing — the tick only reads the
+/// success of the call, not the report it now carries.
+fn pulled(uri: quilt_uri::ManifestUri) -> quilt::flow::PullReport {
+    quilt::flow::PullReport {
+        manifest_uri: uri,
+        added: Vec::new(),
+        added_not_fetched: Vec::new(),
+        updated: Vec::new(),
+        removed: Vec::new(),
+        message: None,
+    }
+}
+
 mod publish;
+mod watched;
 
 /// Hex of an ASCII string, matching the per-byte path encoding in the status
 /// fingerprint — for asserting a path appears hex-encoded in an outcome digest.
@@ -35,14 +54,17 @@ fn test_aggregator() -> Arc<crate::autopull::status::SyncTrayAggregator> {
 fn make_inner(settings: AutosyncSettings) -> WatcherInner {
     WatcherInner {
         settings: Arc::new(RwLock::new(settings)),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: Arc::new(LogReporter),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
+        last_change: LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
     }
 }
 
@@ -94,17 +116,9 @@ fn classify_sync_diverged() {
 }
 
 #[test]
-fn classify_sync_already_up_to_date_is_ok() {
-    let err = Error::from(quilt::Error::PackageOp(
-        quilt::PackageOpError::AlreadyUpToDate,
-    ));
-    assert!(classify_sync_err(err).is_ok());
-}
-
-#[test]
 fn classify_sync_login_required() {
-    let host: Host = "catalog.dev".parse().unwrap();
-    let err = Error::from(quilt::Error::Login(quilt::LoginError::Required(Some(
+    let host = fixtures::host();
+    let err = Error::from(quilt::Error::Login(quilt::LoginError::NoSession(Some(
         host.clone(),
     ))));
     match classify_sync_err(err) {
@@ -230,6 +244,37 @@ fn access_denied_error() -> Error {
     )))
 }
 
+/// An S3 refusal carrying a credential code, as it reaches the classifiers once
+/// the session's keys are stale.
+fn invalid_credentials_error() -> Error {
+    Error::from(quilt::Error::S3(quilt::S3Error::new(
+        quilt::S3ErrorKind::InvalidCredentials("ExpiredToken: the token expired".to_string()),
+    )))
+}
+
+/// Retrying a rejected credential never succeeds — the user has to sign in.
+/// `Error::S3` lands in the transient bucket, so an arm that does not precede it
+/// backs off to the 64 s cap while the login affordance never appears.
+#[test]
+fn invalid_credentials_ask_for_login_rather_than_retrying_forever() {
+    let classified = classify_sync_err(invalid_credentials_error()).unwrap_err();
+
+    assert!(
+        matches!(classified, WatchError::LoginRequired(_)),
+        "expected LoginRequired, got: {classified:?}"
+    );
+}
+
+/// The read side, mirroring `access_denied_on_status_refresh_pauses`: the cheap
+/// status refresh and the pull dry-run go through the other classifier.
+#[test]
+fn invalid_credentials_on_status_refresh_ask_for_login() {
+    match classify_transient_or_login(invalid_credentials_error()) {
+        WatchError::LoginRequired(_) => {}
+        other => panic!("expected LoginRequired, got {other:?}"),
+    }
+}
+
 /// A role denial can never succeed on retry — the role must change first.
 /// Leaving it in the transient bucket means autosync retries forever (capped
 /// at 64 s) and the user is never told why nothing is syncing.
@@ -330,9 +375,43 @@ async fn run_once_disabled_is_a_noop() -> Result<(), Error> {
 }
 
 #[tokio::test]
+async fn a_running_tick_advertises_the_next_tick_not_the_one_it_is_serving() -> Result<(), Error> {
+    // The spawn loop arms `now + cadence` and then sleeps `cadence`, so when a
+    // tick starts its deadline is already now, and it stays in the past while
+    // the tick runs. Without the arming in `run_once`, the v2 card reads a past
+    // deadline, refetches after `REFETCH_DUE_FLOOR`, reads the same deadline
+    // again, and restarts its ring from zero every 10s.
+    //
+    // Tested through `run_once` because the spawn loop needs a Tauri runtime and
+    // cannot run in a test. The cadence arithmetic is tested by
+    // `arming_the_pull_records_a_deadline_one_cadence_out`.
+    let model = MockQuiltModel::new();
+    let inner = make_inner(AutosyncSettings::default());
+    assert!(
+        inner.clocks.next_pull_at.read().await.is_none(),
+        "precondition: a cold start has nothing armed"
+    );
+
+    let before = DateTime::<Utc>::from(crate::autopull::last_change::now());
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    let at = inner
+        .clocks
+        .next_pull_at
+        .read()
+        .await
+        .expect("a tick must arm the tick that follows it");
+    assert!(
+        at > before,
+        "a running tick must not advertise a deadline already past: {at} vs {before}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -348,53 +427,62 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         .returning(move || {
             Ok(vec![
                 quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
+                    .create_installed_package(("acme", "demo").into()),
             ])
         });
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage_for_list.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
-    model
-        .expect_get_installed_package_status()
-        .returning(|_, _| {
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::Behind,
-                BTreeMap::new(),
-            ))
-        });
+    model.expect_locked_package_status().returning(|_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        ))
+    });
     // Clean tree: the dry-run classifier reports a straight surgical update.
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(|_| Ok(PullOutcome::CleanUpdate));
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        })
-    });
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -405,8 +493,206 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
         assert_eq!(statuses[0].0, ns);
         assert_eq!(statuses[0].1.status, "up_to_date");
         assert!(!statuses[0].1.has_changes);
+        // The revision the pull reached is `latest` now: the next tick
+        // observes that, and must find it old news.
+        assert_eq!(
+            statuses[0].1.fingerprint,
+            crate::autopull::reporter::settled_fingerprint("h1", "")
+        );
     }
+    // The mock's report names no files — the metadata-only shape, whose hashes
+    // advance and whose files do not. An entry that stands until dismissed must
+    // not say nothing, so silence is the correct outcome here.
+    assert!(
+        reporter.pulled.lock().unwrap().is_empty(),
+        "a pull that moved nothing posted a toast"
+    );
     assert!(inner.paused.read().await.is_empty());
+    Ok(())
+}
+
+/// A whole-package scope stored under the experiment is honoured with the
+/// experiment off: v2's Keeping promises files added later are downloaded too.
+#[tokio::test]
+async fn a_stored_whole_package_scope_reaches_the_background_pull() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let host = fixtures::host();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: Some(host),
+    };
+    let mut lineage = quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string());
+    lineage.sync_scope = SyncScope::EntirePackage;
+
+    let mut model = MockQuiltModel::new();
+    let lineage_for_list = lineage.clone();
+    model
+        .expect_get_installed_packages_list()
+        .returning(move || {
+            Ok(vec![
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(("acme", "demo").into()),
+            ])
+        });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage_for_list.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    model.expect_locked_package_status().returning(|_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        ))
+    });
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
+    model
+        .expect_locked_package_pull()
+        .withf(|_, _, scope| *scope == SyncScope::EntirePackage)
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
+        });
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        settings: Arc::new(RwLock::new(enabled())),
+        publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+        paused: RwLock::new(BTreeMap::new()),
+        backoff: RwLock::new(BTreeMap::new()),
+        login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
+        reporter: reporter.clone(),
+        aggregator: test_aggregator(),
+        clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
+    };
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+    Ok(())
+}
+
+/// The tick's only outward sign of a pull was a status string; this is the pair
+/// of `report_published` for the other direction. The wording is asserted, not
+/// merely the fact that something was posted — a report naming no files, or the
+/// wrong group, is the failure a user would see.
+#[tokio::test]
+async fn a_pull_reports_what_it_brought() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let host = fixtures::host();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: Some(host),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string());
+
+    let mut model = MockQuiltModel::new();
+    let lineage_for_list = lineage.clone();
+    model
+        .expect_get_installed_packages_list()
+        .returning(move || {
+            Ok(vec![
+                quilt::LocalDomain::new(std::path::PathBuf::new())
+                    .create_installed_package(("acme", "demo").into()),
+            ])
+        });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage_for_list.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    model.expect_locked_package_status().returning(|_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        ))
+    });
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
+    // Individual-file scope: the revision's new path is listed and not fetched.
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| {
+            let mut report = pulled(quilt_uri::ManifestUri {
+                bucket: "bucket".to_string(),
+                namespace: ("acme", "demo").into(),
+                hash: "h1".to_string(),
+                origin: None,
+            });
+            report.added_not_fetched = vec![std::path::PathBuf::from("qc/summary.csv")];
+            report.updated = vec![std::path::PathBuf::from("reads/day2.fastq")];
+            Ok(quilt::flow::Pulled::Applied(report))
+        });
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        settings: Arc::new(RwLock::new(enabled())),
+        publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
+        paused: RwLock::new(BTreeMap::new()),
+        backoff: RwLock::new(BTreeMap::new()),
+        login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
+        reporter: reporter.clone(),
+        aggregator: test_aggregator(),
+        // Branch-only field (plan 3's `next_pull_at`), so `main`'s own test could
+        // not have set it.
+        clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
+    };
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    let pulled = reporter.pulled.lock().unwrap();
+    assert_eq!(pulled.len(), 1, "the pull reported nothing");
+    assert_eq!(pulled[0].0, ns);
+    // The lead sentence states the event; without it the toast opens with a
+    // package name and a file count and never says why it is on screen.
+    assert_eq!(pulled[0].1.body, "Updated to a newer revision.");
+    let groups = &pulled[0].1.groups;
+    assert_eq!(groups.len(), 2, "one group per kind of change");
+    assert_eq!(groups[0].heading, "1 file new, not downloaded");
+    assert_eq!(groups[0].items, ["qc/summary.csv"]);
+    assert_eq!(groups[1].heading, "1 file updated");
+    assert_eq!(groups[1].items, ["reads/day2.fastq"]);
     Ok(())
 }
 
@@ -417,7 +703,7 @@ async fn run_once_behind_and_clean_pulls_and_emits_up_to_date() -> Result<(), Er
 #[tokio::test]
 async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -430,18 +716,19 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     // Behind with a local addition present.
@@ -450,43 +737,58 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         std::path::PathBuf::from("local.txt"),
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
+    // The second walk is the one after the pull.
     model
-        .expect_get_installed_package_status()
-        .return_once(move |_, _| {
+        .expect_locked_package_status()
+        .times(2)
+        .returning(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
-                changes,
+                changes.clone(),
             ))
         });
     // Dry run: the surgical update reconciles cleanly, keeping the local add.
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::KeepsLocalChanges {
-            added: vec![std::path::PathBuf::from("local.txt")],
-            modified: Vec::new(),
-            removed: Vec::new(),
-        })
-    });
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| {
+            Ok(PullOutcome::KeepsLocalChanges {
+                added: vec![std::path::PathBuf::from("local.txt")],
+                modified: Vec::new(),
+                removed: Vec::new(),
+            })
+        });
     // The pull is actually performed.
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        })
-    });
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -503,6 +805,10 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
         );
     }
     assert!(inner.paused.read().await.is_empty());
+    assert!(
+        inner.clocks.publish_waiting.read().await.contains(&ns),
+        "the kept work counts down, so the publish timer takes it next"
+    );
     Ok(())
 }
 
@@ -514,7 +820,7 @@ async fn behind_with_kept_changes_pulls() -> Result<(), Error> {
 #[tokio::test]
 async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -527,18 +833,19 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     // Pre-pull: the tree is dirty (a local edit is present), so the stale-true
@@ -549,7 +856,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .return_once(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
@@ -558,33 +865,46 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
         });
     // Dry run: the pull reconciles every local change (e.g. identical edit) →
     // KeepsLocalChanges with all-empty lists = nothing kept.
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::KeepsLocalChanges {
-            added: Vec::new(),
-            modified: Vec::new(),
-            removed: Vec::new(),
-        })
-    });
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        })
-    });
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| {
+            Ok(PullOutcome::KeepsLocalChanges {
+                added: Vec::new(),
+                modified: Vec::new(),
+                removed: Vec::new(),
+            })
+        });
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -611,7 +931,7 @@ async fn behind_trivially_resolved_reports_clean() -> Result<(), Error> {
 #[tokio::test]
 async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -624,18 +944,19 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     // Pre-pull walk reports a dirty tree (stale-true source).
@@ -645,7 +966,7 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .return_once(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
@@ -653,29 +974,39 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
             ))
         });
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(|_| Ok(PullOutcome::CleanUpdate));
-    model.expect_package_pull().times(1).returning(|_, _, _| {
-        Ok(quilt_uri::ManifestUri {
-            bucket: "bucket".to_string(),
-            namespace: ("acme", "demo").into(),
-            hash: "h1".to_string(),
-            origin: None,
-        })
-    });
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| {
+            Ok(quilt::flow::Pulled::Applied(pulled(
+                quilt_uri::ManifestUri {
+                    bucket: "bucket".to_string(),
+                    namespace: ("acme", "demo").into(),
+                    hash: "h1".to_string(),
+                    origin: None,
+                },
+            )))
+        });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -693,13 +1024,13 @@ async fn behind_clean_update_ignores_stale_pre_pull_changes() -> Result<(), Erro
     Ok(())
 }
 
-/// An expired session surfacing mid-dry-run (from `package_pull_outcome`) must
+/// An expired session surfacing mid-dry-run (from `pull_verdict`) must
 /// classify as `LoginRequired`, not back off as a `Transient` — so the login
 /// affordance appears this tick instead of one backoff later.
 #[tokio::test]
 async fn dry_run_login_required_is_classified() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -709,30 +1040,30 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
     let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string());
 
     let mut model = MockQuiltModel::new();
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     // Status refresh succeeds and reports Behind, so the pull dry-run runs.
-    model
-        .expect_get_installed_package_status()
-        .returning(|_, _| {
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::Behind,
-                BTreeMap::new(),
-            ))
-        });
+    model.expect_locked_package_status().returning(|_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        ))
+    });
     // The dry-run itself hits an expired token.
     let host_for_dry_run = host.clone();
     model
-        .expect_package_pull_outcome()
+        .expect_locked_package_pull_verdict()
         .times(1)
         .returning(move |_| {
             Err(Error::from(quilt::Error::Login(
-                quilt::LoginError::Required(Some(host_for_dry_run.clone())),
+                quilt::LoginError::NoSession(Some(host_for_dry_run.clone())),
             )))
         });
 
@@ -741,10 +1072,13 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
         &ns,
         &lineage,
         &PublishSettings::default(),
+        &LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
+        &crate::autopull::watched::WatchedWalks::default(),
         Duration::from_secs(0),
         true,
         true,
         SyncScope::IndividualFiles,
+        &test_aggregator(),
     )
     .await;
 
@@ -761,7 +1095,7 @@ async fn dry_run_login_required_is_classified() -> Result<(), Error> {
 #[tokio::test]
 async fn behind_blocked_pauses() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -774,18 +1108,19 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     let mut changes = BTreeMap::new();
@@ -794,7 +1129,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .return_once(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
@@ -802,25 +1137,33 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
             ))
         });
     // Dry run: a tracked path changed on both sides → the whole pull blocks.
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::Blocked {
-            conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-        })
-    });
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| {
+            Ok(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            })
+        });
     // The pull itself must never run when the outcome is Blocked.
-    model.expect_package_pull().times(0);
+    model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -843,7 +1186,7 @@ async fn behind_blocked_pauses() -> Result<(), Error> {
 #[tokio::test]
 async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -856,43 +1199,47 @@ async fn run_once_login_required_bumps_backoff() -> Result<(), Error> {
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     // Status check itself fails with LoginRequired (mirrors what
     // `InstalledPackage::status` surfaces when the cached token has
     // expired).
     let host_for_status = host.clone();
-    model
-        .expect_get_installed_package_status()
-        .returning(move |_, _| {
-            Err(Error::from(quilt::Error::Login(
-                quilt::LoginError::Required(Some(host_for_status.clone())),
-            )))
-        });
+    model.expect_locked_package_status().returning(move |_, _| {
+        Err(Error::from(quilt::Error::Login(
+            quilt::LoginError::NoSession(Some(host_for_status.clone())),
+        )))
+    });
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -932,26 +1279,26 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
     let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
 
     let mut model = MockQuiltModel::new();
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
-    model
-        .expect_get_installed_package_status()
-        .returning(|_, _| {
-            let mut changes = BTreeMap::new();
-            changes.insert(
-                std::path::PathBuf::from("a.txt"),
-                quilt::lineage::Change::Modified(quilt::manifest::ManifestRow::default()),
-            );
-            Ok(quilt::lineage::InstalledPackageStatus::new(
-                UpstreamState::UpToDate,
-                changes,
-            ))
-        });
+    model.expect_locked_package_status().returning(|_, _| {
+        let mut changes = BTreeMap::new();
+        changes.insert(
+            std::path::PathBuf::from("a.txt"),
+            quilt::lineage::Change::Modified(quilt::manifest::ManifestRow::default()),
+        );
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::UpToDate,
+            changes,
+        ))
+    });
 
     // pull + push disabled → the tick observes and does nothing.
     let outcome = refresh_then_maybe_sync(
@@ -959,13 +1306,17 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
         &ns,
         &lineage,
         &PublishSettings::default(),
+        &LastChange::new(crate::quilt::state_store::PackageStateStore::in_memory()),
+        &crate::autopull::watched::WatchedWalks::default(),
         Duration::from_secs(0),
         false,
         false,
         SyncScope::IndividualFiles,
+        &test_aggregator(),
     )
     .await
-    .expect("no-action tick should be Ok");
+    .expect("no-action tick should be Ok")
+    .expect("the package was not busy");
 
     assert!(outcome.has_changes);
     let hex_path = hex("a.txt");
@@ -985,7 +1336,7 @@ async fn no_action_tick_carries_status_fingerprint() -> Result<(), Error> {
 #[tokio::test]
 async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
     let ns: Namespace = ("acme", "demo").into();
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let remote = quilt_uri::ManifestUri {
         bucket: "bucket".to_string(),
         namespace: ns.clone(),
@@ -998,18 +1349,19 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
     model.expect_get_installed_packages_list().returning(|| {
         Ok(vec![
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ])
     });
     model
         .expect_get_installed_package_lineage()
         .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
     model.expect_get_installed_package().returning(|_| {
         Ok(Some(
             quilt::LocalDomain::new(std::path::PathBuf::new())
-                .create_installed_package(("acme", "demo").into())
-                .unwrap(),
+                .create_installed_package(("acme", "demo").into()),
         ))
     });
     let mut changes = BTreeMap::new();
@@ -1018,31 +1370,39 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
     );
     model
-        .expect_get_installed_package_status()
+        .expect_locked_package_status()
         .return_once(move |_, _| {
             Ok(quilt::lineage::InstalledPackageStatus::new(
                 UpstreamState::Behind,
                 changes,
             ))
         });
-    model.expect_package_pull_outcome().times(1).returning(|_| {
-        Ok(PullOutcome::Blocked {
-            conflicts: vec![std::path::PathBuf::from("conflict.txt")],
-        })
-    });
-    model.expect_package_pull().times(0);
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| {
+            Ok(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            })
+        });
+    model.expect_locked_package_pull().times(0);
 
     let reporter = Arc::new(RecordingReporter::default());
     let inner = WatcherInner {
         settings: Arc::new(RwLock::new(enabled())),
-        experimental: Arc::new(RwLock::new(ExperimentalSettings::default())),
-        window_mode: Arc::new(RwLock::new(WindowMode::Focused)),
         publish_settings: Arc::new(RwLock::new(PublishSettings::default())),
         paused: RwLock::new(BTreeMap::new()),
         backoff: RwLock::new(BTreeMap::new()),
         login_blocked: RwLock::new(BTreeMap::new()),
+        refusals: tokio::sync::Mutex::default(),
         reporter: reporter.clone(),
         aggregator: test_aggregator(),
+        clocks: Clocks::default(),
+        walks: crate::autopull::watched::WatchedWalks::default(),
+        tasks: crate::tasks::Tasks::default(),
+        last_change: crate::autopull::last_change::LastChange::new(
+            crate::quilt::state_store::PackageStateStore::in_memory(),
+        ),
     };
 
     run_once(&model, &RoleCache::default(), &inner).await?;
@@ -1062,7 +1422,7 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
         format!("{};{}", event.status, event.has_changes),
         "conflict emit should carry a stable heuristic fingerprint, not an empty default"
     );
-    assert!(!event.fingerprint.is_empty());
+    assert_ne!(event.fingerprint, "");
     Ok(())
 }
 
@@ -1074,8 +1434,8 @@ async fn conflict_emit_carries_stable_fingerprint() -> Result<(), Error> {
 /// property under test is not about installation.
 #[test]
 fn login_episode_counts_per_deployment_not_per_package() {
-    let host: Host = "catalog.dev".parse().unwrap();
-    let other: Host = "elsewhere.dev".parse().unwrap();
+    let host = fixtures::one_host();
+    let other = fixtures::another_host();
 
     let mut blocked = BTreeMap::new();
     assert_eq!(
@@ -1102,7 +1462,7 @@ fn login_episode_counts_per_deployment_not_per_package() {
 /// unknown must never be taken for a known host.
 #[test]
 fn an_unattributed_login_failure_does_not_join_a_hosts_episode() {
-    let host: Host = "catalog.dev".parse().unwrap();
+    let host = fixtures::host();
     let mut blocked = BTreeMap::new();
     blocked.insert(("acme", "first").into(), Some(host));
 
@@ -1111,4 +1471,1287 @@ fn an_unattributed_login_failure_does_not_join_a_hosts_episode() {
         LoginBlock::Began,
         "a failure that could not name its deployment is not that deployment's"
     );
+}
+
+#[tokio::test]
+async fn arming_the_pull_records_a_deadline_one_cadence_out() {
+    let inner = make_inner(enabled());
+    let before = DateTime::<Utc>::from(crate::autopull::last_change::now());
+    crate::autopull::arm_next_pull(&inner, Duration::from_secs(30)).await;
+    let at = inner
+        .clocks
+        .next_pull_at
+        .read()
+        .await
+        .expect("arming must record a deadline");
+    // Absolute bounds. A test that asserted `at - before == cadence` would pass
+    // for any cadence, including a wrong one read from the wrong setting.
+    assert!(
+        at >= before + Duration::from_secs(29) && at <= before + Duration::from_secs(31),
+        "expected ~30s out, got {at} from {before}"
+    );
+}
+
+#[tokio::test]
+async fn nothing_is_armed_before_the_loop_runs() {
+    // Cold start: `main_page_facts` must be able to tell "not armed yet" from
+    // "armed for a moment in the past".
+    let inner = make_inner(enabled());
+    assert!(inner.clocks.next_pull_at.read().await.is_none());
+}
+
+/// A local status with `n` changed files.
+fn local_status(files: usize) -> quilt::lineage::InstalledPackageStatus {
+    let mut changes = quilt::lineage::ChangeSet::new();
+    for i in 0..files {
+        changes.insert(
+            std::path::PathBuf::from(format!("f{i}.csv")),
+            quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+        );
+    }
+    quilt::lineage::InstalledPackageStatus::new(UpstreamState::UpToDate, changes)
+}
+
+/// The card's deadline, with the wait `enabled()` sets.
+async fn card_deadline(inner: &WatcherInner) -> Option<DateTime<Utc>> {
+    crate::autopull::next_publish_at(inner, Duration::from_secs(300)).await
+}
+
+#[tokio::test]
+async fn a_local_edit_starts_the_countdown_without_waiting_for_a_tick() {
+    // If only the tick started it, the countdown would lag the working tree by
+    // a whole cadence, and the card would show "Nothing to publish" next to
+    // "1 file changed".
+    let inner = make_inner(enabled());
+    let ns: Namespace = ("acme", "demo").into();
+    let before = DateTime::<Utc>::from(crate::autopull::last_change::now());
+
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
+        None,
+        &local_status(1),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
+
+    let at = card_deadline(&inner)
+        .await
+        .expect("an edit must start a countdown");
+    // `enabled()` takes `PushSettings::default()`, whose `idle_timeout_secs` is
+    // 300. Absolute bounds and a literal: `at - seen == wait` holds for any wait,
+    // including one read from the wrong setting.
+    let expected = before + Duration::from_secs(300);
+    assert!(
+        at >= expected && at <= expected + Duration::from_secs(2),
+        "expected ~{expected}, got {at}"
+    );
+}
+
+#[tokio::test]
+async fn a_tree_with_nothing_in_it_clears_any_deadline() {
+    // Reverting a file leaves no changes, so there is nothing to count down to.
+    let inner = make_inner(enabled());
+    let ns: Namespace = ("acme", "demo").into();
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
+        None,
+        &local_status(1),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
+    assert!(
+        card_deadline(&inner).await.is_some(),
+        "precondition: waiting"
+    );
+
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
+        None,
+        &local_status(0),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
+
+    assert!(card_deadline(&inner).await.is_none());
+    assert!(inner.last_change.get(&ns).await.is_none());
+}
+
+#[tokio::test]
+async fn a_deadline_already_past_still_shows_the_package_waiting() {
+    // That package publishes at the next pass; hiding it would read as nothing
+    // to publish while it has changes.
+    let ns: Namespace = ("acme", "demo").into();
+    let inner = WatcherInner {
+        last_change: LastChange::changed_for_test(&ns, Duration::from_hours(1)).await,
+        ..make_inner(enabled())
+    };
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
+        None,
+        &local_status(1),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
+
+    assert!(
+        card_deadline(&inner)
+            .await
+            .is_some_and(|at| at < Utc::now())
+    );
+}
+
+#[tokio::test]
+async fn the_card_reads_the_wait_as_it_is_now() {
+    let ns: Namespace = ("acme", "demo").into();
+    let inner = WatcherInner {
+        last_change: LastChange::changed_for_test(&ns, Duration::from_mins(1)).await,
+        ..make_inner(enabled())
+    };
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
+        None,
+        &local_status(1),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
+
+    let long = crate::autopull::next_publish_at(&inner, Duration::from_mins(10)).await;
+    let short = crate::autopull::next_publish_at(&inner, Duration::from_mins(5)).await;
+    let (long, short) = (long.expect("waiting"), short.expect("waiting"));
+    assert_eq!(long - short, chrono::Duration::minutes(5));
+}
+
+#[tokio::test]
+async fn publishing_switched_off_counts_down_to_nothing() {
+    let mut settings = enabled();
+    settings.push.enabled = false;
+    let inner = make_inner(settings);
+    let ns: Namespace = ("acme", "demo").into();
+
+    crate::autopull::observe_walk(
+        &inner,
+        &ns,
+        None,
+        &local_status(1),
+        crate::autopull::last_change::PendingCommit::None,
+    )
+    .await;
+
+    assert!(
+        card_deadline(&inner).await.is_none(),
+        "a deadline for an operation that will not run is a lie"
+    );
+}
+
+#[test]
+fn the_deadline_is_the_last_change_plus_the_wait() {
+    let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1000);
+    assert_eq!(
+        crate::autopull::publish_deadline(Some(at), Duration::from_secs(30)),
+        Some(at + Duration::from_secs(30))
+    );
+    assert_eq!(
+        crate::autopull::publish_deadline(None, Duration::from_secs(30)),
+        None
+    );
+}
+
+// ── The apply-in-flight flag ──
+//
+// The quit prompt is only as good as this flag. The tick's own
+// `tick_in_progress` spans the read-only classify and manifest fetch as well,
+// so a prompt keyed on it would fire when no working file is at risk.
+
+fn behind_clean_lineage() -> quilt::lineage::PackageLineage {
+    behind_lineage_on(Some(fixtures::host()))
+}
+
+/// A `Behind` lineage whose remote has `origin`.
+fn behind_lineage_on(origin: Option<quilt_uri::Host>) -> quilt::lineage::PackageLineage {
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("acme", "demo").into(),
+        hash: "h0".to_string(),
+        origin,
+    };
+    quilt::lineage::PackageLineage::from_remote(remote, "h1".to_string())
+}
+
+/// One `Behind` package with a clean tree — the read-only expectations every
+/// apply-flag test shares. Each test adds its own classify/pull arms.
+fn behind_clean_model() -> MockQuiltModel {
+    behind_model_on(behind_clean_lineage(), BTreeMap::new())
+}
+
+/// One `Behind` package with `lineage` and `changes` in its tree.
+fn behind_model_on(
+    lineage: quilt::lineage::PackageLineage,
+    changes: quilt::lineage::ChangeSet,
+) -> MockQuiltModel {
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    model.expect_locked_package_status().returning(move |_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            changes.clone(),
+        ))
+    });
+    model
+}
+
+fn applied() -> quilt::flow::PullReport {
+    pulled(quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("acme", "demo").into(),
+        hash: "h1".to_string(),
+        origin: None,
+    })
+}
+
+/// [`make_inner`] with the caller's aggregator, which is the one field these
+/// tests care about.
+///
+/// Built FROM `make_inner` rather than beside it: the two were written on
+/// different branches and were identical but for this field, so the merge that
+/// brought them together broke the copy that had not heard about `clocks`.
+/// Spelling the difference is what stops the next field from doing it again.
+fn inner_with(aggregator: Arc<crate::autopull::status::SyncTrayAggregator>) -> WatcherInner {
+    WatcherInner {
+        aggregator,
+        ..make_inner(enabled())
+    }
+}
+
+/// A pull that raced another pull finds nothing to do: the tick keeps
+/// syncing quietly, with no toast and no pause.
+#[tokio::test]
+async fn a_pull_that_finds_nothing_to_do_reports_nothing() -> Result<(), Error> {
+    let mut model = behind_clean_model();
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::UpToDate));
+
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        reporter: reporter.clone(),
+        ..make_inner(enabled())
+    };
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(reporter.pulled.lock().unwrap().is_empty(), "no toast");
+    assert!(reporter.paused.lock().unwrap().is_empty(), "no pause");
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_flag_is_clear_while_the_tick_classifies() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(move |_| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
+            Ok(PullOutcome::CleanUpdate)
+        });
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::Applied(applied())));
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        Some(false),
+        "classify reads only — the flag must be clear there"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_flag_is_set_while_the_pull_applies() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
+
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(move |_, _, _| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.apply_in_progress());
+            Ok(quilt::flow::Pulled::Applied(applied()))
+        });
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        Some(true),
+        "the apply writes working files — the flag must be set there"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn apply_flag_is_cleared_after_the_pull_returns() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::Applied(applied())));
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert!(
+        !agg.apply_in_progress(),
+        "a flag left set would prompt on every quit thereafter"
+    );
+    Ok(())
+}
+
+// A flag left set is worse than one never set: the quit prompt would fire on
+// every quit thereafter, and the user would learn to click through it. So the
+// clear must survive an unwind, not merely a return.
+#[test]
+fn the_apply_guard_clears_the_flag_when_dropped_by_a_panic() {
+    let agg = test_aggregator();
+    let held = Arc::clone(&agg);
+    let ns: Namespace = ("acme", "demo").into();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = held.apply_guard(&ns);
+        assert!(
+            held.apply_in_progress(),
+            "the guard sets the flag while held"
+        );
+        panic!("the apply blew up");
+    }));
+    assert!(
+        result.is_err(),
+        "the panic must propagate, not be swallowed"
+    );
+    assert!(
+        !agg.apply_in_progress(),
+        "an unwind past the guard must still clear the flag"
+    );
+}
+
+// ── A verdict computed while the tree was being written ──
+//
+// Mid-apply the three sources disagree by design: the working tree carries the
+// paths written so far, the persisted lineage still names the old base, and the
+// installed manifest is already the new one. A walk in that window reports the
+// written paths as changed on both sides — a conflict that was never real — and
+// pausing on it stops background sync and tells the user something untrue.
+// Observed on a manual pull racing the tick: the conflict list was exactly the
+// manifest-order run of paths the apply had rewritten by that instant.
+
+#[tokio::test]
+async fn a_conflict_verdict_reached_while_that_package_was_applying_does_not_pause()
+-> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("conflict.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    model
+        .expect_locked_package_status()
+        .return_once(move |_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                changes,
+            ))
+        });
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| {
+            Ok(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            })
+        });
+    model.expect_locked_package_pull().times(0);
+
+    let inner = inner_with(Arc::clone(&agg));
+    // Someone else — a hand-pressed pull — is writing this package right now.
+    let _applying = agg.apply_guard(&ns);
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(
+        inner.paused.read().await.is_empty(),
+        "a verdict reached mid-apply must not pause the namespace"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_apply_on_one_package_does_not_speak_for_another() {
+    let agg = test_aggregator();
+    let a: Namespace = ("acme", "demo").into();
+    let b: Namespace = ("acme", "other").into();
+    let _applying = agg.apply_guard(&a);
+    assert!(agg.is_applying(&a));
+    assert!(
+        !agg.is_applying(&b),
+        "a write to one package says nothing about another"
+    );
+}
+
+// The quit prompt asks a different question — is ANYTHING being written — so it
+// still reads across all namespaces.
+#[tokio::test]
+async fn the_quit_prompt_still_sees_any_apply() {
+    let agg = test_aggregator();
+    let ns: Namespace = ("acme", "demo").into();
+    assert!(!agg.apply_in_progress());
+    {
+        let _applying = agg.apply_guard(&ns);
+        assert!(agg.apply_in_progress());
+    }
+    assert!(!agg.apply_in_progress(), "and stops when the write ends");
+}
+
+// A manual pull and the tick's can write the same package at once — nothing
+// serializes them. One entry per namespace cannot represent that: whichever
+// finishes first would clear the mark while the other is still writing, and a
+// quit would then exit without asking.
+#[tokio::test]
+async fn two_overlapping_writes_stay_marked_until_both_finish() {
+    let agg = test_aggregator();
+    let ns: Namespace = ("acme", "demo").into();
+
+    let first = agg.apply_guard(&ns);
+    let second = agg.apply_guard(&ns);
+    assert!(agg.is_applying(&ns));
+
+    drop(first);
+    assert!(
+        agg.is_applying(&ns),
+        "one write finishing must not clear the mark the other still needs"
+    );
+    assert!(
+        agg.apply_in_progress(),
+        "and the quit prompt must still see it"
+    );
+
+    drop(second);
+    assert!(
+        !agg.is_applying(&ns),
+        "cleared once the last write finishes"
+    );
+}
+
+// Sampling "is an apply running?" *after* the verdict is computed only catches
+// an apply still in flight at that instant. A short apply that overlapped the
+// walk and finished before the sample is invisible to it — and that is the
+// worse case, because the pull's own success path has already cleared its
+// pause, so the fictitious one the tick then installs does not self-heal.
+#[tokio::test]
+async fn an_apply_that_finishes_during_the_verdict_still_suppresses_the_pause() -> Result<(), Error>
+{
+    let ns: Namespace = ("acme", "demo").into();
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("conflict.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    model
+        .expect_locked_package_status()
+        .return_once(move |_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                changes,
+            ))
+        });
+
+    // The apply runs and completes while the verdict is being computed.
+    let agg_in_verdict = Arc::clone(&agg);
+    let ns_in_verdict = ns.clone();
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(move |_| {
+            drop(agg_in_verdict.apply_guard(&ns_in_verdict));
+            Ok(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            })
+        });
+    model.expect_locked_package_pull().times(0);
+
+    let inner = inner_with(Arc::clone(&agg));
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(
+        inner.paused.read().await.is_empty(),
+        "an apply that overlapped the verdict must suppress the pause even though \
+         it had finished by the time the gate looked"
+    );
+    Ok(())
+}
+
+// ── A package another writer holds is skipped, not waited on ──
+//
+// A download, a hand-pressed action or the CLI holds the package's lock from
+// its first read to its write. The tick only tries it: a busy package is
+// skipped with nothing read, nothing reported, no pause and no backoff, and
+// the next tick classifies it afresh. The tick runs packages one after
+// another, so the packages after it sync as usual.
+
+/// Two `Behind` packages with clean trees, `acme/busy` listed first; the
+/// try-lock finds `acme/busy` held when `busy` says so.
+fn two_behind_packages(busy: bool) -> MockQuiltModel {
+    let lineage = behind_clean_lineage();
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        let domain = quilt::LocalDomain::new(std::path::PathBuf::new());
+        Ok(vec![
+            domain.create_installed_package(("acme", "busy").into()),
+            domain.create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|ns| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone()),
+        ))
+    });
+    let busy_ns: Namespace = ("acme", "busy").into();
+    model.expect_try_lock_package().returning(move |package| {
+        Ok((!busy || package.namespace != busy_ns).then(|| package.namespace.clone()))
+    });
+    model
+        .expect_locked_package_status()
+        .times(if busy { 1 } else { 2 })
+        .returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::Behind,
+                BTreeMap::new(),
+            ))
+        });
+    model
+        .expect_locked_package_pull_verdict()
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
+    model
+        .expect_locked_package_pull()
+        .times(if busy { 1 } else { 2 })
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::Applied(applied())));
+    model
+}
+
+#[tokio::test]
+async fn the_tick_skips_a_busy_package_quietly_and_syncs_the_rest() -> Result<(), Error> {
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        reporter: reporter.clone(),
+        ..inner_with(test_aggregator())
+    };
+
+    // `times` above: the busy package is never read or pulled, the other is.
+    run_once(&two_behind_packages(true), &RoleCache::default(), &inner).await?;
+    let busy: Namespace = ("acme", "busy").into();
+    assert!(
+        !reporter
+            .statuses
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(ns, _)| *ns == busy),
+        "nothing was observed, so nothing is reported"
+    );
+    assert!(
+        inner.paused.read().await.is_empty(),
+        "a skipped package is not a pause"
+    );
+    assert!(
+        inner.backoff.read().await.is_empty(),
+        "nor a failure to back off from: the next tick simply tries again"
+    );
+
+    // The next tick finds it free and pulls it with the other.
+    run_once(&two_behind_packages(false), &RoleCache::default(), &inner).await?;
+    Ok(())
+}
+
+// ── The activity line: the tick names exactly its transfers ──
+//
+// The line says a pull or publish is running, so it must span the transfer and
+// nothing else: the check that runs every cadence reads only, and a line lit for
+// it would flicker on every tick with nothing moving.
+
+fn pulling(ns: &Namespace) -> AutopullActivity {
+    AutopullActivity {
+        op: ActivityOp::Pull,
+        namespace: ns.clone(),
+    }
+}
+
+#[tokio::test]
+async fn the_pull_holds_its_activity_while_it_applies() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
+
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(move |_, _, _| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.activity());
+            Ok(quilt::flow::Pulled::Applied(applied()))
+        });
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(
+        *seen.lock().unwrap(),
+        Some(Some(pulling(&ns))),
+        "the apply moves files — the line must name it while it runs"
+    );
+    assert_eq!(agg.activity(), None, "and clear once it returns");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_pull_clears_its_activity() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let agg = test_aggregator();
+    let mut model = behind_clean_model();
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
+
+    let seen = Arc::new(std::sync::Mutex::new(None));
+    let (seen_hook, agg_hook) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(move |_, _, _| {
+            *seen_hook.lock().unwrap() = Some(agg_hook.activity());
+            Err(Error::from(quilt::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "connection reset",
+            ))))
+        });
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert_eq!(*seen.lock().unwrap(), Some(Some(pulling(&ns))));
+    assert_eq!(
+        agg.activity(),
+        None,
+        "a line left set would say a pull is running after it failed"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_classify_shows_no_activity() -> Result<(), Error> {
+    let agg = test_aggregator();
+    // Not `behind_clean_model`: its status stub would answer first, and this
+    // test needs the walk itself to look.
+    let lineage = behind_clean_lineage();
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (seen_status, agg_status) = (Arc::clone(&seen), Arc::clone(&agg));
+    model.expect_locked_package_status().returning(move |_, _| {
+        seen_status.lock().unwrap().push(agg_status.activity());
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            BTreeMap::new(),
+        ))
+    });
+    let (seen_outcome, agg_outcome) = (Arc::clone(&seen), Arc::clone(&agg));
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(move |_| {
+            seen_outcome.lock().unwrap().push(agg_outcome.activity());
+            Ok(PullOutcome::CleanUpdate)
+        });
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::Applied(applied())));
+
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    let seen = seen.lock().unwrap();
+    assert!(
+        seen.len() >= 2,
+        "both the status walk and the classify must have run, saw {seen:?}"
+    );
+    assert!(
+        seen.iter().all(Option::is_none),
+        "the check reads only — the line must not name it, saw {seen:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_tick_with_nothing_to_transfer_never_sets_the_activity() -> Result<(), Error> {
+    let agg = test_aggregator();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("acme", "demo").into(),
+        hash: "h0".to_string(),
+        origin: Some(fixtures::host()),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    model
+        .expect_locked_package_status()
+        .times(1..)
+        .returning(|_, _| {
+            Ok(quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::UpToDate,
+                BTreeMap::new(),
+            ))
+        });
+    model.expect_locked_package_pull_verdict().times(0);
+    model.expect_locked_package_pull().times(0);
+    model.expect_locked_package_publish().times(0);
+
+    let activity = agg.subscribe_activity();
+    run_once(&model, &RoleCache::default(), &inner_with(Arc::clone(&agg))).await?;
+
+    assert!(
+        !activity.has_changed().unwrap(),
+        "an up-to-date package moves nothing — the line must never be set, \
+         not even for an instant"
+    );
+    Ok(())
+}
+
+/// Between a task's claim and its last revision, neither the check nor the
+/// publish timer may pull or publish the package.
+#[tokio::test]
+async fn a_package_held_by_a_task_run_is_not_synced() {
+    let ns: Namespace = ("acme", "demo").into();
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ns.clone(),
+        hash: "h0".to_string(),
+        origin: Some(fixtures::host()),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
+    let mut model = MockQuiltModel::new();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model.expect_get_installed_package().returning(|ns| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone()),
+        ))
+    });
+    // Another writer holds the lock, so an unheld package comes back `Busy`.
+    model.expect_try_lock_package().returning(|_| Ok(None));
+    let inner = make_inner(enabled());
+    let pkg =
+        quilt::LocalDomain::new(std::path::PathBuf::new()).create_installed_package(ns.clone());
+    let run = PassSettings {
+        publish: PublishSettings::default(),
+        wait: Duration::ZERO,
+        pull_enabled: true,
+        push_enabled: true,
+        tasks: None,
+    };
+    let roles = RoleCache::default();
+    let pass = || sync_package(&model, &roles, &inner, &pkg, &run, Instant::now());
+
+    let hold = inner.tasks.hold(&ns);
+    assert_eq!(pass().await, Pass::Skipped);
+    drop(hold);
+    assert_eq!(pass().await, Pass::Busy, "the hold was all that skipped it");
+}
+
+fn demo_package() -> quilt::InstalledPackage {
+    quilt::LocalDomain::new(std::path::PathBuf::new())
+        .create_installed_package(("acme", "demo").into())
+}
+
+/// The one package, at `latest` in `bucket`, whose head is claimed under the
+/// invocation `ours` and whose tree holds the agent's `out.md`. Each publish's
+/// metadata lands in `published`.
+fn stale_claim_model(
+    published: &Arc<std::sync::Mutex<Vec<quilt::flow::UserMeta>>>,
+) -> MockQuiltModel {
+    let remote = quilt_uri::ManifestUri {
+        bucket: "bucket".to_string(),
+        namespace: ("acme", "demo").into(),
+        hash: "h0".to_string(),
+        origin: Some(fixtures::host()),
+    };
+    let lineage = quilt::lineage::PackageLineage::from_remote(remote, "h0".to_string());
+    let mut model = MockQuiltModel::new();
+    model
+        .expect_get_installed_packages_list()
+        .returning(|| Ok(vec![demo_package()]));
+    model
+        .expect_get_installed_package()
+        .returning(|_| Ok(Some(demo_package())));
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_get_installed_package_manifest()
+        .returning(|_, _| {
+            Ok(quilt::manifest::Manifest {
+                header: quilt::manifest::ManifestHeader {
+                    user_meta: Some(serde_json::json!({ "agent_exec": {
+                        "document": "TASK.md", "agent": { "id": "kiro" },
+                        "claim": { "status": "claimed", "invocation_id": "ours" },
+                    }})),
+                    ..quilt::manifest::ManifestHeader::default()
+                },
+                rows: Vec::new(),
+            })
+        });
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_locked_package_status().returning(|_, _| {
+        Ok(quilt::lineage::InstalledPackageStatus {
+            latest_refreshed: true,
+            latest_hash: "h0".to_string(),
+            ..quilt::lineage::InstalledPackageStatus::new(
+                UpstreamState::UpToDate,
+                BTreeMap::from([(
+                    std::path::PathBuf::from("out.md"),
+                    quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+                )]),
+            )
+        })
+    });
+    model.expect_resolve_workflow().returning(|_, _| Ok(None));
+    let recording = Arc::clone(published);
+    model
+        .expect_locked_package_publish()
+        .returning(move |_, _, meta, _, _, _| {
+            recording.lock().unwrap().push(meta);
+            Ok(quilt::PublishOutcome::CommittedAndPushed(
+                quilt::PushOutcome {
+                    manifest_uri: quilt_uri::ManifestUri {
+                        bucket: "bucket".to_string(),
+                        namespace: ("acme", "demo").into(),
+                        hash: "h1".to_string(),
+                        origin: None,
+                    },
+                    certified_latest: true,
+                },
+            ))
+        });
+    model
+}
+
+/// After a restart, the agent's leftover files go out on the claim's `failed`
+/// revision. Autosync, which would publish them at once with its own metadata,
+/// leaves the package to the task check, here and in the publish timer.
+#[tokio::test]
+async fn our_own_interrupted_claim_is_published_by_the_sweep_not_autosync() -> Result<(), Error> {
+    let dir = tempfile::TempDir::new()?;
+    tokio::fs::write(
+        dir.path().join("task_settings.json"),
+        r#"{"blessed_buckets":["s3://bucket"],"agents":{}}"#,
+    )
+    .await?;
+    crate::tasks::settings::remember_invocation(dir.path(), "ours").await?;
+    let published = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let model = stale_claim_model(&published);
+    // No wait: autosync publishes a change the moment it sees one.
+    let mut settings = enabled();
+    settings.push.idle_timeout_secs = 0;
+    let inner = WatcherInner {
+        tasks: crate::tasks::Tasks::new(dir.path().to_path_buf(), Arc::new(|_| {})),
+        ..make_inner(settings)
+    };
+
+    let run = PassSettings {
+        publish: PublishSettings::default(),
+        wait: Duration::ZERO,
+        pull_enabled: true,
+        push_enabled: true,
+        tasks: inner.tasks.settings().await,
+    };
+    let roles = RoleCache::default();
+    let pkg = demo_package();
+    assert_eq!(
+        sync_package(&model, &roles, &inner, &pkg, &run, Instant::now()).await,
+        Pass::LeftToTasks,
+        "the publish timer's pass leaves it too"
+    );
+    run_once(&model, &roles, &inner).await?;
+
+    let published = published.lock().unwrap();
+    assert_eq!(
+        published.len(),
+        1,
+        "one revision, the sweep's: {published:?}"
+    );
+    let quilt::flow::UserMeta::Set(meta) = &published[0] else {
+        panic!("the sweep sets the metadata, got {:?}", published[0]);
+    };
+    assert_eq!(meta["agent_exec"]["claim"]["status"], "failed");
+    Ok(())
+}
+
+/// A package with a bucket and no catalog is pulled on this computer's AWS
+/// credentials, like one with a catalog.
+#[tokio::test]
+async fn a_package_without_a_catalog_is_pulled() -> Result<(), Error> {
+    let mut model = behind_model_on(behind_lineage_on(None), BTreeMap::new());
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| Ok(PullOutcome::CleanUpdate));
+    model
+        .expect_locked_package_pull()
+        .times(1)
+        .returning(|_, _, _| Ok(quilt::flow::Pulled::Applied(applied())));
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        reporter: reporter.clone(),
+        ..make_inner(enabled())
+    };
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    let statuses = reporter.statuses.lock().unwrap();
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].1.status, "up_to_date");
+    Ok(())
+}
+
+/// A pull conflict on a package with no catalog pauses it, with no host.
+#[tokio::test]
+async fn a_pull_conflict_without_a_catalog_pauses() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let mut changes = BTreeMap::new();
+    changes.insert(
+        std::path::PathBuf::from("conflict.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let mut model = behind_model_on(behind_lineage_on(None), changes);
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| {
+            Ok(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            })
+        });
+    model.expect_locked_package_pull().times(0);
+    let reporter = Arc::new(RecordingReporter::default());
+    let inner = WatcherInner {
+        reporter: reporter.clone(),
+        ..make_inner(enabled())
+    };
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    let reason = PausedReason::PullConflict(vec!["conflict.txt".to_string()]);
+    assert_eq!(inner.paused.read().await.get(&ns), Some(&reason));
+    assert_eq!(*reporter.hosts.lock().unwrap(), vec![None]);
+    Ok(())
+}
+
+/// Unusable AWS credentials on a package with no catalog are worded as such,
+/// with nothing to sign in to.
+#[tokio::test]
+async fn unusable_credentials_without_a_catalog_name_the_aws_files() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let lineage = behind_lineage_on(None);
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(lineage.clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    model.expect_locked_package_status().returning(|_, _| {
+        Err(Error::from(quilt::Error::Login(
+            quilt::LoginError::NoSession(None),
+        )))
+    });
+    let reporter = Arc::new(RecordingReporter::default());
+    let (tx, rx) = tokio::sync::watch::channel(crate::autopull::status::SyncTrayStatus::default());
+    let inner = WatcherInner {
+        reporter: reporter.clone(),
+        aggregator: Arc::new(crate::autopull::status::SyncTrayAggregator::new(tx)),
+        ..make_inner(enabled())
+    };
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert_eq!(
+        inner.backoff.read().await.get(&ns).map(|b| b.error.clone()),
+        Some(
+            "AWS credentials on this computer aren't usable — update ~/.aws or run aws sso login"
+                .to_string()
+        )
+    );
+    assert_eq!(
+        rx.borrow().error.as_deref(),
+        Some("AWS credentials on this computer aren't usable")
+    );
+    assert_eq!(*reporter.logins.lock().unwrap(), vec![None]);
+    Ok(())
+}
+
+/// A package whose lineage reads `before` until the pass's first remote answer,
+/// and `after` from then on: its catalog changed while the pass ran.
+fn catalog_changed_mid_pass(
+    before: Option<quilt_uri::Host>,
+    after: Option<quilt_uri::Host>,
+) -> (
+    MockQuiltModel,
+    Arc<std::sync::Mutex<quilt::lineage::PackageLineage>>,
+) {
+    let current = Arc::new(std::sync::Mutex::new(behind_lineage_on(before)));
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    let read = current.clone();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(read.lock().unwrap().clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    let mut tree = BTreeMap::new();
+    tree.insert(
+        std::path::PathBuf::from("conflict.txt"),
+        quilt::lineage::Change::Added(quilt::manifest::ManifestRow::default()),
+    );
+    let moved = current.clone();
+    model.expect_locked_package_status().returning(move |_, _| {
+        *moved.lock().unwrap() = behind_lineage_on(after.clone());
+        Ok(quilt::lineage::InstalledPackageStatus::new(
+            UpstreamState::Behind,
+            tree.clone(),
+        ))
+    });
+    (model, current)
+}
+
+/// A refusal the old catalog gave is not recorded once the catalog has
+/// changed: the next pass asks the new one.
+#[tokio::test]
+async fn a_conflict_from_the_old_catalog_does_not_pause() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let (mut model, _) = catalog_changed_mid_pass(None, Some(fixtures::host()));
+    model
+        .expect_locked_package_pull_verdict()
+        .times(1)
+        .returning(|_| {
+            Ok(PullOutcome::Blocked {
+                conflicts: vec![std::path::PathBuf::from("conflict.txt")],
+            })
+        });
+    model.expect_locked_package_pull().times(0);
+    let inner = make_inner(enabled());
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert_eq!(inner.paused.read().await.get(&ns), None);
+    Ok(())
+}
+
+/// The same for a sign-in the old catalog asked for.
+#[tokio::test]
+async fn a_sign_in_the_old_catalog_asked_for_is_not_recorded() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let current = Arc::new(std::sync::Mutex::new(behind_lineage_on(Some(
+        fixtures::host(),
+    ))));
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    let read = current.clone();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(read.lock().unwrap().clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    let moved = current.clone();
+    model.expect_locked_package_status().returning(move |_, _| {
+        *moved.lock().unwrap() = behind_lineage_on(None);
+        Err(Error::from(quilt::Error::Login(
+            quilt::LoginError::NoSession(Some(fixtures::host())),
+        )))
+    });
+    let inner = make_inner(enabled());
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(inner.login_blocked.read().await.get(&ns).is_none());
+    assert!(inner.backoff.read().await.get(&ns).is_none());
+    Ok(())
+}
+
+/// The same for a transient failure: its retry delay was the old catalog's.
+#[tokio::test]
+async fn a_transient_failure_from_the_old_catalog_leaves_no_backoff() -> Result<(), Error> {
+    let ns: Namespace = ("acme", "demo").into();
+    let current = Arc::new(std::sync::Mutex::new(behind_lineage_on(Some(
+        fixtures::host(),
+    ))));
+    let mut model = MockQuiltModel::new();
+    model.expect_get_installed_packages_list().returning(|| {
+        Ok(vec![
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ])
+    });
+    let read = current.clone();
+    model
+        .expect_get_installed_package_lineage()
+        .returning(move |_| Ok(read.lock().unwrap().clone()));
+    model
+        .expect_try_lock_package()
+        .returning(|p| Ok(Some(p.namespace.clone())));
+    model.expect_get_installed_package().returning(|_| {
+        Ok(Some(
+            quilt::LocalDomain::new(std::path::PathBuf::new())
+                .create_installed_package(("acme", "demo").into()),
+        ))
+    });
+    let moved = current.clone();
+    model.expect_locked_package_status().returning(move |_, _| {
+        *moved.lock().unwrap() = behind_lineage_on(None);
+        Err(Error::from(quilt::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "connection refused",
+        ))))
+    });
+    let inner = make_inner(enabled());
+
+    run_once(&model, &RoleCache::default(), &inner).await?;
+
+    assert!(inner.backoff.read().await.get(&ns).is_none());
+    Ok(())
 }

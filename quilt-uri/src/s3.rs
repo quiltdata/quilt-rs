@@ -234,7 +234,7 @@ mod tests {
         };
         assert_eq!(
             uri.display_for_host(&host)?.as_str(),
-            "https://test.quilt.dev/b/bucket/tree/foo/bar"
+            "https://quilt.test/b/bucket/tree/foo/bar"
         );
 
         let uri_with_version = S3Uri {
@@ -244,7 +244,7 @@ mod tests {
         };
         assert_eq!(
             uri_with_version.display_for_host(&host)?.as_str(),
-            "https://test.quilt.dev/b/bucket/tree/foo/bar?version=abc"
+            "https://quilt.test/b/bucket/tree/foo/bar?version=abc"
         );
         Ok(())
     }

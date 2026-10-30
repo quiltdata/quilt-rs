@@ -13,6 +13,7 @@ use std::sync::Mutex as StdMutex;
 use std::sync::Weak;
 
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::OwnedMutexGuard;
 
 use crate::Error;
 use crate::Res;
@@ -20,6 +21,7 @@ use crate::error::AuthError;
 use crate::error::LoginError;
 use crate::io::remote::client::HttpClient;
 use crate::io::storage::LocalStorage;
+use crate::io::storage::LockGuard;
 use crate::io::storage::Storage;
 use crate::io::storage::auth::AuthIo;
 use crate::io::storage::auth::Credentials;
@@ -27,6 +29,7 @@ use crate::io::storage::auth::OAuthClient;
 use crate::io::storage::auth::Tokens;
 use crate::paths::DomainPaths;
 use quilt_uri::Host;
+use quilt_uri::Namespace;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
@@ -49,6 +52,7 @@ pub use registry::RemoteTokens;
 use graphql::mutate_switch_role;
 use graphql::query_buckets;
 use graphql::query_me;
+use graphql::query_package_revisions;
 use oauth::exchange_oauth_code;
 use oauth::refresh_oauth_tokens;
 use oauth::register_client;
@@ -80,8 +84,25 @@ mod tests;
 /// that may authenticate against many distinct hosts.
 type RefreshLocks = Arc<StdMutex<HashMap<Host, Weak<AsyncMutex<()>>>>>;
 
-/// Endpoint label for the role-surface retry logs. All three role calls
-/// share one registry endpoint, so they share one name.
+/// A host's auth lock, held in this process and, through [`lock_host`],
+/// against every other process sharing the store.
+struct HostLock {
+    _file: LockGuard,
+    _process: OwnedMutexGuard<()>,
+}
+
+/// Takes `host`'s auth lock, `.auth/.locks/<host>`, waiting while another
+/// holder in this process or any other has it. Every refresh of the host's
+/// tokens holds it, and so must anything that removes the host's directory.
+pub async fn lock_host(storage: &impl Storage, paths: &DomainPaths, host: &Host) -> Res<LockGuard> {
+    storage.create_private_dir(paths.auth_dir()).await?;
+    storage.create_private_dir(paths.auth_locks_dir()).await?;
+    storage.lock_exclusive(paths.auth_lock(host)).await
+}
+
+/// Endpoint label for the registry GraphQL retry logs. The three role calls
+/// and the revision listing share one registry endpoint, so they share one
+/// name.
 const ROLE_ENDPOINT: &str = "registry GraphQL endpoint";
 
 /// Per-host record of the active role observed *this session*. Purely
@@ -153,6 +174,21 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let arc = Arc::new(AsyncMutex::new(()));
         locks.insert(host.clone(), Arc::downgrade(&arc));
         arc
+    }
+
+    /// Fails with `NoSession`, writing nothing, for a host with no directory.
+    /// Its callers still read the store under the lock, since a login may
+    /// land while they wait.
+    async fn lock(&self, host: &Host) -> Res<HostLock> {
+        let process = self.refresh_lock_for(host).lock_owned().await;
+        if !self.storage.exists(self.paths.auth_host(host)).await {
+            return Err(LoginError::NoSession(Some(host.to_owned())).into());
+        }
+        let file = lock_host(&*self.storage, &self.paths, host).await?;
+        Ok(HostLock {
+            _file: file,
+            _process: process,
+        })
     }
 
     pub async fn login<T: HttpClient>(
@@ -298,7 +334,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let client = auth_io
             .read_client()
             .await?
-            .ok_or(LoginError::Required(Some(host.to_owned())))?;
+            .ok_or(LoginError::NoSession(Some(host.to_owned())))?;
 
         let new_tokens =
             refresh_oauth_tokens(http_client, host, &tokens.refresh_token, &client.client_id)
@@ -317,7 +353,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
     /// be a brief server-side token-validation hiccup (deploy, replica with
     /// stale state, JWKS rotation). Only when two consecutive attempts return
     /// a 4xx do we conclude the refresh token is actually bad and map to
-    /// `LoginError::Required`.
+    /// `LoginError::NoSession`.
     async fn refresh_tokens_with_retry<T: HttpClient>(
         &self,
         http_client: &T,
@@ -333,8 +369,8 @@ impl<S: Storage + Send + Sync> Auth<S> {
             Err(e) => e,
         };
 
-        if matches!(first_err, Error::Login(LoginError::Required(_))) {
-            warn!("❌ No OAuth client registered for {}, login required", host);
+        if matches!(first_err, Error::Login(LoginError::NoSession(_))) {
+            warn!("❌ No OAuth client registered for {}, no session", host);
             return Err(first_err);
         }
         if !is_token_auth_error(&first_err) {
@@ -425,7 +461,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let tokens = auth_io
             .read_tokens()
             .await?
-            .ok_or_else(|| LoginError::Required(Some(host.to_owned())))?;
+            .ok_or_else(|| LoginError::NoSession(Some(host.to_owned())))?;
         let new_tokens = self
             .refresh_tokens_with_retry(http_client, auth_io, host, &tokens)
             .await?;
@@ -481,8 +517,11 @@ impl<S: Storage + Send + Sync> Auth<S> {
     /// already hold the lock use the private `expire_credentials_locked`
     /// instead — the lock is not reentrant.
     pub async fn expire_credentials(&self, host: &Host) -> Res {
-        let lock = self.refresh_lock_for(host);
-        let _guard = lock.lock().await;
+        let _guard = match self.lock(host).await {
+            // No session, so no credentials to expire.
+            Err(Error::Login(LoginError::NoSession(_))) => return Ok(()),
+            guard => guard?,
+        };
         self.expire_credentials_locked(host).await
     }
 
@@ -564,7 +603,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         let tokens = auth_io
             .read_tokens()
             .await?
-            .ok_or_else(|| LoginError::Required(Some(host.to_owned())))?;
+            .ok_or_else(|| LoginError::NoSession(Some(host.to_owned())))?;
 
         if tokens.expires_at <= chrono::Utc::now() + chrono::Duration::seconds(60) {
             info!("⏳ Access token expired for {}, refreshing", host);
@@ -654,8 +693,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         http_client: &T,
         host: &Host,
     ) -> Res<RoleInfo> {
-        let lock = self.refresh_lock_for(host);
-        let _guard = lock.lock().await;
+        let _guard = self.lock(host).await?;
 
         let (registry, access_token) = self.role_call_context(http_client, host).await?;
         let me = match query_me(http_client, &registry, host, &access_token).await {
@@ -722,8 +760,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         role_name: &str,
     ) -> Res<RoleInfo> {
         info!("⏳ Switching role on {} to {}", host, role_name);
-        let lock = self.refresh_lock_for(host);
-        let _guard = lock.lock().await;
+        let _guard = self.lock(host).await?;
 
         let (registry, access_token) = self.role_call_context(http_client, host).await?;
         let me = match mutate_switch_role(http_client, &registry, role_name, &access_token).await {
@@ -760,8 +797,7 @@ impl<S: Storage + Send + Sync> Auth<S> {
         http_client: &T,
         host: &Host,
     ) -> Res<Vec<String>> {
-        let lock = self.refresh_lock_for(host);
-        let _guard = lock.lock().await;
+        let _guard = self.lock(host).await?;
 
         let (registry, access_token) = self.role_call_context(http_client, host).await?;
         match query_buckets(http_client, &registry, &access_token).await {
@@ -770,6 +806,45 @@ impl<S: Storage + Send + Sync> Auth<S> {
                 let retry_token = self.role_retry_token(http_client, host, first_err).await?;
                 classify_retry_outcome(
                     query_buckets(http_client, &registry, &retry_token).await,
+                    is_role_auth_error,
+                    ROLE_ENDPOINT,
+                    host,
+                )
+            }
+        }
+    }
+
+    /// The hashes of every revision the registry lists for `namespace` in
+    /// `bucket` — one timestamped pointer each. Empty when the registry has
+    /// no such package; an error if it vanishes after the first page.
+    ///
+    /// Locks and retries as [`Auth::readable_buckets`] does: it is the same
+    /// registry GraphQL endpoint, refused the same ways.
+    pub async fn package_revisions<T: HttpClient>(
+        &self,
+        http_client: &T,
+        host: &Host,
+        bucket: &str,
+        namespace: &Namespace,
+    ) -> Res<Vec<String>> {
+        let _guard = self.lock(host).await?;
+
+        let (registry, access_token) = self.role_call_context(http_client, host).await?;
+        match query_package_revisions(http_client, &registry, bucket, namespace, &access_token)
+            .await
+        {
+            Ok(hashes) => Ok(hashes),
+            Err(first_err) => {
+                let retry_token = self.role_retry_token(http_client, host, first_err).await?;
+                classify_retry_outcome(
+                    query_package_revisions(
+                        http_client,
+                        &registry,
+                        bucket,
+                        namespace,
+                        &retry_token,
+                    )
+                    .await,
                     is_role_auth_error,
                     ROLE_ENDPOINT,
                     host,
@@ -808,12 +883,12 @@ impl<S: Storage + Send + Sync> Auth<S> {
             }
         }
 
-        // Serialize refreshes for this host so N concurrent callers
-        // fire one HTTP `/get_credentials` call instead of N. The
-        // loser of the race re-reads the credentials the winner
-        // wrote to disk and returns them without hitting the network.
-        let lock = self.refresh_lock_for(host);
-        let _guard = lock.lock().await;
+        // Serialize refreshes for this host, in this process and across
+        // processes, so N concurrent callers fire one HTTP
+        // `/get_credentials` call instead of N. The loser of the race
+        // re-reads the credentials and tokens the winner wrote to disk,
+        // so it never presents a refresh token the winner retired.
+        let _guard = self.lock(host).await?;
 
         match auth_io.read_credentials().await {
             Ok(Some(creds)) => {
@@ -837,8 +912,8 @@ impl<S: Storage + Send + Sync> Auth<S> {
         match auth_io.read_tokens().await {
             Ok(Some(_)) => {}
             Ok(None) => {
-                warn!("❌ No tokens found for {}, login required", host);
-                return Err(LoginError::Required(Some(host.to_owned())).into());
+                warn!("❌ No tokens found for {}, no session", host);
+                return Err(LoginError::NoSession(Some(host.to_owned())).into());
             }
             Err(e) => {
                 error!("❌ Failed to read tokens for {}: {}", host, e);

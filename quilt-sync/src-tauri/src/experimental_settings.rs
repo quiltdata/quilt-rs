@@ -6,8 +6,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::RwLock;
 
-use quilt_rs::lineage::SyncScope;
-
 use crate::error::Error;
 
 const FILE_NAME: &str = "experimental_settings.json";
@@ -15,30 +13,52 @@ const FILE_NAME: &str = "experimental_settings.json";
 /// Opt-ins for behaviour that is not finished being designed.
 ///
 /// Persisted as `experimental_settings.json` in `app_local_data_dir` — its own
-/// file rather than a key on an existing one, so retiring an experiment deletes
-/// a file instead of leaving a dead key behind in settings people keep.
+/// file rather than a key on an existing one, so no experiment leaves a key
+/// behind in settings people keep.
+///
+/// Retiring an experiment needs no migration: unknown fields are ignored on
+/// load, and the next save rewrites the file without the retired key.
 ///
 /// Everything here defaults to **off**. An experiment is shown to someone who
 /// went looking for it, not shipped quietly to everyone with a switch to turn
 /// it back off.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExperimentalSettings {
-    /// Whether the package screen offers a per-package
+    /// Whether v1's package screen offers a per-package
     /// [sync scope](quilt_rs::lineage::SyncScope) — the choice between
     /// downloading the files you pick and keeping the whole package.
     ///
-    /// A **gate on the control**, not on the behaviour: turning this on
-    /// downloads nothing by itself, and turning it off leaves the per-package
-    /// choices written where they are, so re-enabling resumes them. Clearing
-    /// them would destroy a choice the user made in order to undo a setting
-    /// that only ever hid a control.
+    /// A **gate on v1's control** and nothing else: every pull honours the
+    /// package's stored scope whatever this says, and the v2 package page
+    /// offers the choice without it. Turning it off leaves the per-package
+    /// choices written where they are; clearing them would destroy a choice
+    /// the user made in order to undo a setting that only ever hid a control.
     #[serde(default)]
     pub entire_package_sync: bool,
+    /// Whether the v2 Settings page shows the Agent tasks card. Only the card:
+    /// the task runner reads `task_settings.json` whatever this says, and
+    /// turning it off leaves that file as it is.
+    #[serde(default)]
+    pub agent_tasks: bool,
 }
 
 impl ExperimentalSettings {
     fn file_path(data_dir: &Path) -> PathBuf {
         data_dir.join(FILE_NAME)
+    }
+
+    /// Apply only the flags the caller sent.
+    ///
+    /// A caller that knows about one experiment must not reset another it has
+    /// never heard of — which is what a whole-struct write does the moment a
+    /// second flag exists.
+    pub fn patch(&mut self, entire_package_sync: Option<bool>, agent_tasks: Option<bool>) {
+        if let Some(value) = entire_package_sync {
+            self.entire_package_sync = value;
+        }
+        if let Some(value) = agent_tasks {
+            self.agent_tasks = value;
+        }
     }
 
     /// Load settings from disk. Missing file → defaults.
@@ -63,23 +83,6 @@ impl ExperimentalSettings {
     }
 }
 
-/// The scope to ask the engine for: a package's standing choice, honoured only
-/// while the experiment is on.
-///
-/// quilt-rs takes the scope as an argument and never reads it, so combining the
-/// two inputs is this app's job — and it is exactly one rule, in one place, used
-/// by both paths that pull. Keeping it a named function rather than an `&&` at
-/// each call site is what makes "the tick honours it too" checkable instead of
-/// a thing to remember.
-#[must_use]
-pub fn resolve_sync_scope(stored: SyncScope, settings: &ExperimentalSettings) -> SyncScope {
-    if settings.entire_package_sync {
-        stored
-    } else {
-        SyncScope::IndividualFiles
-    }
-}
-
 pub type SharedExperimentalSettings = Arc<RwLock<ExperimentalSettings>>;
 
 pub async fn init(data_dir: &Path) -> Result<SharedExperimentalSettings, Error> {
@@ -98,6 +101,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let settings = ExperimentalSettings {
             entire_package_sync: true,
+            agent_tasks: true,
         };
         settings.save(dir.path()).await?;
         assert_eq!(ExperimentalSettings::load(dir.path()).await?, settings);
@@ -130,40 +134,48 @@ mod tests {
         Ok(())
     }
 
-    fn gate(on: bool) -> ExperimentalSettings {
-        ExperimentalSettings {
-            entire_package_sync: on,
-        }
+    #[test]
+    fn patch_leaves_untouched_flags_alone() {
+        let mut s = ExperimentalSettings {
+            entire_package_sync: true,
+            agent_tasks: false,
+        };
+        s.patch(None, Some(true));
+        assert!(
+            s.entire_package_sync,
+            "a flag the caller never mentioned must not be reset"
+        );
+        assert!(s.agent_tasks);
     }
 
-    /// The gate is a veto, not a switch: it can only ever narrow what a package
-    /// asked for. Both cells of the interesting row asserted, so this cannot
-    /// pass by the gate being ignored.
-    #[test]
-    fn the_gate_can_only_narrow_the_stored_scope() {
-        assert_eq!(
-            resolve_sync_scope(SyncScope::EntirePackage, &gate(true)),
-            SyncScope::EntirePackage,
-            "on: the package's own choice is honoured"
-        );
-        assert_eq!(
-            resolve_sync_scope(SyncScope::EntirePackage, &gate(false)),
-            SyncScope::IndividualFiles,
-            "off: the stored choice is ignored, not obeyed"
-        );
-    }
+    /// A retired experiment leaves its key in files written before it went.
+    /// Such a file must still load with every live flag intact, and the next
+    /// save must drop the key — which is why retiring one is not a migration.
+    #[tokio::test]
+    async fn a_retired_flag_is_ignored_and_dropped_on_save() -> Result<(), Error> {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join(FILE_NAME);
+        tokio::fs::write(
+            &path,
+            br#"{"entire_package_sync":true,"main_page_v2":true,"package_page_v2":true}"#,
+        )
+        .await?;
 
-    /// And it never widens: a package that never opted in is sparse-checkout
-    /// under either gate position, so turning the experiment on changes nothing
-    /// on its own.
-    #[test]
-    fn the_gate_never_widens_a_package_that_did_not_ask() {
-        for on in [true, false] {
-            assert_eq!(
-                resolve_sync_scope(SyncScope::IndividualFiles, &gate(on)),
-                SyncScope::IndividualFiles,
-                "gate on={on}"
-            );
-        }
+        let loaded = ExperimentalSettings::load(dir.path()).await?;
+        assert_eq!(
+            loaded,
+            ExperimentalSettings {
+                entire_package_sync: true,
+                agent_tasks: false,
+            }
+        );
+
+        loaded.save(dir.path()).await?;
+        let written = tokio::fs::read_to_string(&path).await?;
+        assert!(
+            !written.contains("page_v2"),
+            "the retired keys are gone after a save: {written}"
+        );
+        Ok(())
     }
 }

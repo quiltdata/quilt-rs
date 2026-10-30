@@ -1,0 +1,106 @@
+/*
+ * PaneSection. `Card`'s label, without `Card`'s surface.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+  align-items: flex-start;
+  min-width: 0;
+}
+
+/* The system's Label: 600 at the 14px floor, upper-cased in CSS and tracked to
+ * do the work that shrinking would otherwise do. Identical to `Card`'s title on
+ * purpose — two labels a third of an em apart is how a design system stops being
+ * one.
+ *
+ * Upper-cased here and not in the string: `text-transform` leaves the text
+ * itself alone, while typing KEEPING makes some screen readers spell it out as
+ * an initialism. */
+.label {
+  margin: 0;
+  font-size: var(--q-text-body);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--q-fgColor-muted);
+}
+
+/* A label with the section's action at its end. In a column too narrow for
+ * both, the action wraps under the label. */
+.heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--q-space-2);
+  align-self: stretch;
+}
+
+/* A section inside a section fills the one above it. `align-items: flex-start`
+ * sizes children to their content, which is what keeps a Button from stretching
+ * — but it also lets a nested section take its own width from its widest child,
+ * and a child that has to ellipsise inside a 320px pane can then never see the
+ * width it is supposed to fit. */
+.root > .root {
+  width: 100%;
+}
+
+/* A section inside a section. The tracking goes and the weight drops, so two
+ * levels of label are two levels to look at. */
+.nested > .label {
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+/* Proximity has to do the grouping, and it cannot while both gaps are equal: a
+ * label sitting the same distance from the section above it as from its own
+ * content belongs to neither. So the space BETWEEN two sections is double the
+ * space INSIDE one — `gap` already contributes `space-2`, and this adds the
+ * second. Weight alone would not carry it; the nested label is deliberately the
+ * quieter of the two. */
+.root > .root + .root {
+  margin-top: var(--q-space-2);
+}
+
+/* A section's content starts at its edge. Spacing inside is the `gap`'s, and a
+ * paragraph's default margin on top would add air only when the section happens
+ * to open with prose — so the space under a rule would depend on what follows
+ * it. */
+.root > :first-child {
+  margin-top: 0;
+}
+
+/* A top-level section after anything that is not one — resolve mode's
+ * `BackLink`, which the card divides from it with its own hairline — gets the
+ * same air under that rule as under the one drawn between two sections. The
+ * rule and the space above it stay the card's, as they are for rows. */
+* + .root:not(.nested) {
+  padding-top: var(--q-pane-divider-below, var(--q-space-3));
+}
+
+/* Two blocks of a pane are divided, and the rule gets the same air above it as
+ * below. `Card` draws a flush hairline between any two of its children, which is
+ * right for rows — they carry their own padding — and wrong here: against a
+ * section that has none it lands on the last control and reads as that control's
+ * underline. `margin` is the space above the rule, `padding` the space below.
+ *
+ * Top-level sections only. Two nested ones are the sides of a resolve, which the
+ * sentence above them has already joined.
+ *
+ * **All three are custom properties, because the container decides.** Laid out
+ * side by side rather than stacked — which the installed package's pane does
+ * when it has a whole column to spend — there is no rule to draw: two columns
+ * say they are two subjects by being two columns, the space between them belongs
+ * to the row's `gap` rather than to either box's margin, and a vertical rule
+ * sized to the shorter column hangs rather than divides. A container cannot
+ * express that by overriding these declarations: this selector is four classes
+ * and anything reaching in from outside the module is worth less, so it would
+ * lose. Same reason `--q-entry-gutter` exists — one value, set by whoever knows
+ * the arrangement, read by whoever has to draw it. */
+.root:not(.nested) + .root:not(.nested) {
+  border-top: var(--q-pane-divider, 1px solid var(--q-borderColor-muted));
+  margin-top: var(--q-pane-divider-above, var(--q-space-3));
+  padding-top: var(--q-pane-divider-below, var(--q-space-3));
+}

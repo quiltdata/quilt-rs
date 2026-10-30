@@ -4,8 +4,6 @@ use std::path::PathBuf;
 
 use crate::commit_message;
 use crate::error::Error;
-use crate::experimental_settings::ExperimentalSettings;
-use crate::experimental_settings::resolve_sync_scope;
 use crate::publish_settings::PublishSettings;
 use crate::quilt;
 use crate::telemetry::prelude::*;
@@ -39,7 +37,7 @@ pub async fn package_commit(
     metadata: &str,
     workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
-) -> Result<(), Error> {
+) -> Result<quilt::flow::Committed, Error> {
     debug!(
         "Committing the package.\nNamespace:\n{},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
         namespace, message, metadata, workflow
@@ -60,15 +58,16 @@ pub async fn package_commit(
             workflow,
             host_config,
         )
-        .await?;
-    Ok(())
+        .await
 }
 
+/// Installs `paths`, then shows them in the file browser. Returns the report,
+/// whose `skipped` and `hash_mismatch` paths were left out.
 pub async fn install_paths(
     model: &impl QuiltModel,
     installed_package: &quilt::InstalledPackage,
     paths: Vec<PathBuf>,
-) -> Result<PathBuf, Error> {
+) -> Result<quilt::flow::InstallPathsReport, Error> {
     if paths.is_empty() {
         return Err(Error::General(
             "Cannot install paths: empty paths vector provided".to_string(),
@@ -77,19 +76,22 @@ pub async fn install_paths(
 
     let namespace = &installed_package.namespace;
 
-    model
+    let report = model
         .package_install_paths(installed_package, &paths)
         .await?;
+    let left = report.skipped.len() + report.hash_mismatch.len();
 
-    // Post-installation actions based on number of paths
-    if paths.len() == 1 {
+    // Post-installation actions based on number of paths. A file left out is
+    // not there to reveal, so the folder opens instead.
+    if paths.len() == 1 && left == 0 {
         let path = &paths[0];
         info!("Installed {:?}", path);
-        model.reveal_in_file_browser(namespace, path).await
+        model.reveal_in_file_browser(namespace, path).await?;
     } else {
-        info!("Installed {} paths", paths.len());
-        model.open_in_file_browser(namespace).await
+        info!("Installed {} paths, left out {left}", paths.len() - left);
+        model.open_in_file_browser(namespace).await?;
     }
+    Ok(report)
 }
 
 pub async fn install_package_only(
@@ -132,7 +134,7 @@ pub async fn install_paths_only(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
     paths: Vec<PathBuf>,
-) -> Result<PathBuf, Error> {
+) -> Result<quilt::flow::InstallPathsReport, Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?
@@ -144,10 +146,10 @@ pub async fn install_paths_only(
 pub async fn package_uninstall(
     model: &impl QuiltModel,
     namespace: quilt_uri::Namespace,
-) -> Result<(), Error> {
+    prune: bool,
+) -> Result<Option<quilt::flow::Pruned>, Error> {
     debug!("Uninstall package for {} namespace", &namespace);
-    model.package_uninstall(namespace).await?;
-    Ok(())
+    model.package_uninstall(namespace, prune).await
 }
 
 pub fn open_in_web_browser(url: &str) -> Result<(), Error> {
@@ -168,17 +170,21 @@ pub async fn package_revision_certify_latest(
     Ok(())
 }
 
-pub async fn package_revision_reset_local(
+pub async fn package_undo_commit(
     model: &impl QuiltModel,
-    namespace: quilt_uri::Namespace,
+    namespace: &quilt_uri::Namespace,
 ) -> Result<(), Error> {
+    // `ok_or_else`, not the `panic!` its neighbours use: a package can be gone
+    // by the time a menu item is pressed.
     let installed_package = model
-        .get_installed_package(&namespace)
+        .get_installed_package(namespace)
         .await?
-        .unwrap_or_else(|| panic!("Package {namespace} not found"));
-    model
-        .package_revision_reset_local(&installed_package)
-        .await?;
+        .ok_or_else(|| {
+            Error::from(quilt::InstallPackageError::NotInstalled(
+                namespace.to_owned(),
+            ))
+        })?;
+    model.package_undo_commit(&installed_package).await?;
     Ok(())
 }
 
@@ -186,7 +192,7 @@ pub async fn package_push(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
     host_config: Option<HostConfig>,
-) -> Result<quilt::PushOutcome, Error> {
+) -> Result<quilt::Pushed, Error> {
     let installed_package = model
         .get_installed_package(namespace)
         .await?
@@ -194,22 +200,19 @@ pub async fn package_push(
     model.package_push(&installed_package, host_config).await
 }
 
-/// Render `PublishSettings` into a message / metadata / workflow triple
-/// and route through [`package_publish`].
+/// What `settings` say to publish `status` with: the rendered commit message,
+/// the default metadata, and the workflow intent.
 ///
-/// Shared entry point for both the manual one-click Publish command and
-/// the autosync watcher tick — keep them in lockstep so a change to
-/// publish settings (new placeholder, new field) applies identically
-/// regardless of who triggered the publish. Returns the outcome paired
-/// with the rendered commit message; the autosync tick needs the message
-/// string for its `autosync-published` event, the manual command can
-/// discard it.
-pub async fn publish_with_settings(
-    model: &impl QuiltModel,
+/// Shared by both publish paths, the manual one-click Publish command and the
+/// autosync watcher tick, to keep them in lockstep so a change to publish
+/// settings (new placeholder, new field) applies identically regardless of
+/// who triggered the publish. The commit form starts from it too, so
+/// reviewing a publish shows what Publish would send.
+pub fn publish_inputs(
     namespace: &quilt_uri::Namespace,
     settings: &PublishSettings,
-    status: quilt::lineage::InstalledPackageStatus,
-) -> Result<(quilt::PublishOutcome, String), Error> {
+    status: &quilt::lineage::InstalledPackageStatus,
+) -> (String, String, WorkflowIntent) {
     let changes_summary = commit_message::generate(&status.changes);
     let message = commit_message::render_publish_message(
         settings.message_template.as_deref().unwrap_or_default(),
@@ -223,16 +226,61 @@ pub async fn publish_with_settings(
     // — honour the bucket's default workflow; a non-empty id (after trimming)
     // enforces that named workflow.
     let workflow = WorkflowIntent::from_optional_id(settings.default_workflow.as_deref());
-    let outcome = package_publish(
-        model,
-        namespace.clone(),
-        &message,
-        &metadata,
-        workflow,
-        None,
-        Some(status),
-    )
-    .await?;
+    (message, metadata, workflow)
+}
+
+/// What default metadata does to the head's `agent_exec` task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeadTask {
+    /// Replaced with the rest, as the settings write it: the user's Publish.
+    Replace,
+    /// Kept as the head has it, present or not: autosync's, which neither
+    /// drops a task nor makes one.
+    Keep,
+}
+
+/// Publish with what `settings` say, on the lock held since `status` was
+/// walked, so the message names the changes the revision commits and the
+/// publish reuses that walk. Both publish paths, the manual one-click Publish
+/// and the autosync tick, come here. Returns the outcome paired with the
+/// rendered message, which the tick's `autosync-published` event carries.
+pub async fn publish_locked_with_settings<M: QuiltModel>(
+    model: &M,
+    locked: &M::Locked,
+    installed: &quilt::InstalledPackage,
+    settings: &PublishSettings,
+    status: quilt::lineage::InstalledPackageStatus,
+    task: HeadTask,
+) -> Result<(quilt::PublishOutcome, String), Error> {
+    let (message, metadata, workflow) = publish_inputs(&installed.namespace, settings, &status);
+    debug!(
+        "Publishing the package.\nNamespace: {},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
+        installed.namespace, message, metadata, workflow
+    );
+    let metadata = match parse_metadata(&metadata)? {
+        UserMeta::Set(default) if task == HeadTask::Keep => {
+            let lineage = model.get_installed_package_lineage(installed).await?;
+            let head = model
+                .get_installed_package_manifest(installed, &lineage)
+                .await?;
+            UserMeta::Set(crate::tasks::agent_exec::keep_head_task(
+                default,
+                head.header.user_meta.as_ref(),
+            ))
+        }
+        metadata => metadata,
+    };
+    let workflow = model.resolve_workflow(installed, workflow).await?;
+    let outcome = model
+        .locked_package_publish(
+            locked,
+            message.clone(),
+            metadata,
+            workflow,
+            None,
+            Some(status),
+        )
+        .await?;
     Ok((outcome, message))
 }
 
@@ -243,7 +291,6 @@ pub async fn package_publish(
     metadata: &str,
     workflow: WorkflowIntent,
     host_config: Option<HostConfig>,
-    status: Option<quilt::lineage::InstalledPackageStatus>,
 ) -> Result<quilt::PublishOutcome, Error> {
     debug!(
         "Publishing the package.\nNamespace: {},\nmessage: {},\nuser_meta: {},\nworkflow: {:?}",
@@ -264,39 +311,18 @@ pub async fn package_publish(
             metadata,
             workflow,
             host_config,
-            status,
         )
         .await
 }
 
-pub async fn package_pull(
-    model: &impl QuiltModel,
-    namespace: &quilt_uri::Namespace,
-    host_config: Option<HostConfig>,
-    experimental: &ExperimentalSettings,
-) -> Result<(), Error> {
-    let installed_package = model
-        .get_installed_package(namespace)
-        .await?
-        .unwrap_or_else(|| panic!("Package {namespace} not found"));
-    let stored = model
-        .get_installed_package_lineage(&installed_package)
-        .await?
-        .sync_scope;
-    let scope = resolve_sync_scope(stored, experimental);
-    model
-        .package_pull(&installed_package, host_config, scope)
-        .await?;
-    Ok(())
-}
-
+/// Pull with the package's stored scope, which both pull paths honour.
 /// Set the package's remote. Returns `Some(reason)` when the remote was set but
 /// the bucket's default workflow could not be resolved (best-effort path), so
 /// the command layer can surface the warning to the user; `None` otherwise.
 pub async fn set_remote(
     model: &impl QuiltModel,
     namespace: &quilt_uri::Namespace,
-    origin: quilt_uri::Host,
+    origin: Option<quilt_uri::Host>,
     bucket: String,
     workflow: WorkflowIntent,
 ) -> Result<Option<String>, Error> {
@@ -309,12 +335,25 @@ pub async fn set_remote(
         .await
 }
 
+/// Add, change or remove the catalog of the package's remote.
+pub async fn change_catalog(
+    model: &impl QuiltModel,
+    namespace: &quilt_uri::Namespace,
+    origin: Option<quilt_uri::Host>,
+) -> Result<quilt_uri::ManifestUri, Error> {
+    let installed_package = model
+        .get_installed_package(namespace)
+        .await?
+        .ok_or_else(|| Error::from(quilt::InstallPackageError::NotInstalled(namespace.clone())))?;
+    model.change_catalog(&installed_package, origin).await
+}
+
 pub async fn package_create(
     model: &impl QuiltModel,
     namespace: quilt_uri::Namespace,
     source: Option<PathBuf>,
     message: Option<String>,
-) -> Result<quilt::InstalledPackage, Error> {
+) -> Result<(quilt::InstalledPackage, quilt::flow::LeftOut), Error> {
     model.package_create(namespace, source, message).await
 }
 
@@ -381,6 +420,7 @@ pub async fn get_or_register_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     use mockall::predicate::{always, eq};
 
@@ -398,7 +438,7 @@ mod tests {
             bucket: "requested-bucket".to_string(),
             namespace: ns.clone(),
             hash: "requestedhash0000".to_string(),
-            origin: Some("other.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
         };
 
         let mut model = MockQuiltModel::new();
@@ -449,63 +489,65 @@ mod tests {
         })
     }
 
-    /// A `MockQuiltModel` that asserts `publish_with_settings` resolves the
-    /// workflow with exactly `expected` and then publishes once.
+    /// A `MockQuiltModel` that asserts `publish_locked_with_settings` resolves
+    /// the workflow with exactly `expected` and then publishes once.
     fn model_expecting_intent(expected: WorkflowIntent) -> MockQuiltModel {
         let mut model = MockQuiltModel::new();
-        model.expect_get_installed_package().returning(|_| {
-            Ok(Some(
-                quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
-            ))
-        });
         model
             .expect_resolve_workflow()
             .times(1)
             .with(always(), eq(expected))
             .returning(|_, _| Ok(None));
         model
-            .expect_package_publish()
+            .expect_locked_package_publish()
             .times(1)
             .returning(|_, _, _, _, _, _| Ok(fake_publish_outcome(&("acme", "demo").into())));
         model
     }
 
-    #[tokio::test]
-    async fn publish_with_settings_empty_maps_to_bucket_default() -> Result<(), Error> {
-        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
-        let model = model_expecting_intent(WorkflowIntent::BucketDefault);
-        let settings = PublishSettings::default();
+    /// Publish `settings` through `model` on a mocked lock.
+    async fn publish_with(model: &MockQuiltModel, settings: &PublishSettings) -> Result<(), Error> {
+        let installed = quilt::LocalDomain::new(std::path::PathBuf::new())
+            .create_installed_package(("acme", "demo").into());
+        let locked = installed.namespace.clone();
         let status = quilt::lineage::InstalledPackageStatus::default();
-        publish_with_settings(&model, &namespace, &settings, status).await?;
+        publish_locked_with_settings(
+            model,
+            &locked,
+            &installed,
+            settings,
+            status,
+            HeadTask::Replace,
+        )
+        .await?;
         Ok(())
     }
 
     #[tokio::test]
-    async fn publish_with_settings_named_workflow() -> Result<(), Error> {
-        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+    async fn publish_locked_with_settings_empty_maps_to_bucket_default() -> Result<(), Error> {
+        let model = model_expecting_intent(WorkflowIntent::BucketDefault);
+        let settings = PublishSettings::default();
+        publish_with(&model, &settings).await
+    }
+
+    #[tokio::test]
+    async fn publish_locked_with_settings_named_workflow() -> Result<(), Error> {
         let model = model_expecting_intent(WorkflowIntent::Named("x".to_string()));
         let settings = PublishSettings {
             default_workflow: Some("x".to_string()),
             ..PublishSettings::default()
         };
-        let status = quilt::lineage::InstalledPackageStatus::default();
-        publish_with_settings(&model, &namespace, &settings, status).await?;
-        Ok(())
+        publish_with(&model, &settings).await
     }
 
     #[tokio::test]
-    async fn publish_with_settings_whitespace_maps_to_bucket_default() -> Result<(), Error> {
-        let namespace: quilt_uri::Namespace = ("acme", "demo").into();
+    async fn publish_locked_with_settings_whitespace_maps_to_bucket_default() -> Result<(), Error> {
         let model = model_expecting_intent(WorkflowIntent::BucketDefault);
         let settings = PublishSettings {
             default_workflow: Some("   ".into()),
             ..PublishSettings::default()
         };
-        let status = quilt::lineage::InstalledPackageStatus::default();
-        publish_with_settings(&model, &namespace, &settings, status).await?;
-        Ok(())
+        publish_with(&model, &settings).await
     }
 
     /// A workflow-rejection error from `quilt-rs` must propagate through the
@@ -524,15 +566,14 @@ mod tests {
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
                 quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
+                    .create_installed_package(("acme", "demo").into()),
             ))
         });
         model.expect_resolve_workflow().returning(|_, _| Ok(None));
         model
             .expect_package_publish()
             .times(1)
-            .returning(|_, _, _, _, _, _| Err(workflow_rejection()));
+            .returning(|_, _, _, _, _| Err(workflow_rejection()));
 
         // `PublishOutcome` is not `Debug`, so match rather than `expect_err`.
         let Err(err) = package_publish(
@@ -541,7 +582,6 @@ mod tests {
             "msg",
             "",
             WorkflowIntent::BucketDefault,
-            None,
             None,
         )
         .await
@@ -566,8 +606,7 @@ mod tests {
         model.expect_get_installed_package().returning(|_| {
             Ok(Some(
                 quilt::LocalDomain::new(std::path::PathBuf::new())
-                    .create_installed_package(("acme", "demo").into())
-                    .unwrap(),
+                    .create_installed_package(("acme", "demo").into()),
             ))
         });
         model
@@ -581,7 +620,7 @@ mod tests {
             )
             .returning(|_, _, _, _| Ok(None));
 
-        let origin: quilt_uri::Host = "test.quilt.dev".parse().unwrap();
+        let origin = Some(fixtures::host());
         set_remote(&model, &namespace, origin, "my-bucket".to_string(), intent).await?;
         Ok(())
     }

@@ -1,0 +1,1453 @@
+//! The first complete slice of the package context pane.
+//!
+//! The bucket and its catalog, one current revision, the revisions this copy
+//! holds, loaded when their popover opens, and what this copy keeps. This is
+//! the pane's ordinary mode; the page swaps it whole for `resolve.rs`'s
+//! `ResolvePane` while the resolve mode is open.
+
+use std::future::Future;
+use std::pin::Pin;
+
+use leptos::prelude::*;
+
+use super::Wiring;
+use super::keeping::{KeepingCommands, KeepingSection};
+use super::old_revisions::{self, RemoveRevisionsFn, Remover};
+use super::revision_history::{History, Key, Shown};
+use crate::commands;
+use crate::kit::{
+    Align, AnchoredOverlay, Button, ButtonVariant, Card, LoadFailure, PaneSection, RevisionRow,
+    SkeletonBox, SkeletonText,
+};
+
+stylance::import_crate_style!(
+    style,
+    "src/pages/installed_package_v2/context_pane.module.scss"
+);
+
+/// Where the popover's rows come from. A function pointer rather than a
+/// direct call, so the DOM tests and the gallery answer without a Tauri host.
+pub type RevisionHistoryFetch =
+    fn(String) -> Pin<Box<dyn Future<Output = Result<commands::RevisionHistoryData, String>>>>;
+
+/// The app's fetch.
+pub(super) fn fetch_revision_history(
+    namespace: String,
+) -> Pin<Box<dyn Future<Output = Result<commands::RevisionHistoryData, String>>>> {
+    Box::pin(commands::get_revision_history(namespace))
+}
+
+/// The skeleton's bar widths, at the lengths messages actually have, so the
+/// surface does not resize under the cursor when the rows land.
+const BAR_WIDTHS: [&str; 4] = ["200px", "228px", "164px", "188px"];
+
+/// The package's bucket and catalog, the current revision, and the revisions
+/// this copy holds.
+#[component]
+pub fn CurrentRevisionPane(
+    data: commands::PackageContextData,
+    /// Keys the popover's answers; see `revision_history::History`.
+    #[prop(into)]
+    namespace: String,
+    fetch: RevisionHistoryFetch,
+    /// Opens a published row's catalog address. The page's reports failure
+    /// on the band; the gallery's does nothing.
+    open_catalog: Callback<String>,
+    /// The page's command lock and band, which Keeping's commands take.
+    w: Wiring,
+    commands: KeepingCommands,
+    /// Removes old revisions from the popover. `None` offers no removal.
+    #[prop(optional)]
+    remove: Option<RemoveRevisionsFn>,
+    /// The bucket's catalog host. `None` is a bucket reached on this
+    /// computer's AWS credentials.
+    #[prop(default = None)]
+    catalog: Option<String>,
+) -> impl IntoView {
+    let (keeping, size) = (data.keeping, data.size);
+    let bucket = data.bucket.filter(|bucket| !bucket.is_empty());
+    let bucket_section = bucket_section(bucket, catalog, w);
+    let count = data.revision_count;
+
+    let open = RwSignal::new(false);
+    let history = RwSignal::new(History::new(namespace.clone()));
+    let namespace = StoredValue::new(namespace);
+    let remover = remove.map(|remove| Remover::new(namespace, w, remove));
+
+    // `try_update`: a re-read disposes this pane, and a late answer then lands nowhere.
+    let load = move |key: Key| {
+        let ns = namespace.get_value();
+        leptos::task::spawn_local(async move {
+            let answer = fetch(ns).await;
+            if let Err(detail) = &answer {
+                leptos::logging::warn!("Could not load the revision history: {detail}");
+            }
+            history.try_update(|h| h.settle(&key, answer));
+        });
+    };
+
+    // The previous value, so the initial `false` closes nothing.
+    Effect::new(move |was_open: Option<bool>| {
+        let is_open = open.get();
+        match (was_open.unwrap_or(false), is_open) {
+            (false, true) => {
+                if let Some(key) = history.try_update(History::open) {
+                    load(key);
+                }
+            }
+            (true, false) => history.update(History::close),
+            _ => {}
+        }
+        is_open
+    });
+
+    let retry = Callback::new(move |()| {
+        if let Some(key) = history.try_update(History::retry) {
+            load(key);
+        }
+    });
+
+    let trigger = move |surface_id: String| {
+        view! {
+            // Never disabled: the history is a read, outside the page's command lock.
+            <Button
+                on_click=move |_| open.update(|o| *o = !*o)
+                aria_expanded=open
+                aria_controls=surface_id
+            >
+                {format!("History ({count})")}
+            </Button>
+        }
+        .into_any()
+    };
+
+    let loading = move || history.with(|h| matches!(h.shown(), Shown::Loading));
+    // The overlay renders its body once, so the three states are one closure.
+    let body = move || {
+        let shown = history.with(|h| h.shown().clone());
+        surface_body(shown, count, open_catalog, retry, remover)
+    };
+
+    view! {
+        <aside aria-label="About this package" class=style::root>
+            // The card is visually titleless, but its hidden h2 keeps the
+            // PaneSection's h3 in a complete heading hierarchy.
+            <Card label="About this package">
+                {bucket_section}
+                <PaneSection
+                    label="Revision"
+                    action=view! {
+                        <AnchoredOverlay
+                            trigger=trigger
+                            open=open
+                            aria_label="History"
+                            align=Align::End
+                            contained=true
+                        >
+                            // The live region is the caller's (`kit/load_failure.rs`).
+                            <div
+                                class=style::live
+                                aria-live="polite"
+                                aria-busy=move || if loading() { "true" } else { "false" }
+                            >
+                                {body}
+                            </div>
+                        </AnchoredOverlay>
+                    }
+                        .into_any()
+                >
+                    <RevisionRow
+                        message=data.revision.message.unwrap_or_default()
+                        at=data.revision.obtained_at
+                    />
+                </PaneSection>
+                <KeepingSection
+                    namespace=namespace.get_value()
+                    data=keeping
+                    size=size
+                    w=w
+                    commands=commands
+                />
+            </Card>
+            // Beside the popover, not in it: see `old_revisions`.
+            {remover.map(old_revisions::dialog)}
+        </aside>
+    }
+}
+
+/// The pane's column, for the gallery's drawn pane: see
+/// [`package_page_class`](super::package_page_class).
+pub fn context_pane_class() -> &'static str {
+    style::root
+}
+
+/// The package's bucket and its catalog, each named or *Not set*, and the
+/// section's one action, which opens the header's bucket dialog.
+fn bucket_section(
+    bucket: Option<String>,
+    catalog: Option<String>,
+    w: Wiring,
+) -> impl IntoView + use<> {
+    let (action, variant) = if bucket.is_some() {
+        ("Change", ButtonVariant::Default)
+    } else {
+        ("Choose", ButtonVariant::Primary)
+    };
+    let open = w.dialogs.bucket;
+    view! {
+        <PaneSection
+            label="Bucket and catalog"
+            action=view! {
+                <Button on_click=move |_| open.set(true) variant=variant disabled=w.busy>
+                    {action}
+                </Button>
+            }
+                .into_any()
+        >
+            <dl class=style::facts>
+                <dt class=style::muted>"Bucket"</dt>
+                {fact(bucket.map(|bucket| format!("s3://{bucket}")))}
+                <dt class=style::muted>"Catalog"</dt>
+                {fact(catalog)}
+            </dl>
+        </PaneSection>
+    }
+}
+
+/// One value on one line, cut with an ellipsis and whole in its tooltip.
+fn fact(value: Option<String>) -> impl IntoView + use<> {
+    match value {
+        Some(value) => {
+            let title = value.clone();
+            view! {
+                <dd class=style::value title=title>
+                    {value}
+                </dd>
+            }
+            .into_any()
+        }
+        None => view! { <dd class=style::muted>"Not set"</dd> }.into_any(),
+    }
+}
+
+/// What the popover draws for one state of its history.
+fn surface_body(
+    shown: Shown,
+    count: usize,
+    open_catalog: Callback<String>,
+    retry: Callback<()>,
+    remover: Option<Remover>,
+) -> AnyView {
+    match shown {
+        Shown::Loading => view! {
+            <PaneSection>
+                {BAR_WIDTHS
+                    .iter()
+                    .take(count.min(BAR_WIDTHS.len()))
+                    .map(|width| view! { <SkeletonBox width=*width /> })
+                    .collect_view()}
+            </PaneSection>
+        }
+        .into_any(),
+        Shown::Rows(data) => old_revisions::rows_and_footer(data, open_catalog, remover),
+        Shown::Failed => view! {
+            <LoadFailure words="Could not load your revisions." on_retry=retry />
+        }
+        .into_any(),
+    }
+}
+
+/// The pane's loading geometry: the same three sections, each heading and
+/// label in place, with bars for what the payload fills in.
+#[component]
+pub fn CurrentRevisionPaneSkeleton() -> impl IntoView {
+    let button = |width: &str| {
+        view! { <SkeletonBox width=width height="var(--q-control-height)" /> }.into_any()
+    };
+    view! {
+        <aside aria-label="About this package" class=style::root>
+            <Card label="About this package" busy=Signal::stored(true)>
+                <PaneSection label="Bucket and catalog" action=button("72px")>
+                    <dl class=style::facts>
+                        <dt class=style::muted>"Bucket"</dt>
+                        <dd class=style::value>
+                            <SkeletonText width="70%" />
+                        </dd>
+                        <dt class=style::muted>"Catalog"</dt>
+                        <dd class=style::value>
+                            <SkeletonText width="55%" />
+                        </dd>
+                    </dl>
+                </PaneSection>
+                <PaneSection label="Revision" action=button("96px")>
+                    <div class=style::lines>
+                        <SkeletonText width="80%" />
+                        <SkeletonText width="42%" />
+                    </div>
+                </PaneSection>
+                <PaneSection label="Keeping">
+                    <div class=style::lines>
+                        <SkeletonText width="45%" />
+                        <SkeletonText width="55%" />
+                        <SkeletonText width="85%" />
+                    </div>
+                </PaneSection>
+            </Card>
+        </aside>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::{
+        CurrentRevisionData, KeptReason, RevisionHistoryData, RevisionHistoryRow,
+    };
+    use crate::pages::installed_package_v2::Wiring;
+    use crate::pages::installed_package_v2::keeping::KeepingCommands;
+    use crate::pages::installed_package_v2::old_revisions::RemoveRevisionsFn;
+    use crate::test_support::{element_saying, mount, sleep_ms};
+    use std::cell::Cell;
+    use std::future::Future;
+    use std::pin::Pin;
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_test::*;
+
+    const PUBLISHED_URL: &str =
+        "https://quilt.test/b/test/packages/team/dataset/tree/published-hash";
+
+    type Answer = Pin<Box<dyn Future<Output = Result<RevisionHistoryData, String>>>>;
+
+    fn data(
+        message: Option<&str>,
+        bucket: Option<&str>,
+        revision_count: usize,
+    ) -> commands::PackageContextData {
+        commands::PackageContextData {
+            revision: CurrentRevisionData {
+                hash: "abc123".to_string(),
+                message: message.map(ToString::to_string),
+                obtained_at: 1_758_500_000_000.0,
+            },
+            bucket: bucket.map(ToString::to_string),
+            revision_count,
+            keeping: commands::KeepingData {
+                scope: commands::KeepingScope::IndividualFiles,
+                folders: Vec::new(),
+                total: 1,
+                outstanding: 0,
+                remote_only: Vec::new(),
+                deleted_here: 0,
+            },
+            size: None,
+            resolve: None,
+        }
+    }
+
+    fn published_row() -> RevisionHistoryRow {
+        RevisionHistoryRow {
+            hash: "published-hash".to_string(),
+            message: Some("Sent".to_string()),
+            obtained_at: 1_758_500_000_000.0,
+            published: true,
+            catalog_url: Some(PUBLISHED_URL.to_string()),
+            kept: Vec::new(),
+            frees: None,
+        }
+    }
+
+    fn unpublished_row() -> RevisionHistoryRow {
+        RevisionHistoryRow {
+            hash: "local-hash".to_string(),
+            message: Some("Kept here".to_string()),
+            obtained_at: 1_758_400_000_000.0,
+            published: false,
+            catalog_url: None,
+            kept: vec![KeptReason::Unpublished],
+            frees: None,
+        }
+    }
+
+    fn rows(_: String) -> Answer {
+        Box::pin(async {
+            Ok(RevisionHistoryData {
+                rows: vec![published_row(), unpublished_row()],
+                removable_frees: None,
+            })
+        })
+    }
+
+    fn never(_: String) -> Answer {
+        Box::pin(std::future::pending())
+    }
+
+    thread_local! {
+        static REFUSALS: Cell<u32> = const { Cell::new(0) };
+    }
+
+    fn refuses(_: String) -> Answer {
+        REFUSALS.with(|n| n.set(n.get() + 1));
+        Box::pin(async { Err("AccessDenied".into()) })
+    }
+
+    /// The pane over `count` revisions, answering from `fetch`.
+    fn pane(
+        count: usize,
+        fetch: RevisionHistoryFetch,
+        open_catalog: Callback<String>,
+    ) -> web_sys::Element {
+        mount(move || {
+            view! {
+                <CurrentRevisionPane
+                    data=data(Some("Initial upload"), Some("quilt-lab-plates"), count)
+                    namespace="team/dataset"
+                    fetch=fetch
+                    open_catalog=open_catalog
+                    w=Wiring::new()
+                    commands=idle_commands()
+                />
+            }
+        })
+    }
+
+    fn stores_ok(
+        _: String,
+        _: crate::commands::KeepingScope,
+        _: Vec<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>>>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn downloads_ok(
+        _: String,
+        _: Vec<String>,
+    ) -> Pin<Box<dyn Future<Output = Result<crate::commands::NotDownloaded, String>>>> {
+        Box::pin(async { Ok(crate::commands::NotDownloaded::default()) })
+    }
+
+    fn idle_commands() -> KeepingCommands {
+        KeepingCommands {
+            store: stores_ok,
+            download: downloads_ok,
+        }
+    }
+
+    fn ignore() -> Callback<String> {
+        Callback::new(|_: String| ())
+    }
+
+    /// A task boundary and a tick: the fetch settles on the event loop, then the DOM.
+    async fn settle() {
+        sleep_ms(0).await;
+        leptos::task::tick().await;
+    }
+
+    fn trigger(el: &web_sys::Element) -> web_sys::HtmlElement {
+        el.query_selector("button[aria-expanded]")
+            .unwrap()
+            .expect("the revisions trigger")
+            .unchecked_into()
+    }
+
+    /// What the trigger says it controls.
+    fn surface(el: &web_sys::Element) -> web_sys::Element {
+        let id = trigger(el)
+            .get_attribute("aria-controls")
+            .expect("the trigger names what it opens");
+        web_sys::window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .get_element_by_id(&id)
+            .expect("an element with that id")
+    }
+
+    fn live_region(el: &web_sys::Element) -> web_sys::Element {
+        surface(el)
+            .query_selector("[aria-live='polite']")
+            .unwrap()
+            .expect("the surface's live region")
+    }
+
+    fn removal_row(
+        hash: &str,
+        message: &str,
+        kept: Vec<KeptReason>,
+        frees: Option<u64>,
+    ) -> RevisionHistoryRow {
+        RevisionHistoryRow {
+            hash: hash.to_string(),
+            message: Some(message.to_string()),
+            obtained_at: 1_758_500_000_000.0,
+            published: true,
+            catalog_url: Some(PUBLISHED_URL.to_string()),
+            kept,
+            frees,
+        }
+    }
+
+    /// One kept revision and two old ones, the set freeing more than its rows.
+    fn removable(_: String) -> Answer {
+        Box::pin(async {
+            Ok(RevisionHistoryData {
+                rows: vec![
+                    removal_row(
+                        "mine",
+                        "Mine",
+                        vec![KeptReason::Current, KeptReason::NotPushed],
+                        None,
+                    ),
+                    removal_row("old-1", "Old", Vec::new(), Some(1_200_000)),
+                    removal_row("old-2", "Older", Vec::new(), Some(0)),
+                ],
+                removable_frees: Some(6_900_000),
+            })
+        })
+    }
+
+    /// Four old ones, one freeing less than a megabyte and the rest nothing.
+    fn four_small(_: String) -> Answer {
+        Box::pin(async {
+            Ok(RevisionHistoryData {
+                rows: vec![
+                    removal_row("mine", "Mine", vec![KeptReason::Current], None),
+                    removal_row("old-1", "Small", Vec::new(), Some(211_900)),
+                    removal_row("old-2", "Empty", Vec::new(), Some(0)),
+                    removal_row("old-3", "Emptier", Vec::new(), Some(0)),
+                    removal_row("old-4", "Emptiest", Vec::new(), Some(0)),
+                ],
+                removable_frees: Some(211_900),
+            })
+        })
+    }
+
+    /// Two old ones that free nothing, alone or together.
+    fn frees_none(_: String) -> Answer {
+        Box::pin(async {
+            Ok(RevisionHistoryData {
+                rows: vec![
+                    removal_row("mine", "Mine", vec![KeptReason::Current], None),
+                    removal_row("old-1", "Old", Vec::new(), Some(0)),
+                    removal_row("old-2", "Older", Vec::new(), Some(0)),
+                ],
+                removable_frees: Some(0),
+            })
+        })
+    }
+
+    fn all_kept(_: String) -> Answer {
+        Box::pin(async {
+            Ok(RevisionHistoryData {
+                rows: vec![
+                    removal_row("mine", "Mine", vec![KeptReason::Current], None),
+                    removal_row(
+                        "tip",
+                        "Tip",
+                        vec![KeptReason::Latest, KeptReason::Base],
+                        None,
+                    ),
+                ],
+                removable_frees: None,
+            })
+        })
+    }
+
+    thread_local! {
+        static REMOVED: std::cell::RefCell<Vec<(String, Vec<String>)>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    type Removed = Pin<Box<dyn Future<Output = Result<String, String>>>>;
+
+    fn removes_ok(namespace: String, hashes: Vec<String>) -> Removed {
+        REMOVED.with(|r| r.borrow_mut().push((namespace, hashes)));
+        Box::pin(async { Ok(String::new()) })
+    }
+
+    fn removes_never(_: String, _: Vec<String>) -> Removed {
+        Box::pin(std::future::pending())
+    }
+
+    fn removes_busy(_: String, _: Vec<String>) -> Removed {
+        Box::pin(async { Err("team/dataset is busy in another quilt process".to_string()) })
+    }
+
+    /// The pane over `fetch`, removing with `remove`, on `w`, under `activities`.
+    fn removal_pane(
+        fetch: RevisionHistoryFetch,
+        remove: RemoveRevisionsFn,
+        w: Wiring,
+        activities: crate::kit::Activities,
+    ) -> web_sys::Element {
+        mount(move || {
+            provide_context(activities);
+            view! {
+                <CurrentRevisionPane
+                    data=data(Some("Mine"), Some("quilt-lab-plates"), 3)
+                    namespace="team/dataset"
+                    fetch=fetch
+                    open_catalog=ignore()
+                    w=w
+                    commands=idle_commands()
+                    remove=remove
+                />
+            }
+        })
+    }
+
+    async fn opened(el: &web_sys::Element) -> web_sys::Element {
+        trigger(el).click();
+        settle().await;
+        settle().await;
+        surface(el)
+    }
+
+    /// The surface with its rows drawn again: the confirmation's modal closes
+    /// the popover, so it may take a press to open it and one more if the
+    /// trigger still thought it open.
+    async fn reopened(el: &web_sys::Element, surface: &web_sys::Element) -> web_sys::Element {
+        for _ in 0..2 {
+            if surface
+                .query_selector("button[aria-label^='Remove']")
+                .unwrap()
+                .is_some()
+            {
+                break;
+            }
+            trigger(el).click();
+            settle().await;
+            settle().await;
+        }
+        surface.clone()
+    }
+
+    fn button_named(root: &web_sys::Element, label: &str) -> web_sys::HtmlButtonElement {
+        root.query_selector(&format!("button[aria-label='{label}']"))
+            .unwrap()
+            .unwrap_or_else(|| panic!("no {label:?}; markup was {}", root.inner_html()))
+            .unchecked_into()
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_removable_row_says_what_it_frees_and_a_kept_one_why() {
+        let el = removal_pane(
+            removable,
+            removes_ok,
+            Wiring::new(),
+            crate::kit::Activities::new(),
+        );
+        let surface = opened(&el).await;
+
+        element_saying(&surface, "frees 1.2\u{a0}MB");
+        element_saying(&surface, "frees nothing");
+        let tag = element_saying(&surface, "current \u{b7} not pushed");
+        assert_eq!(
+            tag.get_attribute("title").as_deref(),
+            Some("Kept: your files are at this revision, and it has not been pushed.")
+        );
+        button_named(&surface, "Remove \u{201c}Old\u{201d}");
+        assert!(
+            surface
+                .query_selector("button[aria-label='Remove \u{201c}Mine\u{201d}']")
+                .unwrap()
+                .is_none(),
+            "a kept row has no trash"
+        );
+        crate::test_support::button_saying(&surface, "Remove 2 unused \u{b7} 6.9\u{a0}MB");
+    }
+
+    /// Sizes are exact: a row under a megabyte says how much, and so do the
+    /// footer and its question.
+    #[wasm_bindgen_test]
+    async fn sizes_under_a_megabyte_are_exact() {
+        let el = removal_pane(
+            four_small,
+            removes_ok,
+            Wiring::new(),
+            crate::kit::Activities::new(),
+        );
+        let surface = opened(&el).await;
+
+        element_saying(&surface, "frees 211.9\u{a0}kB");
+        crate::test_support::button_saying(&surface, "Remove 4 unused \u{b7} 211.9\u{a0}kB")
+            .click();
+        leptos::task::tick().await;
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Remove all 4 unused revisions? This frees 211.9\u{a0}kB."),
+            "markup was {}",
+            dialog.inner_html()
+        );
+    }
+
+    /// A set that frees nothing drops the size from the footer; its question
+    /// says so.
+    #[wasm_bindgen_test]
+    async fn a_set_freeing_nothing_names_no_size() {
+        let el = removal_pane(
+            frees_none,
+            removes_ok,
+            Wiring::new(),
+            crate::kit::Activities::new(),
+        );
+        let surface = opened(&el).await;
+
+        crate::test_support::button_saying(&surface, "Remove 2 unused").click();
+        leptos::task::tick().await;
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Remove all 2 unused revisions? This frees no space."),
+            "markup was {}",
+            dialog.inner_html()
+        );
+    }
+
+    /// The trash asks first; Remove closes the dialog and starts the removal,
+    /// which shows on the activity line until it answers.
+    #[wasm_bindgen_test]
+    async fn the_trash_confirms_then_removes_that_revision() {
+        REMOVED.with(|r| r.borrow_mut().clear());
+        let w = Wiring::new();
+        let activities = crate::kit::Activities::new();
+        let el = removal_pane(removable, removes_ok, w, activities);
+        let surface = opened(&el).await;
+
+        button_named(&surface, "Remove \u{201c}Old\u{201d}").click();
+        leptos::task::tick().await;
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Remove \u{201c}Old\u{201d}? This frees 1.2\u{a0}MB."),
+            "markup was {}",
+            dialog.inner_html()
+        );
+        assert!(
+            REMOVED.with(|r| r.borrow().is_empty()),
+            "nothing before the answer"
+        );
+
+        crate::test_support::button_saying(&dialog, "Remove").click();
+        settle().await;
+        settle().await;
+
+        assert_eq!(
+            REMOVED.with(|r| r.borrow().clone()),
+            vec![("team/dataset".to_string(), vec!["old-1".to_string()])]
+        );
+        assert!(!w.removal.open.get_untracked(), "the dialog closed");
+        assert_eq!(
+            w.removal.running.get_untracked(),
+            None,
+            "and the removal ended"
+        );
+        assert_eq!(untrack(|| activities.first_label()), "", "the line cleared");
+        assert_eq!(w.outcome.get_untracked(), None);
+    }
+
+    #[wasm_bindgen_test]
+    async fn while_removing_the_line_says_so_and_every_button_refuses() {
+        let w = Wiring::new();
+        let activities = crate::kit::Activities::new();
+        let el = removal_pane(removable, removes_never, w, activities);
+        let surface = opened(&el).await;
+
+        button_named(&surface, "Remove \u{201c}Old\u{201d}").click();
+        leptos::task::tick().await;
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        crate::test_support::button_saying(&dialog, "Remove").click();
+        settle().await;
+
+        assert_eq!(
+            untrack(|| activities.first_label()),
+            "Removing 1 old revision of team/dataset\u{2026}"
+        );
+        // The modal closed the popover; reopened, it lists what is there.
+        let surface = reopened(&el, &surface).await;
+        assert!(button_named(&surface, "Remove \u{201c}Old\u{201d}").disabled());
+        assert!(button_named(&surface, "Remove \u{201c}Older\u{201d}").disabled());
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refusal_reaches_the_band() {
+        let w = Wiring::new();
+        let el = removal_pane(removable, removes_busy, w, crate::kit::Activities::new());
+        let surface = opened(&el).await;
+
+        crate::test_support::button_saying(&surface, "Remove 2 unused \u{b7} 6.9\u{a0}MB").click();
+        leptos::task::tick().await;
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("Remove all 2 unused revisions? This frees 6.9\u{a0}MB.")
+        );
+        crate::test_support::button_saying(&dialog, "Remove").click();
+        settle().await;
+        settle().await;
+
+        let outcome = w.outcome.get_untracked().expect("the band speaks");
+        assert_eq!(outcome.namespace, "team/dataset");
+        assert_eq!(outcome.lead, "Could not remove old revisions.");
+        assert!(outcome.detail.unwrap_or_default().contains("busy"));
+    }
+
+    /// Autopull syncing this package holds its lock: the buttons refuse, and
+    /// the footer says why.
+    #[wasm_bindgen_test]
+    async fn a_sync_of_this_package_disables_removal_and_says_why() {
+        let activities = crate::kit::Activities::new();
+        activities.set(
+            crate::kit::ActivityKind::Autopull,
+            vec![crate::kit::Activity {
+                kind: crate::kit::ActivityKind::Autopull,
+                label: "Getting latest for team/dataset\u{2026}".to_string(),
+                package: Some("team/dataset".to_string()),
+            }],
+        );
+        let el = removal_pane(removable, removes_ok, Wiring::new(), activities);
+        let surface = opened(&el).await;
+
+        element_saying(
+            &surface,
+            "team/dataset is busy syncing \u{2014} try again in a moment",
+        );
+        assert!(button_named(&surface, "Remove \u{201c}Old\u{201d}").disabled());
+    }
+
+    /// A page command that starts while the dialog is open: Remove refuses in
+    /// the dialog rather than asking a lock that will say no.
+    #[wasm_bindgen_test]
+    async fn a_command_started_under_the_dialog_refuses_remove() {
+        REMOVED.with(|r| r.borrow_mut().clear());
+        let w = Wiring::new();
+        let el = removal_pane(removable, removes_ok, w, crate::kit::Activities::new());
+        let surface = opened(&el).await;
+
+        button_named(&surface, "Remove \u{201c}Old\u{201d}").click();
+        leptos::task::tick().await;
+        w.busy.set(true);
+        let dialog = el
+            .query_selector("dialog")
+            .unwrap()
+            .expect("the confirmation");
+        crate::test_support::button_saying(&dialog, "Remove").click();
+        settle().await;
+
+        assert!(REMOVED.with(|r| r.borrow().is_empty()), "nothing was asked");
+        assert!(
+            dialog
+                .text_content()
+                .unwrap_or_default()
+                .contains("team/dataset is busy"),
+            "markup was {}",
+            dialog.inner_html()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_page_command_disables_removal() {
+        let w = Wiring::new();
+        w.busy.set(true);
+        let el = removal_pane(removable, removes_ok, w, crate::kit::Activities::new());
+        let surface = opened(&el).await;
+
+        assert!(button_named(&surface, "Remove \u{201c}Old\u{201d}").disabled());
+    }
+
+    #[wasm_bindgen_test]
+    async fn everything_kept_says_there_is_nothing_to_remove() {
+        let el = removal_pane(
+            all_kept,
+            removes_ok,
+            Wiring::new(),
+            crate::kit::Activities::new(),
+        );
+        let surface = opened(&el).await;
+
+        element_saying(
+            &surface,
+            "Nothing to remove \u{2014} every revision here is in use",
+        );
+        element_saying(&surface, "latest \u{b7} base");
+        assert!(
+            surface
+                .query_selector("button[aria-label^='Remove']")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_pane_names_and_renders_the_current_revision() {
+        let el = pane(4, never, ignore());
+
+        let aside = el.query_selector("aside").unwrap().expect("an aside");
+        assert_eq!(
+            aside.get_attribute("aria-label").as_deref(),
+            Some("About this package")
+        );
+        element_saying(&el, "Revision");
+        assert!(
+            el.text_content()
+                .unwrap_or_default()
+                .contains("Initial upload"),
+            "RevisionRow quotes the message, but preserves its words"
+        );
+        element_saying(&el, "s3://quilt-lab-plates");
+
+        let time = el
+            .query_selector("time")
+            .unwrap()
+            .expect("an obtained time");
+        assert!(
+            time.get_attribute("datetime")
+                .is_some_and(|value| !value.is_empty()),
+            "the machine-readable time travels with the relative one"
+        );
+        // Keeping draws radios beside it, so the section is found by its heading.
+        let revision = element_saying(&el, "Revision")
+            .closest("section")
+            .unwrap()
+            .expect("the Revision section");
+        let buttons = revision.query_selector_all("button").unwrap();
+        assert_eq!(
+            buttons.length(),
+            1,
+            "the trigger is the section's one control; markup was {}",
+            revision.inner_html()
+        );
+        let history = buttons.item(0).unwrap();
+        assert_eq!(
+            history.text_content().unwrap_or_default().trim(),
+            "History (4)"
+        );
+        let heading_row = revision
+            .query_selector("h3")
+            .unwrap()
+            .and_then(|h| h.parent_element())
+            .unwrap();
+        assert!(
+            heading_row != revision && heading_row.contains(Some(&history)),
+            "at the heading's end; markup was {}",
+            revision.inner_html()
+        );
+        assert!(
+            revision.query_selector("a, input").unwrap().is_none(),
+            "no link or input while closed; markup was {}",
+            revision.inner_html()
+        );
+    }
+
+    /// The pane over a package in `bucket`, with `catalog` or none, and the
+    /// dialog flag its action sets.
+    fn pane_in_bucket(
+        bucket: Option<&'static str>,
+        catalog: Option<&'static str>,
+    ) -> (web_sys::Element, Wiring) {
+        let w = Wiring::new();
+        let el = mount(move || {
+            view! {
+                <CurrentRevisionPane
+                    data=data(Some("Initial upload"), bucket, 1)
+                    namespace="team/dataset"
+                    fetch=never
+                    open_catalog=ignore()
+                    w=w
+                    commands=idle_commands()
+                    catalog=catalog.map(ToString::to_string)
+                />
+            }
+        });
+        (el, w)
+    }
+
+    /// The pane's section headings, in order.
+    fn headings(el: &web_sys::Element) -> Vec<String> {
+        let all = el.query_selector_all("h3").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().text_content().unwrap_or_default())
+            .collect()
+    }
+
+    fn bucket_section(el: &web_sys::Element) -> web_sys::Element {
+        let all = el.query_selector_all("h3").unwrap();
+        (0..all.length())
+            .map(|i| all.item(i).unwrap().unchecked_into::<web_sys::Element>())
+            .find(|h| h.text_content().as_deref() == Some("Bucket and catalog"))
+            .and_then(|h| h.closest("section").unwrap())
+            .unwrap_or_else(|| {
+                panic!(
+                    "a Bucket and catalog section; markup was {}",
+                    el.inner_html()
+                )
+            })
+    }
+
+    /// What the section says beside `label`: the term's description.
+    fn said_for(section: &web_sys::Element, label: &str) -> String {
+        let term = element_saying(section, label);
+        assert_eq!(term.tag_name(), "DT", "{label} is a term");
+        term.next_element_sibling()
+            .expect("its description")
+            .text_content()
+            .unwrap_or_default()
+    }
+
+    /// The section's one button, beside its heading.
+    fn section_action(section: &web_sys::Element) -> web_sys::HtmlButtonElement {
+        let buttons = section.query_selector_all("button").unwrap();
+        assert_eq!(
+            buttons.length(),
+            1,
+            "one action for the section; markup was {}",
+            section.inner_html()
+        );
+        let button: web_sys::HtmlButtonElement = buttons.item(0).unwrap().unchecked_into();
+        let heading_row = button.parent_element().unwrap();
+        assert!(
+            heading_row.query_selector("h3").unwrap().is_some(),
+            "beside the heading; markup was {}",
+            section.inner_html()
+        );
+        button
+    }
+
+    /// A bucket with no catalog: the catalog is *Not set*, and the section's
+    /// *Change* opens the bucket dialog. The address is here, not in *Revision*.
+    #[wasm_bindgen_test]
+    async fn a_bucket_without_a_catalog_says_not_set() {
+        let (el, w) = pane_in_bucket(Some("quilt-lab-plates"), None);
+        let section = bucket_section(&el);
+        assert!(said_for(&section, "Bucket").contains("s3://quilt-lab-plates"));
+        assert_eq!(said_for(&section, "Catalog"), "Not set");
+        assert_eq!(
+            headings(&el)[..2],
+            ["Bucket and catalog", "Revision"],
+            "above Revision"
+        );
+        let revision = element_saying(&el, "Revision")
+            .closest("section")
+            .unwrap()
+            .unwrap();
+        assert!(
+            !revision
+                .text_content()
+                .unwrap_or_default()
+                .contains("s3://"),
+            "the address is the Bucket and catalog section's alone"
+        );
+
+        let button = section_action(&section);
+        assert_eq!(button.text_content().unwrap_or_default().trim(), "Change");
+        assert!(!w.dialogs.bucket.get_untracked());
+        button.click();
+        leptos::task::tick().await;
+        assert!(w.dialogs.bucket.get_untracked(), "the dialog opens");
+    }
+
+    /// With a catalog, the section names its host, whole in the tooltip.
+    #[wasm_bindgen_test]
+    async fn a_bucket_with_a_catalog_offers_to_change_it() {
+        let (el, w) = pane_in_bucket(Some("quilt-lab-plates"), Some("quilt.test"));
+        let section = bucket_section(&el);
+        assert!(said_for(&section, "Bucket").contains("s3://quilt-lab-plates"));
+        assert_eq!(said_for(&section, "Catalog"), "quilt.test");
+        let host = element_saying(&section, "Catalog")
+            .next_element_sibling()
+            .unwrap();
+        assert_eq!(host.get_attribute("title").as_deref(), Some("quilt.test"));
+
+        let button = section_action(&section);
+        assert_eq!(button.text_content().unwrap_or_default().trim(), "Change");
+        button.click();
+        leptos::task::tick().await;
+        assert!(w.dialogs.bucket.get_untracked());
+    }
+
+    /// The action waits its turn behind the page's command lock.
+    #[wasm_bindgen_test]
+    async fn the_bucket_action_waits_for_the_lock() {
+        for bucket in [Some("quilt-lab-plates"), None] {
+            let (el, w) = pane_in_bucket(bucket, None);
+            w.busy.set(true);
+            leptos::task::tick().await;
+            assert!(section_action(&bucket_section(&el)).disabled());
+        }
+    }
+
+    /// A package with no bucket has the same section, both facts *Not set*,
+    /// and its action is the primary *Choose*, into the same dialog.
+    #[wasm_bindgen_test]
+    async fn a_local_package_chooses_its_bucket_in_the_section() {
+        let (el, w) = pane_in_bucket(None, None);
+        let section = bucket_section(&el);
+        assert_eq!(said_for(&section, "Bucket"), "Not set");
+        assert_eq!(said_for(&section, "Catalog"), "Not set");
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("No S3 bucket"),
+            "Revision no longer says it; markup was {}",
+            el.inner_html()
+        );
+
+        let button = section_action(&section);
+        assert_eq!(button.text_content().unwrap_or_default().trim(), "Choose");
+        let primary = crate::test_support::mount(|| {
+            view! {
+                <Button on_click=|_| () variant=ButtonVariant::Primary>
+                    "x"
+                </Button>
+            }
+        })
+        .query_selector("button")
+        .unwrap()
+        .unwrap()
+        .class_name();
+        assert_eq!(button.class_name(), primary, "drawn as the primary");
+        button.click();
+        leptos::task::tick().await;
+        assert!(w.dialogs.bucket.get_untracked(), "the dialog opens");
+    }
+
+    #[wasm_bindgen_test]
+    fn absent_facts_have_honest_words() {
+        for message in [None, Some("")] {
+            let el = mount(move || {
+                view! {
+                    <CurrentRevisionPane
+                        data=data(message, None, 1)
+                        namespace="team/dataset"
+                        fetch=never
+                        open_catalog=ignore()
+                        w=Wiring::new()
+                        commands=idle_commands()
+                    />
+                }
+            });
+            element_saying(&el, "No message");
+        }
+    }
+
+    #[wasm_bindgen_test]
+    fn the_trigger_states_the_count_and_what_it_opens() {
+        let el = pane(4, never, ignore());
+        let button = trigger(&el);
+        assert_eq!(
+            button.text_content().unwrap_or_default().trim(),
+            "History (4)"
+        );
+        assert_eq!(
+            button.get_attribute("aria-expanded").as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            surface(&el).get_attribute("aria-label").as_deref(),
+            Some("History")
+        );
+    }
+
+    /// The surface opens at once into bars, one per revision up to four, and
+    /// the region says it is busy until the answer lands.
+    #[wasm_bindgen_test]
+    async fn opening_draws_the_skeleton_until_the_answer() {
+        for (count, bars) in [(2, 2), (6, 4)] {
+            let el = pane(count, never, ignore());
+            trigger(&el).click();
+            settle().await;
+
+            assert_eq!(
+                trigger(&el).get_attribute("aria-expanded").as_deref(),
+                Some("true")
+            );
+            assert_eq!(
+                live_region(&el).get_attribute("aria-busy").as_deref(),
+                Some("true")
+            );
+            let drawn = surface(&el)
+                .query_selector_all("[aria-hidden='true']")
+                .unwrap()
+                .length();
+            assert_eq!(
+                drawn,
+                bars,
+                "{count} revisions; markup was {}",
+                el.inner_html()
+            );
+        }
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_rows_arrive_published_and_not() {
+        let el = pane(2, rows, ignore());
+        trigger(&el).click();
+        settle().await;
+        settle().await;
+
+        let surface = surface(&el);
+        assert_eq!(
+            live_region(&el).get_attribute("aria-busy").as_deref(),
+            Some("false")
+        );
+        element_saying(&surface, "Published");
+        element_saying(&surface, "Not published");
+
+        let links = surface.query_selector_all("a").unwrap();
+        assert_eq!(links.length(), 1, "only the published row links");
+        let link = surface
+            .query_selector(&format!("a[href=\"{PUBLISHED_URL}\"]"))
+            .unwrap()
+            .expect("the published row links to its exact revision");
+        assert_eq!(
+            link.get_attribute("aria-label").as_deref(),
+            Some("Open in catalog")
+        );
+        let sent = element_saying(&surface, "\u{201c}Sent\u{201d}");
+        assert!(
+            sent.closest("a").unwrap().is_none(),
+            "the message is text beside the link, not inside it"
+        );
+        assert!(
+            surface
+                .text_content()
+                .unwrap_or_default()
+                .contains("Kept here"),
+            "the unpublished row is text"
+        );
+        assert_eq!(
+            surface
+                .query_selector_all("time[datetime]")
+                .unwrap()
+                .length(),
+            2,
+            "each row says when"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_refusal_offers_a_retry_that_asks_again() {
+        REFUSALS.with(|n| n.set(0));
+        let el = pane(2, refuses, ignore());
+        trigger(&el).click();
+        settle().await;
+        settle().await;
+
+        let surface = surface(&el);
+        element_saying(&surface, "Could not load your revisions.");
+        assert_eq!(REFUSALS.with(Cell::get), 1);
+
+        element_saying(&surface, "Try again").click();
+        settle().await;
+        assert_eq!(REFUSALS.with(Cell::get), 2, "the retry asked again");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_published_link_opens_through_the_callback() {
+        let opened: RwSignal<Option<String>> = RwSignal::new(None);
+        let el = pane(
+            2,
+            rows,
+            Callback::new(move |url: String| opened.set(Some(url))),
+        );
+        trigger(&el).click();
+        settle().await;
+        settle().await;
+
+        let before = web_sys::window().unwrap().location().href().unwrap();
+        surface(&el)
+            .query_selector("[aria-label='Open in catalog']")
+            .unwrap()
+            .expect("the published row's link")
+            .unchecked_into::<web_sys::HtmlElement>()
+            .click();
+        leptos::task::tick().await;
+
+        assert_eq!(opened.get_untracked().as_deref(), Some(PUBLISHED_URL));
+        assert_eq!(
+            web_sys::window().unwrap().location().href().unwrap(),
+            before,
+            "the test page did not navigate"
+        );
+    }
+
+    /// The skeleton draws the loaded pane's three sections, each with bars.
+    #[wasm_bindgen_test]
+    fn the_skeleton_draws_every_section_and_marks_the_region_busy() {
+        let el = mount(|| view! { <CurrentRevisionPaneSkeleton /> });
+        let card = el
+            .query_selector("aside > section")
+            .unwrap()
+            .expect("the composing card");
+        assert_eq!(card.get_attribute("aria-busy").as_deref(), Some("true"));
+        assert_eq!(headings(&el), ["Bucket and catalog", "Revision", "Keeping"]);
+    }
+
+    #[expect(dead_code, reason = "only the classes these tests need are loaded")]
+    mod sheets {
+        stylance::import_crate_style!(pub pane, "src/kit/pane_section.module.scss");
+        stylance::import_crate_style!(pub bar, "src/kit/skeleton_box.module.scss");
+        stylance::import_crate_style!(pub page, "src/pages/installed_package_v2.module.scss");
+    }
+
+    /// The sheets the pane is drawn with, and the page's, whose column is the
+    /// container the pane's narrow layout asks about.
+    fn load_pane_sheets() {
+        use sheets::{bar, page, pane};
+        crate::test_support::load_module_style(
+            include_str!("../../kit/pane_section.module.scss"),
+            &[
+                ("root", pane::root),
+                ("label", pane::label),
+                ("nested", pane::nested),
+                ("heading", pane::heading),
+            ],
+        );
+        crate::test_support::load_module_style(
+            include_str!("../../kit/skeleton_box.module.scss"),
+            &[("root", bar::root), ("text", bar::text)],
+        );
+        crate::test_support::load_module_style(
+            include_str!("context_pane.module.scss"),
+            &[
+                ("root", style::root),
+                ("muted", style::muted),
+                ("facts", style::facts),
+                ("value", style::value),
+                ("lines", style::lines),
+            ],
+        );
+        crate::test_support::load_module_style(
+            include_str!("../installed_package_v2.module.scss"),
+            &[("page", page::page)],
+        );
+    }
+
+    /// Under the page's stylesheets every bar has width: a section sizes its
+    /// children to their content, and a bar sized in percent must not
+    /// collapse inside it.
+    #[wasm_bindgen_test]
+    async fn every_skeleton_bar_is_drawn() {
+        load_pane_sheets();
+        let el = mount(|| view! { <CurrentRevisionPaneSkeleton /> });
+        sleep_ms(0).await;
+
+        let sections = el.query_selector_all("aside section section").unwrap();
+        assert_eq!(sections.length(), 3);
+        for i in 0..sections.length() {
+            let section: web_sys::Element = sections.item(i).unwrap().unchecked_into();
+            let bars = section.query_selector_all("[aria-hidden='true']").unwrap();
+            assert!(bars.length() > 0, "bars in section {i}");
+            for j in 0..bars.length() {
+                let bar: web_sys::HtmlElement = bars.item(j).unwrap().unchecked_into();
+                assert!(
+                    bar.offset_width() > 0,
+                    "bar {j} of section {i} has no width; markup was {}",
+                    section.inner_html()
+                );
+            }
+        }
+    }
+
+    /// The skeleton pane in the page's column at `width`, with the tokens the
+    /// sheets read.
+    fn pane_at(width: u32) -> web_sys::Element {
+        load_pane_sheets();
+        mount(move || {
+            view! {
+                <div
+                    class=sheets::page::page
+                    style=format!(
+                        "width:{width}px; --q-space-1:4px; --q-space-2:8px; \
+                         --q-space-3:12px; --q-space-4:16px",
+                    )
+                >
+                    <CurrentRevisionPaneSkeleton />
+                </div>
+            }
+        })
+    }
+
+    fn sections(el: &web_sys::Element) -> Vec<web_sys::DomRect> {
+        let list = el.query_selector_all("aside section section").unwrap();
+        (0..list.length())
+            .map(|i| {
+                list.item(i)
+                    .unwrap()
+                    .unchecked_into::<web_sys::Element>()
+                    .get_bounding_client_rect()
+            })
+            .collect()
+    }
+
+    /// Narrow, the three sections are three columns, not a stack, so the
+    /// pane is one section tall above the files.
+    #[wasm_bindgen_test]
+    async fn narrow_the_sections_are_three_columns() {
+        let el = pane_at(600);
+        sleep_ms(0).await;
+        let rects = sections(&el);
+        assert_eq!(rects.len(), 3);
+        for pair in rects.windows(2) {
+            assert_eq!(pair[0].top(), pair[1].top(), "one top line");
+            assert!(pair[0].right() <= pair[1].left(), "side by side");
+        }
+    }
+
+    /// Wide, they stack in the pane beside the files.
+    #[wasm_bindgen_test]
+    async fn wide_the_sections_stack() {
+        let el = pane_at(1024);
+        sleep_ms(0).await;
+        let rects = sections(&el);
+        assert_eq!(rects.len(), 3);
+        for pair in rects.windows(2) {
+            assert!(pair[0].bottom() <= pair[1].top(), "one under the other");
+        }
+    }
+
+    /// In a column too narrow for a heading and its action, the action wraps
+    /// under the heading rather than past the column's edge.
+    #[wasm_bindgen_test]
+    async fn a_section_s_action_stays_inside_a_narrow_column() {
+        let el = pane_at(400);
+        sleep_ms(0).await;
+        let list = el.query_selector_all("aside section section").unwrap();
+        for i in 0..list.length() {
+            let section: web_sys::Element = list.item(i).unwrap().unchecked_into();
+            let edge = section.get_bounding_client_rect().right();
+            let parts = section.query_selector_all("h3, h3 ~ *").unwrap();
+            for j in 0..parts.length() {
+                let part: web_sys::Element = parts.item(j).unwrap().unchecked_into();
+                assert!(
+                    part.get_bounding_client_rect().right() <= edge + 0.5,
+                    "section {i} spills past its column; markup was {}",
+                    section.inner_html()
+                );
+            }
+        }
+    }
+}

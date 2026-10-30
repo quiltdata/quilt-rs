@@ -397,9 +397,9 @@ mod tests {
         assert_eq!(sha256_chunked_hash.algorithm(), MULTIHASH_SHA256_CHUNKED);
         assert_eq!(crc64_hash.algorithm(), MULTIHASH_CRC64_NVME);
 
-        assert!(!sha256_hash.digest().is_empty());
-        assert!(!sha256_chunked_hash.digest().is_empty());
-        assert!(!crc64_hash.digest().is_empty());
+        assert_ne!(sha256_hash.digest(), [] as [u8; 0]);
+        assert_ne!(sha256_chunked_hash.digest(), [] as [u8; 0]);
+        assert_ne!(crc64_hash.digest(), [] as [u8; 0]);
 
         // Test trait object polymorphism
         fn check_hash_trait<T: Hash>(hash: &T) -> u64 {

@@ -46,6 +46,7 @@
 
   .action {
     display: flex;
+    flex-shrink: 0;
     gap: var(--q-ui-size-2);
     margin-left: 8px;
   }

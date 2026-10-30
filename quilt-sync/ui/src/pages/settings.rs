@@ -34,7 +34,7 @@ pub fn Settings() -> impl IntoView {
 
     let breadcrumbs = vec![
         BreadcrumbItem::Link(BreadcrumbLink {
-            href: "/installed-packages-list".to_string(),
+            href: "/".to_string(),
             title: String::new(),
         }),
         BreadcrumbItem::Current("Settings".to_string()),
@@ -54,7 +54,7 @@ pub fn Settings() -> impl IntoView {
                             view! { <SettingsContent data=d notification=notification refetch=refetch /> }.into_any()
                         }
                         Err(e) => {
-                            crate::error_handler::handle_or_display(&e, notification)
+                            crate::error_handler::handle_or_display_in_shell(&e, notification)
                         }
                     }
                 })}
@@ -88,6 +88,7 @@ fn SettingsContent(
             <AccountSection auth_hosts=data.auth_hosts notification=notification refetch=refetch />
             <ExperimentalSection
                 entire_package_sync=data.experimental.entire_package_sync
+                new_design=data.design == commands::Design::V2
                 notification=notification
                 refetch=refetch
             />
@@ -95,6 +96,7 @@ fn SettingsContent(
                 version=data.version
                 os=data.os
                 log_level=data.log_level
+                log_env=data.log_env
                 logs_dir=data.logs_dir
                 logs_dir_is_temporary=data.logs_dir_is_temporary
                 notification=notification

@@ -37,8 +37,8 @@ pub(super) fn is_credentials_auth_error(e: &Error) -> bool {
 }
 
 /// Returns true when an error from the registry **GraphQL endpoint** (the
-/// role surface: `me`, `switchRole`, `buckets`) means the access token is no
-/// longer accepted.
+/// role surface: `me`, `switchRole`, `buckets`; and `package`'s revision
+/// list) means the access token is no longer accepted.
 ///
 /// Same 401/403 shape as the credentials endpoint and for the same reason —
 /// a 400 there is a malformed document, i.e. a client bug — but kept as its
@@ -88,10 +88,10 @@ pub(super) fn classify_retry_outcome<T>(
         Err(e) if is_auth_error(&e) => {
             warn!(
                 status = ?http_status(&e),
-                "❌ Auth error on {} for {} persisted after retry, login required: {}",
+                "❌ Auth error on {} for {} persisted after retry, no session remains: {}",
                 endpoint, host, e
             );
-            Err(LoginError::Required(Some(host.to_owned())).into())
+            Err(LoginError::NoSession(Some(host.to_owned())).into())
         }
         Err(e) => {
             warn!(

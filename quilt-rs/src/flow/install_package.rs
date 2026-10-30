@@ -4,8 +4,6 @@ use tracing::info;
 use crate::Error;
 use crate::InstallPackageError;
 use crate::Res;
-#[cfg(test)]
-use crate::error::FsError;
 use crate::flow;
 use crate::io::manifest::resolve_tag;
 use crate::io::remote::Remote;
@@ -89,7 +87,6 @@ mod tests {
     use std::str::FromStr;
 
     use crate::io::remote::mocks::MockRemote;
-    use crate::io::storage::LocalStorage;
     use crate::io::storage::mocks::MockStorage;
     use crate::lineage::Home;
     use quilt_uri::S3Uri;
@@ -191,8 +188,14 @@ mod tests {
 
     // Verify it throws correct error when no permissions
     // Permissions denied, because we try to create a file in the OS root directory
+    // Unix only: a Windows runner's user may write to the drive root, so the
+    // install would succeed there and leave folders behind.
+    #[cfg(unix)]
     #[test(tokio::test)]
     async fn test_installing_when_no_permissions() -> Res {
+        use crate::error::FsError;
+        use crate::io::storage::LocalStorage;
+
         let manifest_uri = ManifestUri {
             bucket: "a".to_string(),
             hash: "h".to_string(),

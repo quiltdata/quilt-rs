@@ -1,0 +1,108 @@
+/*
+ * Card. A bordered, titled container for a list of related rows — the state
+ * strip's Autosync and Accounts blocks, and the five sections Settings will
+ * reuse it for.
+ *
+ * Flat and bordered, never elevated: no shadow at any size.
+ */
+
+/* No `flex` here. It used to carry `flex: 1 1 300px` for the state strip's two-card
+ * row, which was its parent's layout living in the child — and actively wrong once a
+ * card went into the page's flex COLUMN, where `flex-basis` sizes the HEIGHT, so the
+ * card asked to be 300px tall. The strip sets it on its own children now. */
+.root {
+  min-width: 0;
+  padding: var(--q-space-3);
+  border: 1px solid var(--q-borderColor-default);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-default);
+}
+
+/* Uppercase and muted, so it labels the block without competing with the rows inside
+ * it. At the 14px floor this is chunkier than an 11px design would be — letter-spacing
+ * does the work that shrinking used to.
+ *
+ * Upper-cased in CSS and not in the string: `text-transform` leaves the text itself
+ * alone, while typing NEEDS YOUR ATTENTION makes some screen readers spell it out as
+ * an initialism. */
+.title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0 0 var(--q-space-2);
+  font-size: var(--q-text-body);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--q-fgColor-muted);
+}
+
+/* Neither upper-cased nor tracked — it is a number, and spacing digits apart makes
+ * them read as separate figures. */
+.count {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The card owns the rhythm of its contents, not the rows. A hairline between
+ * *any* two children means a card holding a mix — ToggleRows and HostRows — is
+ * divided consistently, which a `.row + .row` rule inside one row's module
+ * could not do. */
+.body > * + * {
+  border-top: 1px solid var(--q-borderColor-muted);
+}
+
+/* A list for the reader that announces one, with none of the chrome that implies.
+ * `ul.body` rather than `.body`, so the `div` form keeps its own shorter reset. */
+/* `list-style: none` is enough for WebKit to drop the list semantics with it,
+ * so every one of these carries an explicit `role="list"`. */
+ul.body {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* Rows that carry their own padding. The file list's group headings stick to the
+ * card's top edge when it scrolls, and its footer hairline has to reach both
+ * borders — a padded card would inset both and leave a gutter the rows do not
+ * know about. Titled cards keep the padding; this one is named by `label` and
+ * draws no title at all. */
+.root.flush {
+  padding: 0;
+}
+
+/* A list on the page itself. The hairlines between its children stay. */
+.root.bare {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
+/* A card that is the page's growing region. `min-height: 0` is the load-bearing
+ * half: a flex child defaults to `min-height: auto` and refuses to shrink below
+ * its content, so a card holding seven hundred rows pushes the page taller
+ * instead of scrolling inside it. The body is what scrolls, not the section, so
+ * a sticky heading inside it keeps a scroll container to stick to. */
+.root.fill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.root.fill > .body,
+.root.fill > ul.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A list card scrolls its rows itself; a card of other children leaves that
+ * to a scroller inside it, as the file pane's does. */
+.root.fill > ul.body {
+  overflow-y: auto;
+}

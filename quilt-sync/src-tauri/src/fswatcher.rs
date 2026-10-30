@@ -24,8 +24,6 @@ use reactor::snapshot_mappings;
 use subscriber::MappingSignal;
 use subscriber::Subscription;
 
-const SIGNAL_CHANNEL_CAPACITY: usize = 128;
-
 /// Spawn the reactor and seed it with the current installed-packages list.
 /// The reactor then polls the model on a fixed interval (see
 /// `RECONCILE_INTERVAL` in `reactor.rs`) to pick up installs / uninstalls
@@ -36,7 +34,7 @@ pub fn spawn(
     settings: SharedFsWatcherSettings,
     reporter: &Arc<dyn StatusReporter>,
 ) {
-    let (signal_tx, signal_rx) = mpsc::channel::<MappingSignal>(SIGNAL_CHANNEL_CAPACITY);
+    let (signal_tx, signal_rx) = mpsc::unbounded_channel::<MappingSignal>();
 
     // Use `try_read` so a poisoned/contended lock on settings doesn't
     // block startup; fall back to the type default.
@@ -60,6 +58,8 @@ pub fn spawn(
         reporter: reporter.clone(),
         signal_rx,
         subscription,
+        trailing: reactor::TrailingWalks::default(),
+        local_volume: std::collections::BTreeMap::new(),
         last_reconcile_error_kind: None,
     };
 
@@ -70,10 +70,14 @@ pub fn spawn(
         let model_ref: &Model = &model;
         tauri::async_runtime::block_on(async { snapshot_mappings(model_ref).await })
     };
-    if let Some(initial) = initial
-        && let Err(err) = state.subscription.reconcile(initial)
-    {
-        emit_subscriber_error(reporter.as_ref(), &err);
+    if let Some(initial) = initial {
+        reactor::note_volumes(&mut state, &initial.packages);
+        if let Err(err) = state
+            .subscription
+            .reconcile(initial.packages, initial.user_rules)
+        {
+            emit_subscriber_error(reporter.as_ref(), &err);
+        }
     }
 
     let task_handle = app_handle.clone();

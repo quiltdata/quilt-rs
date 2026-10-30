@@ -10,13 +10,19 @@ use crate::cli::Error;
 use crate::cli::browse;
 use crate::cli::commit;
 use crate::cli::create;
+use crate::cli::gc;
+use crate::cli::history;
+use crate::cli::home;
 use crate::cli::install;
+use crate::cli::keep;
 use crate::cli::list;
 use crate::cli::login;
 use crate::cli::pull;
 use crate::cli::push;
+use crate::cli::remove_revisions;
 use crate::cli::role;
 use crate::cli::status;
+use crate::cli::undo_commit;
 use crate::cli::uninstall;
 
 pub struct Model {
@@ -41,14 +47,33 @@ pub trait Commands {
         commit::model(local_domain, args).await
     }
 
+    async fn gc(&self) -> Result<gc::Output, Error> {
+        gc::model(self.get_local_domain()).await
+    }
+
+    async fn home(&self, args: home::Input) -> Result<home::Output, Error> {
+        let local_domain = self.get_local_domain();
+        home::model(local_domain, args).await
+    }
+
     async fn install(&self, args: install::Input) -> Result<install::Output, Error> {
         let local_domain = self.get_local_domain();
         install::model(local_domain, args).await
     }
 
-    async fn list(&self) -> Result<list::Output, Error> {
+    async fn keep(&self, args: keep::Input) -> Result<keep::Output, Error> {
         let local_domain = self.get_local_domain();
-        list::model(local_domain).await
+        keep::model(local_domain, args).await
+    }
+
+    async fn list(&self, args: list::Input) -> Result<list::Output, Error> {
+        let local_domain = self.get_local_domain();
+        list::model(local_domain, args).await
+    }
+
+    async fn log(&self, args: history::Input) -> Result<history::Output, Error> {
+        let local_domain = self.get_local_domain();
+        history::model(local_domain, args).await
     }
 
     async fn login(&self, args: login::Input) -> Result<login::Output, Error> {
@@ -64,6 +89,19 @@ pub trait Commands {
     async fn push(&self, args: push::Input) -> Result<push::Output, Error> {
         let local_domain = self.get_local_domain();
         push::model(local_domain, args).await
+    }
+
+    async fn remove_revisions(
+        &self,
+        args: remove_revisions::Input,
+    ) -> Result<remove_revisions::Output, Error> {
+        let local_domain = self.get_local_domain();
+        remove_revisions::model(local_domain, args).await
+    }
+
+    async fn undo_commit(&self, args: undo_commit::Input) -> Result<undo_commit::Output, Error> {
+        let local_domain = self.get_local_domain();
+        undo_commit::model(local_domain, args).await
     }
 
     async fn role(&self, args: role::Input) -> Result<role::Output, Error> {
@@ -126,6 +164,20 @@ impl From<&TempDir> for Model {
 pub async fn install_package_into_temp_dir(
     uri_str: &str,
 ) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
+    install_paths_into_temp_dir(uri_str, None).await
+}
+
+/// The same, checking out `paths` as well as the manifest.
+///
+/// The distinction decides what a later pull can report: install registers the
+/// manifest and not the files, so a path this copy does not track falls outside
+/// the touch set and a remote change to it moves nothing — correctly silent, and
+/// invisible to a test that installed no paths.
+#[cfg(test)]
+pub async fn install_paths_into_temp_dir(
+    uri_str: &str,
+    paths: Option<Vec<std::path::PathBuf>>,
+) -> Result<(Model, quilt_rs::InstalledPackage, TempDir), Error> {
     let (model, temp_dir) = Model::from_temp_dir()?;
 
     model.set_home(temp_dir.path()).await?;
@@ -133,8 +185,10 @@ pub async fn install_package_into_temp_dir(
     let output = model
         .install(install::Input {
             namespace: None,
-            paths: None,
+            paths,
             uri: uri_str.to_string(),
+            keep: None,
+            download: true,
         })
         .await?;
 

@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
-use leptos_router::hooks::{use_navigate, use_query_map};
+use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, MergeData};
 use crate::components::buttons;
@@ -15,7 +15,7 @@ pub fn Merge() -> impl IntoView {
     let notification = RwSignal::new(None);
     let ui_locked = RwSignal::new(false);
 
-    let query = use_query_map();
+    let query = crate::routes::use_query();
     let data = LocalResource::new(move || {
         let namespace = query.read().get("namespace").unwrap_or_default();
         async move { commands::get_merge_data(namespace).await }
@@ -33,15 +33,15 @@ pub fn Merge() -> impl IntoView {
                 match data.await {
                     Ok(d) => {
                         let ns = d.namespace.clone();
-                        let pkg_href = format!("/installed-package?namespace={ns}&filter=unmodified");
+                        let pkg_href = crate::routes::package_page_href(&ns);
                         let breadcrumbs = vec![
                             BreadcrumbItem::Link(BreadcrumbLink {
-                                href: "/installed-packages-list".to_string(),
+                                href: "/".to_string(),
                                 title: String::new(),
                             }),
                             BreadcrumbItem::Link(BreadcrumbLink {
                                 href: pkg_href,
-                                title: ns.clone(),
+                                title: ns.to_string(),
                             }),
                             BreadcrumbItem::Current("Resolve conflict".to_string()),
                         ];
@@ -83,11 +83,11 @@ fn MergeContent(
         let navigate = navigate_for_certify.clone();
         ui_locked.set(true);
         leptos::task::spawn_local(async move {
-            match commands::certify_latest(ns.clone(), uri).await {
+            match commands::certify_latest(ns.to_string(), uri).await {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     navigate(
-                        &format!("/installed-package?namespace={ns}&filter=unmodified"),
+                        &crate::routes::package_page_href(&ns),
                         NavigateOptions::default(),
                     );
                 }
@@ -108,11 +108,11 @@ fn MergeContent(
         let navigate = navigate_for_reset.clone();
         ui_locked.set(true);
         leptos::task::spawn_local(async move {
-            match commands::reset_local(ns.clone(), uri).await {
+            match commands::reset_local(ns.to_string(), uri).await {
                 Ok(msg) => {
                     notification.set(Some(Notification::Success(msg)));
                     navigate(
-                        &format!("/installed-package?namespace={ns}&filter=unmodified"),
+                        &crate::routes::package_page_href(&ns),
                         NavigateOptions::default(),
                     );
                 }
@@ -179,7 +179,7 @@ fn build_toolbar_actions(
             let ns = ns_for_open.clone();
             let uri = uri_for_open.clone();
             leptos::task::spawn_local(async move {
-                match commands::open_in_file_browser(ns, uri).await {
+                match commands::open_in_file_browser(ns.to_string(), uri).await {
                     Ok(msg) => notification.set(Some(Notification::Success(msg))),
                     Err(e) => notification.set(Some(Notification::Error(e))),
                 }
@@ -203,10 +203,12 @@ fn build_toolbar_actions(
             let navigate = navigate.clone();
             ui_locked.set(true);
             leptos::task::spawn_local(async move {
-                match commands::package_uninstall(ns, uri).await {
+                // v1 keeps the downloaded files: only the v2 confirmation
+                // offers to delete them.
+                match commands::package_uninstall(ns.to_string(), uri, false).await {
                     Ok(msg) => {
                         notification.set(Some(Notification::Success(msg)));
-                        navigate("/installed-packages-list", NavigateOptions::default());
+                        navigate("/", NavigateOptions::default());
                     }
                     Err(e) => {
                         ui_locked.set(false);

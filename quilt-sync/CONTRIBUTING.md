@@ -2,6 +2,32 @@
 
 ## Testing
 
+### A disposable app run
+
+QuiltSync does not read `QUILT_DOMAIN`; only the `quilt` CLI does. The app
+keeps one data folder, `com.quiltdata.quilt-sync` under the platform
+local-data directory, with more than the Quilt domain in it: auth, the home
+folder path and the package state, but also the app's settings, logs,
+telemetry identity and webview storage.
+
+On Linux that folder is under `XDG_DATA_HOME`, so an empty directory there
+gives a run with none of your state, which is the quick way to see the
+setup and login pages:
+
+```sh
+unset QUILT_DOMAIN
+export XDG_DATA_HOME=/tmp/quiltsync-fresh
+just app dev
+```
+
+`quilt` in the same shell then uses the same disposable domain. Delete the
+directory to start over. Package files live in the home folder, not in the
+data folder, so pick a temporary home at setup instead of `~/QuiltSync`.
+
+On macOS and Windows the location does not follow an environment variable;
+move the folder aside instead (see [docs/telemetry.md](../docs/telemetry.md)
+for where it is).
+
 ### "Golden path" Testing
 
 #### Prerequisites
@@ -42,27 +68,34 @@
 
 ## Release Process
 
-### Creating new releases
+The full procedure is in [docs/releases.md](../docs/releases.md). What is
+specific to QuiltSync:
 
-1. **Update the changelog**: Add new section to [CHANGELOG.md](CHANGELOG.md) following
-   <https://keepachangelog.com> format with PR links
-2. **Bump version**: Update version in `src-tauri/Cargo.toml`
-3. **Create release via GitHub Actions**:
-   * Go to the Actions tab: <https://github.com/quiltdata/quilt-rs/actions/workflows/release-quilt-sync.yaml>
-   * Click "Run workflow" button
-   * The workflow will build all platforms and create a draft GitHub release
-     with built assets
-4. **Publish release**: Edit the draft release created by the workflow and publish
-   it
-
-The release workflow builds for all platforms and creates a draft release
-using the version from `src-tauri/Cargo.toml`.
+* **Version and changelog**: the version is the one in
+  `src-tauri/Cargo.toml` (not a workspace version), and the changelog is
+  [CHANGELOG.md](CHANGELOG.md). Before releasing, drop `-dev` from both and
+  add today's date to the changelog heading. `quilt-sync` depends on
+  `quilt-rs` and `quilt-uri` by path only, so their versions never need
+  updating here.
+* **Workflow**:
+  [`release-quilt-sync.yaml`](https://github.com/quiltdata/quilt-rs/actions/workflows/release-quilt-sync.yaml),
+  run manually with an `environment` input. It builds macOS (arm64, x86_64),
+  Linux and Windows bundles into a draft release tagged
+  `QuiltSync/v<version>`. Install one of the bundles to check it, then approve
+  the `promote` job (`release-approval` environment): it publishes the draft,
+  marks it "latest", and dispatches `upload-to-hubspot.yaml`. Don't publish
+  the draft by hand.
+* **Rollout**: the auto-updater reads `https://www.quilt.bio/hubfs/latest.json`,
+  which only `upload-to-hubspot.yaml` writes, so users get the update once the
+  HubSpot mirror has run, not when the GitHub release goes public. Re-run
+  `upload-to-hubspot.yaml` manually if it fails.
 
 ### Auto Updater Setup
 
-The auto updater requires these GitHub repository secrets:
+Updates are signed; the release workflow needs these GitHub repository
+secrets:
 
 * `TAURI_SIGNING_PRIVATE_KEY`: Private key for signing updates
 * `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: Password for the private key (optional)
 
-Updates are cryptographically signed and only work for GitHub releases.
+The matching public key is embedded in `src-tauri/tauri.conf.json`.

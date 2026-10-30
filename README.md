@@ -5,7 +5,7 @@ your scripts and AI agents read and write real revisions: each one immutable
 and content-addressed, pushable to S3 when you want it shared. No server and
 no cloud credentials required to start.
 
-[![CI](https://github.com/quiltdata/quilt-rs/actions/workflows/test-quilt-rs.yaml/badge.svg)](https://github.com/quiltdata/quilt-rs/actions/workflows/test-quilt-rs.yaml)
+[![CI](https://github.com/quiltdata/quilt-rs/actions/workflows/test.yaml/badge.svg)](https://github.com/quiltdata/quilt-rs/actions/workflows/test.yaml)
 [![crates.io](https://img.shields.io/crates/v/quilt-cli.svg)](https://crates.io/crates/quilt-cli)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
@@ -39,18 +39,16 @@ Windows builds from source only
 
 ## Quickstart
 
-This example uses two directories: `--home` is where `quilt` keeps every
-package's working copy (pass it once; it is remembered after that,
-[#838](https://github.com/quiltdata/quilt-rs/issues/838)), and `-s` is an
-existing directory to import files from. Commands log at INFO by default;
-prefix them with `RUST_LOG=warn` to get exactly the output shown
-([#837](https://github.com/quiltdata/quilt-rs/issues/837)).
+This example uses two directories: `quilt` keeps package working copies under
+`~/QuiltSync` by default, and `-s` is an existing directory to import files
+from. Commands keep stdout reserved for command output by default; add `-v` or
+`--verbose` to show INFO-level logs on stderr.
 
 ```bash
 mkdir -p ~/plate-exports
 printf 'sample,od600\nA1,0.42\n' > ~/plate-exports/plate1.csv
 
-quilt --home ~/QuiltSync create -n lab/assays -s ~/plate-exports -m "first run"
+quilt create -n lab/assays -s ~/plate-exports -m "first run"
 ```
 
 ```text
@@ -99,22 +97,30 @@ destination bucket and host:
 
 ```bash
 quilt login --host quilt.example.com
-quilt push -n lab/assays --bucket lab-data --origin quilt.example.com
+quilt push -n lab/assays --bucket lab-data --host quilt.example.com
 ```
 
-Collaborators log in to the same stack — on their machine, the first command
-also sets `--home` once — then install. `install` by itself fetches only the
-manifest, the content-hashed file listing; `--path` (or a `&path=` param in
-the URI) downloads the files they actually need:
+A bucket with no stack works too: leave out `--host`, skip `quilt login`, and
+the push uses the AWS credentials on this computer (`~/.aws`, environment
+variables or SSO).
+
+Collaborators log in to the same stack, then install. Their working copies use
+`~/QuiltSync` unless they choose a different directory first with
+`quilt home <dir>`.
+`install` by itself fetches only the manifest, the content-hashed file listing;
+`--path` (or a `&path=` param in the URI) downloads the files they actually
+need:
 
 ```bash
-quilt --home ~/QuiltSync login --host quilt.example.com
+quilt login --host quilt.example.com
 quilt install --path plate1.csv \
   'quilt+s3://lab-data#package=lab/assays&catalog=quilt.example.com'
 ```
 
 From then on, `quilt pull -n lab/assays` updates the files they installed to
-each new revision. To inspect a remote package without installing anything,
+each new revision. To keep the whole package, or every file under some folders,
+including files added later, run `quilt keep -n lab/assays --all` or
+`--folder <dir>`. To inspect a remote package without installing anything,
 `quilt browse <PKG_URI>` prints its manifest.
 
 ## Or skip the terminal: QuiltSync
@@ -169,46 +175,64 @@ web catalog compares any two revisions of a package; the CLI does not have a
 The two compose: code in git, the data that code consumes and produces in
 `quilt`, each referencing the other by hash.
 
-## Current limitations
+## How we scope work — build vs. borrow
 
-We chose to ship something simple that handles large binary files and
-arbitrary document types over something complete. These are the sharp edges
-that choice left, not positions we intend to defend forever. Each has an
-issue, and [roadmap.md](roadmap.md) records how the work is sequenced.
-Telling us which one actually blocks you is the most useful feedback you can
-give — it is how we order the queue.
+We build the one hard, unique part ourselves and borrow the rest from two
+systems that already do it well.
 
-- **No undo yet.** No `revert`/`reset` verb, and a local-only package has no
-  rollback path at all
-  ([#840](https://github.com/quiltdata/quilt-rs/issues/840)).
-- **No revision log yet** in the CLI
-  ([#841](https://github.com/quiltdata/quilt-rs/issues/841)). QuiltSync and
-  the Quilt catalog show a package's revision history in the meantime.
-- **Noisy output.** Commands log at INFO on stdout; `RUST_LOG=warn` fixes it
-  today ([#837](https://github.com/quiltdata/quilt-rs/issues/837)).
-- **Disk usage only grows.** `objects/` and the manifest cache are never
-  pruned. Content is shared across packages with no reference counting, so
-  leaking bytes beats deleting something another package still addresses.
-  Refcounted pruning is a real feature we have not built.
-- **Divergence is resolved per package, not per file.** When two people move
-  past the same base, you pick your manifest or theirs. Relatedly, a first
-  push certifies itself as `latest` even if a teammate published that
-  namespace first. Both are deliberate given binary payloads;
-  [Resolving Diverged](docs/architecture.md#resolving-diverged) records the
-  reasoning and the exact gaps versus git.
-- **Prebuilt CLI binaries for macOS and Linux only.** Windows builds from
-  source ([#844](https://github.com/quiltdata/quilt-rs/issues/844)), though
-  QuiltSync ships a signed Windows app.
+- **Build (ours):** local sync and a real native-desktop app — keeping the
+  files on your machine and the ones in the cloud in agreement.
+- **Borrow from quilt3:** the proven Python tool defines how data is packaged,
+  hashed, and validated; we match it exactly.
+- **Borrow from the Web Catalog and top sync apps:** the web app sets the
+  friendly Quilt experience (search, AI, previews, wording) and apps like
+  Dropbox and Google Drive set the bar for effortless sync; we mirror both
+  rather than invent our own.
+
+We shipped something simple that handles large binary files and arbitrary
+document types over something complete, and the sharp edges that choice left
+are not positions we intend to defend forever. The
+[Roadmap](https://github.com/quiltdata/quilt-rs/issues/889) tracks what is
+missing and roughly in what order we mean to fix it. Telling us which gap
+actually blocks you is the most useful feedback you can give — it is how we
+order the queue.
 
 ## What is in this repo
 
-- **[`quilt-cli/`](quilt-cli/)** — the `quilt` binary
-  ([crates.io](https://crates.io/crates/quilt-cli))
-- **[`quilt-rs/`](quilt-rs/)** — the library it is built on
-  ([crates.io](https://crates.io/crates/quilt-rs))
-- **[`quilt-uri/`](quilt-uri/)** — WASM-safe Quilt+ URI parsing
-  ([crates.io](https://crates.io/crates/quilt-uri))
-- **[`quilt-sync/`](quilt-sync/)** — QuiltSync, the cross-platform desktop app
+One Cargo workspace. The library does the work; the CLI and the desktop app
+are thin front ends over it.
+
+```text
+  quilt-cli              quilt-sync (QuiltSync)
+  the `quilt` binary     Tauri app + Leptos UI, autosync
+         |                    |
+         +---------+----------+
+                   |
+                   v
+               quilt-rs       package format, local store, sync state,
+                   |          auth, S3 and catalog I/O
+                   v
+               quilt-uri      quilt+s3:// and s3:// parsing;
+                              no I/O, builds for WASM
+```
+
+- **[`quilt-rs/`](quilt-rs/)**: the engine. It is an independent Rust
+  implementation of the Quilt package format, and its manifests are
+  byte-identical to quilt3's. It keeps a local store under `.quilt/` and talks
+  to S3 and your Quilt stack directly
+  ([crates.io](https://crates.io/crates/quilt-rs)).
+- **[`quilt-cli/`](quilt-cli/)**: the `quilt` binary, built on the library.
+  It has no config of its own and shares its home folder with QuiltSync
+  ([crates.io](https://crates.io/crates/quilt-cli)).
+- **[`quilt-sync/`](quilt-sync/)**: QuiltSync, the desktop app. It watches
+  your folders, pulls new revisions and publishes your edits. It keeps your
+  local edits when it pulls, and stops to ask when they conflict or the
+  revisions have diverged.
+- **[`quilt-uri/`](quilt-uri/)**: the shared URI types, also used by the UI in
+  the browser ([crates.io](https://crates.io/crates/quilt-uri)).
+
+How a working copy knows where it stands, and why there's no merge:
+[mental model](docs/mental-model.md) and [architecture](docs/architecture.md).
 
 ## Documentation
 

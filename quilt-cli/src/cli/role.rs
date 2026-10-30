@@ -3,6 +3,7 @@ use quilt_uri::Host;
 
 use crate::cli::Error;
 use crate::cli::model::Commands;
+use crate::cli::output::Render;
 use crate::cli::output::Std;
 
 #[derive(Debug)]
@@ -27,6 +28,15 @@ impl std::fmt::Display for Output {
             output.push(format!("{marker} {role}"));
         }
         write!(f, "{}", output.join("\n"))
+    }
+}
+
+impl Render for Output {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "current": &self.info.current,
+            "available": &self.info.available,
+        })
     }
 }
 
@@ -108,5 +118,34 @@ mod tests {
         };
 
         assert_eq!(format!("{output}"), "No roles available");
+    }
+
+    #[test]
+    fn json_carries_current_and_available() {
+        let output = Output {
+            info: RoleInfo {
+                current: "ReadWrite".to_string(),
+                available: vec!["ReadOnly".to_string(), "ReadWrite".to_string()],
+            },
+        };
+
+        assert_eq!(
+            output.to_json().to_string(),
+            r#"{"current":"ReadWrite","available":["ReadOnly","ReadWrite"]}"#
+        );
+    }
+
+    /// The `*` marker is a display affordance; JSON names the active role
+    /// outright.
+    #[test]
+    fn json_has_no_active_role_marker() {
+        let output = Output {
+            info: RoleInfo {
+                current: "ReadWrite".to_string(),
+                available: vec!["ReadWrite".to_string()],
+            },
+        };
+
+        assert!(!output.to_json().to_string().contains('*'));
     }
 }

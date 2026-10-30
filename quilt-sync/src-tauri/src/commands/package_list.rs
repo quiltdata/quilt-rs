@@ -6,7 +6,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use serde::Serialize;
-use tokio::time::timeout;
+use tokio::time::Instant;
+use tokio::time::timeout_at;
 
 use quilt_rs::RoleInfo;
 use quilt_uri::Host;
@@ -28,7 +29,7 @@ pub struct InstalledPackagesListData {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledPackageListItem {
-    pub namespace: String,
+    pub namespace: quilt_uri::Namespace,
     pub status: String,
     pub has_changes: bool,
     /// True when the package has a local commit. Setting a remote only
@@ -36,9 +37,7 @@ pub struct InstalledPackageListItem {
     /// re-commit, so the UI gates the "creates a new revision" notice on this.
     pub has_local_commit: bool,
     pub uri: Option<quilt_uri::S3PackageUri>,
-    /// Raw `lineage.remote_uri` rendering, kept separate from `uri` so
-    /// the UI can still surface a misconfigured remote when origin
-    /// resolution fails (status: "error" branch).
+    /// Raw `lineage.remote_uri` rendering, kept separate from `uri`.
     pub remote_display: Option<String>,
     /// The autosync watcher's `Other` pause message for this namespace,
     /// if it is currently paused for a reason the status string cannot
@@ -142,21 +141,24 @@ pub(super) async fn denied_mark(
     AccessMark::denied(host, info.as_ref())
 }
 
-/// How long the roster waits on one host's readable-bucket query before
-/// giving up on it.
+/// How long the roster waits on one host before giving up on it. The budget
+/// covers the readable-bucket query and the role query behind a denial
+/// together. `commands/main_page.rs` has a copy; keep the two in sync.
 ///
-/// The roster is otherwise local data and used to paint without touching the
-/// network. The query added two round trips per host — `config.json`, then a
-/// GraphQL POST — serialized per host under that host's credential lock and
-/// behind a retry middleware with a 10s connect timeout, so an unreachable
-/// host (offline, captive portal, DNS blackhole) held the main screen blank
-/// for tens of seconds.
+/// Apart from these queries the roster is local data and renders without the
+/// network. The bucket query adds two round trips per host (`config.json`, then
+/// a GraphQL POST), serialised under the host's credential lock behind a retry
+/// middleware with a 10s connect timeout. Without a budget, an unreachable host
+/// (offline, captive portal, DNS blackhole) keeps the main screen blank for tens
+/// of seconds.
 ///
-/// The pre-filter is an optimistic hint, and there is already a correct
-/// degrade path for not having it: reactive-only marking, where the
-/// authoritative per-row status call marks the denied rows a moment later.
-/// So the budget is deliberately short. Undershooting on a slow-but-working
-/// link costs only the hint; overshooting costs the first paint.
+/// The bucket pre-filter is only a hint: without it, the per-row status call
+/// still marks denied rows a moment later. So the budget is short. On a slow
+/// link the roster loses only the hint; a longer wait would delay the first
+/// render.
+///
+/// One deadline covers both queries. A separate budget for each, run in series,
+/// would double the wait.
 const BUCKET_LIST_BUDGET: Duration = Duration::from_secs(2);
 
 /// A message-bearing autosync pause for a namespace: the stable reason
@@ -173,7 +175,7 @@ pub(super) async fn get_installed_packages_list_data_from_model(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
     tracing: &crate::telemetry::Telemetry,
-    paused_reasons: &HashMap<String, PausedRow>,
+    paused_reasons: &HashMap<quilt_uri::Namespace, PausedRow>,
 ) -> Result<InstalledPackagesListData, Error> {
     // A roster load is the cadence the role refresh is pinned to. A switch is
     // server-side and global, so it can happen in the web catalog with the app
@@ -227,6 +229,8 @@ fn row_host(item: &InstalledPackageListItem) -> Option<&Host> {
 /// as "nothing is readable": an empty set would grey the entire roster.
 /// A query that does not answer inside [`BUCKET_LIST_BUDGET`] counts as
 /// failed, which is what keeps the roster local-only in effect.
+///
+/// The v2 main page copies this. Mirror fixes there until v1 is deleted.
 async fn mark_unreadable_buckets(
     m: &impl model::QuiltModel,
     roles: &RoleCache,
@@ -240,7 +244,9 @@ async fn mark_unreadable_buckets(
     }
 
     for host in hosts {
-        let query = timeout(BUCKET_LIST_BUDGET, m.readable_buckets(&host));
+        // One deadline for the host, shared by both calls below.
+        let deadline = Instant::now() + BUCKET_LIST_BUDGET;
+        let query = timeout_at(deadline, m.readable_buckets(&host));
         let readable: HashSet<String> = match query.await {
             Ok(Ok(buckets)) => buckets.into_iter().collect(),
             Ok(Err(err)) => {
@@ -269,7 +275,14 @@ async fn mark_unreadable_buckets(
             continue;
         }
 
-        let mark = denied_mark(m, roles, Some(&host)).await;
+        // Whatever is left of the host's budget — see the v2 copy in
+        // `main_page.rs` for why a denial with no role is the right degrade.
+        let mark = timeout_at(deadline, denied_mark(m, roles, Some(&host)))
+            .await
+            .unwrap_or_else(|_| {
+                tracing::debug!("Role query for {host} timed out");
+                AccessMark::denied(Some(&host), None)
+            });
         for index in unreadable {
             let item = &mut packages[index];
             item.no_access = mark.no_access;
@@ -283,9 +296,9 @@ async fn load_package_item(
     m: &impl model::QuiltModel,
     tracing: &crate::telemetry::Telemetry,
     installed_package: &quilt::InstalledPackage,
-    paused_reasons: &HashMap<String, PausedRow>,
+    paused_reasons: &HashMap<quilt_uri::Namespace, PausedRow>,
 ) -> Result<InstalledPackageListItem, Error> {
-    let namespace = installed_package.namespace.to_string();
+    let namespace = installed_package.namespace.clone();
     let paused = paused_reasons.get(&namespace);
     let paused_reason = paused.map(|p| p.message.clone());
     let paused_kind = paused.map(|p| p.reason.clone());
@@ -310,22 +323,6 @@ async fn load_package_item(
     };
 
     let typed_uri = quilt_uri::S3PackageUri::from(remote_uri);
-
-    if remote_uri.origin.is_none() {
-        return Ok(InstalledPackageListItem {
-            namespace,
-            status: "error".to_string(),
-            has_changes: false,
-            has_local_commit,
-            uri: Some(typed_uri),
-            remote_display: Some(remote_uri.to_string()),
-            paused_reason,
-            paused_kind,
-            no_access: false,
-            no_access_reason: None,
-            role_switch_host: None,
-        });
-    }
 
     if let Some(host) = typed_uri.catalog.as_ref() {
         tracing.add_host(host);
@@ -364,7 +361,7 @@ pub async fn get_installed_packages_list_data(
     // named) surface on a row; the status string alone carries the rest. The
     // reason discriminant rides along so the UI can pick conflict-,
     // role- or generic guidance.
-    let paused_reasons: HashMap<String, PausedRow> = watcher
+    let paused_reasons: HashMap<quilt_uri::Namespace, PausedRow> = watcher
         .snapshot()
         .await
         .paused
@@ -478,10 +475,6 @@ pub(super) async fn refresh_package_status_from_model(
             has_changes,
         ));
     };
-    if remote_uri.origin.is_none() {
-        return Ok(RefreshedPackageStatus::new("error".to_string(), false));
-    }
-
     let host = remote_uri.origin.clone();
     if let Some(host) = host.as_ref() {
         tracing.add_host(host);
@@ -556,6 +549,7 @@ pub async fn refresh_package_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quilt_uri::fixtures;
 
     use std::sync::{Arc, Mutex};
 
@@ -572,7 +566,7 @@ mod tests {
     /// intersection is about.
     fn make_manifest_uri_in_bucket(bucket: &str, namespace: &str) -> quilt_uri::ManifestUri {
         quilt_uri::ManifestUri {
-            origin: Some("test.quilt.dev".parse().unwrap()),
+            origin: Some(fixtures::host()),
             bucket: bucket.to_string(),
             namespace: namespace.try_into().unwrap(),
             hash: "abcdef".to_string(),
@@ -646,7 +640,7 @@ mod tests {
         model
     }
 
-    /// A single package on `test.quilt.dev` whose status call fails with
+    /// A single package on `quilt.test` whose status call fails with
     /// `err`, with the host's roles under the test's control and a clean
     /// working tree.
     fn mock_model_with_status_error(err: Error, roles: Option<RoleInfo>) -> MockQuiltModel {
@@ -797,7 +791,7 @@ mod tests {
         );
         assert_eq!(
             item.role_switch_host.as_deref(),
-            Some("test.quilt.dev"),
+            Some("quilt.test"),
             "a user holding two roles gets the switch affordance, pointed at the row's host"
         );
     }
@@ -846,7 +840,7 @@ mod tests {
         let find = |ns: &str| {
             data.packages
                 .iter()
-                .find(|p| p.namespace == ns)
+                .find(|p| p.namespace.to_string() == ns)
                 .unwrap_or_else(|| panic!("{ns} in roster"))
         };
         let unreachable = find("team/locked");
@@ -882,7 +876,7 @@ mod tests {
         let listed = data
             .packages
             .iter()
-            .find(|p| p.namespace == "team/open")
+            .find(|p| p.namespace.to_string() == "team/open")
             .expect("team/open in roster");
         assert!(!listed.no_access, "the pre-filter clears a listed bucket");
 
@@ -948,6 +942,8 @@ mod tests {
         reason = "`readable_buckets` awaits; the other two do not. Rewriting just those would leave one impl split between `async fn` and `fn -> impl Future`, which reads worse than either consistent choice."
     )]
     impl model::QuiltModel for SilentHost {
+        type Locked = quilt::LockedPackage;
+
         fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
             &self.domain
         }
@@ -975,6 +971,90 @@ mod tests {
             tokio::time::sleep(BUCKET_LIST_BUDGET * 100).await;
             Ok(Vec::new())
         }
+    }
+
+    /// A host that answers the bucket query and then never answers `/me`.
+    /// `SilentHost` tests a hang on the first call; this tests a hang on the
+    /// second.
+    struct SilentRole {
+        domain: tokio::sync::Mutex<quilt::LocalDomain>,
+    }
+
+    impl Default for SilentRole {
+        fn default() -> Self {
+            Self {
+                domain: tokio::sync::Mutex::new(quilt::LocalDomain::new(std::path::PathBuf::new())),
+            }
+        }
+    }
+
+    #[allow(
+        clippy::unused_async_trait_impl,
+        reason = "`refresh_roles` awaits; the others do not — see `SilentHost`."
+    )]
+    impl model::QuiltModel for SilentRole {
+        type Locked = quilt::LockedPackage;
+
+        fn get_quilt(&self) -> &tokio::sync::Mutex<quilt::LocalDomain> {
+            &self.domain
+        }
+
+        async fn get_installed_packages_list(&self) -> Result<Vec<quilt::InstalledPackage>, Error> {
+            Ok(vec![make_installed_package(("team", "locked"))])
+        }
+
+        async fn get_installed_package_lineage(
+            &self,
+            package: &quilt::InstalledPackage,
+        ) -> Result<quilt::lineage::PackageLineage, Error> {
+            let ns = package.namespace.to_string();
+            Ok(quilt::lineage::PackageLineage::from_remote(
+                make_manifest_uri_in_bucket("locked", &ns),
+                "abcdef".to_string(),
+            ))
+        }
+
+        async fn readable_buckets(&self, _host: &Host) -> Result<Vec<String>, Error> {
+            // Answers at once, and does not name `locked` — so the row is
+            // denied and the role query behind the reason is reached.
+            Ok(vec!["reachable".to_string()])
+        }
+
+        async fn refresh_roles(&self, _host: &Host) -> Result<quilt::auth::RoleInfo, Error> {
+            tokio::time::sleep(BUCKET_LIST_BUDGET * 100).await;
+            unreachable!("the budget above cuts this off")
+        }
+    }
+
+    /// The v1 copy of the test of the same name in `commands/main_page.rs`. If
+    /// the budget covered only the bucket query, a host that answers it and hangs
+    /// on `/me` would keep the main screen blank for as long as the HTTP stack
+    /// allows. The row still comes back denied, because the bucket refused, with
+    /// no role named.
+    #[tokio::test(start_paused = true)]
+    async fn a_role_query_that_never_answers_does_not_hold_the_roster() {
+        let m = SilentRole::default();
+
+        let started = tokio::time::Instant::now();
+        let data = get_installed_packages_list_data_from_model(
+            &m,
+            &RoleCache::default(),
+            &crate::telemetry::Telemetry::default(),
+            &HashMap::new(),
+        )
+        .await
+        .expect("list");
+
+        let row = &data.packages[0];
+        assert!(
+            row.no_access,
+            "the denial stands; the role query is what failed"
+        );
+        assert!(
+            started.elapsed() <= BUCKET_LIST_BUDGET,
+            "the roster waited {:?} on a role query that never answers",
+            started.elapsed(),
+        );
     }
 
     /// The roster is local data; the bucket query is an optimistic hint on
@@ -1026,7 +1106,7 @@ mod tests {
         let locked = data
             .packages
             .iter()
-            .find(|p| p.namespace == "team/locked")
+            .find(|p| p.namespace.to_string() == "team/locked")
             .expect("team/locked in roster");
         assert!(locked.no_access);
         assert!(locked.no_access_reason.is_some(), "still says why");
@@ -1155,7 +1235,7 @@ mod tests {
         .expect("list");
         data.packages
             .into_iter()
-            .find(|p| p.namespace == "team/locked")
+            .find(|p| p.namespace.to_string() == "team/locked")
             .expect("team/locked in roster")
             .no_access_reason
             .expect("a denied row says why")
@@ -1198,7 +1278,7 @@ mod tests {
 
         assert_eq!(
             *cache_clears.lock().expect("cache clear log"),
-            vec!["test.quilt.dev".to_string(), "test.quilt.dev".to_string()],
+            vec!["quilt.test".to_string(), "quilt.test".to_string()],
             "each load's fetch must finish the flush, or the S3 clients keep \
              signing as the role the user left"
         );
@@ -1209,7 +1289,7 @@ mod tests {
     #[tokio::test]
     async fn a_switch_drops_the_cached_role() {
         let roles = RoleCache::default();
-        let host: quilt_uri::Host = "test.quilt.dev".parse().expect("host");
+        let host = fixtures::host();
 
         let mut first = MockQuiltModel::new();
         first
@@ -1327,7 +1407,12 @@ mod tests {
 
         assert_eq!(data.packages.len(), 4);
 
-        let find = |ns: &str| data.packages.iter().find(|p| p.namespace == ns).unwrap();
+        let find = |ns: &str| {
+            data.packages
+                .iter()
+                .find(|p| p.namespace.to_string() == ns)
+                .unwrap()
+        };
 
         // Spot-check URI propagation on one package; the other packages
         // share the same fixture shape, and `S3PackageUri::from(&ManifestUri)`
@@ -1340,7 +1425,7 @@ mod tests {
         assert_eq!(ahead_uri.namespace.to_string(), "test/ahead");
         assert_eq!(
             catalog_host(ahead.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
         assert!(ahead.remote_display.is_some());
 
@@ -1388,13 +1473,13 @@ mod tests {
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
-        assert_eq!(pkg.namespace, "test/pkg");
+        assert_eq!(pkg.namespace.to_string(), "test/pkg");
         // Light phase derives status from lineage (up_to_date, not error)
         assert_eq!(pkg.status, "up_to_date");
         assert!(!pkg.has_changes); // Always false in light phase
         assert_eq!(
             catalog_host(pkg.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
 
         Ok(())
@@ -1409,7 +1494,7 @@ mod tests {
             .expect_get_installed_packages_list()
             .return_once(move || Ok(pkgs));
 
-        // Remote URI exists but has no origin → triggers early return with error status
+        // Remote URI exists but has no origin: read like any other remote.
         model
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
@@ -1432,8 +1517,8 @@ mod tests {
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
-        assert_eq!(pkg.namespace, "test/noorigin");
-        assert_eq!(pkg.status, "error");
+        assert_eq!(pkg.namespace.to_string(), "test/noorigin");
+        assert_eq!(pkg.status, "up_to_date");
         // URI is exposed (so the "Set remote" popup can pre-fill bucket)
         // but its catalog is unset.
         let pkg_uri = pkg.uri.as_ref().expect("URI present");
@@ -1471,7 +1556,7 @@ mod tests {
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
-        assert_eq!(pkg.namespace, "test/local");
+        assert_eq!(pkg.namespace.to_string(), "test/local");
         assert_eq!(pkg.status, "local");
         assert!(pkg.uri.is_none());
         assert!(pkg.remote_display.is_none());
@@ -1493,7 +1578,7 @@ mod tests {
             .expect_get_installed_package_lineage()
             .returning(|pkg| {
                 let uri = quilt_uri::ManifestUri {
-                    origin: Some("test.quilt.dev".parse().unwrap()),
+                    origin: Some(fixtures::host()),
                     bucket: "test".to_string(),
                     namespace: pkg.namespace.clone(),
                     hash: String::new(),
@@ -1519,13 +1604,13 @@ mod tests {
 
         assert_eq!(data.packages.len(), 1);
         let pkg = &data.packages[0];
-        assert_eq!(pkg.namespace, "test/localpush");
+        assert_eq!(pkg.namespace.to_string(), "test/localpush");
         assert_eq!(pkg.status, "local");
         assert!(!pkg.has_changes);
         // Has origin (for Push button and disabled Catalog button in UI).
         assert_eq!(
             catalog_host(pkg.uri.as_ref()).as_deref(),
-            Some("test.quilt.dev")
+            Some("quilt.test")
         );
 
         Ok(())
@@ -1616,6 +1701,16 @@ mod tests {
                     "abcdef".to_string(),
                 ))
             });
+        // Read on the machine's own AWS credentials, like any other remote.
+        model
+            .expect_get_installed_package_status()
+            .times(1)
+            .returning(|_, _| {
+                Ok(quilt::lineage::InstalledPackageStatus::new(
+                    quilt::lineage::UpstreamState::Behind,
+                    quilt::lineage::ChangeSet::new(),
+                ))
+            });
 
         let tracing = crate::telemetry::Telemetry::default();
         let ns = ("test", "noorigin").into();
@@ -1624,7 +1719,7 @@ mod tests {
                 .await
                 .map_err(|e| e.to_string())?;
 
-        assert_eq!(result.status, "error");
+        assert_eq!(result.status, "behind");
         assert!(!result.has_changes);
         Ok(())
     }
@@ -1767,7 +1862,7 @@ mod tests {
         // has an `Other` message.
         let mut paused_reasons = HashMap::new();
         paused_reasons.insert(
-            "test/paused".to_string(),
+            quilt_uri::Namespace::try_from("test/paused").expect("a valid fixture namespace"),
             PausedRow {
                 reason: "other".to_string(),
                 message: "workflow rejected metadata".to_string(),
@@ -1787,7 +1882,12 @@ mod tests {
         .await
         .map_err(|e| e.to_string())?;
 
-        let find = |ns: &str| data.packages.iter().find(|p| p.namespace == ns).unwrap();
+        let find = |ns: &str| {
+            data.packages
+                .iter()
+                .find(|p| p.namespace.to_string() == ns)
+                .unwrap()
+        };
         assert_eq!(
             find("test/paused").paused_reason.as_deref(),
             Some("workflow rejected metadata"),
@@ -1804,7 +1904,8 @@ mod tests {
     #[test]
     fn package_item_data_wire_form_is_verbatim() {
         let item = InstalledPackageListItem {
-            namespace: "acme/data".to_string(),
+            namespace: quilt_uri::Namespace::try_from("acme/data")
+                .expect("a valid fixture namespace"),
             status: "paused".to_string(),
             has_changes: false,
             has_local_commit: false,
@@ -1816,11 +1917,11 @@ mod tests {
             no_access_reason: Some(
                 "Current role ReadOnly has no access to this bucket".to_string(),
             ),
-            role_switch_host: Some("acme.quilt.dev".to_string()),
+            role_switch_host: Some("quilt.test".to_string()),
         };
         assert_eq!(
             serde_json::to_string(&item).unwrap(),
-            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other","noAccess":true,"noAccessReason":"Current role ReadOnly has no access to this bucket","roleSwitchHost":"acme.quilt.dev"}"#
+            r#"{"namespace":"acme/data","status":"paused","hasChanges":false,"hasLocalCommit":false,"uri":null,"remoteDisplay":null,"pausedReason":"workflow rejected metadata","pausedKind":"other","noAccess":true,"noAccessReason":"Current role ReadOnly has no access to this bucket","roleSwitchHost":"quilt.test"}"#
         );
     }
 }

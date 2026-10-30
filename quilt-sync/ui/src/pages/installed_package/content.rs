@@ -8,7 +8,7 @@ use super::selection::{
 };
 use super::status_banner::StatusBanner;
 use super::sync_scope::{ALL_DOWNLOADED_LINE, STANDING_SCOPE_LINE, SyncScopeBand};
-use crate::commands::{self, InstalledPackageData, PausedEvent, PullCheck};
+use crate::commands::{self, EntryCounts, InstalledPackageData, PausedEvent, PullCheck};
 use crate::components::buttons;
 use crate::components::{
     IgnorePopup, IgnorePopupData, Notification, SetRemotePopup, UnignorePopup, UnignorePopupData,
@@ -66,9 +66,7 @@ pub(super) fn InstalledPackageContent(
     let ignored_count = data.ignored_count;
     let unmodified_count = data.unmodified_count;
 
-    let has_changes = entries
-        .iter()
-        .any(|e| matches!(e.status.as_str(), "added" | "modified" | "deleted"));
+    let has_changes = package_has_changes(&data.counts);
 
     // The remote entries this package currently offers, by path. Every read of
     // the selection is resolved against this set, which is what lets a preserved
@@ -192,7 +190,7 @@ pub(super) fn InstalledPackageContent(
     });
 
     // Commit button: primary when no remote entries are checked
-    let commit_href = format!("/commit?namespace={namespace}");
+    let commit_href = crate::routes::commit_href(&namespace);
     let commit_href_clone = commit_href.clone();
 
     let ns_for_status = namespace.clone();
@@ -218,8 +216,8 @@ pub(super) fn InstalledPackageContent(
         let is_behind = status_for_outcome == "behind";
         async move {
             if is_behind {
-                match commands::package_pull_outcome(ns).await {
-                    Ok(outcome) => PullCheck::Ready(outcome),
+                match commands::package_pull_outcome(ns.to_string()).await {
+                    Ok(preview) => PullCheck::Ready(preview),
                     Err(_) => PullCheck::Failed,
                 }
             } else {
@@ -229,10 +227,9 @@ pub(super) fn InstalledPackageContent(
     });
     let pull_check = Signal::derive(move || pull_outcome_res.get().unwrap_or(PullCheck::Loading));
     let show_commit = status != "error";
-    let has_origin = origin_host.is_some();
     // Mirror the Publish gating from the Installed Packages List: Commit and
-    // Push is offered only when there's a remote and something to ship.
-    let is_publishable = has_origin
+    // Push is offered only when there's a bucket and something to ship.
+    let is_publishable = util::has_bucket(uri.as_ref())
         && (status == "ahead" || (status == "up_to_date" && has_changes) || status == "local");
     // A role denial disables the action bar's *action* — Commit and Push —
     // and gives it a tooltip. Disabled, not hidden: the user opened this page
@@ -279,7 +276,7 @@ pub(super) fn InstalledPackageContent(
                             let bucket = bucket_for_fetch.clone();
                             let catalog = catalog_for_fetch.clone();
                             async move {
-                                commands::get_revision_message(bucket, ns, hash, catalog).await
+                                commands::get_revision_message(bucket, ns.to_string(), hash, catalog).await
                             }
                         });
                         let requested_short: String = requested.chars().take(8).collect();
@@ -334,7 +331,7 @@ pub(super) fn InstalledPackageContent(
 
                 // ── Status banner ──
                 <StatusBanner
-                    namespace=ns_for_status
+                    namespace=ns_for_status.clone()
                     status=status_clone
                     uri=uri_for_status
                     no_access_reason=banner_no_access_reason
@@ -351,10 +348,11 @@ pub(super) fn InstalledPackageContent(
                     // ── Entries toolbar ──
                     <Show when=move || scope_gate>
                         <SyncScopeBand
-                            namespace=namespace_for_scope.clone()
+                            namespace=namespace_for_scope.to_string()
                             with_status=with_status
                             pending=pending_count
                             entire_package=syncs_entire_package
+                            keeps_folders=data.keeps_folders
                             notification=notification
                             ui_locked=ui_locked
                             refetch=refetch
@@ -421,7 +419,7 @@ pub(super) fn InstalledPackageContent(
                     move || {
                         let ns = ns_for_publish.clone();
                         let uri = uri_for_publish.clone();
-                        async move { commands::package_publish(ns, uri).await }
+                        async move { commands::package_publish(ns.to_string(), uri).await }
                     },
                     notification,
                     Some(ui_locked),
@@ -469,6 +467,7 @@ pub(super) fn InstalledPackageContent(
                     <UnignorePopup
                         data=data
                         notification=notification
+                        refetch=refetch
                         on_close=move || show_unignore_popup.set(None)
                     />
                 }
@@ -477,11 +476,11 @@ pub(super) fn InstalledPackageContent(
 
         <Show when=move || show_set_remote_popup.get()>
             <SetRemotePopup
-                namespace=data.namespace.clone()
+                namespace=data.namespace.to_string()
                 current_host=current_host.clone()
                 current_bucket=current_bucket.clone()
                 has_local_commit=data.has_local_commit
-                locked=remote_locked
+                published=remote_locked
                 notification=notification
                 refetch=refetch
                 on_close=move || show_set_remote_popup.set(false)
@@ -528,9 +527,19 @@ fn revision_label(message: Option<&str>, hash: Option<&str>) -> Option<AnyView> 
     }
 }
 
+/// Whether the package has local changes, read from the whole-package count.
+///
+/// Not from `entries`: those are the first 1000 paths, so on a larger package
+/// every change can sort past the cap, and reading the rows would hide
+/// Commit and Push from a package that has something to ship.
+fn package_has_changes(counts: &EntryCounts) -> bool {
+    counts.changed > 0
+}
+
 #[cfg(test)]
 mod tests {
-    use super::commit_affordance_disabled;
+    use super::{commit_affordance_disabled, package_has_changes};
+    use crate::commands::EntryCounts;
     use crate::util::commit_denied_hint;
 
     const DENIED: &str = "Current role ReadOnly has no access to this bucket";
@@ -591,6 +600,22 @@ mod tests {
             Some("Current role ReadOnly has no access to this bucket. Switch role to commit.")
         );
         assert_eq!(commit_denied_hint(None), None);
+    }
+
+    /// A change that the cap dropped from the rows still counts, so Commit and
+    /// Push stays on offer; a package with no changes offers nothing to ship.
+    #[test]
+    fn changes_are_read_from_the_whole_package_count() {
+        let capped_away = EntryCounts {
+            all: 1_001,
+            changed: 1,
+            ..EntryCounts::default()
+        };
+        assert!(package_has_changes(&capped_away));
+        assert!(!package_has_changes(&EntryCounts {
+            all: 1_001,
+            ..EntryCounts::default()
+        }));
     }
 
     /// The action bar's markup, sliced out of [`SOURCE`] so the assertions

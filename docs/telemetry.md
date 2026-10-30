@@ -61,20 +61,31 @@ install can hold a file from months ago; a busy one holds ten days. Read as a
 calendar window it is simply wrong, and that misreading is the reason this
 paragraph exists.
 
-**Turning up the volume.** `QUILTSYNC_LOG` **replaces** the defaults for both
-sinks:
+**The tail survives a quit, not a crash.** Lines go to a background writer, so
+whatever is still queued when the process ends is lost. `App::run`'s exit callback
+in `main.rs` drops the writer's guard, which drains the queue — up to about a second
+of the quit. A `kill`, a signal or an aborting panic never reach it.
+
+**Turning up the volume.** `QUILT_LOG` **replaces** the defaults for both
+sinks, under the same rule as the `quilt` CLI: a bare level such as `debug` puts
+our crates at it and dependencies at `warn`, and a value with `=` is directives:
 
 ```bash
-QUILTSYNC_LOG=quilt_sync=trace,quilt_rs=trace just start
+QUILT_LOG=trace just app dev
+QUILT_LOG=quilt_sync=trace,quilt_rs=trace just app dev
 ```
 
 It replaces rather than merges, so a narrow override is genuinely narrow —
-`QUILTSYNC_LOG=quilt_sync=trace` drops the dependency floor along with
-everything else, which is ordinary `RUST_LOG` behaviour. Note this is a
-**developer** convenience, not a user-facing escape hatch: an app launched from
-the OS shell inherits no terminal environment, so "set a variable and reproduce
-it" is not an instruction anybody can follow. The defaults have to be right on
-their own.
+`QUILT_LOG=quilt_sync=trace` drops the dependency floor along with everything
+else. The crash reporter never goes below `info`, whatever the value: it is
+off-machine, and `debug` is where paths and package names appear. A quieter
+value (`warn`, `error`, `off`) still quiets it. A value that is neither a level
+nor directives, such as `debgu`, is ignored and logged as an error.
+
+Note this is a **developer** convenience, not a user-facing escape hatch: an
+app launched from the OS shell inherits no terminal environment, so "set a
+variable and reproduce it" is not an instruction anybody can follow. The
+defaults have to be right on their own.
 
 **Choosing a level for new code.** The cost of a statement is its level times
 its **call rate**, and a statement in a timer-driven path has an unbounded rate.
@@ -164,8 +175,8 @@ reuse later.
 timeout — keeps its events in `<app-data>/unsent_events.jsonl`, one per line,
 bounded at 1000 with the oldest dropped. They replay on the next send that
 succeeds. A *refused* send is not kept: the API answered, so a retry earns the
-same answer. Nothing is flushed at exit, because nothing runs at exit: Tauri's
-`run` ends the process directly, so no destructor gets a chance.
+same answer. Nothing is flushed at exit: exit-time work exists (the log drains
+there, above), but a send is a network round trip and a quit must not wait on one.
 
 ## Verifying a change without credentials
 
@@ -173,7 +184,7 @@ A debug build dry-runs both off-machine sinks to the terminal, which is the
 whole verification loop for anything about *what* is reported:
 
 ```bash
-just start
+just app dev
 # analytics:
 #   telemetry(dry-run) package_pulled {"host":"example.quiltdata.com","distinct_id":"…"}
 # faults:

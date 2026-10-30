@@ -1,0 +1,22 @@
+/*
+ * SelectAll. The box sits in the rows' own checkbox column.
+ *
+ * The x is not this component's to choose: the file pane sets one gutter value
+ * and the group headings, the rows and this all measure from it. So there is no
+ * padding here — the toolbar positions it.
+ */
+
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  font-size: var(--q-text-body);
+  cursor: pointer;
+}
+
+/* Never wraps and never shrinks: the text changes length every time the
+ * selection does, and a control that reflows while you click it is the thing
+ * that makes people miss. */
+.text {
+  white-space: nowrap;
+}

@@ -84,8 +84,8 @@ use crate::autopull::tick::run_once;
 use crate::model::MockQuiltModel;
 use crate::quilt;
 use crate::telemetry::Telemetry;
+use quilt_uri::fixtures;
 
-const HOST: &str = "test.quilt.dev";
 const OPEN: &str = "open";
 const LOCKED: &str = "locked";
 const READ_ONLY: &str = "ReadOnly";
@@ -218,7 +218,7 @@ fn bucket_for(namespace: &Namespace) -> &'static str {
 
 fn manifest_uri_for(namespace: &Namespace) -> ManifestUri {
     ManifestUri {
-        origin: Some(HOST.parse().expect("host")),
+        origin: Some(fixtures::host()),
         bucket: bucket_for(namespace).to_string(),
         namespace: namespace.clone(),
         hash: "abcdef".to_string(),
@@ -260,6 +260,20 @@ fn model_for(stack: &Arc<FakeStack>) -> MockQuiltModel {
         });
 
     let s3 = Arc::clone(stack);
+    model
+        .expect_try_lock_package()
+        .returning(|package| Ok(Some(package.namespace.clone())));
+    let s3_locked = Arc::clone(stack);
+    model
+        .expect_locked_package_status()
+        .returning(move |namespace, _| {
+            let bucket = bucket_for(namespace);
+            if s3_locked.can_read(bucket) {
+                Ok(quilt::lineage::InstalledPackageStatus::default())
+            } else {
+                Err(access_denied(bucket))
+            }
+        });
     model
         .expect_get_installed_package_status()
         .returning(move |package, _| {
@@ -310,7 +324,7 @@ fn row<'a>(
 ) -> &'a InstalledPackageListItem {
     packages
         .iter()
-        .find(|item| item.namespace == namespace)
+        .find(|item| item.namespace.to_string() == namespace)
         .unwrap_or_else(|| panic!("{namespace} in roster"))
 }
 
@@ -338,7 +352,15 @@ async fn switch_to(
     watcher: &Watcher,
     role: &str,
 ) -> Result<(), Error> {
-    switch_role_command(model, roles, watcher, &Telemetry::default(), HOST, role).await?;
+    switch_role_command(
+        model,
+        roles,
+        watcher,
+        &Telemetry::default(),
+        "quilt.test",
+        role,
+    )
+    .await?;
     Ok(())
 }
 
@@ -378,7 +400,7 @@ async fn a_switch_reaches_s3_and_unmarks_the_rows_the_new_role_can_read() {
 
     assert_eq!(
         stack.cache_clears_since(before_switch),
-        vec![HOST.to_string()],
+        vec!["quilt.test".to_string()],
         "the switch must drop the host's cached S3 clients, or they keep signing as the old role"
     );
 
@@ -442,7 +464,7 @@ async fn a_switch_made_in_the_catalog_reaches_s3_when_settings_reads_the_role() 
     let before_settings = stack.cache_clears().len();
 
     // They open Settings, which reads the role afresh — the observation.
-    let data = get_roles_command(&model, &roles, HOST)
+    let data = get_roles_command(&model, &roles, "quilt.test")
         .await
         .expect("roles");
     assert_eq!(
@@ -451,7 +473,7 @@ async fn a_switch_made_in_the_catalog_reaches_s3_when_settings_reads_the_role() 
     );
     assert_eq!(
         stack.cache_clears_since(before_settings),
-        vec![HOST.to_string()],
+        vec!["quilt.test".to_string()],
         "observing the switch must also drop the clients still signing as the old role"
     );
 
@@ -510,7 +532,7 @@ async fn the_mark_names_the_role_the_user_switched_to() {
     );
     assert_eq!(
         locked.role_switch_host.as_deref(),
-        Some(HOST),
+        Some("quilt.test"),
         "another role is still held, so the affordance stays"
     );
 }
@@ -539,7 +561,7 @@ async fn a_switch_releases_the_pause_a_denial_created_and_the_next_tick_proceeds
         1,
         "only the denied namespace pauses, got {paused:?}"
     );
-    assert_eq!(paused[0].namespace, "team/locked");
+    assert_eq!(paused[0].namespace.to_string(), "team/locked");
     assert_eq!(paused[0].reason, "roleDenied");
     assert_eq!(
         paused[0].message.as_deref(),
