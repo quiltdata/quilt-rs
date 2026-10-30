@@ -5929,7 +5929,7 @@ dependencies = [
 
 [[package]]
 name = "quilt-sync"
-version = "0.26.1"
+version = "0.26.2-dev"
 dependencies = [
  "agent-client-protocol",
  "chrono",
