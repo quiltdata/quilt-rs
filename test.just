@@ -9,16 +9,6 @@ export SCOPE := env("SCOPE", "--workspace --all-targets")
 # The nextest filterset `live` runs; CI narrows it to split reads from writes.
 export LIVE := env("LIVE", "test(/::live_/)")
 
-# The timeout limits only the wait for the tests to finish; browser start and
-# page load have their own limits. Past it the runner fails with "Failed to
-# detect test as having been run" and names no test. It is a hang guard, set
-# well above the suite's time.
-wasm_timeout := "180"
-
-# The suite's time is watched against this smaller budget instead: over it, the
-# recipe warns but passes, so growth shows long before the timeout.
-wasm_budget := "75"
-
 # Run the tests needing no AWS credentials (what a fork's CI runs); arguments go to nextest
 [positional-arguments]
 no-aws *args:
@@ -36,14 +26,11 @@ live *args:
 doc:
     cargo test --doc --workspace --exclude quilt-sync --exclude quilt-sync-ui
 
-# Run QuiltSync frontend tests in headless Firefox; warns when they outgrow their time budget
+# The runner's default timeout, 20 s for the whole run, is shorter than the
+# suite. The timeout limits only the wait for the tests to finish; past it the
+# runner fails with "Failed to detect test as having been run" and names no
+# test. It is a hang guard, set well above the suite's time.
+#
+# Run QuiltSync frontend tests in headless Firefox
 frontend:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    log=$(mktemp)
-    WASM_BINDGEN_TEST_TIMEOUT={{ wasm_timeout }} CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner \
-        cargo test -p quilt-sync-ui --target wasm32-unknown-unknown 2>&1 | tee "$log"
-    secs=$(grep -oE 'finished in [0-9.]+s' "$log" | grep -oE '[0-9.]+' | sort -n | tail -1 || true)
-    if [ -n "$secs" ] && awk -v s="$secs" -v b={{ wasm_budget }} 'BEGIN { exit !(s > b) }'; then
-        echo "::warning title=Wasm test suite time::The wasm tests took ${secs}s, over the {{ wasm_budget }}s budget (timeout {{ wasm_timeout }}s). Speed up or split the suite."
-    fi
+    WASM_BINDGEN_TEST_TIMEOUT=180 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
