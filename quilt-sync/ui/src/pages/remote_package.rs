@@ -81,7 +81,7 @@ mod tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    /// With no Tauri host the read rejects, so this also covers the error
+    /// With no engine the read rejects, so this also covers the error
     /// page drawn inside the relay's shell.
     #[wasm_bindgen_test]
     async fn the_relay_draws_the_preview_bar_once_with_refresh_disabled() {

@@ -13,7 +13,7 @@ use crate::components::layout::BreadcrumbItem;
 use crate::components::{
     Layout, Notification, SetRemotePopup, SetRemotePopupData, Spinner, ToolbarActions,
 };
-use crate::tauri as tauri_bridge;
+use crate::engine;
 use crate::util;
 use crate::util::make_action;
 use quilt_uri::S3PackageUri;
@@ -188,7 +188,7 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // Status-changed listener. Updates the per-row status bus, and triggers
     // a list refetch when a namespace transitions to/from the paused status
     // so each row re-reads its `paused_reason` from the backend.
-    let listener = tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
+    let listener = engine::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
         let is_paused = ev.status == "paused";
         let was_paused =
             paused_seen.with_untracked(|seen| seen.contains(&ev.namespace.to_string()));
@@ -211,14 +211,13 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // Commit & Push success notification, and refetch so the published
     // namespace's now-cleared pause is re-read from the backend and its
     // row stops rendering red.
-    let publish_listener =
-        tauri_bridge::listen::<PublishedEvent>(AUTOSYNC_PUBLISHED_EVENT, move |ev| {
-            notification.set(Some(Notification::Success(format!(
-                "Autosync published {} — {}",
-                ev.namespace, ev.message,
-            ))));
-            refetch.notify();
-        });
+    let publish_listener = engine::listen::<PublishedEvent>(AUTOSYNC_PUBLISHED_EVENT, move |ev| {
+        notification.set(Some(Notification::Success(format!(
+            "Autosync published {} — {}",
+            ev.namespace, ev.message,
+        ))));
+        refetch.notify();
+    });
     on_cleanup(move || drop(publish_listener));
 
     // Autosync pause events — surface as a warning toast carrying the
@@ -227,7 +226,7 @@ pub fn InstalledPackagesList() -> impl IntoView {
     // (here) and a stable indicator when they open the package. The
     // refetch re-reads the backend paused map so the row's durable red
     // state reflects authoritative data (the toast is transient feedback).
-    let paused_listener = tauri_bridge::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
+    let paused_listener = engine::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
         // The classic refusal kinds (pendingChanges, pendingCommit,
         // diverged) are already legible from the per-row status string;
         // `other` and `pullConflict` carry information it drops, so only

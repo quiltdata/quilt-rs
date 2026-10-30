@@ -1,58 +1,46 @@
-//! The desktop app: the Tauri window, its commands, the tray and deep links.
+//! The desktop app: the window, the tray, deep links and the desktop features
+//! the engine's commands use.
+//!
+//! The window is one more client of the engine: it loads the engine's page and
+//! talks over its socket like a browser tab.
 
-use tauri::Emitter;
-use tokio::sync::broadcast::error::RecvError;
-
-use crate::engine::events::EventSink;
-use crate::engine::telemetry::prelude::*;
+use tauri::AppHandle;
+use tauri::Manager;
+use tauri::WebviewUrl;
+use tauri::WebviewWindow;
+use tauri::WebviewWindowBuilder;
 
 pub mod commands;
 pub mod tray;
 pub mod uri;
 
-/// Send every engine event to the window under its own name.
-pub fn forward_events<R: tauri::Runtime>(app: &tauri::AppHandle<R>, events: &EventSink) {
-    let app = app.clone();
-    let mut rx = events.subscribe();
-    tauri::async_runtime::spawn(async move {
-        loop {
-            match rx.recv().await {
-                Ok((name, payload)) => {
-                    if let Err(err) = app.emit(&name, payload) {
-                        warn!("failed to emit {name}: {err}");
-                    }
-                }
-                Err(RecvError::Lagged(missed)) => {
-                    warn!("the window missed {missed} events");
-                }
-                Err(RecvError::Closed) => break,
-            }
-        }
-    });
+/// The window's label, for every lookup of it.
+pub const MAIN: &str = "main";
+
+/// Open the window on `link`, the engine's page with its token.
+///
+/// # Errors
+///
+/// When `link` isn't a URL or Tauri can't build the window.
+pub fn open_window(app: &AppHandle, link: &str) -> tauri::Result<WebviewWindow> {
+    let url = link.parse().map_err(tauri::Error::InvalidUrl)?;
+    WebviewWindowBuilder::new(app, MAIN, WebviewUrl::External(url))
+        .title("QuiltSync")
+        .inner_size(1280.0, 900.0)
+        .min_inner_size(640.0, 560.0)
+        .resizable(true)
+        .build()
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::mpsc;
-    use std::time::Duration;
-
-    use tauri::Listener;
-
-    use super::*;
-
-    #[test]
-    fn an_engine_event_reaches_the_window_under_its_name() {
-        let app = tauri::test::mock_app();
-        let events = EventSink::new();
-        let (tx, rx) = mpsc::channel();
-        app.listen_any("toast", move |event| {
-            let _ = tx.send(event.payload().to_owned());
-        });
-
-        forward_events(app.handle(), &events);
-        events.emit("toast", serde_json::json!({"id": 1}));
-
-        let payload = rx.recv_timeout(Duration::from_secs(5)).expect("forwarded");
-        assert_eq!(payload, r#"{"id":1}"#);
+/// Bring the window to the front, from the tray or a deep link.
+pub fn show_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        #[cfg(target_os = "macos")]
+        {
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        }
     }
 }

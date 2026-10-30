@@ -51,6 +51,12 @@ impl EventSink {
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.tx.subscribe()
     }
+
+    /// Whether anyone listens: a connected client does from before its hello.
+    #[must_use]
+    pub fn has_listeners(&self) -> bool {
+        self.tx.receiver_count() > 0
+    }
 }
 
 static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new();

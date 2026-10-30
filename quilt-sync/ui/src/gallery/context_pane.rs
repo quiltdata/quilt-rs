@@ -145,7 +145,7 @@ fn history(
 /// and belongs in an address, which is not a name.
 ///
 /// The opener does nothing here. In the app it is `open_in_web_browser`; a
-/// gallery has no Tauri host to hand an address to, and letting the anchor
+/// gallery has no engine to hand an address to, and letting the anchor
 /// follow itself would take the gallery with it.
 fn catalog(revision: &str) -> CatalogLink {
     CatalogLink::new(catalog_href(revision), Callback::new(|_url: String| ()))

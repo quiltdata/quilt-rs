@@ -6,12 +6,8 @@
 //! and app-level effects such as `UpdateChecker`'s on-mount version check, none
 //! of which belong in a harness whose whole point is rendering component
 //! stories in isolation, outside any page's own data-fetching and navigation.
-//! (`tauri::invoke`/`invoke_unit` now return `Err` rather than trapping when
-//! `window.__TAURI__` is missing, so `UpdateChecker`'s own on-mount call is no
-//! longer a crash risk here — but `tauri_listen_raw` is still declared without
-//! `catch`, so a page reachable through `App`'s router that calls `listen()`
-//! (`installed_packages_list.rs`, say) would still trap the module outside
-//! Tauri. The isolation stays correct regardless.)
+//! (With no engine to talk to, every command here fails quietly, so nothing
+//! traps — the isolation is about what gets drawn, not about safety.)
 //!
 //! Run it with `just gallery` and iterate in Chrome or Firefox for
 //! speed — then check **GNOME Web (Epiphany)**, which is `WebKitGTK`, before

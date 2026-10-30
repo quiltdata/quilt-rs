@@ -173,10 +173,14 @@ async fn ui_file(uri: Uri) -> Response {
         Some(file) => file,
         None => match Ui::get("index.html") {
             Some(file) => file,
+            // In development the window can open before `trunk watch` has
+            // built the UI once, so the page asks again until it's there.
             None => {
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
-                    "The UI isn't built. Run `trunk build` in quilt-sync/ui.",
+                    [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    "<meta http-equiv=\"refresh\" content=\"1\">\
+                     The UI isn't built. Run <code>trunk build</code> in quilt-sync/ui.",
                 )
                     .into_response();
             }
@@ -312,6 +316,7 @@ async fn session(socket: WebSocket, state: AppState) {
         }
     };
 
+    info!("a client connected");
     // Whichever ends first ends the session: the client left, or it fell
     // behind and was closed.
     tokio::select! {
@@ -319,6 +324,7 @@ async fn session(socket: WebSocket, state: AppState) {
         () = reader => {}
         () = overflow.notified() => warn!("closing a client that doesn't read its replies"),
     }
+    info!("a client left");
 }
 
 /// Queue a reply, or mark the session for closing when the client has stopped

@@ -8,7 +8,7 @@ use leptos::prelude::*;
 
 use crate::commands;
 use crate::components::buttons;
-use crate::tauri as tauri_bridge;
+use crate::engine;
 
 /// Event the backend raises when a quit would interrupt an apply. Kept in
 /// lockstep with `tray.rs`.
@@ -89,7 +89,7 @@ pub fn QuitPromptCard(
 pub fn QuitPrompt() -> impl IntoView {
     let visible = RwSignal::new(false);
 
-    let listener = tauri_bridge::listen::<u64>(QUIT_PROMPT_EVENT, move |generation| {
+    let listener = engine::listen::<u64>(QUIT_PROMPT_EVENT, move |generation| {
         visible.set(true);
         // Report the prompt on screen at once. Until this lands the backend
         // treats the quit as unanswerable and lets it through after a short

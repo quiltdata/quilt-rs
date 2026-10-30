@@ -281,6 +281,16 @@ fn format_namespace_filter_query(
     }
 }
 
+/// The event that sends every client to a page. Its payload is the page's
+/// path and query, as [`page`] writes them.
+pub const NAVIGATE_EVENT: &str = "navigate";
+
+/// `path` as a client's router takes it: the path and its query, no host.
+pub fn page(path: Paths) -> String {
+    let base = Url::parse(RELATIVE_URL_BASE).expect("constant base URL is valid");
+    from_url(path, base)[url::Position::BeforePath..].to_owned()
+}
+
 pub fn from_url(path: Paths, mut url: Url) -> url::Url {
     url.set_fragment(None);
     match path {
@@ -396,6 +406,18 @@ mod tests {
     use quilt_uri::fixtures;
 
     use crate::engine::Result;
+
+    #[test]
+    fn a_page_is_its_path_and_query_without_a_host() {
+        assert_eq!(page(Paths::Home), "/");
+        assert_eq!(
+            page(Paths::Commit(
+                ("foo", "bar").into(),
+                EntriesFilter::default()
+            )),
+            "/commit?namespace=foo%2Fbar"
+        );
+    }
 
     #[test]
     fn test_commit() -> Result<()> {

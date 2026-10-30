@@ -322,7 +322,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_failed_create_leaves_the_dialog_open_and_the_button_usable() {
-        // There is no Tauri host here, so the invoke rejects — which is exactly the
+        // There is no engine here, so the invoke rejects — which is exactly the
         // failure path. The dialog stays open because the operation did not succeed
         // and the user did not dismiss it; what it says is asserted separately, in
         // `a_failed_create_says_why_inside_the_dialog`.
@@ -402,7 +402,7 @@ mod tests {
         //
         // The test calls the command directly first, so it checks that the
         // backend's own message arrives, not just some message. There is no
-        // Tauri host here, so both calls reject with the same message.
+        // engine here, so both calls reject with the same message.
         //
         // Its first line only: with no host the rejection is a thrown `TypeError`
         // whose text carries a JS stack, and the stack names the frame that called,
@@ -410,7 +410,7 @@ mod tests {
         // string and the whole of it lands in the banner.
         let err = commands::package_create("user/new-package".to_string(), None, None)
             .await
-            .expect_err("no Tauri host, so the invoke rejects");
+            .expect_err("no engine, so the invoke rejects");
         let expected = err.lines().next().expect("a message to compare");
 
         let open = RwSignal::new(true);

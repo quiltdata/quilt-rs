@@ -1,6 +1,7 @@
 pub mod appbar;
 pub mod autopull_activity;
 pub mod buttons;
+pub mod connection;
 pub mod ignore_popup;
 pub mod layout;
 pub mod popover;
@@ -12,6 +13,7 @@ pub mod update_checker;
 pub mod workflow_select;
 
 pub use autopull_activity::AutopullActivityFeed;
+pub use connection::{ConnectionBanner, FollowEngine, NoLink};
 pub use ignore_popup::{IgnorePopup, IgnorePopupData, UnignorePopup, UnignorePopupData};
 pub use layout::{Layout, Notification, ToolbarActions};
 pub use popover::with_popover;

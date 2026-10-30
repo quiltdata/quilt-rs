@@ -3,7 +3,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::AppHandle;
-use tauri::Emitter;
 use tauri::Manager;
 use tauri::WindowEvent;
 use tauri::async_runtime;
@@ -20,6 +19,8 @@ use tokio::sync::watch;
 
 use crate::engine::telemetry::prelude::*;
 
+use super::MAIN;
+use super::show_window;
 use crate::engine::autopull::SyncTrayStatus;
 use crate::engine::autopull::TrayMode;
 use crate::engine::quit::QuitAction;
@@ -68,7 +69,7 @@ impl TrayController {
             .menu(&menu)
             .tooltip("Quilt — idle")
             .on_menu_event(move |app, event| match event.id().as_ref() {
-                MENU_ID_OPEN => show_main_window(app),
+                MENU_ID_OPEN => show_window(app),
                 MENU_ID_BROWSER => {
                     if let Err(err) = opener::open_browser(&link) {
                         warn!("failed to open the browser: {err}");
@@ -88,7 +89,7 @@ impl TrayController {
                     ..
                 } = event
                 {
-                    show_main_window(tray.app_handle());
+                    show_window(tray.app_handle());
                 }
             })
             .build(app)?;
@@ -115,18 +116,6 @@ fn load_tray_icon(app: &AppHandle) -> Result<Image<'static>, TrayError> {
     let bytes = std::fs::read(&path)?;
     let image = Image::from_bytes(&bytes)?.to_owned();
     Ok(image)
-}
-
-fn show_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
-        #[cfg(target_os = "macos")]
-        {
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-        }
-    }
 }
 
 fn spawn_status_listener(
@@ -165,8 +154,8 @@ fn apply_status(tray: &TrayIcon, status: &SyncTrayStatus) {
     let _ = tray.set_tooltip(Some(&tooltip));
 }
 
-/// Event the window listens for to raise the prompt. Kept in lockstep with
-/// the UI's `listen(...)` call.
+/// Event the window and every tab listen for to raise the prompt. Kept in
+/// lockstep with the UI's `listen(...)` call.
 const QUIT_PROMPT_EVENT: &str = "quit-prompt";
 
 /// How long a raised prompt has to report itself on screen before the quit is
@@ -186,7 +175,7 @@ fn request_quit(app: &AppHandle) {
     match services.quit_gate.request(applying) {
         QuitAction::Exit => app.exit(0),
         QuitAction::AlreadyPrompting => {}
-        QuitAction::Prompt(generation) => prompt_before_quit(app, generation),
+        QuitAction::Prompt(generation) => prompt_before_quit(app, &services, generation),
     }
 }
 
@@ -198,13 +187,14 @@ fn request_quit(app: &AppHandle) {
 /// through. A Quit that appears to do nothing is a worse outcome than an
 /// interrupted apply — the apply is what the reconcile is being made to
 /// survive, whereas an app that will not close has no remedy at all.
-fn prompt_before_quit(app: &AppHandle, generation: u64) {
-    show_main_window(app);
-    if let Err(err) = app.emit(QUIT_PROMPT_EVENT, generation) {
-        warn!("quit prompt could not be raised, quitting: {err}");
+fn prompt_before_quit(app: &AppHandle, services: &Services, generation: u64) {
+    show_window(app);
+    if !services.events.has_listeners() {
+        warn!("no window or tab to raise the quit prompt in, quitting");
         app.exit(0);
         return;
     }
+    services.events.emit(QUIT_PROMPT_EVENT, generation);
     let handle = app.clone();
     async_runtime::spawn(async move {
         tokio::time::sleep(PROMPT_GRACE).await;
@@ -219,7 +209,7 @@ fn prompt_before_quit(app: &AppHandle, generation: u64) {
 }
 
 fn install_close_handler(app: &AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
+    let Some(window) = app.get_webview_window(MAIN) else {
         return;
     };
     let handle = app.clone();
@@ -240,7 +230,7 @@ fn install_close_handler(app: &AppHandle) {
                 return;
             }
             api.prevent_close();
-            if let Some(window) = handle.get_webview_window("main") {
+            if let Some(window) = handle.get_webview_window(MAIN) {
                 let _ = window.hide();
             }
             #[cfg(target_os = "macos")]

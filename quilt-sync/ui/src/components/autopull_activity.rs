@@ -25,10 +25,10 @@ use leptos::task::spawn_local;
 
 use crate::commands;
 use crate::commands::ActivityOp;
+use crate::engine;
 use crate::kit;
 use crate::kit::Activity;
 use crate::kit::ActivityKind;
-use crate::tauri as tauri_bridge;
 
 /// The words for autopull's activity: one [`Activity`] while a transfer runs,
 /// none when it is idle.
@@ -114,9 +114,10 @@ pub fn AutopullActivityFeed() -> impl IntoView {
     // Whatever autopull was already doing when the window opened.
     spawn_local(feed.hydrate());
 
-    // The read after registration closes the startup race: any change after it
-    // arrives as an event, which bumps the stamp.
-    let listener = tauri_bridge::listen_then::<Option<commands::AutopullActivity>>(
+    // The read each time events start to flow closes the startup race and the
+    // gap of a reconnect: any change after it arrives as an event, which bumps
+    // the stamp.
+    let listener = engine::listen_then::<Option<commands::AutopullActivity>>(
         commands::AUTOPULL_ACTIVITY_EVENT,
         move |activity| feed.follow(activity.as_ref()),
         move || spawn_local(feed.hydrate()),

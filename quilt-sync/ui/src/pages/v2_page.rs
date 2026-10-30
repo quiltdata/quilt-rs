@@ -12,7 +12,8 @@
 //! # The rules
 //!
 //! 1. One read, keyed by the address it was asked for, read again on
-//!    [`PageHandle::reload`]: the watcher's news, *Refresh*, a command done.
+//!    [`PageHandle::reload`]: the watcher's news, *Refresh*, a command done, a
+//!    reconnect to the engine after news may have been lost.
 //! 2. Reads are numbered, and only the newest one's answer lands. An older
 //!    read that settles late is dropped.
 //! 3. The answer lands in a signal, never a resource. A resource read under
@@ -109,6 +110,7 @@ impl PageHandle {
         } = self;
         let landed = RwSignal::new(None::<(String, Result<T, String>)>);
         let reads = StoredValue::new(0_u64);
+        crate::engine::reread_on_reconnect(reload);
         Effect::new(move |_| {
             reload.track();
             let asked = key.get();

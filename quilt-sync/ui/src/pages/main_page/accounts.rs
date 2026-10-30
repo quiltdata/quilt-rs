@@ -28,7 +28,7 @@ use crate::kit::HostRowSkeleton;
 use crate::routes::sign_in_href;
 
 /// The card, on one payload — the shape [`AutosyncBody`](super::autosync) has,
-/// and testable without a Tauri host for the same reason. A failed read renders
+/// and testable without an engine for the same reason. A failed read renders
 /// nothing at all rather than this card with no rows: asserting anything about a
 /// user's sessions on the strength of a failed read would be a manufactured
 /// state. The page owns that decision, along with the resource — see
@@ -325,7 +325,7 @@ mod tests {
     }
 
     /// Every fixture but [`waiting_for_a_role`] is settled (`provisional: false`).
-    /// There is no Tauri host under `wasm-bindgen-test`, so a provisional row
+    /// There is no engine under `wasm-bindgen-test`, so a provisional row
     /// spawns an invoke that can only fail — noise in the log, and a settle no
     /// assertion here wants.
     fn two_hosts() -> MainPageAccountsData {
@@ -387,9 +387,7 @@ mod tests {
     /// which is the point — the two states are told apart by that flag alone.
     ///
     /// It does spawn a `refresh_main_page_account`, and that is harmless here:
-    /// `tauri_invoke_catching` is `catch`-bound, so a missing `window.__TAURI__`
-    /// comes back as an `Err` rather than trapping the module (`tauri.rs:15-23`).
-    /// The row therefore never settles, the assertions below cannot race it, and
+    /// with no engine under test the call comes back as an `Err`. The row therefore never settles, the assertions below cannot race it, and
     /// the whole cost is one `console.error` line.
     fn waiting_for_a_role() -> MainPageAccountsData {
         MainPageAccountsData {
@@ -506,7 +504,7 @@ mod tests {
         // and by more than this card holds, which is why the trigger counted here
         // is the page's own and not one private to the card.
         //
-        // There is no Tauri host here, so `switch_role` can only fail — which is
+        // There is no engine here, so `switch_role` can only fail — which is
         // exactly why the trigger must fire on the error path too.
         let fired = RwSignal::new(0);
         let refresh = Trigger::new();

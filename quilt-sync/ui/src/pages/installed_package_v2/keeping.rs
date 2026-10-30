@@ -40,7 +40,7 @@ pub type ScopeStore = fn(String, KeepingScope, Vec<String>) -> Answer<()>;
 pub type BacklogDownload = fn(String, Vec<String>) -> Answer<NotDownloaded>;
 
 /// Keeping's two commands. Function pointers, so the DOM tests and the
-/// gallery answer without a Tauri host.
+/// gallery answer without an engine.
 #[derive(Clone, Copy)]
 pub struct KeepingCommands {
     pub store: ScopeStore,

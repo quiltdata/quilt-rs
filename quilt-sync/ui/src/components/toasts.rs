@@ -22,7 +22,7 @@ use crate::commands;
 use crate::commands::Toast;
 use crate::commands::ToastGroup;
 use crate::commands::ToastKind;
-use crate::tauri as tauri_bridge;
+use crate::engine;
 
 /// The visible toasts, keyed by id so a hydration read and a live event cannot
 /// double-render the same toast — the backend retains before it emits, so that
@@ -134,27 +134,25 @@ pub fn ToastStack() -> impl IntoView {
     // Whatever was posted while nothing was listening.
     spawn_local(store.reconcile());
 
-    let listener = tauri_bridge::listen::<Toast>(commands::TOAST_EVENT, move |toast| {
-        // The payload alone cannot say what the backend evicted to make room,
-        // so show it and then re-read.
-        store.insert(toast);
-        spawn_local(store.reconcile());
-    });
-
-    // A second read, sequenced after the listener exists. This **narrows** the
-    // startup race rather than closing it: registration completes on a promise
-    // the bridge does not expose, so a toast posted between the first read and
-    // the listener going live is still deliverable only by the reconcile above,
-    // which the next toast triggers. Closing it properly needs the bridge to
-    // hand back a registration future.
-    spawn_local(store.reconcile());
+    // Read again each time events start to flow: a toast posted before the
+    // listener was live, or while the socket was down, arrived unheard.
+    let listener = engine::listen_then::<Toast>(
+        commands::TOAST_EVENT,
+        move |toast| {
+            // The payload alone cannot say what the backend evicted to make
+            // room, so show it and then re-read.
+            store.insert(toast);
+            spawn_local(store.reconcile());
+        },
+        move || spawn_local(store.reconcile()),
+    );
     on_cleanup(move || drop(listener));
 
     view! { <ToastLayer store=store /> }
 }
 
 /// The markup, split from the bridge wiring above so it can be mounted in a
-/// test — `ToastStack` cannot, since it reaches for Tauri on mount.
+/// test — `ToastStack` cannot, since it reaches for the engine on mount.
 #[component]
 fn ToastLayer(store: Store) -> impl IntoView {
     let toasts = store.toasts;
