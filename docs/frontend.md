@@ -8,9 +8,9 @@
 QuiltSync is a Tauri v2 desktop application. The UI is a
 **client-side rendered Leptos WASM app** running inside the webview.
 Rust compiles to WebAssembly via Trunk, and Leptos handles routing,
-reactivity, and DOM rendering entirely in the browser. The Tauri
-backend exposes data through `#[tauri::command]` handlers that return
-serializable structs -- the frontend owns all rendering.
+reactivity, and DOM rendering entirely in the browser. The backend
+exposes data through commands that return serializable structs -- the
+frontend owns all rendering.
 
 ## Stack
 
@@ -21,7 +21,7 @@ serializable structs -- the frontend owns all rendering.
 | WASM bridge | wasm-bindgen + serde-wasm-bindgen | `ui/src/tauri.rs` |
 | Styles | Plain CSS (global, no scoping) | `ui/assets/css/` |
 | Build tool | Trunk | `ui/Trunk.toml` |
-| IPC | Tauri commands (`#[tauri::command]`) over the engine's plain functions | `src-tauri/src/desktop/commands.rs` |
+| IPC | One Tauri command, `engine_call`, over the engine's command table | `src-tauri/src/engine/dispatch.rs` |
 
 ## Directory Structure
 
@@ -64,7 +64,7 @@ quilt-sync/ui/
     │   ├── setup.rs
     │   ├── error.rs
     │   └── remote_package.rs
-    ├── commands.rs             # Typed Tauri command wrappers + response DTOs
+    ├── commands.rs             # Typed command wrappers + response DTOs
     ├── tauri.rs                # Low-level WASM-to-JS invoke bridge
     └── error_handler.rs        # Error parsing and redirect logic
 ```
@@ -91,10 +91,10 @@ Suspense renders <Layout> + <Spinner /> while loading
 LocalResource calls commands::get_page_data() [typed wrapper]
     |                                              (Tauri IPC)
     v
-tauri::invoke() → wasm-bindgen → window.__TAURI__.core.invoke()
+tauri::invoke() → wasm-bindgen → window.__TAURI__.core.invoke("engine_call")
     |
     v
-Rust #[tauri::command] handler returns serializable struct
+dispatch runs the command, which returns a serializable struct
     |
     v
 serde-wasm-bindgen deserializes response into Rust DTO
@@ -307,7 +307,7 @@ Key conventions:
 
 ## IPC Bridge
 
-Two layers connect Leptos components to Tauri commands:
+Two layers connect Leptos components to the backend's commands:
 
 ### Low-level (`tauri.rs`)
 
@@ -315,12 +315,14 @@ Two layers connect Leptos components to Tauri commands:
 pub async fn invoke<A, R>(cmd: &str, args: &A) -> Result<R, String>
 ```
 
-Calls `window.__TAURI__.core.invoke()` via wasm-bindgen, serializing
-args with serde-wasm-bindgen and deserializing the response.
+Calls `window.__TAURI__.core.invoke("engine_call", {cmd, args})` via
+wasm-bindgen, serializing args with serde-wasm-bindgen and deserializing
+the response. `engine_call` hands the call to the engine's command table
+(`src-tauri/src/engine/dispatch.rs`), which lists every command once.
 
 ### Typed wrappers (`commands.rs`)
 
-Each Tauri command has a corresponding async function with proper
+Each command has a corresponding async function with proper
 arg/return types:
 
 ```rust

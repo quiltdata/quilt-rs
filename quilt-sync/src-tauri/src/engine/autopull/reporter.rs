@@ -278,7 +278,7 @@ impl PausedEvent {
 
 /// Point-in-time view of the autosync watcher's per-namespace state.
 ///
-/// Returned by the `get_autosync_snapshot` Tauri command so the UI can
+/// Returned by the `get_autosync_snapshot` command so the UI can
 /// re-hydrate per-page banners on navigation — listening for the
 /// `autosync-paused` event only catches pauses that fire while the page
 /// is mounted, but the watcher's `paused` map persists across page

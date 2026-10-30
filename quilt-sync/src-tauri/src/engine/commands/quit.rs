@@ -12,7 +12,7 @@ use crate::engine::services::Services;
 /// the user has since dismissed cannot vouch for the one now outstanding.
 #[allow(
     clippy::unused_async,
-    reason = "every plain command is async, so the Tauri wrappers treat them alike"
+    reason = "every plain command is async, so the dispatch treats them alike"
 )]
 pub async fn quit_prompt_shown(s: &Services, generation: u64) -> Result<(), String> {
     s.quit_gate.note_shown(generation);
@@ -22,7 +22,7 @@ pub async fn quit_prompt_shown(s: &Services, generation: u64) -> Result<(), Stri
 /// *Stay* — the quit is abandoned, and a later one asks afresh.
 #[allow(
     clippy::unused_async,
-    reason = "every plain command is async, so the Tauri wrappers treat them alike"
+    reason = "every plain command is async, so the dispatch treats them alike"
 )]
 pub async fn quit_cancel(s: &Services) -> Result<(), String> {
     s.quit_gate.cancel();

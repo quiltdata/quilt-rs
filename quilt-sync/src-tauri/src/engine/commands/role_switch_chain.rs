@@ -328,7 +328,7 @@ fn row<'a>(
         .unwrap_or_else(|| panic!("{namespace} in roster"))
 }
 
-/// Fetch the roster the way the Tauri command does, with no pauses to show.
+/// Fetch the roster the way the command does, with no pauses to show.
 ///
 /// The empty paused map means the command's projection of
 /// `watcher.snapshot().paused` into `paused_reasons` is **not** exercised
@@ -345,7 +345,7 @@ async fn roster(model: &MockQuiltModel, roles: &RoleCache) -> Vec<InstalledPacka
     .packages
 }
 
-/// The switch, called exactly as the Tauri command calls it.
+/// The switch, called exactly as the command calls it.
 async fn switch_to(
     model: &MockQuiltModel,
     roles: &RoleCache,

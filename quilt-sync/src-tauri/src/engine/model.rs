@@ -685,7 +685,7 @@ pub trait QuiltModel {
     ///
     /// Takes a [`LocalDomain::remote_handle`] and releases the domain lock
     /// before the round trip. This one runs on the roster's first paint, so
-    /// holding the lock across it would stall every other Tauri command and
+    /// holding the lock across it would stall every other command and
     /// the autopull tick behind a registry call.
     async fn readable_buckets(&self, host: &Host) -> Result<Vec<String>, Error> {
         let remote = self.get_quilt().lock().await.remote_handle();
@@ -709,7 +709,7 @@ pub trait QuiltModel {
     /// [`QuiltModel::readable_buckets`]. This one is worse than the reads:
     /// it resolves the registry URL, runs a GraphQL mutation and may refresh
     /// the access token in between, so holding the lock would park every
-    /// other Tauri command and the autopull tick behind a slow registry for
+    /// other command and the autopull tick behind a slow registry for
     /// as long as the switch takes.
     async fn switch_role(&self, host: &Host, role_name: &str) -> Result<RoleInfo, Error> {
         let remote = self.get_quilt().lock().await.remote_handle();
@@ -970,7 +970,7 @@ pub mod mocks;
 ///
 /// `lock().await.get_remote().call().await` keeps the guard alive to the end
 /// of the *statement*, so the domain stays locked for the whole round trip and
-/// every other Tauri command — and the autopull tick — parks behind it.
+/// every other command — and the autopull tick — parks behind it.
 /// Taking a [`quilt::LocalDomain::remote_handle`] and letting the guard drop
 /// first is the shape these tests pin.
 ///
