@@ -41,7 +41,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/activity_line.module.scss");
+stylance::import_crate_style!(style, "src/kit/activity_line.module.css");
 
 /// Who is doing the work, in the order the line ranks them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -250,7 +250,7 @@ mod tests {
         let doc = web_sys::window().unwrap().document().unwrap();
         let sheet = doc.create_element("style").unwrap();
         sheet.set_text_content(Some(
-            &include_str!("activity_line.module.scss")
+            &include_str!("activity_line.module.css")
                 .replace(".line", &format!(".{}", style::line)),
         ));
         doc.head().unwrap().append_child(&sheet).unwrap();

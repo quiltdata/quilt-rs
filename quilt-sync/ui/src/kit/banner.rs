@@ -42,7 +42,7 @@ use leptos::prelude::*;
 use super::icons;
 use super::state_label::StateTone;
 
-stylance::import_crate_style!(style, "src/kit/banner.module.scss");
+stylance::import_crate_style!(style, "src/kit/banner.module.css");
 
 /// What happened.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

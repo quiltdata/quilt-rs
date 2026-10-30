@@ -17,7 +17,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/pane_section.module.scss");
+stylance::import_crate_style!(style, "src/kit/pane_section.module.css");
 
 #[component]
 pub fn PaneSection(

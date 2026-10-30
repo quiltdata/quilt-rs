@@ -14,7 +14,7 @@ use wasm_bindgen::closure::Closure;
 use super::icons;
 use super::json_oneliner::{self, Kind, Part};
 
-stylance::import_crate_style!(style, "src/kit/json_display.module.scss");
+stylance::import_crate_style!(style, "src/kit/json_display.module.css");
 
 /// In `ch`; the stylesheet uses the same numbers.
 const ICON_CH: f64 = 2.0;

@@ -65,7 +65,7 @@ use super::ButtonVariant;
 use super::action_menu;
 use super::icons;
 
-stylance::import_crate_style!(style, "src/kit/split_button.module.scss");
+stylance::import_crate_style!(style, "src/kit/split_button.module.css");
 
 /// One of the commands a [`SplitButton`] can be set to.
 #[derive(Clone)]

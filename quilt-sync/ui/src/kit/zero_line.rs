@@ -16,7 +16,7 @@ use super::SkeletonBox;
 use super::state_label::StateTone;
 use super::unique_id;
 
-stylance::import_crate_style!(style, "src/kit/zero_line.module.scss");
+stylance::import_crate_style!(style, "src/kit/zero_line.module.css");
 
 #[component]
 pub fn ZeroLine(
@@ -149,15 +149,15 @@ mod tests {
         // The rows' own stylesheets, for the few classes this test draws.
         #[allow(dead_code)]
         mod sheets {
-            stylance::import_crate_style!(pub cause, "src/kit/cause_row.module.scss");
-            stylance::import_crate_style!(pub queue_row, "src/kit/queue_row.module.scss");
+            stylance::import_crate_style!(pub cause, "src/kit/cause_row.module.css");
+            stylance::import_crate_style!(pub queue_row, "src/kit/queue_row.module.css");
         }
         use sheets::cause;
         use sheets::queue_row;
 
-        load_module_style(include_str!("../../assets/css/kit/_tokens.scss"), &[]);
+        load_module_style(include_str!("../../assets/css/kit/tokens.css"), &[]);
         load_module_style(
-            include_str!("zero_line.module.scss"),
+            include_str!("zero_line.module.css"),
             &[
                 ("root", style::root),
                 ("placeholder", style::placeholder),
@@ -169,7 +169,7 @@ mod tests {
             ],
         );
         load_module_style(
-            include_str!("cause_row.module.scss"),
+            include_str!("cause_row.module.css"),
             &[
                 ("root", cause::root),
                 ("text", cause::text),
@@ -179,7 +179,7 @@ mod tests {
             ],
         );
         load_module_style(
-            include_str!("queue_row.module.scss"),
+            include_str!("queue_row.module.css"),
             &[
                 ("root", queue_row::root),
                 ("line", queue_row::line),

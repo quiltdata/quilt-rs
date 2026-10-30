@@ -51,7 +51,7 @@ use super::Dialog;
 use super::Submit;
 use super::submission::Submission;
 
-stylance::import_crate_style!(style, "src/kit/confirm_dialog.module.scss");
+stylance::import_crate_style!(style, "src/kit/confirm_dialog.module.css");
 
 /// The one checkbox a confirmation may carry: its words and the caller's value.
 #[derive(Clone)]

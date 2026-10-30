@@ -1,0 +1,175 @@
+/*
+ * The file pane. The page's growing half: it takes the width the context pane
+ * leaves, and its rows scroll the page under its search and toolbar.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Grouping and the facets, as one right-hand group. It keeps justifying right
+ * when it wraps, and stacks upwards like the toolbar it sits in. */
+.views {
+  display: flex;
+  flex-wrap: wrap-reverse;
+  justify-content: flex-end;
+  gap: var(--q-space-2);
+  margin-left: auto;
+}
+
+/* The search and the toolbar, one band. The gap falls between the two, and
+ * `ListToolbar` carries its own `space-2` below it, so the toolbar sits as far
+ * from the search as from the list.
+ *
+ * On the page it stays under the header while the rows scroll. It stops high
+ * enough to leave the floor in view, reaches up over the gap above it and
+ * paints it, so rows never show through the gap, and it sits at the same place
+ * stuck or not. The pane is its parent and runs to the end of the list. */
+.band {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+}
+
+[data-page-scroll] .band {
+  position: sticky;
+  top: min(
+    var(--pinned-top) +
+    var(--pinned-header),
+    var(--pinned-frame) -
+    var(--pinned-floor) -
+    var(--pinned-toolbar)
+  );
+  z-index: 1;
+  margin-top: calc(-1 * var(--q-space-3));
+  padding-top: var(--q-space-3);
+  background: var(--q-bgColor-page);
+}
+
+/* The rows hold positioned parts with a `z-index` of their own, such as a
+ * checkbox. Isolated, they stack inside the list and cannot rise over the band
+ * or the footer, and a folder heading over its rows stays inside it too. */
+.list {
+  isolation: isolate;
+}
+
+/* Under the toolbar in the band. The toolbar's bottom padding is the room
+ * above it, so it takes back the band's gap, and keeps as much below. */
+.cap {
+  margin: calc(-1 * var(--q-space-2)) 0 0;
+  padding: 0 var(--q-space-3) var(--q-space-2);
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+  padding: var(--q-space-2) var(--q-space-3);
+}
+
+/* The search row. A row, because `SearchInput` fills its parent's main axis. */
+.search {
+  display: flex;
+}
+
+/* Select-all's box in the rows' checkbox column, a row's `space-3` inset from
+ * the pane's edge, so the two boxes share one x. The caption puts the box's
+ * hole and the gutter spacer (`--q-entry-gutter`, set by the pane, `0px` when
+ * the list has no heading) before its words, as a row does before its name.
+ *
+ * The spacers below carry a `width` as well as their flex basis. WebKit sizes
+ * this slot's content from its children's own widths and ignores their bases,
+ * so an empty 16px spacer counted for nothing and the 17px hole for its 14px
+ * tick. The slot came out 19px short, the spacers then took their real width,
+ * and `All 1,190 files downloaded` broke in two with the line otherwise empty.
+ * With the widths stated the measure and the layout agree. */
+.selectall {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+  padding-left: var(--q-space-3);
+}
+
+/* As `EntryRow`'s: no gutter gives back the gap after it. */
+.gutter {
+  flex: 0 0 var(--q-entry-gutter, 16px);
+  width: var(--q-entry-gutter, 16px);
+  margin-left: min(0px, var(--q-entry-gutter, 16px) - var(--q-space-2));
+}
+
+/* The box's hole, as `EntryRow`'s `.nobox` keeps it: the caption's words start
+ * in the rows' name column rather than where a box would be. It holds the
+ * Success tone's tick, the column's summary when every file is here, drawn as
+ * `ZeroLine` draws it: `fg` and not `onMuted` because there is no fill under
+ * it, and legal here because the caption does not hover. Centred in the hole as
+ * the rows' check is, and no hit target — a statement, not a control. */
+.done {
+  display: flex;
+  flex: 0 0 17px;
+  width: 17px;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.done svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--q-fgColor-success);
+}
+
+/* `All 1,090 files downloaded`: a statement about the package, not a control,
+ * so it is muted and has no pointer. Unlike select-all's label it wraps: a pane
+ * narrower than the words (high zoom) breaks the line rather than spilling past
+ * the pane, and an ellipsis would cut the one word that says what it means. */
+.caption {
+  font-size: var(--q-text-body);
+  color: var(--q-fgColor-muted);
+}
+
+/* The list's footer: a spacer and the `[Download]` primary, flush right on
+ * the list's inset. `Card` draws the hairline above it. On the page it stays
+ * at the bottom of the window while the list runs past it, and under a short
+ * list the card's height puts it at the bottom. The one carve-out from
+ * the Never Move Geometry Rule, copied from the Banner: 4px and a fade, 160ms,
+ * and no exit animation — unticking the last row grows the list back, and
+ * animating that moves rows under the pointer. Under reduced motion it simply
+ * appears. The gallery's scene draws the same footer with `g-fp-footer`, which
+ * is gallery chrome and so absent from the app's stylesheet. */
+.footer {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--q-space-2) var(--q-space-3);
+  animation: footer-rise 160ms ease-out;
+}
+
+[data-page-scroll] .footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--q-bgColor-page);
+}
+
+@keyframes footer-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .footer {
+    animation: none;
+  }
+}

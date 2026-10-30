@@ -143,7 +143,7 @@ use super::TooltipHandle;
 use super::icons;
 use super::state_label::StateTone;
 
-stylance::import_crate_style!(style, "src/kit/entry_row.module.scss");
+stylance::import_crate_style!(style, "src/kit/entry_row.module.css");
 
 /// A row's tick: where it stands, and what to do when it moves.
 ///

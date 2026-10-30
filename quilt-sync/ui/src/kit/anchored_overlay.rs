@@ -45,7 +45,7 @@ use wasm_bindgen::closure::Closure;
 use super::placement::place;
 use super::unique_id;
 
-stylance::import_crate_style!(style, "src/kit/anchored_overlay.module.scss");
+stylance::import_crate_style!(style, "src/kit/anchored_overlay.module.css");
 
 /// Which of the surface's edges lines up with the trigger's.
 ///

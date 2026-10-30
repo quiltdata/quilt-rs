@@ -13,7 +13,7 @@ use crate::kit::Naming;
 use crate::kit::Select;
 use crate::kit::SkeletonText;
 
-stylance::import_crate_style!(style, "src/kit/host_row.module.scss");
+stylance::import_crate_style!(style, "src/kit/host_row.module.css");
 
 #[component]
 pub fn HostRow(

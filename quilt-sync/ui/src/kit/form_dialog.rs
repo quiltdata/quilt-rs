@@ -95,7 +95,7 @@ use super::Dialog;
 use super::Submit;
 use super::submission::Submission;
 
-stylance::import_crate_style!(style, "src/kit/form_dialog.module.scss");
+stylance::import_crate_style!(style, "src/kit/form_dialog.module.css");
 
 #[component]
 pub fn FormDialog(

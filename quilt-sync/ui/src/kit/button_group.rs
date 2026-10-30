@@ -30,7 +30,7 @@ use super::TooltipHandle;
 use super::icons;
 use super::tooltip;
 
-stylance::import_crate_style!(style, "src/kit/button_group.module.scss");
+stylance::import_crate_style!(style, "src/kit/button_group.module.css");
 
 /// One segment of a [`ButtonGroup`].
 #[derive(Clone)]

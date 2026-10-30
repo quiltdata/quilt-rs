@@ -1,0 +1,142 @@
+/*
+ * Queue row. Namespace, state as a clause, the remedy as text. The clause states the
+ * row's state in words, and the row draws no colour for it.
+ */
+
+/* A column, because a row may carry a detail line under its first one. */
+.root {
+  display: flex;
+  flex-direction: column;
+  /* Same reason as the list rows: a flex item's automatic minimum size is its
+   * max-content width, so without a definite width a long namespace pushes the row
+   * past its container instead of ellipsising. */
+  width: 100%;
+  padding: 4px 2px;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: var(--q-space-2);
+  /* The queue's line, less the row's own vertical padding. */
+  min-height: calc(var(--q-queue-line-height) - 2 * var(--q-space-1));
+}
+
+/* On `.root`, so the whole row is the target — its padding
+ * included. The row IS an anchor, so the document conventions have to be switched
+ * off explicitly, colour and underline both, as in `package_row.module.css`. The
+ * tint is the only affordance and there is no hover underline to go with it; the
+ * focus ring comes from the baseline's global `:focus-visible`, which lands here
+ * because this is the focusable element. */
+.linked {
+  color: var(--q-fgColor-default);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.linked:hover {
+  background: var(--q-overlay-hover);
+}
+
+/* The pause's own message, from the engine rather than from this vocabulary.
+ *
+ * `pre-wrap` keeps the newlines: a workflow rejection is a sentence followed by one
+ * indented line per broken rule, and flattening it loses which rules those are.
+ * Indented to the namespace, not the bullet, because it is about that package. */
+.detail {
+  padding-left: calc(var(--q-control-height-sm) + var(--q-space-2));
+  padding-bottom: var(--q-space-1);
+  color: var(--q-fgColor-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 70ch;
+}
+
+/* The disclosure column. Same 24px as `CauseRow`'s expander, so a cause and a
+ * package start their text at the same x, under the status line's text, and the
+ * parent is not indented past its own children. */
+.bullet {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--q-control-height-sm);
+  align-self: stretch;
+}
+
+/* A row with no state of its own gets a plain bullet — it is one of a set of names,
+ * and that is what a bullet is for. A row that has a state leaves this column empty:
+ * its clause already marks it. */
+.dot::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--q-borderColor-emphasis);
+}
+
+/* The name and its clause, as one wrapping run between the bullet and the remedy.
+ *
+ * The clause moves under the name when the two do not fit on one line, rather than
+ * being cut to nothing beside it. Side by side they were one line that gave way at
+ * its end: at a 640px window a 43-character name left `has conflicts in 2 files` 134
+ * of its 140px, and a longer one left none, so the row named a package and said
+ * nothing about it. Wrapped, each is cut only when it alone is wider than the line,
+ * and a row is one line again as soon as both fit. */
+.subject {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--q-space-2);
+  min-width: 0;
+}
+
+/* The row's subject: at weight 600 in default ink against a muted clause, which is
+ * the treatment `HostRow` already uses for a host above its sub-line.
+ *
+ * `min-width: 0` because a flex item's automatic minimum size is its max-content
+ * width, and without clearing it a name wider than the whole line pushes the row
+ * past its card instead of ellipsising. */
+.namespace {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Takes the rest of the line the name leaves, and wraps under it when its words do
+ * not fit there (see `.subject`). Ellipsised only when it is wider than a whole line
+ * by itself. */
+.clause {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--q-fgColor-muted);
+}
+
+/* No fixed width: the remedy hugs its verb and sits at the region's right edge, so
+ * the RIGHT edges form the straight line and the left edges follow the verb's length.
+ * A fixed column would align the left edges too, at the cost of padding every short
+ * verb out to the width of `Choose S3 bucket`. */
+.action {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-1);
+}
+
+/* An expanded cause's packages, indented by exactly one column — the disclosure width
+ * plus its gap — so a sub-row's own bullet sits where the parent's text starts. One
+ * indent step, the same unit a tree uses, rather than a number chosen to look right.
+ * Quieter too, because it is evidence and not a decision of its own. */
+.sub {
+  padding-left: calc(var(--q-control-height-sm) + var(--q-space-2));
+  color: var(--q-fgColor-muted);
+}

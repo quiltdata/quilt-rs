@@ -22,7 +22,7 @@ coverage:
 export SCOPE := env("SCOPE", "--workspace --all-targets")
 
 # Report every formatting and lint failure; writes nothing
-lint: lint-md check wasm-check
+lint: lint-md lint-css check wasm-check
     cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui --all-targets --all-features -- --deny warnings
 
 # `rumdl fmt` looks equivalent but exits 0 with unfixable issues outstanding.
@@ -31,6 +31,7 @@ lint: lint-md check wasm-check
 fmt:
     cargo fmt --all
     git ls-files -z '*.md' | xargs -0 rumdl check --fix
+    biome check --write
 
 # rumdl needs an explicit file list: pointed at a directory it obeys every
 # .gitignore above the checkout, and one ignoring `*` leaves it zero files.
@@ -38,6 +39,10 @@ fmt:
 # Lint the tracked markdown
 lint-md:
     git ls-files -z '*.md' | xargs -0 rumdl check
+
+# Check the format and lint of the CSS that `biome.jsonc` names
+lint-css:
+    biome check
 
 # Check formatting, then lint `SCOPE` with clippy
 check: && clippy

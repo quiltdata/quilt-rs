@@ -26,7 +26,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/checkbox.module.scss");
+stylance::import_crate_style!(style, "src/kit/checkbox.module.css");
 
 /// How the box draws, as one value rather than two booleans.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -113,7 +113,7 @@ mod tests {
     /// the wasm harness mounts no stylesheet at all — `element_from_point` in a
     /// document with no CSS reports nothing, so the only place this is checkable
     /// is the source. `sync_scope.rs` reads its own file for the same reason.
-    const STYLES: &str = include_str!("checkbox.module.scss");
+    const STYLES: &str = include_str!("checkbox.module.css");
 
     /// The `.input` rule, without the rules that merely mention it.
     fn input_rule() -> &'static str {

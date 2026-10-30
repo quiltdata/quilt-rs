@@ -14,12 +14,12 @@ use leptos::prelude::*;
 use super::icons;
 use super::{Button, IconButton, IconButtonVariant};
 
-stylance::import_crate_style!(style, "src/kit/folder_list.module.scss");
+stylance::import_crate_style!(style, "src/kit/folder_list.module.css");
 // The field is `TextInput`'s, drawn alike.
 stylance::import_crate_style!(
     #[allow(dead_code, reason = "only the field's resting class is wanted")]
     field,
-    "src/kit/text_input.module.scss"
+    "src/kit/text_input.module.css"
 );
 
 /// The rows worth saving: those with something in them, in order.

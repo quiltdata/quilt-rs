@@ -195,7 +195,7 @@ mod tests {
 
     #[expect(dead_code, reason = "only the classes that cut a name are loaded")]
     mod rows {
-        stylance::import_crate_style!(pub style, "src/kit/entry_row.module.scss");
+        stylance::import_crate_style!(pub style, "src/kit/entry_row.module.css");
     }
     use rows::style as row;
 
@@ -204,7 +204,7 @@ mod tests {
         reason = "only the classes a name's surface uses are loaded"
     )]
     mod tooltips {
-        stylance::import_crate_style!(pub style, "src/kit/tooltip.module.scss");
+        stylance::import_crate_style!(pub style, "src/kit/tooltip.module.css");
     }
     use tooltips::style as tips;
 
@@ -213,7 +213,7 @@ mod tests {
     /// The rows' own stylesheet, so a long name is cut as it is in the app.
     fn row_style() {
         load_module_style(
-            include_str!("entry_row.module.scss"),
+            include_str!("entry_row.module.css"),
             &[
                 ("root", row::root),
                 ("main", row::main),
@@ -480,7 +480,7 @@ mod tests {
     async fn a_long_path_wraps_in_its_tooltip() {
         unmount_earlier();
         load_module_style(
-            include_str!("tooltip.module.scss"),
+            include_str!("tooltip.module.css"),
             &[
                 ("root", tips::root),
                 ("surface", tips::surface),

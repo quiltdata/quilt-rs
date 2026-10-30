@@ -44,7 +44,7 @@ use super::state_label::StateTone;
 use crate::util::Held;
 use crate::util::counted;
 
-stylance::import_crate_style!(style, "src/kit/package_row.module.scss");
+stylance::import_crate_style!(style, "src/kit/package_row.module.css");
 
 #[component]
 pub fn PackageRow(

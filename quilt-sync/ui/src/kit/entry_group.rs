@@ -76,7 +76,7 @@ use super::TooltipHandle;
 use super::differs_id;
 use super::icons;
 
-stylance::import_crate_style!(style, "src/kit/entry_group.module.scss");
+stylance::import_crate_style!(style, "src/kit/entry_group.module.css");
 
 /// What a closed heading holding a row that differs says, in words and in its
 /// mark's tooltip.

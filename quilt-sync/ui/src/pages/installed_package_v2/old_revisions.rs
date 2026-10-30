@@ -57,7 +57,7 @@ use crate::util::format_size;
 
 stylance::import_crate_style!(
     style,
-    "src/pages/installed_package_v2/old_revisions.module.scss"
+    "src/pages/installed_package_v2/old_revisions.module.css"
 );
 
 /// What removes revisions. A function pointer, so the DOM tests answer without

@@ -16,7 +16,7 @@ use wasm_bindgen::JsValue;
 
 use super::countdown::EpochMillis;
 
-stylance::import_crate_style!(style, "src/kit/relative_time.module.scss");
+stylance::import_crate_style!(style, "src/kit/relative_time.module.css");
 
 /// Coarse buckets, deliberately. Nobody reads a file list to learn that something
 /// changed 43 minutes ago rather than 44 — they read it to know whether it was

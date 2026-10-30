@@ -43,9 +43,9 @@ stylance = "0.8.4"
 # from Rust and no list of stylesheets exists. Output is generated and
 # gitignored; Trunk's pre_build hook rebuilds it.
 [package.metadata.stylance]
-output_file = "./assets/css/kit/_modules.scss"
+output_file = "./assets/css/kit/modules.css"
 folders = ["./src/kit/", "./src/pages/"]
-extensions = [".module.scss"]
+extensions = [".module.css"]
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3.79"

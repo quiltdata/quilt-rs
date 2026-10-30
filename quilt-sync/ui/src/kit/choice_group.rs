@@ -24,7 +24,7 @@ use leptos::prelude::*;
 
 use super::unique_id;
 
-stylance::import_crate_style!(style, "src/kit/choice_group.module.scss");
+stylance::import_crate_style!(style, "src/kit/choice_group.module.css");
 
 /// One alternative.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -38,7 +38,7 @@ use super::installed_package_v2::{MenuCommand, MenuItem, remote_item, remove_ite
 use super::json_editor::{JsonEditor, focus_json_editor};
 use super::row_menu::{RowCommand, menu_actions};
 
-stylance::import_crate_style!(style, "src/pages/commit_v2.module.scss");
+stylance::import_crate_style!(style, "src/pages/commit_v2.module.css");
 
 mod page;
 pub use page::{CommitV2, CommitV2Skeleton};
@@ -982,10 +982,10 @@ mod layout_tests {
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
 
-    stylance::import_crate_style!(columns, "src/kit/two_columns.module.scss");
-    stylance::import_crate_style!(card, "src/kit/card.module.scss");
-    stylance::import_crate_style!(form_control, "src/kit/form_control.module.scss");
-    stylance::import_crate_style!(text_input, "src/kit/text_input.module.scss");
+    stylance::import_crate_style!(columns, "src/kit/two_columns.module.css");
+    stylance::import_crate_style!(card, "src/kit/card.module.css");
+    stylance::import_crate_style!(form_control, "src/kit/form_control.module.css");
+    stylance::import_crate_style!(text_input, "src/kit/text_input.module.css");
 
     /// The kit's spacing tokens, which the test page does not load.
     const TOKENS: &str = "--q-space-3:12px; --q-space-4:16px";
@@ -997,7 +997,7 @@ mod layout_tests {
     /// The page's, the layout's and the card's stylesheets, as the app has them.
     fn load_styles() {
         load_module_style(
-            include_str!("../kit/two_columns.module.scss"),
+            include_str!("../kit/two_columns.module.css"),
             &[
                 ("grid", columns::grid),
                 ("tight", columns::tight),
@@ -1005,7 +1005,7 @@ mod layout_tests {
             ],
         );
         load_module_style(
-            include_str!("../kit/card.module.scss"),
+            include_str!("../kit/card.module.css"),
             &[
                 ("root", card::root),
                 ("title", card::title),
@@ -1017,7 +1017,7 @@ mod layout_tests {
             ],
         );
         load_module_style(
-            include_str!("commit_v2.module.scss"),
+            include_str!("commit_v2.module.css"),
             &[
                 ("column", style::column),
                 ("form", style::form),
@@ -1152,7 +1152,7 @@ mod layout_tests {
     async fn the_message_and_the_files_line_up() {
         load_styles();
         load_module_style(
-            include_str!("../kit/form_control.module.scss"),
+            include_str!("../kit/form_control.module.css"),
             &[
                 ("root", form_control::root),
                 ("name", form_control::name),
@@ -1162,7 +1162,7 @@ mod layout_tests {
             ],
         );
         load_module_style(
-            include_str!("../kit/text_input.module.scss"),
+            include_str!("../kit/text_input.module.css"),
             &[("root", text_input::root), ("invalid", text_input::invalid)],
         );
         // The app's baseline (modern-normalize) zeroes a control's margin,

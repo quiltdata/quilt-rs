@@ -24,7 +24,7 @@ use crate::kit::{
 };
 use crate::routes;
 
-stylance::import_crate_style!(style, "src/pages/installed_package_v2/resolve.module.scss");
+stylance::import_crate_style!(style, "src/pages/installed_package_v2/resolve.module.css");
 
 /// The pane's one sentence, counting the page's differing set.
 #[must_use]

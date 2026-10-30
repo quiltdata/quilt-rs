@@ -10,7 +10,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/label.module.scss");
+stylance::import_crate_style!(style, "src/kit/label.module.css");
 
 /// How loud a [`Label`] is. Not a state tone: it says nothing about health.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

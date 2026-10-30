@@ -11,7 +11,7 @@ use leptos::prelude::*;
 
 use super::Naming;
 
-stylance::import_crate_style!(style, "src/kit/select.module.scss");
+stylance::import_crate_style!(style, "src/kit/select.module.css");
 
 #[component]
 pub fn Select(

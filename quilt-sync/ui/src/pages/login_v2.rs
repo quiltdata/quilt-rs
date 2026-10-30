@@ -21,7 +21,7 @@ use crate::kit::{
 
 use super::v2_page::{Outcome, PageHandle, PageRead, V2Page, critical, hold, still_here};
 
-stylance::import_crate_style!(style, "src/pages/login_v2.module.scss");
+stylance::import_crate_style!(style, "src/pages/login_v2.module.css");
 
 /// Which sign-in is out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

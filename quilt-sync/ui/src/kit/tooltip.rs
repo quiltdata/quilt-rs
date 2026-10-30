@@ -98,7 +98,7 @@ use super::Align;
 use super::placement::place;
 use super::unique_id;
 
-stylance::import_crate_style!(pub(super) style, "src/kit/tooltip.module.scss");
+stylance::import_crate_style!(pub(super) style, "src/kit/tooltip.module.css");
 
 /// How long the pointer rests before it opens. The common default; shorter
 /// fires on every row a pointer merely crosses in a dense list.
@@ -748,7 +748,7 @@ mod tests {
     /// the app.
     fn tooltip_style() {
         load_module_style(
-            include_str!("tooltip.module.scss"),
+            include_str!("tooltip.module.css"),
             &[
                 ("root", style::root),
                 ("fill", style::fill),

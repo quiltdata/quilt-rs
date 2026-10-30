@@ -10,7 +10,7 @@
 //! render, and therefore cannot be reviewed.
 //!
 //! Each component is a `<name>.rs` with its stylesheet beside it as
-//! `<name>.module.scss` (see `Cargo.toml` for how those are bundled).
+//! `<name>.module.css` (see `Cargo.toml` for how those are bundled).
 //!
 //! **`@keyframes` names are global.** `stylance` hashes class names, not keyframe
 //! names, and every module is concatenated into one stylesheet — so two components
@@ -230,18 +230,18 @@ mod tests {
             (
                 "confirm_dialog",
                 ".consequence",
-                include_str!("kit/confirm_dialog.module.scss"),
+                include_str!("kit/confirm_dialog.module.css"),
             ),
-            ("banner", ".message", include_str!("kit/banner.module.scss")),
+            ("banner", ".message", include_str!("kit/banner.module.css")),
             (
                 "toggle_row",
                 ".sublabel",
-                include_str!("kit/toggle_row.module.scss"),
+                include_str!("kit/toggle_row.module.css"),
             ),
             (
                 "queue_row",
                 ".detail",
-                include_str!("kit/queue_row.module.scss"),
+                include_str!("kit/queue_row.module.css"),
             ),
         ];
 
@@ -285,10 +285,10 @@ mod tests {
     #[test]
     fn a_column_that_ellipsises_can_end_up_narrower_than_its_text() {
         const SHEETS: [(&str, &str); 4] = [
-            ("queue_row", include_str!("kit/queue_row.module.scss")),
-            ("package_row", include_str!("kit/package_row.module.scss")),
-            ("file_row", include_str!("kit/file_row.module.scss")),
-            ("cause_row", include_str!("kit/cause_row.module.scss")),
+            ("queue_row", include_str!("kit/queue_row.module.css")),
+            ("package_row", include_str!("kit/package_row.module.css")),
+            ("file_row", include_str!("kit/file_row.module.css")),
+            ("cause_row", include_str!("kit/cause_row.module.css")),
         ];
 
         for (component, sheet) in SHEETS {
@@ -311,7 +311,7 @@ mod tests {
     /// which rules those are.
     #[test]
     fn a_queue_row_detail_keeps_the_line_breaks_it_is_given() {
-        const SHEET: &str = include_str!("kit/queue_row.module.scss");
+        const SHEET: &str = include_str!("kit/queue_row.module.css");
         let rule = rules(SHEET)
             .find(|(selector, _)| selects(selector, ".detail"))
             .map(|(_, body)| body)

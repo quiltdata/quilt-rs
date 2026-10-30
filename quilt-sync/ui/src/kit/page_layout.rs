@@ -45,7 +45,7 @@ use wasm_bindgen::closure::Closure;
 
 use crate::kit::Appbar;
 
-stylance::import_crate_style!(style, "src/kit/page_layout.module.scss");
+stylance::import_crate_style!(style, "src/kit/page_layout.module.css");
 
 #[component]
 pub fn PageLayout(
