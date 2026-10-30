@@ -6,10 +6,11 @@
 //! "args"}` get `{"id", "ok"}` or `{"id", "err"}`, and every event arrives as
 //! `{"event", "payload"}`.
 //!
-//! Nothing is sent before the hello: an engine with another version than the
-//! one that served this page means the page is stale, and it reloads instead.
-//! A dropped socket reconnects with back-off. When the engine refuses the
-//! token (it was reset), the page stops trying and says so once.
+//! Nothing is sent before the hello. A dropped socket reconnects with
+//! back-off, and a hello after a reconnect reloads the page: what changed
+//! while it was cut off reached it as no event, and the engine may be a newer
+//! one. When the engine refuses the token (it was reset), the page stops
+//! trying and says so once.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -36,11 +37,27 @@ struct Listener {
     callback: Callback,
 }
 
+/// Where the shared socket stands.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Link {
+    /// No socket, and nothing under way.
+    #[default]
+    Idle,
+    /// A socket is open or opening; the engine hasn't said hello yet.
+    Connecting,
+    /// The engine said hello: requests go straight out.
+    Ready,
+    /// A retry, or the check of a refused token, is under way: no new socket
+    /// until it is done.
+    Waiting,
+    /// The engine refused the token: no more sockets.
+    Refused,
+}
+
 #[derive(Default)]
 struct State {
     socket: Option<WebSocket>,
-    /// The engine said hello, and its version matches.
-    ready: bool,
+    link: Link,
     next_id: u64,
     /// `resolve` and `reject` of each request's promise.
     pending: HashMap<u64, (js_sys::Function, js_sys::Function)>,
@@ -51,12 +68,8 @@ struct State {
     /// Run once at the next hello, for listeners registered before it.
     on_ready: Vec<(u64, OnReady)>,
     retries: u32,
-    /// A retry, or the check of a refused token, is under way: no new socket
-    /// until it is done.
-    waiting: bool,
-    /// The version of the engine that served this page, from the first hello.
-    version: Option<String>,
-    refused: bool,
+    /// A hello came before, so the next one follows a reconnect.
+    greeted: bool,
 }
 
 thread_local! {
@@ -85,12 +98,10 @@ fn js_err(err: &JsValue) -> String {
 
 /// Open the shared socket unless one exists.
 fn connect() -> Result<(), String> {
-    let (busy, refused) = STATE.with_borrow(|s| (s.socket.is_some() || s.waiting, s.refused));
-    if refused {
-        return Err(REFUSED.to_owned());
-    }
-    if busy {
-        return Ok(());
+    match STATE.with_borrow(|s| s.link) {
+        Link::Idle => {}
+        Link::Refused => return Err(REFUSED.to_owned()),
+        Link::Connecting | Link::Ready | Link::Waiting => return Ok(()),
     }
     let host = web_sys::window()
         .ok_or("No window")?
@@ -108,29 +119,23 @@ fn connect() -> Result<(), String> {
     socket.set_onclose(Some(on_close.as_ref().unchecked_ref()));
     on_close.forget();
 
-    STATE.with_borrow_mut(|s| s.socket = Some(socket));
+    STATE.with_borrow_mut(|s| {
+        s.socket = Some(socket);
+        s.link = Link::Connecting;
+    });
     Ok(())
 }
 
-#[derive(serde::Deserialize)]
-struct Hello {
-    version: String,
-}
-
-fn on_hello(hello: &Hello) {
-    let stale = STATE.with_borrow_mut(|s| {
-        let first = s.version.get_or_insert_with(|| hello.version.clone());
-        *first != hello.version
-    });
-    if stale {
-        // The engine was upgraded while this page stayed open.
+fn on_hello() {
+    let reconnected = STATE.with_borrow_mut(|s| std::mem::replace(&mut s.greeted, true));
+    if reconnected {
         if let Some(window) = web_sys::window() {
             let _ = window.location().reload();
         }
         return;
     }
     let on_ready = STATE.with_borrow_mut(|s| {
-        s.ready = true;
+        s.link = Link::Ready;
         s.retries = 0;
         let queue = std::mem::take(&mut s.queue);
         if let Some(socket) = &s.socket {
@@ -154,11 +159,8 @@ fn on_message(event: MessageEvent) {
         web_sys::console::error_1(&format!("ws: unreadable message: {text}").into());
         return;
     };
-    if let Some(hello) = message.remove("hello") {
-        match serde_json::from_value(hello) {
-            Ok(hello) => on_hello(&hello),
-            Err(err) => web_sys::console::error_1(&format!("ws: unreadable hello: {err}").into()),
-        }
+    if message.contains_key("hello") {
+        on_hello();
         return;
     }
     if let Some(serde_json::Value::String(name)) = message.remove("event") {
@@ -197,9 +199,12 @@ fn on_message(event: MessageEvent) {
 
 fn on_close() {
     let (pending, delay, was_ready) = STATE.with_borrow_mut(|s| {
-        let was_ready = std::mem::take(&mut s.ready);
+        let was_ready = s.link == Link::Ready;
         s.socket = None;
-        s.waiting = true;
+        s.link = Link::Waiting;
+        // Their promises are rejected below; sent later, they would run
+        // after the page was told they failed.
+        s.queue.clear();
         let delay = FIRST_RETRY_MS
             .saturating_mul(1 << s.retries.min(4))
             .min(LAST_RETRY_MS);
@@ -228,7 +233,7 @@ fn on_close() {
 
 fn retry_after(delay: i32) {
     let retry = Closure::once_into_js(|| {
-        STATE.with_borrow_mut(|s| s.waiting = false);
+        STATE.with_borrow_mut(|s| s.link = Link::Idle);
         let _ = connect();
     });
     if let Some(window) = web_sys::window() {
@@ -254,8 +259,7 @@ async fn token_refused() -> bool {
 /// Stop reconnecting, fail what waits, and say so once.
 fn refuse() {
     let pending = STATE.with_borrow_mut(|s| {
-        s.refused = true;
-        s.waiting = false;
+        s.link = Link::Refused;
         s.queue.clear();
         s.on_ready.clear();
         std::mem::take(&mut s.pending)
@@ -290,8 +294,8 @@ pub(super) async fn request(cmd: &str, args: serde_json::Value) -> Result<String
         s.next_id += 1;
         let id = s.next_id;
         let message = serde_json::json!({ "id": id, "cmd": cmd, "args": args }).to_string();
-        match (&s.socket, s.ready) {
-            (Some(socket), true) => {
+        match (&s.socket, s.link) {
+            (Some(socket), Link::Ready) => {
                 if let Err(err) = socket.send_with_str(&message) {
                     let _ = reject.call1(&JsValue::NULL, &err);
                     return;
@@ -313,7 +317,7 @@ pub(super) fn send_and_forget(cmd: &str, args: &serde_json::Value) {
         let Ok(mut s) = state.try_borrow_mut() else {
             return;
         };
-        if !s.ready {
+        if s.link != Link::Ready {
             return;
         }
         s.next_id += 1;
@@ -340,7 +344,7 @@ pub(super) fn listen(event: &str, callback: Callback, on_ready: OnReady) -> Resu
                 callback,
             },
         );
-        (id, s.ready)
+        (id, s.link == Link::Ready)
     });
     if ready {
         // Later, as with Tauri.
