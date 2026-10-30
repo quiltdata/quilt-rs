@@ -728,8 +728,8 @@ mod tests {
 
     #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
     mod sheets {
-        stylance::import_crate_style!(pub page, "src/pages/main_page.module.scss");
-        stylance::import_crate_style!(pub card, "src/kit/card.module.scss");
+        stylance::import_crate_style!(pub page, "src/pages/main_page.module.css");
+        stylance::import_crate_style!(pub card, "src/kit/card.module.css");
     }
 
     /// The feed has no scroller of its own: a long feed grows the region, and
@@ -739,11 +739,11 @@ mod tests {
     async fn a_long_feed_scrolls_the_page_not_its_card() {
         use crate::test_support::load_module_style;
         load_module_style(
-            include_str!("../main_page.module.scss"),
+            include_str!("../main_page.module.css"),
             &[("list_region", sheets::page::list_region)],
         );
         load_module_style(
-            include_str!("../../kit/card.module.scss"),
+            include_str!("../../kit/card.module.css"),
             &[
                 ("root", sheets::card::root),
                 ("body", sheets::card::body),
@@ -913,7 +913,7 @@ mod tests {
         // regression against §3.2's flat default.
         //
         // `[class*=group]` matches nothing in this crate: grepping the generated
-        // `assets/css/kit/_modules.scss` shows stylance emits `<class>-<hash>`
+        // `assets/css/kit/modules.css` shows stylance emits `<class>-<hash>`
         // (`root-e6e1377`, `title-e6e1377`, `annotation-e6e1377`, `count-e6e1377`
         // for `group_heading`), never module-prefixed, so a selector containing
         // "group" would pass here for the wrong reason and prove nothing.

@@ -35,7 +35,7 @@ use leptos::prelude::*;
 
 use super::state_label::StateTone;
 
-stylance::import_crate_style!(style, "src/kit/form_control.module.scss");
+stylance::import_crate_style!(style, "src/kit/form_control.module.css");
 
 /// Ids only have to be unique within a document, and this is a single-threaded wasm
 /// document. `Relaxed` is enough: nothing orders anything against this counter.

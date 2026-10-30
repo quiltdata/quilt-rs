@@ -8,7 +8,7 @@
 use leptos::ev::MouseEvent;
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/icon_button.module.scss");
+stylance::import_crate_style!(style, "src/kit/icon_button.module.css");
 
 /// Framed for chrome, Bare for row actions.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

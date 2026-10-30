@@ -42,7 +42,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/state_label.module.scss");
+stylance::import_crate_style!(style, "src/kit/state_label.module.css");
 
 /// How loudly a state is stated.
 ///

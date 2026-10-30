@@ -26,7 +26,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/skeleton_box.module.scss");
+stylance::import_crate_style!(style, "src/kit/skeleton_box.module.css");
 
 #[component]
 pub fn SkeletonBox(

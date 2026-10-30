@@ -9,7 +9,7 @@ use super::Checkbox;
 use super::SkeletonBox;
 use super::SkeletonText;
 
-stylance::import_crate_style!(style, "src/kit/toggle_row.module.scss");
+stylance::import_crate_style!(style, "src/kit/toggle_row.module.css");
 
 #[component]
 pub fn ToggleRow(

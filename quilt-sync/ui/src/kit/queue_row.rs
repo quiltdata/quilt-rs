@@ -27,7 +27,7 @@ use leptos::prelude::*;
 use super::PackageAction;
 use super::SkeletonBox;
 
-stylance::import_crate_style!(style, "src/kit/queue_row.module.scss");
+stylance::import_crate_style!(style, "src/kit/queue_row.module.css");
 
 /// What to do about a row, and where doing it happens.
 ///
@@ -280,7 +280,7 @@ mod tests {
     /// the clause's boxes.
     async fn drawn(width: u32, name: &'static str) -> (web_sys::DomRect, web_sys::HtmlElement) {
         crate::test_support::load_module_style(
-            include_str!("queue_row.module.scss"),
+            include_str!("queue_row.module.css"),
             &[
                 ("root", style::root),
                 ("line", style::line),

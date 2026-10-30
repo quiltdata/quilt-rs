@@ -2,7 +2,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/group_heading.module.scss");
+stylance::import_crate_style!(style, "src/kit/group_heading.module.css");
 
 #[component]
 pub fn GroupHeading(

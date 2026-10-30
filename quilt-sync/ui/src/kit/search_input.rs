@@ -8,7 +8,7 @@ use leptos::prelude::*;
 
 use super::icons;
 
-stylance::import_crate_style!(style, "src/kit/search_input.module.scss");
+stylance::import_crate_style!(style, "src/kit/search_input.module.css");
 
 #[component]
 pub fn SearchInput(

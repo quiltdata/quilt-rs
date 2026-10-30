@@ -1,0 +1,21 @@
+/* A test handle that adds no box. */
+.slate {
+  display: contents;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--q-space-2);
+  margin-top: var(--q-space-2);
+}
+
+/* As `Blankslate`'s box, so the slate lands where its skeleton stood. */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--q-space-3);
+  padding: var(--q-space-10) var(--q-space-4);
+}

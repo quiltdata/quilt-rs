@@ -2326,7 +2326,7 @@ mod tests {
             assert!(slot.class_list().contains(super::style::slot), "{hook}");
         }
         assert!(
-            include_str!("../settings_v2.module.scss").contains(".slot {\n  display: contents;")
+            include_str!("../settings_v2.module.css").contains(".slot {\n  display: contents;")
         );
     }
 

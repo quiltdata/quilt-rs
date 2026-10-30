@@ -20,7 +20,7 @@ use leptos::prelude::*;
 use super::CheckState;
 use super::Checkbox;
 
-stylance::import_crate_style!(style, "src/kit/select_all.module.scss");
+stylance::import_crate_style!(style, "src/kit/select_all.module.css");
 
 #[component]
 pub fn SelectAll(

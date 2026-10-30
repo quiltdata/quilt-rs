@@ -105,9 +105,9 @@ mod tests {
         }
     }
 
-    /// The `g-` classes are gallery chrome, which only `gallery.scss` loads: a
+    /// The `g-` classes are gallery chrome, which only `gallery.html` links: a
     /// page that borrows one is unstyled in the app, as the file pane's footer
-    /// once was. Pages style themselves through their own `.module.scss`.
+    /// once was. Pages style themselves through their own `.module.css`.
     #[test]
     fn no_page_uses_a_gallery_only_class() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pages");

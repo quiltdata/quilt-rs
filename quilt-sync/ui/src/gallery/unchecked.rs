@@ -5,13 +5,13 @@
 //! `refresh_main_page_package` rejected, so the row keeps the light phase's cached
 //! state and nothing has confirmed it. The state is not *wrong* — it is
 //! **unwitnessed**, and it stays that way until something asks again. The row already
-//! says so in two channels, dashed and dimmed (`kit/package_row.module.scss`); what
+//! says so in two channels, dashed and dimmed (`kit/package_row.module.css`); what
 //! it cannot say is that the check failed rather than that it is still running, and it
 //! cannot offer to run it again.
 //!
 //! # Why the queue carries it and not the row
 //!
-//! `kit/package_row.module.scss` and `queue.rs`'s own comment both argued the row
+//! `kit/package_row.module.css` and `queue.rs`'s own comment both argued the row
 //! should carry it. Drawn in the browser, that position loses on three counts, and
 //! the third is measured rather than asserted:
 //!
@@ -27,7 +27,7 @@
 //!    already owns a different absence, `not recorded`, meaning the package has no
 //!    recorded change time.
 //! 3. **The dim is a weaker signal than anyone had checked, and weakest in dark.**
-//!    `package_row.module.scss` measured *legibility* — dimmed text against its
+//!    `package_row.module.css` measured *legibility* — dimmed text against its
 //!    ground — and is right: 7.05:1 in light and 9.40:1 in dark, both above AA at
 //!    opacity 0.75. What nobody measured is **distinguishability**, dimmed text
 //!    against a settled row's text, which is the channel a reader actually uses to

@@ -25,7 +25,7 @@
 //! to 528px tall, and scrolls inside, the buttons under the fold. Scrolled
 //! there so the editor's context menu reaches past the popup's lower edge,
 //! the menu is not cropped: a point just past the edge lands on it. Without
-//! the rule in `_base.scss` that frees the editor's menus from a modal's
+//! the rule in `base.css` that frees the editor's menus from a modal's
 //! clip, it does not.
 //!
 //! # Left open

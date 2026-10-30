@@ -13,7 +13,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/two_columns.module.scss");
+stylance::import_crate_style!(style, "src/kit/two_columns.module.css");
 
 #[component]
 pub fn TwoColumns(
@@ -54,7 +54,7 @@ mod tests {
 
     fn load_stylesheet() {
         load_module_style(
-            include_str!("two_columns.module.scss"),
+            include_str!("two_columns.module.css"),
             &[
                 ("grid", style::grid),
                 ("tight", style::tight),

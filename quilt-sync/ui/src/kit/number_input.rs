@@ -13,8 +13,8 @@ use leptos::prelude::*;
 
 use super::Naming;
 
-stylance::import_crate_style!(field, "src/kit/text_input.module.scss");
-stylance::import_crate_style!(style, "src/kit/number_input.module.scss");
+stylance::import_crate_style!(field, "src/kit/text_input.module.css");
+stylance::import_crate_style!(style, "src/kit/number_input.module.css");
 
 #[component]
 pub fn NumberInput(

@@ -19,7 +19,7 @@ use crate::routes::sign_in_href;
 
 use super::v2_page::{Outcome, PageHandle, PageRead, V2Page, critical};
 
-stylance::import_crate_style!(style, "src/pages/error_v2.module.scss");
+stylance::import_crate_style!(style, "src/pages/error_v2.module.css");
 
 /// What went wrong, and a button for each way on that the caller offers.
 /// *Go home* is always one.

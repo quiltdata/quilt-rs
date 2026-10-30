@@ -90,7 +90,7 @@ use crate::util::thousands;
 
 use super::file_pane::Kept;
 
-stylance::import_crate_style!(style, "src/pages/installed_package_v2/incoming.module.scss");
+stylance::import_crate_style!(style, "src/pages/installed_package_v2/incoming.module.css");
 
 /// The catalog link's name, as revision rows word theirs.
 pub const OPEN_LABEL: &str = "Open in catalog";

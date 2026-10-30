@@ -36,7 +36,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/cause_row.module.scss");
+stylance::import_crate_style!(style, "src/kit/cause_row.module.css");
 
 #[component]
 pub fn CauseRow(

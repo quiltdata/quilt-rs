@@ -24,4 +24,4 @@ preview *args: stubs
 # its pre-build hooks write. Empty stubs get it past that check.
 [private]
 stubs:
-    mkdir -p assets/js && touch assets/js/json-editor.js assets/css/kit/_modules.scss assets/css/kit/_normalize.scss
+    mkdir -p assets/js && touch assets/js/json-editor.js assets/css/kit/modules.css assets/css/kit/normalize.css

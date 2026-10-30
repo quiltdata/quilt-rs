@@ -34,7 +34,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/segmented_control.module.scss");
+stylance::import_crate_style!(style, "src/kit/segmented_control.module.css");
 
 /// One segment: its words, and whether it can be chosen.
 ///

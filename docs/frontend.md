@@ -683,7 +683,7 @@ Still outstanding:
    content, not its label, and our `role="status"` element has no text
    content.
 
-Tokens are named property-first in `_tokens.scss` and in every module
+Tokens are named property-first in `tokens.css` and in every module
 stylesheet. The role words `subtle`, `canvas` and `strong` are not used,
 so a fill token and a border token cannot share one name. v1's page CSS
 does not read these tokens: it uses a separate `--q-ui-*` namespace.
@@ -693,7 +693,7 @@ dangling `var()` fails **silently** -- the declaration is simply dropped
 and the element renders unstyled rather than erroring:
 
 - every `var(--q-*)` in the kit resolves to a name defined in
-  `_tokens.scss` (diff the used set against the defined set);
+  `tokens.css` (diff the used set against the defined set);
 - the count of distinct token names is unchanged, which is what proves
   the rename was bijective and did not quietly collapse two roles into
   one.

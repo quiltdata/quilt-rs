@@ -1,0 +1,37 @@
+/* The card at a form's width, centred in the page column. */
+.page {
+  width: 100%;
+  max-width: 480px;
+  margin-inline: auto;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-4);
+}
+
+.divider {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--q-borderColor-muted);
+}
+
+.instructions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-2);
+}
+
+.quiet {
+  margin: 0;
+  color: var(--q-fgColor-muted);
+  overflow-wrap: anywhere;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-3);
+}

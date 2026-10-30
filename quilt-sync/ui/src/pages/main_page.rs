@@ -56,7 +56,7 @@ use toolbar_memory::PACKAGES_SORT;
 use toolbar_memory::remember_choice;
 use toolbar_memory::remembered_choice;
 
-stylance::import_crate_style!(style, "src/pages/main_page.module.scss");
+stylance::import_crate_style!(style, "src/pages/main_page.module.css");
 
 use crate::kit::Blankslate;
 use crate::kit::Button;
@@ -444,10 +444,10 @@ fn PackageListRow(
 }
 
 /// The rows, as direct children of the card body — no wrapper element. The
-/// card's own `.body > * + *` rule (`kit/card.module.scss`) spaces them; a
+/// card's own `.body > * + *` rule (`kit/card.module.css`) spaces them; a
 /// wrapping `div` would defeat that direct-child selector, and gallery
-/// chrome's `.g-rows` is not shipped to the app bundle at all (`app.scss`
-/// excludes it). Split out from `MainPage` so it can be tested without a
+/// chrome's `.g-rows` is not shipped to the app at all (`index.html` does
+/// not link it). Split out from `MainPage` so it can be tested without a
 /// Tauri host.
 /// The class a run of rows carries, for the feed's list as well as this one — it has
 /// no stylesheet of its own and the rule is the page's.
@@ -1340,7 +1340,7 @@ fn MainPageRegions(
                                             // A heading and its rows are flat siblings
                                             // here, never wrapped in a `div` per group
                                             // — `Card`'s own `.body > * + *` rule
-                                            // (`kit/card.module.scss`) spaces any two
+                                            // (`kit/card.module.css`) spaces any two
                                             // direct children, and a wrapper would
                                             // defeat that.
                                             {move || match shape.get() {
@@ -3756,7 +3756,7 @@ mod tests {
 
     #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
     mod frame_sheet {
-        stylance::import_crate_style!(pub layout, "src/kit/page_layout.module.scss");
+        stylance::import_crate_style!(pub layout, "src/kit/page_layout.module.css");
     }
 
     /// The parts above the list stay where they are while the rows scroll the
@@ -3765,14 +3765,14 @@ mod tests {
     async fn the_bands_stay_stacked_while_the_rows_scroll_the_page() {
         use crate::test_support::load_module_style;
         load_module_style(
-            include_str!("../kit/page_layout.module.scss"),
+            include_str!("../kit/page_layout.module.css"),
             &[
                 ("root", frame_sheet::layout::root),
                 ("main", frame_sheet::layout::main),
             ],
         );
         load_module_style(
-            include_str!("main_page.module.scss"),
+            include_str!("main_page.module.css"),
             &[
                 ("list_region", style::list_region),
                 ("strip", style::strip),
@@ -3840,14 +3840,14 @@ mod tests {
     async fn a_stuck_group_heading_draws_over_its_rows() {
         use crate::test_support::load_module_style;
         load_module_style(
-            include_str!("../kit/page_layout.module.scss"),
+            include_str!("../kit/page_layout.module.css"),
             &[
                 ("root", frame_sheet::layout::root),
                 ("main", frame_sheet::layout::main),
             ],
         );
         load_module_style(
-            include_str!("main_page.module.scss"),
+            include_str!("main_page.module.css"),
             &[
                 ("list_region", style::list_region),
                 ("toolbar", style::toolbar),
@@ -3923,14 +3923,14 @@ mod tests {
     async fn bands_taller_than_the_window_leave_the_list_in_view() {
         use crate::test_support::load_module_style;
         load_module_style(
-            include_str!("../kit/page_layout.module.scss"),
+            include_str!("../kit/page_layout.module.css"),
             &[
                 ("root", frame_sheet::layout::root),
                 ("main", frame_sheet::layout::main),
             ],
         );
         load_module_style(
-            include_str!("main_page.module.scss"),
+            include_str!("main_page.module.css"),
             &[
                 ("list_region", style::list_region),
                 ("strip", style::strip),

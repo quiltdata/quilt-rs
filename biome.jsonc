@@ -1,0 +1,25 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
+  // The kit's hand-written CSS. The generated `modules.css` and the vendored
+  // `normalize.css` are left out, and so is v1's CSS.
+  "files": {
+    "includes": [
+      "quilt-sync/ui/assets/css/kit/*.css",
+      "quilt-sync/ui/src/**/*.module.css",
+      "!quilt-sync/ui/assets/css/kit/modules.css",
+      "!quilt-sync/ui/assets/css/kit/normalize.css"
+    ]
+  },
+  "formatter": {
+    "indentStyle": "space"
+  },
+  "linter": {
+    "rules": {
+      "style": {
+        // It wants a lower-specificity rule before a higher one, which here
+        // means reordering rules whose order the cascade depends on.
+        "noDescendingSpecificity": "off"
+      }
+    }
+  }
+}
