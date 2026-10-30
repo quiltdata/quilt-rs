@@ -19,6 +19,14 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.40.1-dev]
+
+### Added
+
+- Prebuilt Windows x86_64 binaries, so `cargo binstall quilt-cli` installs on Windows without compiling
+  - <https://github.com/quiltdata/quilt-rs/issues/844>
+  - <https://github.com/quiltdata/quilt-rs/pull/859>
+
 ## [v0.40.0] - 2026-10-29
 
 ### Changed
