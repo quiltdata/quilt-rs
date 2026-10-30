@@ -156,7 +156,15 @@ impl EngineLock {
         match fs::read_to_string(self.data_dir.join(TOKEN_FILE)) {
             Ok(text) if is_token(text.trim()) => Ok(text.trim().to_owned()),
             Ok(_) => self.new_web_token(),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => self.new_web_token(),
+            // Missing, or not text at all.
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::InvalidData
+                ) =>
+            {
+                self.new_web_token()
+            }
             Err(err) => Err(err),
         }
     }
@@ -203,9 +211,9 @@ pub async fn bind_desktop(ip: IpAddr, last: Option<u16>) -> io::Result<TcpListen
     TcpListener::bind(SocketAddr::new(ip, 0)).await
 }
 
-/// A token as [`EngineLock::web_token`] makes it: hex digits only.
+/// A token as [`EngineLock::web_token`] makes it: 32 lowercase hex digits.
 fn is_token(text: &str) -> bool {
-    !text.is_empty() && text.bytes().all(|b| b.is_ascii_hexdigit())
+    text.len() == 32 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Write `path` whole and owner-only: a temp file, then a rename.
@@ -305,18 +313,21 @@ mod tests {
 
     #[test]
     fn a_damaged_token_file_is_replaced() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join(TOKEN_FILE), "not a token\n").unwrap();
-        assert_eq!(read_token(dir.path()), None);
-        let Acquired::Held(lock) = acquire(dir.path()).unwrap() else {
-            panic!("a fresh folder was locked");
-        };
-        let token = lock.web_token().unwrap();
-        assert!(is_token(&token));
-        assert_eq!(
-            fs::read_to_string(dir.path().join(TOKEN_FILE)).unwrap(),
-            token
-        );
+        let damaged: [&[u8]; 3] = [b"not a token\n", b"a\n", &[0xff, 0xfe, 0x00]];
+        for contents in damaged {
+            let dir = tempfile::tempdir().unwrap();
+            fs::write(dir.path().join(TOKEN_FILE), contents).unwrap();
+            assert_eq!(read_token(dir.path()), None);
+            let Acquired::Held(lock) = acquire(dir.path()).unwrap() else {
+                panic!("a fresh folder was locked");
+            };
+            let token = lock.web_token().unwrap();
+            assert!(is_token(&token));
+            assert_eq!(
+                fs::read_to_string(dir.path().join(TOKEN_FILE)).unwrap(),
+                token
+            );
+        }
     }
 
     #[tokio::test]

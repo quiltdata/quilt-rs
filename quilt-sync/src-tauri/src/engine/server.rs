@@ -39,6 +39,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use serde_json::json;
 use tokio::net::TcpListener;
+use tokio::sync::Notify;
+use tokio::sync::Semaphore;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 
@@ -53,6 +55,12 @@ use crate::engine::telemetry::prelude::*;
 #[derive(RustEmbed)]
 #[folder = "../ui/dist/"]
 struct Ui;
+
+/// Requests one client may have running at once.
+const MAX_CALLS: usize = 32;
+
+/// Replies waiting for a client to read them.
+const REPLY_BUFFER: usize = 256;
 
 #[derive(Clone)]
 struct AppState {
@@ -97,7 +105,7 @@ fn router(
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .fallback(ui_file)
-        .layer(axum::middleware::map_response(no_cache))
+        .layer(axum::middleware::map_response(page_headers))
         .with_state(state);
     if !addr.ip().is_loopback() {
         return app;
@@ -144,10 +152,16 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
 
 /// The UI's file names carry no hash, so a browser must check each one again:
 /// a cached old script under a new `index.html` fails its integrity check.
-async fn no_cache(mut response: Response) -> Response {
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+/// And no other page may frame the UI: framed, it would still read its token
+/// and could be clicked through.
+async fn page_headers(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("frame-ancestors 'none'"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
     response
 }
 
@@ -206,7 +220,10 @@ async fn session(socket: WebSocket, state: AppState) {
     // Before the hello, so the client misses no event after it.
     let mut events = state.services.events.subscribe();
     let (mut sink, mut stream) = socket.split();
-    let (replies, mut outbox) = mpsc::unbounded_channel::<String>();
+    let (replies, mut outbox) = mpsc::channel::<String>(REPLY_BUFFER);
+    // A client that sends but doesn't read fills the replies; it's closed then.
+    let overflow = Arc::new(Notify::new());
+    let calls = Arc::new(Semaphore::new(MAX_CALLS));
     let hello = json!({
         "hello": {
             "version": state.services.app.version.to_string(),
@@ -257,8 +274,13 @@ async fn session(socket: WebSocket, state: AppState) {
             };
             match serde_json::from_str::<Call>(&text) {
                 Ok(call) => {
+                    // Read no more requests while this many run.
+                    let Ok(permit) = Arc::clone(&calls).acquire_owned().await else {
+                        break;
+                    };
                     let state = state.clone();
                     let replies = replies.clone();
+                    let overflow = Arc::clone(&overflow);
                     tokio::spawn(async move {
                         let reply = match dispatch(
                             &state.services,
@@ -271,7 +293,8 @@ async fn session(socket: WebSocket, state: AppState) {
                             Ok(ok) => json!({ "id": call.id, "ok": ok }),
                             Err(err) => json!({ "id": call.id, "err": err }),
                         };
-                        let _ = replies.send(reply.to_string());
+                        drop(permit);
+                        queue(&replies, &overflow, reply.to_string());
                     });
                 }
                 Err(err) => {
@@ -282,7 +305,7 @@ async fn session(socket: WebSocket, state: AppState) {
                         .and_then(|value| value.get("id").cloned())
                     {
                         let reply = json!({ "id": id, "err": format!("bad request: {err}") });
-                        let _ = replies.send(reply.to_string());
+                        queue(&replies, &overflow, reply.to_string());
                     }
                 }
             }
@@ -294,6 +317,15 @@ async fn session(socket: WebSocket, state: AppState) {
     tokio::select! {
         () = writer => {}
         () = reader => {}
+        () = overflow.notified() => warn!("closing a client that doesn't read its replies"),
+    }
+}
+
+/// Queue a reply, or mark the session for closing when the client has stopped
+/// reading. Nothing to do once the session has ended.
+fn queue(replies: &mpsc::Sender<String>, overflow: &Notify, reply: String) {
+    if let Err(mpsc::error::TrySendError::Full(_)) = replies.try_send(reply) {
+        overflow.notify_one();
     }
 }
 
@@ -435,18 +467,22 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_page_needs_no_token_and_is_never_cached() {
+    async fn a_page_needs_no_token_and_is_never_cached_or_framed() {
         let running = start().await;
         for path in ["/", "/commit?namespace=a%2Fb", "/?t=nope"] {
             let (status, headers) = get(running.addr, path, &[]).await;
             assert_ne!(status, 401, "{path}");
             assert_ne!(status, 303, "{path}");
-            assert!(
-                headers
-                    .iter()
-                    .any(|h| h.eq_ignore_ascii_case("cache-control: no-cache")),
-                "{path}"
-            );
+            for expected in [
+                "cache-control: no-cache",
+                "content-security-policy: frame-ancestors 'none'",
+                "x-frame-options: DENY",
+            ] {
+                assert!(
+                    headers.iter().any(|h| h.eq_ignore_ascii_case(expected)),
+                    "{path}: {expected}"
+                );
+            }
             assert!(
                 !headers
                     .iter()
