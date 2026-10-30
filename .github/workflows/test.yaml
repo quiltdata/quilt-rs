@@ -1,7 +1,7 @@
 name: Test
 
-# Every job's work is a `just` recipe, so `just ci` and `just ci-pr` run the
-# same checks locally. This file holds only triggers, setup and secrets.
+# Every job's work is a `just` recipe, so `just ci` runs the same checks
+# locally. This file holds only triggers, setup and secrets.
 
 on:
   # Toolchain canary: `rust-toolchain.toml` floats on `stable` and
@@ -83,6 +83,7 @@ jobs:
               - rust-toolchain.toml
               - clippy.toml
               - .cargo/**
+              - .config/nextest.toml
               - justfile
               - test.just
               - .github/workflows/test.yaml
