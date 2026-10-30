@@ -45,7 +45,7 @@ jobs:
     name: changes
     # Which jobs a pull request needs, by the files it changes. Every other
     # event, the merge queue included, runs every job. A job left out shows as skipped.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     # The filter lists a pull request's files through the API.
     permissions:
@@ -107,7 +107,7 @@ jobs:
     name: markdown
     needs: changes
     if: needs.changes.outputs.md == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout repository
@@ -131,7 +131,7 @@ jobs:
     name: css
     needs: changes
     if: needs.changes.outputs.css == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout repository
@@ -156,7 +156,7 @@ jobs:
     # tested in the `frontend` jobs.
     needs: changes
     if: needs.changes.outputs.crates == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       # The crates above, for the recipes' cargo commands.
@@ -308,7 +308,7 @@ jobs:
     name: cargo-deny
     needs: changes
     if: needs.changes.outputs.crates == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Checkout repository
@@ -330,7 +330,7 @@ jobs:
     # on every crate but the UI.
     needs: changes
     if: needs.changes.outputs.sync == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       # QuiltSync's backend, for the recipes' cargo commands.
@@ -416,7 +416,7 @@ jobs:
     name: frontend lint
     needs: changes
     if: needs.changes.outputs.ui == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Checkout repository
@@ -460,7 +460,7 @@ jobs:
     name: frontend wasm tests
     needs: changes
     if: needs.changes.outputs.ui == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       # Smaller binaries make the build and wasm-bindgen faster; debugging is done locally.
@@ -498,7 +498,7 @@ jobs:
     name: frontend build
     needs: changes
     if: needs.changes.outputs.ui == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Checkout repository
@@ -554,7 +554,7 @@ jobs:
       - frontend-wasm-tests
       - frontend-build
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
       - name: Fail if any job failed or was cancelled
