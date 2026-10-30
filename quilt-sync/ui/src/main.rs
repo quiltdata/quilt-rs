@@ -27,6 +27,8 @@ fn main() {
     // The launch marker comes off before anything is drawn: it darkens the bare
     // canvas, which only an empty frame may have.
     quilt_sync_ui::theme::stop_booting();
+    // Before the router reads the address: a link's token leaves it here.
+    let _ = quilt_sync_ui::tauri::is_web_mode();
     mount_to_body(App);
 }
 

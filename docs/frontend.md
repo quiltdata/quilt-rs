@@ -321,10 +321,12 @@ the response. `engine_call` hands the call to the engine's command table
 (`src-tauri/src/engine/dispatch.rs`), which lists every command once.
 
 The engine also serves the UI over HTTP (`src-tauri/src/engine/server.rs`),
-and the tray's *Open in browser* opens it in a browser tab. A page the engine
-served carries a `quiltsync-web=1` cookie, and `invoke` and `listen` then go
-over the engine's WebSocket instead (`ui/src/tauri/ws.rs`): the same commands,
-through the same table, and every event to every tab.
+and the tray's *Open in browser* opens it in a browser tab with `?t=<token>`.
+The page keeps that token in its origin's `localStorage` (a cookie would reach
+every port on the host) and drops it from the address. A page holding a token
+sends `invoke` and `listen` over the engine's WebSocket instead
+(`ui/src/tauri/ws.rs`, `/ws?t=<token>`): the same commands, through the same
+table, and every event to every tab.
 
 ### Typed wrappers (`commands.rs`)
 

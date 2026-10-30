@@ -1,7 +1,9 @@
 //! The WebSocket transport, for a page the engine served to a browser.
 //!
-//! One shared socket at `/ws` on the page's own host, authorised by the cookie
-//! the engine set when the page was opened with `?t=<token>`. The engine
+//! One shared socket at `/ws?t=<token>` on the page's own host. The page is
+//! opened with `?t=<token>`; it keeps the token in its origin's
+//! `localStorage`, which, unlike a cookie, no other port can read, and drops it
+//! from the address. The engine
 //! speaks first, `{"hello": {"version", …}}`; then requests `{"id", "cmd",
 //! "args"}` get `{"id", "ok"}` or `{"id", "err"}`, and every event arrives as
 //! `{"event", "payload"}`.
@@ -72,24 +74,51 @@ struct State {
     greeted: bool,
 }
 
+/// Where the page keeps the engine's token.
+const TOKEN_KEY: &str = "quiltsync-token";
+
 thread_local! {
     static STATE: RefCell<State> = RefCell::default();
-    static SERVED: bool = read_served();
+    static TOKEN: Option<String> = read_token();
 }
 
-/// Whether the engine served this page, so it talks over the socket. The
-/// engine sets this readable marker beside the token's `HttpOnly` cookie; test
-/// harnesses and the gallery are served over HTTP too, but without it.
+/// Whether the engine served this page, so it talks over the socket: the page
+/// holds the engine's token. Test harnesses and the gallery are served over
+/// HTTP too, but hold none.
 pub(super) fn served() -> bool {
-    SERVED.with(|served| *served)
+    TOKEN.with(Option::is_some)
 }
 
-fn read_served() -> bool {
-    web_sys::window()
-        .and_then(|w| w.document())
-        .and_then(|d| js_sys::Reflect::get(&d, &JsValue::from_str("cookie")).ok())
-        .and_then(|c| c.as_string())
-        .is_some_and(|c| c.split(';').any(|pair| pair.trim() == "quiltsync-web=1"))
+/// The token from the address, kept for later loads and dropped from the
+/// address; or, with none there, the one kept before. Storage that is missing
+/// or throws only means nothing is kept.
+fn read_token() -> Option<String> {
+    let window = web_sys::window()?;
+    let storage = window.local_storage().ok().flatten();
+    let href = window.location().href().ok()?;
+    if let Some((token, rest)) = split_token(&href) {
+        if let Some(storage) = &storage {
+            let _ = storage.set_item(TOKEN_KEY, &token);
+        }
+        if let Ok(history) = window.history() {
+            let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&rest));
+        }
+        return Some(token);
+    }
+    storage?.get_item(TOKEN_KEY).ok().flatten()
+}
+
+/// The `t` of `href`, and `href` without it.
+fn split_token(href: &str) -> Option<(String, String)> {
+    let url = web_sys::Url::new(href).ok()?;
+    let params = url.search_params();
+    let token = params.get("t").filter(|t| !t.is_empty())?;
+    params.delete("t");
+    Some((token, url.href()))
+}
+
+fn token() -> String {
+    TOKEN.with(|t| t.clone().unwrap_or_default())
 }
 
 fn js_err(err: &JsValue) -> String {
@@ -108,7 +137,11 @@ fn connect() -> Result<(), String> {
         .location()
         .host()
         .map_err(|e| js_err(&e))?;
-    let socket = WebSocket::new(&format!("ws://{host}/ws")).map_err(|e| js_err(&e))?;
+    let url = format!(
+        "ws://{host}/ws?t={}",
+        js_sys::encode_uri_component(&token())
+    );
+    let socket = WebSocket::new(&url).map_err(|e| js_err(&e))?;
 
     // Leaked on purpose, one set per socket: a socket may still fire after
     // this module has let go of it.
@@ -242,13 +275,14 @@ fn retry_after(delay: i32) {
     }
 }
 
-/// Whether the engine answers 401 to this page's cookie. An engine that
+/// Whether the engine answers 401 to this page's token. An engine that
 /// doesn't answer at all is away, not refusing.
 async fn token_refused() -> bool {
     let Some(window) = web_sys::window() else {
         return false;
     };
-    let Ok(response) = JsFuture::from(window.fetch_with_str("/ws")).await else {
+    let url = format!("/ws?t={}", js_sys::encode_uri_component(&token()));
+    let Ok(response) = JsFuture::from(window.fetch_with_str(&url)).await else {
         return false;
     };
     response
@@ -366,4 +400,28 @@ pub(super) fn unlisten(id: u64) {
             s.on_ready.retain(|(listener, _)| *listener != id);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::split_token;
+
+    #[wasm_bindgen_test]
+    fn the_token_leaves_the_address_and_the_rest_stays() {
+        assert_eq!(
+            split_token("http://127.0.0.1:7878/commit?namespace=a%2Fb&t=abc#top"),
+            Some((
+                "abc".to_owned(),
+                "http://127.0.0.1:7878/commit?namespace=a%2Fb#top".to_owned()
+            ))
+        );
+        assert_eq!(
+            split_token("http://127.0.0.1:7878/?t=abc"),
+            Some(("abc".to_owned(), "http://127.0.0.1:7878/".to_owned()))
+        );
+        assert_eq!(split_token("http://127.0.0.1:7878/?namespace=a"), None);
+        assert_eq!(split_token("http://127.0.0.1:7878/?t="), None);
+    }
 }

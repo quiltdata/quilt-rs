@@ -122,8 +122,8 @@ pub fn read_token(data_dir: &Path) -> Option<String> {
     is_token(token).then(|| token.to_owned())
 }
 
-/// The address to open: `url` with the token, which the page trades for a
-/// cookie.
+/// The address to open: `url` with the token, which the page keeps and drops
+/// from the address.
 #[must_use]
 pub fn link(url: &str, token: &str) -> String {
     format!("{}/?t={token}", url.trim_end_matches('/'))

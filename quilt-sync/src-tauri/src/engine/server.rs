@@ -7,7 +7,9 @@
 //! engine event goes to every client as `{"event", "payload"}`.
 //!
 //! Any website can open a socket to `127.0.0.1`, so `/ws` checks the `Host`
-//! (against DNS rebinding), the `Origin`, then the token, before it upgrades.
+//! (against DNS rebinding), the `Origin`, then the token in `?t=`, before it
+//! upgrades. Pages and files need no token: the page keeps it in its own
+//! origin's `localStorage`, which, unlike a cookie, no other port can read.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -52,19 +54,11 @@ use crate::engine::telemetry::prelude::*;
 #[folder = "../ui/dist/"]
 struct Ui;
 
-/// The readable cookie that tells the page it was served by the engine, so it
-/// talks over the socket. Test harnesses and the gallery are served over HTTP
-/// too, but without it.
-const WEB_MARKER: &str = "quiltsync-web=1; SameSite=Strict; Path=/";
-
 #[derive(Clone)]
 struct AppState {
     services: Arc<Services>,
     desktop: Option<Arc<dyn Desktop>>,
     token: Arc<str>,
-    /// Browsers share one host's cookies across its ports, so the name carries
-    /// the port: two engines on `127.0.0.1` keep their own.
-    cookie: Arc<str>,
 }
 
 /// Serve on `listener` in a background task and answer its address.
@@ -99,15 +93,10 @@ fn router(
         services,
         desktop,
         token: token.into(),
-        cookie: format!("quiltsync-{}", addr.port()).into(),
     };
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .fallback(ui_file)
-        .layer(axum::middleware::from_fn_with_state(
-            state.clone(),
-            cookie_from_link,
-        ))
         .layer(axum::middleware::map_response(no_cache))
         .with_state(state);
     if !addr.ip().is_loopback() {
@@ -153,68 +142,12 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
     }
 }
 
-/// The token from the cookie named `name`, if the request sent one.
-fn cookie_token<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    headers
-        .get_all(header::COOKIE)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(';'))
-        .find_map(|pair| pair.trim().strip_prefix(name)?.strip_prefix('='))
-}
-
 /// The UI's file names carry no hash, so a browser must check each one again:
 /// a cached old script under a new `index.html` fails its integrity check.
 async fn no_cache(mut response: Response) -> Response {
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-    response
-}
-
-/// A page opened with `?t=<token>` trades it for a cookie and comes back
-/// without it, so the token stays out of the address bar and history.
-async fn cookie_from_link(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    let uri = request.uri();
-    if uri.path() == "/ws" {
-        return next.run(request).await;
-    }
-    let mut token_ok = false;
-    let rest: Vec<(String, String)> =
-        url::form_urlencoded::parse(uri.query().unwrap_or_default().as_bytes())
-            .filter(|(key, value)| {
-                if key == "t" {
-                    token_ok = *value == *state.token;
-                    return false;
-                }
-                true
-            })
-            .map(|(key, value)| (key.into_owned(), value.into_owned()))
-            .collect();
-    if !token_ok {
-        return next.run(request).await;
-    }
-    let mut location = uri.path().to_owned();
-    if !rest.is_empty() {
-        location.push('?');
-        location.push_str(
-            &url::form_urlencoded::Serializer::new(String::new())
-                .extend_pairs(rest)
-                .finish(),
-        );
-    }
-    let cookie = format!(
-        "{}={}; HttpOnly; SameSite=Strict; Path=/",
-        state.cookie, state.token
-    );
-    let mut response = (
-        StatusCode::SEE_OTHER,
-        [(header::LOCATION, location), (header::SET_COOKIE, cookie)],
-    )
-        .into_response();
-    response
-        .headers_mut()
-        .append(header::SET_COOKIE, HeaderValue::from_static(WEB_MARKER));
     response
 }
 
@@ -252,9 +185,7 @@ async fn ws_handler(
     if !origin_allowed(&headers) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    // `?t=` serves clients that aren't pages, like tests.
-    let by_cookie = cookie_token(&headers, &state.cookie) == Some(&*state.token);
-    if !by_cookie && query.get("t").map(String::as_str) != Some(&*state.token) {
+    if query.get("t").map(String::as_str) != Some(&*state.token) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     match ws {
@@ -433,19 +364,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_token_is_read_from_its_own_cookie() {
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::COOKIE,
-            "quiltsync-9999=other; quiltsync-7878=tok; quiltsync-web=1"
-                .parse()
-                .unwrap(),
-        );
-        assert_eq!(cookie_token(&headers, "quiltsync-7878"), Some("tok"));
-        assert_eq!(cookie_token(&headers, "quiltsync-1"), None);
-    }
-
     struct Running {
         addr: SocketAddr,
         services: Arc<Services>,
@@ -517,34 +435,25 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_link_with_the_token_becomes_a_cookie() {
+    async fn a_page_needs_no_token_and_is_never_cached() {
         let running = start().await;
-        let (status, headers) = get(running.addr, "/commit?namespace=a%2Fb&t=0123abcd", &[]).await;
-        assert_eq!(status, 303);
-        let header = |name: &str| -> Vec<String> {
-            headers
-                .iter()
-                .filter_map(|line| line.split_once(": "))
-                .filter(|(key, _)| key.eq_ignore_ascii_case(name))
-                .map(|(_, value)| value.to_owned())
-                .collect()
-        };
-        assert_eq!(header("location"), ["/commit?namespace=a%2Fb"]);
-        let cookies = header("set-cookie");
-        let port = running.addr.port();
-        assert!(cookies.contains(&format!(
-            "quiltsync-{port}={TOKEN}; HttpOnly; SameSite=Strict; Path=/"
-        )));
-        assert!(cookies.contains(&WEB_MARKER.to_owned()));
-
-        // A wrong token is no link: the page is served as is.
-        let (status, headers) = get(running.addr, "/?t=nope", &[]).await;
-        assert_ne!(status, 303);
-        assert!(
-            headers
-                .iter()
-                .any(|h| h.eq_ignore_ascii_case("cache-control: no-cache"))
-        );
+        for path in ["/", "/commit?namespace=a%2Fb", "/?t=nope"] {
+            let (status, headers) = get(running.addr, path, &[]).await;
+            assert_ne!(status, 401, "{path}");
+            assert_ne!(status, 303, "{path}");
+            assert!(
+                headers
+                    .iter()
+                    .any(|h| h.eq_ignore_ascii_case("cache-control: no-cache")),
+                "{path}"
+            );
+            assert!(
+                !headers
+                    .iter()
+                    .any(|h| h.to_ascii_lowercase().starts_with("set-cookie")),
+                "{path}"
+            );
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -563,10 +472,12 @@ mod tests {
         );
         // Over plain HTTP the right token passes the checks, and only the
         // missing upgrade is refused.
-        let cookie = format!("quiltsync-{port}={TOKEN}");
         let origin = format!("http://{addr}");
-        let (status, _) = get(addr, "/ws", &[("Cookie", &cookie), ("Origin", &origin)]).await;
+        let (status, _) = get(addr, "/ws?t=0123abcd", &[("Origin", &origin)]).await;
         assert!(status != 401 && status != 403, "{status}");
+        // A cookie is no token.
+        let cookie = format!("quiltsync-{port}={TOKEN}");
+        assert_eq!(get(addr, "/ws", &[("Cookie", &cookie)]).await.0, 401);
 
         // DNS rebinding: a page on another name that resolves here.
         let mut request = format!("ws://{addr}/ws?t={TOKEN}")
