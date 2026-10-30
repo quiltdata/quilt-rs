@@ -10,52 +10,61 @@ mod app "quilt-sync/app.just"
 # The component gallery: `dev`, `build` and `preview`
 mod gallery "quilt-sync/ui/gallery.just"
 
-# The test suites: plain `just test`, `live` and `frontend`
+# The test suites: plain `just test`, `live`, `frontend` and `doc`
 mod test "test.just"
 
 # Run test coverage for all packages
 coverage:
     cargo tarpaulin --out html
 
-# Report every formatting and lint failure; writes nothing
-lint:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    cargo fmt --all --check
-    # rumdl needs an explicit file list: pointed at a directory it obeys every
-    # .gitignore above the checkout, and one ignoring `*` leaves it zero files.
-    git ls-files -z '*.md' | xargs -0 rumdl check
-    cargo clippy --workspace --all-targets --all-features
-    cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui --all-targets --all-features
+# The cargo flags that pick what `check` and `clippy` lint: the whole
+# workspace, unless CI narrows it for a job.
+export SCOPE := env("SCOPE", "--workspace --all-targets")
 
+# Report every formatting and lint failure; writes nothing
+lint: lint-md check wasm-check
+    cargo clippy --target wasm32-unknown-unknown -p quilt-sync-ui --all-targets --all-features -- --deny warnings
+
+# `rumdl fmt` looks equivalent but exits 0 with unfixable issues outstanding.
+#
 # Fix what `lint` reports, over the same file set
 fmt:
-    #!/usr/bin/env bash
-    set -euo pipefail
     cargo fmt --all
-    # `rumdl fmt` looks equivalent but exits 0 with unfixable issues outstanding
     git ls-files -z '*.md' | xargs -0 rumdl check --fix
 
-# The list is kept in step with .github/workflows by hand; CI runs it as
-# separate jobs, not through this recipe. Cheap checks run first, so a failure
-# ends the run early.
+# rumdl needs an explicit file list: pointed at a directory it obeys every
+# .gitignore above the checkout, and one ignoring `*` leaves it zero files.
 #
-# Run everything CI checks, live AWS tests included; use before a push
-ci: lint ci-static test::no-aws test::live ci-doctests test::frontend ci-release-build
+# Lint the tracked markdown
+lint-md:
+    git ls-files -z '*.md' | xargs -0 rumdl check
 
-# `--all-features` is the cargo-deny action's default
-[private]
-ci-static:
-    cargo deny --all-features check
+# Check formatting, then lint `SCOPE` with clippy
+check: && clippy
+    cargo fmt --all --check
+
+# Lint `SCOPE` with clippy for this OS
+clippy:
+    cargo clippy $SCOPE --all-features -- --deny warnings
+
+# Build quilt-uri for wasm
+wasm-check:
     cargo check -p quilt-uri --target wasm32-unknown-unknown
     cargo check -p quilt-uri --target wasm32-unknown-unknown --all-features
 
-# nextest does not run doctests. CI leaves out the two QuiltSync crates; their
-# runner cannot build them.
-[private]
-ci-doctests:
-    cargo test --doc --workspace --exclude quilt-sync --exclude quilt-sync-ui
+# `--all-features` is the cargo-deny action's default.
+#
+# Check dependency licenses and advisories
+deny:
+    cargo deny --all-features check
 
-[private]
-ci-release-build:
+# Build QuiltSync's frontend for release
+release-build:
     cd quilt-sync/ui && trunk build --release
+
+# Each CI job runs these recipes, some with a narrower `SCOPE`; the workflow adds
+# only triggers, setup and secrets. Cheap checks run first, so a failure ends
+# the run early.
+#
+# Run everything CI checks, live AWS tests included; use before a push
+ci: lint deny test::no-aws test::live test::doc test::frontend release-build
