@@ -88,9 +88,10 @@ pub struct CommitState {
 /// future [`pull`](crate::flow::pull) is allowed to fetch, so it outlives the
 /// operation that reads it. See `model/ctx/sync/node.md#sync-scope`.
 ///
-/// Nothing in quilt-rs reads the stored value: `pull` takes the scope as an
-/// argument, and its callers, the `quilt` CLI and the desktop app, pass the
-/// one stored here.
+/// [`pull`](crate::flow::pull) takes the scope as an argument from its
+/// caller, the `quilt` CLI or the desktop app, which passes the one stored
+/// here. [`keep`](crate::InstalledPackage::keep), `kept` and the download
+/// backlog read the stored value.
 ///
 /// A value this version does not know reads as [`Self::IndividualFiles`], the
 /// scope that fetches the least, so a later scope never fails the load.
