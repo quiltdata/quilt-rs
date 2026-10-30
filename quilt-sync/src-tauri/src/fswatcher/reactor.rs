@@ -7,13 +7,11 @@ use std::time::Duration;
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
 use quilt_uri::Namespace;
-use tauri::Manager;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 use crate::autopull::PackageStatusEvent;
 use crate::autopull::StatusReporter;
-use crate::autopull::Watcher;
 use crate::autopull::WatcherInner;
 use crate::autopull::last_change::PendingCommit;
 use crate::autopull::reporter::SubscriberErrorEvent;
@@ -119,11 +117,8 @@ impl TrailingWalks {
     }
 }
 
-pub(crate) async fn run(mut state: ReactorState, app_handle: tauri::AppHandle) {
-    let watcher = app_handle.state::<Watcher>();
-    let model = app_handle.state::<Model>();
-    // `State::inner()` unwraps the guard; `shared()` is the Watcher's own.
-    drive(&mut state, &*model, watcher.inner().shared()).await;
+pub(crate) async fn run(mut state: ReactorState, model: Arc<Model>, watcher: Arc<WatcherInner>) {
+    drive(&mut state, &*model, &watcher).await;
 }
 
 /// The reactor's loop: reconcile the watches, take signals, and walk each

@@ -128,12 +128,12 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
 /// what happens on submit and what it says when that fails.
 #[component]
 fn PackageFields(namespace: RwSignal<String>, source: RwSignal<String>) -> impl IntoView {
-    // v1's directory picker, unchanged: the chosen path becomes the (disabled)
-    // field's text. A cancelled picker returns `Err`, and the field is left as
-    // it was.
+    // The native picker, or the in-page folder browser where there is none:
+    // the chosen path becomes the (disabled) field's text. A cancel returns
+    // `Err`, and the field is left as it was.
     let on_browse = move |_| {
         leptos::task::spawn_local(async move {
-            if let Ok(path) = commands::open_directory_picker().await {
+            if let Ok(path) = crate::pages::pick_folder().await {
                 source.set(path);
             }
         });

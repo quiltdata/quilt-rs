@@ -6,3 +6,7 @@ mod gallery "ui/gallery.just"
 # Run QuiltSync in development mode, rebuilding on save
 dev: gallery::stubs
     cargo tauri dev
+
+# Run headless QuiltSync in development mode, rebuilding on save
+headless *args: gallery::stubs
+    cargo tauri dev -- -- --headless {{ args }}

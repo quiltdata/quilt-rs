@@ -1,8 +1,8 @@
 use std::fmt::Write;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tauri::AppHandle;
-use tauri::Emitter;
 use tauri::Manager;
 use tauri::WindowEvent;
 use tauri::async_runtime;
@@ -19,12 +19,10 @@ use tokio::sync::watch;
 
 use crate::telemetry::prelude::*;
 
-use crate::autopull::SharedAutosyncSettings;
 use crate::autopull::SyncTrayStatus;
 use crate::autopull::TrayMode;
-use crate::autopull::Watcher;
 use crate::quit::QuitAction;
-use crate::quit::QuitGate;
+use crate::services::Services;
 
 const TRAY_ICON_ASSET: &str = "icons/tray/trayicon.png";
 
@@ -48,6 +46,11 @@ pub struct TrayController {
 
 const MENU_ID_OPEN: &str = "tray-open";
 const MENU_ID_QUIT: &str = "tray-quit";
+const MENU_ID_BROWSER: &str = "tray-browser";
+
+/// The address of the running UI server, token included; the window loads
+/// it too.
+pub struct WebUiUrl(pub String);
 
 impl TrayController {
     pub fn install(
@@ -55,8 +58,10 @@ impl TrayController {
         status_rx: watch::Receiver<SyncTrayStatus>,
     ) -> Result<Self, TrayError> {
         let open_item = MenuItem::with_id(app, MENU_ID_OPEN, "Open Quilt", true, None::<&str>)?;
+        let browser_item =
+            MenuItem::with_id(app, MENU_ID_BROWSER, "Open in browser", true, None::<&str>)?;
         let quit_item = MenuItem::with_id(app, MENU_ID_QUIT, "Quit", true, None::<&str>)?;
-        let menu = Menu::with_items(app, &[&open_item, &quit_item])?;
+        let menu = Menu::with_items(app, &[&open_item, &browser_item, &quit_item])?;
 
         let icon = load_tray_icon(app)?;
         let tray = TrayIconBuilder::new()
@@ -65,6 +70,7 @@ impl TrayController {
             .tooltip("Quilt — idle")
             .on_menu_event(|app, event| match event.id().as_ref() {
                 MENU_ID_OPEN => show_main_window(app),
+                MENU_ID_BROWSER => open_in_browser(app),
                 MENU_ID_QUIT => request_quit(app),
                 _ => {}
             })
@@ -86,6 +92,7 @@ impl TrayController {
 
         let listener = spawn_status_listener(tray.clone(), status_rx);
         let _ = open_item;
+        let _ = browser_item;
         let _ = quit_item;
 
         install_close_handler(app);
@@ -116,6 +123,17 @@ fn show_main_window(app: &AppHandle) {
         {
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
         }
+    }
+}
+
+/// Open the running UI server in the default browser. The browser shares the
+/// window's `Services`, so both hear every event.
+fn open_in_browser(app: &AppHandle) {
+    let Some(url) = app.try_state::<WebUiUrl>() else {
+        return;
+    };
+    if let Err(err) = opener::open_browser(&url.0) {
+        warn!("failed to open the browser: {err}");
     }
 }
 
@@ -167,15 +185,13 @@ const PROMPT_GRACE: Duration = Duration::from_millis(1500);
 /// Route a quit request through the gate: exit when nothing is being written,
 /// otherwise ask and let the answer decide.
 fn request_quit(app: &AppHandle) {
-    let applying = app
-        .try_state::<Watcher>()
-        .is_some_and(|watcher| watcher.apply_in_progress());
-    let Some(gate) = app.try_state::<QuitGate>() else {
+    let Some(services) = app.try_state::<Arc<Services>>() else {
         // Nothing to ask with. A quit that cannot be questioned proceeds.
         app.exit(0);
         return;
     };
-    match gate.request(applying) {
+    let applying = services.watcher.apply_in_progress();
+    match services.quit_gate.request(applying) {
         QuitAction::Exit => app.exit(0),
         QuitAction::AlreadyPrompting => {}
         QuitAction::Prompt(generation) => prompt_before_quit(app, generation),
@@ -192,17 +208,20 @@ fn request_quit(app: &AppHandle) {
 /// survive, whereas an app that will not close has no remedy at all.
 fn prompt_before_quit(app: &AppHandle, generation: u64) {
     show_main_window(app);
-    if let Err(err) = app.emit(QUIT_PROMPT_EVENT, generation) {
-        warn!("quit prompt could not be raised, quitting: {err}");
+    // On the event sink, so the window hears it over its socket (and a
+    // browser does too).
+    let Some(services) = app.try_state::<Arc<Services>>() else {
+        warn!("quit prompt could not be raised, quitting");
         app.exit(0);
         return;
-    }
+    };
+    services.events.emit(QUIT_PROMPT_EVENT, generation);
     let handle = app.clone();
     async_runtime::spawn(async move {
         tokio::time::sleep(PROMPT_GRACE).await;
         if handle
-            .try_state::<QuitGate>()
-            .is_some_and(|gate| gate.unanswerable(generation))
+            .try_state::<Arc<Services>>()
+            .is_some_and(|services| services.quit_gate.unanswerable(generation))
         {
             warn!("quit prompt never reported itself on screen, quitting");
             handle.exit(0);
@@ -218,8 +237,8 @@ fn install_close_handler(app: &AppHandle) {
     window.on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
             let close_to_tray = {
-                let settings = handle.state::<SharedAutosyncSettings>();
-                let snapshot = async_runtime::block_on(settings.read());
+                let services = handle.state::<Arc<Services>>();
+                let snapshot = async_runtime::block_on(services.autosync_settings.read());
                 snapshot.close_to_tray
             };
             if !close_to_tray {

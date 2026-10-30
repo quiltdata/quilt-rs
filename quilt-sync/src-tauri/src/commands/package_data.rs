@@ -5,10 +5,10 @@ use serde::Serialize;
 use crate::Error;
 use crate::commands::RoleCache;
 use crate::experimental_settings::ExperimentalSettings;
-use crate::experimental_settings::SharedExperimentalSettings;
 use crate::model;
 use crate::quilt;
 use crate::routes;
+use crate::services::Services;
 
 use super::package_entries::{EntryCounts, EntryList, InstalledPackageEntryData, entry_list};
 use super::package_list::denied_mark;
@@ -214,15 +214,15 @@ async fn get_installed_package_data_from_model(
     })
 }
 
-#[tauri::command]
 pub async fn get_installed_package_data(
-    m: tauri::State<'_, model::Model>,
-    roles: tauri::State<'_, RoleCache>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-    experimental: tauri::State<'_, SharedExperimentalSettings>,
+    s: &Services,
     namespace: String,
     filter: Option<String>,
 ) -> Result<InstalledPackageData, String> {
+    let m = &*s.model;
+    let roles = &*s.roles;
+    let tracing = &*s.telemetry;
+    let experimental = &s.experimental_settings;
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
@@ -231,7 +231,7 @@ pub async fn get_installed_package_data(
         .unwrap_or_default();
 
     let experimental = experimental.read().await.clone();
-    get_installed_package_data_from_model(&*m, &experimental, &roles, &tracing, &namespace, filter)
+    get_installed_package_data_from_model(m, &experimental, roles, tracing, &namespace, filter)
         .await
         .map_err(|e| e.to_frontend_string())
 }

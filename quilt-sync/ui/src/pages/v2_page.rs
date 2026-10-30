@@ -111,6 +111,7 @@ impl PageHandle {
         let reads = StoredValue::new(0_u64);
         Effect::new(move |_| {
             reload.track();
+            crate::tauri::reconnects();
             let asked = key.get();
             reads.update_value(|n| *n += 1);
             let this = reads.get_value();

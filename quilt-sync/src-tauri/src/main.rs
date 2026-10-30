@@ -10,6 +10,7 @@
 
 use std::sync::Arc;
 
+use tauri::Emitter;
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tokio::sync;
@@ -22,8 +23,11 @@ mod changelog;
 mod commands;
 mod commit_message;
 mod design_settings;
+mod dispatch;
+mod engine_lock;
 mod env;
 mod error;
+mod events;
 mod experimental_settings;
 mod fswatcher;
 mod log_settings;
@@ -34,29 +38,257 @@ mod publish_settings;
 mod quilt;
 mod quit;
 mod routes;
+mod server;
+mod services;
 mod tasks;
 mod telemetry;
 mod toast;
 mod tray;
+mod update_feed;
 mod uri;
 
-use app::App;
-use autopull::StatusReporter;
-use autopull::Watcher;
-use autopull::reporter::TauriEventReporter;
 use error::Error;
-use model::Model;
 
 type Result<T = ()> = std::result::Result<T, Error>;
 
 rust_i18n::i18n!("locales");
 
-#[allow(clippy::too_many_lines, reason = "Tauri app builder and setup wiring")]
+/// Command-line options for a run without a window.
+struct Headless {
+    bind: std::net::IpAddr,
+    port: u16,
+    data_dir: Option<std::path::PathBuf>,
+    reset_token: bool,
+}
+
+/// `QUILTSYNC_DATA_DIR`, which replaces the data folder in both modes.
+fn data_dir_from_env() -> Option<std::path::PathBuf> {
+    std::env::var_os("QUILTSYNC_DATA_DIR")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+}
+
+/// `--headless [--bind <ip>] [--port <n>] [--data-dir <path>] [--reset-token]`,
+/// or `None`
+/// for the desktop app.
+fn parse_headless() -> Option<Headless> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.iter().any(|a| a == "--headless") {
+        return None;
+    }
+    let value = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+    };
+    let bind = value("--bind").map_or(std::net::IpAddr::from([127, 0, 0, 1]), |v| {
+        v.parse().expect("--bind takes an IP address")
+    });
+    let port = value("--port").map_or(7878, |v| v.parse().expect("--port takes a number"));
+    let data_dir = value("--data-dir").map(std::path::PathBuf::from);
+    Some(Headless {
+        bind,
+        port,
+        data_dir,
+        reset_token: args.iter().any(|a| a == "--reset-token"),
+    })
+}
+
+/// Serve the UI to a browser with no window and no Tauri, until Ctrl-C.
+/// Exits with code 2 when another engine already runs on the data folder.
+fn run_headless(opts: &Headless) {
+    let data_dir = opts
+        .data_dir
+        .clone()
+        .or_else(data_dir_from_env)
+        .unwrap_or_else(services::default_data_dir);
+    match engine_lock::acquire_or_wait_for_info(&data_dir) {
+        Ok(engine_lock::Acquired::Held(lock)) => engine_lock::hold(lock),
+        Ok(engine_lock::Acquired::Running(info)) => {
+            match info {
+                Some(info) => println!("QuiltSync is already running: {}", info.url_with_token()),
+                None => println!(
+                    "QuiltSync is already running on {} (its address is unknown)",
+                    data_dir.display()
+                ),
+            }
+            std::process::exit(2);
+        }
+        Err(err) => {
+            eprintln!("failed to lock {}: {err}", data_dir.display());
+            std::process::exit(1);
+        }
+    }
+    if opts.reset_token
+        && let Err(err) = engine_lock::reset_web_token()
+    {
+        eprintln!("failed to make a new token: {err}");
+        std::process::exit(1);
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build the tokio runtime");
+    runtime.block_on(async {
+        let version = semver::Version::parse(env!("CARGO_PKG_VERSION")).expect("crate version");
+        let services = services::Services::init(data_dir, version)
+            .await
+            .expect("failed to start the services");
+        let token = engine_lock::web_token();
+        let addr = server::serve(
+            Arc::clone(&services),
+            std::net::SocketAddr::new(opts.bind, opts.port),
+            token.clone(),
+        )
+        .await
+        .expect("failed to start the server");
+        let host = if addr.ip().is_loopback() || addr.ip().is_unspecified() {
+            format!("localhost:{}", addr.port())
+        } else {
+            addr.to_string()
+        };
+        engine_lock::publish(&format!("http://{host}"), &token);
+        println!("QuiltSync headless: http://{host}/?t={token}");
+        if !addr.ip().is_loopback() {
+            println!("The Host header check is off: the server is not bound to loopback.");
+        }
+        if addr.ip().is_unspecified() {
+            println!(
+                "Warning: listening on all interfaces over plain HTTP; the token and your data \
+                 travel unencrypted. Prefer the default bind and an SSH tunnel, \
+                 e.g. `ssh -L {port}:localhost:{port} <host>`.",
+                port = addr.port()
+            );
+        }
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            error!("failed to wait for Ctrl-C: {err}");
+        }
+        services.app.logging.shutdown();
+    });
+}
+
+/// Become the engine for `data_dir`, or, when another engine (headless) holds
+/// it, open the browser at that engine and exit without starting one.
+fn take_engine_lock_or_open_browser(data_dir: &std::path::Path) {
+    match engine_lock::acquire_or_wait_for_info(data_dir) {
+        Ok(engine_lock::Acquired::Held(lock)) => engine_lock::hold(lock),
+        Ok(engine_lock::Acquired::Running(info)) => {
+            if let Some(info) = info {
+                info!("another engine runs on {}; opening it", data_dir.display());
+                if let Err(err) = opener::open_browser(info.url_with_token()) {
+                    error!("failed to open the browser: {err}");
+                }
+            } else {
+                error!("another engine runs on {}", data_dir.display());
+            }
+            std::process::exit(0);
+        }
+        Err(err) => {
+            // Starting anyway beats not starting at all.
+            error!("failed to lock {}: {err}", data_dir.display());
+        }
+    }
+}
+
+/// In a timing run, report the page's errors and the socket's big messages
+/// and closes to `bench_report` on a socket of its own.
+const BENCH_PROBE: &str = r"(function () {
+  var t = new URLSearchParams(location.search).get('t');
+  if (!t) { try { t = sessionStorage.getItem('quiltsync-token'); } catch (e) {} }
+  if (!t || location.protocol !== 'http:') return;
+  var OW = window.WebSocket, q = [], n = 1e9;
+  var log = new OW('ws://' + location.host + '/ws?t=' + t);
+  function send(m) {
+    var s = JSON.stringify({ id: n++, cmd: 'bench_report', args: { text: 'page: ' + m } });
+    if (log.readyState === 1) log.send(s); else q.push(s);
+  }
+  log.onopen = function () { q.forEach(function (s) { log.send(s); }); q = []; };
+  ['error', 'warn'].forEach(function (k) {
+    var f = console[k];
+    console[k] = function () { send(k + ' ' + [].map.call(arguments, String).join(' ')); f.apply(console, arguments); };
+  });
+  document.addEventListener('visibilitychange', function () { send('visibility hidden=' + document.hidden); });
+  window.addEventListener('error', function (ev) { send('onerror ' + ev.message); });
+  window.addEventListener('unhandledrejection', function (ev) { send('rejection ' + ev.reason); });
+  window.WebSocket = function (u, p) {
+    var w = p === undefined ? new OW(u) : new OW(u, p);
+    w.addEventListener('message', function (ev) {
+      var d = ev.data;
+      if (typeof d !== 'string' || d.length > 10000) send('message ' + (d.length || d.size) + ' hidden=' + document.hidden);
+    });
+    w.addEventListener('close', function (ev) { send('close ' + ev.code + ' ' + ev.reason); });
+    return w;
+  };
+  window.WebSocket.prototype = OW.prototype;
+})();";
+
+/// The main window: the UI server's page at `url`, or the bundled page over
+/// Tauri IPC with `ipc`, kept for comparing the two.
+fn main_window(app: &tauri::App, url: &str, ipc: bool) -> Result {
+    let target = if ipc {
+        tauri::WebviewUrl::App("index.html".into())
+    } else {
+        tauri::WebviewUrl::External(url.parse().map_err(Error::ParseUrl)?)
+    };
+    let mut window = tauri::WebviewWindowBuilder::new(app, "main", target)
+        .title("QuiltSync")
+        .inner_size(1280.0, 900.0)
+        .min_inner_size(640.0, 560.0)
+        .resizable(true)
+        .fullscreen(false)
+        .use_https_scheme(true);
+    // A timing run (see WEB-MVP.md): the page reads the namespace to measure.
+    if let Ok(namespace) = std::env::var("QUILTSYNC_BENCH") {
+        let script = format!(
+            "window.__QS_BENCH__ = {};\n{BENCH_PROBE}",
+            serde_json::Value::String(namespace)
+        );
+        // A hidden window (a locked screen, another space) would otherwise
+        // suspend the page mid-run.
+        window = window
+            .initialization_script(&script)
+            .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
+    }
+    window.build()?;
+    Ok(())
+}
+
+/// Start the desktop app's server with the saved token, on its last port
+/// when that is free, so a browser tab opened on an earlier run reconnects.
+fn serve_desktop(services: &Arc<services::Services>) -> Result<(std::net::SocketAddr, String)> {
+    let token = engine_lock::web_token();
+    let serve_on = |port: u16| {
+        tauri::async_runtime::block_on(server::serve(
+            Arc::clone(services),
+            std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+            token.clone(),
+        ))
+    };
+    let addr = match engine_lock::saved_port().map(serve_on) {
+        Some(Ok(addr)) => addr,
+        Some(Err(err)) => {
+            info!("the last port is taken ({err}); picking another");
+            serve_on(0)?
+        }
+        None => serve_on(0)?,
+    };
+    engine_lock::save_port(addr.port());
+    Ok((addr, token))
+}
+
 fn main() {
     env::init();
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+    if let Some(opts) = parse_headless() {
+        run_headless(&opts);
+        return;
+    }
+
+    let mut builder = tauri::Builder::default();
+    // A run on a throwaway data folder is a second copy next to the installed
+    // app; it must not hand itself over to that one.
+    if services::data_dir_override().is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Err(err) = match argv.get(1) {
                 Some(uri_str) => {
                     info!("Single-instance deep link: {:?}", uri_str);
@@ -66,29 +298,24 @@ fn main() {
             } {
                 error!("{}", err);
             }
-        }))
+        }));
+    }
+    builder
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            let package_info = app.package_info();
-
-            // Resolved before the sinks are built: the crash client's event hook
-            // captures the identity when the client is constructed, so it has to
-            // be known first or crashes would go out unattributed.
-            let data_dir = app
-                .path()
-                .app_local_data_dir()
-                .expect("Failed to resolve data dir");
-
-            let sinks = telemetry::Sinks::resolve();
-            let telemetry = telemetry::Telemetry::new(
-                &package_info.version,
-                sinks,
-                telemetry::InstallId::load(&data_dir),
-                Some(telemetry::Buffer::new(&data_dir)),
-            );
+            let version = app.package_info().version.clone();
+            let data_dir = data_dir_from_env().unwrap_or_else(|| {
+                app.path()
+                    .app_local_data_dir()
+                    .expect("Failed to resolve data dir")
+            });
+            // A second desktop app never gets here (the single-instance
+            // plugin stops it); a headless engine on this folder does not
+            // stop the plugin, so hand the user to it in the browser.
+            take_engine_lock_or_open_browser(&data_dir);
 
             // Registers the schemes from tauri.conf.json at runtime. macOS
             // takes them from the bundle's Info.plist, so this only logs there.
@@ -97,94 +324,44 @@ fn main() {
                 error!("Failed to register deep link schemes: {}", err);
             }
 
-            let logging = telemetry::Telemetry::init_file_logging(&data_dir)?;
+            let services =
+                tauri::async_runtime::block_on(services::Services::init(data_dir, version))?;
+            app.manage(Arc::clone(&services));
+            let _ = services.desktop.set(app.handle().clone());
 
-            telemetry.init();
+            // The window is a page of the UI server, talking to the backend
+            // over the same WebSocket a browser uses.
+            let (addr, token) = serve_desktop(&services)?;
+            let url = format!("http://127.0.0.1:{}/?t={token}", addr.port());
+            app.manage(tray::WebUiUrl(url.clone()));
+            engine_lock::publish(&format!("http://127.0.0.1:{}", addr.port()), &token);
+            let ipc_window = std::env::var_os("QUILTSYNC_IPC_WINDOW").is_some();
+            main_window(app, &url, ipc_window)?;
 
-            let publish_settings = tauri::async_runtime::block_on(publish_settings::init(
-                &data_dir,
-            ))
-            .unwrap_or_else(|err| {
-                error!("Failed to load publish settings, using defaults: {err}");
-                std::sync::Arc::new(tokio::sync::RwLock::new(
-                    publish_settings::PublishSettings::default(),
-                ))
+            // Only the bundled page (`QUILTSYNC_IPC_WINDOW`) listens on the
+            // Tauri bus.
+            let mut events = services.events.subscribe();
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if !ipc_window {
+                    return;
+                }
+                loop {
+                    match events.recv().await {
+                        Ok((name, payload)) => {
+                            if let Err(err) = handle.emit(&name, payload) {
+                                warn!("failed to emit {name}: {err}");
+                            }
+                        }
+                        Err(sync::broadcast::error::RecvError::Lagged(missed)) => {
+                            warn!("window missed {missed} backend events");
+                        }
+                        Err(sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
             });
 
-            let autosync_settings = tauri::async_runtime::block_on(autopull::init_settings(
-                &data_dir,
-            ))
-            .unwrap_or_else(|err| {
-                error!("Failed to load autosync settings, using defaults: {err}");
-                std::sync::Arc::new(tokio::sync::RwLock::new(
-                    autopull::AutosyncSettings::default(),
-                ))
-            });
-            let experimental_settings =
-                tauri::async_runtime::block_on(experimental_settings::init(&data_dir))
-                    .unwrap_or_else(|err| {
-                        error!("Failed to load experimental settings, using defaults: {err}");
-                        std::sync::Arc::new(tokio::sync::RwLock::new(
-                            experimental_settings::ExperimentalSettings::default(),
-                        ))
-                    });
-            let fswatcher_settings = tauri::async_runtime::block_on(fswatcher::init_settings(
-                &data_dir,
-            ))
-            .unwrap_or_else(|err| {
-                error!("Failed to load fswatcher settings, using defaults: {err}");
-                std::sync::Arc::new(tokio::sync::RwLock::new(
-                    fswatcher::FsWatcherSettings::default(),
-                ))
-            });
-
-            // Only the app opens the package state store; the CLI never does.
-            // One store for the last-change times and the walks' stat cache.
-            let state_store = std::sync::Arc::new(quilt::state_store::PackageStateStore::new(
-                quilt::paths::DomainPaths::new(data_dir.clone()).state_db(),
-            ));
-            let last_change =
-                autopull::last_change::LastChange::shared(std::sync::Arc::clone(&state_store));
-            app.manage(Model::create_with_state_store(data_dir, state_store));
-            app.manage(commands::WorkflowRulesCache::default());
-            app.manage(commands::RoleCache::default());
-            app.manage(sync::Mutex::new(app.handle().clone()));
-            app.manage(App::new(package_info, logging));
-            app.manage(telemetry);
-            app.manage(oauth::OAuthState::default());
-            app.manage(toast::ToastCenter::new(Box::new(
-                toast::TauriToastEmitter::new(app.handle().clone()),
-            )));
-            // The watcher reads `Model` via `app_handle.state::<Model>()`
-            // so it can spawn after `Model` is registered above.
-            // Telemetry wraps the UI reporter rather than replacing it: the
-            // engine's outcomes reach the window exactly as before, and telemetry
-            // observes them on the way past.
-            let reporter: Arc<dyn StatusReporter> =
-                Arc::new(autopull::reporter::TelemetryReporter::wrapping(
-                    Arc::new(TauriEventReporter::new(app.handle().clone())),
-                    app.handle().clone(),
-                ));
-            let (watcher, status_rx) = Watcher::spawn(
-                app.handle().clone(),
-                autosync_settings.clone(),
-                publish_settings.clone(),
-                reporter.clone(),
-                last_change,
-            );
-            autopull::activity::spawn_forwarder(app.handle().clone(), watcher.subscribe_activity());
-            app.manage(publish_settings);
-            app.manage(autosync_settings);
-            app.manage(experimental_settings);
-            app.manage(watcher);
-            // After the watcher is managed: the reactor reads its shared state.
-            fswatcher::spawn(app.handle(), fswatcher_settings.clone(), &reporter);
-            app.manage(fswatcher_settings);
-            app.manage(quit::QuitGate::default());
-
-            // The tray controller needs the autosync settings (for
-            // close_to_tray), now in `app.state::<...>()`.
-            match tray::TrayController::install(app.handle(), status_rx) {
+            match tray::TrayController::install(app.handle(), services.tray_status.clone()) {
                 Ok(controller) => {
                     app.manage(controller);
                 }
@@ -199,102 +376,16 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            commands::certify_latest,
-            commands::erase_auth,
-            commands::get_bucket_workflows,
-            commands::get_commit_data,
-            commands::get_installed_package_data,
-            commands::get_installed_packages_list_data,
-            commands::get_login_data,
-            commands::get_login_error_data,
-            commands::get_merge_data,
-            commands::get_roles,
-            commands::switch_role,
-            commands::load_workflow_rules,
-            commands::validate_commit_candidate,
-            commands::get_settings_data,
-            commands::get_setup_data,
-            commands::debug_dot_quilt,
-            commands::debug_logs,
-            commands::open_data_dir,
-            commands::open_home_dir,
-            commands::run_gc,
-            commands::measure_storage,
-            commands::collect_diagnostic_logs,
-            commands::send_crash_report,
-            commands::login,
-            commands::login_oauth,
-            commands::open_directory_picker,
-            commands::open_in_default_application,
-            commands::open_in_file_browser,
-            commands::copy_to_clipboard,
-            commands::package_file_path,
-            commands::open_in_web_browser,
-            commands::package_commit,
-            commands::package_commit_and_push,
-            commands::package_install_paths,
-            commands::package_set_sync_scope,
-            commands::package_publish,
-            commands::package_pull,
-            commands::package_pull_outcome,
-            commands::package_push,
-            commands::update_publish_settings,
-            commands::update_autosync_settings,
-            commands::set_autosync_direction,
-            commands::patch_autosync_settings,
-            commands::get_autosync_snapshot,
-            commands::get_autopull_activity,
-            commands::get_toasts,
-            commands::dismiss_toast,
-            commands::update_fswatcher_settings,
-            commands::set_default_ignore_rules,
-            commands::open_user_ignore_rules,
-            commands::update_log_settings,
-            commands::update_experimental_settings,
-            commands::update_task_settings,
-            commands::update_design_settings,
-            commands::get_main_page_packages,
-            commands::get_main_page_recent_files,
-            commands::get_main_page_accounts,
-            commands::refresh_main_page_account,
-            commands::refresh_main_page_package,
-            commands::get_main_page_watcher,
-            commands::get_package_page_data,
-            commands::get_revision_history,
-            commands::remove_revisions,
-            commands::package_download_backlog,
-            commands::refresh_package_status,
-            commands::package_uninstall,
-            commands::reset_local,
-            commands::undo_commit,
-            commands::reveal_in_file_browser,
-            commands::set_remote,
-            commands::change_catalog,
-            commands::package_create,
-            commands::setup,
-            commands::add_to_quiltignore,
-            commands::test_quiltignore_pattern,
-            commands::stop_ignoring_preview,
-            commands::stop_ignoring,
-            commands::handle_remote_package,
-            commands::get_revision_message,
-            commands::check_for_update,
-            commands::download_and_install_update,
-            commands::report_ui_panic,
-            commands::quit_prompt_shown,
-            commands::quit_confirm,
-            commands::quit_cancel,
-        ])
+        .invoke_handler(dispatch::invoke_handler())
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             // Runs after every plugin's exit hook, so a plugin's own exit-time
             // logging still reaches the file. A drop hosted in a plugin would not.
             if matches!(event, tauri::RunEvent::Exit)
-                && let Some(app) = app_handle.try_state::<App>()
+                && let Some(services) = app_handle.try_state::<Arc<services::Services>>()
             {
-                app.logging.shutdown();
+                services.app.logging.shutdown();
             }
         });
 }

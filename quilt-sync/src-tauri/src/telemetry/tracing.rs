@@ -215,12 +215,14 @@ fn init_tracing(
         tracing_subscriber::registry()
             .with(file)
             .with(crash_sink(filter(saved, CRASH_SINK_DIRECTIVES)))
-            .init();
+            .try_init()
+            .ok();
         Some(guard)
     } else {
         tracing_subscriber::registry()
             .with(crash_sink(filter(saved, CRASH_SINK_DIRECTIVES)))
-            .init();
+            .try_init()
+            .ok();
         None
     };
 

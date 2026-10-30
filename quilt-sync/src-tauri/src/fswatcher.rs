@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::Manager;
 use tokio::sync::mpsc;
 
 use crate::autopull::StatusReporter;
@@ -29,8 +28,9 @@ use subscriber::Subscription;
 /// `RECONCILE_INTERVAL` in `reactor.rs`) to pick up installs / uninstalls
 /// without a dedicated mutation channel — accepted-cost is a few-second
 /// delay before a freshly-installed package starts watching.
-pub fn spawn(
-    app_handle: &tauri::AppHandle,
+pub async fn spawn(
+    model: Arc<Model>,
+    watcher: Arc<crate::autopull::WatcherInner>,
     settings: SharedFsWatcherSettings,
     reporter: &Arc<dyn StatusReporter>,
 ) {
@@ -65,11 +65,7 @@ pub fn spawn(
 
     // Initial reconcile up front so existing packages are watched
     // immediately, instead of waiting for the first periodic tick.
-    let initial = {
-        let model = app_handle.state::<Model>();
-        let model_ref: &Model = &model;
-        tauri::async_runtime::block_on(async { snapshot_mappings(model_ref).await })
-    };
+    let initial = snapshot_mappings(&*model).await;
     if let Some(initial) = initial {
         reactor::note_volumes(&mut state, &initial.packages);
         if let Err(err) = state
@@ -80,9 +76,8 @@ pub fn spawn(
         }
     }
 
-    let task_handle = app_handle.clone();
-    tauri::async_runtime::spawn(async move {
-        run_reactor(state, task_handle).await;
+    crate::events::spawn(async move {
+        run_reactor(state, model, watcher).await;
     });
 
     info!("fswatcher: spawned (debounce={debounce_ms}ms)");

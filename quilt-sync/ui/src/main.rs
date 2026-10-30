@@ -40,7 +40,11 @@ fn App() -> impl IntoView {
         <components::ToastStack />
         <components::AutopullActivityFeed />
         <components::QuitPrompt />
+        <pages::FolderBrowser />
         <Router>
+            <WebNavigation />
+            <DocumentTitle />
+            <Bench />
             <Routes fallback=|| view! { <NotFoundPage read=read_settings /> }>
                 <Route path=path!("/") view=|| view! { <Home /> } />
                 <Route path=path!("/commit") view=|| view! { <CommitPage read=read_settings /> } />
@@ -55,6 +59,46 @@ fn App() -> impl IntoView {
                 <Route path=path!("/setup") view=|| view! { <SetupPage read=read_settings /> } />
             </Routes>
         </Router>
+    }
+}
+
+/// Keep the browser tab's title on the current package and page.
+#[component]
+fn DocumentTitle() -> impl IntoView {
+    let location = leptos_router::hooks::use_location();
+    Effect::new(move |_| {
+        let path = location.pathname.get();
+        let query = quilt_sync_ui::routes::Query::parse(&location.search.get());
+        document().set_title(&quilt_sync_ui::routes::page_title(&path, &query));
+    });
+}
+
+/// Go where the backend points (after a login, on a deep link), in the window
+/// and in a browser alike.
+#[component]
+fn WebNavigation() -> impl IntoView {
+    #[derive(serde::Deserialize)]
+    struct Navigate {
+        url: String,
+    }
+    let navigate = leptos_router::hooks::use_navigate();
+    let listener = quilt_sync_ui::tauri::listen::<Navigate>("navigate", move |payload| {
+        navigate(
+            &quilt_sync_ui::tauri::strip_origin(&payload.url),
+            leptos_router::NavigateOptions::default(),
+        );
+    });
+    on_cleanup(move || drop(listener));
+}
+
+/// A timing run, when the desktop app asked for one (see `WEB-MVP.md`).
+#[component]
+fn Bench() -> impl IntoView {
+    if let Some(namespace) = quilt_sync_ui::bench::namespace() {
+        let navigate = leptos_router::hooks::use_navigate();
+        leptos::task::spawn_local(quilt_sync_ui::bench::run(namespace, move |to| {
+            navigate(to, leptos_router::NavigateOptions::default());
+        }));
     }
 }
 

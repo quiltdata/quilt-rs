@@ -55,19 +55,6 @@
           ]
         }
       ]
-    },
-    "windows": [
-      {
-        "label": "main",
-        "fullscreen": false,
-        "resizable": true,
-        "title": "QuiltSync",
-        "width": 1280,
-        "height": 900,
-        "minWidth": 640,
-        "minHeight": 560,
-        "useHttpsScheme": true
-      }
-    ]
+    }
   }
 }

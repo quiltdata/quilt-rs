@@ -1103,6 +1103,7 @@ fn MainPageRegions(
     let files_retry = Trigger::new();
     let recent_files = LocalResource::new(move || {
         reload.track();
+        crate::tauri::reconnects();
         files_retry.track();
         let wanted = files_wanted.get();
         async move {
@@ -1470,6 +1471,7 @@ pub fn MainPage() -> impl IntoView {
     let accounts_retry = Trigger::new();
     let packages = LocalResource::new(move || {
         reload.track();
+        crate::tauri::reconnects();
         packages_retry.track();
         async move {
             outstanding.update(|n| *n += 1);
@@ -1488,6 +1490,7 @@ pub fn MainPage() -> impl IntoView {
     // resource does not call the test's fetcher at all.
     let accounts = LocalResource::new(move || {
         reload.track();
+        crate::tauri::reconnects();
         accounts_retry.track();
         async move {
             outstanding.update(|n| *n += 1);

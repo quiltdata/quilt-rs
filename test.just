@@ -34,3 +34,12 @@ doc:
 # Run QuiltSync frontend tests in headless Firefox
 frontend:
     WASM_BINDGEN_TEST_TIMEOUT=180 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
+
+# An MVP, kept out of `ci`. Builds the debug app (which sends no telemetry) and
+# the UI, then drives headless QuiltSync in Playwright's Chromium.
+#
+# Run the QuiltSync browser end-to-end tests
+e2e *args:
+    cargo build {{ scope }}
+    cd quilt-sync/ui && trunk build
+    cd quilt-sync/e2e && npm ci --no-audit --no-fund && npx playwright install chromium && npx playwright test {{ args }}

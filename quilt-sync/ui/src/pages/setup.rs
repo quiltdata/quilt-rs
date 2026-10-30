@@ -59,7 +59,7 @@ fn SetupContent(default_home: String) -> impl IntoView {
         browsing.set(true);
         hint.set(String::new());
         leptos::task::spawn_local(async move {
-            match commands::open_directory_picker().await {
+            match crate::pages::pick_folder().await {
                 Ok(path) => {
                     directory.set(path);
                     hint.set(String::new());

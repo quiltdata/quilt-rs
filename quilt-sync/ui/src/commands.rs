@@ -987,6 +987,22 @@ pub async fn copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> Resul
         text: String,
         uri: Option<S3PackageUri>,
     }
+    // Over the socket the backend copies when it is the desktop app (the
+    // window, or a browser on the same machine); a headless one has no
+    // clipboard the reader can paste from, so the browser copies.
+    if tauri::is_web_mode() {
+        let args = Args {
+            text: text.clone(),
+            uri,
+        };
+        return match tauri::invoke("copy_to_clipboard", &args).await {
+            Err(err) if err == tauri::NOT_IN_BROWSER => {
+                tauri::copy_in_browser(&text).await?;
+                Ok("Successfully copied to clipboard".to_string())
+            }
+            other => other,
+        };
+    }
     tauri::invoke("copy_to_clipboard", &Args { text, uri }).await
 }
 
@@ -2242,6 +2258,25 @@ pub async fn reveal_in_file_browser(
 
 pub async fn open_directory_picker() -> Result<String, String> {
     tauri::invoke_unit("open_directory_picker").await
+}
+
+/// One folder's subfolders, for the in-browser folder browser.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderListing {
+    pub path: String,
+    pub parent: Option<String>,
+    pub folders: Vec<String>,
+    pub home: String,
+}
+
+/// The folders in `path`, or in the home folder for `None`.
+pub async fn list_folders(path: Option<String>) -> Result<FolderListing, String> {
+    #[derive(Serialize)]
+    struct Args {
+        path: Option<String>,
+    }
+    tauri::invoke("list_folders", &Args { path }).await
 }
 
 // ── Debug/diagnostics ───────────────────────────────────────

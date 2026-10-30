@@ -24,8 +24,8 @@ use crate::commands::RoleCache;
 use crate::model;
 use crate::model::QuiltModel;
 use crate::publish_settings::PublishSettings;
-use crate::publish_settings::SharedPublishSettings;
 use crate::quilt;
+use crate::services::Services;
 
 use super::package_entries::ENTRIES_CAP;
 use super::package_entries::EntryCounts;
@@ -68,17 +68,14 @@ async fn get_merge_data_from_model(
     })
 }
 
-#[tauri::command]
-pub async fn get_merge_data(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-    namespace: String,
-) -> Result<MergeData, String> {
+pub async fn get_merge_data(s: &Services, namespace: String) -> Result<MergeData, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    get_merge_data_from_model(&*m, &tracing, &namespace)
+    get_merge_data_from_model(m, tracing, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -617,20 +614,17 @@ fn changed_bytes(changes: &quilt::lineage::ChangeSet) -> u64 {
         .sum()
 }
 
-#[tauri::command]
-pub async fn get_commit_data(
-    m: tauri::State<'_, model::Model>,
-    roles: tauri::State<'_, RoleCache>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-    publish_settings: tauri::State<'_, SharedPublishSettings>,
-    namespace: String,
-) -> Result<CommitData, String> {
+pub async fn get_commit_data(s: &Services, namespace: String) -> Result<CommitData, String> {
+    let m = &*s.model;
+    let roles = &*s.roles;
+    let tracing = &*s.telemetry;
+    let publish_settings = &s.publish_settings;
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
     let settings = publish_settings.read().await.clone();
-    get_commit_data_from_model(&*m, &roles, &tracing, &settings, &namespace)
+    get_commit_data_from_model(m, roles, tracing, &settings, &namespace)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -650,17 +644,17 @@ async fn get_bucket_workflows_from_model(
 /// can present the same tri-state (`Available` / `NotConfigured` /
 /// `Unavailable`) the commit dialog uses. A fetch failure maps to
 /// `Unavailable` rather than an error, so the popup still opens.
-#[tauri::command]
 pub async fn get_bucket_workflows(
-    m: tauri::State<'_, model::Model>,
+    s: &Services,
     host: Option<String>,
     bucket: String,
 ) -> Result<CommitWorkflows, String> {
+    let m = &*s.model;
     let host = match host {
         Some(host) => Some(quilt_uri::Host::from_str(&host).map_err(|e| e.to_string())?),
         None => None,
     };
-    Ok(get_bucket_workflows_from_model(&*m, host, &bucket).await)
+    Ok(get_bucket_workflows_from_model(m, host, &bucket).await)
 }
 
 // ── Live commit-dialog validation ──
@@ -883,16 +877,16 @@ fn violations_from_error(err: &WorkflowValidationError) -> Vec<CommitViolation> 
 /// `refresh` is set on the dialog's first load of a session to drop the
 /// namespace's cached entries and re-fetch, so a config.yml change since the
 /// last open is picked up (the cache is app-lifetime state).
-#[tauri::command]
 pub async fn load_workflow_rules(
-    m: tauri::State<'_, model::Model>,
-    cache: tauri::State<'_, WorkflowRulesCache>,
+    s: &Services,
     namespace: String,
     workflow_id: String,
     refresh: bool,
 ) -> Result<bool, String> {
+    let m = &*s.model;
+    let cache = &s.workflow_rules;
     cache
-        .ensure_loaded(&*m, &namespace, &workflow_id, refresh)
+        .ensure_loaded(m, &namespace, &workflow_id, refresh)
         .await
         .map_err(|e| e.to_frontend_string())
 }
@@ -902,15 +896,15 @@ pub async fn load_workflow_rules(
 /// per-keystroke (debounced) path. Returns the advisory violations, routed per
 /// field; an empty list means the input satisfies the workflow (or no rules are
 /// loaded yet).
-#[tauri::command]
 pub async fn validate_commit_candidate(
-    cache: tauri::State<'_, WorkflowRulesCache>,
+    s: &Services,
     namespace: String,
     workflow_id: String,
     message: String,
     user_meta: String,
     name: String,
 ) -> Result<Vec<CommitViolation>, String> {
+    let cache = &s.workflow_rules;
     Ok(cache
         .validate(&namespace, &workflow_id, &message, &user_meta, &name)
         .await)

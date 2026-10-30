@@ -7,10 +7,11 @@ use std::path::PathBuf;
 use quilt_uri::S3PackageUri;
 use rfd::FileDialog;
 use serde::Serialize;
+use std::sync::Arc;
+
 use tauri::Manager;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_updater::UpdaterExt;
-use tokio::sync;
 
 use crate::Error;
 use crate::app;
@@ -19,13 +20,13 @@ use crate::model::QuiltModel;
 use crate::notify::Notify;
 use crate::quilt;
 use crate::quilt::paths::DomainPaths;
+use crate::services::Services;
 use crate::telemetry::diagnostics;
 use crate::telemetry::event::PackageFileEvent;
 use crate::telemetry::{MixpanelEvent, prelude::*};
 
-fn get_default_home_dir(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
-    let path_resolver = app_handle.path();
-    let user_home = path_resolver.home_dir()?;
+fn get_default_home_dir() -> Result<PathBuf, Error> {
+    let user_home = dirs::home_dir().ok_or_else(|| Error::General("No home directory".into()))?;
     Ok(user_home.join(quilt::DEFAULT_HOME_DIR_NAME))
 }
 
@@ -37,20 +38,19 @@ pub struct SetupData {
     pub default_home: String,
 }
 
-#[tauri::command]
-pub async fn get_setup_data(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-) -> Result<SetupData, String> {
-    let app_handle = app_handle.lock().await;
-    let home = get_default_home_dir(&app_handle).map_err(|e| e.to_string())?;
+#[allow(
+    clippy::unused_async,
+    reason = "every plain command is async, so the IPC wrappers and the dispatcher treat them alike"
+)]
+pub async fn get_setup_data() -> Result<SetupData, String> {
+    let home = get_default_home_dir().map_err(|e| e.to_string())?;
     Ok(SetupData {
         default_home: home.display().to_string(),
     })
 }
 
 fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<PathBuf, Error> {
-    let paths = app_handle.path();
-    let home_dir = paths.home_dir()?;
+    let home_dir = dirs::home_dir().ok_or_else(|| Error::General("No home directory".into()))?;
 
     let canonical_home = home_dir.join(quilt::DEFAULT_HOME_DIR_NAME);
     let canonical_home_already_exists = canonical_home.exists();
@@ -93,9 +93,18 @@ fn open_directory_picker_command(app_handle: &tauri::AppHandle) -> Result<PathBu
 
 #[tauri::command]
 pub async fn open_directory_picker(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    app_handle: tauri::AppHandle,
+    s: tauri::State<'_, Arc<Services>>,
 ) -> Result<PathBuf, String> {
+    open_directory_picker_with(&app_handle, &s)
+}
+
+/// [`open_directory_picker`] without Tauri's injection, for the socket.
+pub fn open_directory_picker_with(
+    app_handle: &tauri::AppHandle,
+    s: &Services,
+) -> Result<PathBuf, String> {
+    let tracing = &*s.telemetry;
     // Deliberately reported before the outcome, and the only site that is. The
     // criterion is whether the event's name stays true when the call returns
     // `Err`, and here it does: this command models the user *cancelling* as an
@@ -103,8 +112,6 @@ pub async fn open_directory_picker(
     // to "a folder was chosen". Those are different questions and this event
     // answers the first. If the second is ever wanted, it is a second event.
     tracing.track(MixpanelEvent::DirectoryPickerOpened);
-
-    let app_handle = &app_handle.lock().await;
 
     match open_directory_picker_command(app_handle) {
         Ok(path) => Ok(path),
@@ -115,28 +122,23 @@ pub async fn open_directory_picker(
     }
 }
 
-fn debug_dot_quilt_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
-    let local_data_dir = app_handle.path().app_local_data_dir()?;
-    let dot_quilt_dir = DomainPaths::new(local_data_dir).dot_quilt_dir();
+fn debug_dot_quilt_command(local_data_dir: &std::path::Path) -> Result<(), Error> {
+    let dot_quilt_dir = DomainPaths::new(local_data_dir.to_path_buf()).dot_quilt_dir();
 
     opener::open_browser(&dot_quilt_dir)?;
     Ok(())
 }
 
-#[tauri::command]
-pub async fn debug_dot_quilt(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-) -> Result<String, String> {
-    let app_handle = app_handle.lock().await;
+pub async fn debug_dot_quilt(s: &Services) -> Result<String, String> {
+    let tracing = &*s.telemetry;
 
     let msg_init = "Opening .quilt directory".to_string();
     let msg_ok = "Successfully opened .quilt directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open directory: {err}");
 
     Notify::new(msg_init)
-        .on_success(&tracing, MixpanelEvent::DebugDotQuiltOpened)
-        .map(debug_dot_quilt_command(&app_handle), msg_ok, msg_err)
+        .on_success(tracing, MixpanelEvent::DebugDotQuiltOpened)
+        .map(debug_dot_quilt_command(&s.data_dir), msg_ok, msg_err)
 }
 
 fn debug_logs_command(app: &app::App) -> Result<(), Error> {
@@ -145,19 +147,17 @@ fn debug_logs_command(app: &app::App) -> Result<(), Error> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn debug_logs(
-    app: tauri::State<'_, app::App>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-) -> Result<String, String> {
-    let app: &app::App = &app;
+pub async fn debug_logs(s: &Services) -> Result<String, String> {
+    let app = &s.app;
+    let tracing = &*s.telemetry;
+    let app: &app::App = app;
 
     let msg_init = "Opening logs directory".to_string();
     let msg_ok = "Successfully opened logs directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open logs directory: {err}");
 
     Notify::new(msg_init)
-        .on_success(&tracing, MixpanelEvent::DebugLogsOpened)
+        .on_success(tracing, MixpanelEvent::DebugLogsOpened)
         .map(debug_logs_command(app), msg_ok, msg_err)
 }
 
@@ -168,40 +168,33 @@ async fn open_home_dir_command(m: &model::Model) -> Result<(), Error> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn open_home_dir(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-) -> Result<String, String> {
+pub async fn open_home_dir(s: &Services) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
     let msg_init = "Opening home directory".to_string();
     let msg_ok = "Successfully opened home directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open home directory: {err}");
 
     Notify::new(msg_init)
-        .on_success(&tracing, MixpanelEvent::HomeDirOpened)
-        .map(open_home_dir_command(&m).await, msg_ok, msg_err)
+        .on_success(tracing, MixpanelEvent::HomeDirOpened)
+        .map(open_home_dir_command(m).await, msg_ok, msg_err)
 }
 
-fn open_data_dir_command(app_handle: &tauri::AppHandle) -> Result<(), Error> {
-    let local_data_dir = app_handle.path().app_local_data_dir()?;
-    opener::open_browser(&local_data_dir)?;
+fn open_data_dir_command(local_data_dir: &std::path::Path) -> Result<(), Error> {
+    opener::open_browser(local_data_dir)?;
     Ok(())
 }
 
-#[tauri::command]
-pub async fn open_data_dir(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-) -> Result<String, String> {
-    let app_handle = app_handle.lock().await;
+pub async fn open_data_dir(s: &Services) -> Result<String, String> {
+    let tracing = &*s.telemetry;
 
     let msg_init = "Opening data directory".to_string();
     let msg_ok = "Successfully opened data directory".to_string();
     let msg_err = |err: &Error| format!("Failed to open data directory: {err}");
 
     Notify::new(msg_init)
-        .on_success(&tracing, MixpanelEvent::DataDirOpened)
-        .map(open_data_dir_command(&app_handle), msg_ok, msg_err)
+        .on_success(tracing, MixpanelEvent::DataDirOpened)
+        .map(open_data_dir_command(&s.data_dir), msg_ok, msg_err)
 }
 
 /// What Free up space freed: the report's sentence, and its bytes for a
@@ -234,9 +227,9 @@ async fn run_gc_command(m: &impl QuiltModel) -> Result<FreedSpace, String> {
 }
 
 /// Delete what the domain holds for nothing, answering with what was freed.
-#[tauri::command]
-pub async fn run_gc(m: tauri::State<'_, model::Model>) -> Result<FreedSpace, String> {
-    run_gc_command(&*m).await
+pub async fn run_gc(s: &Services) -> Result<FreedSpace, String> {
+    let m = &*s.model;
+    run_gc_command(m).await
 }
 
 /// How much local storage holds, and how much Free up space would free.
@@ -262,34 +255,30 @@ async fn measure_storage_command(m: &impl QuiltModel) -> Result<StorageSize, Str
 
 /// Measure local storage without deleting anything or taking package locks;
 /// run only when the user asks.
-#[tauri::command]
-pub async fn measure_storage(m: tauri::State<'_, model::Model>) -> Result<StorageSize, String> {
-    measure_storage_command(&*m).await
+pub async fn measure_storage(s: &Services) -> Result<StorageSize, String> {
+    let m = &*s.model;
+    measure_storage_command(m).await
 }
 
 async fn collect_diagnostic_logs_command(
-    app_handle: &tauri::AppHandle,
+    data_dir: &std::path::Path,
     m: &model::Model,
     app: &app::App,
     tracing: &crate::telemetry::Telemetry,
 ) -> Result<PathBuf, Error> {
-    let info = diagnostics::collect(app_handle, m, app, tracing.install_id()).await?;
+    let info = diagnostics::collect(data_dir, m, app, tracing.install_id()).await?;
     tokio::task::spawn_blocking(move || diagnostics::save_diagnostic_zip(&info))
         .await
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub async fn collect_diagnostic_logs(
-    app_handle: tauri::State<'_, sync::Mutex<tauri::AppHandle>>,
-    m: tauri::State<'_, model::Model>,
-    app: tauri::State<'_, app::App>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-) -> Result<String, String> {
-    let app_handle = app_handle.lock().await;
-    let app: &app::App = &app;
+pub async fn collect_diagnostic_logs(s: &Services) -> Result<String, String> {
+    let m = &*s.model;
+    let app = &s.app;
+    let tracing = &*s.telemetry;
+    let app: &app::App = app;
 
-    match collect_diagnostic_logs_command(&app_handle, &m, app, &tracing).await {
+    match collect_diagnostic_logs_command(&s.data_dir, m, app, tracing).await {
         Ok(zip_path) => {
             // Reported here rather than through `Notify::on_success`, because this
             // command returns the archive's path and so does not route its outcome
@@ -302,12 +291,12 @@ pub async fn collect_diagnostic_logs(
     }
 }
 
-#[tauri::command]
 pub async fn send_crash_report(
+    s: &Services,
     zip_path: String,
     message: Option<String>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
 ) -> Result<String, String> {
+    let tracing = &*s.telemetry;
     let zip_path = PathBuf::from(zip_path);
     if zip_path.file_name() != Some("quiltsync-diagnostic.zip".as_ref()) {
         return Err("Invalid diagnostic zip filename".to_string());
@@ -325,7 +314,7 @@ pub async fn send_crash_report(
     .and_then(|r| r);
 
     Notify::new(msg_init)
-        .on_success(&tracing, MixpanelEvent::CrashReportSent)
+        .on_success(tracing, MixpanelEvent::CrashReportSent)
         .map(result, msg_ok, msg_err)
 }
 
@@ -340,25 +329,25 @@ async fn reveal_in_file_browser_command(
     Ok(())
 }
 
-#[tauri::command]
 pub async fn reveal_in_file_browser(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    s: &Services,
     namespace: String,
     path: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
     let msg_init = format!("Revealing {path} in file browser for {namespace}");
     let msg_ok = format!("Successfully opened {path} in file browser");
     let msg_err = |err: &Error| format!("Failed to open directory: {err}");
 
     Notify::new(msg_init)
         .on_success(
-            &tracing,
+            tracing,
             MixpanelEvent::FileRevealed(PackageFileEvent::for_uri(uri.as_ref())),
         )
         .map(
-            reveal_in_file_browser_command(&m, &namespace, &path).await,
+            reveal_in_file_browser_command(m, &namespace, &path).await,
             msg_ok,
             msg_err,
         )
@@ -370,24 +359,24 @@ async fn open_in_file_browser_command(m: &model::Model, namespace: &str) -> Resu
     Ok(())
 }
 
-#[tauri::command]
 pub async fn open_in_file_browser(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    s: &Services,
     namespace: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
     let msg_init = format!("Opening file manager for {namespace}");
     let msg_ok = format!("Successfully opened file manager for {namespace}");
     let msg_err = |err: &Error| format!("Failed to open file manager: {err}");
 
     Notify::new(msg_init)
         .on_success(
-            &tracing,
+            tracing,
             MixpanelEvent::PackageDirOpened(PackageFileEvent::for_uri(uri.as_ref())),
         )
         .map(
-            open_in_file_browser_command(&m, &namespace).await,
+            open_in_file_browser_command(m, &namespace).await,
             msg_ok,
             msg_err,
         )
@@ -404,25 +393,25 @@ async fn open_in_default_application_command(
     Ok(())
 }
 
-#[tauri::command]
 pub async fn open_in_default_application(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    s: &Services,
     namespace: String,
     path: String,
     uri: Option<S3PackageUri>,
 ) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
     let msg_init = format!("Opening {path} with default application for {namespace}");
     let msg_ok = format!("Successfully opened {path} with default application");
     let msg_err = |err: &Error| format!("Failed to open application: {err}");
 
     Notify::new(msg_init)
         .on_success(
-            &tracing,
+            tracing,
             MixpanelEvent::DefaultApplicationOpened(PackageFileEvent::for_uri(uri.as_ref())),
         )
         .map(
-            open_in_default_application_command(&m, &namespace, &path).await,
+            open_in_default_application_command(m, &namespace, &path).await,
             msg_ok,
             msg_err,
         )
@@ -444,13 +433,13 @@ async fn package_file_path_command(
 /// path*: a `New` file has no `quilt+s3` address that resolves, so the reader
 /// gets where it is on this computer instead. Reads nothing but the package's
 /// home, and reports nothing: the copy that follows is the event.
-#[tauri::command]
 pub async fn package_file_path(
-    m: tauri::State<'_, model::Model>,
+    s: &Services,
     namespace: String,
     path: String,
 ) -> Result<String, String> {
-    package_file_path_command(&*m, &namespace, &path)
+    let m = &*s.model;
+    package_file_path_command(m, &namespace, &path)
         .await
         .map(|p| p.display().to_string())
         .map_err(|err| err.to_string())
@@ -474,11 +463,8 @@ fn open_in_web_browser_command(url: &str) -> Result<(), Error> {
     Ok(())
 }
 
-#[tauri::command]
-pub async fn open_in_web_browser(
-    url: String,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-) -> Result<String, String> {
+pub async fn open_in_web_browser(s: &Services, url: String) -> Result<String, String> {
+    let tracing = &*s.telemetry;
     // Hostless on purpose, even though a URL has a host: this one command opens
     // catalog links, documentation, a local directory and `mailto:` alike, so its
     // URL's host is not necessarily a Quilt deployment — and `host` means the
@@ -489,7 +475,7 @@ pub async fn open_in_web_browser(
     let msg_err = |err: &Error| format!("Failed to open URL: {err}");
 
     Notify::new(msg_init)
-        .on_success(&tracing, MixpanelEvent::WebBrowserOpened)
+        .on_success(tracing, MixpanelEvent::WebBrowserOpened)
         .map(open_in_web_browser_command(&url), msg_ok, msg_err)
 }
 
@@ -517,17 +503,27 @@ fn copy_to_clipboard_command(app: &tauri::AppHandle, text: &str) -> Result<(), E
 #[tauri::command]
 pub async fn copy_to_clipboard(
     app: tauri::AppHandle,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
+    s: tauri::State<'_, Arc<Services>>,
     text: String,
     uri: Option<S3PackageUri>,
+) -> Result<String, String> {
+    copy_to_clipboard_with(&app, &s, &text, uri.as_ref())
+}
+
+/// [`copy_to_clipboard`] without Tauri's injection, for the socket.
+pub fn copy_to_clipboard_with(
+    app: &tauri::AppHandle,
+    s: &Services,
+    text: &str,
+    uri: Option<&S3PackageUri>,
 ) -> Result<String, String> {
     let msg_init = format!("Copying to clipboard: {text}");
     let msg_ok = "Successfully copied to clipboard".to_string();
     let msg_err = |err: &Error| format!("Failed to copy to clipboard: {err}");
 
     Notify::new(msg_init)
-        .on_success(&tracing, copied_event(uri.as_ref()))
-        .map(copy_to_clipboard_command(&app, &text), msg_ok, msg_err)
+        .on_success(&s.telemetry, copied_event(uri))
+        .map(copy_to_clipboard_command(app, text), msg_ok, msg_err)
 }
 
 /// A package's address when `uri` names no file, a file's otherwise.
@@ -545,18 +541,15 @@ async fn setup_command(m: &model::Model, directory: &str) -> Result<quilt::linea
     m.set_home(&directory).await
 }
 
-#[tauri::command]
-pub async fn setup(
-    m: tauri::State<'_, model::Model>,
-    tracing: tauri::State<'_, crate::telemetry::Telemetry>,
-    directory: String,
-) -> Result<String, String> {
+pub async fn setup(s: &Services, directory: String) -> Result<String, String> {
+    let m = &*s.model;
+    let tracing = &*s.telemetry;
     let msg_init = format!("Setup with directory {directory}");
     let msg_ok = format!("Successfully set up directory: {directory}");
     let msg_err = |err: &Error| format!("Failed to create QuiltSync directory: {err}");
     Notify::new(msg_init)
-        .on_success(&tracing, MixpanelEvent::SetupCompleted)
-        .map(setup_command(&m, &directory).await, msg_ok, msg_err)
+        .on_success(tracing, MixpanelEvent::SetupCompleted)
+        .map(setup_command(m, &directory).await, msg_ok, msg_err)
 }
 
 // ── Auto-update ────────────────────────────────────────────
@@ -630,18 +623,38 @@ fn bounded(message: &str) -> String {
 /// a breadcrumb; the explicit report is what becomes an issue. Logging it at `error!`
 /// instead would file a *second* issue through the crash-sink layer, since that is
 /// what an error-level event does — one panic, two reports.
-#[tauri::command]
 #[allow(
-    clippy::needless_pass_by_value,
-    reason = "Tauri's command macro dictates the signature: an argument is deserialized \
-              into an owned value and state is injected by value. Sync rather than async \
-              because there is nothing to await, and an async command taking state would \
-              have to return a Result it could never populate."
+    clippy::unused_async,
+    reason = "every plain command is async, so the IPC wrappers and the dispatcher treat them alike"
 )]
-pub fn report_ui_panic(message: String, tracing: tauri::State<'_, crate::telemetry::Telemetry>) {
+pub async fn report_ui_panic(s: &Services, message: String) -> Result<(), String> {
     let message = bounded(&message);
     warn!("UI panic: {message}");
-    tracing.report_ui_panic(&message);
+    s.telemetry.report_ui_panic(&message);
+    Ok(())
+}
+
+/// A timing run's results from the page (see `WEB-MVP.md`): appended to
+/// `bench-report.txt` in the data folder.
+/// Save a fresh browser token in the data folder. It takes effect at the next
+/// start: the running server keeps the token it started with, and tabs opened
+/// with the old link stop reconnecting after that start.
+pub async fn reset_web_token(_s: &Services) -> Result<(), String> {
+    crate::engine_lock::reset_web_token().map_err(|err| err.to_string())
+}
+
+pub async fn bench_report(s: &Services, text: String) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    println!("{text}");
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(s.data_dir.join("bench-report.txt"))
+        .await
+        .map_err(|e| e.to_string())?;
+    file.write_all(format!("{text}\n").as_bytes())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
