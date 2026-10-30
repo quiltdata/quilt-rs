@@ -38,10 +38,15 @@ just -l
 targets. CI checks all three, so a clean `just lint` leaves nothing for it to
 reject. `just fmt` is the half that writes, over the same file set.
 
-`just ci` runs everything the CI workflows check, in one command, for use just
-before you push. It includes the live AWS tests, so it needs AWS credentials;
-without AWS access, run the individual recipes instead (`just lint`, `just test`,
-`just test frontend`).
+While working, run only the tests you touch:
+`just test no-aws -E 'package(quilt-rs)'` for one crate, or `-E 'test(name)'`
+for one test. Before a push, run `just ci`.
+
+`just ci` runs everything CI checks, in one command, for use just before you
+push. CI runs the same recipes, some with a narrower scope, and on a pull
+request it skips the jobs the changed files cannot affect. `just ci` includes
+the live AWS tests, so it needs AWS credentials; without AWS access, run the
+individual recipes instead (`just lint`, `just test`, `just test frontend`).
 
 QuiltSync's frontend is a Rust-to-WebAssembly crate built by Trunk, so `just
 gallery` (the component gallery in a browser) and `just app dev` (the desktop
@@ -145,14 +150,21 @@ of anything that weakens security, and review will say so where it is not. But
 a pull request missing any of these will be sent back, so they are the cheap
 ones to check first.
 
-**CI is green.** Which checks run depends on what you touched: the Rust
-workflows ignore markdown-only changes, `test-quilt-rs` also ignores
-`quilt-sync/**`, and the markdown lint fires only on `*.md`. A pull request
-tests on Linux only: the macOS and Windows jobs run on `main` and never appear
-on a pull request at all. So read the check list for what is there, not for
-the absence of red — a check that never ran is not a check that passed. A
-fork gets the same set as a branch here, minus the `live_*` tests, which are
-skipped rather than failed (see "Tests that need AWS" above).
+**CI is green.** Which checks run depends on what you touched: the Rust jobs
+skip markdown-only changes, the `crates` jobs also skip `quilt-sync/**`, the
+frontend job runs only when the UI or something it builds from changes, and
+the markdown lint runs only on `*.md`. A pull request
+tests on Linux only: the macOS and Windows jobs show as skipped. So read the
+check list for what is there, not for the absence of red — a check that never
+ran is not a check that passed. A fork gets the same set as a branch here,
+minus the `live_*` tests, which are skipped rather than failed (see "Tests that
+need AWS" above). The one required check, `all checks`, passes when no job
+failed.
+
+A maintainer merges with "Merge when ready", which puts the pull request in
+the merge queue. The queue tests `main` plus the pull request with every job on
+every OS, and `main` moves only if that passes. So an OS-specific bug stops the
+merge rather than showing up on `main` after it.
 
 **Every review comment is resolved, and @greptileai is at 5/5.** Reviews come
 from Greptile and Copilot as well as from maintainers. The bots are usually

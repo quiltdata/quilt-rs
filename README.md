@@ -5,7 +5,7 @@ your scripts and AI agents read and write real revisions: each one immutable
 and content-addressed, pushable to S3 when you want it shared. No server and
 no cloud credentials required to start.
 
-[![CI](https://github.com/quiltdata/quilt-rs/actions/workflows/test-quilt-rs.yaml/badge.svg)](https://github.com/quiltdata/quilt-rs/actions/workflows/test-quilt-rs.yaml)
+[![CI](https://github.com/quiltdata/quilt-rs/actions/workflows/test.yaml/badge.svg)](https://github.com/quiltdata/quilt-rs/actions/workflows/test.yaml)
 [![crates.io](https://img.shields.io/crates/v/quilt-cli.svg)](https://crates.io/crates/quilt-cli)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
