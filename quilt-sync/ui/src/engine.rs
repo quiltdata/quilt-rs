@@ -45,6 +45,8 @@ thread_local! {
 /// Once, before the router reads the address: a link's token leaves it here.
 pub fn start() {
     let token = browser::read_link();
+    // Now, so a duplicate of this tab can't copy its id.
+    browser::page_id();
     LINKED.set(token.is_some());
     match token {
         Some(browser::Token::Kept(token)) => {

@@ -76,23 +76,36 @@ thread_local! {
 }
 
 /// This page's id: `window` for the desktop window, or one this tab makes up.
-/// Kept in the tab's session storage, so a reload during a login still finds
-/// where the login sent it.
+/// The page takes it out of the tab's session storage while it runs and puts
+/// it back as it leaves, so a reload or a login's redirect finds it, while a
+/// duplicated tab, which copies a running tab's storage, makes its own.
 pub(super) fn page_id() -> String {
     PAGE_ID.with_borrow_mut(|id| {
         id.get_or_insert_with(|| {
-            let session = web_sys::window().and_then(|w| w.session_storage().ok().flatten());
-            if let Some(kept) = session
+            let window = web_sys::window();
+            let session = window
                 .as_ref()
-                .and_then(|s| s.get_item(PAGE_KEY).ok().flatten())
-            {
-                return kept;
-            }
-            // Random enough to tell a user's tabs apart; nothing rests on it.
-            let random = js_sys::Math::random().to_string();
-            let made = format!("tab-{}", random.trim_start_matches("0."));
-            if let Some(session) = session {
-                let _ = session.set_item(PAGE_KEY, &made);
+                .and_then(|w| w.session_storage().ok().flatten());
+            let kept = session.as_ref().and_then(|s| {
+                let kept = s.get_item(PAGE_KEY).ok().flatten();
+                let _ = s.remove_item(PAGE_KEY);
+                kept
+            });
+            let made = kept.unwrap_or_else(|| {
+                // Random enough to tell a user's tabs apart; nothing rests on it.
+                let random = js_sys::Math::random().to_string();
+                format!("tab-{}", random.trim_start_matches("0."))
+            });
+            if let (Some(window), Some(session)) = (window, session) {
+                let id = made.clone();
+                let put_back = Closure::<dyn Fn()>::new(move || {
+                    let _ = session.set_item(PAGE_KEY, &id);
+                });
+                let _ = window.add_event_listener_with_callback(
+                    "pagehide",
+                    put_back.as_ref().unchecked_ref(),
+                );
+                put_back.forget();
             }
             made
         })
