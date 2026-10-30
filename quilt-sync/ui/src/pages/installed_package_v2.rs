@@ -4152,6 +4152,12 @@ mod tests {
         find(el, &format!(".{}", sheets::layout::root))
     }
 
+    /// Layout rounds to fractions of a pixel, differently at different
+    /// offsets in the shared test document.
+    fn assert_near(left: f64, right: f64, what: &str) {
+        assert!((left - right).abs() < 0.01, "{what}: {left} vs {right}");
+    }
+
     /// The header stays under the appbar, the file pane's search and toolbar
     /// under the header, and the context pane beside them, while the rows
     /// scroll the page.
@@ -4160,13 +4166,13 @@ mod tests {
         let el = scrolling_page(1024, 200, plain_rows());
         sleep_ms(50).await;
         let frame = frame(&el);
-        assert_eq!(
+        assert_near(
             find(&el, &format!(".{}", style::header))
                 .get_bounding_client_rect()
                 .top()
                 - frame.get_bounding_client_rect().top(),
             48.0,
-            "before any scroll the header already rests where it sticks"
+            "before any scroll the header already rests where it sticks",
         );
         frame.set_scroll_top(1000);
         sleep_ms(50).await;
@@ -4176,16 +4182,16 @@ mod tests {
         let header = rect(&format!(".{}", style::header));
         let band = rect(&format!(".{}", sheets::files::band));
         let pane = rect("aside");
-        assert_eq!(
+        assert_near(
             header.top() - origin,
             48.0,
-            "the header stays under the appbar"
+            "the header stays under the appbar",
         );
-        assert_eq!(band.top(), header.bottom(), "the toolbar under the header");
-        assert_eq!(
+        assert_near(band.top(), header.bottom(), "the toolbar under the header");
+        assert_near(
             pane.top(),
             header.bottom() + 12.0,
-            "the pane beside it, the shell's gap under the header"
+            "the pane beside it, the shell's gap under the header",
         );
     }
 
@@ -4211,19 +4217,19 @@ mod tests {
             .get_bounding_client_rect()
             .height();
         let resting = header_top();
-        assert_eq!(resting, 48.0 + row, "the header rests under the banner row");
+        assert_near(resting, 48.0 + row, "the header rests under the banner row");
         frame.set_scroll_top(1000);
         sleep_ms(50).await;
         assert_eq!(frame.scroll_top(), 1000, "the frame scrolls the page");
-        assert_eq!(
+        assert_near(
             find(&el, "[data-banner]")
                 .get_bounding_client_rect()
                 .bottom()
                 - frame.get_bounding_client_rect().top(),
             48.0 + row,
-            "the banner stays under the appbar"
+            "the banner stays under the appbar",
         );
-        assert_eq!(header_top(), resting, "and the header under the banner");
+        assert_near(header_top(), resting, "and the header under the banner");
     }
 
     /// A banner taller than a third of the window scrolls inside, so the page
@@ -4320,8 +4326,12 @@ mod tests {
             find(&el, "aside").get_bounding_client_rect().bottom() < origin,
             "the pane went up with the page"
         );
-        assert_eq!(header.top() - origin, 48.0);
-        assert_eq!(band.top(), header.bottom());
+        assert_near(
+            header.top() - origin,
+            48.0,
+            "the header stays under the appbar",
+        );
+        assert_near(band.top(), header.bottom(), "the toolbar under the header");
     }
 
     /// While something is ticked the footer stays at the bottom of the window
@@ -4334,10 +4344,10 @@ mod tests {
         sleep_ms(250).await;
         let frame = frame(&el);
         let footer = find(&el, &format!(".{}", sheets::files::footer));
-        assert_eq!(
+        assert_near(
             footer.get_bounding_client_rect().bottom(),
             frame.get_bounding_client_rect().bottom(),
-            "the footer is on the window's bottom edge"
+            "the footer is on the window's bottom edge",
         );
         let padding = web_sys::window()
             .unwrap()
@@ -4362,10 +4372,10 @@ mod tests {
         sleep_ms(250).await;
         let frame = frame(&el);
         let footer = find(&el, &format!(".{}", sheets::files::footer));
-        assert_eq!(
+        assert_near(
             footer.get_bounding_client_rect().bottom(),
             frame.get_bounding_client_rect().bottom() - 32.0,
-            "the footer ends where the page's bottom padding starts"
+            "the footer ends where the page's bottom padding starts",
         );
     }
 
@@ -4444,10 +4454,10 @@ mod tests {
         let heading = find(&el, &format!(".{}", sheets::group::head));
         let rect = heading.get_bounding_client_rect();
         let band = find(&el, &format!(".{}", sheets::files::band)).get_bounding_client_rect();
-        assert_eq!(
+        assert_near(
             rect.top(),
             band.bottom(),
-            "the heading sticks under the toolbar"
+            "the heading sticks under the toolbar",
         );
         #[allow(clippy::cast_possible_truncation, reason = "a point on screen")]
         let hit = web_sys::window()
