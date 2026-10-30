@@ -1,22 +1,13 @@
-# The crates a test `scope` selects. `all` is every crate that tests on the
-# host, with every target. CI tests the rest apart: `crates`, the ones
-# published to crates.io, on a runner without Tauri's system libraries; `sync`,
-# QuiltSync's backend; `ui`, the frontend's host tests.
+# The cargo flags that pick what `no-aws` and `live` test: every crate that
+# tests on the host, with every target, unless CI narrows it for a job.
 #
 # `quilt-sync-ui` has tests for two targets, and neither harness runs the
-# other's: its `#[test]` functions run on the host, in `all` and `ui`, and its
-# `#[wasm_bindgen_test]` ones run in `just test frontend`. DOM tests cannot run
-# on the host, because `mount_to` and similar helpers are wasm-bindgen bindings
-# into JS. Pure-logic tests could move to wasm instead. Once v1 is deleted only
-# about twenty host tests remain, and converting them and dropping the host run
-# becomes the cheaper option.
-#
-# `--lib --bins`, not `--bin quilt-sync-ui`: most of the tests are in the
-# library target, and `--bin` alone runs only the few in the binary.
-all := "--workspace --all-targets"
-crates := "--workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui"
-sync := "-p quilt-sync --all-targets"
-ui := "-p quilt-sync-ui --lib --bins"
+# other's: its `#[test]` functions run here, and its `#[wasm_bindgen_test]`
+# ones run in `just test frontend`.
+export SCOPE := env("SCOPE", "--workspace --all-targets")
+
+# The nextest filterset `live` runs; CI narrows it to split reads from writes.
+export LIVE := env("LIVE", "test(/::live_/)")
 
 # The timeout limits only the wait for the tests to finish; browser start and
 # page load have their own limits. Past it the runner fails with "Failed to
@@ -28,17 +19,15 @@ wasm_timeout := "180"
 # recipe warns but passes, so growth shows long before the timeout.
 wasm_budget := "75"
 
-# `shift` drops the scope, so only the arguments after it reach nextest.
-#
-# Run the tests of `scope` (all, crates, sync or ui) needing no AWS credentials (what a fork's CI runs); arguments go to nextest
+# Run the tests needing no AWS credentials (what a fork's CI runs); arguments go to nextest
 [positional-arguments]
-no-aws scope="all" *args:
-    shift && cargo nextest run --profile no-aws {{ if scope == "all" { all } else if scope == "crates" { crates } else if scope == "sync" { sync } else if scope == "ui" { ui } else { error("scope is all, crates, sync or ui") } }} "$@"
+no-aws *args:
+    cargo nextest run --profile no-aws $SCOPE "$@"
 
-# Run the live_* fixture tests of `scope`, which need AWS credentials, narrowed by the nextest `filter`; arguments go to nextest
+# Run only the live_* fixture tests, which need AWS credentials; arguments go to nextest
 [positional-arguments]
-live scope="all" filter="all()" *args:
-    shift 2 && cargo nextest run {{ if scope == "all" { all } else if scope == "crates" { crates } else if scope == "sync" { sync } else if scope == "ui" { ui } else { error("scope is all, crates, sync or ui") } }} -E {{ quote("test(/::live_/) and (" + filter + ")") }} "$@"
+live *args:
+    cargo nextest run $SCOPE -E "$LIVE" "$@"
 
 # nextest does not run doctests. The QuiltSync crates are left out: CI's runner
 # for them cannot build them.

@@ -123,6 +123,9 @@ jobs:
     if: needs.changes.outputs.crates == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      # The crates above, for the recipes' cargo commands.
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -138,7 +141,7 @@ jobs:
           tool: nextest,just
 
       - name: Format, lint and wasm check
-        run: just check crates
+        run: just check wasm-check
 
       # Split in two so a fork pull request is not a different, quieter run of
       # the same step. Everything that needs no credentials runs everywhere;
@@ -146,15 +149,16 @@ jobs:
       # secrets. With `live-writes`, the selections partition the suite — none
       # overlaps.
       - name: Test
-        run: just test no-aws crates
+        run: just test no-aws
 
       - name: Test (live AWS fixtures)
         # Secrets reach a pull request only from a branch in this repository —
         # a platform rule, so this is a skip, not a failure.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        # The tests that write to S3 run in `live-writes`.
-        run: just test live crates 'not test(/::live_write_/)'
+        run: just test live
         env:
+          # The tests that write to S3 run in `live-writes`.
+          LIVE: test(/::live_/) and not test(/::live_write_/)
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
@@ -176,6 +180,9 @@ jobs:
         platform: [macos-15, windows-latest]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 45
+    env:
+      # Same crates as `crates`, for the reason given there.
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
     # Bash on Windows too: `just` runs recipe lines with `sh`, which Git Bash
     # puts on the PATH.
     defaults:
@@ -198,20 +205,21 @@ jobs:
       # The only lint of code built for this OS alone. Linux cannot lint it
       # for the other target: aws-lc-rs compiles C for the target it builds.
       - name: Lint
-        run: just clippy crates
+        run: just clippy
 
       # `--no-fail-fast`, and every step runs after a failure: one run should
       # list every failure, not just the first.
       - name: Test
         if: ${{ !cancelled() }}
-        run: just test no-aws crates --no-fail-fast
+        run: just test no-aws --no-fail-fast
 
       - name: Test (live AWS fixtures)
         # Same rule as in `crates`.
         if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-        # The tests that write to S3 run in `live-writes`.
-        run: just test live crates 'not test(/::live_write_/)' --no-fail-fast
+        run: just test live --no-fail-fast
         env:
+          # The tests that write to S3 run in `live-writes`.
+          LIVE: test(/::live_/) and not test(/::live_write_/)
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
@@ -237,6 +245,9 @@ jobs:
         platform: ${{ github.ref == 'refs/heads/main' && fromJSON('["ubuntu-24.04", "windows-latest"]') || fromJSON('["ubuntu-24.04"]') }}
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 45
+    env:
+      # Same crates as `crates`, for the reason given there.
+      SCOPE: --workspace --all-targets --exclude quilt-sync --exclude quilt-sync-ui
     defaults:
       run:
         shell: bash
@@ -253,8 +264,9 @@ jobs:
           tool: nextest,just
 
       - name: Test (live AWS fixture writes)
-        run: just test live crates 'test(/::live_write_/)' --no-fail-fast
+        run: just test live --no-fail-fast
         env:
+          LIVE: test(/::live_write_/)
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
@@ -287,6 +299,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
+      # QuiltSync's backend, for the recipes' cargo commands.
+      SCOPE: -p quilt-sync --all-targets
       # Use mold linker on Linux to avoid OOM crashes on memory-constrained CI runners
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
@@ -305,18 +319,18 @@ jobs:
           tool: nextest,just
 
       - name: Format and lint
-        run: just check sync
+        run: just check
 
       # Two steps, for the reason given in `crates`.
       - name: Test
-        run: just test no-aws sync
+        run: just test no-aws
         env:
           RUST_LOG: debug
 
       - name: Test (live AWS fixtures)
         # Same rule as in `crates`.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        run: just test live sync
+        run: just test live
         env:
           RUST_LOG: debug
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -333,6 +347,9 @@ jobs:
         platform: [macos-15, windows-latest]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 30
+    env:
+      # Same crate as `quilt-sync`.
+      SCOPE: -p quilt-sync --all-targets
     defaults:
       run:
         shell: bash
@@ -352,17 +369,17 @@ jobs:
           tool: nextest,just
 
       - name: Lint
-        run: just clippy sync
+        run: just clippy
 
       # Runs after a lint failure too, so one run lists both.
       - name: Test
         if: ${{ !cancelled() }}
-        run: just test no-aws sync
+        run: just test no-aws
 
   frontend:
     name: frontend
     # `quilt-sync-ui`, when a pull request changes it or anything it builds
-    # from (`just changes`).
+    # from.
     needs: changes
     if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-24.04
@@ -407,15 +424,32 @@ jobs:
           tool: stylance-cli@0.8.4
 
       - name: Format and lint
-        run: just check ui
+        run: just check
+        env:
+          # The frontend is built for wasm.
+          SCOPE: --target wasm32-unknown-unknown -p quilt-sync-ui --all-targets
 
       # The wasm tests warn, and stay green, when they outgrow their time
       # budget (test.just).
       - name: Test (wasm)
         run: just test frontend
 
+      # This crate has tests for two targets, and neither harness runs the
+      # other's: `wasm-bindgen-test-runner` runs only `#[wasm_bindgen_test]`, and
+      # libtest runs only `#[test]`. The step above runs the wasm tests; this step
+      # runs the host tests. Without it, no `#[test]` in this crate runs in CI.
+      #
+      # DOM tests cannot run here, because `mount_to` and similar helpers are
+      # wasm-bindgen bindings into JS. Pure-logic tests could move to wasm
+      # instead. Once v1 is deleted only about twenty host tests remain, and
+      # converting them and removing this step becomes the cheaper option.
+      #
+      # `--lib --bins`, not `--bin quilt-sync-ui`: most of the tests are in the
+      # library target, and `--bin` alone runs only the few in the binary.
       - name: Test (host target)
-        run: just test no-aws ui
+        run: just test no-aws
+        env:
+          SCOPE: -p quilt-sync-ui --lib --bins
 
       - name: Build
         run: just release-build

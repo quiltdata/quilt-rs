@@ -78,7 +78,7 @@ To work on one crate, narrow the tests you run rather than the packages you
 build:
 
 ```bash
-just test no-aws all -E 'test(name)'    # one test, against the workspace build
+just test no-aws -E 'test(name)'    # one test, against the workspace build
 ```
 
 `-p` reads as the cheaper choice and is not, once you switch back. Cargo
