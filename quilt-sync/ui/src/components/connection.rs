@@ -1,6 +1,9 @@
 //! What the page shows of its connection to the engine, and what the engine
 //! asks of every page.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
@@ -53,29 +56,25 @@ pub fn NoLink() -> impl IntoView {
 #[component]
 pub fn FollowEngine() -> impl IntoView {
     let navigate = use_navigate();
+    // One follow at a time, so an older answer can't land after a newer one; a
+    // nudge during a follow makes it ask once more.
+    let busy = Rc::new(Cell::new(false));
+    let again = Rc::new(Cell::new(false));
     let go = move || {
-        let navigate = navigate.clone();
+        if busy.replace(true) {
+            again.set(true);
+            return;
+        }
+        let (busy, again, navigate) = (Rc::clone(&busy), Rc::clone(&again), navigate.clone());
         leptos::task::spawn_local(async move {
-            let Ok(Some(sent)) = commands::pending_navigation().await else {
-                return;
-            };
-            // Said to be done before going, as a reload would cut it off; if
-            // the reply is lost the engine sends it again, and this page skips
-            // it.
-            let first = remember(&sent.id);
-            let _ = commands::navigation_done(sent.id).await;
-            if !first {
-                return;
-            }
-            // The router ignores a move to where the page already is, so
-            // opening the same link again reloads, which runs it again.
-            if Some(&sent.page) == here().as_ref() {
-                if let Some(window) = web_sys::window() {
-                    let _ = window.location().reload();
+            loop {
+                again.set(false);
+                follow(&navigate).await;
+                if !again.get() {
+                    break;
                 }
-            } else {
-                navigate(&sent.page, NavigateOptions::default());
             }
+            busy.set(false);
         });
     };
     let listener = engine::listen_then::<serde::de::IgnoredAny>(
@@ -87,6 +86,28 @@ pub fn FollowEngine() -> impl IntoView {
         go,
     );
     on_cleanup(move || drop(listener));
+}
+
+/// Go where the engine sent this page, if anywhere, and say so.
+async fn follow(navigate: &impl Fn(&str, NavigateOptions)) {
+    let Ok(Some(sent)) = commands::pending_navigation().await else {
+        return;
+    };
+    // Noted and gone in one step, with no wait between, so a reload can't come
+    // after one and before the other. A reply to the done that's lost brings
+    // it again, and the page skips it.
+    if remember(&sent.id) {
+        // The router ignores a move to where the page already is, so opening
+        // the same link again reloads, which runs it again.
+        if Some(&sent.page) == here().as_ref() {
+            if let Some(window) = web_sys::window() {
+                let _ = window.location().reload();
+            }
+        } else {
+            navigate(&sent.page, NavigateOptions::default());
+        }
+    }
+    let _ = commands::navigation_done(sent.id).await;
 }
 
 /// Where this tab keeps the last navigation it followed, across its reloads.
@@ -223,6 +244,37 @@ mod tests {
             Some(&before),
         );
         // Else it asks again at every later test's connect.
+        unmount_earlier();
+    }
+
+    /// Nudges while the page is still asking make it ask once more after, not
+    /// once each at the same time, so an older answer can't land last.
+    #[wasm_bindgen_test]
+    async fn nudges_during_an_ask_make_one_more_ask() {
+        unmount_earlier();
+        let engine = FakeEngine::install();
+        mount(
+            || view! { <leptos_router::components::Router><FollowEngine /></leptos_router::components::Router> },
+        );
+        sleep_ms(0).await;
+        engine.hello();
+        sleep_ms(0).await;
+        assert_eq!(engine.requests().len(), 1);
+
+        engine.event(crate::commands::NAVIGATE_EVENT, &serde_json::Value::Null);
+        engine.event(crate::commands::NAVIGATE_EVENT, &serde_json::Value::Null);
+        sleep_ms(0).await;
+        assert_eq!(engine.requests().len(), 1, "no second ask while one waits");
+
+        engine.reply(&engine.requests()[0]["id"], &serde_json::Value::Null);
+        sleep_ms(0).await;
+        let requests = engine.requests();
+        assert_eq!(requests.len(), 2, "one more ask for both nudges");
+        assert_eq!(requests[1]["cmd"], "pending_navigation");
+        engine.reply(&requests[1]["id"], &serde_json::Value::Null);
+        sleep_ms(0).await;
+        assert_eq!(engine.requests().len(), 2);
+
         unmount_earlier();
     }
 
