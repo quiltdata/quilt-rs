@@ -70,7 +70,7 @@ pub(crate) fn RelayScreen(read: PageRead<String>) -> impl IntoView {
         in_flight,
         ..
     } = page;
-    let answer = page.read(key, read);
+    let answer = page.run(key, read);
 
     // On to the package. Sign-in and setup are the scaffold's, as for every
     // v2 page.

@@ -39,22 +39,14 @@ const NO_STORAGE: &str =
 
 thread_local! {
     static LINKED: Cell<bool> = const { Cell::new(false) };
-    /// This page's id, for the engine to send it somewhere.
-    static PAGE_ID: RefCell<Option<String>> = const { RefCell::new(None) };
 }
-
-/// The desktop window's page id; a browser tab makes up its own.
-const WINDOW: &str = "window";
 
 /// Read the token the page was opened with and choose the way to the engine.
 /// Once, before the router reads the address: a link's token leaves it here.
 pub fn start() {
-    let opened = browser::read_link();
-    LINKED.set(opened.token.is_some());
-    if opened.window {
-        PAGE_ID.set(Some(WINDOW.to_owned()));
-    }
-    match opened.token {
+    let token = browser::read_link();
+    LINKED.set(token.is_some());
+    match token {
         Some(browser::Token::Kept(token)) => {
             link::install(Some(Rc::new(browser::Browser { token })));
         }
@@ -67,16 +59,14 @@ pub fn start() {
 }
 
 /// This page's id, for the engine to send it somewhere: the desktop window's,
-/// or one made up for this tab when first asked.
+/// or one this tab made up and keeps across its reloads.
 pub fn page_id() -> String {
-    PAGE_ID.with_borrow_mut(|id| {
-        id.get_or_insert_with(|| {
-            // Random enough to tell a user's tabs apart; nothing rests on it.
-            let random = js_sys::Math::random().to_string();
-            format!("tab-{}", random.trim_start_matches("0."))
-        })
-        .clone()
-    })
+    browser::page_id()
+}
+
+/// Whether this page is the desktop window rather than a browser tab.
+pub fn is_window() -> bool {
+    page_id() == browser::WINDOW
 }
 
 /// Whether the page was given a link to the engine, now or before.

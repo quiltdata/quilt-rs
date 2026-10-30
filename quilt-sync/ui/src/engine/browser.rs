@@ -26,8 +26,11 @@ const TOKEN_KEY: &str = "quiltsync-token";
 /// Where the page notes the engine version it reloaded for, per tab.
 const RELOADED_KEY: &str = "quiltsync-reloaded-for";
 
-/// Where the desktop window notes that it is the window, for its reloads.
-const WINDOW_KEY: &str = "quiltsync-window";
+/// Where the page keeps its id across its reloads.
+const PAGE_KEY: &str = "quiltsync-page";
+
+/// The desktop window's page id; a browser tab makes up its own.
+pub(super) const WINDOW: &str = "window";
 
 /// The token this page has.
 pub(super) enum Token {
@@ -36,22 +39,10 @@ pub(super) enum Token {
     Unkept,
 }
 
-/// What the page was opened with.
-pub(super) struct Opened {
-    pub(super) token: Option<Token>,
-    /// The page is the desktop window.
-    pub(super) window: bool,
-}
-
 /// The link from the address, kept for later loads and dropped from the
 /// address; or, with none there, what was kept before.
-pub(super) fn read_link() -> Opened {
-    let Some(window) = web_sys::window() else {
-        return Opened {
-            token: None,
-            window: false,
-        };
-    };
+pub(super) fn read_link() -> Option<Token> {
+    let window = web_sys::window()?;
     let storage = window.local_storage().ok().flatten();
     let session = window.session_storage().ok().flatten();
     let link = window
@@ -66,26 +57,47 @@ pub(super) fn read_link() -> Opened {
         if link.window
             && let Some(session) = &session
         {
-            let _ = session.set_item(WINDOW_KEY, "1");
+            let _ = session.set_item(PAGE_KEY, WINDOW);
         }
         if let Ok(history) = window.history() {
             let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&link.rest));
         }
-        return Opened {
-            token: Some(if kept {
-                Token::Kept(link.token)
-            } else {
-                Token::Unkept
-            }),
-            window: link.window,
-        };
+        return Some(if kept {
+            Token::Kept(link.token)
+        } else {
+            Token::Unkept
+        });
     }
-    Opened {
-        token: storage
-            .and_then(|s| s.get_item(TOKEN_KEY).ok().flatten())
-            .map(Token::Kept),
-        window: session.is_some_and(|s| s.get_item(WINDOW_KEY).ok().flatten().is_some()),
-    }
+    storage?.get_item(TOKEN_KEY).ok().flatten().map(Token::Kept)
+}
+
+thread_local! {
+    static PAGE_ID: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// This page's id: `window` for the desktop window, or one this tab makes up.
+/// Kept in the tab's session storage, so a reload during a login still finds
+/// where the login sent it.
+pub(super) fn page_id() -> String {
+    PAGE_ID.with_borrow_mut(|id| {
+        id.get_or_insert_with(|| {
+            let session = web_sys::window().and_then(|w| w.session_storage().ok().flatten());
+            if let Some(kept) = session
+                .as_ref()
+                .and_then(|s| s.get_item(PAGE_KEY).ok().flatten())
+            {
+                return kept;
+            }
+            // Random enough to tell a user's tabs apart; nothing rests on it.
+            let random = js_sys::Math::random().to_string();
+            let made = format!("tab-{}", random.trim_start_matches("0."));
+            if let Some(session) = session {
+                let _ = session.set_item(PAGE_KEY, &made);
+            }
+            made
+        })
+        .clone()
+    })
 }
 
 #[derive(Debug, PartialEq, Eq)]

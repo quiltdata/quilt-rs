@@ -346,7 +346,8 @@ saying to open the new link. An engine of another version reloads the page.
 Events sent while the socket was down are lost, so after a reconnect every v2
 page reads again (`engine::reread_on_reconnect`, used by
 `PageHandle::read` and the main page), and listeners that hydrate a state read
-again through `listen_then`. v1 pages don't.
+again through `listen_then`. v1 pages don't. A relay page whose read is its
+operation uses `PageHandle::run`, which never runs again on its own.
 
 ### Typed wrappers (`commands.rs`)
 

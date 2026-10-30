@@ -85,9 +85,15 @@ pub fn QuitPromptCard(
 
 /// App-level listener. Mounted once beside the other app-level surfaces, so a
 /// quit is answerable from whatever screen is open.
+///
+/// The desktop window's alone: quitting is the desktop app's, and one prompt
+/// can't be answered in one tab and left standing in another.
 #[component]
 pub fn QuitPrompt() -> impl IntoView {
     let visible = RwSignal::new(false);
+    if !engine::is_window() {
+        return None;
+    }
 
     let listener = engine::listen::<u64>(QUIT_PROMPT_EVENT, move |generation| {
         visible.set(true);
@@ -119,11 +125,11 @@ pub fn QuitPrompt() -> impl IntoView {
         });
     };
 
-    move || {
+    Some(move || {
         visible
             .get()
             .then(|| view! { <QuitPromptCard on_quit=on_quit on_stay=on_stay /> })
-    }
+    })
 }
 
 #[cfg(test)]

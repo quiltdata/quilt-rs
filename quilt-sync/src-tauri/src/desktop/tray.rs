@@ -154,8 +154,8 @@ fn apply_status(tray: &TrayIcon, status: &SyncTrayStatus) {
     let _ = tray.set_tooltip(Some(&tooltip));
 }
 
-/// Event the window and every tab listen for to raise the prompt. Kept in
-/// lockstep with the UI's `listen(...)` call.
+/// Event the window listens for to raise the prompt; a browser tab doesn't.
+/// Kept in lockstep with the UI's `listen(...)` call.
 const QUIT_PROMPT_EVENT: &str = "quit-prompt";
 
 /// How long a raised prompt has to report itself on screen before the quit is

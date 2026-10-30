@@ -102,6 +102,24 @@ impl PageHandle {
     where
         T: Clone + PartialEq + Send + Sync + 'static,
     {
+        crate::engine::reread_on_reconnect(self.reload);
+        self.answer(key, read)
+    }
+
+    /// [`Self::read`] for a page whose read is its operation, as a relay's: run
+    /// once per address, and never again on its own after a reconnect, since
+    /// the first run may still be going on the engine.
+    pub fn run<T>(self, key: Memo<String>, op: PageRead<T>) -> Memo<Option<Result<T, String>>>
+    where
+        T: Clone + PartialEq + Send + Sync + 'static,
+    {
+        self.answer(key, op)
+    }
+
+    fn answer<T>(self, key: Memo<String>, read: PageRead<T>) -> Memo<Option<Result<T, String>>>
+    where
+        T: Clone + PartialEq + Send + Sync + 'static,
+    {
         let Self {
             reload,
             in_flight,
@@ -110,7 +128,6 @@ impl PageHandle {
         } = self;
         let landed = RwSignal::new(None::<(String, Result<T, String>)>);
         let reads = StoredValue::new(0_u64);
-        crate::engine::reread_on_reconnect(reload);
         Effect::new(move |_| {
             reload.track();
             let asked = key.get();
@@ -328,6 +345,43 @@ mod tests {
     use crate::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
+
+    thread_local! {
+        static CALLS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    fn counted(_: String) -> std::pin::Pin<Box<dyn Future<Output = Result<u32, String>>>> {
+        CALLS.with(|c| c.set(c.get() + 1));
+        Box::pin(async { Ok(1) })
+    }
+
+    /// After a reconnect a page reads again; a relay, whose read is its
+    /// operation, does not run again on its own.
+    #[wasm_bindgen_test]
+    async fn a_reconnect_reads_a_page_again_but_never_reruns_a_relay() {
+        for (relay, expected) in [(false, 2), (true, 1)] {
+            CALLS.with(|c| c.set(0));
+            let engine = crate::engine::fake::FakeEngine::install();
+            mount(move || {
+                let key = Memo::new(|_| "k".to_string());
+                let page = PageHandle::new();
+                let _answer = if relay {
+                    page.run(key, counted)
+                } else {
+                    page.read(key, counted)
+                };
+            });
+            let _listener = crate::engine::listen::<serde_json::Value>("toast", |_| ());
+            sleep_ms(0).await;
+            engine.hello();
+            engine.close();
+            sleep_ms(0).await;
+            engine.hello();
+            sleep_ms(0).await;
+            assert_eq!(CALLS.with(std::cell::Cell::get), expected, "relay: {relay}");
+            unmount_earlier();
+        }
+    }
 
     thread_local! {
         static READS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
