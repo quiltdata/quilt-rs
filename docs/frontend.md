@@ -333,8 +333,10 @@ tab as `{"event", "payload"}`. The engine's command table
 After a login or a deep link the engine sends one page somewhere, not every
 page: the page a link lands on may run its operation as it opens. Each page has
 an id (the desktop window's is `window`); the engine keeps the address for that
-id and nudges every page with `navigate`, and the page it is for takes it with
-`take_navigation`, at the nudge or when it next connects.
+id and nudges every page with `navigate`, and the page it is for asks with
+`pending_navigation`, at the nudge or when it next connects. The engine keeps
+the address until the page says it went (`navigation_done`), so a reply lost to
+a dropped socket is asked for again; the page skips an id it already followed.
 
 The connection (`engine/link.rs`) knows nothing of the socket
 (`engine/browser.rs`), so another transport or a test's fake

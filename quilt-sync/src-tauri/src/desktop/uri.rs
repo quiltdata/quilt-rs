@@ -270,12 +270,16 @@ mod tests {
         navigate(&services, Some("a-tab"), routes::Paths::Settings);
         navigate(&services, None, routes::Paths::Home);
         assert_eq!(
-            services.navigations.take("a-tab").as_deref(),
-            Some("/settings")
+            services.navigations.pending("a-tab").unwrap().page,
+            "/settings"
         );
         assert_eq!(
-            services.navigations.take(navigation::WINDOW).as_deref(),
-            Some("/")
+            services
+                .navigations
+                .pending(navigation::WINDOW)
+                .unwrap()
+                .page,
+            "/"
         );
     }
 

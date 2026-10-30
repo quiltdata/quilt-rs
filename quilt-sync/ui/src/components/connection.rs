@@ -56,16 +56,25 @@ pub fn FollowEngine() -> impl IntoView {
     let go = move || {
         let navigate = navigate.clone();
         leptos::task::spawn_local(async move {
-            if let Ok(Some(page)) = commands::take_navigation().await {
-                // The router ignores a move to where the page already is, so
-                // opening the same link again reloads, which runs it again.
-                if Some(&page) == here().as_ref() {
-                    if let Some(window) = web_sys::window() {
-                        let _ = window.location().reload();
-                    }
-                } else {
-                    navigate(&page, NavigateOptions::default());
+            let Ok(Some(sent)) = commands::pending_navigation().await else {
+                return;
+            };
+            // Said to be done before going, as a reload would cut it off; if
+            // the reply is lost the engine sends it again, and this page skips
+            // it.
+            let first = remember(&sent.id);
+            let _ = commands::navigation_done(sent.id).await;
+            if !first {
+                return;
+            }
+            // The router ignores a move to where the page already is, so
+            // opening the same link again reloads, which runs it again.
+            if Some(&sent.page) == here().as_ref() {
+                if let Some(window) = web_sys::window() {
+                    let _ = window.location().reload();
                 }
+            } else {
+                navigate(&sent.page, NavigateOptions::default());
             }
         });
     };
@@ -78,6 +87,22 @@ pub fn FollowEngine() -> impl IntoView {
         go,
     );
     on_cleanup(move || drop(listener));
+}
+
+/// Where this tab keeps the last navigation it followed, across its reloads.
+const FOLLOWED_KEY: &str = "quiltsync-followed";
+
+/// Note navigation `id` as followed; false if it already was.
+fn remember(id: &str) -> bool {
+    let session = web_sys::window().and_then(|w| w.session_storage().ok().flatten());
+    let Some(session) = session else {
+        return true;
+    };
+    if session.get_item(FOLLOWED_KEY).ok().flatten().as_deref() == Some(id) {
+        return false;
+    }
+    let _ = session.set_item(FOLLOWED_KEY, id);
+    true
 }
 
 /// The page's address, without its host.
@@ -131,12 +156,21 @@ mod tests {
         assert_eq!(alerts(&root), 1);
     }
 
-    /// The page asks where the engine sent it once it connects, takes it, and
-    /// goes there.
+    /// The page asks where the engine sent it once it connects, says it went,
+    /// and goes there; sent the same one again, as after a lost reply, it says
+    /// so again but doesn't go twice.
     #[wasm_bindgen_test]
-    async fn a_page_goes_where_the_engine_sent_it() {
+    async fn a_page_goes_where_the_engine_sent_it_once() {
+        // Routers that earlier tests left would follow the address too.
+        unmount_earlier();
         let window = web_sys::window().unwrap();
         let before = window.location().href().unwrap();
+        // Not already at the page it's sent to, which would reload the runner.
+        let _ = window.history().unwrap().replace_state_with_url(
+            &wasm_bindgen::JsValue::NULL,
+            "",
+            Some("/"),
+        );
         let engine = FakeEngine::install();
         mount(
             || view! { <leptos_router::components::Router><FollowEngine /></leptos_router::components::Router> },
@@ -145,22 +179,43 @@ mod tests {
         engine.hello();
         sleep_ms(0).await;
 
+        let sent = serde_json::json!({"id": "n1", "page": "/settings"});
         let requests = engine.requests();
         assert_eq!(requests.len(), 1, "one ask, at the hello");
-        assert_eq!(requests[0]["cmd"], "take_navigation");
+        assert_eq!(requests[0]["cmd"], "pending_navigation");
         assert_eq!(requests[0]["args"]["page"], engine::page_id());
-        engine.reply(&requests[0]["id"], &serde_json::json!("/settings"));
+        engine.reply(&requests[0]["id"], &sent);
+        sleep_ms(0).await;
+        let requests = engine.requests();
+        assert_eq!(requests[1]["cmd"], "navigation_done");
+        assert_eq!(requests[1]["args"]["id"], "n1");
+        engine.reply(&requests[1]["id"], &serde_json::Value::Null);
         sleep_ms(0).await;
         assert_eq!(window.location().pathname().unwrap(), "/settings");
 
-        // A nudge asks again.
+        let _ = window.history().unwrap().replace_state_with_url(
+            &wasm_bindgen::JsValue::NULL,
+            "",
+            Some("/"),
+        );
+
+        // A nudge asks again, and the engine still has it.
         engine.event(crate::commands::NAVIGATE_EVENT, &serde_json::Value::Null);
         sleep_ms(0).await;
         let requests = engine.requests();
-        assert_eq!(requests.len(), 2);
-        // Answered, so no ask outlives the test to take a later test's reply.
-        engine.reply(&requests[1]["id"], &serde_json::Value::Null);
+        assert_eq!(requests[2]["cmd"], "pending_navigation");
+        engine.reply(&requests[2]["id"], &sent);
         sleep_ms(0).await;
+        let requests = engine.requests();
+        assert_eq!(requests[3]["cmd"], "navigation_done");
+        engine.reply(&requests[3]["id"], &serde_json::Value::Null);
+        sleep_ms(0).await;
+        assert_eq!(
+            window.location().pathname().unwrap(),
+            "/",
+            "it doesn't go twice"
+        );
+        assert_eq!(engine.requests().len(), 4);
 
         let _ = window.history().unwrap().replace_state_with_url(
             &wasm_bindgen::JsValue::NULL,

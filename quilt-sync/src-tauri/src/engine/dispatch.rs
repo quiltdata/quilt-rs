@@ -24,6 +24,7 @@ use crate::engine::commands::{
 use crate::engine::design_settings::Design;
 use crate::engine::desktop::{Desktop, NOT_AVAILABLE};
 use crate::engine::log_settings::LogLevel;
+use crate::engine::navigation::Navigation;
 use crate::engine::quilt::flow::PullPreview;
 use crate::engine::services::Services;
 use crate::engine::tasks::settings::TaskSettings;
@@ -224,7 +225,8 @@ commands! {
         open_in_web_browser(url: String) -> String;
         setup(directory: String) -> String;
         get_toasts() -> Vec<Toast>;
-        take_navigation(page: String) -> Option<String>;
+        pending_navigation(page: String) -> Option<Navigation>;
+        navigation_done(page: String, id: String) -> ();
         dismiss_toast(id: u64) -> ();
         report_ui_panic(message: String) -> ();
         quit_prompt_shown(generation: u64) -> ();

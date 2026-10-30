@@ -1268,7 +1268,7 @@ pub const AUTOSYNC_CHANGED_EVENT: &str = "autosync-changed";
 pub const PACKAGES_CHANGED_EVENT: &str = "packages-changed";
 
 /// The engine sent a page somewhere, after a login or a deep link: each page
-/// asks [`take_navigation`] whether it was this one. Carries nothing. Kept in
+/// asks [`pending_navigation`] whether it was this one. Carries nothing. Kept in
 /// lockstep with the backend.
 pub const NAVIGATE_EVENT: &str = "navigate";
 
@@ -2023,14 +2023,33 @@ pub async fn login_oauth(host: String, back: Option<String>) -> Result<String, S
     engine::invoke("login_oauth", &Args { host, back, page }).await
 }
 
-/// Where the engine sent this page, if anywhere; once.
-pub async fn take_navigation() -> Result<Option<String>, String> {
+/// Somewhere the engine sent this page.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Navigation {
+    pub id: String,
+    /// The address, without the host.
+    pub page: String,
+}
+
+/// Where the engine sent this page, if anywhere, until it says it went.
+pub async fn pending_navigation() -> Result<Option<Navigation>, String> {
     #[derive(Serialize)]
     struct Args {
         page: String,
     }
     let page = engine::page_id();
-    engine::invoke("take_navigation", &Args { page }).await
+    engine::invoke("pending_navigation", &Args { page }).await
+}
+
+/// This page followed navigation `id`.
+pub async fn navigation_done(id: String) -> Result<(), String> {
+    #[derive(Serialize)]
+    struct Args {
+        page: String,
+        id: String,
+    }
+    let page = engine::page_id();
+    engine::invoke("navigation_done", &Args { page, id }).await
 }
 
 pub async fn erase_auth(host: String) -> Result<String, String> {
