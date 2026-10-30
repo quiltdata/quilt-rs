@@ -60,9 +60,10 @@ struct Ui;
 /// Requests one client may have running at once.
 const MAX_CALLS: usize = 32;
 
-/// Requests waiting for one of those. Past this the server reads no more from
-/// the client until one starts, so a burst slows down rather than fails.
-const CALL_BUFFER: usize = 1024;
+/// Requests waiting for one of those. Far more than a page sends at once (the
+/// main page sends one per package), so the server never stops reading: the
+/// quit prompt's answers must get through. A client that sends more is closed.
+const CALL_BUFFER: usize = 65_536;
 
 /// Answers to the quit prompt. They skip the queue: a quit waits only a moment
 /// for them before going through.
@@ -234,7 +235,8 @@ async fn session(socket: WebSocket, state: AppState) {
     let mut events = state.services.events.subscribe();
     let (mut sink, mut stream) = socket.split();
     let (replies, mut outbox) = mpsc::channel::<String>(REPLY_BUFFER);
-    // A client that sends but doesn't read fills the replies; it's closed then.
+    // A client that sends but doesn't read fills the replies, or sends far more
+    // than a page does; it's closed then.
     let overflow = Arc::new(Notify::new());
     let (waiting, mut queued) = mpsc::channel::<Call>(CALL_BUFFER);
     let hello = json!({
@@ -306,7 +308,8 @@ async fn session(socket: WebSocket, state: AppState) {
                     run(&state, &replies, &overflow, call, None);
                 }
                 Ok(call) => {
-                    if waiting.send(call).await.is_err() {
+                    if waiting.try_send(call).is_err() {
+                        overflow.notify_one();
                         break;
                     }
                 }
@@ -332,7 +335,7 @@ async fn session(socket: WebSocket, state: AppState) {
         () = writer => {}
         () = reader => {}
         () = dispatcher => {}
-        () = overflow.notified() => warn!("closing a client that doesn't read its replies"),
+        () = overflow.notified() => warn!("closing a client that can't keep up"),
     }
     info!("a client left");
 }
