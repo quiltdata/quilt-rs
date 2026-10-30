@@ -525,6 +525,24 @@ mod tests {
         assert_eq!(thousands(140_000), "140,000");
         assert_eq!(thousands(1_234_567), "1,234,567");
     }
+
+    #[test]
+    fn a_complete_package_names_its_size_and_the_files_deleted_here() {
+        let held = Held {
+            total: 340,
+            outstanding: 0,
+            deleted_here: 2,
+            size: Some(PackageSize {
+                total: 3_400_000,
+                downloaded: 3_400_000,
+                backlog: 0,
+            }),
+        };
+        assert_eq!(
+            counted(held),
+            "All files are downloaded \u{b7} 3.4\u{a0}MB \u{b7} 2 deleted here"
+        );
+    }
 }
 
 /// The sentence naming what an incoming revision brings, or `None` when it
