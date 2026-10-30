@@ -111,13 +111,14 @@ fn read_token() -> Option<Token> {
         let kept = storage
             .as_ref()
             .is_some_and(|storage| storage.set_item(TOKEN_KEY, &token).is_ok());
-        if !kept {
-            return Some(Token::Unkept);
-        }
         if let Ok(history) = window.history() {
             let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&rest));
         }
-        return Some(Token::Kept(token));
+        return Some(if kept {
+            Token::Kept(token)
+        } else {
+            Token::Unkept
+        });
     }
     storage?.get_item(TOKEN_KEY).ok().flatten().map(Token::Kept)
 }

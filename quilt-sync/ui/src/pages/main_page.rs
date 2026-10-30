@@ -1504,6 +1504,7 @@ pub fn MainPage() -> impl IntoView {
             actions=appbar_actions(move || reload.notify(), Signal::derive(move || outstanding.get() > 0))
         >
             <PackageStatusListener reload=reload />
+            <PackagesChangedListener reload=reload />
             <MainPageRegions
                 packages=packages
                 accounts=accounts
@@ -1531,6 +1532,17 @@ fn PackageStatusListener(reload: Trigger) -> impl IntoView {
     let listener = crate::tauri::listen::<commands::PackageStatusEvent>(
         commands::PACKAGE_STATUS_EVENT,
         move |event| watch.observe(&event),
+    );
+    on_cleanup(move || drop(listener));
+}
+
+/// Ask the backend again when a package is created, installed or uninstalled,
+/// here or in another window or tab.
+#[component]
+fn PackagesChangedListener(reload: Trigger) -> impl IntoView {
+    let listener = crate::tauri::listen::<serde::de::IgnoredAny>(
+        commands::PACKAGES_CHANGED_EVENT,
+        move |_| reload.notify(),
     );
     on_cleanup(move || drop(listener));
 }

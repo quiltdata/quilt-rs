@@ -577,6 +577,41 @@ mod tests {
         );
     }
 
+    /// One client creates a package; another, with its list open, hears it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_package_created_in_one_client_reaches_the_others() {
+        let running = start().await;
+        let home = tempfile::tempdir().unwrap();
+        let mut creator = connect(running.addr).await;
+        let mut watcher = connect(running.addr).await;
+        next_json(&mut creator).await;
+        next_json(&mut watcher).await;
+
+        for call in [
+            json!({"id": 1, "cmd": "setup", "args": {"directory": home.path()}}),
+            json!({"id": 2, "cmd": "package_create", "args": {"namespace": "a/b"}}),
+        ] {
+            let id = call["id"].clone();
+            creator
+                .send(tungstenite::Message::Text(call.to_string().into()))
+                .await
+                .unwrap();
+            loop {
+                let reply = next_json(&mut creator).await;
+                if reply["id"] == id {
+                    assert!(reply.get("ok").is_some(), "{reply}");
+                    break;
+                }
+            }
+        }
+
+        loop {
+            if next_json(&mut watcher).await["event"] == "packages-changed" {
+                break;
+            }
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn every_client_hears_every_event() {
         let running = start().await;
