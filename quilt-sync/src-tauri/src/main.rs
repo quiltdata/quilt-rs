@@ -57,17 +57,13 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            if let Err(err) = match argv.get(1) {
-                Some(uri_str) => {
-                    info!("Single-instance deep link: {:?}", uri_str);
-                    uri::handle_deep_link_url(app, uri_str)
+            if let Some(uri_str) = argv.get(1) {
+                info!("Single-instance deep link: {:?}", uri_str);
+                if let Err(err) = uri::handle_deep_link_url(app, uri_str) {
+                    error!("{}", err);
                 }
-                None => {
-                    tray::show_main_window(app);
-                    Ok(())
-                }
-            } {
-                error!("{}", err);
+            } else {
+                tray::show_main_window(app);
             }
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
