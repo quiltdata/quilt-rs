@@ -121,6 +121,9 @@ pub fn QuitPrompt() -> impl IntoView {
         leptos::task::spawn_local(async move {
             if let Err(err) = commands::quit_cancel().await {
                 leptos::logging::error!("quit cancel failed: {err}");
+                // The engine still waits for an answer; ask again rather than
+                // leave every later quit waiting on this one.
+                visible.try_set(true);
             }
         });
     };
