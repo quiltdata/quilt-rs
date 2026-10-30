@@ -30,8 +30,17 @@ struct PendingAuth {
     redirect_uri: String,
     client_id: String,
     state: String,
-    back: Option<String>,
+    landing: Landing,
     created_at: Instant,
+}
+
+/// Where a login lands once it succeeds.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Landing {
+    /// The page to show, as the login page was asked to return to.
+    pub back: Option<String>,
+    /// The id of the page that asked; `None` sends the window.
+    pub page: Option<String>,
 }
 
 /// The URL and related data needed to open the browser for OAuth login.
@@ -60,7 +69,7 @@ impl OAuthState {
         &self,
         host: &quilt_uri::Host,
         client_id: &str,
-        back: Option<String>,
+        landing: Landing,
     ) -> AuthorizeRequest {
         let pkce = quilt::auth::pkce_challenge();
         let redirect_uri = redirect_uri(host);
@@ -86,7 +95,7 @@ impl OAuthState {
             redirect_uri,
             client_id: client_id.to_string(),
             state: state.clone(),
-            back,
+            landing,
             created_at: Instant::now(),
         };
 
@@ -112,7 +121,7 @@ impl OAuthState {
         host: &quilt_uri::Host,
         code: String,
         state: &str,
-    ) -> Result<(quilt::auth::OAuthParams, Option<String>), Error> {
+    ) -> Result<(quilt::auth::OAuthParams, Landing), Error> {
         let host_key = host.to_string();
         let mut guard = self.pending.lock().await;
         let pending = match guard.remove(&host_key) {
@@ -155,7 +164,7 @@ impl OAuthState {
                 redirect_uri: pending.redirect_uri,
                 client_id: pending.client_id,
             },
-            pending.back,
+            pending.landing,
         ))
     }
 }
@@ -197,12 +206,24 @@ mod tests {
         tokio::time::pause();
         let oauth = OAuthState::default();
         let host = fixtures::host();
-        let req = oauth.start_login(&host, "client-id", None).await;
+        let landing = Landing {
+            back: Some("/settings".to_string()),
+            page: Some("a-tab".to_string()),
+        };
+        let req = oauth.start_login(&host, "client-id", landing).await;
         let state = extract_state(&req.authorize_url);
-        let result = oauth
+        let (_, landing) = oauth
             .take_params(&host, "auth-code".to_string(), &state)
-            .await;
-        assert!(result.is_ok());
+            .await
+            .unwrap();
+        assert_eq!(
+            landing,
+            Landing {
+                back: Some("/settings".to_string()),
+                page: Some("a-tab".to_string()),
+            },
+            "the login lands where, and for whom, it was asked"
+        );
     }
 
     #[tokio::test]
@@ -227,7 +248,9 @@ mod tests {
         tokio::time::pause();
         let oauth = OAuthState::default();
         let host = fixtures::host();
-        let req = oauth.start_login(&host, "client-id", None).await;
+        let req = oauth
+            .start_login(&host, "client-id", Landing::default())
+            .await;
         let state = extract_state(&req.authorize_url);
         tokio::time::advance(TTL + Duration::from_secs(1)).await;
         let result = oauth
@@ -250,12 +273,16 @@ mod tests {
         let host_b = fixtures::another_host();
 
         // Login for host A — will expire.
-        oauth.start_login(&host_a, "client-id", None).await;
+        oauth
+            .start_login(&host_a, "client-id", Landing::default())
+            .await;
 
         // Advance past TTL, then start a login for host B.
         // The retain in start_login should evict the stale host A entry.
         tokio::time::advance(TTL + Duration::from_secs(1)).await;
-        oauth.start_login(&host_b, "client-id", None).await;
+        oauth
+            .start_login(&host_b, "client-id", Landing::default())
+            .await;
 
         // Only host B should remain; the expired host A entry must be gone.
         let guard = oauth.pending.lock().await;

@@ -156,7 +156,7 @@ commands! {
         get_roles(host: String) -> RolesData;
         switch_role(host: String, role: String) -> RolesData;
         login(host: String, code: String) -> String;
-        login_oauth(host: String, back: Option<String>) -> String;
+        login_oauth(host: String, back: Option<String>, page: Option<String>) -> String;
         get_merge_data(namespace: String) -> MergeData;
         get_commit_data(namespace: String) -> CommitData;
         get_bucket_workflows(host: Option<String>, bucket: String) -> CommitWorkflows;
@@ -224,6 +224,7 @@ commands! {
         open_in_web_browser(url: String) -> String;
         setup(directory: String) -> String;
         get_toasts() -> Vec<Toast>;
+        take_navigation(page: String) -> Option<String>;
         dismiss_toast(id: u64) -> ();
         report_ui_panic(message: String) -> ();
         quit_prompt_shown(generation: u64) -> ();

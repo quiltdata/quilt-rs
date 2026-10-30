@@ -3,7 +3,9 @@
 //!
 //! The page is opened with `?t=<token>`. It keeps the token in its origin's
 //! `localStorage`, which, unlike a cookie, no other port can read, and drops it
-//! from the address. The socket is `/ws?t=<token>` on the page's own host.
+//! from the address. The socket is `/ws?t=<token>` on the page's own host. The
+//! desktop window's link also says `window`, which the page keeps for its
+//! reloads.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -24,6 +26,9 @@ const TOKEN_KEY: &str = "quiltsync-token";
 /// Where the page notes the engine version it reloaded for, per tab.
 const RELOADED_KEY: &str = "quiltsync-reloaded-for";
 
+/// Where the desktop window notes that it is the window, for its reloads.
+const WINDOW_KEY: &str = "quiltsync-window";
+
 /// The token this page has.
 pub(super) enum Token {
     Kept(String),
@@ -31,35 +36,79 @@ pub(super) enum Token {
     Unkept,
 }
 
-/// The token from the address, kept for later loads and dropped from the
-/// address; or, with none there, the one kept before.
-pub(super) fn read_token() -> Option<Token> {
-    let window = web_sys::window()?;
-    let storage = window.local_storage().ok().flatten();
-    let href = window.location().href().ok()?;
-    if let Some((token, rest)) = split_token(&href) {
-        let kept = storage
-            .as_ref()
-            .is_some_and(|storage| storage.set_item(TOKEN_KEY, &token).is_ok());
-        if let Ok(history) = window.history() {
-            let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&rest));
-        }
-        return Some(if kept {
-            Token::Kept(token)
-        } else {
-            Token::Unkept
-        });
-    }
-    storage?.get_item(TOKEN_KEY).ok().flatten().map(Token::Kept)
+/// What the page was opened with.
+pub(super) struct Opened {
+    pub(super) token: Option<Token>,
+    /// The page is the desktop window.
+    pub(super) window: bool,
 }
 
-/// The `t` of `href`, and `href` without it.
-fn split_token(href: &str) -> Option<(String, String)> {
+/// The link from the address, kept for later loads and dropped from the
+/// address; or, with none there, what was kept before.
+pub(super) fn read_link() -> Opened {
+    let Some(window) = web_sys::window() else {
+        return Opened {
+            token: None,
+            window: false,
+        };
+    };
+    let storage = window.local_storage().ok().flatten();
+    let session = window.session_storage().ok().flatten();
+    let link = window
+        .location()
+        .href()
+        .ok()
+        .and_then(|href| split_link(&href));
+    if let Some(link) = link {
+        let kept = storage
+            .as_ref()
+            .is_some_and(|storage| storage.set_item(TOKEN_KEY, &link.token).is_ok());
+        if link.window
+            && let Some(session) = &session
+        {
+            let _ = session.set_item(WINDOW_KEY, "1");
+        }
+        if let Ok(history) = window.history() {
+            let _ = history.replace_state_with_url(&JsValue::NULL, "", Some(&link.rest));
+        }
+        return Opened {
+            token: Some(if kept {
+                Token::Kept(link.token)
+            } else {
+                Token::Unkept
+            }),
+            window: link.window,
+        };
+    }
+    Opened {
+        token: storage
+            .and_then(|s| s.get_item(TOKEN_KEY).ok().flatten())
+            .map(Token::Kept),
+        window: session.is_some_and(|s| s.get_item(WINDOW_KEY).ok().flatten().is_some()),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Link {
+    token: String,
+    window: bool,
+    /// The address without them.
+    rest: String,
+}
+
+/// The `t` of `href` and whether it opens the window, and `href` without them.
+fn split_link(href: &str) -> Option<Link> {
     let url = web_sys::Url::new(href).ok()?;
     let params = url.search_params();
     let token = params.get("t").filter(|t| !t.is_empty())?;
+    let window = params.has("window");
     params.delete("t");
-    Some((token, url.href()))
+    params.delete("window");
+    Some(Link {
+        token,
+        window,
+        rest: url.href(),
+    })
 }
 
 /// The engine that served this page, over a WebSocket.
@@ -158,22 +207,35 @@ impl Connector for Browser {
 mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use super::split_token;
+    use super::{Link, split_link};
+
+    fn link(token: &str, window: bool, rest: &str) -> Link {
+        Link {
+            token: token.to_owned(),
+            window,
+            rest: rest.to_owned(),
+        }
+    }
 
     #[wasm_bindgen_test]
-    fn the_token_leaves_the_address_and_the_rest_stays() {
+    fn the_link_leaves_the_address_and_the_rest_stays() {
         assert_eq!(
-            split_token("http://127.0.0.1:7878/commit?namespace=a%2Fb&t=abc#top"),
-            Some((
-                "abc".to_owned(),
-                "http://127.0.0.1:7878/commit?namespace=a%2Fb#top".to_owned()
+            split_link("http://127.0.0.1:7878/commit?namespace=a%2Fb&t=abc#top"),
+            Some(link(
+                "abc",
+                false,
+                "http://127.0.0.1:7878/commit?namespace=a%2Fb#top"
             ))
         );
         assert_eq!(
-            split_token("http://127.0.0.1:7878/?t=abc"),
-            Some(("abc".to_owned(), "http://127.0.0.1:7878/".to_owned()))
+            split_link("http://127.0.0.1:7878/?t=abc"),
+            Some(link("abc", false, "http://127.0.0.1:7878/"))
         );
-        assert_eq!(split_token("http://127.0.0.1:7878/?namespace=a"), None);
-        assert_eq!(split_token("http://127.0.0.1:7878/?t="), None);
+        assert_eq!(
+            split_link("http://127.0.0.1:7878/?t=abc&window"),
+            Some(link("abc", true, "http://127.0.0.1:7878/"))
+        );
+        assert_eq!(split_link("http://127.0.0.1:7878/?namespace=a"), None);
+        assert_eq!(split_link("http://127.0.0.1:7878/?t="), None);
     }
 }

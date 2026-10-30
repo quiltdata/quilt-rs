@@ -1267,9 +1267,9 @@ pub const AUTOSYNC_CHANGED_EVENT: &str = "autosync-changed";
 /// the backend.
 pub const PACKAGES_CHANGED_EVENT: &str = "packages-changed";
 
-/// Sends every page somewhere: after a login, or a deep link. The payload is
-/// the page's path and query. Kept in lockstep with the backend's
-/// `routes::NAVIGATE_EVENT`.
+/// The engine sent a page somewhere, after a login or a deep link: each page
+/// asks [`take_navigation`] whether it was this one. Carries nothing. Kept in
+/// lockstep with the backend.
 pub const NAVIGATE_EVENT: &str = "navigate";
 
 /// One host in the Accounts card, as it arrives.
@@ -2011,13 +2011,26 @@ pub async fn login(host: String, code: String) -> Result<String, String> {
     engine::invoke("login", &Args { host, code }).await
 }
 
+/// Start a browser login. It lands on `back` in this page, the one that asked.
 pub async fn login_oauth(host: String, back: Option<String>) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         host: String,
         back: Option<String>,
+        page: Option<String>,
     }
-    engine::invoke("login_oauth", &Args { host, back }).await
+    let page = Some(engine::page_id());
+    engine::invoke("login_oauth", &Args { host, back, page }).await
+}
+
+/// Where the engine sent this page, if anywhere; once.
+pub async fn take_navigation() -> Result<Option<String>, String> {
+    #[derive(Serialize)]
+    struct Args {
+        page: String,
+    }
+    let page = engine::page_id();
+    engine::invoke("take_navigation", &Args { page }).await
 }
 
 pub async fn erase_auth(host: String) -> Result<String, String> {

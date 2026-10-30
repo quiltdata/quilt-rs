@@ -11,17 +11,19 @@ use super::show_window;
 use crate::engine::Error;
 use crate::engine::Result;
 use crate::engine::model;
+use crate::engine::navigation;
+use crate::engine::oauth::Landing;
 use crate::engine::routes;
 use crate::engine::services::Services;
 use crate::engine::telemetry::MixpanelEvent;
 use crate::engine::telemetry::event::{LoginEvent, LoginFlow};
 use crate::engine::telemetry::prelude::*;
 
-/// Send every window and tab to `path`.
-fn navigate(services: &Services, path: routes::Paths) {
-    let page = routes::page(path);
-    debug!("Navigating every client to {}", page);
-    services.events.emit(routes::NAVIGATE_EVENT, page);
+/// Send page `to` (a page id; `None` is the window) to `path`.
+fn navigate(services: &Services, to: Option<&str>, path: routes::Paths) {
+    let to = to.unwrap_or(navigation::WINDOW);
+    debug!("Sending page {} to {}", to, path);
+    services.navigations.send(&services.events, to, path);
 }
 
 /// The page of a Quilt package URI.
@@ -31,7 +33,11 @@ fn package_path(uri_str: &str) -> Result<routes::Paths> {
 
 /// Show a Quilt package URI's page, in the window brought to the front.
 fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
-    navigate(&app_handle.state::<Arc<Services>>(), package_path(uri_str)?);
+    navigate(
+        &app_handle.state::<Arc<Services>>(),
+        None,
+        package_path(uri_str)?,
+    );
     show_window(app_handle);
     Ok(())
 }
@@ -132,23 +138,24 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
             .take_params(&host, auth_params.code.clone(), &state)
             .await
         {
-            Ok((oauth_params, stored_location)) => {
+            Ok((oauth_params, landing)) => {
                 info!("OAuth 2.1 callback for host: {}", host_str);
                 let login_result = model::login_oauth(m, &host, oauth_params).await;
-                (login_result, stored_location)
+                (login_result, landing)
             }
             Err(err) => {
                 error!(
                     "OAuth callback rejected for {}, aborting: {}",
                     host_str, err
                 );
-                (Err(err), None)
+                (Err(err), Landing::default())
             }
         };
 
         match result {
-            (Ok(()), stored_location) => {
-                let final_path = stored_location
+            (Ok(()), landing) => {
+                let final_path = landing
+                    .back
                     .as_deref()
                     .and_then(|loc| {
                         loc.parse::<routes::Paths>()
@@ -167,12 +174,13 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     host,
                     flow: LoginFlow::OAuth,
                 }));
-                navigate(&s, final_path);
+                navigate(&s, landing.page.as_deref(), final_path);
             }
-            (Err(err), _) => {
+            (Err(err), landing) => {
                 error!("Failed to login via deep link: {}", err);
                 navigate(
                     &s,
+                    landing.page.as_deref(),
                     routes::Paths::LoginError(
                         host,
                         t!("login_error.title").into(),
@@ -203,43 +211,17 @@ pub fn handle_deep_link_url(app_handle: &AppHandle, url_str: &str) -> Result {
     }
 }
 
-/// Wait until a window or tab listens, so a deep link that arrives with the
-/// launch isn't sent to nobody. The window loads the UI first, which takes a
-/// moment.
-async fn wait_for_a_client(app_handle: &AppHandle) -> Result<()> {
-    const MAX_ATTEMPTS: u32 = 50;
-    const RETRY_DELAY_MS: u64 = 200;
-
-    let services = Arc::clone(&app_handle.state::<Arc<Services>>());
-    for _ in 0..MAX_ATTEMPTS {
-        if services.events.has_listeners() {
-            return Ok(());
-        }
-        tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
-    }
-    Err(Error::General("No window or tab connected".into()))
-}
-
 fn handle_deep_link_navigation(app_handle: &AppHandle, urls: &[Url]) {
     let Some(first_url) = urls.first() else {
         return;
     };
 
+    // The window takes its page whenever it connects, so a link that arrives
+    // with the launch needs no wait for it.
     let url_str = first_url.to_string();
-    let handle = app_handle.clone();
-
-    tauri::async_runtime::spawn(async move {
-        match wait_for_a_client(&handle).await {
-            Ok(()) => {
-                if let Err(err) = handle_deep_link_url(&handle, &url_str) {
-                    error!("Failed to handle deep link '{}': {}", url_str, err);
-                }
-            }
-            Err(_) => {
-                error!("No window or tab connected, deep link lost: {}", url_str);
-            }
-        }
-    });
+    if let Err(err) = handle_deep_link_url(app_handle, &url_str) {
+        error!("Failed to handle deep link '{}': {}", url_str, err);
+    }
 }
 
 pub fn setup_deep_link_handler(app_handle: &AppHandle) {
@@ -282,19 +264,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn navigating_sends_every_client_the_page() {
+    async fn a_navigation_goes_to_the_page_that_asked_or_else_the_window() {
         let data_dir = tempfile::tempdir().unwrap();
         let services = Services::init(data_dir.path().to_path_buf(), semver::Version::new(0, 0, 0))
             .await
             .unwrap();
-        let mut events = services.events.subscribe();
-        navigate(&services, routes::Paths::Settings);
+        navigate(&services, Some("a-tab"), routes::Paths::Settings);
+        navigate(&services, None, routes::Paths::Home);
         assert_eq!(
-            events.recv().await.unwrap(),
-            (
-                routes::NAVIGATE_EVENT.to_owned(),
-                serde_json::json!("/settings")
-            )
+            services.navigations.take("a-tab").as_deref(),
+            Some("/settings")
+        );
+        assert_eq!(
+            services.navigations.take(navigation::WINDOW).as_deref(),
+            Some("/")
         );
     }
 

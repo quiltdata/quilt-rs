@@ -20,6 +20,7 @@ pub mod fswatcher;
 pub mod lock;
 pub mod log_settings;
 pub mod model;
+pub mod navigation;
 pub mod notify;
 pub mod oauth;
 pub mod publish_settings;

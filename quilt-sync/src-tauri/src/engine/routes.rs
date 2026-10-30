@@ -281,10 +281,6 @@ fn format_namespace_filter_query(
     }
 }
 
-/// The event that sends every client to a page. Its payload is the page's
-/// path and query, as [`page`] writes them.
-pub const NAVIGATE_EVENT: &str = "navigate";
-
 /// `path` as a client's router takes it: the path and its query, no host.
 pub fn page(path: Paths) -> String {
     let base = Url::parse(RELATIVE_URL_BASE).expect("constant base URL is valid");

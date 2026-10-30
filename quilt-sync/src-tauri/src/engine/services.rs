@@ -26,6 +26,7 @@ use crate::engine::experimental_settings::SharedExperimentalSettings;
 use crate::engine::fswatcher;
 use crate::engine::fswatcher::SharedFsWatcherSettings;
 use crate::engine::model::Model;
+use crate::engine::navigation::Navigations;
 use crate::engine::oauth::OAuthState;
 use crate::engine::publish_settings;
 use crate::engine::publish_settings::SharedPublishSettings;
@@ -55,6 +56,7 @@ pub struct Services {
     /// Held by every settings write, so two saves of one file never overlap.
     pub settings_writes: tokio::sync::Mutex<()>,
     pub events: EventSink,
+    pub navigations: Navigations,
     /// The tray icon's state; a desktop tray clones it.
     pub tray_status: watch::Receiver<SyncTrayStatus>,
 }
@@ -168,6 +170,7 @@ impl Services {
             quit_gate: QuitGate::default(),
             settings_writes: tokio::sync::Mutex::new(()),
             events,
+            navigations: Navigations::default(),
             tray_status,
         }))
     }

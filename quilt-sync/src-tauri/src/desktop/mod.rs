@@ -17,13 +17,16 @@ pub mod uri;
 /// The window's label, for every lookup of it.
 pub const MAIN: &str = "main";
 
-/// Open the window on `link`, the engine's page with its token.
+/// Open the window on `link`, the engine's page with its token. The link also
+/// says `window`, so the engine can send this page somewhere by name.
 ///
 /// # Errors
 ///
 /// When `link` isn't a URL or Tauri can't build the window.
 pub fn open_window(app: &AppHandle, link: &str) -> tauri::Result<WebviewWindow> {
-    let url = link.parse().map_err(tauri::Error::InvalidUrl)?;
+    let url = format!("{link}&window")
+        .parse()
+        .map_err(tauri::Error::InvalidUrl)?;
     WebviewWindowBuilder::new(app, MAIN, WebviewUrl::External(url))
         .title("QuiltSync")
         .inner_size(1280.0, 900.0)
