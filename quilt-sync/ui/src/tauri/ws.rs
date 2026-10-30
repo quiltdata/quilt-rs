@@ -9,9 +9,9 @@
 //! `{"event", "payload"}`.
 //!
 //! Nothing is sent before the hello. A dropped socket reconnects with
-//! back-off, and a hello after a reconnect reloads the page: what changed
-//! while it was cut off reached it as no event, and the engine may be a newer
-//! one. When the engine refuses the token (it was reset), the page stops
+//! back-off, and a hello after any closed socket, even one that never got
+//! going, reloads the page: requests failed and events were lost in the gap,
+//! and the engine may be a newer one. When the engine refuses the token (it was reset), the page stops
 //! trying and says so once.
 
 use std::cell::RefCell;
@@ -70,8 +70,9 @@ struct State {
     /// Run once at the next hello, for listeners registered before it.
     on_ready: Vec<(u64, OnReady)>,
     retries: u32,
-    /// A hello came before, so the next one follows a reconnect.
-    greeted: bool,
+    /// A socket closed before, so the next hello follows a gap: requests
+    /// failed and events were lost in it.
+    cut_off: bool,
 }
 
 /// Where the page keeps the engine's token.
@@ -160,8 +161,7 @@ fn connect() -> Result<(), String> {
 }
 
 fn on_hello() {
-    let reconnected = STATE.with_borrow_mut(|s| std::mem::replace(&mut s.greeted, true));
-    if reconnected {
+    if STATE.with_borrow(|s| s.cut_off) {
         if let Some(window) = web_sys::window() {
             let _ = window.location().reload();
         }
@@ -235,6 +235,7 @@ fn on_close() {
         let was_ready = s.link == Link::Ready;
         s.socket = None;
         s.link = Link::Waiting;
+        s.cut_off = true;
         // Their promises are rejected below; sent later, they would run
         // after the page was told they failed.
         s.queue.clear();
