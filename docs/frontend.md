@@ -21,7 +21,7 @@ frontend owns all rendering.
 | WASM bridge | wasm-bindgen + serde-wasm-bindgen | `ui/src/tauri.rs` |
 | Styles | Plain CSS (global, no scoping) | `ui/assets/css/` |
 | Build tool | Trunk | `ui/Trunk.toml` |
-| IPC | One Tauri command, `engine_call`, over the engine's command table | `src-tauri/src/engine/dispatch.rs` |
+| IPC | One Tauri command, `engine_call`, over the engine's command table; in a browser tab, the engine's WebSocket | `src-tauri/src/engine/dispatch.rs`, `src-tauri/src/engine/server.rs` |
 
 ## Directory Structure
 
@@ -319,6 +319,12 @@ Calls `window.__TAURI__.core.invoke("engine_call", {cmd, args})` via
 wasm-bindgen, serializing args with serde-wasm-bindgen and deserializing
 the response. `engine_call` hands the call to the engine's command table
 (`src-tauri/src/engine/dispatch.rs`), which lists every command once.
+
+The engine also serves the UI over HTTP (`src-tauri/src/engine/server.rs`),
+and the tray's *Open in browser* opens it in a browser tab. A page the engine
+served carries a `quiltsync-web=1` cookie, and `invoke` and `listen` then go
+over the engine's WebSocket instead (`ui/src/tauri/ws.rs`): the same commands,
+through the same table, and every event to every tab.
 
 ### Typed wrappers (`commands.rs`)
 
