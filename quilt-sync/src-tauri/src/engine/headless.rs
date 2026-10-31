@@ -81,11 +81,16 @@ fn parse_headless(args: &[String]) -> Result<Args, String> {
     Ok(parsed)
 }
 
-/// `QUILTSYNC_DATA_DIR`, when set.
+/// `QUILTSYNC_DATA_DIR`, when set, made absolute.
 pub fn data_dir_from_env() -> Option<PathBuf> {
     std::env::var_os(DATA_DIR_VAR)
         .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
+        .map(|dir| absolute(PathBuf::from(dir)))
+}
+
+/// The data folder's paths become file URLs, which a relative path can't be.
+fn absolute(dir: PathBuf) -> PathBuf {
+    std::path::absolute(&dir).unwrap_or(dir)
 }
 
 /// Where the desktop app keeps its data, found without Tauri.
@@ -97,6 +102,7 @@ fn default_data_dir() -> Option<PathBuf> {
 pub fn run(args: Args) -> ExitCode {
     let Some(data_dir) = args
         .data_dir
+        .map(absolute)
         .or_else(data_dir_from_env)
         .or_else(default_data_dir)
     else {
@@ -252,6 +258,13 @@ mod tests {
             let err = args(bad).unwrap().unwrap_err();
             assert!(err.contains("Usage:"), "{err}");
         }
+    }
+
+    #[test]
+    fn a_relative_data_folder_becomes_absolute() {
+        let dir = absolute(PathBuf::from("data"));
+        assert!(dir.is_absolute());
+        assert!(dir.ends_with("data"));
     }
 
     #[test]
