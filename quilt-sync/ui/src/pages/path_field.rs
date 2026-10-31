@@ -48,7 +48,11 @@ pub fn PathField(
             }
         });
     });
-    let current = move || checked.with(|c| (c.path == value.get()).then(|| c.clone()));
+    // Nothing to say of an empty field, nor of an answer for an older text.
+    let current = move || {
+        let now = value.get();
+        checked.with(|c| (!now.is_empty() && c.path == now).then(|| c.clone()))
+    };
     let next = move || current().and_then(|c| c.offered.into_iter().find(|offer| *offer != c.path));
     let error = Signal::derive(move || {
         let c = current()?;
@@ -203,6 +207,18 @@ mod tests {
         .await;
         let text = root.text_content().unwrap_or_default();
         assert!(text.contains("This is a file, not a folder."), "{text}");
+        unmount_earlier();
+    }
+
+    #[wasm_bindgen_test]
+    async fn an_empty_field_says_nothing() {
+        unmount_earlier();
+        let _engine = FakeEngine::install();
+        let value = RwSignal::new(String::new());
+        let root = mount(move || view! { <PathField label="Folder" value=value /> });
+        sleep_ms(0).await;
+        let text = root.text_content().unwrap_or_default();
+        assert!(!text.contains("There is no folder here."), "{text}");
         unmount_earlier();
     }
 
