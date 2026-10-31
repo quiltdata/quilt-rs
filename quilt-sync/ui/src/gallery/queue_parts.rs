@@ -85,7 +85,7 @@ pub(crate) fn queue_row(
 
 /// The routes are the app's, so a story's remedy points at its own section.
 fn story_href(_: PackageAction, _: &'static str) -> String {
-    "#queuerow".to_string()
+    "#/combined/queue-parts".to_string()
 }
 
 pub(crate) fn row(namespace: &'static str, state: &PackageState) -> AnyView {
