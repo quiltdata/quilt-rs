@@ -169,7 +169,12 @@ impl EngineLock {
         }
     }
 
-    fn new_web_token(&self) -> io::Result<String> {
+    /// Make a new token and save it, so links with the old one stop working.
+    ///
+    /// # Errors
+    ///
+    /// When the file can't be written.
+    pub fn new_web_token(&self) -> io::Result<String> {
         let token = uuid::Uuid::new_v4().simple().to_string();
         write_private(&self.data_dir.join(TOKEN_FILE), token.as_bytes())?;
         Ok(token)
@@ -207,6 +212,29 @@ pub async fn bind_desktop(ip: IpAddr, last: Option<u16>) -> io::Result<TcpListen
         && let Ok(listener) = TcpListener::bind(SocketAddr::new(ip, port)).await
     {
         return Ok(listener);
+    }
+    TcpListener::bind(SocketAddr::new(ip, 0)).await
+}
+
+/// The port headless tries first on a data folder's first run.
+pub const HEADLESS_PORT: u16 = 7878;
+
+/// How many ports after the first headless tries before it takes any.
+const HEADLESS_TRIES: u16 = 100;
+
+/// Headless's port when none is given: the last one, else
+/// [`HEADLESS_PORT`]; when that is taken, the next free one after it, so the
+/// link stays easy to guess.
+///
+/// # Errors
+///
+/// When not even a free port can be bound.
+pub async fn bind_headless(ip: IpAddr, last: Option<u16>) -> io::Result<TcpListener> {
+    let first = last.unwrap_or(HEADLESS_PORT);
+    for port in (first..=u16::MAX).take(HEADLESS_TRIES.into()) {
+        if let Ok(listener) = TcpListener::bind(SocketAddr::new(ip, port)).await {
+            return Ok(listener);
+        }
     }
     TcpListener::bind(SocketAddr::new(ip, 0)).await
 }
@@ -342,6 +370,34 @@ mod tests {
         // `again` still holds the port.
         let other = bind_desktop(LOOPBACK, Some(port)).await.unwrap();
         assert_ne!(other.local_addr().unwrap().port(), port);
+    }
+
+    #[tokio::test]
+    async fn headless_takes_the_next_port_when_its_last_is_taken() {
+        let taken = bind_desktop(LOOPBACK, None).await.unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let next = bind_headless(LOOPBACK, Some(port)).await.unwrap();
+        let got = next.local_addr().unwrap().port();
+        assert_ne!(got, port);
+        // Near the top of the range there may be no next port, and any will do.
+        if port <= u16::MAX - HEADLESS_TRIES {
+            assert!(
+                got > port && got <= port + HEADLESS_TRIES,
+                "{got} after {port}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_token_replaces_the_old_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let Acquired::Held(lock) = acquire(dir.path()).unwrap() else {
+            panic!("a fresh folder was locked");
+        };
+        let old = lock.web_token().unwrap();
+        let new = lock.new_web_token().unwrap();
+        assert_ne!(old, new);
+        assert_eq!(lock.web_token().unwrap(), new);
     }
 
     #[test]

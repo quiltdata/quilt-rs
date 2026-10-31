@@ -126,6 +126,9 @@ pub enum Error {
     #[error("General error: {0}")]
     General(String),
 
+    #[error("Port {0} is in use. Choose another with `--port`, or `--port 0` for any free port.")]
+    PortInUse(u16),
+
     #[error("Package name must be prefix/name, using only letters, digits, _ and -; got: {0}")]
     PackageName(String),
 

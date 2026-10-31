@@ -6,7 +6,6 @@ use std::fs;
 use std::path::PathBuf;
 
 use quilt_uri::S3PackageUri;
-use serde::Serialize;
 
 use crate::engine::Error;
 use crate::engine::desktop::Desktop;
@@ -103,25 +102,6 @@ pub async fn copy_to_clipboard(
     Notify::new(msg_init)
         .on_success(&s.telemetry, super::copied_event(uri.as_ref()))
         .map(desktop.copy_to_clipboard(&text), msg_ok, msg_err)
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateInfo {
-    pub version: String,
-}
-
-pub async fn check_for_update(
-    _s: &Services,
-    desktop: &dyn Desktop,
-) -> Result<Option<UpdateInfo>, String> {
-    // The UI ignores a failed check so users are not nagged on every launch,
-    // which leaves the log as the only place the failure shows.
-    desktop
-        .check_for_update()
-        .await
-        .map(|version| version.map(|version| UpdateInfo { version }))
-        .inspect_err(|e| warn!("update check failed: {e}"))
 }
 
 pub async fn download_and_install_update(

@@ -22,9 +22,6 @@ pub trait Desktop: Send + Sync {
 
     fn copy_to_clipboard(&self, text: &str) -> Result;
 
-    /// The version the update feed offers, if it is newer than this build.
-    async fn check_for_update(&self) -> std::result::Result<Option<String>, String>;
-
     /// Download and install the update, then restart.
     async fn install_update(&self) -> std::result::Result<(), String>;
 

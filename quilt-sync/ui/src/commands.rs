@@ -786,6 +786,10 @@ pub struct RemotePackageResult {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     pub version: String,
+    /// The download for the engine's machine, for an engine that can't
+    /// install it itself.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 // ── Data-fetching commands ──────────────────────────────────
@@ -981,11 +985,25 @@ pub async fn get_login_error_data(
 /// `commands.rs`'s own note on the `uri` argument several commands take and
 /// never use.
 pub async fn copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> Result<String, String> {
+    use leptos::prelude::GetUntracked;
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         text: String,
         uri: Option<S3PackageUri>,
+    }
+    // Headless has no desktop clipboard; the reader's browser has one, but
+    // only on a secure page: loopback, not another machine over plain HTTP.
+    if engine::headless().get_untracked() {
+        let window = web_sys::window().ok_or("No window")?;
+        if !window.is_secure_context() {
+            return Err(format!("This page can't copy. Copy it by hand: {text}"));
+        }
+        let clipboard = window.navigator().clipboard();
+        wasm_bindgen_futures::JsFuture::from(clipboard.write_text(&text))
+            .await
+            .map_err(|_| "This browser didn't allow copying here".to_owned())?;
+        return Ok("Copied to the clipboard".to_owned());
     }
     engine::invoke("copy_to_clipboard", &Args { text, uri }).await
 }
@@ -1004,6 +1022,31 @@ pub async fn package_file_path(namespace: String, path: String) -> Result<String
 
 pub async fn get_settings_data() -> Result<SettingsData, String> {
     engine::invoke_unit("get_settings_data").await
+}
+
+/// Whether a typed path is there, and a folder.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathCheck {
+    pub exists: bool,
+    pub is_dir: bool,
+}
+
+pub async fn check_path(path: String) -> Result<PathCheck, String> {
+    #[derive(Serialize)]
+    struct Args {
+        path: String,
+    }
+    engine::invoke("check_path", &Args { path }).await
+}
+
+/// The folders whose path starts with `prefix`, each ending in a separator.
+pub async fn complete_path(prefix: String) -> Result<Vec<String>, String> {
+    #[derive(Serialize)]
+    struct Args {
+        prefix: String,
+    }
+    engine::invoke("complete_path", &Args { prefix }).await
 }
 
 pub async fn get_setup_data() -> Result<SetupData, String> {

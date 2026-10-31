@@ -120,14 +120,14 @@ fn router(
     if !addr.ip().is_loopback() {
         return app;
     }
-    let port = addr.port();
+    let addr = *addr;
     app.layer(axum::middleware::from_fn(
         move |request: Request, next: Next| async move {
             let host = request
                 .headers()
                 .get(header::HOST)
                 .and_then(|h| h.to_str().ok());
-            if host_allowed(host, port) {
+            if host_allowed(host, &addr) {
                 next.run(request).await
             } else {
                 StatusCode::FORBIDDEN.into_response()
@@ -138,13 +138,19 @@ fn router(
 
 /// Whether `host` (the `Host` header) names this loopback server. A page on
 /// another name that resolves to `127.0.0.1` still sends its own name.
-fn host_allowed(host: Option<&str>, port: u16) -> bool {
+fn host_allowed(host: Option<&str>, addr: &SocketAddr) -> bool {
     let Some(host) = host else {
         return false;
     };
-    ["127.0.0.1", "localhost", "[::1]"]
-        .iter()
-        .any(|name| host.eq_ignore_ascii_case(&format!("{name}:{port}")))
+    let port = addr.port();
+    // A browser leaves out the default port.
+    let named = |name: &str| {
+        host.eq_ignore_ascii_case(&format!("{name}:{port}"))
+            || (port == 80 && host.eq_ignore_ascii_case(name))
+    };
+    named(&addr.ip().to_string())
+        || named(&format!("[{}]", addr.ip()))
+        || ["127.0.0.1", "localhost", "[::1]"].into_iter().any(named)
 }
 
 /// An `Origin`, when sent, must be the page's own: `http://` and the `Host`.
@@ -214,7 +220,13 @@ async fn ws_handler(
         return StatusCode::FORBIDDEN.into_response();
     }
     if query.get("t").map(String::as_str) != Some(&*state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+        // Says where the new link is: headless has no tray to take it from.
+        let mode = if state.desktop.is_some() {
+            "desktop"
+        } else {
+            "headless"
+        };
+        return (StatusCode::UNAUTHORIZED, mode).into_response();
     }
     match ws {
         Ok(ws) => ws.on_upgrade(move |socket| session(socket, state)),
@@ -243,8 +255,7 @@ async fn session(socket: WebSocket, state: AppState) {
         "hello": {
             "version": state.services.app.version.to_string(),
             "desktop": state.desktop.is_some(),
-            // The engine doesn't check for updates on its own yet.
-            "updateAvailable": Value::Null,
+            "updateAvailable": state.services.updates.known(),
         }
     });
 
@@ -413,13 +424,14 @@ mod tests {
 
     #[test]
     fn the_host_must_be_this_loopback_server() {
+        let addr: SocketAddr = "127.0.0.1:7878".parse().unwrap();
         for ok in [
             "127.0.0.1:7878",
             "localhost:7878",
             "LocalHost:7878",
             "[::1]:7878",
         ] {
-            assert!(host_allowed(Some(ok), 7878), "{ok}");
+            assert!(host_allowed(Some(ok), &addr), "{ok}");
         }
         for bad in [
             "evil.example:7878",
@@ -430,9 +442,20 @@ mod tests {
             "localhost.evil.example:7878",
             "",
         ] {
-            assert!(!host_allowed(Some(bad), 7878), "{bad}");
+            assert!(!host_allowed(Some(bad), &addr), "{bad}");
         }
-        assert!(!host_allowed(None, 7878));
+        assert!(!host_allowed(None, &addr));
+        let default: SocketAddr = "127.0.0.1:80".parse().unwrap();
+        assert!(
+            host_allowed(Some("127.0.0.1"), &default),
+            "port 80 left out"
+        );
+        assert!(host_allowed(Some("localhost:80"), &default));
+        let other: SocketAddr = "127.0.0.2:7878".parse().unwrap();
+        assert!(
+            host_allowed(Some("127.0.0.2:7878"), &other),
+            "the address it is bound to"
+        );
     }
 
     #[test]
