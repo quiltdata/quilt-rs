@@ -15,7 +15,7 @@ use crate::kit::Dialog;
 use crate::kit::FormControl;
 use crate::kit::TextInput;
 
-stylance::import_crate_style!(style, "src/pages/main_page/create_package.module.scss");
+stylance::import_crate_style!(style, "src/pages/main_page/create_package.module.css");
 
 #[component]
 pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoView {

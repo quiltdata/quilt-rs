@@ -32,6 +32,10 @@
 - Under the hood, the window talks to the engine over the same connection as a browser tab (<https://github.com/quiltdata/quilt-rs/pull/1272>)
 - Under the hood, every command is listed once and the window reaches them all through one Tauri command; what only the desktop can do goes through one interface. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1265>)
 
+### Fixed
+
+- On Windows and Linux, opening QuiltSync while it runs in the tray shows its window (<https://github.com/quiltdata/quilt-rs/pull/1275>)
+
 ## [v0.26.1] - 2026-10-29
 
 ### Fixed

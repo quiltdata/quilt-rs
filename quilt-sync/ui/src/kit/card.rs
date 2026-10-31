@@ -5,7 +5,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/card.module.scss");
+stylance::import_crate_style!(style, "src/kit/card.module.css");
 
 #[component]
 // Each bool is its own optional prop, set by name at the call site.

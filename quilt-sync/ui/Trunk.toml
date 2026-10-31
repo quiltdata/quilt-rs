@@ -7,7 +7,7 @@ filehash = false
 watch = ["src", "index.html", "gallery.html", "assets"]
 # Generated into a watched directory: without the ignore, each build rewrites
 # them, the watcher fires, and Trunk rebuilds forever. Sources stay watched.
-ignore = ["assets/js/json-editor.js", "assets/css/kit/_modules.scss", "assets/css/kit/_normalize.scss"]
+ignore = ["assets/js/json-editor.js", "assets/css/kit/modules.css", "assets/css/kit/normalize.css"]
 
 # Bundle vanilla-jsoneditor before Trunk compiles the WASM crate.
 # The glue JS source lives in js/; the output lands in assets/js/
@@ -15,11 +15,11 @@ ignore = ["assets/js/json-editor.js", "assets/css/kit/_modules.scss", "assets/cs
 [[hooks]]
 stage = "pre_build"
 command = "sh"
-command_arguments = ["-c", "npm install --prefer-offline --no-audit --no-fund && npx esbuild js/json-editor-glue.js --bundle --format=iife --outfile=assets/js/json-editor.js && cp node_modules/modern-normalize/modern-normalize.css assets/css/kit/_normalize.scss"]
+command_arguments = ["-c", "npm install --prefer-offline --no-audit --no-fund && npx esbuild js/json-editor-glue.js --bundle --format=iife --outfile=assets/js/json-editor.js && cp node_modules/modern-normalize/modern-normalize.css assets/css/kit/normalize.css"]
 
-# CSS Modules. Runs before sass so the generated partial is current. Needs
-# `cargo install stylance-cli`; a missing tool fails the build here, which is
-# wanted — skipping it would render every class as nothing.
+# CSS Modules. Runs before Trunk reads the stylesheets, so the generated bundle
+# is current. Needs `cargo install stylance-cli`; a missing tool fails the
+# build here, which is wanted — skipping it would render every class as nothing.
 [[hooks]]
 stage = "pre_build"
 command = "stylance"

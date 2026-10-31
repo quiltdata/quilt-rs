@@ -11,7 +11,7 @@ use leptos::prelude::*;
 // that file and concatenates every module into one generated stylesheet, so
 // there is no list of stylesheets to maintain and no way for this file's
 // classes to collide with another component's.
-stylance::import_crate_style!(style, "src/kit/button.module.scss");
+stylance::import_crate_style!(style, "src/kit/button.module.css");
 
 /// Visual weight. `Primary` is the one affordance a region is steering you
 /// toward; everything else is `Default`. A region with two primaries has a
@@ -246,14 +246,14 @@ mod tests {
     ///
     /// Read from the source, not from a computed style: no stylesheet is loaded in the
     /// test harness, so `getComputedStyle` there returns browser defaults. Same reason
-    /// the kit's measure test reads its SCSS.
+    /// the kit's measure test reads its CSS.
     ///
     /// The sizes are deliberately not asserted equal. At the large size both are 16px,
     /// but at the medium one the icon is 14px against the spinner's 12px, so the button
     /// narrows by 2px — stated in `DESIGN.md` rather than pinned as if it were exact.
     #[test]
     fn the_stylesheet_is_what_hides_the_icon_while_loading() {
-        const SHEET: &str = include_str!("button.module.scss");
+        const SHEET: &str = include_str!("button.module.css");
         let rule = SHEET
             .split(".loading .icon {")
             .nth(1)
@@ -266,7 +266,6 @@ mod tests {
             .split("/*")
             .map(|part| part.split_once("*/").map_or(part, |(_, rest)| rest))
             .flat_map(|part| part.lines())
-            .map(|line| line.split("//").next().unwrap_or(""))
             .flat_map(|line| line.split(';'))
             .filter_map(|declaration| declaration.split_once(':'))
             .filter(|(property, _)| property.trim() == "display")
@@ -344,7 +343,7 @@ mod tests {
     /// so a Danger verb and the refusal above it cannot disagree about what red means.
     #[test]
     fn the_danger_rule_reads_the_tones_muted_tokens_and_no_literal() {
-        const SHEET: &str = include_str!("button.module.scss");
+        const SHEET: &str = include_str!("button.module.css");
         let rule = SHEET
             .split(".danger {")
             .nth(1)

@@ -22,7 +22,7 @@ use crate::kit::{
 
 stylance::import_crate_style!(
     style,
-    "src/pages/installed_package_v2/context_pane.module.scss"
+    "src/pages/installed_package_v2/context_pane.module.css"
 );
 
 /// Where the popover's rows come from. A function pointer rather than a
@@ -1308,9 +1308,9 @@ mod tests {
 
     #[expect(dead_code, reason = "only the classes these tests need are loaded")]
     mod sheets {
-        stylance::import_crate_style!(pub pane, "src/kit/pane_section.module.scss");
-        stylance::import_crate_style!(pub bar, "src/kit/skeleton_box.module.scss");
-        stylance::import_crate_style!(pub page, "src/pages/installed_package_v2.module.scss");
+        stylance::import_crate_style!(pub pane, "src/kit/pane_section.module.css");
+        stylance::import_crate_style!(pub bar, "src/kit/skeleton_box.module.css");
+        stylance::import_crate_style!(pub page, "src/pages/installed_package_v2.module.css");
     }
 
     /// The sheets the pane is drawn with, and the page's, whose column is the
@@ -1318,7 +1318,7 @@ mod tests {
     fn load_pane_sheets() {
         use sheets::{bar, page, pane};
         crate::test_support::load_module_style(
-            include_str!("../../kit/pane_section.module.scss"),
+            include_str!("../../kit/pane_section.module.css"),
             &[
                 ("root", pane::root),
                 ("label", pane::label),
@@ -1327,11 +1327,11 @@ mod tests {
             ],
         );
         crate::test_support::load_module_style(
-            include_str!("../../kit/skeleton_box.module.scss"),
+            include_str!("../../kit/skeleton_box.module.css"),
             &[("root", bar::root), ("text", bar::text)],
         );
         crate::test_support::load_module_style(
-            include_str!("context_pane.module.scss"),
+            include_str!("context_pane.module.css"),
             &[
                 ("root", style::root),
                 ("muted", style::muted),
@@ -1341,7 +1341,7 @@ mod tests {
             ],
         );
         crate::test_support::load_module_style(
-            include_str!("../installed_package_v2.module.scss"),
+            include_str!("../installed_package_v2.module.css"),
             &[("page", page::page)],
         );
     }

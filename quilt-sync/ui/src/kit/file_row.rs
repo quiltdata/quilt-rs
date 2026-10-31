@@ -22,7 +22,7 @@ use super::SkeletonBox;
 use super::countdown::EpochMillis;
 use super::icons;
 
-stylance::import_crate_style!(style, "src/kit/file_row.module.scss");
+stylance::import_crate_style!(style, "src/kit/file_row.module.css");
 
 #[component]
 pub fn FileRow(
@@ -281,7 +281,7 @@ mod tests {
     /// the path and the tag are both cut as in the app.
     fn cut_row() -> web_sys::Element {
         crate::test_support::load_module_style(
-            include_str!("file_row.module.scss"),
+            include_str!("file_row.module.css"),
             &[
                 ("root", style::root),
                 ("path", style::path),

@@ -47,7 +47,7 @@ use crate::util::format_size;
 
 use super::commit_v2::{MetadataEditorField, MetadataPreview};
 
-stylance::import_crate_style!(style, "src/pages/settings_v2.module.scss");
+stylance::import_crate_style!(style, "src/pages/settings_v2.module.css");
 
 mod page;
 pub use page::{SettingsV2, SettingsV2Skeleton};
@@ -2318,35 +2318,17 @@ mod tests {
 
     /// The grid's styles and the card rows', for a layout test.
     fn load_layout_styles() {
-        stylance::import_crate_style!(grid, "src/kit/two_columns.module.scss");
+        stylance::import_crate_style!(grid, "src/kit/two_columns.module.css");
         crate::test_support::load_module_style(
-            include_str!("../kit/two_columns.module.scss"),
+            include_str!("../kit/two_columns.module.css"),
             &[
                 ("grid", grid::grid),
                 ("tight", grid::tight),
                 ("fill", grid::fill),
             ],
         );
-        // The rules alone: the file's `//` comments are not CSS.
-        let scss = include_str!("settings_v2.module.scss");
-        let rule = |name: &str| {
-            let start = scss.find(&format!(".{name} {{")).expect("the rule");
-            let end = start + scss[start..].find('}').expect("its end") + 1;
-            scss[start..end].to_string()
-        };
-        let css = [
-            "slot",
-            "row",
-            "row_text",
-            "row_value",
-            "agents",
-            "agent",
-            "command",
-        ]
-        .map(rule)
-        .join("\n");
         crate::test_support::load_module_style(
-            &css,
+            include_str!("settings_v2.module.css"),
             &[
                 ("slot", style::slot),
                 ("row", style::row),
@@ -2448,16 +2430,11 @@ mod tests {
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn the_agent_legend_is_narrow() {
         crate::test_support::unmount_earlier();
-        let scss = include_str!("settings_v2.module.scss");
-        let start = scss.find(".agent_fields {").expect("the rule");
-        // Without the file's `//` comments, which are not CSS.
-        let css: String = scss[start..]
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
         // As the app's normalize sets every box.
-        let css = format!("{css}\n[data-legend-test] legend {{ box-sizing: border-box; }}");
+        let css = format!(
+            "{}\n[data-legend-test] legend {{ box-sizing: border-box; }}",
+            include_str!("settings_v2.module.css")
+        );
         crate::test_support::load_module_style(
             &css,
             &[

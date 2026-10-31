@@ -14,7 +14,7 @@
     corrects the marker. Only a stored v1 answer ("0") predicts v1, so a
     first-ever launch, with nothing stored, opens in v2, the default.
 
-    `data-booting` keeps this to the empty frame — `_base.scss` hangs the dark
+    `data-booting` keeps this to the empty frame — `base.css` hangs the dark
     canvas off it, and `main` clears it before the mount.
   -->
   <script>
@@ -41,8 +41,11 @@
   <link rel="stylesheet" href="assets/css/external/400.css" />
   <link rel="stylesheet" href="assets/css/external/500.css" />
   <link rel="stylesheet" href="assets/css/external/700.css" />
-  <!-- v2 kit bundle: tokens + every component module (not the gallery chrome). -->
-  <link data-trunk rel="scss" href="assets/css/kit/app.scss" />
+  <!-- v2 kit: tokens + every component module, not the gallery chrome. -->
+  <link data-trunk rel="css" href="assets/css/kit/normalize.css" />
+  <link data-trunk rel="css" href="assets/css/kit/tokens.css" />
+  <link data-trunk rel="css" href="assets/css/kit/base.css" />
+  <link data-trunk rel="css" href="assets/css/kit/modules.css" />
   <!-- base styles -->
   <link rel="stylesheet" href="assets/css/theme.css" />
   <link rel="stylesheet" href="assets/css/spinner.css" />

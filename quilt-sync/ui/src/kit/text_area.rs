@@ -12,9 +12,9 @@ use super::ControlId;
 stylance::import_crate_style!(
     #[allow(dead_code)]
     field,
-    "src/kit/text_input.module.scss"
+    "src/kit/text_input.module.css"
 );
-stylance::import_crate_style!(style, "src/kit/text_area.module.scss");
+stylance::import_crate_style!(style, "src/kit/text_area.module.css");
 
 #[component]
 pub fn TextArea(

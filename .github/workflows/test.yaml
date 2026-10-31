@@ -52,6 +52,7 @@ jobs:
       pull-requests: read
     outputs:
       md: ${{ github.event_name != 'pull_request' || steps.filter.outputs.md == 'true' }}
+      css: ${{ github.event_name != 'pull_request' || steps.filter.outputs.css == 'true' }}
       crates: ${{ github.event_name != 'pull_request' || steps.filter.outputs.crates == 'true' }}
       sync: ${{ github.event_name != 'pull_request' || steps.filter.outputs.sync == 'true' }}
       ui: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ui == 'true' }}
@@ -69,6 +70,11 @@ jobs:
             md:
               - "**/*.md"
               - .rumdl.toml
+              - justfile
+              - .github/workflows/test.yaml
+            css:
+              - "**/*.css"
+              - biome.jsonc
               - justfile
               - .github/workflows/test.yaml
             # Cargo forbids dependency cycles, so no other crate depends on QuiltSync.
@@ -120,6 +126,33 @@ jobs:
 
       - name: Lint markdown files
         run: just lint-md
+
+  css:
+    name: css
+    needs: changes
+    if: needs.changes.outputs.css == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      # Pinned, so a new Biome release cannot fail an unrelated PR; Renovate
+      # bumps it. Keep `biome.jsonc`'s `$schema` on the same version.
+      # renovate: datasource=npm depName=@biomejs/biome
+      BIOME_VERSION: 2.6.4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # The project's own action, pinned by commit as third-party code.
+      - name: Install Biome
+        uses: biomejs/setup-biome@4c91541eaada48f67d7dbd7833600ce162b68f51 # v2.7.1
+        with:
+          version: ${{ env.BIOME_VERSION }}
+
+      - name: Install just
+        uses: taiki-e/install-action@just
+
+      - name: Lint CSS files
+        run: just lint-css
 
   crates:
     name: crates
@@ -519,6 +552,7 @@ jobs:
     needs:
       - changes
       - markdown
+      - css
       - crates
       - crates-cross-platform
       - live-writes

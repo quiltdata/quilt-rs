@@ -6,6 +6,7 @@
     ":ignoreModulesAndTests",
     "group:monorepos",
     "group:recommended",
+    "customManagers:githubActionsVersions",
     "replacements:all",
     "workarounds:all"
   ]

@@ -41,10 +41,8 @@ use super::TooltipLine;
 use super::countdown::EpochMillis;
 use super::icons;
 use super::state_label::StateTone;
-use crate::util::Held;
-use crate::util::counted;
 
-stylance::import_crate_style!(style, "src/kit/package_row.module.scss");
+stylance::import_crate_style!(style, "src/kit/package_row.module.css");
 
 #[component]
 pub fn PackageRow(
@@ -90,7 +88,7 @@ pub fn PackageRow(
     /// How much of the package is here, for the tooltip, in Keeping's words.
     /// `None`, when the check did not answer, leaves its line out.
     #[prop(optional, into)]
-    size: MaybeProp<Held>,
+    size: MaybeProp<String>,
 ) -> impl IntoView {
     // One computed string: Leptos rejects two `class` attributes on an element, and
     // the row dims as a whole rather than the label dimming alone — see the
@@ -179,7 +177,7 @@ pub fn PackageRow(
 fn tooltip_lines(
     host: Option<&str>,
     downloads: Option<RowDownloads>,
-    size: Option<Held>,
+    size: Option<String>,
 ) -> Vec<TooltipLine> {
     let host = host
         .filter(|host| !host.is_empty())
@@ -195,7 +193,7 @@ fn tooltip_lines(
         })
         .icon(icons::download)
     });
-    let size = size.map(|held| TooltipLine::new(counted(held)).icon(icons::folder));
+    let size = size.map(|words| TooltipLine::new(words).icon(icons::folder));
     [host, scope, size].into_iter().flatten().collect()
 }
 
@@ -327,7 +325,6 @@ mod marker_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::PackageSize;
     use crate::test_support::{
         blur, describing_tooltip, focus_report, keyboard_focus, mount, unmount_earlier,
     };
@@ -410,19 +407,9 @@ mod tests {
         );
     }
 
-    /// 12 of 340 files here, 1.9 MB of 3.4 MB.
-    const PLATE: Held = Held {
-        total: 340,
-        outstanding: 328,
-        deleted_here: 0,
-        size: Some(PackageSize {
-            total: 3_400_000,
-            downloaded: 1_900_000,
-            backlog: 0,
-        }),
-    };
+    const PLATE: &str = "12 of 340 files \u{b7} 1.9\u{a0}MB of 3.4\u{a0}MB downloaded";
 
-    fn row_with(host: Option<&'static str>, size: Option<Held>) -> web_sys::Element {
+    fn row_with(host: Option<&'static str>, size: Option<&'static str>) -> web_sys::Element {
         mount(move || {
             view! {
                 <PackageRow
@@ -432,7 +419,7 @@ mod tests {
                     tone=Signal::stored(StateTone::Success)
                     downloads=RowDownloads::IndividualFiles { downloaded: 12, total: 340 }
                     host=host.map(str::to_string)
-                    size=size
+                    size=size.map(str::to_string)
                 />
             }
         })
@@ -486,7 +473,7 @@ mod tests {
                 "a-long-owner-name/a-much-longer-package-name-than-the-column",
                 "Host: nightly.quilttest.com",
                 "Only the files you picked are kept",
-                "12 of 340 files \u{b7} 1.9\u{a0}MB of 3.4\u{a0}MB downloaded",
+                PLATE,
             ]
         );
     }
@@ -516,7 +503,7 @@ mod tests {
             [
                 "a-long-owner-name/a-much-longer-package-name-than-the-column",
                 "Only the files you picked are kept",
-                "12 of 340 files \u{b7} 1.9\u{a0}MB of 3.4\u{a0}MB downloaded",
+                PLATE,
             ]
         );
     }
@@ -539,15 +526,13 @@ mod tests {
 #[cfg(test)]
 mod tooltip_tests {
     use super::RowDownloads;
-    use crate::commands::PackageSize;
-    use crate::util::{Held, counted};
 
     fn tooltip_lines(
         host: Option<&str>,
         downloads: Option<RowDownloads>,
-        size: Option<Held>,
+        size: Option<&str>,
     ) -> Vec<String> {
-        super::tooltip_lines(host, downloads, size)
+        super::tooltip_lines(host, downloads, size.map(str::to_string))
             .into_iter()
             .map(|line| line.text)
             .collect()
@@ -558,12 +543,7 @@ mod tooltip_tests {
         let lines = super::tooltip_lines(
             Some("nightly.quilttest.com"),
             Some(RowDownloads::EntirePackage { to_download: 0 }),
-            Some(Held {
-                total: 1,
-                outstanding: 0,
-                deleted_here: 0,
-                size: None,
-            }),
+            Some("All files are downloaded".to_string()),
         );
         assert_eq!(lines.len(), 3);
         assert!(lines.iter().all(|line| line.icon.is_some()));
@@ -602,27 +582,6 @@ mod tooltip_tests {
         };
         assert_eq!(folders(2), ["Files in 2 folders are kept"]);
         assert_eq!(folders(1), ["Files in 1 folder are kept"]);
-    }
-
-    /// Keeping's own words, so the row and the package page agree.
-    #[test]
-    fn the_size_line_says_what_keeping_says() {
-        let size = |size| tooltip_lines(None, None, Some(size));
-        let held = Held {
-            total: 340,
-            outstanding: 0,
-            deleted_here: 2,
-            size: Some(PackageSize {
-                total: 3_400_000,
-                downloaded: 3_400_000,
-                backlog: 0,
-            }),
-        };
-        assert_eq!(size(held), [counted(held)]);
-        assert_eq!(
-            size(held),
-            ["All files are downloaded \u{b7} 3.4\u{a0}MB \u{b7} 2 deleted here"]
-        );
     }
 
     #[test]

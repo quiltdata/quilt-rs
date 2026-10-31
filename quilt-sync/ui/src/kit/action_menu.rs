@@ -55,7 +55,7 @@ use super::IconButton;
 use super::IconButtonVariant;
 use super::icons;
 
-stylance::import_crate_style!(style, "src/kit/action_menu.module.scss");
+stylance::import_crate_style!(style, "src/kit/action_menu.module.css");
 
 /// How loudly a command is offered.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

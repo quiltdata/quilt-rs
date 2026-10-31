@@ -26,7 +26,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/spinner.module.scss");
+stylance::import_crate_style!(style, "src/kit/spinner.module.css");
 
 /// Inline beside text, or centred in a region of its own.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -15,7 +15,7 @@
 
 use leptos::prelude::*;
 
-stylance::import_crate_style!(style, "src/kit/list_toolbar.module.scss");
+stylance::import_crate_style!(style, "src/kit/list_toolbar.module.css");
 
 #[component]
 pub fn ListToolbar(

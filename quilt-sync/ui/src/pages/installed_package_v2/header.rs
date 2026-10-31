@@ -102,7 +102,7 @@ use super::bucket_form::BucketDialog;
 use super::role_dialog::RoleDialog;
 use super::{Dialogs, Outcome, Reread, Wiring, holding, run};
 
-stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.scss");
+stylance::import_crate_style!(style, "src/pages/installed_package_v2/header.module.css");
 
 /// While another command is running. One working tree, one command: two at
 /// once is a race the page has no way to arbitrate.

@@ -20,7 +20,7 @@ use crate::kit::StateLabel;
 use crate::kit::StateTone;
 use crate::kit::countdown::EpochMillis;
 
-stylance::import_crate_style!(style, "src/pages/main_page/package_autosync.module.scss");
+stylance::import_crate_style!(style, "src/pages/main_page/package_autosync.module.css");
 
 /// The most marks the stack draws; the rest are counted under it.
 const STACK_MAX: usize = 3;

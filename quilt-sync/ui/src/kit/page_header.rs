@@ -7,7 +7,7 @@ use leptos::prelude::*;
 
 use super::SkeletonBox;
 
-stylance::import_crate_style!(style, "src/kit/page_header.module.scss");
+stylance::import_crate_style!(style, "src/kit/page_header.module.css");
 
 #[component]
 pub fn PageHeader(

@@ -1,6 +1,6 @@
 //! Follow the OS colour scheme.
 //!
-//! `_tokens.scss` declares the dark palette under `:root[data-theme="dark"]`.
+//! `tokens.css` declares the dark palette under `:root[data-theme="dark"]`.
 //! The gallery sets that attribute from its own button; this module sets it in
 //! the app from the OS preference. This is the approach the tokens' own comment
 //! asks for: *"following the OS means setting `data-theme` from Rust, not
@@ -130,7 +130,7 @@ fn remember_v2(on: bool) {
 
 /// The attribute `index.html` sets while the document has no page on it.
 ///
-/// See `_base.scss`: it is what scopes the dark launch canvas to the empty
+/// See `base.css`: it is what scopes the dark launch canvas to the empty
 /// frame. A v2 reader opens v1's pages too, and those draw on a light canvas —
 /// so the marker has to be gone before anything is drawn at all.
 pub fn stop_booting() {
@@ -238,16 +238,13 @@ mod tests {
     /// `main` before the mount.
     #[test]
     fn a_dark_scheme_never_reaches_the_document_root() {
-        // Both global partials the app bundle carries, because the rule this pins
-        // was written in `_tokens.scss` and moved. `_chrome.scss` is excluded: it is
+        // Both global sheets the app links, because the rule this pins
+        // was written in `tokens.css` and moved. `chrome.css` is excluded: it is
         // the gallery's own and never ships. A component module could hold a `:root`
         // rule in principle, but one would already be breaking the tier split.
         const SHEETS: [(&str, &str); 2] = [
-            (
-                "_tokens.scss",
-                include_str!("../assets/css/kit/_tokens.scss"),
-            ),
-            ("_base.scss", include_str!("../assets/css/kit/_base.scss")),
+            ("tokens.css", include_str!("../assets/css/kit/tokens.css")),
+            ("base.css", include_str!("../assets/css/kit/base.css")),
         ];
 
         let declarations: Vec<(&str, &str, &str)> = SHEETS
@@ -302,7 +299,7 @@ mod tests {
         );
     }
 
-    /// The reset in `app.scss` reaches v1's pages, whose ink no theme switches,
+    /// The reset in `base.css` reaches v1's pages, whose ink no theme switches,
     /// and `follow_os` cannot see the flag — so a themed ground on `body` would
     /// go dark under v1's black text, for a v2 reader on Settings as much as for
     /// a v1 one at home. The one ground it may paint is the frame `/` and
@@ -311,7 +308,7 @@ mod tests {
     /// stylesheet, where the bare rule was added once already.
     #[test]
     fn the_shared_reset_paints_a_ground_only_for_a_v2_reader_s_home_frame() {
-        const BASE: &str = include_str!("../assets/css/kit/_base.scss");
+        const BASE: &str = include_str!("../assets/css/kit/base.css");
         let rule = |selector: &str| {
             BASE.split(selector)
                 .nth(1)

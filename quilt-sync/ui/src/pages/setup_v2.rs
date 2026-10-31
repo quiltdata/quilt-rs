@@ -18,7 +18,7 @@ use crate::kit::{
 
 use super::v2_page::{PageHandle, PageRead, V2Page, critical, hold, still_here};
 
-stylance::import_crate_style!(style, "src/pages/setup_v2.module.scss");
+stylance::import_crate_style!(style, "src/pages/setup_v2.module.css");
 
 /// The read's only address.
 const HERE: &str = "setup";

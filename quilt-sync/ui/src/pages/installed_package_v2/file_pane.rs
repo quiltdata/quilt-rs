@@ -90,10 +90,7 @@ pub(crate) mod selection;
 
 pub use selection::{Kept, Picking};
 
-stylance::import_crate_style!(
-    style,
-    "src/pages/installed_package_v2/file_pane.module.scss"
-);
+stylance::import_crate_style!(style, "src/pages/installed_package_v2/file_pane.module.css");
 
 /// How the list is grouped. Not remembered: every visit starts at
 /// [`Grouping::BaseFolder`], because which axis is useful depends on the shape
@@ -2963,10 +2960,10 @@ mod pane_tests {
 
     #[expect(dead_code, reason = "only the classes these tests need are loaded")]
     mod sheets {
-        stylance::import_crate_style!(pub row, "src/kit/entry_row.module.scss");
-        stylance::import_crate_style!(pub group, "src/kit/entry_group.module.scss");
-        stylance::import_crate_style!(pub check, "src/kit/checkbox.module.scss");
-        stylance::import_crate_style!(pub toolbar, "src/kit/list_toolbar.module.scss");
+        stylance::import_crate_style!(pub row, "src/kit/entry_row.module.css");
+        stylance::import_crate_style!(pub group, "src/kit/entry_group.module.css");
+        stylance::import_crate_style!(pub check, "src/kit/checkbox.module.css");
+        stylance::import_crate_style!(pub toolbar, "src/kit/list_toolbar.module.css");
     }
 
     /// The cap's notice sits right under the toolbar, whose bottom padding is
@@ -2975,11 +2972,11 @@ mod pane_tests {
     async fn the_cap_notice_has_one_gap_above_and_below() {
         use crate::test_support::load_module_style;
         load_module_style(
-            include_str!("file_pane.module.scss"),
+            include_str!("file_pane.module.css"),
             &[("band", style::band), ("cap", style::cap)],
         );
         load_module_style(
-            include_str!("../../kit/list_toolbar.module.scss"),
+            include_str!("../../kit/list_toolbar.module.css"),
             &[("root", sheets::toolbar::root)],
         );
         let el = mount(|| {
@@ -3042,7 +3039,7 @@ mod pane_tests {
     async fn the_boxes_make_the_list_s_left_edge() {
         use crate::test_support::load_module_style;
         load_module_style(
-            include_str!("file_pane.module.scss"),
+            include_str!("file_pane.module.css"),
             &[
                 ("selectall", style::selectall),
                 ("gutter", style::gutter),
@@ -3050,7 +3047,7 @@ mod pane_tests {
             ],
         );
         load_module_style(
-            include_str!("../../kit/entry_row.module.scss"),
+            include_str!("../../kit/entry_row.module.css"),
             &[
                 ("root", sheets::row::root),
                 ("main", sheets::row::main),
@@ -3060,7 +3057,7 @@ mod pane_tests {
             ],
         );
         load_module_style(
-            include_str!("../../kit/entry_group.module.scss"),
+            include_str!("../../kit/entry_group.module.css"),
             &[
                 ("head", sheets::group::head),
                 ("disclose", sheets::group::disclose),
@@ -3069,7 +3066,7 @@ mod pane_tests {
             ],
         );
         load_module_style(
-            include_str!("../../kit/checkbox.module.scss"),
+            include_str!("../../kit/checkbox.module.css"),
             &[
                 ("root", sheets::check::root),
                 ("input", sheets::check::input),

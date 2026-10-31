@@ -298,7 +298,7 @@ fn ByDesign(
 /// `aria-busy` region, which would hold its announcement back.
 ///
 /// The ground is these routes' alone. `data-home-frame` is styled off
-/// `theme::set_v2`'s root marker (`_base.scss`), which records the reader's
+/// `theme::set_v2`'s root marker (`base.css`), which records the reader's
 /// design setting — see [`design_preview`] — and a frame may paint from that
 /// marker only where it predicts what is coming. That is here and nowhere else:
 /// `/` and `/installed-package` render v2 on exactly the value the marker is set
@@ -402,7 +402,7 @@ mod tests {
         // what it looks like: no stylesheet is loaded here.
         for v2 in [true, false] {
             let el = home_frame(v2);
-            // Inside the frame `_base.scss` grounds for a v2 reader — the two are
+            // Inside the frame `base.css` grounds for a v2 reader — the two are
             // pinned together because the frame is what a stylesheet can see.
             let status = el
                 .query_selector("[data-home-frame] [role=status]")

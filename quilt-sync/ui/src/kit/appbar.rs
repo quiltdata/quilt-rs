@@ -9,7 +9,7 @@ use leptos::prelude::*;
 
 use crate::kit::ActivityLine;
 
-stylance::import_crate_style!(style, "src/kit/appbar.module.scss");
+stylance::import_crate_style!(style, "src/kit/appbar.module.css");
 
 #[component]
 pub fn Appbar(
@@ -61,7 +61,7 @@ mod tests {
     }
 
     mod sheets {
-        stylance::import_crate_style!(pub line, "src/kit/activity_line.module.scss");
+        stylance::import_crate_style!(pub line, "src/kit/activity_line.module.css");
     }
 
     /// In the v2 frame the bar keeps its height, which the sticky parts under
@@ -73,11 +73,11 @@ mod tests {
         use crate::test_support::load_module_style;
         use crate::test_support::sleep_ms;
         load_module_style(
-            include_str!("appbar.module.scss"),
+            include_str!("appbar.module.css"),
             &[("appbar", style::appbar), ("bar", style::bar)],
         );
         load_module_style(
-            include_str!("activity_line.module.scss"),
+            include_str!("activity_line.module.css"),
             &[("line", sheets::line::line)],
         );
         // The app's normalize sheet, which the test page does not load.

@@ -15,16 +15,23 @@
     pulls 1.2 MB of Roboto; none of it is wanted here.
   -->
   <!--
-    ONE stylesheet, compiled at build time: Trunk runs dart-sass over
-    `gallery.scss`, which pulls the tokens, the generated CSS-Module bundle, and
-    the gallery's own chrome.
+    Plain CSS, linked in cascade order: the reset, the tokens, the global base,
+    the generated CSS-Module bundle, and the gallery's own chrome. Tokens and
+    chrome stay hand-written and global on purpose: tokens declare `:root`
+    custom properties and chrome styles `body`, neither of which a CSS Module
+    can scope.
 
     Adding a component never touches this file, and never touches an index
     either: a component declares its own stylesheet in Rust via
     `import_crate_style!`, and `stylance-cli` discovers every
-    `src/kit/*.module.scss` and concatenates them.
+    `src/kit/*.module.css` and concatenates them into `modules.css`.
   -->
-  <link data-trunk rel="scss" href="assets/css/kit/gallery.scss" />
+  <link data-trunk rel="css" href="assets/css/kit/normalize.css" />
+  <link data-trunk rel="css" href="assets/css/kit/tokens.css" />
+  <link data-trunk rel="css" href="assets/css/kit/base.css" />
+  <link data-trunk rel="css" href="assets/css/kit/modules.css" />
+  <link data-trunk rel="css" href="assets/css/kit/chrome.css" />
+  <link data-trunk rel="css" href="assets/css/kit/old_revisions_inline.css" />
   <!-- The appbar's mark, for the whole-page scenes; the app's index.html copies all of assets/. -->
   <link data-trunk rel="copy-dir" href="assets/img" data-target-path="assets/img" />
 

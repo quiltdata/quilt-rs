@@ -65,7 +65,7 @@ pub use header::{MenuCommand, MenuItem, menu_items, remote_target};
 use incoming::{HoverCard, IncomingSummary};
 use resolve::{ResolveCommands, ResolvePane};
 
-stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.scss");
+stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.css");
 
 pub use super::v2_page::Outcome;
 
@@ -2336,8 +2336,8 @@ mod tests {
     /// inline container releases it — and stacks the shell — when it narrows.
     #[test]
     fn the_shell_and_pane_styles_own_the_responsive_width() {
-        const PAGE: &str = include_str!("installed_package_v2.module.scss");
-        const PANE: &str = include_str!("installed_package_v2/context_pane.module.scss");
+        const PAGE: &str = include_str!("installed_package_v2.module.css");
+        const PANE: &str = include_str!("installed_package_v2/context_pane.module.css");
 
         assert!(PAGE.contains("container-type: inline-size"));
         assert!(PAGE.contains("@container (max-width: 800px)"));
@@ -4017,14 +4017,14 @@ mod tests {
 
     #[expect(dead_code, reason = "only the classes this layout needs are loaded")]
     mod sheets {
-        stylance::import_crate_style!(pub layout, "src/kit/page_layout.module.scss");
-        stylance::import_crate_style!(pub appbar, "src/kit/appbar.module.scss");
+        stylance::import_crate_style!(pub layout, "src/kit/page_layout.module.css");
+        stylance::import_crate_style!(pub appbar, "src/kit/appbar.module.css");
         stylance::import_crate_style!(
             pub files,
-            "src/pages/installed_package_v2/file_pane.module.scss"
+            "src/pages/installed_package_v2/file_pane.module.css"
         );
-        stylance::import_crate_style!(pub group, "src/kit/entry_group.module.scss");
-        stylance::import_crate_style!(pub card, "src/kit/card.module.scss");
+        stylance::import_crate_style!(pub group, "src/kit/entry_group.module.css");
+        stylance::import_crate_style!(pub card, "src/kit/card.module.css");
     }
 
     /// The tokens the sheets read, which the test page does not load.
@@ -4035,7 +4035,7 @@ mod tests {
     fn load_page_sheets() {
         use crate::test_support::load_module_style;
         load_module_style(
-            include_str!("../kit/page_layout.module.scss"),
+            include_str!("../kit/page_layout.module.css"),
             &[
                 ("root", sheets::layout::root),
                 ("main", sheets::layout::main),
@@ -4043,14 +4043,14 @@ mod tests {
             ],
         );
         load_module_style(
-            include_str!("../kit/appbar.module.scss"),
+            include_str!("../kit/appbar.module.css"),
             &[
                 ("appbar", sheets::appbar::appbar),
                 ("bar", sheets::appbar::bar),
             ],
         );
         load_module_style(
-            include_str!("installed_package_v2.module.scss"),
+            include_str!("installed_package_v2.module.css"),
             &[
                 ("page", style::page),
                 ("shell", style::shell),
@@ -4058,7 +4058,7 @@ mod tests {
             ],
         );
         load_module_style(
-            include_str!("installed_package_v2/file_pane.module.scss"),
+            include_str!("installed_package_v2/file_pane.module.css"),
             &[
                 ("root", sheets::files::root),
                 ("band", sheets::files::band),
@@ -4067,11 +4067,11 @@ mod tests {
             ],
         );
         load_module_style(
-            include_str!("../kit/entry_group.module.scss"),
+            include_str!("../kit/entry_group.module.css"),
             &[("root", sheets::group::root), ("head", sheets::group::head)],
         );
         load_module_style(
-            include_str!("../kit/card.module.scss"),
+            include_str!("../kit/card.module.css"),
             &[
                 ("root", sheets::card::root),
                 ("body", sheets::card::body),

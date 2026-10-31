@@ -48,7 +48,7 @@ use leptos::prelude::*;
 
 use super::Button;
 
-stylance::import_crate_style!(style, "src/kit/load_failure.module.scss");
+stylance::import_crate_style!(style, "src/kit/load_failure.module.css");
 
 #[component]
 pub fn LoadFailure(

@@ -71,7 +71,7 @@ use super::RelativeTime;
 use super::countdown::EpochMillis;
 use super::icons;
 
-stylance::import_crate_style!(style, "src/kit/revision_row.module.scss");
+stylance::import_crate_style!(style, "src/kit/revision_row.module.css");
 
 /// `MouseEvent.button` for the middle one. `auxclick` carries the right button
 /// under the same event, and that gesture is asking for the context menu.
