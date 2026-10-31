@@ -44,7 +44,6 @@ fn main() {
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Registers the schemes from tauri.conf.json at runtime. macOS
@@ -81,8 +80,10 @@ fn main() {
                 }
             };
             let services = Arc::clone(&engine.services);
-            desktop::forward_events(app.handle(), &services.events);
             app.manage(Arc::clone(&services));
+            // The window is a client of the engine like any tab: it loads the
+            // engine's page with its token.
+            desktop::open_window(app.handle(), &engine.link)?;
 
             match tray::TrayController::install(
                 app.handle(),
@@ -105,7 +106,6 @@ fn main() {
 
             Ok(())
         })
-        .invoke_handler(desktop::commands::invoke_handler())
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {

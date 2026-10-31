@@ -7,55 +7,37 @@ use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 use url::Url;
 
+use super::show_window;
 use crate::engine::Error;
 use crate::engine::Result;
-use crate::engine::error::DesktopError;
 use crate::engine::model;
+use crate::engine::navigation;
 use crate::engine::routes;
 use crate::engine::services::Services;
 use crate::engine::telemetry::MixpanelEvent;
 use crate::engine::telemetry::event::{LoginEvent, LoginFlow};
 use crate::engine::telemetry::prelude::*;
 
-fn get_remote_package_url(current_url: &Url, uri_str: &str) -> Result<Url> {
-    let uri: quilt_uri::S3PackageUri = uri_str.parse()?;
-    Ok(routes::from_url(
-        routes::Paths::RemotePackage(uri.clone()),
-        current_url.to_owned(),
-    ))
+/// Send page `to` (a page id; `None` is the window) to `path`.
+fn navigate(services: &Services, to: Option<&str>, path: routes::Paths) {
+    let to = to.unwrap_or(navigation::WINDOW);
+    debug!("Sending page {} to {}", to, path);
+    services.navigations.send(&services.events, to, path);
 }
 
-fn navigate_to_url(app_handle: &AppHandle, url: Url) -> Result {
-    match app_handle.get_webview_window("main") {
-        Some(win) => {
-            win.navigate(url)?;
-            win.set_focus()?;
-            Ok(())
-        }
-        None => Err(Error::Desktop(DesktopError::Window)),
-    }
+/// The page of a Quilt package URI.
+fn package_path(uri_str: &str) -> Result<routes::Paths> {
+    Ok(routes::Paths::RemotePackage(uri_str.parse()?))
 }
 
-/// Navigate to a Quilt package URI by parsing it and redirecting to the package page
+/// Show a Quilt package URI's page, in the window brought to the front.
 fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
-    let win = app_handle
-        .get_webview_window("main")
-        .ok_or(DesktopError::Window)?;
-    let current_url = win.url()?;
-    let redirect_url = get_remote_package_url(&current_url, uri_str)?;
-    navigate_to_url(app_handle, redirect_url)
-}
-
-/// Navigate to a page after successful login.
-fn navigate_after_login(app_handle: &AppHandle, path: routes::Paths) -> Result {
-    debug!("Attempting to redirect after login to: {:?}", path);
-    let win = app_handle
-        .get_webview_window("main")
-        .ok_or(DesktopError::Window)?;
-    let win_url = win.url()?;
-    let redirect_url = routes::from_url(path, win_url);
-    debug!("Redirecting to: {}", redirect_url);
-    win.navigate(redirect_url)?;
+    navigate(
+        &app_handle.state::<Arc<Services>>(),
+        None,
+        package_path(uri_str)?,
+    );
+    show_window(app_handle);
     Ok(())
 }
 
@@ -151,27 +133,27 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
         let oauth_state = &s.oauth;
         let m = &*s.model;
 
-        let result = match oauth_state
+        let (landing, params) = oauth_state
             .take_params(&host, auth_params.code.clone(), &state)
-            .await
-        {
-            Ok((oauth_params, stored_location)) => {
+            .await;
+        let result = match params {
+            Ok(oauth_params) => {
                 info!("OAuth 2.1 callback for host: {}", host_str);
-                let login_result = model::login_oauth(m, &host, oauth_params).await;
-                (login_result, stored_location)
+                model::login_oauth(m, &host, oauth_params).await
             }
             Err(err) => {
                 error!(
                     "OAuth callback rejected for {}, aborting: {}",
                     host_str, err
                 );
-                (Err(err), None)
+                Err(err)
             }
         };
 
         match result {
-            (Ok(()), stored_location) => {
-                let final_path = stored_location
+            Ok(()) => {
+                let final_path = landing
+                    .back
                     .as_deref()
                     .and_then(|loc| {
                         loc.parse::<routes::Paths>()
@@ -187,62 +169,22 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     })
                     .unwrap_or(redirect_path);
                 s.telemetry.track(MixpanelEvent::UserLoggedIn(LoginEvent {
-                    // Cloned, not moved: the redirect-failure path below
-                    // still needs the host to build its error route.
-                    host: host.clone(),
+                    host,
                     flow: LoginFlow::OAuth,
                 }));
-                if let Err(err) = navigate_after_login(&handle, final_path) {
-                    error!("Failed to redirect after login: {}", err);
-                    let error_path = routes::Paths::LoginError(
-                        host.clone(),
-                        t!("error.title").into(),
-                        err.to_string(),
-                    );
-                    if let Some(win) = handle.get_webview_window("main") {
-                        match win.url() {
-                            Ok(win_url) => {
-                                let error_url = routes::from_url(error_path, win_url);
-                                if let Err(nav_err) = win.navigate(error_url) {
-                                    error!(
-                                        "Failed to navigate to error page after login: {}",
-                                        nav_err
-                                    );
-                                }
-                            }
-                            Err(url_err) => {
-                                error!(
-                                    "Failed to get window URL when navigating to error page: {}",
-                                    url_err
-                                );
-                            }
-                        }
-                    }
-                }
+                navigate(&s, landing.page.as_deref(), final_path);
             }
-            (Err(err), _) => {
+            Err(err) => {
                 error!("Failed to login via deep link: {}", err);
-                let error_path = routes::Paths::LoginError(
-                    host,
-                    t!("login_error.title").into(),
-                    err.to_string(),
+                navigate(
+                    &s,
+                    landing.page.as_deref(),
+                    routes::Paths::LoginError(
+                        host,
+                        t!("login_error.title").into(),
+                        err.to_string(),
+                    ),
                 );
-                if let Some(win) = handle.get_webview_window("main") {
-                    match win.url() {
-                        Ok(win_url) => {
-                            let error_url = routes::from_url(error_path, win_url);
-                            if let Err(nav_err) = win.navigate(error_url) {
-                                error!("Failed to navigate to error page: {}", nav_err);
-                            }
-                        }
-                        Err(url_err) => {
-                            error!(
-                                "Failed to get window URL when navigating to error page: {}",
-                                url_err
-                            );
-                        }
-                    }
-                }
             }
         }
     });
@@ -267,55 +209,17 @@ pub fn handle_deep_link_url(app_handle: &AppHandle, url_str: &str) -> Result {
     }
 }
 
-async fn wait_for_main_window(app_handle: &AppHandle) -> Result<()> {
-    const MAX_ATTEMPTS: u32 = 10;
-    const RETRY_DELAY_MS: u64 = 200;
-
-    let mut attempts = 0;
-
-    while attempts < MAX_ATTEMPTS {
-        if let Some(window) = app_handle.get_webview_window("main") {
-            // Check window is visible and URL is valid
-            if let Ok(true) = window.is_visible()
-                && let Ok(url) = window.url()
-            {
-                // Ensure the app has loaded (not about:blank)
-                if url.host().is_some() {
-                    return Ok(());
-                }
-            }
-        }
-
-        attempts += 1;
-        tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
-    }
-
-    Err(Error::Desktop(DesktopError::Window))
-}
-
 fn handle_deep_link_navigation(app_handle: &AppHandle, urls: &[Url]) {
     let Some(first_url) = urls.first() else {
         return;
     };
 
+    // The window takes its page whenever it connects, so a link that arrives
+    // with the launch needs no wait for it.
     let url_str = first_url.to_string();
-    let handle = app_handle.clone();
-
-    tauri::async_runtime::spawn(async move {
-        match wait_for_main_window(&handle).await {
-            Ok(()) => {
-                if let Err(err) = handle_deep_link_url(&handle, &url_str) {
-                    error!("Failed to handle deep link '{}': {}", url_str, err);
-                }
-            }
-            Err(_) => {
-                error!(
-                    "Failed to find ready main window, deep link lost: {}",
-                    url_str
-                );
-            }
-        }
-    });
+    if let Err(err) = handle_deep_link_url(app_handle, &url_str) {
+        error!("Failed to handle deep link '{}': {}", url_str, err);
+    }
 }
 
 pub fn setup_deep_link_handler(app_handle: &AppHandle) {
@@ -348,21 +252,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_get_remote_package_url() {
-        let current_url = Url::parse("http://localhost:3000/").unwrap();
-        let uri_str = "quilt+s3://bucket#package=foo/bar@hash";
-
-        let result = get_remote_package_url(&current_url, uri_str);
-        assert!(result.is_ok());
+    fn a_package_link_opens_its_package_page() {
+        let path = package_path("quilt+s3://bucket#package=foo/bar@hash").unwrap();
+        assert!(
+            routes::page(path).starts_with("/remote-package?"),
+            "a remote package page"
+        );
+        assert!(package_path("invalid-uri").is_err());
     }
 
-    #[test]
-    fn test_get_remote_package_url_invalid_uri() {
-        let current_url = Url::parse("http://localhost:3000/").unwrap();
-        let uri_str = "invalid-uri";
-
-        let result = get_remote_package_url(&current_url, uri_str);
-        assert!(result.is_err());
+    #[tokio::test]
+    async fn a_navigation_goes_to_the_page_that_asked_or_else_the_window() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let services = Services::init(data_dir.path().to_path_buf(), semver::Version::new(0, 0, 0))
+            .await
+            .unwrap();
+        navigate(&services, Some("a-tab"), routes::Paths::Settings);
+        navigate(&services, None, routes::Paths::Home);
+        assert_eq!(
+            services.navigations.pending("a-tab").unwrap().page,
+            "/settings"
+        );
+        assert_eq!(
+            services
+                .navigations
+                .pending(navigation::WINDOW)
+                .unwrap()
+                .page,
+            "/"
+        );
     }
 
     #[test]

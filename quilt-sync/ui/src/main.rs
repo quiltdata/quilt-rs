@@ -28,8 +28,12 @@ fn main() {
     // canvas, which only an empty frame may have.
     quilt_sync_ui::theme::stop_booting();
     // Before the router reads the address: a link's token leaves it here.
-    let _ = quilt_sync_ui::tauri::is_web_mode();
-    mount_to_body(App);
+    quilt_sync_ui::engine::start();
+    if quilt_sync_ui::engine::linked() {
+        mount_to_body(App);
+    } else {
+        mount_to_body(components::NoLink);
+    }
 }
 
 #[component]
@@ -38,11 +42,14 @@ fn App() -> impl IntoView {
     // below both find it. Without it the line draws nothing.
     provide_context(kit::Activities::new());
     view! {
+        <components::ConnectionBanner />
         <components::UpdateChecker />
         <components::ToastStack />
         <components::AutopullActivityFeed />
         <components::QuitPrompt />
         <Router>
+            <components::FollowEngine />
+            <DocumentTitle />
             <Routes fallback=|| view! { <NotFoundPage read=read_settings /> }>
                 <Route path=path!("/") view=|| view! { <Home /> } />
                 <Route path=path!("/commit") view=|| view! { <CommitPage read=read_settings /> } />
@@ -58,6 +65,19 @@ fn App() -> impl IntoView {
             </Routes>
         </Router>
     }
+}
+
+/// The browser tab names the page; see [`quilt_sync_ui::routes::page_title`].
+#[component]
+fn DocumentTitle() -> impl IntoView {
+    let location = leptos_router::hooks::use_location();
+    Effect::new(move |_| {
+        let query = quilt_sync_ui::routes::Query::parse(&location.search.get());
+        document().set_title(&quilt_sync_ui::routes::page_title(
+            &location.pathname.get(),
+            &query,
+        ));
+    });
 }
 
 /// `/` is the main page, and the design setting decides which one it is.
@@ -88,8 +108,8 @@ fn Home() -> impl IntoView {
 /// return) lands on the page the reader has switched on rather than on whichever
 /// one the link was written against. There is no second address for either page.
 ///
-/// `read` is a parameter so a test can answer the settings read without a Tauri
-/// host; the route passes [`read_settings`].
+/// `read` is a parameter so a test can answer the settings read without an
+/// engine; the route passes [`read_settings`].
 #[component]
 fn PackagePage(read: SettingsRead) -> impl IntoView {
     view! {
@@ -535,7 +555,7 @@ mod tests {
 
     /// `/installed-package` as the router draws it, over a stubbed settings read.
     ///
-    /// Neither page has a Tauri host here, so each draws its own failure — inside
+    /// Neither page has an engine here, so each draws its own failure — inside
     /// its own frame, which is what tells them apart: v2's `PageLayout` carries
     /// `data-v2-page`, v1's `Layout` is `#layout`. The route sets the marker;
     /// [`Mounted`]'s drop puts it back.

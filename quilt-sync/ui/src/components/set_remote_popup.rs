@@ -499,7 +499,7 @@ mod tests {
     }
 
     /// Once published, Enter in the catalog field saves: the bucket it would
-    /// otherwise move to is locked. With no Tauri host here, the save's
+    /// otherwise move to is locked. With no engine here, the save's
     /// refusal is what shows that it ran.
     #[wasm_bindgen_test]
     async fn enter_in_the_catalog_saves_once_published() {

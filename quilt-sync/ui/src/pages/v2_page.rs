@@ -12,7 +12,8 @@
 //! # The rules
 //!
 //! 1. One read, keyed by the address it was asked for, read again on
-//!    [`PageHandle::reload`]: the watcher's news, *Refresh*, a command done.
+//!    [`PageHandle::reload`]: the watcher's news, *Refresh*, a command done, a
+//!    reconnect to the engine after news may have been lost.
 //! 2. Reads are numbered, and only the newest one's answer lands. An older
 //!    read that settles late is dropped.
 //! 3. The answer lands in a signal, never a resource. A resource read under
@@ -98,6 +99,24 @@ impl PageHandle {
     /// keeps the last answer up while it is out. The memo compares answers, so
     /// one equal to the last notifies nothing.
     pub fn read<T>(self, key: Memo<String>, read: PageRead<T>) -> Memo<Option<Result<T, String>>>
+    where
+        T: Clone + PartialEq + Send + Sync + 'static,
+    {
+        crate::engine::reread_on_reconnect(self.reload);
+        self.answer(key, read)
+    }
+
+    /// [`Self::read`] for a page whose read is its operation, as a relay's: run
+    /// once per address, and never again on its own after a reconnect, since
+    /// the first run may still be going on the engine.
+    pub fn run<T>(self, key: Memo<String>, op: PageRead<T>) -> Memo<Option<Result<T, String>>>
+    where
+        T: Clone + PartialEq + Send + Sync + 'static,
+    {
+        self.answer(key, op)
+    }
+
+    fn answer<T>(self, key: Memo<String>, read: PageRead<T>) -> Memo<Option<Result<T, String>>>
     where
         T: Clone + PartialEq + Send + Sync + 'static,
     {
@@ -326,6 +345,43 @@ mod tests {
     use crate::test_support::{button_saying, mount, sleep_ms, unmount_earlier};
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
+
+    thread_local! {
+        static CALLS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    fn counted(_: String) -> std::pin::Pin<Box<dyn Future<Output = Result<u32, String>>>> {
+        CALLS.with(|c| c.set(c.get() + 1));
+        Box::pin(async { Ok(1) })
+    }
+
+    /// After a reconnect a page reads again; a relay, whose read is its
+    /// operation, does not run again on its own.
+    #[wasm_bindgen_test]
+    async fn a_reconnect_reads_a_page_again_but_never_reruns_a_relay() {
+        for (relay, expected) in [(false, 2), (true, 1)] {
+            CALLS.with(|c| c.set(0));
+            let engine = crate::engine::fake::FakeEngine::install();
+            mount(move || {
+                let key = Memo::new(|_| "k".to_string());
+                let page = PageHandle::new();
+                let _answer = if relay {
+                    page.run(key, counted)
+                } else {
+                    page.read(key, counted)
+                };
+            });
+            let _listener = crate::engine::listen::<serde_json::Value>("toast", |_| ());
+            sleep_ms(0).await;
+            engine.hello();
+            engine.close();
+            sleep_ms(0).await;
+            engine.hello();
+            sleep_ms(0).await;
+            assert_eq!(CALLS.with(std::cell::Cell::get), expected, "relay: {relay}");
+            unmount_earlier();
+        }
+    }
 
     thread_local! {
         static READS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };

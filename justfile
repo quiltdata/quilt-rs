@@ -75,13 +75,13 @@ ci: lint check-engine deny test::no-aws test::live test::doc test::frontend rele
 check-engine:
     #!/usr/bin/env bash
     set -euo pipefail
-    cd quilt-sync/src-tauri/src/engine
+    cd quilt-sync/src-tauri/src
     failed=0
-    if grep -rnE '\btauri[_:]' .; then
+    if grep -rnE '\btauri[_:]' engine.rs engine; then
         echo "error: the engine names Tauri (above)" >&2
         failed=1
     fi
-    if grep -rnoE '(^|[^$[:alnum:]_])crate::[[:alnum:]_]+' . | grep -vE 'crate::engine$'; then
+    if grep -rnoE '(^|[^$[:alnum:]_])crate::[[:alnum:]_]+' engine.rs engine | grep -vE 'crate::engine$'; then
         echo "error: the engine reaches outside crate::engine (above)" >&2
         failed=1
     fi

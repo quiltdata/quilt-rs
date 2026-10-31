@@ -386,7 +386,7 @@ pub fn differing_marks(
 }
 
 /// The dry run, for one namespace. A seam, like [`PageRead`], so a test can
-/// answer without a Tauri host.
+/// answer without an engine.
 pub(crate) type PullRead =
     fn(String) -> Pin<Box<dyn Future<Output = Result<commands::PullPreview, String>>>>;
 
@@ -611,7 +611,7 @@ fn normalized_address(
 }
 
 /// Render one successful page payload. Kept pure so its atomic shape can be
-/// tested without pretending the wasm runner has a Tauri host.
+/// tested without pretending the wasm runner has an engine.
 ///
 /// `asked` is the address's `resolve=1`; the mode is open only when this
 /// payload also carries a comparison, so the header, the pane and the marks
@@ -1261,7 +1261,7 @@ fn read_page(
 }
 
 /// The page over whichever read, resolve commands and revision lookup it is
-/// given, so a routed test can feed it a payload without a Tauri host.
+/// given, so a routed test can feed it a payload without an engine.
 #[component]
 fn PackageScreen(
     read: PageRead,
@@ -1570,7 +1570,7 @@ fn PackageEventListener(reload: Trigger) -> impl IntoView {
         query.read_untracked().get("namespace").as_deref() == Some(namespace.to_string().as_str())
     };
 
-    let status = crate::tauri::listen::<commands::PackageStatusEvent>(
+    let status = crate::engine::listen::<commands::PackageStatusEvent>(
         commands::PACKAGE_STATUS_EVENT,
         move |event| {
             if is_ours(&event.namespace) {
@@ -1578,7 +1578,7 @@ fn PackageEventListener(reload: Trigger) -> impl IntoView {
             }
         },
     );
-    let paused = crate::tauri::listen::<commands::PausedEvent>(
+    let paused = crate::engine::listen::<commands::PausedEvent>(
         commands::AUTOSYNC_PAUSED_EVENT,
         move |event| {
             if is_ours(&event.namespace) {
@@ -1772,7 +1772,7 @@ mod tests {
     }
 
     /// A copy that fails still reaches the band, as a failure, and marks no
-    /// row. There is no Tauri bridge in this harness, so every copy fails.
+    /// row. There is no engine in this harness, so every copy fails.
     #[wasm_bindgen_test]
     async fn a_failed_copy_goes_to_the_band_and_marks_nothing() {
         // Mounting starts the executor the copy is spawned on.
@@ -1821,13 +1821,9 @@ mod tests {
     async fn a_slower_copy_leaves_the_newer_one_marked() {
         // Mounting starts the executor the copy is spawned on.
         crate::test_support::mount(|| ());
-        // A host that counts every command it is asked to run, so a write
+        // An engine that counts every command it is asked to run, so a write
         // the gate missed would show.
-        let host = js_sys::Function::new_no_args(
-            "window.__asked = []; window.__TAURI__ = { core: { invoke: (cmd) => \
-             { window.__asked.push(cmd); return Promise.resolve(''); } } };",
-        );
-        host.call0(&wasm_bindgen::JsValue::NULL).unwrap();
+        let engine = crate::engine::fake::FakeEngine::serving();
         let outcome = RwSignal::new(None);
         let copies = CopyMark::new();
         run_reading_on(
@@ -1853,13 +1849,11 @@ mod tests {
             .unwrap();
         crate::test_support::sleep_ms(0).await;
 
-        let asked = js_sys::Function::new_no_args(
-            "const asked = window.__asked; delete window.__TAURI__; delete window.__asked; \
-             return asked.length;",
-        )
-        .call0(&wasm_bindgen::JsValue::NULL)
-        .unwrap();
-        assert_eq!(asked.as_f64(), Some(0.0), "the slower copy wrote nothing");
+        assert_eq!(
+            engine.all_requests(),
+            Vec::<serde_json::Value>::new(),
+            "the slower copy wrote nothing"
+        );
         assert_eq!(copies.copied.get_untracked().as_deref(), Some("b.csv"));
         assert_eq!(copies.said.get_untracked(), "Copied URI of b.csv");
         assert_eq!(outcome.get_untracked(), None);
@@ -2368,8 +2362,8 @@ mod tests {
     /// fixed string would pass a weaker test and tell the next unit nothing.
     ///
     /// The seam's `It works!` is gone — the header took that space — and its
-    /// assertion went with it. What replaced it is stronger: there is no Tauri
-    /// host under the test runner, so the page's read fails, and this now also
+    /// assertion went with it. What replaced it is stronger: there is no
+    /// engine under the test runner, so the page's read fails, and this now also
     /// holds the failure arm to keeping the frame and the package's name rather
     /// than blanking the page.
     ///

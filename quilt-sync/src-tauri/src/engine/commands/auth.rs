@@ -17,6 +17,7 @@ use crate::engine::autopull::Watcher;
 use crate::engine::model;
 use crate::engine::model::QuiltModel;
 use crate::engine::notify::Notify;
+use crate::engine::oauth::Landing;
 use crate::engine::quilt;
 use crate::engine::quilt::io::storage::LocalStorage;
 use crate::engine::quilt::paths::DomainPaths;
@@ -442,6 +443,7 @@ pub async fn login_oauth(
     s: &Services,
     host: String,
     back: Option<String>,
+    page: Option<String>,
 ) -> Result<String, String> {
     let m = &*s.model;
     let oauth_state = &s.oauth;
@@ -456,7 +458,9 @@ pub async fn login_oauth(
         .await
         .map_err(|e| e.to_string())?;
 
-    let request = oauth_state.start_login(&host, &client_id, back).await;
+    let request = oauth_state
+        .start_login(&host, &client_id, Landing { back, page })
+        .await;
 
     model::open_in_web_browser(&request.authorize_url).map_err(|e| e.to_string())?;
 

@@ -5,7 +5,7 @@ use crate::commands::{
     self, FSWATCHER_SUBSCRIBER_ERROR_EVENT, FsWatcherSettingsData, SubscriberErrorEvent,
 };
 use crate::components::Notification;
-use crate::tauri as tauri_bridge;
+use crate::engine;
 
 // ── Filesystem watcher section ──
 
@@ -24,7 +24,7 @@ pub(super) fn FsWatcherSection(
     // noisy and the reactor recovers via the next reconcile tick, so we
     // just log them to the browser console.
     let listener =
-        tauri_bridge::listen::<SubscriberErrorEvent>(FSWATCHER_SUBSCRIBER_ERROR_EVENT, move |ev| {
+        engine::listen::<SubscriberErrorEvent>(FSWATCHER_SUBSCRIBER_ERROR_EVENT, move |ev| {
             if ev.kind == "inotify_limit" {
                 notification.set(Some(Notification::Error(
                     "Filesystem watcher hit the OS inotify limit. \

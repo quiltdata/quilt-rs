@@ -40,6 +40,7 @@ use serde_json::Value;
 use serde_json::json;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::Semaphore;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
@@ -58,6 +59,15 @@ struct Ui;
 
 /// Requests one client may have running at once.
 const MAX_CALLS: usize = 32;
+
+/// Requests waiting for one of those. Far more than a page sends at once (the
+/// main page sends one per package), so the server never stops reading: the
+/// quit prompt's answers must get through. A client that sends more is closed.
+const CALL_BUFFER: usize = 65_536;
+
+/// Answers to the quit prompt. They skip the queue: a quit waits only a moment
+/// for them before going through.
+const QUIT_ANSWERS: [&str; 3] = ["quit_prompt_shown", "quit_cancel", "quit_confirm"];
 
 /// Replies waiting for a client to read them.
 const REPLY_BUFFER: usize = 256;
@@ -173,10 +183,14 @@ async fn ui_file(uri: Uri) -> Response {
         Some(file) => file,
         None => match Ui::get("index.html") {
             Some(file) => file,
+            // In development the window can open before `trunk watch` has
+            // built the UI once, so the page asks again until it's there.
             None => {
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
-                    "The UI isn't built. Run `trunk build` in quilt-sync/ui.",
+                    [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+                    "<meta http-equiv=\"refresh\" content=\"1\">\
+                     The UI isn't built. Run <code>trunk build</code> in quilt-sync/ui.",
                 )
                     .into_response();
             }
@@ -221,9 +235,10 @@ async fn session(socket: WebSocket, state: AppState) {
     let mut events = state.services.events.subscribe();
     let (mut sink, mut stream) = socket.split();
     let (replies, mut outbox) = mpsc::channel::<String>(REPLY_BUFFER);
-    // A client that sends but doesn't read fills the replies; it's closed then.
+    // A client that sends but doesn't read fills the replies, or sends far more
+    // than a page does; it's closed then.
     let overflow = Arc::new(Notify::new());
-    let calls = Arc::new(Semaphore::new(MAX_CALLS));
+    let (waiting, mut queued) = mpsc::channel::<Call>(CALL_BUFFER);
     let hello = json!({
         "hello": {
             "version": state.services.app.version.to_string(),
@@ -265,6 +280,22 @@ async fn session(socket: WebSocket, state: AppState) {
         let _ = sink.close().await;
     };
 
+    // Runs the queued calls, this many at a time.
+    let dispatcher = {
+        let state = state.clone();
+        let replies = replies.clone();
+        let overflow = Arc::clone(&overflow);
+        async move {
+            let calls = Arc::new(Semaphore::new(MAX_CALLS));
+            while let Some(call) = queued.recv().await {
+                let Ok(permit) = Arc::clone(&calls).acquire_owned().await else {
+                    break;
+                };
+                run(&state, &replies, &overflow, call, Some(permit));
+            }
+        }
+    };
+
     let reader = async {
         while let Some(Ok(message)) = stream.next().await {
             let text = match message {
@@ -273,29 +304,14 @@ async fn session(socket: WebSocket, state: AppState) {
                 _ => continue,
             };
             match serde_json::from_str::<Call>(&text) {
+                Ok(call) if QUIT_ANSWERS.contains(&call.cmd.as_str()) => {
+                    run(&state, &replies, &overflow, call, None);
+                }
                 Ok(call) => {
-                    // Read no more requests while this many run.
-                    let Ok(permit) = Arc::clone(&calls).acquire_owned().await else {
+                    if waiting.try_send(call).is_err() {
+                        overflow.notify_one();
                         break;
-                    };
-                    let state = state.clone();
-                    let replies = replies.clone();
-                    let overflow = Arc::clone(&overflow);
-                    tokio::spawn(async move {
-                        let reply = match dispatch(
-                            &state.services,
-                            state.desktop.as_deref(),
-                            &call.cmd,
-                            call.args,
-                        )
-                        .await
-                        {
-                            Ok(ok) => json!({ "id": call.id, "ok": ok }),
-                            Err(err) => json!({ "id": call.id, "err": err }),
-                        };
-                        drop(permit);
-                        queue(&replies, &overflow, reply.to_string());
-                    });
+                    }
                 }
                 Err(err) => {
                     warn!("unreadable request: {err}");
@@ -312,13 +328,44 @@ async fn session(socket: WebSocket, state: AppState) {
         }
     };
 
+    info!("a client connected");
     // Whichever ends first ends the session: the client left, or it fell
     // behind and was closed.
     tokio::select! {
         () = writer => {}
         () = reader => {}
-        () = overflow.notified() => warn!("closing a client that doesn't read its replies"),
+        () = dispatcher => {}
+        () = overflow.notified() => warn!("closing a client that can't keep up"),
     }
+    info!("a client left");
+}
+
+/// Run `call` in its own task and queue its reply, holding `permit` until done.
+fn run(
+    state: &AppState,
+    replies: &mpsc::Sender<String>,
+    overflow: &Arc<Notify>,
+    call: Call,
+    permit: Option<OwnedSemaphorePermit>,
+) {
+    let state = state.clone();
+    let replies = replies.clone();
+    let overflow = Arc::clone(overflow);
+    tokio::spawn(async move {
+        let reply = match dispatch(
+            &state.services,
+            state.desktop.as_deref(),
+            &call.cmd,
+            call.args,
+        )
+        .await
+        {
+            Ok(ok) => json!({ "id": call.id, "ok": ok }),
+            Err(err) => json!({ "id": call.id, "err": err }),
+        };
+        drop(permit);
+        queue(&replies, &overflow, reply.to_string());
+    });
 }
 
 /// Queue a reply, or mark the session for closing when the client has stopped
@@ -349,6 +396,19 @@ mod tests {
             headers.insert(header::ORIGIN, origin.parse().unwrap());
         }
         headers
+    }
+
+    /// A renamed quit command would quietly lose its place ahead of the queue.
+    #[test]
+    fn the_quit_answers_are_commands() {
+        for name in QUIT_ANSWERS {
+            assert!(
+                crate::engine::dispatch::COMMANDS
+                    .iter()
+                    .any(|(listed, _)| *listed == name),
+                "{name} is not a command"
+            );
+        }
     }
 
     #[test]
@@ -631,5 +691,56 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// With every slot busy, a quit answer still goes through at once, while
+    /// any other call waits for a slot.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_quit_answer_skips_a_full_queue() {
+        let running = start().await;
+        let mut socket = connect(running.addr).await;
+        next_json(&mut socket).await;
+
+        let send = |call: Value| tungstenite::Message::Text(call.to_string().into());
+        let writing = running.services.settings_writes.lock().await;
+        for id in 0..MAX_CALLS {
+            let call =
+                json!({"id": id, "cmd": "update_log_settings", "args": {"level": "default"}});
+            socket.send(send(call)).await.unwrap();
+        }
+        socket
+            .send(send(json!({"id": 100, "cmd": "get_toasts"})))
+            .await
+            .unwrap();
+        socket
+            .send(send(json!({"id": 101, "cmd": "quit_cancel"})))
+            .await
+            .unwrap();
+
+        let first = next_json(&mut socket).await;
+        assert_eq!(
+            first,
+            json!({"id": 101, "ok": null}),
+            "the quit answer first"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), socket.next())
+                .await
+                .is_err(),
+            "nothing else while every slot waits"
+        );
+
+        drop(writing);
+        let mut ids = std::collections::HashSet::new();
+        while ids.len() < MAX_CALLS + 1 {
+            let reply = next_json(&mut socket).await;
+            if let Some(id) = reply.get("id").and_then(Value::as_u64) {
+                ids.insert(id);
+            }
+        }
+        assert!(
+            ids.contains(&100),
+            "the waiting call runs once a slot frees"
+        );
     }
 }

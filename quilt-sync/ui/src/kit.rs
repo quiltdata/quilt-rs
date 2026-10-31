@@ -4,9 +4,9 @@
 //! goes with it and nothing here needs renaming.
 //!
 //! **Components here are presentation only:** props in, view out, callbacks for
-//! anything with an effect. No `commands`, no `tauri`, no fetching. That is
+//! anything with an effect. No `commands`, no `engine`, no fetching. That is
 //! enforced rather than encouraged — `gallery.rs` mounts this module in a plain
-//! browser with no Tauri runtime, so a component that calls a command cannot
+//! browser with no engine, so a component that calls a command cannot
 //! render, and therefore cannot be reviewed.
 //!
 //! Each component is a `<name>.rs` with its stylesheet beside it as

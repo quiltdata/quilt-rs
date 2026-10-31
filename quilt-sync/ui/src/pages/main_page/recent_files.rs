@@ -1011,7 +1011,7 @@ mod tests {
     }
 
     /// A refused clipboard says so. Silence would be indistinguishable from a
-    /// click that never registered, and there is no Tauri bridge in this
+    /// click that never registered, and there is no engine in this
     /// harness, so every copy here refuses.
     #[wasm_bindgen_test]
     async fn a_copy_that_fails_says_so_and_draws_no_mark() {

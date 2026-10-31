@@ -26,7 +26,7 @@ stylance::import_crate_style!(
 );
 
 /// Where the popover's rows come from. A function pointer rather than a
-/// direct call, so the DOM tests and the gallery answer without a Tauri host.
+/// direct call, so the DOM tests and the gallery answer without an engine.
 pub type RevisionHistoryFetch =
     fn(String) -> Pin<Box<dyn Future<Output = Result<commands::RevisionHistoryData, String>>>>;
 

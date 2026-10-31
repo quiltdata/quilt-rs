@@ -205,9 +205,63 @@ pub fn use_query() -> leptos::prelude::Memo<Query> {
     Memo::new(move |_| url.with(|url| Query::parse(url.search())))
 }
 
+/// The browser tab's title for the page at `path`, most specific first:
+/// `Commit · org/pkg · QuiltSync`, `org/pkg · QuiltSync`, `QuiltSync`.
+#[must_use]
+pub fn page_title(path: &str, query: &Query) -> String {
+    let package = match path {
+        "/remote-package" => query.get("uri").and_then(|uri| package_in_uri(&uri)),
+        _ => query.get("namespace"),
+    };
+    let page = match path {
+        "/commit" => Some("Commit"),
+        "/merge" => Some("Merge"),
+        "/login" => Some("Login"),
+        "/settings" => Some("Settings"),
+        "/setup" => Some("Setup"),
+        "/error" => Some("Error"),
+        _ => None,
+    };
+    [page, package.as_deref(), Some("QuiltSync")]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// The package a `quilt+s3` URI names, without its revision or path.
+fn package_in_uri(uri: &str) -> Option<String> {
+    let (_, rest) = uri.split_once("package=")?;
+    let end = rest.find(['@', ':', '&']).unwrap_or(rest.len());
+    Some(rest[..end].to_owned()).filter(|name| !name.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn the_tab_title_names_the_page_then_the_package() {
+        let ns = |namespace: &str| Query(vec![("namespace".into(), namespace.into())]);
+        assert_eq!(page_title("/", &Query::default()), "QuiltSync");
+        assert_eq!(
+            page_title("/installed-package", &ns("org/pkg")),
+            "org/pkg · QuiltSync"
+        );
+        assert_eq!(
+            page_title("/commit", &ns("org/pkg")),
+            "Commit · org/pkg · QuiltSync"
+        );
+        assert_eq!(
+            page_title("/settings", &Query::default()),
+            "Settings · QuiltSync"
+        );
+        let uri = Query(vec![(
+            "uri".into(),
+            "quilt+s3://bucket#package=org/pkg@abc123&path=a.csv".into(),
+        )]);
+        assert_eq!(page_title("/remote-package", &uri), "org/pkg · QuiltSync");
+    }
 
     /// A `back` that is itself an encoded address keeps its encoding.
     #[wasm_bindgen_test::wasm_bindgen_test]

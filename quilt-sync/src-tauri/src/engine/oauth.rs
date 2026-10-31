@@ -15,23 +15,38 @@ use crate::engine::telemetry::prelude::*;
 #[allow(clippy::duration_suboptimal_units)]
 const TTL: Duration = Duration::from_secs(10 * 60);
 
-/// Pending OAuth authorization state, keyed by host.
+/// How long an expired login is kept, so its callback can still tell the page
+/// that asked that it expired.
+#[allow(clippy::duration_suboptimal_units)]
+const FORGET: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Pending OAuth authorization state, keyed by its `state` token, so two
+/// logins to one host each land on their own page.
 ///
 /// When the user initiates OAuth login, we generate a PKCE challenge
 /// and store the verifier here. When the deep link callback arrives,
-/// we look up the verifier for the host and exchange the code.
+/// we look up the verifier by its state and exchange the code.
 #[derive(Default)]
 pub struct OAuthState {
     pending: Mutex<HashMap<String, PendingAuth>>,
 }
 
 struct PendingAuth {
+    host: String,
     code_verifier: String,
     redirect_uri: String,
     client_id: String,
-    state: String,
-    back: Option<String>,
+    landing: Landing,
     created_at: Instant,
+}
+
+/// Where a login lands once it succeeds.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Landing {
+    /// The page to show, as the login page was asked to return to.
+    pub back: Option<String>,
+    /// The id of the page that asked; `None` sends the window.
+    pub page: Option<String>,
 }
 
 /// The URL and related data needed to open the browser for OAuth login.
@@ -60,7 +75,7 @@ impl OAuthState {
         &self,
         host: &quilt_uri::Host,
         client_id: &str,
-        back: Option<String>,
+        landing: Landing,
     ) -> AuthorizeRequest {
         let pkce = quilt::auth::pkce_challenge();
         let redirect_uri = redirect_uri(host);
@@ -81,19 +96,19 @@ impl OAuthState {
             .append_pair("state", &state);
         let authorize_url = url.into();
 
+        let host_key = host.to_string();
         let pending = PendingAuth {
+            host: host_key.clone(),
             code_verifier: pkce.code_verifier,
             redirect_uri,
             client_id: client_id.to_string(),
-            state: state.clone(),
-            back,
+            landing,
             created_at: Instant::now(),
         };
 
-        let host_key = host.to_string();
         let mut guard = self.pending.lock().await;
-        guard.retain(|_, v| v.created_at.elapsed() < TTL);
-        guard.insert(host_key.clone(), pending);
+        guard.retain(|_, v| v.created_at.elapsed() < FORGET);
+        guard.insert(state, pending);
 
         info!("Stored pending OAuth state for {host_key}");
 
@@ -112,51 +127,67 @@ impl OAuthState {
         host: &quilt_uri::Host,
         code: String,
         state: &str,
-    ) -> Result<(quilt::auth::OAuthParams, Option<String>), Error> {
+    ) -> (Landing, Result<quilt::auth::OAuthParams, Error>) {
         let host_key = host.to_string();
         let mut guard = self.pending.lock().await;
-        let pending = match guard.remove(&host_key) {
+        let pending = match guard.remove(state) {
+            Some(p) if p.host != host_key => {
+                warn!("OAuth state for {} came back for {host_key}", p.host);
+                return (
+                    Landing::default(),
+                    Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
+                        format!("State mismatch for {host_key}: possible CSRF attack"),
+                    ))),
+                );
+            }
             Some(p) if p.created_at.elapsed() < TTL => {
                 info!("Found pending OAuth state for {host_key}");
                 p
             }
-            Some(_) => {
+            Some(expired) => {
                 warn!("Pending OAuth state for {host_key} has expired");
-                return Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
-                    format!(
-                        "OAuth state for {host_key} has expired; login again to restart the flow"
-                    ),
-                )));
+                return (
+                    expired.landing,
+                    Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
+                        format!(
+                            "OAuth state for {host_key} has expired; login again to restart the flow"
+                        ),
+                    ))),
+                );
+            }
+            None if guard.values().any(|p| p.host == host_key) => {
+                warn!("OAuth state mismatch for {host_key}: possible CSRF attack");
+                return (
+                    Landing::default(),
+                    Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
+                        format!("State mismatch for {host_key}: possible CSRF attack"),
+                    ))),
+                );
             }
             None => {
-                let keys: Vec<String> = guard.keys().cloned().collect();
-                warn!("No pending OAuth state for {host_key}. Pending hosts: {keys:?}");
-                return Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
-                    format!(
-                        "No active OAuth flow for {host_key}; \
-                     please start the login flow from within the app"
-                    ),
-                )));
+                warn!("No pending OAuth state for {host_key}");
+                return (
+                    Landing::default(),
+                    Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
+                        format!(
+                            "No active OAuth flow for {host_key}; \
+                         please start the login flow from within the app"
+                        ),
+                    ))),
+                );
             }
         };
         drop(guard);
 
-        if pending.state != state {
-            warn!("OAuth state mismatch for {host_key}: possible CSRF attack");
-            return Err(Error::OAuthUi(crate::engine::error::OAuthUiError::OAuth(
-                format!("State mismatch for {host_key}: possible CSRF attack"),
-            )));
-        }
-
-        Ok((
-            quilt::auth::OAuthParams {
+        (
+            pending.landing,
+            Ok(quilt::auth::OAuthParams {
                 code,
                 code_verifier: pending.code_verifier,
                 redirect_uri: pending.redirect_uri,
                 client_id: pending.client_id,
-            },
-            pending.back,
-        ))
+            }),
+        )
     }
 }
 
@@ -197,12 +228,24 @@ mod tests {
         tokio::time::pause();
         let oauth = OAuthState::default();
         let host = fixtures::host();
-        let req = oauth.start_login(&host, "client-id", None).await;
+        let landing = Landing {
+            back: Some("/settings".to_string()),
+            page: Some("a-tab".to_string()),
+        };
+        let req = oauth.start_login(&host, "client-id", landing).await;
         let state = extract_state(&req.authorize_url);
-        let result = oauth
+        let (landing, params) = oauth
             .take_params(&host, "auth-code".to_string(), &state)
             .await;
-        assert!(result.is_ok());
+        assert!(params.is_ok());
+        assert_eq!(
+            landing,
+            Landing {
+                back: Some("/settings".to_string()),
+                page: Some("a-tab".to_string()),
+            },
+            "the login lands where, and for whom, it was asked"
+        );
     }
 
     #[tokio::test]
@@ -210,9 +253,10 @@ mod tests {
         let oauth = OAuthState::default();
         let host = fixtures::host();
         // No start_login call — simulates an unsolicited deep link.
-        let result = oauth
+        let (landing, result) = oauth
             .take_params(&host, "auth-code".to_string(), "state")
             .await;
+        assert_eq!(landing, Landing::default(), "no page asked for it");
         assert!(
             matches!(
                 result,
@@ -227,12 +271,21 @@ mod tests {
         tokio::time::pause();
         let oauth = OAuthState::default();
         let host = fixtures::host();
-        let req = oauth.start_login(&host, "client-id", None).await;
+        let asked = Landing {
+            back: None,
+            page: Some("a-tab".to_string()),
+        };
+        let req = oauth.start_login(&host, "client-id", asked).await;
         let state = extract_state(&req.authorize_url);
         tokio::time::advance(TTL + Duration::from_secs(1)).await;
-        let result = oauth
+        let (landing, result) = oauth
             .take_params(&host, "auth-code".to_string(), &state)
             .await;
+        assert_eq!(
+            landing.page.as_deref(),
+            Some("a-tab"),
+            "the page that asked hears that it expired"
+        );
         assert!(
             matches!(
                 result,
@@ -243,23 +296,101 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn start_login_evicts_expired_entries() {
+    async fn an_expired_login_still_reaches_its_page_after_another_starts() {
         tokio::time::pause();
         let oauth = OAuthState::default();
-        let host_a = fixtures::one_host();
-        let host_b = fixtures::another_host();
-
-        // Login for host A — will expire.
-        oauth.start_login(&host_a, "client-id", None).await;
-
-        // Advance past TTL, then start a login for host B.
-        // The retain in start_login should evict the stale host A entry.
+        let host = fixtures::host();
+        let asked = Landing {
+            back: None,
+            page: Some("a-tab".to_string()),
+        };
+        let req = oauth.start_login(&host, "client-id", asked).await;
+        let state = extract_state(&req.authorize_url);
         tokio::time::advance(TTL + Duration::from_secs(1)).await;
-        oauth.start_login(&host_b, "client-id", None).await;
+        oauth
+            .start_login(&fixtures::another_host(), "client-id", Landing::default())
+            .await;
 
-        // Only host B should remain; the expired host A entry must be gone.
+        let (landing, result) = oauth
+            .take_params(&host, "auth-code".to_string(), &state)
+            .await;
+        assert_eq!(landing.page.as_deref(), Some("a-tab"));
+        assert!(result.is_err(), "it expired");
+    }
+
+    #[tokio::test]
+    async fn start_login_forgets_logins_after_a_day() {
+        tokio::time::pause();
+        let oauth = OAuthState::default();
+        oauth
+            .start_login(&fixtures::one_host(), "client-id", Landing::default())
+            .await;
+        tokio::time::advance(FORGET + Duration::from_secs(1)).await;
+        oauth
+            .start_login(&fixtures::another_host(), "client-id", Landing::default())
+            .await;
+
         let guard = oauth.pending.lock().await;
         assert_eq!(guard.len(), 1);
-        assert!(guard.contains_key("another.quilt.test"));
+        assert!(guard.values().all(|p| p.host == "another.quilt.test"));
+    }
+
+    #[tokio::test]
+    async fn two_logins_to_one_host_each_land_on_their_page() {
+        tokio::time::pause();
+        let oauth = OAuthState::default();
+        let host = fixtures::host();
+        let first = oauth
+            .start_login(
+                &host,
+                "client-id",
+                Landing {
+                    back: None,
+                    page: Some("first".to_string()),
+                },
+            )
+            .await;
+        let second = oauth
+            .start_login(
+                &host,
+                "client-id",
+                Landing {
+                    back: None,
+                    page: Some("second".to_string()),
+                },
+            )
+            .await;
+
+        for (req, page) in [(first, "first"), (second, "second")] {
+            let state = extract_state(&req.authorize_url);
+            let (landing, result) = oauth
+                .take_params(&host, "auth-code".to_string(), &state)
+                .await;
+            assert!(result.is_ok());
+            assert_eq!(landing.page.as_deref(), Some(page));
+        }
+    }
+
+    #[tokio::test]
+    async fn a_wrong_state_is_refused_and_lands_nowhere_in_particular() {
+        let oauth = OAuthState::default();
+        let host = fixtures::host();
+        let asked = Landing {
+            back: None,
+            page: Some("a-tab".to_string()),
+        };
+        let req = oauth.start_login(&host, "client-id", asked).await;
+        let (landing, result) = oauth
+            .take_params(&host, "auth-code".to_string(), "forged")
+            .await;
+        assert_eq!(landing, Landing::default());
+        assert!(result.is_err());
+
+        let state = extract_state(&req.authorize_url);
+        let (landing, result) = oauth
+            .take_params(&host, "auth-code".to_string(), &state)
+            .await;
+        assert!(result.is_ok(), "the real callback still works");
+        assert_eq!(landing.page.as_deref(), Some("a-tab"));
     }
 }

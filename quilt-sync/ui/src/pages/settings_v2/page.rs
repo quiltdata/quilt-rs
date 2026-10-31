@@ -94,7 +94,7 @@ pub(crate) enum Write {
 }
 
 /// What the page reads and writes, as parameters so a test can answer
-/// without a Tauri host. The rest of its commands are called directly.
+/// without an engine. The rest of its commands are called directly.
 #[derive(Clone, Copy)]
 pub(crate) struct SettingsIo {
     pub read: PageRead<SettingsData>,

@@ -61,7 +61,7 @@ stylance::import_crate_style!(
 );
 
 /// What removes revisions. A function pointer, so the DOM tests answer without
-/// a Tauri host.
+/// an engine.
 pub type RemoveRevisionsFn =
     fn(String, Vec<String>) -> Pin<Box<dyn Future<Output = Result<String, String>>>>;
 

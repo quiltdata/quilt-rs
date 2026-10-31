@@ -22,7 +22,7 @@ struct PanicArgs {
 pub fn install() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        crate::tauri::invoke_and_forget(
+        crate::engine::invoke_and_forget(
             "report_ui_panic",
             &PanicArgs {
                 message: info.to_string(),

@@ -16,7 +16,7 @@ use crate::commands::{
 };
 use crate::components::layout::{BreadcrumbItem, BreadcrumbLink};
 use crate::components::{Layout, Spinner};
-use crate::tauri as tauri_bridge;
+use crate::engine;
 
 /// True iff `event` reports an observation the page has not acted on yet — its
 /// fingerprint differs from the last one the page refetched for. A tick that
@@ -107,7 +107,7 @@ pub fn InstalledPackage() -> impl IntoView {
     // signals on the list page, so we use a full refetch rather than
     // mutate sub-signals individually.
     let event_holder: RwSignal<Option<PackageStatusEvent>> = RwSignal::new(None);
-    let listener = tauri_bridge::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
+    let listener = engine::listen::<PackageStatusEvent>(PACKAGE_STATUS_EVENT, move |ev| {
         event_holder.set(Some(ev));
     });
     on_cleanup(move || drop(listener));
@@ -127,7 +127,7 @@ pub fn InstalledPackage() -> impl IntoView {
     // event that fires between the two doesn't get dropped. If the
     // listener wins the race the snapshot won't overwrite a fresher
     // value — see the `slot.is_none()` check on the seed below.
-    let paused_listener = tauri_bridge::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
+    let paused_listener = engine::listen::<PausedEvent>(AUTOSYNC_PAUSED_EVENT, move |ev| {
         if !warrants_paused_banner(&ev.reason) {
             return;
         }

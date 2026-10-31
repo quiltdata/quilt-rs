@@ -28,7 +28,7 @@
 //!
 //! [`Appbar`](crate::kit::Appbar) is built by `PageLayout` and by v1's `Layout`, and a
 //! prop would thread through both and every page that builds them. So the app
-//! provides [`Activities`] once, and the kit stays free of Tauri. Without one —
+//! provides [`Activities`] once, and the kit stays free of the engine. Without one —
 //! the gallery's and the tests' default — the line draws nothing at all.
 //!
 //! # Why the region stays mounted

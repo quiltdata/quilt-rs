@@ -141,7 +141,7 @@ mod tests {
     }
 
     /// One click runs the sweep, with no dialog in between, and its answer
-    /// lands in the notification. Outside Tauri the call fails, which is the
+    /// lands in the notification. With no engine the call fails, which is the
     /// error path; the button is usable again after it.
     #[wasm_bindgen_test]
     async fn free_up_space_runs_at_once_and_reports() {

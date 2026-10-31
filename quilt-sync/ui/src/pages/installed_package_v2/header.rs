@@ -488,7 +488,7 @@ pub(crate) fn ask_to_remove(open: RwSignal<bool>, prune: RwSignal<bool>) {
 }
 
 /// Remove's command: namespace, remote and prune in, the backend's report
-/// out. A parameter so a test can answer without a Tauri host.
+/// out. A parameter so a test can answer without an engine.
 pub(crate) type Uninstall = fn(
     String,
     Option<quilt_uri::S3PackageUri>,
@@ -1437,7 +1437,7 @@ mod tests {
         );
     }
 
-    /// There is no Tauri bridge under the runner, so `invoke` answers `Err` —
+    /// There is no engine under the runner, so `invoke` answers `Err` —
     /// which makes this the failure arm, and the failure arm is the one the band
     /// exists for. The lead is the page's sentence; the bridge's own text follows
     /// as the detail.
@@ -2136,7 +2136,7 @@ mod tests {
     }
 
     /// The copy touches neither the package nor the lock, so it stays live
-    /// while a command runs, and with no Tauri bridge its failure reaches the
+    /// while a command runs, and with no engine its failure reaches the
     /// band, keyed to the package, while `busy` stays the other command's.
     #[wasm_bindgen_test]
     async fn the_copy_runs_while_another_command_does_and_reports_its_failure() {

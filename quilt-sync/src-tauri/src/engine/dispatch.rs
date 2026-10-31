@@ -24,6 +24,7 @@ use crate::engine::commands::{
 use crate::engine::design_settings::Design;
 use crate::engine::desktop::{Desktop, NOT_AVAILABLE};
 use crate::engine::log_settings::LogLevel;
+use crate::engine::navigation::Navigation;
 use crate::engine::quilt::flow::PullPreview;
 use crate::engine::services::Services;
 use crate::engine::tasks::settings::TaskSettings;
@@ -156,7 +157,7 @@ commands! {
         get_roles(host: String) -> RolesData;
         switch_role(host: String, role: String) -> RolesData;
         login(host: String, code: String) -> String;
-        login_oauth(host: String, back: Option<String>) -> String;
+        login_oauth(host: String, back: Option<String>, page: Option<String>) -> String;
         get_merge_data(namespace: String) -> MergeData;
         get_commit_data(namespace: String) -> CommitData;
         get_bucket_workflows(host: Option<String>, bucket: String) -> CommitWorkflows;
@@ -224,6 +225,8 @@ commands! {
         open_in_web_browser(url: String) -> String;
         setup(directory: String) -> String;
         get_toasts() -> Vec<Toast>;
+        pending_navigation(page: String) -> Option<Navigation>;
+        navigation_done(page: String, id: String) -> ();
         dismiss_toast(id: u64) -> ();
         report_ui_panic(message: String) -> ();
         quit_prompt_shown(generation: u64) -> ();
