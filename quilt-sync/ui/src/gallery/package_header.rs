@@ -25,7 +25,7 @@
 //! Every label, tone and action comes from `render(state, site)` — the one place
 //! the vocabulary lives. A scene that hand-wrote its own strings would be a
 //! drawing of the header rather than a rendering of it, and would keep agreeing
-//! with itself after the vocabulary moved. `queue.rs` set that precedent.
+//! with itself after the vocabulary moved. `queue_parts.rs` set that precedent.
 //!
 //! **The site is `PageHeader`**, which this scene is what settled. The header
 //! borrows the list's chip words for every state but one: `Behind` reads

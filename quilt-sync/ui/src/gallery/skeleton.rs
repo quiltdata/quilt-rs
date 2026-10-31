@@ -8,7 +8,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
-use crate::gallery::queue::row;
+use crate::gallery::queue_parts::row;
 use crate::kit::AttentionQueue;
 use crate::kit::Card;
 use crate::kit::GroupHeading;

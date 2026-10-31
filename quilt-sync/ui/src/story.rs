@@ -519,6 +519,23 @@ pub fn Cell(
     }
 }
 
+/// A stand-in for a command. The delay is the point: an action that answers instantly
+/// never shows the in-flight footer it is here to demonstrate.
+///
+/// # Panics
+///
+/// Outside a browser, where there is no window.
+pub async fn after_a_beat(ms: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        drop(
+            web_sys::window()
+                .expect("a window")
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms),
+        );
+    });
+    drop(wasm_bindgen_futures::JsFuture::from(promise).await);
+}
+
 #[cfg(test)]
 mod tests {
     use leptos::prelude::*;

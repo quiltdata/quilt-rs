@@ -5,12 +5,12 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
-use crate::differs_caption;
 use crate::kit::DiffersId;
 use crate::kit::EntryAction;
 use crate::kit::EntryRow;
 use crate::kit::EntrySelection;
 use crate::kit::MenuAction;
+use crate::kit::differs_id;
 use crate::kit::state_label::StateTone;
 
 fn menu() -> Vec<MenuAction> {
@@ -272,7 +272,7 @@ fn differing(opened: RwSignal<String>) -> AnyView {
                 <div style="width:100%; --q-entry-gutter: 0px">
                     <Provider value=DiffersId("resolve-differing-entry-row")>
                         {shapes(opened)}
-                        {differs_caption(3)}
+                        <p class="g-note" id=differs_id()>"3 files differ between these revisions — marked in the list."</p>
                     </Provider>
                 </div>
             </Cell>
