@@ -275,6 +275,14 @@ pub(crate) fn LoginScreen(read: PageRead<LoginData>) -> impl IntoView {
         };
         // This command is now the last one, so an earlier failure is not news.
         outcome.set(None);
+        // The engine would open it on its own machine, which for headless is
+        // seldom the reader's.
+        if engine::headless().get_untracked() {
+            if let Some(window) = web_sys::window() {
+                let _ = window.open_with_url_and_target(&data.catalog_url, "_blank");
+            }
+            return;
+        }
         let here = key.get_untracked();
         leptos::task::spawn_local(async move {
             if let Err(e) = commands::open_in_web_browser(data.catalog_url).await {

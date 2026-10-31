@@ -20,7 +20,19 @@ pub struct PathCheck {
 
 /// Whether `path` exists and is a folder.
 pub async fn check_path(_s: &Services, path: String) -> Result<PathCheck, String> {
-    Ok(check(Path::new(&path)).await)
+    Ok(check(Path::new(&expand_home(&path))).await)
+}
+
+/// `path` with a leading `~` as the user's home folder, as a shell reads it.
+pub fn expand_home(path: &str) -> String {
+    let rest = match path.strip_prefix('~') {
+        Some(rest) if rest.is_empty() || rest.starts_with(['/', MAIN_SEPARATOR]) => rest,
+        _ => return path.to_owned(),
+    };
+    match dirs::home_dir() {
+        Some(home) => format!("{}{rest}", home.display()),
+        None => path.to_owned(),
+    }
 }
 
 async fn check(path: &Path) -> PathCheck {
@@ -37,8 +49,9 @@ async fn check(path: &Path) -> PathCheck {
 }
 
 /// The folders whose path starts with `prefix`, each ending in a separator,
-/// sorted: `/mnt/da` offers `/mnt/data/`. Hidden folders only when the typed
-/// part starts with a dot. Nothing for a relative path.
+/// sorted: `/mnt/da` offers `/mnt/data/`, and `~/Qu` offers `~/QuiltSync/`.
+/// Hidden folders only when the typed part starts with a dot. Nothing for a
+/// relative path.
 pub async fn complete_path(_s: &Services, prefix: String) -> Result<Vec<String>, String> {
     Ok(complete(&prefix).await)
 }
@@ -46,10 +59,11 @@ pub async fn complete_path(_s: &Services, prefix: String) -> Result<Vec<String>,
 async fn complete(prefix: &str) -> Vec<String> {
     let cut = prefix.rfind(['/', MAIN_SEPARATOR]).map_or(0, |i| i + 1);
     let (parent, part) = prefix.split_at(cut);
-    if parent.is_empty() || !Path::new(parent).is_absolute() {
+    let real_parent = expand_home(parent);
+    if parent.is_empty() || !Path::new(&real_parent).is_absolute() {
         return Vec::new();
     }
-    let Ok(mut entries) = tokio::fs::read_dir(parent).await else {
+    let Ok(mut entries) = tokio::fs::read_dir(&real_parent).await else {
         return Vec::new();
     };
     let mut offered = Vec::new();
@@ -105,6 +119,18 @@ mod tests {
         );
         assert_eq!(complete("relative/da").await, Vec::<String>::new());
         assert_eq!(complete("").await, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_leading_tilde_is_the_home_folder() {
+        let home = dirs::home_dir().unwrap().display().to_string();
+        assert_eq!(expand_home("~"), home);
+        assert_eq!(
+            expand_home(&format!("~{MAIN_SEPARATOR}QuiltSync")),
+            format!("{home}{MAIN_SEPARATOR}QuiltSync")
+        );
+        assert_eq!(expand_home("~bob/x"), "~bob/x", "another user's isn't ours");
+        assert_eq!(expand_home("/a/~/b"), "/a/~/b");
     }
 
     #[tokio::test]

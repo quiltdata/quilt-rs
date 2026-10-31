@@ -83,5 +83,10 @@ tauri-plugin-single-instance = { version = "2.5.5", features = ["deep-link"] }
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 libc = "0.2"
 
+# A release build has no console of its own; `--headless` attaches to the
+# terminal it was started from. Already in the lock, so no new crate.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
 [lints]
 workspace = true

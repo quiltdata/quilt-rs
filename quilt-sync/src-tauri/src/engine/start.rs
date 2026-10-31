@@ -138,13 +138,13 @@ pub async fn start(options: Options) -> Result<Started> {
     }))
 }
 
-/// The address a browser opens: a loopback or any-address bind is reached on
-/// `127.0.0.1`, which the `Host` check allows and browsers treat as secure.
+/// The address a browser opens: the bound one, except that an any-address
+/// bind is reached on this machine's loopback.
 fn link_host(addr: SocketAddr) -> String {
-    if addr.ip().is_loopback() || addr.ip().is_unspecified() {
-        format!("127.0.0.1:{}", addr.port())
-    } else {
-        addr.to_string()
+    match addr.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => format!("127.0.0.1:{}", addr.port()),
+        IpAddr::V6(ip) if ip.is_unspecified() => format!("[::1]:{}", addr.port()),
+        _ => addr.to_string(),
     }
 }
 
@@ -182,6 +182,16 @@ mod tests {
             panic!("a second engine started on the same folder");
         };
         assert_eq!(link.as_deref(), Some(engine.link.as_str()));
+    }
+
+    #[test]
+    fn the_link_names_the_bound_address_or_loopback_for_any() {
+        let host = |addr: &str| link_host(addr.parse().unwrap());
+        assert_eq!(host("127.0.0.1:7878"), "127.0.0.1:7878");
+        assert_eq!(host("[::1]:7878"), "[::1]:7878");
+        assert_eq!(host("0.0.0.0:7878"), "127.0.0.1:7878");
+        assert_eq!(host("[::]:7878"), "[::1]:7878");
+        assert_eq!(host("10.0.0.5:7878"), "10.0.0.5:7878");
     }
 
     #[tokio::test(flavor = "multi_thread")]

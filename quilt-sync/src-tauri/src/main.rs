@@ -30,11 +30,30 @@ use engine::start::Started;
 
 rust_i18n::i18n!("locales");
 
+/// Print to the terminal that started us. A Windows release build is a GUI
+/// program with no console, so without this headless's link goes nowhere.
+#[cfg(windows)]
+fn attach_console() {
+    // SAFETY: takes no pointers; failing (no parent console) is fine.
+    unsafe {
+        windows_sys::Win32::System::Console::AttachConsole(
+            windows_sys::Win32::System::Console::ATTACH_PARENT_PROCESS,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn attach_console() {}
+
 fn main() -> ExitCode {
     env::init();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match headless::parse(&args) {
+    let headless = headless::parse(&args);
+    if headless.is_some() {
+        attach_console();
+    }
+    match headless {
         Some(Ok(args)) => return headless::run(args),
         Some(Err(usage)) => {
             eprintln!("{usage}");

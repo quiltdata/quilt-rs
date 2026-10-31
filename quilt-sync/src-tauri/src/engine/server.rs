@@ -120,14 +120,14 @@ fn router(
     if !addr.ip().is_loopback() {
         return app;
     }
-    let port = addr.port();
+    let addr = *addr;
     app.layer(axum::middleware::from_fn(
         move |request: Request, next: Next| async move {
             let host = request
                 .headers()
                 .get(header::HOST)
                 .and_then(|h| h.to_str().ok());
-            if host_allowed(host, port) {
+            if host_allowed(host, &addr) {
                 next.run(request).await
             } else {
                 StatusCode::FORBIDDEN.into_response()
@@ -138,13 +138,15 @@ fn router(
 
 /// Whether `host` (the `Host` header) names this loopback server. A page on
 /// another name that resolves to `127.0.0.1` still sends its own name.
-fn host_allowed(host: Option<&str>, port: u16) -> bool {
+fn host_allowed(host: Option<&str>, addr: &SocketAddr) -> bool {
     let Some(host) = host else {
         return false;
     };
-    ["127.0.0.1", "localhost", "[::1]"]
-        .iter()
-        .any(|name| host.eq_ignore_ascii_case(&format!("{name}:{port}")))
+    let port = addr.port();
+    host.eq_ignore_ascii_case(&addr.to_string())
+        || ["127.0.0.1", "localhost", "[::1]"]
+            .iter()
+            .any(|name| host.eq_ignore_ascii_case(&format!("{name}:{port}")))
 }
 
 /// An `Origin`, when sent, must be the page's own: `http://` and the `Host`.
@@ -418,13 +420,14 @@ mod tests {
 
     #[test]
     fn the_host_must_be_this_loopback_server() {
+        let addr: SocketAddr = "127.0.0.1:7878".parse().unwrap();
         for ok in [
             "127.0.0.1:7878",
             "localhost:7878",
             "LocalHost:7878",
             "[::1]:7878",
         ] {
-            assert!(host_allowed(Some(ok), 7878), "{ok}");
+            assert!(host_allowed(Some(ok), &addr), "{ok}");
         }
         for bad in [
             "evil.example:7878",
@@ -435,9 +438,14 @@ mod tests {
             "localhost.evil.example:7878",
             "",
         ] {
-            assert!(!host_allowed(Some(bad), 7878), "{bad}");
+            assert!(!host_allowed(Some(bad), &addr), "{bad}");
         }
-        assert!(!host_allowed(None, 7878));
+        assert!(!host_allowed(None, &addr));
+        let other: SocketAddr = "127.0.0.2:7878".parse().unwrap();
+        assert!(
+            host_allowed(Some("127.0.0.2:7878"), &other),
+            "the address it is bound to"
+        );
     }
 
     #[test]
