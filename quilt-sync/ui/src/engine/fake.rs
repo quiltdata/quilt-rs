@@ -29,6 +29,8 @@ struct Inner {
     reloads: RefCell<Vec<String>>,
     /// Says hello on each socket and answers every request with `null`.
     serving: Cell<bool>,
+    /// Says it has no desktop, as headless does.
+    headless: Cell<bool>,
 }
 
 pub(crate) struct FakeEngine {
@@ -62,9 +64,10 @@ impl Connector for FakeConnector {
     fn open(&self, id: u64) -> Result<Box<dyn Socket>, String> {
         self.0.opened.borrow_mut().push(id);
         if self.0.serving.get() {
-            wasm_bindgen_futures::spawn_local(
-                async move { link::received(id, &hello(link::VERSION)) },
-            );
+            wasm_bindgen_futures::spawn_local({
+                let desktop = !self.0.headless.get();
+                async move { link::received(id, &hello(link::VERSION, desktop)) }
+            });
         }
         Ok(Box::new(FakeSocket {
             id,
@@ -72,9 +75,13 @@ impl Connector for FakeConnector {
         }))
     }
 
-    fn refused(&self) -> Pin<Box<dyn Future<Output = bool>>> {
-        let refuses = self.0.refuses.get();
-        Box::pin(async move { refuses })
+    fn refused(&self) -> Pin<Box<dyn Future<Output = Option<&'static str>>>> {
+        let message = self.0.refuses.get().then_some(if self.0.headless.get() {
+            link::REFUSED_HEADLESS
+        } else {
+            link::REFUSED
+        });
+        Box::pin(async move { message })
     }
 
     fn after(&self, ms: i32, then: Box<dyn FnOnce()>) {
@@ -90,8 +97,9 @@ impl Connector for FakeConnector {
     }
 }
 
-fn hello(version: &str) -> String {
-    json!({ "hello": { "version": version, "desktop": true, "updateAvailable": null } }).to_string()
+fn hello(version: &str, desktop: bool) -> String {
+    json!({ "hello": { "version": version, "desktop": desktop, "updateAvailable": null } })
+        .to_string()
 }
 
 impl FakeEngine {
@@ -127,7 +135,7 @@ impl FakeEngine {
     }
 
     pub(crate) fn hello_from(&self, version: &str) {
-        link::received(self.socket(), &hello(version));
+        link::received(self.socket(), &hello(version, !self.inner.headless.get()));
     }
 
     pub(crate) fn event(&self, name: &str, payload: &Value) {
@@ -143,6 +151,11 @@ impl FakeEngine {
 
     pub(crate) fn close(&self) {
         link::closed(self.socket());
+    }
+
+    /// From now on the engine says it has no desktop, as headless does.
+    pub(crate) fn as_headless(&self) {
+        self.inner.headless.set(true);
     }
 
     pub(crate) fn refuse_token(&self) {

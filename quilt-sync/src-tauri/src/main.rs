@@ -8,6 +8,7 @@
 // package reads, deeper than the default limit of 128.
 #![recursion_limit = "256"]
 
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use tauri::Manager;
@@ -21,14 +22,26 @@ mod engine;
 use desktop::tray;
 use desktop::uri;
 use engine::env;
+use engine::headless;
 use engine::services::Services;
 use engine::start;
+use engine::start::Options;
 use engine::start::Started;
 
 rust_i18n::i18n!("locales");
 
-fn main() {
+fn main() -> ExitCode {
     env::init();
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match headless::parse(&args) {
+        Some(Ok(args)) => return headless::run(args),
+        Some(Err(usage)) => {
+            eprintln!("{usage}");
+            return ExitCode::from(2);
+        }
+        None => {}
+    }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -52,17 +65,15 @@ fn main() {
                 error!("Failed to register deep link schemes: {}", err);
             }
 
-            let data_dir = app
-                .path()
-                .app_local_data_dir()
-                .expect("Failed to resolve data dir");
+            let data_dir = match headless::data_dir_from_env() {
+                Some(dir) => dir,
+                None => app.path().app_local_data_dir()?,
+            };
             let version = app.package_info().version.clone();
             let desktop = desktop::commands::desktop(app.handle());
-            let engine = match tauri::async_runtime::block_on(start::start(
-                data_dir,
-                version,
-                Some(desktop),
-            ))? {
+            let engine = match tauri::async_runtime::block_on(start::start(Options::desktop(
+                data_dir, version, desktop,
+            )))? {
                 Started::Engine(engine) => engine,
                 Started::Running(link) => {
                     // Another process is the engine for this data folder; its
@@ -116,4 +127,5 @@ fn main() {
                 services.app.logging.shutdown();
             }
         });
+    ExitCode::SUCCESS
 }

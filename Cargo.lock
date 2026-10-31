@@ -5999,6 +5999,7 @@ dependencies = [
  "quilt-rs",
  "quilt-uri",
  "regex",
+ "reqwest 0.13.5",
  "rfd",
  "rust-embed",
  "rust-i18n",

@@ -81,6 +81,19 @@ pub fn connection() -> Signal<Connection> {
     link::connection().read_only().into()
 }
 
+/// Whether the engine has the desktop app's features (the native picker, the
+/// updater): `None` until its first hello. Features follow the engine, so a
+/// tab of the desktop app's engine has them too.
+pub fn desktop() -> Signal<Option<bool>> {
+    link::desktop().read_only().into()
+}
+
+/// Whether the engine said it has no desktop, as headless does. False until
+/// its first hello.
+pub fn headless() -> Signal<bool> {
+    Signal::derive(|| desktop().get() == Some(false))
+}
+
 /// Notify `reload` each time the page reconnects, so a page reads again what
 /// it may have missed while the socket was down. Not at the first hello: a
 /// read made before it waits for it.

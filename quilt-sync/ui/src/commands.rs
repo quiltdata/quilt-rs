@@ -786,6 +786,10 @@ pub struct RemotePackageResult {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     pub version: String,
+    /// The download for the engine's machine, for an engine that can't
+    /// install it itself.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 // ── Data-fetching commands ──────────────────────────────────
@@ -1004,6 +1008,31 @@ pub async fn package_file_path(namespace: String, path: String) -> Result<String
 
 pub async fn get_settings_data() -> Result<SettingsData, String> {
     engine::invoke_unit("get_settings_data").await
+}
+
+/// Whether a typed path is there, and a folder.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathCheck {
+    pub exists: bool,
+    pub is_dir: bool,
+}
+
+pub async fn check_path(path: String) -> Result<PathCheck, String> {
+    #[derive(Serialize)]
+    struct Args {
+        path: String,
+    }
+    engine::invoke("check_path", &Args { path }).await
+}
+
+/// The folders whose path starts with `prefix`, each ending in a separator.
+pub async fn complete_path(prefix: String) -> Result<Vec<String>, String> {
+    #[derive(Serialize)]
+    struct Args {
+        prefix: String,
+    }
+    engine::invoke("complete_path", &Args { prefix }).await
 }
 
 pub async fn get_setup_data() -> Result<SetupData, String> {

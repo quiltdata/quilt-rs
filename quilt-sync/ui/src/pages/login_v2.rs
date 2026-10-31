@@ -14,6 +14,7 @@ use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, LoginData};
+use crate::engine;
 use crate::kit::{
     BannerVariant, Button, ButtonSize, ButtonVariant, Card, FormControl, LoadFailure, PageLayout,
     SkeletonBox, TextInput, icons, readable,
@@ -36,6 +37,9 @@ pub fn LoginCard(
     #[prop(into)] host: String,
     #[prop(into)] catalog_url: String,
     code: RwSignal<String>,
+    /// The code alone: headless has nothing to receive a browser sign-in.
+    #[prop(optional, into)]
+    code_only: Signal<bool>,
     /// Which sign-in is out, if one is.
     #[prop(into)]
     running: Signal<Option<SignIn>>,
@@ -45,29 +49,35 @@ pub fn LoginCard(
 ) -> impl IntoView {
     let locked = move || running.get().is_some();
     let title = ["Log in to ".to_string(), host].concat();
-    let instructions = [
-        "Or visit ".to_string(),
-        catalog_url,
-        " to get your code:".to_string(),
-    ]
-    .concat();
+    let instructions = move || {
+        let lead = if code_only.get() {
+            "Visit "
+        } else {
+            "Or visit "
+        };
+        [lead, &catalog_url, " to get your code:"].concat()
+    };
     view! {
         <div class=style::page>
             <Card title=title>
                 <div class=style::stack>
-                    <div>
-                        <Button
-                            variant=ButtonVariant::Primary
-                            size=ButtonSize::Large
-                            leading_visual=icons::link_external()
-                            loading=Signal::derive(move || running.get() == Some(SignIn::Browser))
-                            disabled=Signal::derive(locked)
-                            on_click=move |_| on_browser.run(())
-                        >
-                            "Log in with browser"
-                        </Button>
-                    </div>
-                    <hr class=style::divider />
+                    <Show when=move || !code_only.get()>
+                        <div>
+                            <Button
+                                variant=ButtonVariant::Primary
+                                size=ButtonSize::Large
+                                leading_visual=icons::link_external()
+                                loading=Signal::derive(move || {
+                                    running.get() == Some(SignIn::Browser)
+                                })
+                                disabled=Signal::derive(locked)
+                                on_click=move |_| on_browser.run(())
+                            >
+                                "Log in with browser"
+                            </Button>
+                        </div>
+                        <hr class=style::divider />
+                    </Show>
                     <div class=style::instructions>
                         <p class=style::quiet>{instructions}</p>
                         <div>
@@ -293,6 +303,7 @@ pub(crate) fn LoginScreen(read: PageRead<LoginData>) -> impl IntoView {
                         host=d.host
                         catalog_url=d.catalog_url
                         code=code
+                        code_only=engine::headless()
                         running=running
                         on_browser=on_browser
                         on_open_catalog=on_open_catalog
@@ -393,6 +404,32 @@ mod tests {
     }
 
     /// The page reads once on mount, keyed by both query parameters.
+    /// Headless has nothing to receive a browser sign-in, so the card offers
+    /// the code alone.
+    #[wasm_bindgen_test]
+    async fn a_code_only_card_has_no_browser_sign_in() {
+        unmount_earlier();
+        let el = mount(|| {
+            view! {
+                <LoginCard
+                    host="quilt.test"
+                    catalog_url="https://quilt.test/code"
+                    code=RwSignal::new(String::new())
+                    code_only=true
+                    running=Signal::derive(|| None)
+                    on_browser=Callback::new(|()| {})
+                    on_open_catalog=Callback::new(|()| {})
+                    on_submit=Callback::new(|()| {})
+                />
+            }
+        });
+        sleep_ms(0).await;
+        let text = el.text_content().unwrap_or_default();
+        assert!(!text.contains("Log in with browser"), "{text}");
+        assert!(text.contains("Visit https://quilt.test/code"), "{text}");
+        button_saying(&el, "Submit code and Log in");
+    }
+
     #[wasm_bindgen_test]
     async fn the_page_reads_once() {
         let _el = login(answered).await;

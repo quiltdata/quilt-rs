@@ -3,19 +3,21 @@
 //!
 //! [`SetupCard`] is the page's one region over props: the gallery draws it
 //! over fixtures, and [`SetupV2`] fills it from `get_setup_data`. The folder
-//! starts at the read's suggestion; once chosen it is the page's, so a
-//! re-read does not put the suggestion back.
+//! starts at the read's suggestion; from then on it is the page's, so a
+//! re-read does not put the suggestion back over a folder picked or typed.
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
 use leptos_router::hooks::use_navigate;
 
 use crate::commands::{self, SetupData};
+use crate::engine;
 use crate::kit::{
     Button, ButtonVariant, Card, FormControl, LoadFailure, PageLayout, SkeletonBox, TextInput,
     readable,
 };
 
+use super::path_field::PathField;
 use super::v2_page::{PageHandle, PageRead, V2Page, critical, hold, still_here};
 
 stylance::import_crate_style!(style, "src/pages/setup_v2.module.css");
@@ -23,10 +25,13 @@ stylance::import_crate_style!(style, "src/pages/setup_v2.module.css");
 /// The read's only address.
 const HERE: &str = "setup";
 
-/// The folder, chosen with the system's picker, and Save.
+/// The folder, chosen with the system's picker or typed, and Save.
 #[component]
 pub fn SetupCard(
     directory: RwSignal<String>,
+    /// Typed rather than picked: headless has no picker.
+    #[prop(optional, into)]
+    typed: Signal<bool>,
     /// The picker is open.
     #[prop(into)]
     choosing: Signal<bool>,
@@ -50,22 +55,31 @@ pub fn SetupCard(
                     <p class=style::quiet>
                         "Select a directory where QuiltSync will store your packages, ex. ~/QuiltSync"
                     </p>
-                    <div class=style::choose>
-                        <FormControl
-                            label="Set home directory"
-                            control=move |id| {
-                                view! { <TextInput id=id value=directory readonly=true /> }
-                                    .into_any()
+                    <Show
+                        when=move || !typed.get()
+                        fallback=move || {
+                            view! {
+                                <PathField label="Set home directory" value=directory may_be_new=true />
                             }
-                        />
-                        <Button
-                            loading=choosing
-                            disabled=Signal::derive(locked)
-                            on_click=move |_| on_choose.run(())
-                        >
-                            "Browse"
-                        </Button>
-                    </div>
+                        }
+                    >
+                        <div class=style::choose>
+                            <FormControl
+                                label="Set home directory"
+                                control=move |id| {
+                                    view! { <TextInput id=id value=directory readonly=true /> }
+                                        .into_any()
+                                }
+                            />
+                            <Button
+                                loading=choosing
+                                disabled=Signal::derive(locked)
+                                on_click=move |_| on_choose.run(())
+                            >
+                                "Browse"
+                            </Button>
+                        </div>
+                    </Show>
                     <div>
                         <Button
                             variant=ButtonVariant::Primary
@@ -140,34 +154,13 @@ pub(crate) fn SetupScreen(read: PageRead<SetupData>) -> impl IntoView {
         if let Some(Ok(d)) = answer.get()
             && !chosen.get_value()
         {
+            chosen.set_value(true);
             directory.set(d.default_home);
         }
     });
 
     let choosing = RwSignal::new(false);
-    let on_choose = Callback::new(move |()| {
-        if choosing.get_untracked() || busy.get_untracked() {
-            return;
-        }
-        choosing.set(true);
-        outcome.set(None);
-        leptos::task::spawn_local(async move {
-            match commands::open_directory_picker().await {
-                Ok(path) => {
-                    chosen.try_set_value(true);
-                    directory.try_set(path);
-                }
-                Err(e) => {
-                    outcome.try_set(Some(critical(
-                        HERE.into(),
-                        "Could not choose the directory.",
-                        Some(e),
-                    )));
-                }
-            }
-            choosing.try_set(false);
-        });
-    });
+    let on_choose = pick_folder(page, choosing, chosen, directory);
 
     let navigate = use_navigate();
     let on_save = Callback::new(move |()| {
@@ -203,6 +196,7 @@ pub(crate) fn SetupScreen(read: PageRead<SetupData>) -> impl IntoView {
                 view! {
                     <SetupCard
                         directory=directory
+                        typed=engine::headless()
                         choosing=choosing
                         saving=busy
                         on_choose=on_choose
@@ -227,6 +221,39 @@ pub(crate) fn SetupScreen(read: PageRead<SetupData>) -> impl IntoView {
             }
         />
     }
+}
+
+/// Browse: the system's picker fills the folder.
+fn pick_folder(
+    page: PageHandle,
+    choosing: RwSignal<bool>,
+    chosen: StoredValue<bool>,
+    directory: RwSignal<String>,
+) -> Callback<()> {
+    let PageHandle { busy, outcome, .. } = page;
+    Callback::new(move |()| {
+        if choosing.get_untracked() || busy.get_untracked() {
+            return;
+        }
+        choosing.set(true);
+        outcome.set(None);
+        leptos::task::spawn_local(async move {
+            match commands::open_directory_picker().await {
+                Ok(path) => {
+                    chosen.try_set_value(true);
+                    directory.try_set(path);
+                }
+                Err(e) => {
+                    outcome.try_set(Some(critical(
+                        HERE.into(),
+                        "Could not choose the directory.",
+                        Some(e),
+                    )));
+                }
+            }
+            choosing.try_set(false);
+        });
+    })
 }
 
 #[cfg(test)]

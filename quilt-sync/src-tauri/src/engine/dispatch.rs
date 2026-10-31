@@ -17,9 +17,9 @@ use crate::engine::commands::{
     AccountHost, AutosyncPatch, AutosyncSettingsData, CommitData, CommitViolation, CommitWorkflows,
     FreedSpace, InstalledPackageData, InstalledPackagesListData, KeepingScope, LoginData,
     LoginErrorData, MainPageAccounts, MainPagePackageRefresh, MainPagePackages,
-    MainPageRecentFiles, MainPageWatcher, MergeData, NotDownloaded, PackagePageData,
+    MainPageRecentFiles, MainPageWatcher, MergeData, NotDownloaded, PackagePageData, PathCheck,
     RefreshedPackageStatus, RemotePackageResult, RevisionHistoryData, RolesData, SetRemoteResponse,
-    SettingsData, SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize, UpdateInfo,
+    SettingsData, SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
 };
 use crate::engine::design_settings::Design;
 use crate::engine::desktop::{Desktop, NOT_AVAILABLE};
@@ -29,6 +29,7 @@ use crate::engine::quilt::flow::PullPreview;
 use crate::engine::services::Services;
 use crate::engine::tasks::settings::TaskSettings;
 use crate::engine::toast::Toast;
+use crate::engine::updates::UpdateInfo;
 
 /// Builds [`dispatch`] from the table below. Each group calls its functions in
 /// [`crate::engine::commands`] differently:
@@ -231,11 +232,13 @@ commands! {
         report_ui_panic(message: String) -> ();
         quit_prompt_shown(generation: u64) -> ();
         quit_cancel() -> ();
+        check_for_update() -> Option<UpdateInfo>;
+        check_path(path: String) -> PathCheck;
+        complete_path(prefix: String) -> Vec<String>;
     }
     desktop {
         open_directory_picker() -> PathBuf;
         copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> String;
-        check_for_update() -> Option<UpdateInfo>;
         download_and_install_update() -> ();
         quit_confirm() -> ();
     }
@@ -334,10 +337,6 @@ mod tests {
             Ok(())
         }
 
-        async fn check_for_update(&self) -> std::result::Result<Option<String>, String> {
-            Ok(Some("9.9.9".into()))
-        }
-
         async fn install_update(&self) -> std::result::Result<(), String> {
             Ok(())
         }
@@ -359,8 +358,5 @@ mod tests {
             .await
             .expect("quit");
         assert!(desktop.quit.load(Ordering::SeqCst));
-
-        let update = dispatch(&s, Some(&desktop), "check_for_update", Value::Null).await;
-        assert_eq!(update, Ok(serde_json::json!({"version": "9.9.9"})));
     }
 }

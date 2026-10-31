@@ -31,6 +31,10 @@ const LAST_RETRY_MS: i32 = 5_000;
 pub(super) const REFUSED: &str =
     "QuiltSync has a new link. Open it from the tray menu: Open in browser.";
 
+/// The same, from a headless engine, which has no tray.
+pub(super) const REFUSED_HEADLESS: &str =
+    "QuiltSync has a new link. Open the link it printed when it started.";
+
 /// What a request answers when the page has no way to the engine at all: a
 /// test harness, the gallery, or a page opened without its link.
 pub(super) const NOT_LINKED: &str = "Not connected to QuiltSync";
@@ -52,8 +56,9 @@ pub(super) trait Connector {
     /// that id, never before this returns.
     fn open(&self, id: u64) -> Result<Box<dyn Socket>, String>;
 
-    /// Whether the engine refuses this page's token.
-    fn refused(&self) -> Pin<Box<dyn Future<Output = bool>>>;
+    /// What to say when the engine refuses this page's token; `None` when it
+    /// doesn't.
+    fn refused(&self) -> Pin<Box<dyn Future<Output = Option<&'static str>>>>;
 
     /// Run `then` after `ms` milliseconds.
     fn after(&self, ms: i32, then: Box<dyn FnOnce()>);
@@ -108,6 +113,8 @@ struct State {
     connection: ArcRwSignal<Connection>,
     /// How many hellos followed a gap.
     reconnects: ArcRwSignal<u64>,
+    /// Whether the engine has the desktop app's features, from its hello.
+    desktop: ArcRwSignal<Option<bool>>,
 }
 
 impl State {
@@ -127,6 +134,7 @@ impl State {
             retries: 0,
             connection: ArcRwSignal::new(Connection::Connecting),
             reconnects: ArcRwSignal::new(0),
+            desktop: ArcRwSignal::new(None),
         }
     }
 }
@@ -146,6 +154,10 @@ pub(super) fn connection() -> ArcRwSignal<Connection> {
 
 pub(super) fn reconnects() -> ArcRwSignal<u64> {
     STATE.with_borrow(|s| s.reconnects.clone())
+}
+
+pub(super) fn desktop() -> ArcRwSignal<Option<bool>> {
+    STATE.with_borrow(|s| s.desktop.clone())
 }
 
 fn js_err(err: &JsValue) -> String {
@@ -188,7 +200,8 @@ pub(super) fn received(id: u64, text: &str) {
     };
     if let Some(hello) = message.remove("hello") {
         let version = hello.get("version").and_then(serde_json::Value::as_str);
-        on_hello(version.unwrap_or_default());
+        let desktop = hello.get("desktop").and_then(serde_json::Value::as_bool);
+        on_hello(version.unwrap_or_default(), desktop.unwrap_or(false));
         return;
     }
     if let Some(serde_json::Value::String(name)) = message.remove("event") {
@@ -225,7 +238,7 @@ pub(super) fn received(id: u64, text: &str) {
     }
 }
 
-fn on_hello(version: &str) {
+fn on_hello(version: &str, desktop: bool) {
     if version != VERSION {
         let connector = STATE.with_borrow(|s| s.connector.clone());
         if connector.is_some_and(|c| c.reload(version)) {
@@ -234,6 +247,10 @@ fn on_hello(version: &str) {
         web_sys::console::warn_1(
             &format!("engine: QuiltSync {version} serves this page, built for {VERSION}").into(),
         );
+    }
+    let desktop_signal = STATE.with_borrow(|s| s.desktop.clone());
+    if desktop_signal.get_untracked() != Some(desktop) {
+        desktop_signal.set(Some(desktop));
     }
     let (lives, connection, reconnects, hellos, reconnected) = STATE.with_borrow_mut(|s| {
         s.phase = Phase::Ready;
@@ -307,8 +324,8 @@ pub(super) fn closed(id: u64) {
     }
     // The socket never got going: the engine is away, or it refused the token.
     wasm_bindgen_futures::spawn_local(async move {
-        if connector.refused().await {
-            refuse(REFUSED);
+        if let Some(message) = connector.refused().await {
+            refuse(message);
         } else {
             retry_after(&connector, delay);
         }

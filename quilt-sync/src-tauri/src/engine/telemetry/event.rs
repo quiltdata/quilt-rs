@@ -238,6 +238,7 @@ impl From<&crate::engine::error::Error> for Failure {
             | E::PackageUri(PackageUriError::Invalid(_) | PackageUriError::Qs(_))
             | E::FS(_)
             | E::Json(_)
+            | E::PortInUse(_)
             | E::ParseUrl(_)
             | E::Commit(_)
             | E::General(_)

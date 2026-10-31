@@ -2,6 +2,7 @@ use leptos::prelude::*;
 
 use crate::commands;
 use crate::components::buttons;
+use crate::engine;
 
 // Intentionally short: we want to aggressively encourage updates.
 // Previously this was a fully automatic updater; 5 minutes is a concession.
@@ -37,8 +38,9 @@ fn set_dismissed() {
 enum UpdateState {
     /// No update available or still checking.
     Hidden,
-    /// An update is available; display version and action buttons.
-    Available(String),
+    /// An update is available; display version and action buttons, or for
+    /// an engine with no desktop, where to download it.
+    Available(String, Option<String>),
     /// Download and install in progress.
     Installing,
     /// Download or install failed; show error and allow retry.
@@ -63,7 +65,7 @@ pub fn UpdateChecker() -> impl IntoView {
             // check failure (network error, etc.) is silently ignored to avoid
             // distracting the user on every launch.
             if let Ok(Some(info)) = commands::check_for_update().await {
-                state.set(UpdateState::Available(info.version));
+                state.set(UpdateState::Available(info.version, info.url));
             }
         });
     });
@@ -74,7 +76,8 @@ pub fn UpdateChecker() -> impl IntoView {
     };
 
     let install = move |_| {
-        let (UpdateState::Available(version) | UpdateState::Failed { version, .. }) = state.get()
+        let (UpdateState::Available(version, _) | UpdateState::Failed { version, .. }) =
+            state.get()
         else {
             return;
         };
@@ -90,16 +93,14 @@ pub fn UpdateChecker() -> impl IntoView {
 
     move || match state.get() {
         UpdateState::Hidden => None,
-        UpdateState::Available(version) => Some(
+        UpdateState::Available(version, url) => Some(
             view! {
                 <div class="qui-notify">
                     <div class="root">
                         <div class="update-bar">
                             <span>"Update available: " {version}</span>
                             <div class="update-bar-actions">
-                                <buttons::FormPrimary on_click=install>
-                                    "Download & Install"
-                                </buttons::FormPrimary>
+                                <UpdateAction url=url on_install=install />
                                 <buttons::FormSecondary on_click=dismiss>
                                     "Dismiss"
                                 </buttons::FormSecondary>
@@ -142,5 +143,34 @@ pub fn UpdateChecker() -> impl IntoView {
             }
             .into_any(),
         ),
+    }
+}
+
+/// Install, where the engine can; headless can't install itself, so the
+/// user downloads it and restarts QuiltSync.
+#[component]
+fn UpdateAction(
+    url: Option<String>,
+    on_install: impl Fn(leptos::ev::MouseEvent) + Clone + Send + Sync + 'static,
+) -> impl IntoView {
+    move || {
+        if engine::headless().get() {
+            url.clone().map(|url| {
+                view! {
+                    <a href=url target="_blank" rel="noopener">
+                        "Download"
+                    </a>
+                }
+                .into_any()
+            })
+        } else {
+            let on_install = on_install.clone();
+            Some(
+                view! {
+                    <buttons::FormPrimary on_click=on_install>"Download & Install"</buttons::FormPrimary>
+                }
+                .into_any(),
+            )
+        }
     }
 }
