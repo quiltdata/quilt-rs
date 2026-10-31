@@ -10,6 +10,7 @@ use leptos::prelude::*;
 use crate::Cell;
 use crate::Scene;
 use crate::Story;
+use crate::after_a_beat;
 use crate::kit::Banner;
 use crate::kit::BannerVariant;
 use crate::kit::Button;
@@ -299,19 +300,6 @@ pub fn CreateForm() -> impl IntoView {
 }
 
 // ── FormDialog ──
-
-/// A stand-in for a command. The delay is the point: an action that answers instantly
-/// never shows the in-flight footer it is here to demonstrate.
-pub(crate) async fn after_a_beat(ms: i32) {
-    let promise = js_sys::Promise::new(&mut |resolve, _| {
-        drop(
-            web_sys::window()
-                .expect("a window")
-                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms),
-        );
-    });
-    drop(wasm_bindgen_futures::JsFuture::from(promise).await);
-}
 
 /// One case, as the button that opens it. A `FormDialog` cannot be drawn inline —
 /// `show_modal()` puts it in the top layer over the whole page — so the only honest way

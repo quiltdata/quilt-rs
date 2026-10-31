@@ -5,7 +5,6 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Story;
-use crate::differs_caption;
 use crate::kit::CheckState;
 use crate::kit::DiffersId;
 use crate::kit::EntryAction;
@@ -13,6 +12,7 @@ use crate::kit::EntryGroup;
 use crate::kit::EntryRow;
 use crate::kit::EntrySelection;
 use crate::kit::GroupSelection;
+use crate::kit::differs_id;
 use crate::kit::state_label::StateTone;
 
 /// Enough rows to scroll the heading against. Downloaded, so each carries the
@@ -49,7 +49,7 @@ fn marked_group(open: RwSignal<bool>) -> AnyView {
                 <EntryRow name="a.csv" size="4 KB" differs=true have_mark=true />
                 <EntryRow name="b.csv" size="4 KB" have_mark=true />
             </EntryGroup>
-            {differs_caption(1)}
+            <p class="g-note" id=differs_id()>"1 file differs between these revisions — marked in the list."</p>
         </Provider>
     }
     .into_any()
