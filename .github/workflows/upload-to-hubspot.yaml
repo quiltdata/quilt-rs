@@ -43,7 +43,7 @@ on:
 jobs:
   upload-to-hubspot:
     name: Download and Upload to HubSpot
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     env:
       HUBSPOT_API_BASE: "https://api.hubapi.com"
       HUBFS_ROOT_URL: "https://www.quilt.bio/hubfs"
