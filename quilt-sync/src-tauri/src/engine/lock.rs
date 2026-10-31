@@ -378,10 +378,14 @@ mod tests {
         let port = taken.local_addr().unwrap().port();
         let next = bind_headless(LOOPBACK, Some(port)).await.unwrap();
         let got = next.local_addr().unwrap().port();
-        assert!(
-            got > port && got <= port + HEADLESS_TRIES,
-            "{got} after {port}"
-        );
+        assert_ne!(got, port);
+        // Near the top of the range there may be no next port, and any will do.
+        if port <= u16::MAX - HEADLESS_TRIES {
+            assert!(
+                got > port && got <= port + HEADLESS_TRIES,
+                "{got} after {port}"
+            );
+        }
     }
 
     #[test]

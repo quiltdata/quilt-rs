@@ -143,10 +143,14 @@ fn host_allowed(host: Option<&str>, addr: &SocketAddr) -> bool {
         return false;
     };
     let port = addr.port();
-    host.eq_ignore_ascii_case(&addr.to_string())
-        || ["127.0.0.1", "localhost", "[::1]"]
-            .iter()
-            .any(|name| host.eq_ignore_ascii_case(&format!("{name}:{port}")))
+    // A browser leaves out the default port.
+    let named = |name: &str| {
+        host.eq_ignore_ascii_case(&format!("{name}:{port}"))
+            || (port == 80 && host.eq_ignore_ascii_case(name))
+    };
+    named(&addr.ip().to_string())
+        || named(&format!("[{}]", addr.ip()))
+        || ["127.0.0.1", "localhost", "[::1]"].into_iter().any(named)
 }
 
 /// An `Origin`, when sent, must be the page's own: `http://` and the `Host`.
@@ -441,6 +445,12 @@ mod tests {
             assert!(!host_allowed(Some(bad), &addr), "{bad}");
         }
         assert!(!host_allowed(None, &addr));
+        let default: SocketAddr = "127.0.0.1:80".parse().unwrap();
+        assert!(
+            host_allowed(Some("127.0.0.1"), &default),
+            "port 80 left out"
+        );
+        assert!(host_allowed(Some("localhost:80"), &default));
         let other: SocketAddr = "127.0.0.2:7878".parse().unwrap();
         assert!(
             host_allowed(Some("127.0.0.2:7878"), &other),

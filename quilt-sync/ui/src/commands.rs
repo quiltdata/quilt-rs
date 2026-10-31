@@ -985,11 +985,24 @@ pub async fn get_login_error_data(
 /// `commands.rs`'s own note on the `uri` argument several commands take and
 /// never use.
 pub async fn copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> Result<String, String> {
+    use leptos::prelude::GetUntracked;
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         text: String,
         uri: Option<S3PackageUri>,
+    }
+    // Headless has no desktop clipboard; the reader's browser has one. Only on
+    // a secure origin, which loopback is.
+    if engine::headless().get_untracked() {
+        let clipboard = web_sys::window()
+            .ok_or("No window")?
+            .navigator()
+            .clipboard();
+        wasm_bindgen_futures::JsFuture::from(clipboard.write_text(&text))
+            .await
+            .map_err(|_| "This browser didn't allow copying here".to_owned())?;
+        return Ok("Copied to the clipboard".to_owned());
     }
     engine::invoke("copy_to_clipboard", &Args { text, uri }).await
 }

@@ -327,7 +327,8 @@ a page opened with no link says how to get one.
 Under `--headless` (`src-tauri/src/engine/headless.rs`) there is no window or
 tray: the engine prints the link. The hello's `desktop` tells the page what it
 can offer (`engine::headless()`): a typed folder path instead of the picker,
-code login only, and a download link instead of installing an update.
+the browser's clipboard, code login only, and a download link instead of
+installing an update.
 
 `invoke` and `listen` go over one WebSocket, `/ws?t=<token>`. The engine
 speaks first with a hello; each request is `{"id", "cmd", "args"}` and its
