@@ -150,7 +150,7 @@ pub fn run(args: Args) -> ExitCode {
         if !args.bind.is_loopback() {
             let port = url::Url::parse(&engine.link)
                 .ok()
-                .and_then(|url| url.port())
+                .and_then(|url| url.port_or_known_default())
                 .unwrap_or(start::HEADLESS_PORT);
             println!(
                 "Warning: QuiltSync listens on {} over plain HTTP, so the link's token and your \
