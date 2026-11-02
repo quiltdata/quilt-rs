@@ -84,7 +84,7 @@ fn main() -> ExitCode {
                 error!("Failed to register deep link schemes: {}", err);
             }
 
-            let data_dir = match headless::data_dir_from_env() {
+            let data_dir = match headless::domain_from_env() {
                 Some(dir) => dir,
                 None => app.path().app_local_data_dir()?,
             };

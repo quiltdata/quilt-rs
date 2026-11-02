@@ -24,7 +24,7 @@ just app dev
 directory to start over. Package files live in the home folder, not in the
 data folder, so pick a temporary home at setup instead of `~/QuiltSync`.
 
-On any platform, `QUILTSYNC_DATA_DIR` replaces the data folder, though the
+On any platform, `QUILT_DOMAIN` replaces the data folder, though the
 webview's storage stays where Tauri keeps it (see
 [docs/telemetry.md](../docs/telemetry.md) for where the folder normally is).
 
@@ -34,14 +34,14 @@ webview's storage stays where Tauri keeps it (see
 save, and prints a link to open in a browser. It takes the app's arguments:
 
 ```sh
-just app headless --data-dir /tmp/quiltsync-headless --port 0
+just app headless --domain /tmp/quiltsync-headless --port 0
 ```
 
 * `--bind <ip>`: `127.0.0.1` unless given; another address is reachable from
   other machines, unencrypted.
 * `--port <n>`: exactly this port, or `0` for any. Without it, the data
   folder's last port, else 7878, else the next free one.
-* `--data-dir <path>`, or `QUILTSYNC_DATA_DIR`.
+* `--domain <path>`, or `QUILT_DOMAIN`.
 * `--reset-token`: a new link; open tabs with the old one stop working.
 
 Ctrl-C stops it. A second one on the same data folder prints the first one's

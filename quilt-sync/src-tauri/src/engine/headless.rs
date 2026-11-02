@@ -17,18 +17,18 @@ use crate::engine::start::Started;
 /// The app's identifier (`tauri.conf.json`), which names its data folder.
 pub const IDENTIFIER: &str = "com.quiltdata.quilt-sync";
 
-/// Replaces the data folder in both modes.
-const DATA_DIR_VAR: &str = "QUILTSYNC_DATA_DIR";
+/// Replaces the data folder in both modes, as it replaces the CLI's domain.
+const DOMAIN_VAR: &str = "QUILT_DOMAIN";
 
 const USAGE: &str =
-    "Usage: quilt-sync --headless [--bind <ip>] [--port <n>] [--data-dir <path>] [--reset-token]";
+    "Usage: quilt-sync --headless [--bind <ip>] [--port <n>] [--domain <path>] [--reset-token]";
 
 /// What `--headless` was given.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Args {
     pub bind: IpAddr,
     pub port: Port,
-    pub data_dir: Option<PathBuf>,
+    pub domain: Option<PathBuf>,
     pub reset_token: bool,
 }
 
@@ -44,7 +44,7 @@ fn parse_headless(args: &[String]) -> Result<Args, String> {
     let mut parsed = Args {
         bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
         port: Port::Headless,
-        data_dir: None,
+        domain: None,
         reset_token: false,
     };
     let mut rest = args.iter();
@@ -74,16 +74,16 @@ fn parse_headless(args: &[String]) -> Result<Args, String> {
                         .map_err(|_| "--port takes a number".to_owned())?,
                 );
             }
-            "--data-dir" => parsed.data_dir = Some(PathBuf::from(value()?)),
+            "--domain" => parsed.domain = Some(PathBuf::from(value()?)),
             other => return Err(format!("Unknown argument: {other}")),
         }
     }
     Ok(parsed)
 }
 
-/// `QUILTSYNC_DATA_DIR`, when set, made absolute.
-pub fn data_dir_from_env() -> Option<PathBuf> {
-    std::env::var_os(DATA_DIR_VAR)
+/// `QUILT_DOMAIN`, when set, made absolute.
+pub fn domain_from_env() -> Option<PathBuf> {
+    std::env::var_os(DOMAIN_VAR)
         .filter(|v| !v.is_empty())
         .map(|dir| absolute(PathBuf::from(dir)))
 }
@@ -101,12 +101,12 @@ fn default_data_dir() -> Option<PathBuf> {
 /// Serve until Ctrl-C (or SIGTERM).
 pub fn run(args: Args) -> ExitCode {
     let Some(data_dir) = args
-        .data_dir
+        .domain
         .map(absolute)
-        .or_else(data_dir_from_env)
+        .or_else(domain_from_env)
         .or_else(default_data_dir)
     else {
-        eprintln!("No data folder: give one with --data-dir");
+        eprintln!("No data folder: give one with --domain");
         return ExitCode::FAILURE;
     };
     let version = Version::parse(env!("CARGO_PKG_VERSION")).expect("the crate's version");
@@ -220,7 +220,7 @@ mod tests {
             Some(Ok(Args {
                 bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
                 port: Port::Headless,
-                data_dir: None,
+                domain: None,
                 reset_token: false,
             }))
         );
@@ -234,14 +234,14 @@ mod tests {
                 "--bind",
                 "0.0.0.0",
                 "--port=0",
-                "--data-dir",
+                "--domain",
                 "/tmp/q",
                 "--reset-token",
             ]),
             Some(Ok(Args {
                 bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                 port: Port::Given(0),
-                data_dir: Some(PathBuf::from("/tmp/q")),
+                domain: Some(PathBuf::from("/tmp/q")),
                 reset_token: true,
             }))
         );

@@ -32,6 +32,7 @@
 - Under the hood, everything but the window, tray and deep links moves into an engine with no Tauri in it, which the desktop app drives. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1262>)
 - Under the hood, the window talks to the engine over the same connection as a browser tab (<https://github.com/quiltdata/quilt-rs/pull/1272>)
 - The update check reads the update feed directly, so a browser tab sees new versions too (<https://github.com/quiltdata/quilt-rs/pull/1279>)
+- `QUILT_DOMAIN` moves QuiltSync's data folder, as it moves the `quilt` CLI's domain (<https://github.com/quiltdata/quilt-rs/pull/1279>)
 - Under the hood, every command is listed once and the window reaches them all through one Tauri command; what only the desktop can do goes through one interface. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1265>)
 
 ### Fixed
