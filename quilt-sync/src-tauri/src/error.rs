@@ -49,7 +49,7 @@ pub enum OAuthUiError {
 #[derive(thiserror::Error, Debug)]
 pub enum TelemetryError {
     #[error("Mixpanel error: {0}")]
-    Mixpanel(#[from] mixpanel_rs::error::Error),
+    Mixpanel(#[from] crate::telemetry::mixpanel::SendError),
 
     #[error("Mixpanel serialization error: {0}")]
     Serialize(String),
@@ -181,8 +181,8 @@ impl From<serde_qs::Error> for Error {
     }
 }
 
-impl From<mixpanel_rs::error::Error> for Error {
-    fn from(e: mixpanel_rs::error::Error) -> Self {
+impl From<crate::telemetry::mixpanel::SendError> for Error {
+    fn from(e: crate::telemetry::mixpanel::SendError) -> Self {
         Error::Telemetry(TelemetryError::Mixpanel(e))
     }
 }
