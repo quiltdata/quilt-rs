@@ -364,10 +364,7 @@ mod tests {
     use super::*;
 
     fn refusal() -> crate::engine::Error {
-        crate::engine::Error::from(mixpanel_rs::error::Error::ApiClientError(
-            400,
-            "no such token".to_owned(),
-        ))
+        crate::engine::Error::from(mixpanel::SendError::Refused("no such token".to_owned()))
     }
 
     /// A refusal is reported, because it is our bug and fails every event alike.
@@ -397,7 +394,7 @@ mod tests {
         let telemetry = Telemetry::default();
 
         telemetry.report_delivery_failure_for_test(&crate::engine::Error::from(
-            mixpanel_rs::error::Error::MaxRetriesReached("gave up".to_owned()),
+            mixpanel::SendError::Unreachable("gave up".to_owned()),
         ));
 
         assert!(
@@ -416,7 +413,7 @@ mod tests {
     #[test]
     fn a_network_failure_does_not_spend_the_refusal_report() {
         for network in [
-            crate::engine::Error::from(mixpanel_rs::error::Error::ApiServerError(503)),
+            crate::engine::Error::from(mixpanel::SendError::Unreachable("server error".to_owned())),
             crate::engine::Error::from(crate::engine::error::TelemetryError::SendTimeout(10)),
         ] {
             let telemetry = Telemetry::default();
