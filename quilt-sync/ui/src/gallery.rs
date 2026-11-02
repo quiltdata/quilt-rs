@@ -77,11 +77,14 @@ mod gallery {
     pub mod old_revisions_inline;
     pub mod package_autosync;
     pub mod package_header;
+    pub mod package_row;
     pub mod packages;
     pub mod page;
     pub mod pane_section;
     pub mod queue;
+    pub mod queue_parts;
     pub mod recent_files;
+    pub mod recent_files_parts;
     pub mod revision_row;
     pub mod search_input;
     pub mod segmented_control;
@@ -103,7 +106,7 @@ use leptos::prelude::*;
 
 use quilt_sync_ui::story::{Catalog, Entry, Gallery, Home, HomeFrame, Tier};
 // The story modules reach these as `crate::Story` and the like.
-pub(crate) use quilt_sync_ui::story::{Cell, Scene, Story};
+pub(crate) use quilt_sync_ui::story::{Cell, Scene, Story, after_a_beat};
 
 fn main() {
     console_error_panic_hook::set_once();
@@ -189,7 +192,7 @@ const ENTRIES: &[Entry] = &[
     entry!(CORE, "Label", label::LabelStories),
     entry!(CORE, "LoadFailure", load_failure::LoadFailureStories),
     entry!(CORE, "NameTooltip", name_tooltip::NameTooltipStories),
-    entry!(CORE, "PackageRow", packages::PackageRowStories),
+    entry!(CORE, "PackageRow", package_row::PackageRowStories),
     entry!(CORE, "PaneSection", pane_section::PaneSectionStories),
     entry!(CORE, "RevisionRow", revision_row::RevisionRowStories),
     entry!(CORE, "SearchInput", search_input::SearchInputStories),
@@ -212,11 +215,11 @@ const ENTRIES: &[Entry] = &[
         "File pane toolbar",
         file_toolbar::FileToolbarStories
     ),
-    entry!(COMBINED, "Queue parts", queue::QueueStories),
+    entry!(COMBINED, "Queue parts", queue_parts::QueueStories),
     entry!(
         COMBINED,
         "Recent files parts",
-        recent_files::RecentFilesStories
+        recent_files_parts::RecentFilesStories
     ),
     entry!(
         SCENES / "Main page",

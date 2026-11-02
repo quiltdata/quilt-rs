@@ -3,7 +3,7 @@
 use leptos::prelude::*;
 
 use crate::Scene;
-use crate::gallery::forms::after_a_beat;
+use crate::after_a_beat;
 use crate::kit::Banner;
 use crate::kit::BannerVariant;
 use crate::kit::Button;

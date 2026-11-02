@@ -63,7 +63,7 @@ use leptos::prelude::*;
 
 use crate::Cell;
 use crate::Scene;
-use crate::gallery::forms::after_a_beat;
+use crate::after_a_beat;
 use crate::kit::Activities;
 use crate::kit::Activity;
 use crate::kit::ActivityKind;
