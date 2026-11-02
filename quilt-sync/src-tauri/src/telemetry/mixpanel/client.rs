@@ -136,7 +136,7 @@ impl MixpanelClient {
             }
             let wait = match wait {
                 // Waiting would run past the send's time limit; end now.
-                Some(wait) if Instant::now() + wait > deadline => {
+                Some(wait) if wait > deadline.saturating_duration_since(Instant::now()) => {
                     return Err(SendError::Unreachable(format!(
                         "{message}; longer than the send has left"
                     )));

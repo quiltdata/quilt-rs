@@ -518,6 +518,7 @@ async fn a_429_waits_for_retry_after() {
 async fn a_retry_after_longer_than_the_send_has_left_is_unreachable_at_once() {
     for (replies, requests, seconds) in [
         (vec![rate_limited(Some(30))], 1, 0),
+        (vec![rate_limited(Some(u64::MAX))], 1, 0),
         // 1 s and 2 s of backoff leave 7 s, less than 8.
         (
             vec![reply(500, ""), reply(500, ""), rate_limited(Some(8))],
