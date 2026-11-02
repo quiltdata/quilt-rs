@@ -52,7 +52,10 @@ async function start(domain: string, fakeHome: string, log: string[]) {
     child.stdout?.on("data", (chunk: Buffer) => {
       log.push(chunk.toString());
       out += chunk.toString();
-      const found = out.match(/QuiltSync is running\. Open (http:\/\/\S+)/);
+      // A chunk can end inside the link, so only a whole line counts.
+      const found = out.match(
+        /QuiltSync is running\. Open (http:\/\/\S+)\r?\n/,
+      );
       if (found) {
         clearTimeout(timer);
         ok(new URL(found[1]));
