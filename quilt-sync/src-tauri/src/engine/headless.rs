@@ -61,6 +61,9 @@ fn parse_headless(args: &[String]) -> Result<Args, String> {
                 .ok_or_else(|| format!("{flag} needs a value"))
         };
         match flag {
+            "--headless" | "--reset-token" if inline.is_some() => {
+                return Err(format!("{flag} takes no value"));
+            }
             "--headless" => {}
             "--reset-token" => parsed.reset_token = true,
             "--bind" => {
@@ -75,7 +78,13 @@ fn parse_headless(args: &[String]) -> Result<Args, String> {
                         .map_err(|_| "--port takes a number".to_owned())?,
                 );
             }
-            "--domain" => parsed.domain = Some(PathBuf::from(value()?)),
+            "--domain" => {
+                let domain = value()?;
+                if domain.is_empty() {
+                    return Err("--domain needs a folder".to_owned());
+                }
+                parsed.domain = Some(PathBuf::from(domain));
+            }
             other => return Err(format!("Unknown argument: {other}")),
         }
     }
@@ -262,6 +271,8 @@ mod tests {
             &["--headless", "--bind", "here"],
             &["--headless", "--port"],
             &["--headless", "--domain", "--reset-token"],
+            &["--headless", "--domain", ""],
+            &["--headless", "--reset-token=false"],
             &["--headless", "--verbose"],
         ] {
             let err = args(bad).unwrap().unwrap_err();

@@ -4,11 +4,11 @@
 
 ### A disposable app run
 
-QuiltSync does not read `QUILT_DOMAIN`; only the `quilt` CLI does. The app
-keeps one data folder, `com.quiltdata.quilt-sync` under the platform
-local-data directory, with more than the Quilt domain in it: auth, the home
-folder path and the package state, but also the app's settings, logs,
-telemetry identity and webview storage.
+The app keeps one data folder, `com.quiltdata.quilt-sync` under the platform
+local-data directory, which is also the `quilt` CLI's default domain. It holds
+more than the Quilt domain: auth, the home folder path and the package state,
+but also the app's settings, logs and telemetry identity. The window's
+webview storage stays where Tauri keeps it.
 
 On Linux that folder is under `XDG_DATA_HOME`, so an empty directory there
 gives a run with none of your state, which is the quick way to see the
@@ -24,9 +24,9 @@ just app dev
 directory to start over. Package files live in the home folder, not in the
 data folder, so pick a temporary home at setup instead of `~/QuiltSync`.
 
-On any platform, `QUILT_DOMAIN` replaces the data folder, though the
-webview's storage stays where Tauri keeps it (see
-[docs/telemetry.md](../docs/telemetry.md) for where the folder normally is).
+On any platform, `QUILT_DOMAIN` replaces the data folder for both the app and
+`quilt` (see [docs/telemetry.md](../docs/telemetry.md) for where the folder
+normally is).
 
 ### Headless
 
