@@ -32,6 +32,8 @@ enum Reply {
     },
     /// Read the request, then close the connection without an answer.
     Close,
+    /// Answer 200, then close the connection before the body is complete.
+    CutOff,
     /// Read the request, then keep the connection open without an answer.
     Silence,
 }
@@ -151,6 +153,13 @@ async fn serve(mut stream: TcpStream, reply: &Reply, seen: &Mutex<Vec<Request>>)
             body,
         } => (status, retry_after, body),
         Reply::Close => return,
+        Reply::CutOff => {
+            let head = "HTTP/1.1 200 Scripted\r\nContent-Length: 100\r\nConnection: close\r\n\r\n";
+            let _ = stream.write_all(head.as_bytes()).await;
+            let _ = stream.write_all(br#"{"status""#).await;
+            let _ = stream.shutdown().await;
+            return;
+        }
         Reply::Silence => {
             tokio::spawn(async move {
                 let _open = stream;
@@ -580,6 +589,20 @@ async fn a_refused_connection_is_retried_then_unreachable() {
 #[tokio::test(start_paused = true)]
 async fn a_dropped_answer_is_retried() {
     let server = Server::start(vec![Reply::Close, accepted()]).await;
+
+    server
+        .client(None)
+        .send(vec![event("one")])
+        .await
+        .expect("delivered on the second try");
+
+    assert_eq!(server.gaps(), vec![1]);
+}
+
+/// A 2xx whose body is cut off gave no verdict, so it is retried.
+#[tokio::test(start_paused = true)]
+async fn a_cut_off_body_is_retried() {
+    let server = Server::start(vec![Reply::CutOff, accepted()]).await;
 
     server
         .client(None)
