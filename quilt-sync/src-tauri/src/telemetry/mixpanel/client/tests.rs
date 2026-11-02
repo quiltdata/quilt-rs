@@ -582,7 +582,10 @@ async fn a_refused_connection_is_retried_then_unreachable() {
         .expect_err("nothing listens");
 
     assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
-    assert_eq!(whole_seconds(started.elapsed()), 1 + 2 + 4);
+    assert!(err.to_string().contains("after 3 retries"), "{err}");
+    // Windows takes about 2 s to refuse, so each try may end at its 3 s
+    // timeout instead; either way the backoff comes on top.
+    assert!(whole_seconds(started.elapsed()) >= 1 + 2 + 4);
 }
 
 /// A connection that closes before answering is retried like a refused one.
