@@ -10,7 +10,7 @@ mod app "quilt-sync/app.just"
 # The component gallery: `dev`, `build` and `preview`
 mod gallery "quilt-sync/ui/gallery.just"
 
-# The test suites: plain `just test`, `live`, `frontend` and `doc`
+# The test suites: plain `just test`, `live`, `frontend`, `doc` and `e2e`
 mod test "test.just"
 
 # Run test coverage for all packages
@@ -40,7 +40,7 @@ fmt:
 lint-md:
     git ls-files -z '*.md' | xargs -0 rumdl check
 
-# Check the format and lint of the CSS that `biome.jsonc` names
+# Check the format and lint of the CSS and e2e TypeScript that `biome.jsonc` names
 lint-css:
     biome check
 
