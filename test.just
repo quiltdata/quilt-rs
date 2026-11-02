@@ -36,13 +36,14 @@ frontend:
     WASM_BINDGEN_TEST_TIMEOUT=180 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
 
 # The suite starts the debug binary, which serves the UI from `ui/dist`, so
-# both are built first. The browser is installed once, with
+# both are built first; the binary with `SCOPE`, as `just test` builds it, so
+# the two share one build. The browser is installed once, with
 # `npx playwright install chromium` in `quilt-sync/e2e`.
 #
 # Run the browser tests against headless QuiltSync; arguments go to Playwright
 [positional-arguments]
 e2e *args:
     cd quilt-sync/ui && trunk build
-    cargo build -p quilt-sync
+    cargo build $SCOPE
     cd quilt-sync/e2e && npm ci --no-audit --no-fund
     cd quilt-sync/e2e && npx playwright test "$@"

@@ -43,7 +43,7 @@ async function start(domain: string, fakeHome: string, log: string[]) {
     env,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const link = await new Promise<URL>((ok, fail) => {
+  const ready = new Promise<URL>((ok, fail) => {
     let out = "";
     const timer = setTimeout(
       () => fail(new Error(`no link after 30s:\n${log.join("")}`)),
@@ -65,7 +65,13 @@ async function start(domain: string, fakeHome: string, log: string[]) {
     });
     child.on("error", fail);
   });
-  return { child, link };
+  try {
+    return { child, link: await ready };
+  } catch (err) {
+    // An engine that never printed its link would otherwise outlive the run.
+    await stop(child);
+    throw err;
+  }
 }
 
 function stop(child: ChildProcess): Promise<void> {
