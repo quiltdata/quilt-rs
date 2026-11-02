@@ -35,6 +35,11 @@ concurrency:
 
 env:
   RUST_BACKTRACE: 1
+  # No debug info: it is most of what rust-cache stores, and the caches of all
+  # jobs together must fit the repository's 10 GB limit. It also makes the
+  # build and wasm-bindgen faster. Panics still report their file and line;
+  # backtraces show function names only. Debugging is done locally.
+  CARGO_PROFILE_DEV_DEBUG: 0
   # Steps without credentials skip the IMDS probe, so a test that reaches for
   # AWS fails with a credentials error in a moment, rather than timing out
   # against an endpoint the runner does not have.
@@ -468,9 +473,6 @@ jobs:
     if: needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      # Smaller binaries make the build and wasm-bindgen faster; debugging is done locally.
-      CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
