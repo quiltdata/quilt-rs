@@ -255,7 +255,7 @@ mod tests {
 
         buffer.forget_delivered(2);
 
-        assert!(buffer.load().is_empty());
+        assert_eq!(buffer.load(), Vec::new());
         assert!(!buffer.path.exists(), "an empty buffer left a file behind");
     }
 
@@ -346,6 +346,6 @@ mod tests {
     fn a_missing_buffer_is_empty() {
         let dir = tempfile::tempdir().expect("tempdir");
 
-        assert!(Buffer::new(dir.path()).load().is_empty());
+        assert_eq!(Buffer::new(dir.path()).load(), Vec::new());
     }
 }

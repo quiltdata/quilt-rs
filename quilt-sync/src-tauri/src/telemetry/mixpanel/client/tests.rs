@@ -22,14 +22,14 @@ const TOKEN: &str = "a-token";
 
 struct Reply {
     status: u16,
-    headers: Vec<(&'static str, String)>,
+    retry_after: Option<u64>,
     body: String,
 }
 
 fn reply(status: u16, body: &str) -> Reply {
     Reply {
         status,
-        headers: Vec::new(),
+        retry_after: None,
         body: body.to_owned(),
     }
 }
@@ -40,9 +40,7 @@ fn accepted() -> Reply {
 
 fn rate_limited(retry_after: Option<u64>) -> Reply {
     Reply {
-        headers: retry_after
-            .map(|s| vec![("Retry-After", s.to_string())])
-            .unwrap_or_default(),
+        retry_after,
         ..reply(429, "")
     }
 }
@@ -120,15 +118,20 @@ async fn serve(mut stream: TcpStream, reply: &Reply, seen: &Mutex<Vec<Request>>)
     };
     seen.lock().expect("not poisoned").push(request);
 
-    let mut head = format!(
-        "HTTP/1.1 {} Scripted\r\nContent-Length: {}\r\nConnection: close\r\n",
+    let extra = reply
+        .retry_after
+        .map(|secs| {
+            format!(
+                "Retry-After: {secs}
+"
+            )
+        })
+        .unwrap_or_default();
+    let head = format!(
+        "HTTP/1.1 {} Scripted\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n",
         reply.status,
         reply.body.len()
     );
-    for (name, value) in &reply.headers {
-        head.push_str(&format!("{name}: {value}\r\n"));
-    }
-    head.push_str("\r\n");
     let _ = stream.write_all(head.as_bytes()).await;
     let _ = stream.write_all(reply.body.as_bytes()).await;
     let _ = stream.shutdown().await;
