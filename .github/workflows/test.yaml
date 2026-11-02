@@ -79,7 +79,6 @@ jobs:
               - .github/workflows/test.yaml
             css:
               - "**/*.css"
-              - quilt-sync/e2e/**/*.ts
               - biome.jsonc
               - justfile
               - .github/workflows/test.yaml
@@ -555,15 +554,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      # The binary alone: the suite needs nothing else built.
-      SCOPE: -p quilt-sync
       # Same linker as `quilt-sync`, for the same reason.
       CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      # The binary links WebKitGTK even when it runs headless.
+      # The engine links WebKitGTK even when it runs headless.
       - name: Install Ubuntu dependencies
         uses: ./.github/actions/install-ubuntu-deps
 
@@ -572,20 +569,18 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      # Trunk's pre_build hook needs npm too.
+      # Trunk's pre_build hook needs npm.
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: '26'
           cache: 'npm'
-          cache-dependency-path: |
-            quilt-sync/ui/package-lock.json
-            quilt-sync/e2e/package-lock.json
+          cache-dependency-path: quilt-sync/ui/package-lock.json
 
-      - name: Install trunk and just
+      - name: Install trunk, cargo-nextest and just
         uses: taiki-e/install-action@v2
         with:
-          tool: trunk,just
+          tool: trunk,nextest,just
 
       # Pinned for the reason given in `frontend build`.
       - name: Install stylance
@@ -593,31 +588,9 @@ jobs:
         with:
           tool: stylance-cli@0.8.4
 
-      # Keyed by the lockfile, which pins Playwright and so its browser build.
-      - name: Cache the Playwright browser
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('quilt-sync/e2e/package-lock.json') }}
-
-      # `--with-deps` also installs the browser's system libraries, which the
-      # cache doesn't hold.
-      - name: Install the Playwright browser
-        working-directory: quilt-sync/e2e
-        run: |
-          npm ci --no-audit --no-fund
-          npx playwright install --with-deps chromium
-
+      # The runner's Chrome; the tests fetch the chromedriver that matches it.
       - name: Test
         run: just test e2e
-
-      - name: Keep the traces of failed tests
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: e2e-test-results
-          path: quilt-sync/e2e/test-results/
-          retention-days: 7
 
   checks:
     name: all checks

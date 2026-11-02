@@ -47,17 +47,16 @@ link and exits.
 
 ### Browser tests
 
-`quilt-sync/e2e` drives headless QuiltSync in Chromium with Playwright. Each
-test starts its own engine on temporary folders, so your data is never
-touched. The first time, install the browser:
+`engine/e2e.rs` drives headless QuiltSync in Chrome over WebDriver, with
+[thirtyfour](https://crates.io/crates/thirtyfour). Each test starts its own
+engine in the test process, on temporary folders, so your data is never
+touched. They need Google Chrome installed; the first run fetches the
+chromedriver that matches it. `CHROME_BIN` names a Chrome or Chromium that
+isn't where Chrome usually is.
 
-```sh
-cd quilt-sync/e2e && npm ci && npx playwright install chromium
-```
-
-Then `just test e2e` builds the UI and the debug binary and runs the suite;
-arguments go to Playwright, e.g. `just test e2e --headed`. It isn't part of
-`just ci`, which would then need the browser; CI runs it in its own job.
+`just test e2e` builds the UI and runs them; arguments go to nextest. They sit
+behind the crate's `e2e` feature, so `just test` and `just ci` don't need
+Chrome; CI runs them in their own job.
 
 ### "Golden path" Testing
 

@@ -12,6 +12,8 @@ pub mod commit_message;
 pub mod design_settings;
 pub mod desktop;
 pub mod dispatch;
+#[cfg(all(test, feature = "e2e"))]
+mod e2e;
 pub mod env;
 pub mod error;
 pub mod events;

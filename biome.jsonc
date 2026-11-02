@@ -1,11 +1,9 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.4/schema.json",
-  // The kit's hand-written CSS and the e2e suite. The generated `modules.css`
-  // and the vendored `normalize.css` are left out, and so is v1's CSS.
+  // The kit's hand-written CSS. The generated `modules.css` and the vendored
+  // `normalize.css` are left out, and so is v1's CSS.
   "files": {
     "includes": [
-      "quilt-sync/e2e/*.ts",
-      "quilt-sync/e2e/tests/*.ts",
       "quilt-sync/ui/assets/css/kit/*.css",
       "quilt-sync/ui/src/**/*.module.css",
       "!quilt-sync/ui/assets/css/kit/modules.css",

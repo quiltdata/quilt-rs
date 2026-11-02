@@ -34,7 +34,7 @@
 - The update check reads the update feed directly, so a browser tab sees new versions too (<https://github.com/quiltdata/quilt-rs/pull/1279>)
 - `QUILT_DOMAIN` moves QuiltSync's data folder, as it moves the `quilt` CLI's domain (<https://github.com/quiltdata/quilt-rs/pull/1279>)
 - Under the hood, every command is listed once and the window reaches them all through one Tauri command; what only the desktop can do goes through one interface. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1265>)
-- Under the hood, browser tests drive headless QuiltSync in Chromium, and CI runs them on every PR (<https://github.com/quiltdata/quilt-rs/pull/1287>)
+- Under the hood, browser tests drive headless QuiltSync in Chrome from Rust, and CI runs them on every PR (<https://github.com/quiltdata/quilt-rs/pull/1287>)
 
 ### Fixed
 

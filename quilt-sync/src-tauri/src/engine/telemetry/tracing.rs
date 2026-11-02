@@ -168,7 +168,8 @@ where
         .with_filter(directives.and(CRASH_SINK_CEILING))
 }
 
-/// Install the subscriber, with a filter per sink.
+/// Install the subscriber, with a filter per sink. An engine started again in
+/// the same process, as the browser tests do, keeps the first one.
 ///
 /// **Each layer filters for itself.** A filter attached to the registry instead
 /// would be *global*: it drops events before any layer sees them, so a level chosen
@@ -215,12 +216,14 @@ fn init_tracing(
         tracing_subscriber::registry()
             .with(file)
             .with(crash_sink(filter(saved, CRASH_SINK_DIRECTIVES)))
-            .init();
+            .try_init()
+            .ok();
         Some(guard)
     } else {
         tracing_subscriber::registry()
             .with(crash_sink(filter(saved, CRASH_SINK_DIRECTIVES)))
-            .init();
+            .try_init()
+            .ok();
         None
     };
 

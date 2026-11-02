@@ -40,7 +40,7 @@ fmt:
 lint-md:
     git ls-files -z '*.md' | xargs -0 rumdl check
 
-# Check the format and lint of the CSS and e2e TypeScript that `biome.jsonc` names
+# Check the format and lint of the CSS that `biome.jsonc` names
 lint-css:
     biome check
 
