@@ -21,6 +21,10 @@
 
 ## [v0.26.2-dev]
 
+### Changed
+
+- Usage analytics report the QuiltSync version (<https://github.com/quiltdata/quilt-rs/pull/1286>)
+
 ### Fixed
 
 - On Windows and Linux, opening QuiltSync while it runs in the tray shows its window (<https://github.com/quiltdata/quilt-rs/pull/1275>)
