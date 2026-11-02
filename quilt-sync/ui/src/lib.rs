@@ -48,6 +48,7 @@ pub mod kit;
 pub mod pages;
 pub mod panic_report;
 pub mod routes;
+pub mod story;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod theme;
