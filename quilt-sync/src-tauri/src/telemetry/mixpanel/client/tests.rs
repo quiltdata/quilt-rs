@@ -120,12 +120,7 @@ async fn serve(mut stream: TcpStream, reply: &Reply, seen: &Mutex<Vec<Request>>)
 
     let extra = reply
         .retry_after
-        .map(|secs| {
-            format!(
-                "Retry-After: {secs}
-"
-            )
-        })
+        .map(|secs| format!("Retry-After: {secs}\r\n"))
         .unwrap_or_default();
     let head = format!(
         "HTTP/1.1 {} Scripted\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n",
@@ -236,7 +231,9 @@ async fn each_event_gains_the_token_and_the_library_properties() {
         ("host".to_owned(), json!("quilt.test")),
         ("time".to_owned(), json!(1_700_000_000)),
         // The client's own values win over the caller's.
+        ("token".to_owned(), json!("caller-token")),
         ("mp_lib".to_owned(), json!("not-rust")),
+        ("$lib_version".to_owned(), json!("caller-version")),
     ]);
     properties.insert("$insert_id".to_owned(), json!("an-id"));
 
