@@ -80,7 +80,13 @@ wildcards = "deny"
 # without a version, which Cargo records as `*`. That's expected for path
 # deps — only flag wildcards on registry crates.
 allow-wildcard-paths = true
-deny = []
+# One TLS stack: rustls with aws-lc-rs, which the AWS SDK needs anyway. Each
+# extra stack is one more source of security fixes to follow.
+deny = [
+    { crate = "native-tls", reason = "use rustls" },
+    { crate = "openssl-sys", reason = "use rustls" },
+    { crate = "ring", reason = "use aws-lc-rs as the rustls provider" },
+]
 
 [sources]
 unknown-registry = "deny"
