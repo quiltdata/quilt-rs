@@ -415,6 +415,18 @@ async fn setup_command(m: &model::Model, directory: &str) -> Result<quilt::linea
 }
 
 pub async fn setup(s: &Services, directory: String) -> Result<String, String> {
+    // A typed folder may start with `~`; a relative one would move with the
+    // working folder.
+    let directory = super::expand_home(&directory);
+    if !std::path::Path::new(&directory).is_absolute() {
+        return Err(format!(
+            "Give the folder's full path, like {}",
+            get_default_home_dir().map_or_else(
+                |_| "~/QuiltSync".to_owned(),
+                |home| home.display().to_string()
+            )
+        ));
+    }
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let msg_init = format!("Setup with directory {directory}");

@@ -37,6 +37,7 @@ use crate::engine::telemetry::Telemetry;
 use crate::engine::telemetry::prelude::*;
 use crate::engine::toast::SinkToastEmitter;
 use crate::engine::toast::ToastCenter;
+use crate::engine::updates::Updates;
 
 pub struct Services {
     pub data_dir: PathBuf,
@@ -57,6 +58,7 @@ pub struct Services {
     pub settings_writes: tokio::sync::Mutex<()>,
     pub events: EventSink,
     pub navigations: Navigations,
+    pub updates: Updates,
     /// The tray icon's state; a desktop tray clones it.
     pub tray_status: watch::Receiver<SyncTrayStatus>,
 }
@@ -68,6 +70,7 @@ impl Services {
     ///
     /// When file logging cannot start.
     pub async fn init(data_dir: PathBuf, version: Version) -> Result<Arc<Self>> {
+        let app_version = version.clone();
         crate::engine::events::set_runtime(tokio::runtime::Handle::current());
 
         // Resolved before the sinks are built: the crash client's event hook
@@ -171,6 +174,7 @@ impl Services {
             settings_writes: tokio::sync::Mutex::new(()),
             events,
             navigations: Navigations::default(),
+            updates: Updates::new(app_version),
             tray_status,
         }))
     }

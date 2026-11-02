@@ -324,6 +324,12 @@ tray's *Open in browser*. The page keeps the token in its origin's
 the address; a browser with site storage turned off gets a message instead, and
 a page opened with no link says how to get one.
 
+Under `--headless` (`src-tauri/src/engine/headless.rs`) there is no window or
+tray: the engine prints the link. The hello's `desktop` tells the page what it
+can offer (`engine::headless()`): a typed folder path instead of the picker,
+the browser's clipboard, code login only, and a download link instead of
+installing an update.
+
 `invoke` and `listen` go over one WebSocket, `/ws?t=<token>`. The engine
 speaks first with a hello; each request is `{"id", "cmd", "args"}` and its
 reply `{"id", "ok"}` or `{"id", "err"}`; every event goes to every window and

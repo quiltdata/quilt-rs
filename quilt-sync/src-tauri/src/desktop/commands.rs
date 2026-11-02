@@ -48,12 +48,6 @@ impl<R: Runtime> Desktop for TauriDesktop<R> {
         Ok(())
     }
 
-    async fn check_for_update(&self) -> Result<Option<String>, String> {
-        let updater = self.app.updater().map_err(|e| e.to_string())?;
-        let update = updater.check().await.map_err(|e| e.to_string())?;
-        Ok(update.map(|update| update.version))
-    }
-
     async fn install_update(&self) -> Result<(), String> {
         let updater = self.app.updater().map_err(|e| e.to_string())?;
         let update = updater

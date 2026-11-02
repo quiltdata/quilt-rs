@@ -25,7 +25,14 @@ pub struct Engine {
     pub services: Arc<Services>,
     /// The page's address with the token, for a browser to open.
     pub link: String,
-    _lock: EngineLock,
+    lock: EngineLock,
+}
+
+impl Engine {
+    /// Let go of the services, keeping the data folder's lock.
+    pub fn into_lock(self) -> EngineLock {
+        self.lock
+    }
 }
 
 /// What [`start`] found.
@@ -36,8 +43,8 @@ pub enum Started {
     Running(Option<String>),
 }
 
-/// Start the engine for `data_dir`, serving on loopback with the desktop's
-/// port rule.
+/// Start the engine for `data_dir`, serving on loopback: the desktop app on
+/// its last port or any, headless on its last port or 7878 or the next free.
 ///
 /// # Errors
 ///
@@ -57,7 +64,12 @@ pub async fn start(
         }
     };
 
-    let listener = lock::bind_desktop(IpAddr::V4(Ipv4Addr::LOCALHOST), lock.saved_port()).await?;
+    let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    let listener = if desktop.is_some() {
+        lock::bind_desktop(loopback, lock.saved_port()).await?
+    } else {
+        lock::bind_headless(loopback, lock.saved_port()).await?
+    };
     let addr = listener.local_addr()?;
     if let Err(err) = lock.save_port(addr.port()) {
         warn!("failed to save the port: {err}");
@@ -65,6 +77,11 @@ pub async fn start(
     let token = lock.web_token()?;
 
     let services = Services::init(data_dir, version.clone()).await?;
+    // Early, so a page's hello can already say. Tests don't reach the network.
+    if cfg!(not(test)) {
+        let services = Arc::clone(&services);
+        tokio::spawn(async move { services.updates.check().await });
+    }
     server::serve(listener, Arc::clone(&services), desktop, token.clone())?;
 
     let url = format!("http://{addr}");
@@ -72,7 +89,7 @@ pub async fn start(
     Ok(Started::Engine(Engine {
         services,
         link: lock::link(&url, &token),
-        _lock: lock,
+        lock,
     }))
 }
 

@@ -6,3 +6,8 @@ mod gallery "ui/gallery.just"
 # Run QuiltSync in development mode, rebuilding on save
 dev: gallery::stubs
     cargo tauri dev
+
+# Run QuiltSync headless in development mode, rebuilding on save, e.g. `--domain /tmp/q`
+[positional-arguments]
+headless *args: gallery::stubs
+    cargo tauri dev -- -- --headless "$@"

@@ -214,7 +214,13 @@ async fn ws_handler(
         return StatusCode::FORBIDDEN.into_response();
     }
     if query.get("t").map(String::as_str) != Some(&*state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+        // Says where the new link is: headless has no tray to take it from.
+        let mode = if state.desktop.is_some() {
+            "desktop"
+        } else {
+            "headless"
+        };
+        return (StatusCode::UNAUTHORIZED, mode).into_response();
     }
     match ws {
         Ok(ws) => ws.on_upgrade(move |socket| session(socket, state)),
@@ -243,8 +249,7 @@ async fn session(socket: WebSocket, state: AppState) {
         "hello": {
             "version": state.services.app.version.to_string(),
             "desktop": state.desktop.is_some(),
-            // The engine doesn't check for updates on its own yet.
-            "updateAvailable": Value::Null,
+            "updateAvailable": state.services.updates.known(),
         }
     });
 

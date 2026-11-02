@@ -45,7 +45,7 @@ pub fn NoLink() -> impl IntoView {
     view! {
         <Blankslate
             heading="Open QuiltSync from its link"
-            description="This page needs the link QuiltSync gives it. Open it from the tray menu: Open in browser."
+            description="This page needs the link QuiltSync gives it: Open in browser in its tray menu, or the link it printed if it runs with --headless."
         />
     }
 }
@@ -175,6 +175,24 @@ mod tests {
         sleep_ms(0).await;
         assert_eq!(engine.sockets_opened(), 1);
         assert_eq!(alerts(&root), 1);
+    }
+
+    /// A headless engine has no tray, so its refusal says to open the link it
+    /// printed instead.
+    #[wasm_bindgen_test]
+    async fn a_headless_refusal_does_not_point_to_the_tray() {
+        let engine = FakeEngine::install();
+        engine.as_headless();
+        engine.refuse_token();
+        let root = mount(ConnectionBanner);
+        let _asked = ask("get_toasts");
+        sleep_ms(0).await;
+        engine.close();
+        sleep_ms(0).await;
+
+        let text = root.text_content().unwrap_or_default();
+        assert!(text.contains("printed"), "{text}");
+        assert!(!text.contains("tray"), "{text}");
     }
 
     /// The page asks where the engine sent it once it connects, says it went,

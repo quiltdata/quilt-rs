@@ -17,6 +17,7 @@ pub mod error;
 pub mod events;
 pub mod experimental_settings;
 pub mod fswatcher;
+pub mod headless;
 pub mod lock;
 pub mod log_settings;
 pub mod model;
@@ -33,6 +34,7 @@ pub mod start;
 pub mod tasks;
 pub mod telemetry;
 pub mod toast;
+pub mod updates;
 
 pub use error::Error;
 

@@ -183,19 +183,29 @@ impl Connector for Browser {
     }
 
     /// A browser hides the status of a refused upgrade, so ask over plain
-    /// HTTP. An engine that doesn't answer at all is away, not refusing.
-    fn refused(&self) -> Pin<Box<dyn Future<Output = bool>>> {
+    /// HTTP. An engine that doesn't answer at all is away, not refusing. A
+    /// refusal says whether the engine is headless, which has no tray.
+    fn refused(&self) -> Pin<Box<dyn Future<Output = Option<&'static str>>>> {
         let url = format!("/ws?t={}", js_sys::encode_uri_component(&self.token));
         Box::pin(async move {
-            let Some(window) = web_sys::window() else {
-                return false;
+            let window = web_sys::window()?;
+            let response: web_sys::Response = JsFuture::from(window.fetch_with_str(&url))
+                .await
+                .ok()?
+                .dyn_into()
+                .ok()?;
+            if response.status() != 401 {
+                return None;
+            }
+            let body = match response.text() {
+                Ok(text) => JsFuture::from(text).await.ok().and_then(|t| t.as_string()),
+                Err(_) => None,
             };
-            let Ok(response) = JsFuture::from(window.fetch_with_str(&url)).await else {
-                return false;
-            };
-            response
-                .dyn_into::<web_sys::Response>()
-                .is_ok_and(|r| r.status() == 401)
+            Some(if body.as_deref() == Some("headless") {
+                link::REFUSED_HEADLESS
+            } else {
+                link::REFUSED
+            })
         })
     }
 

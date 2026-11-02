@@ -4,11 +4,11 @@
 
 ### A disposable app run
 
-QuiltSync does not read `QUILT_DOMAIN`; only the `quilt` CLI does. The app
-keeps one data folder, `com.quiltdata.quilt-sync` under the platform
-local-data directory, with more than the Quilt domain in it: auth, the home
-folder path and the package state, but also the app's settings, logs,
-telemetry identity and webview storage.
+The app keeps one data folder, `com.quiltdata.quilt-sync` under the platform
+local-data directory, which is also the `quilt` CLI's default domain. It holds
+more than the Quilt domain: auth, the home folder path and the package state,
+but also the app's settings, logs and telemetry identity. The window's
+webview storage stays where Tauri keeps it.
 
 On Linux that folder is under `XDG_DATA_HOME`, so an empty directory there
 gives a run with none of your state, which is the quick way to see the
@@ -24,9 +24,26 @@ just app dev
 directory to start over. Package files live in the home folder, not in the
 data folder, so pick a temporary home at setup instead of `~/QuiltSync`.
 
-On macOS and Windows the location does not follow an environment variable;
-move the folder aside instead (see [docs/telemetry.md](../docs/telemetry.md)
-for where it is).
+On any platform, `QUILT_DOMAIN` replaces the data folder for both the app and
+`quilt` (see [docs/telemetry.md](../docs/telemetry.md) for where the folder
+normally is).
+
+### Headless
+
+`just app headless` runs QuiltSync with no window and no tray, rebuilding on
+save, and prints a link to open in a browser. It takes the app's arguments:
+
+```sh
+just app headless --domain /tmp/quiltsync-headless
+```
+
+* `--domain <path>`, or `QUILT_DOMAIN`: the data folder.
+
+It listens on localhost only: the data folder's last port, else 7878, else the
+next free one.
+
+Ctrl-C stops it. A second one on the same data folder prints the first one's
+link and exits.
 
 ### "Golden path" Testing
 

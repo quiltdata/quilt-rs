@@ -211,6 +211,29 @@ pub async fn bind_desktop(ip: IpAddr, last: Option<u16>) -> io::Result<TcpListen
     TcpListener::bind(SocketAddr::new(ip, 0)).await
 }
 
+/// The port headless tries first on a data folder's first run.
+const HEADLESS_PORT: u16 = 7878;
+
+/// How many ports after the first headless tries before it takes any.
+const HEADLESS_TRIES: u16 = 100;
+
+/// Headless's port when none is given: the last one, else
+/// [`HEADLESS_PORT`]; when that is taken, the next free one after it, so the
+/// link stays easy to guess.
+///
+/// # Errors
+///
+/// When not even a free port can be bound.
+pub async fn bind_headless(ip: IpAddr, last: Option<u16>) -> io::Result<TcpListener> {
+    let first = last.unwrap_or(HEADLESS_PORT);
+    for port in (first..=u16::MAX).take(HEADLESS_TRIES.into()) {
+        if let Ok(listener) = TcpListener::bind(SocketAddr::new(ip, port)).await {
+            return Ok(listener);
+        }
+    }
+    TcpListener::bind(SocketAddr::new(ip, 0)).await
+}
+
 /// A token as [`EngineLock::web_token`] makes it: 32 lowercase hex digits.
 fn is_token(text: &str) -> bool {
     text.len() == 32 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
@@ -342,6 +365,22 @@ mod tests {
         // `again` still holds the port.
         let other = bind_desktop(LOOPBACK, Some(port)).await.unwrap();
         assert_ne!(other.local_addr().unwrap().port(), port);
+    }
+
+    #[tokio::test]
+    async fn headless_takes_the_next_port_when_its_last_is_taken() {
+        let taken = bind_desktop(LOOPBACK, None).await.unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let next = bind_headless(LOOPBACK, Some(port)).await.unwrap();
+        let got = next.local_addr().unwrap().port();
+        assert_ne!(got, port);
+        // Near the top of the range there may be no next port, and any will do.
+        if port <= u16::MAX - HEADLESS_TRIES {
+            assert!(
+                got > port && got <= port + HEADLESS_TRIES,
+                "{got} after {port}"
+            );
+        }
     }
 
     #[test]

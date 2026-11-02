@@ -5986,6 +5986,7 @@ dependencies = [
  "async-trait",
  "axum",
  "chrono",
+ "clap",
  "dirs",
  "dotenv",
  "dunce",
@@ -5999,6 +6000,7 @@ dependencies = [
  "quilt-rs",
  "quilt-uri",
  "regex",
+ "reqwest 0.13.5",
  "rfd",
  "rust-embed",
  "rust-i18n",
@@ -6029,6 +6031,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

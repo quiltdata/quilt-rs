@@ -7,6 +7,7 @@
 use leptos::prelude::*;
 
 use crate::commands;
+use crate::engine;
 use crate::kit::Banner;
 use crate::kit::BannerVariant;
 use crate::kit::Button;
@@ -14,6 +15,8 @@ use crate::kit::ButtonVariant;
 use crate::kit::Dialog;
 use crate::kit::FormControl;
 use crate::kit::TextInput;
+
+use crate::pages::path_field::PathField;
 
 stylance::import_crate_style!(style, "src/pages/main_page/create_package.module.css");
 
@@ -156,26 +159,40 @@ fn PackageFields(namespace: RwSignal<String>, source: RwSignal<String>) -> impl 
                     .into_any()
             }
         />
-        // A path the user picks with the OS dialog rather than types, so the
-        // text field is disabled and the Browse button is the control.
-        <FormControl
-            label="Folder to add"
-            caption="Optional. You can add files later."
-            control=move |id| {
+        // Where there is a desktop, a path the user picks with the OS dialog
+        // rather than types, so the text field is disabled and the Browse
+        // button is the control. Headless has no dialog: the path is typed.
+        <Show
+            when=move || !engine::headless().get()
+            fallback=move || {
                 view! {
-                    <div class=style::folder_row>
-                        <TextInput
-                            id=id
-                            value=source
-                            placeholder="No folder chosen"
-                            disabled=true
-                        />
-                        <Button on_click=on_browse>"Browse…"</Button>
-                    </div>
+                    <PathField
+                        label="Folder to add (optional)"
+                        value=source
+                        placeholder="/path/to/folder"
+                    />
                 }
-                    .into_any()
             }
-        />
+        >
+            <FormControl
+                label="Folder to add"
+                caption="Optional. You can add files later."
+                control=move |id| {
+                    view! {
+                        <div class=style::folder_row>
+                            <TextInput
+                                id=id
+                                value=source
+                                placeholder="No folder chosen"
+                                disabled=true
+                            />
+                            <Button on_click=on_browse>"Browse…"</Button>
+                        </div>
+                    }
+                        .into_any()
+                }
+            />
+        </Show>
     }
 }
 
