@@ -47,16 +47,17 @@ fn parse_headless(args: &[String]) -> Result<Args, String> {
         domain: None,
         reset_token: false,
     };
-    let mut rest = args.iter();
+    let mut rest = args.iter().peekable();
     while let Some(arg) = rest.next() {
         let (flag, inline) = match arg.split_once('=') {
             Some((flag, value)) => (flag, Some(value.to_owned())),
             None => (arg.as_str(), None),
         };
+        // A flag next isn't a value; `--domain=--odd` still names such a folder.
         let mut value = || {
             inline
                 .clone()
-                .or_else(|| rest.next().cloned())
+                .or_else(|| rest.next_if(|next| !next.starts_with("--")).cloned())
                 .ok_or_else(|| format!("{flag} needs a value"))
         };
         match flag {
@@ -120,7 +121,9 @@ pub fn run(args: Args) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let code = runtime.block_on(async {
+    // The lock outlives the runtime: tasks still writing hold the services,
+    // so a new engine mustn't take the folder before they stop.
+    let served = runtime.block_on(async {
         let options = Options {
             data_dir: data_dir.clone(),
             version,
@@ -139,11 +142,11 @@ pub fn run(args: Args) -> ExitCode {
                         data_dir.display()
                     ),
                 }
-                return ExitCode::SUCCESS;
+                return Err(ExitCode::SUCCESS);
             }
             Err(err) => {
                 eprintln!("{err}");
-                return ExitCode::FAILURE;
+                return Err(ExitCode::FAILURE);
             }
         };
         println!("QuiltSync is running. Open {}", engine.link);
@@ -175,11 +178,16 @@ pub fn run(args: Args) -> ExitCode {
             }
         }
         engine.services.app.logging.shutdown();
-        drop(engine);
-        ExitCode::SUCCESS
+        Ok(engine.into_lock())
     });
     runtime.shutdown_timeout(Duration::from_secs(5));
-    code
+    match served {
+        Ok(lock) => {
+            drop(lock);
+            ExitCode::SUCCESS
+        }
+        Err(code) => code,
+    }
 }
 
 /// Ctrl-C, or SIGTERM where there is one.
@@ -253,6 +261,7 @@ mod tests {
             &["--headless", "--port", "lots"][..],
             &["--headless", "--bind", "here"],
             &["--headless", "--port"],
+            &["--headless", "--domain", "--reset-token"],
             &["--headless", "--verbose"],
         ] {
             let err = args(bad).unwrap().unwrap_err();

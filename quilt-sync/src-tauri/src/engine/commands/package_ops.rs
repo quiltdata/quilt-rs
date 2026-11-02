@@ -1030,7 +1030,11 @@ pub async fn package_create(
         tracing,
         MixpanelEvent::PackageCreated(PackageEvent::hostless()),
     );
+    // It writes the package's files, so a stop waits for it as for a pull.
+    let applying = quilt_uri::Namespace::try_from(namespace.as_str()).ok();
+    let guard = applying.as_ref().map(|ns| s.watcher.apply_guard(ns));
     let result = package_create_command(m, &namespace, source, message).await;
+    drop(guard);
     if let Some(toast) = result
         .as_ref()
         .ok()

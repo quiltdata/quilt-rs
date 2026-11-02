@@ -1002,7 +1002,7 @@ pub async fn copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> Resul
         let clipboard = window.navigator().clipboard();
         wasm_bindgen_futures::JsFuture::from(clipboard.write_text(&text))
             .await
-            .map_err(|_| "This browser didn't allow copying here".to_owned())?;
+            .map_err(|_| format!("This browser didn't allow copying. Copy it by hand: {text}"))?;
         return Ok("Copied to the clipboard".to_owned());
     }
     engine::invoke("copy_to_clipboard", &Args { text, uri }).await

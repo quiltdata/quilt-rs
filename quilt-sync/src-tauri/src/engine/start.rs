@@ -29,7 +29,14 @@ pub struct Engine {
     pub services: Arc<Services>,
     /// The page's address with the token, for a browser to open.
     pub link: String,
-    _lock: EngineLock,
+    lock: EngineLock,
+}
+
+impl Engine {
+    /// Let go of the services, keeping the data folder's lock.
+    pub fn into_lock(self) -> EngineLock {
+        self.lock
+    }
 }
 
 /// How to start: which folder, which address, and with what desktop.
@@ -134,7 +141,7 @@ pub async fn start(options: Options) -> Result<Started> {
     Ok(Started::Engine(Engine {
         services,
         link: lock::link(&url, &token),
-        _lock: lock,
+        lock,
     }))
 }
 

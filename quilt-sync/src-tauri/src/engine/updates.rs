@@ -20,6 +20,11 @@ const FEED: &str = "https://www.quilt.bio/hubfs/latest.json";
 #[allow(clippy::duration_suboptimal_units)]
 const FRESH: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// How long a failed read stands, so an outage costs one request, not one per
+/// page.
+#[allow(clippy::duration_suboptimal_units)]
+const RETRY: Duration = Duration::from_secs(10 * 60);
+
 /// A newer version, and where to download it for this machine.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +48,8 @@ struct Platform {
 
 pub struct Updates {
     current: Version,
+    feed: &'static str,
+    /// When to ask the feed again, and the last version it offered.
     last: Mutex<Option<(Instant, Option<UpdateInfo>)>>,
 }
 
@@ -50,6 +57,7 @@ impl Updates {
     pub fn new(current: Version) -> Self {
         Self {
             current,
+            feed: FEED,
             last: Mutex::new(None),
         }
     }
@@ -66,22 +74,31 @@ impl Updates {
     ///
     /// # Errors
     ///
-    /// When the feed can't be read.
+    /// When the feed can't be read; checks until [`RETRY`] has passed answer
+    /// with what was known before.
     pub async fn check(&self) -> Result<Option<UpdateInfo>, String> {
         let mut last = self.last.lock().await;
-        if let Some((at, found)) = last.as_ref()
-            && at.elapsed() < FRESH
+        if let Some((again, found)) = last.as_ref()
+            && Instant::now() < *again
         {
             return Ok(found.clone());
         }
-        let found = self.read_feed().await?;
-        *last = Some((Instant::now(), found.clone()));
-        Ok(found)
+        match self.read_feed().await {
+            Ok(found) => {
+                *last = Some((Instant::now() + FRESH, found.clone()));
+                Ok(found)
+            }
+            Err(err) => {
+                let known = last.take().and_then(|(_, found)| found);
+                *last = Some((Instant::now() + RETRY, known));
+                Err(err)
+            }
+        }
     }
 
     async fn read_feed(&self) -> Result<Option<UpdateInfo>, String> {
         let feed: Feed = reqwest::Client::new()
-            .get(FEED)
+            .get(self.feed)
             .timeout(Duration::from_secs(30))
             .send()
             .await
@@ -158,6 +175,16 @@ mod tests {
         feed.platforms.clear();
         let found = newer(&Version::new(0, 1, 0), &feed).unwrap();
         assert_eq!(found.url, None);
+    }
+
+    #[tokio::test]
+    async fn a_failed_read_is_not_retried_at_once() {
+        let updates = Updates {
+            feed: "http://127.0.0.1:1/latest.json",
+            ..Updates::new(Version::new(0, 1, 0))
+        };
+        assert!(updates.check().await.is_err());
+        assert_eq!(updates.check().await, Ok(None), "the failure stands");
     }
 
     /// Both read the same feed; a move of one must move the other.

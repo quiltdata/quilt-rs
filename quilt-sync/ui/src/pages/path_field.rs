@@ -9,6 +9,10 @@ use crate::kit::{FormControl, TextInput};
 
 stylance::import_crate_style!(style, "src/pages/path_field.module.css");
 
+/// How long typing must pause before the engine is asked, so a quick typist
+/// doesn't queue a folder read per key.
+const PAUSE_MS: i32 = 150;
+
 /// What the engine said of the path as typed.
 #[derive(Clone, Default, PartialEq, Eq)]
 struct Checked {
@@ -34,12 +38,20 @@ pub fn PathField(
             return;
         }
         leptos::task::spawn_local(async move {
+            // Only the answer for what's typed now: typing on overtakes it.
+            let still = || value.try_get_untracked().as_ref() == Some(&path);
+            sleep_ms(PAUSE_MS).await;
+            if !still() {
+                return;
+            }
             let check = commands::check_path(path.clone()).await.unwrap_or_default();
+            if !still() {
+                return;
+            }
             let offered = commands::complete_path(path.clone())
                 .await
                 .unwrap_or_default();
-            // Only the answer for what's typed now: typing on overtakes it.
-            if value.try_get_untracked().as_ref() == Some(&path) {
+            if still() {
                 checked.try_set(Checked {
                     path,
                     check,
@@ -94,7 +106,12 @@ pub fn PathField(
             control=move |id| {
                 view! {
                     <div on:keydown=on_keydown>
-                        <TextInput id=id value=value placeholder=placeholder />
+                        <TextInput
+                            id=id
+                            value=value
+                            placeholder=placeholder
+                            invalid=Signal::derive(move || error.get().is_some())
+                        />
                         <p class=style::hint aria-live="polite">{hint}</p>
                     </div>
                 }
@@ -102,6 +119,15 @@ pub fn PathField(
             }
         />
     }
+}
+
+async fn sleep_ms(ms: i32) {
+    let promise = js_sys::Promise::new(&mut |resolve, _| {
+        if let Some(window) = web_sys::window() {
+            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms);
+        }
+    });
+    let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
 }
 
 fn caret_at_end(ev: &web_sys::KeyboardEvent) -> bool {
@@ -121,7 +147,7 @@ mod tests {
 
     use super::*;
     use crate::engine::fake::FakeEngine;
-    use crate::test_support::{mount, sleep_ms, unmount_earlier};
+    use crate::test_support::{mount, unmount_earlier};
 
     fn input(root: &web_sys::Element) -> web_sys::HtmlInputElement {
         root.query_selector("input")
@@ -140,7 +166,7 @@ mod tests {
     /// Answers the field's two asks for what's typed: a check, then the
     /// folders on offer.
     async fn answer(engine: &FakeEngine, check: serde_json::Value, offered: serde_json::Value) {
-        sleep_ms(0).await;
+        sleep_ms(PAUSE_MS + 50).await;
         if engine.requests().is_empty() {
             // The first ask opened the socket; it waits for the hello.
             engine.hello();
@@ -207,6 +233,32 @@ mod tests {
         .await;
         let text = root.text_content().unwrap_or_default();
         assert!(text.contains("This is a file, not a folder."), "{text}");
+        assert_eq!(field.get_attribute("aria-invalid").as_deref(), Some("true"));
+        unmount_earlier();
+    }
+
+    #[wasm_bindgen_test]
+    async fn quick_typing_asks_once_for_the_last_text() {
+        unmount_earlier();
+        let engine = FakeEngine::install();
+        let value = RwSignal::new(String::new());
+        let root = mount(move || view! { <PathField label="Folder" value=value /> });
+        sleep_ms(0).await;
+        let field = input(&root);
+        for text in ["/m", "/mn", "/mnt"] {
+            type_into(&field, text);
+            sleep_ms(10).await;
+        }
+        sleep_ms(PAUSE_MS + 50).await;
+        engine.hello();
+        sleep_ms(0).await;
+        let asked: Vec<_> = engine
+            .requests()
+            .into_iter()
+            .filter(|r| r["cmd"] == "check_path")
+            .map(|r| r["args"]["path"].clone())
+            .collect();
+        assert_eq!(asked, vec![serde_json::json!("/mnt")]);
         unmount_earlier();
     }
 

@@ -8,5 +8,6 @@ dev: gallery::stubs
     cargo tauri dev
 
 # Run QuiltSync headless in development mode, rebuilding on save, e.g. `--port 0 --domain /tmp/q`
+[positional-arguments]
 headless *args: gallery::stubs
-    cargo tauri dev -- -- --headless {{ args }}
+    cargo tauri dev -- -- --headless "$@"
