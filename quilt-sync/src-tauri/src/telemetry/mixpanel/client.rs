@@ -4,6 +4,7 @@
 //! [`MixpanelClient`]. The tests in `client/tests.rs` pin the HTTP wire.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -69,6 +70,9 @@ pub struct MixpanelClient {
     token: String,
     authorization: Option<String>,
     url: String,
+    /// Until when the API asked us to wait, after a wait no send could
+    /// afford. In memory only: a restart forgets it.
+    quiet_until: Mutex<Option<Instant>>,
 }
 
 impl MixpanelClient {
@@ -95,6 +99,7 @@ impl MixpanelClient {
             // `verbose=1` makes the API say whether it accepted the events;
             // without it a refusal is an HTTP 200 too.
             url: format!("{}/track?ip=0&verbose=1", base_url.trim_end_matches('/')),
+            quiet_until: Mutex::new(None),
         }
     }
 
@@ -103,6 +108,13 @@ impl MixpanelClient {
     /// Stops at the first request that fails; requests before it stay
     /// delivered.
     pub async fn send(&self, mut events: Vec<WireEvent>) -> Result<(), SendError> {
+        if let Some(until) = *self.quiet_until.lock().expect("quiet_until lock")
+            && Instant::now() < until
+        {
+            return Err(SendError::Unreachable(
+                "Mixpanel API asked to wait before the next send".to_owned(),
+            ));
+        }
         for event in &mut events {
             let properties = &mut event.properties;
             properties.insert("token".to_owned(), Value::from(self.token.as_str()));
@@ -137,6 +149,8 @@ impl MixpanelClient {
             let wait = match wait {
                 // Waiting would run past the send's time limit; end now.
                 Some(wait) if wait > deadline.saturating_duration_since(Instant::now()) => {
+                    *self.quiet_until.lock().expect("quiet_until lock") =
+                        Instant::now().checked_add(wait);
                     return Err(SendError::Unreachable(format!(
                         "{message}; longer than the send has left"
                     )));
