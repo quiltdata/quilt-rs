@@ -18,7 +18,7 @@
 
 use std::path::{Path, PathBuf};
 
-use mixpanel_rs::Event;
+use crate::telemetry::mixpanel::WireEvent;
 
 use crate::telemetry::prelude::*;
 
@@ -63,7 +63,7 @@ impl Buffer {
     /// is rare and already slow. An append plus a separate trim would leave the file
     /// unbounded in exactly the case the bound exists for: a session that is offline
     /// for its whole life.
-    pub fn keep(&self, events: &[Event]) {
+    pub fn keep(&self, events: &[WireEvent]) {
         let mut lines = self.read_lines();
         for event in events {
             match serde_json::to_string(event) {
@@ -99,7 +99,7 @@ impl Buffer {
     /// are sent again — and that one is already paid for: every event carries the
     /// idempotency key the ingest API dedupes on, which exists for exactly this.
     /// Losing events is permanent; sending one twice is not.
-    pub fn load(&self) -> Vec<Event> {
+    pub fn load(&self) -> Vec<WireEvent> {
         let lines = self.read_lines();
         if lines.is_empty() {
             return Vec::new();
@@ -183,8 +183,8 @@ mod tests {
 
     use super::*;
 
-    fn event(name: &str) -> Event {
-        Event {
+    fn event(name: &str) -> WireEvent {
+        WireEvent {
             event: name.to_owned(),
             properties: HashMap::from([(
                 "$insert_id".to_owned(),
@@ -193,7 +193,7 @@ mod tests {
         }
     }
 
-    fn names(events: &[Event]) -> Vec<String> {
+    fn names(events: &[WireEvent]) -> Vec<String> {
         events.iter().map(|e| e.event.clone()).collect()
     }
 
@@ -278,7 +278,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let buffer = Buffer::new(dir.path());
 
-        let events: Vec<Event> = (0..MAX_BUFFERED + 10)
+        let events: Vec<WireEvent> = (0..MAX_BUFFERED + 10)
             .map(|i| event(&i.to_string()))
             .collect();
         buffer.keep(&events);
@@ -308,6 +308,37 @@ mod tests {
         std::fs::write(&buffer.path, format!("{{ not json\n{contents}")).expect("write");
 
         assert_eq!(names(&buffer.load()), vec!["kept"]);
+    }
+
+    /// A line written by an earlier release still loads, and a kept event is
+    /// written in the same shape.
+    #[test]
+    fn a_line_in_the_released_format_still_loads() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let buffer = Buffer::new(dir.path());
+        let line = r#"{"event":"package_pulled","properties":{"host":"quilt.test","distinct_id":"an-install","time":1700000000,"$insert_id":"an-id"}}"#;
+        std::fs::write(&buffer.path, format!("{line}\n")).expect("write");
+
+        let loaded = buffer.load();
+
+        let expected = WireEvent {
+            event: "package_pulled".to_owned(),
+            properties: HashMap::from([
+                ("host".to_owned(), serde_json::json!("quilt.test")),
+                ("distinct_id".to_owned(), serde_json::json!("an-install")),
+                ("time".to_owned(), serde_json::json!(1_700_000_000)),
+                ("$insert_id".to_owned(), serde_json::json!("an-id")),
+            ]),
+        };
+        assert_eq!(loaded, vec![expected.clone()]);
+
+        buffer.forget_delivered(1);
+        buffer.keep(&[expected]);
+        let written = std::fs::read_to_string(&buffer.path).expect("written");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(written.trim()).expect("one JSON line"),
+            serde_json::from_str::<serde_json::Value>(line).expect("JSON"),
+        );
     }
 
     /// An install that has never been offline has no file, which is not an error.

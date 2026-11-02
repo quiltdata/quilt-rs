@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use mixpanel_rs::{Config, Event, Mixpanel};
 use quilt_uri::Host;
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -16,6 +15,10 @@ use crate::error::TelemetryError;
 use crate::telemetry::buffer::Buffer;
 use crate::telemetry::prelude::*;
 use crate::telemetry::{InstallId, MixpanelEvent, Sinks};
+
+pub mod client;
+
+pub use client::{MixpanelClient, SendError, WireEvent};
 
 /// How many events may wait to be sent before the queue starts refusing.
 ///
@@ -62,7 +65,7 @@ pub fn event_payload(
 #[derive(Clone)]
 pub enum Analytics {
     /// A configured sink: the event is sent.
-    Live(Arc<Mixpanel>),
+    Live(Arc<MixpanelClient>),
     /// A local build: the event is rendered to its wire form and written to the
     /// developer's console. Nothing leaves the machine.
     DryRun,
@@ -74,14 +77,14 @@ impl Analytics {
     pub fn resolve(sinks: Sinks) -> Self {
         match sinks {
             Sinks::Development => Self::DryRun,
-            Sinks::Production => mixpanel_config().map_or(Self::Off, |(token, config)| {
-                Self::Live(Arc::new(Mixpanel::init(&token, Some(config))))
-            }),
+            Sinks::Production => {
+                mixpanel_client().map_or(Self::Off, |client| Self::Live(Arc::new(client)))
+            }
         }
     }
 }
 
-fn mixpanel_config() -> Option<(String, Config)> {
+fn mixpanel_client() -> Option<MixpanelClient> {
     let token = env::mixpanel_project_token();
     let secret = env::mixpanel_api_secret();
     if token.is_none() {
@@ -90,18 +93,7 @@ fn mixpanel_config() -> Option<(String, Config)> {
     if secret.is_none() {
         eprintln!("No MIXPANEL_API_SECRET configured");
     }
-    token.map(|token| {
-        let config = Config {
-            secret,
-            // Without this the client does not ask the ingest API to say whether
-            // it *accepted* the event, so it never reads the status field and a
-            // rejected event returns HTTP 200 and is reported as a success. A
-            // malformed property would fail silently, forever.
-            verbose: true,
-            ..Default::default()
-        };
-        (token, config)
-    })
+    token.map(|token| MixpanelClient::new(&token, secret.as_deref()))
 }
 
 /// Whether a failed send means **we** are wrong, or the network was.
@@ -121,8 +113,6 @@ pub enum DeliveryFailure {
 
 impl DeliveryFailure {
     pub fn classify(err: &crate::Error) -> Self {
-        use mixpanel_rs::error::Error as Mp;
-
         let crate::Error::Telemetry(err) = err else {
             // Nothing outside telemetry reaches this, and an unrecognised failure
             // is safer treated as ours than as the network's.
@@ -142,22 +132,9 @@ impl DeliveryFailure {
         };
 
         match err {
-            // A verdict came back, and it was no. `ApiClientError` is what the
-            // verbose response parses a non-`1` status into.
-            Mp::ApiClientError(..)
-            | Mp::ApiUnexpectedResponse(_)
-            | Mp::ApiPayloadTooLarge
-            | Mp::JsonError(_)
-            | Mp::UrlError(_)
-            | Mp::TimeError => Self::Refused,
-
-            // No verdict: the request failed, was throttled, or the server was
-            // unwell. Retried by the client first; this is what is left after.
-            Mp::HttpError(_)
-            | Mp::ApiServerError(_)
-            | Mp::ApiRateLimitError(_)
-            | Mp::ApiHttpError(..)
-            | Mp::MaxRetriesReached(_) => Self::Unreachable,
+            SendError::Refused(_) => Self::Refused,
+            // Retried by the client first; this is what is left after.
+            SendError::Unreachable(_) => Self::Unreachable,
         }
     }
 }
@@ -212,7 +189,7 @@ impl Queued {
 
     /// The wire form, with the queue's own two properties merged in beside the
     /// event's and the install's.
-    fn wire(&self, install_id: Option<&InstallId>) -> crate::Result<Event> {
+    fn wire(&self, install_id: Option<&InstallId>) -> crate::Result<WireEvent> {
         let (event, properties) = wire_payload(&self.event, install_id)?;
         let mut properties = properties.unwrap_or_default();
 
@@ -227,7 +204,7 @@ impl Queued {
             Value::String(self.insert_id.to_string()),
         );
 
-        Ok(Event { event, properties })
+        Ok(WireEvent { event, properties })
     }
 }
 
@@ -395,7 +372,7 @@ async fn drain_buffer(
 /// gets the same answer and the buffer would fill with events that can never leave.
 /// Only a failure with no verdict — a dead network, a timeout — is worth keeping,
 /// which is the same line [`DeliveryFailure`] already draws for whose fault it is.
-fn keep_if_undelivered(buffer: Option<&Buffer>, events: &[Event], err: &crate::Error) {
+fn keep_if_undelivered(buffer: Option<&Buffer>, events: &[WireEvent], err: &crate::Error) {
     let Some(buffer) = buffer else { return };
     if matches!(DeliveryFailure::classify(err), DeliveryFailure::Unreachable) {
         buffer.keep(events);
@@ -406,7 +383,7 @@ async fn send_batch(
     analytics: &Analytics,
     install_id: Option<&InstallId>,
     batch: &[Queued],
-    events: Vec<Event>,
+    events: Vec<WireEvent>,
 ) -> crate::Result<()> {
     match analytics {
         Analytics::Live(_) => send_wire(analytics, events).await,
@@ -422,10 +399,10 @@ async fn send_batch(
 
 /// Send already-wired events — the one path a replay and a fresh batch share, so
 /// neither can acquire a property the other lacks.
-async fn send_wire(analytics: &Analytics, events: Vec<Event>) -> crate::Result<()> {
+async fn send_wire(analytics: &Analytics, events: Vec<WireEvent>) -> crate::Result<()> {
     match analytics {
-        Analytics::Live(mixpanel) => {
-            tokio::time::timeout(SEND_TIMEOUT, mixpanel.track_batch(events))
+        Analytics::Live(client) => {
+            tokio::time::timeout(SEND_TIMEOUT, client.send(events))
                 .await
                 .map_err(|_| TelemetryError::SendTimeout(SEND_TIMEOUT.as_secs()))??;
         }
@@ -819,40 +796,23 @@ mod tests {
     }
 
     /// A verdict from the API is our bug; no verdict is somebody's network. The
-    /// split decides what reaches the crash reporter, so it is worth pinning per
-    /// variant rather than by category.
+    /// split decides what reaches the crash reporter. Which HTTP answers fall on
+    /// which side is pinned by the client's own tests.
     #[test]
     fn a_refusal_and_an_unreachable_api_are_told_apart() {
-        use mixpanel_rs::error::Error as Mp;
+        let err = crate::Error::from(SendError::Refused("no such token".to_owned()));
+        assert_eq!(
+            DeliveryFailure::classify(&err),
+            DeliveryFailure::Refused,
+            "the API answered, and said no: {err}"
+        );
 
-        let refused = [
-            Mp::ApiClientError(400, "no such token".to_owned()),
-            Mp::ApiUnexpectedResponse("not json".to_owned()),
-            Mp::ApiPayloadTooLarge,
-        ];
-        for err in refused {
-            let err = crate::Error::from(err);
-            assert_eq!(
-                DeliveryFailure::classify(&err),
-                DeliveryFailure::Refused,
-                "the API answered, and said no: {err}"
-            );
-        }
-
-        let unreachable = [
-            Mp::ApiServerError(503),
-            Mp::ApiRateLimitError(Some(30)),
-            Mp::MaxRetriesReached("gave up".to_owned()),
-            Mp::ApiHttpError(502, "bad gateway".to_owned()),
-        ];
-        for err in unreachable {
-            let err = crate::Error::from(err);
-            assert_eq!(
-                DeliveryFailure::classify(&err),
-                DeliveryFailure::Unreachable,
-                "no verdict came back: {err}"
-            );
-        }
+        let err = crate::Error::from(SendError::Unreachable("gave up".to_owned()));
+        assert_eq!(
+            DeliveryFailure::classify(&err),
+            DeliveryFailure::Unreachable,
+            "no verdict came back: {err}"
+        );
     }
 
     /// A failure that never reached the network is ours by definition — a payload
@@ -966,7 +926,7 @@ mod tests {
     fn a_failure_with_no_verdict_is_kept() {
         let dir = tempfile::tempdir().expect("tempdir");
         let buffer = Buffer::new(dir.path());
-        let events = vec![Event {
+        let events = vec![WireEvent {
             event: "app_launched".to_owned(),
             properties: HashMap::new(),
         }];
@@ -987,7 +947,7 @@ mod tests {
     fn a_refusal_is_not_kept() {
         let dir = tempfile::tempdir().expect("tempdir");
         let buffer = Buffer::new(dir.path());
-        let events = vec![Event {
+        let events = vec![WireEvent {
             event: "app_launched".to_owned(),
             properties: HashMap::new(),
         }];
