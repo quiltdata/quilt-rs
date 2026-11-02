@@ -25,7 +25,6 @@ use engine::env;
 use engine::headless;
 use engine::services::Services;
 use engine::start;
-use engine::start::Options;
 use engine::start::Started;
 
 rust_i18n::i18n!("locales");
@@ -55,10 +54,8 @@ fn main() -> ExitCode {
     }
     match headless {
         Some(Ok(args)) => return headless::run(args),
-        Some(Err(usage)) => {
-            eprintln!("{usage}");
-            return ExitCode::from(2);
-        }
+        // Help exits 0, a usage error 2.
+        Some(Err(err)) => err.exit(),
         None => {}
     }
 
@@ -90,9 +87,11 @@ fn main() -> ExitCode {
             };
             let version = app.package_info().version.clone();
             let desktop = desktop::commands::desktop(app.handle());
-            let engine = match tauri::async_runtime::block_on(start::start(Options::desktop(
-                data_dir, version, desktop,
-            )))? {
+            let engine = match tauri::async_runtime::block_on(start::start(
+                data_dir,
+                version,
+                Some(desktop),
+            ))? {
                 Started::Engine(engine) => engine,
                 Started::Running(link) => {
                     // Another process is the engine for this data folder; its

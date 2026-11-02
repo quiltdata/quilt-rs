@@ -992,13 +992,9 @@ pub async fn copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> Resul
         text: String,
         uri: Option<S3PackageUri>,
     }
-    // Headless has no desktop clipboard; the reader's browser has one, but
-    // only on a secure page: loopback, not another machine over plain HTTP.
+    // Headless has no desktop clipboard; the reader's browser has one.
     if engine::headless().get_untracked() {
         let window = web_sys::window().ok_or("No window")?;
-        if !window.is_secure_context() {
-            return Err(format!("This page can't copy. Copy it by hand: {text}"));
-        }
         let clipboard = window.navigator().clipboard();
         wasm_bindgen_futures::JsFuture::from(clipboard.write_text(&text))
             .await

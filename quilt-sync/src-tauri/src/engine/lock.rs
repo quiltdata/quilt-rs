@@ -169,12 +169,7 @@ impl EngineLock {
         }
     }
 
-    /// Make a new token and save it, so links with the old one stop working.
-    ///
-    /// # Errors
-    ///
-    /// When the file can't be written.
-    pub fn new_web_token(&self) -> io::Result<String> {
+    fn new_web_token(&self) -> io::Result<String> {
         let token = uuid::Uuid::new_v4().simple().to_string();
         write_private(&self.data_dir.join(TOKEN_FILE), token.as_bytes())?;
         Ok(token)
@@ -217,7 +212,7 @@ pub async fn bind_desktop(ip: IpAddr, last: Option<u16>) -> io::Result<TcpListen
 }
 
 /// The port headless tries first on a data folder's first run.
-pub const HEADLESS_PORT: u16 = 7878;
+const HEADLESS_PORT: u16 = 7878;
 
 /// How many ports after the first headless tries before it takes any.
 const HEADLESS_TRIES: u16 = 100;
@@ -386,18 +381,6 @@ mod tests {
                 "{got} after {port}"
             );
         }
-    }
-
-    #[test]
-    fn a_new_token_replaces_the_old_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let Acquired::Held(lock) = acquire(dir.path()).unwrap() else {
-            panic!("a fresh folder was locked");
-        };
-        let old = lock.web_token().unwrap();
-        let new = lock.new_web_token().unwrap();
-        assert_ne!(old, new);
-        assert_eq!(lock.web_token().unwrap(), new);
     }
 
     #[test]

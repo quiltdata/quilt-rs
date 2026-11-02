@@ -34,15 +34,13 @@ normally is).
 save, and prints a link to open in a browser. It takes the app's arguments:
 
 ```sh
-just app headless --domain /tmp/quiltsync-headless --port 0
+just app headless --domain /tmp/quiltsync-headless
 ```
 
-* `--bind <ip>`: `127.0.0.1` unless given; another address is reachable from
-  other machines, unencrypted.
-* `--port <n>`: exactly this port, or `0` for any. Without it, the data
-  folder's last port, else 7878, else the next free one.
-* `--domain <path>`, or `QUILT_DOMAIN`.
-* `--reset-token`: a new link; open tabs with the old one stop working.
+* `--domain <path>`, or `QUILT_DOMAIN`: the data folder.
+
+It listens on localhost only: the data folder's last port, else 7878, else the
+next free one.
 
 Ctrl-C stops it. A second one on the same data folder prints the first one's
 link and exits.

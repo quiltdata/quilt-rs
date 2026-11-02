@@ -20,6 +20,7 @@ agent-client-protocol = "3.6.0"
 async-trait.workspace = true
 axum = { version = "0.8.9", features = ["ws"] }
 chrono.workspace = true
+clap.workspace = true
 dotenv = "0.15"
 dunce = "1"
 dirs.workspace = true

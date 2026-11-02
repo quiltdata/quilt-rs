@@ -1,17 +1,15 @@
 //! `QuiltSync` with no window and no Tauri: `--headless`, serving its UI to a
 //! browser until Ctrl-C.
 
-use std::net::IpAddr;
-use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use clap::Parser;
+use clap::builder::TypedValueParser;
 use semver::Version;
 
 use crate::engine::start;
-use crate::engine::start::Options;
-use crate::engine::start::Port;
 use crate::engine::start::Started;
 
 /// The app's identifier (`tauri.conf.json`), which names its data folder.
@@ -20,75 +18,41 @@ pub const IDENTIFIER: &str = "com.quiltdata.quilt-sync";
 /// Replaces the data folder in both modes, as it replaces the CLI's domain.
 const DOMAIN_VAR: &str = "QUILT_DOMAIN";
 
-const USAGE: &str =
-    "Usage: quilt-sync --headless [--bind <ip>] [--port <n>] [--domain <path>] [--reset-token]";
-
-/// What `--headless` was given.
-#[derive(Debug, PartialEq, Eq)]
+/// What `--headless` takes.
+#[derive(Debug, PartialEq, Eq, Parser)]
+#[command(
+    name = "quilt-sync",
+    about = "Serve QuiltSync to a browser on this machine, with no window or tray."
+)]
 pub struct Args {
-    pub bind: IpAddr,
-    pub port: Port,
+    /// Run with no window or tray, until Ctrl-C.
+    #[arg(long, required = true)]
+    pub headless: bool,
+
+    /// The data folder, which is also the `quilt` CLI's domain. Without it,
+    /// `QUILT_DOMAIN`, else the desktop app's folder.
+    // Not clap's `env`: an empty variable is unset here, as in the desktop app.
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_parser = clap::builder::NonEmptyStringValueParser::new().map(PathBuf::from),
+    )]
     pub domain: Option<PathBuf>,
-    pub reset_token: bool,
 }
 
 /// The arguments after the program's name: `None` when they don't ask for
-/// headless, so the desktop app starts.
-pub fn parse(args: &[String]) -> Option<Result<Args, String>> {
+/// headless (or its help), so the desktop app starts on whatever the OS
+/// passed, a deep link included.
+pub fn parse(args: &[String]) -> Option<Result<Args, clap::Error>> {
     args.iter()
-        .any(|arg| arg == "--headless")
-        .then(|| parse_headless(args).map_err(|err| format!("{err}\n{USAGE}")))
-}
-
-fn parse_headless(args: &[String]) -> Result<Args, String> {
-    let mut parsed = Args {
-        bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
-        port: Port::Headless,
-        domain: None,
-        reset_token: false,
-    };
-    let mut rest = args.iter().peekable();
-    while let Some(arg) = rest.next() {
-        let (flag, inline) = match arg.split_once('=') {
-            Some((flag, value)) => (flag, Some(value.to_owned())),
-            None => (arg.as_str(), None),
-        };
-        // A flag next isn't a value; `--domain=--odd` still names such a folder.
-        let mut value = || {
-            inline
-                .clone()
-                .or_else(|| rest.next_if(|next| !next.starts_with("--")).cloned())
-                .ok_or_else(|| format!("{flag} needs a value"))
-        };
-        match flag {
-            "--headless" | "--reset-token" if inline.is_some() => {
-                return Err(format!("{flag} takes no value"));
-            }
-            "--headless" => {}
-            "--reset-token" => parsed.reset_token = true,
-            "--bind" => {
-                parsed.bind = value()?
-                    .parse()
-                    .map_err(|_| "--bind takes an IP address".to_owned())?;
-            }
-            "--port" => {
-                parsed.port = Port::Given(
-                    value()?
-                        .parse()
-                        .map_err(|_| "--port takes a number".to_owned())?,
-                );
-            }
-            "--domain" => {
-                let domain = value()?;
-                if domain.is_empty() {
-                    return Err("--domain needs a folder".to_owned());
-                }
-                parsed.domain = Some(PathBuf::from(domain));
-            }
-            other => return Err(format!("Unknown argument: {other}")),
-        }
-    }
-    Ok(parsed)
+        .any(|arg| {
+            arg == "--headless" || arg.starts_with("--headless=") || arg == "--help" || arg == "-h"
+        })
+        .then(|| {
+            Args::try_parse_from(
+                std::iter::once("quilt-sync").chain(args.iter().map(String::as_str)),
+            )
+        })
 }
 
 /// `QUILT_DOMAIN`, when set, made absolute.
@@ -133,15 +97,7 @@ pub fn run(args: Args) -> ExitCode {
     // The lock outlives the runtime: tasks still writing hold the services,
     // so a new engine mustn't take the folder before they stop.
     let served = runtime.block_on(async {
-        let options = Options {
-            data_dir: data_dir.clone(),
-            version,
-            desktop: None,
-            bind: args.bind,
-            port: args.port,
-            reset_token: args.reset_token,
-        };
-        let engine = match start::start(options).await {
+        let engine = match start::start(data_dir.clone(), version, None).await {
             Ok(Started::Engine(engine)) => engine,
             Ok(Started::Running(link)) => {
                 match link {
@@ -159,18 +115,6 @@ pub fn run(args: Args) -> ExitCode {
             }
         };
         println!("QuiltSync is running. Open {}", engine.link);
-        if !args.bind.is_loopback() {
-            let port = url::Url::parse(&engine.link)
-                .ok()
-                .and_then(|url| url.port_or_known_default())
-                .unwrap_or(start::HEADLESS_PORT);
-            println!(
-                "Warning: QuiltSync listens on {} over plain HTTP, so the link's token and your \
-                 data travel unencrypted. Prefer the default bind and an SSH tunnel, e.g. \
-                 `ssh -L {port}:localhost:{port} <this host>`.",
-                args.bind
-            );
-        }
         println!("Press Ctrl-C to stop.");
         stopped().await;
         // Files half-written are what a stop would leave behind; a second
@@ -220,63 +164,61 @@ async fn stopped() {
 mod tests {
     use super::*;
 
-    fn args(list: &[&str]) -> Option<Result<Args, String>> {
+    fn args(list: &[&str]) -> Option<Result<Args, clap::Error>> {
         parse(&list.iter().map(|&s| s.to_owned()).collect::<Vec<_>>())
+    }
+
+    fn usage_error(list: &[&str]) -> clap::error::ErrorKind {
+        args(list).unwrap().unwrap_err().kind()
     }
 
     #[test]
     fn without_headless_the_desktop_starts() {
-        assert_eq!(args(&[]), None);
-        assert_eq!(args(&["quilt+s3://bucket#package=a/b"]), None);
+        assert!(args(&[]).is_none());
+        assert!(args(&["quilt+s3://bucket#package=a/b"]).is_none());
+        assert!(args(&["--some-os-flag"]).is_none());
     }
 
     #[test]
-    fn the_defaults_are_loopback_and_the_headless_port_rule() {
+    fn the_domain_is_read_with_a_space_or_an_equals() {
+        let expect = Args {
+            headless: true,
+            domain: Some(PathBuf::from("/tmp/q")),
+        };
         assert_eq!(
-            args(&["--headless"]),
-            Some(Ok(Args {
-                bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
-                port: Port::Headless,
-                domain: None,
-                reset_token: false,
-            }))
+            args(&["--headless", "--domain", "/tmp/q"])
+                .unwrap()
+                .unwrap(),
+            expect
+        );
+        assert_eq!(
+            args(&["--domain=/tmp/q", "--headless"]).unwrap().unwrap(),
+            expect
         );
     }
 
     #[test]
-    fn every_flag_is_read_with_a_space_or_an_equals() {
+    fn a_bad_argument_is_a_usage_error() {
+        use clap::error::ErrorKind;
         assert_eq!(
-            args(&[
-                "--headless",
-                "--bind",
-                "0.0.0.0",
-                "--port=0",
-                "--domain",
-                "/tmp/q",
-                "--reset-token",
-            ]),
-            Some(Ok(Args {
-                bind: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                port: Port::Given(0),
-                domain: Some(PathBuf::from("/tmp/q")),
-                reset_token: true,
-            }))
+            usage_error(&["--headless", "--domain"]),
+            ErrorKind::InvalidValue
         );
-    }
-
-    #[test]
-    fn a_bad_argument_says_what_and_how() {
-        for bad in [
-            &["--headless", "--port", "lots"][..],
-            &["--headless", "--bind", "here"],
-            &["--headless", "--port"],
-            &["--headless", "--domain", "--reset-token"],
-            &["--headless", "--domain", ""],
-            &["--headless", "--reset-token=false"],
+        assert_eq!(
+            usage_error(&["--headless", "--domain", ""]),
+            ErrorKind::InvalidValue
+        );
+        assert_eq!(
+            usage_error(&["--headless", "--verbose"]),
+            ErrorKind::UnknownArgument
+        );
+        assert_eq!(usage_error(&["--headless=x"]), ErrorKind::TooManyValues);
+        assert_eq!(usage_error(&["--help"]), ErrorKind::DisplayHelp);
+        for list in [
+            &["--headless", "--domain"][..],
             &["--headless", "--verbose"],
         ] {
-            let err = args(bad).unwrap().unwrap_err();
-            assert!(err.contains("Usage:"), "{err}");
+            assert_eq!(args(list).unwrap().unwrap_err().exit_code(), 2, "{list:?}");
         }
     }
 
