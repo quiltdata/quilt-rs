@@ -453,6 +453,19 @@ async fn a_3xx_without_a_location_is_unreachable() {
     assert_eq!(server.requests().len(), 1);
 }
 
+/// A request that cannot be built is our bug: refused, not retried.
+#[tokio::test]
+async fn a_request_that_cannot_be_built_is_a_refusal() {
+    let client = MixpanelClient::with_base_url(TOKEN, None, "not a url");
+
+    let err = client
+        .send(vec![event("one")])
+        .await
+        .expect_err("no request");
+
+    assert!(matches!(err, SendError::Refused(_)), "{err:?}");
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_5xx_is_retried_with_backoff() {
     let server = Server::start(vec![reply(500, ""), reply(503, ""), accepted()]).await;

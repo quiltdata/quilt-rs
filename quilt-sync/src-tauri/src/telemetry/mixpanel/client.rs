@@ -222,11 +222,13 @@ impl MixpanelClient {
     }
 }
 
-/// A request that got no answer is retried. A redirect loop got answers, so
-/// it is not.
+/// A request that got no answer is retried. A request we could not build is
+/// our bug; a redirect loop got answers. Neither is retried.
 fn http_failure(err: &reqwest::Error) -> Failure {
     let message = format!("HTTP request error: {err}");
-    if err.is_redirect() {
+    if err.is_builder() {
+        Failure::Done(SendError::Refused(message))
+    } else if err.is_redirect() {
         Failure::Done(SendError::Unreachable(message))
     } else {
         Failure::Retry {

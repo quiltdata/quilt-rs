@@ -23,7 +23,7 @@
 
 ### Changed
 
-- Usage analytics report QuiltSync and its version as the sending library, retry a request that got no answer, and keep a batch for later at once when the API asks for a wait longer than a send may take (<https://github.com/quiltdata/quilt-rs/pull/1286>)
+- Usage analytics report the QuiltSync version (<https://github.com/quiltdata/quilt-rs/pull/1286>)
 
 ### Fixed
 
