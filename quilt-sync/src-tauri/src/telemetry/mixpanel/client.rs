@@ -11,6 +11,7 @@ use base64::engine::general_purpose::STANDARD;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::time::Instant;
 
 #[cfg(test)]
 mod tests;
@@ -20,11 +21,14 @@ const API: &str = "https://api.mixpanel.com";
 const CHUNK: usize = 50;
 const MAX_RETRIES: u32 = 3;
 const BACKOFF_BASE: Duration = Duration::from_secs(1);
-const BACKOFF_CAP: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long one send may take, retries included. The caller bounds the send
+/// with it; the client gives up early on a wait that would outlast it.
+pub const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 // Library properties every event carries; changing them splits reports in
 // Mixpanel.
-const LIB: &str = "rust";
-const LIB_VERSION: &str = "0.3.1";
+const LIB: &str = "quiltsync";
+const LIB_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// An event as the ingest API receives it: a name and its properties.
 ///
@@ -81,8 +85,10 @@ impl MixpanelClient {
 
     fn sending_to(token: &str, secret: Option<&str>, base_url: &str) -> Self {
         Self {
-            // No timeout here: the caller bounds the whole send.
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .expect("an HTTP client"),
             token: token.to_owned(),
             authorization: secret
                 .map(|secret| format!("Basic {}", STANDARD.encode(format!("{secret}:")))),
@@ -103,15 +109,17 @@ impl MixpanelClient {
             properties.insert("mp_lib".to_owned(), Value::from(LIB));
             properties.insert("$lib_version".to_owned(), Value::from(LIB_VERSION));
         }
+        let deadline = Instant::now() + SEND_TIMEOUT;
         for chunk in events.chunks(CHUNK) {
             let json = serde_json::to_string(chunk)
                 .map_err(|err| SendError::Refused(format!("JSON serialization error: {err}")))?;
-            self.post(format!("data={}", STANDARD.encode(json))).await?;
+            self.post(format!("data={}", STANDARD.encode(json)), deadline)
+                .await?;
         }
         Ok(())
     }
 
-    async fn post(&self, body: String) -> Result<(), SendError> {
+    async fn post(&self, body: String, deadline: Instant) -> Result<(), SendError> {
         let mut retries = 0;
         loop {
             let (message, wait) = match self.post_once(body.clone()).await {
@@ -126,8 +134,17 @@ impl MixpanelClient {
                     "Max retries reached: Failed after {retries} retries. Last error: {message}"
                 )));
             }
-            let backoff = (BACKOFF_BASE * 2u32.pow(retries)).min(BACKOFF_CAP);
-            tokio::time::sleep(wait.unwrap_or(backoff)).await;
+            let wait = match wait {
+                // Waiting would run past the send's time limit; end now.
+                Some(wait) if Instant::now() + wait > deadline => {
+                    return Err(SendError::Unreachable(format!(
+                        "{message}; longer than the send has left"
+                    )));
+                }
+                Some(wait) => wait,
+                None => BACKOFF_BASE * 2u32.pow(retries),
+            };
+            tokio::time::sleep(wait).await;
             retries += 1;
         }
     }
@@ -205,16 +222,16 @@ impl MixpanelClient {
     }
 }
 
-/// A request that got no answer is retried only when it never connected or
-/// timed out.
+/// A request that got no answer is retried. A redirect loop got answers, so
+/// it is not.
 fn http_failure(err: &reqwest::Error) -> Failure {
     let message = format!("HTTP request error: {err}");
-    if err.is_connect() || err.is_timeout() {
+    if err.is_redirect() {
+        Failure::Done(SendError::Unreachable(message))
+    } else {
         Failure::Retry {
             message,
             wait: None,
         }
-    } else {
-        Failure::Done(SendError::Unreachable(message))
     }
 }

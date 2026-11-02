@@ -1,8 +1,12 @@
 //! The wire contract of [`MixpanelClient`], checked against a local HTTP server.
 //!
 //! The server answers each connection with the next scripted reply and closes
-//! it. Retry tests run on paused time, so their waits cost nothing and the gaps
-//! between requests read exactly.
+//! it. Retry tests run on paused time, so their waits cost nothing.
+//!
+//! Paused time jumps to the next timer whenever the runtime waits. A ticking
+//! task keeps each jump to a millisecond, so the client's request timeout
+//! cannot fire while the local server is still answering. Gaps between
+//! requests are read in whole seconds.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -20,14 +24,20 @@ use super::{MixpanelClient, SendError, WireEvent};
 
 const TOKEN: &str = "a-token";
 
-struct Reply {
-    status: u16,
-    retry_after: Option<u64>,
-    body: String,
+enum Reply {
+    Answer {
+        status: u16,
+        retry_after: Option<u64>,
+        body: String,
+    },
+    /// Read the request, then close the connection without an answer.
+    Close,
+    /// Read the request, then keep the connection open without an answer.
+    Silence,
 }
 
 fn reply(status: u16, body: &str) -> Reply {
-    Reply {
+    Reply::Answer {
         status,
         retry_after: None,
         body: body.to_owned(),
@@ -39,10 +49,25 @@ fn accepted() -> Reply {
 }
 
 fn rate_limited(retry_after: Option<u64>) -> Reply {
-    Reply {
+    Reply::Answer {
+        status: 429,
         retry_after,
-        ..reply(429, "")
+        body: String::new(),
     }
+}
+
+/// See the module docs: under paused time, the clock moves in steps of a
+/// millisecond while this runs.
+fn tick() {
+    tokio::spawn(async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    });
+}
+
+fn whole_seconds(duration: Duration) -> u64 {
+    (duration + Duration::from_millis(500)).as_secs()
 }
 
 #[derive(Debug)]
@@ -78,6 +103,7 @@ impl Server {
         let addr = listener.local_addr().expect("an address");
         let requests = Arc::new(Mutex::new(Vec::new()));
         let seen = Arc::clone(&requests);
+        tick();
         tokio::spawn(async move {
             let mut replies = replies.into_iter().peekable();
             let mut last = None;
@@ -104,10 +130,10 @@ impl Server {
         self.requests.lock().expect("not poisoned")
     }
 
-    fn gaps(&self) -> Vec<Duration> {
+    fn gaps(&self) -> Vec<u64> {
         self.requests()
             .windows(2)
-            .map(|pair| pair[1].at - pair[0].at)
+            .map(|pair| whole_seconds(pair[1].at - pair[0].at))
             .collect()
     }
 }
@@ -118,17 +144,30 @@ async fn serve(mut stream: TcpStream, reply: &Reply, seen: &Mutex<Vec<Request>>)
     };
     seen.lock().expect("not poisoned").push(request);
 
-    let extra = reply
-        .retry_after
+    let (status, retry_after, body) = match reply {
+        Reply::Answer {
+            status,
+            retry_after,
+            body,
+        } => (status, retry_after, body),
+        Reply::Close => return,
+        Reply::Silence => {
+            tokio::spawn(async move {
+                let _open = stream;
+                std::future::pending::<()>().await;
+            });
+            return;
+        }
+    };
+    let extra = retry_after
         .map(|secs| format!("Retry-After: {secs}\r\n"))
         .unwrap_or_default();
     let head = format!(
-        "HTTP/1.1 {} Scripted\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n",
-        reply.status,
-        reply.body.len()
+        "HTTP/1.1 {status} Scripted\r\nContent-Length: {}\r\nConnection: close\r\n{extra}\r\n",
+        body.len()
     );
     let _ = stream.write_all(head.as_bytes()).await;
-    let _ = stream.write_all(reply.body.as_bytes()).await;
+    let _ = stream.write_all(body.as_bytes()).await;
     let _ = stream.shutdown().await;
 }
 
@@ -232,7 +271,7 @@ async fn each_event_gains_the_token_and_the_library_properties() {
         ("time".to_owned(), json!(1_700_000_000)),
         // The client's own values win over the caller's.
         ("token".to_owned(), json!("caller-token")),
-        ("mp_lib".to_owned(), json!("not-rust")),
+        ("mp_lib".to_owned(), json!("caller-lib")),
         ("$lib_version".to_owned(), json!("caller-version")),
     ]);
     properties.insert("$insert_id".to_owned(), json!("an-id"));
@@ -255,8 +294,8 @@ async fn each_event_gains_the_token_and_the_library_properties() {
                 "time": 1_700_000_000,
                 "$insert_id": "an-id",
                 "token": TOKEN,
-                "mp_lib": "rust",
-                "$lib_version": "0.3.1",
+                "mp_lib": "quiltsync",
+                "$lib_version": env!("CARGO_PKG_VERSION"),
             },
         })]
     );
@@ -424,10 +463,7 @@ async fn a_5xx_is_retried_with_backoff() {
         .await
         .expect("delivered on the third try");
 
-    assert_eq!(
-        server.gaps(),
-        vec![Duration::from_secs(1), Duration::from_secs(2)]
-    );
+    assert_eq!(server.gaps(), vec![1, 2]);
     let bodies: Vec<String> = server.requests().iter().map(|r| r.body.clone()).collect();
     assert!(
         bodies.windows(2).all(|pair| pair[0] == pair[1]),
@@ -446,20 +482,13 @@ async fn a_5xx_gives_up_after_three_retries() {
         .expect_err("gave up");
 
     assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
-    assert_eq!(
-        server.gaps(),
-        vec![
-            Duration::from_secs(1),
-            Duration::from_secs(2),
-            Duration::from_secs(4)
-        ]
-    );
+    assert_eq!(server.gaps(), vec![1, 2, 4]);
 }
 
 #[tokio::test(start_paused = true)]
 async fn a_429_waits_for_retry_after() {
-    // Longer than the backoff cap: the server's wait is not capped.
-    let server = Server::start(vec![rate_limited(Some(30)), accepted()]).await;
+    // Longer than any backoff: the server's wait wins.
+    let server = Server::start(vec![rate_limited(Some(5)), accepted()]).await;
 
     server
         .client(None)
@@ -467,7 +496,35 @@ async fn a_429_waits_for_retry_after() {
         .await
         .expect("delivered after the wait");
 
-    assert_eq!(server.gaps(), vec![Duration::from_secs(30)]);
+    assert_eq!(server.gaps(), vec![5]);
+}
+
+/// A wait the send's 10 s cannot cover ends it at once, so the caller can
+/// buffer the batch.
+#[tokio::test(start_paused = true)]
+async fn a_retry_after_longer_than_the_send_has_left_is_unreachable_at_once() {
+    for (replies, requests, seconds) in [
+        (vec![rate_limited(Some(30))], 1, 0),
+        // 1 s and 2 s of backoff leave 7 s, less than 8.
+        (
+            vec![reply(500, ""), reply(500, ""), rate_limited(Some(8))],
+            3,
+            3,
+        ),
+    ] {
+        let server = Server::start(replies).await;
+        let started = Instant::now();
+
+        let err = server
+            .client(None)
+            .send(vec![event("one")])
+            .await
+            .expect_err("not worth the wait");
+
+        assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
+        assert_eq!(server.requests().len(), requests);
+        assert_eq!(whole_seconds(started.elapsed()), seconds);
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -481,14 +538,7 @@ async fn a_429_without_retry_after_backs_off() {
         .expect_err("gave up");
 
     assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
-    assert_eq!(
-        server.gaps(),
-        vec![
-            Duration::from_secs(1),
-            Duration::from_secs(2),
-            Duration::from_secs(4)
-        ]
-    );
+    assert_eq!(server.gaps(), vec![1, 2, 4]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -500,6 +550,7 @@ async fn a_refused_connection_is_retried_then_unreachable() {
         .local_addr()
         .expect("an address");
     let client = MixpanelClient::with_base_url(TOKEN, None, &format!("http://{addr}"));
+    tick();
 
     let started = Instant::now();
     let err = client
@@ -508,30 +559,33 @@ async fn a_refused_connection_is_retried_then_unreachable() {
         .expect_err("nothing listens");
 
     assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
-    assert_eq!(started.elapsed(), Duration::from_secs(1 + 2 + 4));
+    assert_eq!(whole_seconds(started.elapsed()), 1 + 2 + 4);
 }
 
-/// A connection that closes before answering is not retried.
+/// A connection that closes before answering is retried like a refused one.
 #[tokio::test(start_paused = true)]
-async fn a_dropped_answer_is_unreachable_without_a_retry() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let addr = listener.local_addr().expect("an address");
-    let accepted = Arc::new(Mutex::new(0usize));
-    let count = Arc::clone(&accepted);
-    tokio::spawn(async move {
-        while let Ok((mut stream, _)) = listener.accept().await {
-            let _ = read_request(&mut stream).await;
-            *count.lock().expect("not poisoned") += 1;
-            drop(stream);
-        }
-    });
-    let client = MixpanelClient::with_base_url(TOKEN, None, &format!("http://{addr}"));
+async fn a_dropped_answer_is_retried() {
+    let server = Server::start(vec![Reply::Close, accepted()]).await;
 
-    let err = client
+    server
+        .client(None)
         .send(vec![event("one")])
         .await
-        .expect_err("no answer");
+        .expect("delivered on the second try");
 
-    assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
-    assert_eq!(*accepted.lock().expect("not poisoned"), 1);
+    assert_eq!(server.gaps(), vec![1]);
+}
+
+/// A request with no answer for 3 s is given up and retried.
+#[tokio::test(start_paused = true)]
+async fn a_silent_request_times_out_and_is_retried() {
+    let server = Server::start(vec![Reply::Silence, accepted()]).await;
+
+    server
+        .client(None)
+        .send(vec![event("one")])
+        .await
+        .expect("delivered on the second try");
+
+    assert_eq!(server.gaps(), vec![3 + 1]);
 }
