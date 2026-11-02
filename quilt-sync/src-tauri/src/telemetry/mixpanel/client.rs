@@ -21,8 +21,8 @@ const CHUNK: usize = 50;
 const MAX_RETRIES: u32 = 3;
 const BACKOFF_BASE: Duration = Duration::from_secs(1);
 const BACKOFF_CAP: Duration = Duration::from_secs(10);
-// The library properties the mixpanel-rs crate sent, kept so the events in
-// Mixpanel read the same.
+// Library properties every event carries; changing them splits reports in
+// Mixpanel.
 const LIB: &str = "rust";
 const LIB_VERSION: &str = "0.3.1";
 
