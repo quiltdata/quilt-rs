@@ -21,6 +21,10 @@
 
 ## [v0.26.2-dev]
 
+### Changed
+
+- QuiltSync makes all its HTTPS connections with one TLS library, and on Linux no longer uses OpenSSL (<https://github.com/quiltdata/quilt-rs/pull/PRNUM>)
+
 ### Fixed
 
 - On Windows and Linux, opening QuiltSync while it runs in the tray shows its window (<https://github.com/quiltdata/quilt-rs/pull/1275>)
