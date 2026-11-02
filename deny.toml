@@ -16,11 +16,6 @@ yanked = "deny"
 # `warning[advisory-not-detected]`. Kept out of the committed config so CI logs
 # stay free of warning noise.
 ignore = [
-    # --- rustls-pemfile pulled in by aws-smithy-http-client v1.1.x ---
-    # Tracking via aws-sdk-rust upstream; update once aws-smithy-http-client
-    # drops rustls-pemfile 1.x.
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile 1.x via aws-smithy-http-client; awaiting AWS SDK update" },
-
     # --- Tauri Linux backend (GTK3 / webkit2gtk) ---
     # Tauri 2.x has not migrated off GTK3. These advisories will clear when
     # Tauri ships a GTK4 backend or we drop the Linux target.
@@ -44,24 +39,8 @@ ignore = [
     # still depends on it as of 0.8.16 / 0.9.0-alpha. Revisit on Leptos bumps.
     { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2 unmaintained, transitive via Leptos" },
 
-    # --- mixpanel-rs (dotenv) ---
-    { id = "RUSTSEC-2021-0141", reason = "dotenv unmaintained, transitive via mixpanel-rs" },
-
-    # --- h2 0.3 via mixpanel-rs ---
-    # Denial of service, low severity: h2 accepts and queues empty DATA frames
-    # without limit, so a stream that is never drained can grow unboundedly.
-    # Reached only as an outbound client to Mixpanel's ingest API; nothing in
-    # the workspace serves HTTP over hyper 0.14, and a local build never even
-    # constructs the client (`Sink::DryRun`).
-    #
-    # Not fixable in place: the advisory patches `>= 0.4.16` and the 0.3 line
-    # has no patched release at all, while mixpanel-rs 0.3.1 is its latest and
-    # pins reqwest 0.11. Clears when mixpanel-rs moves to reqwest 0.12+, or when
-    # we replace it. Our own h2 0.4 is patched — 0.4.19 in Cargo.lock.
-    #
-    # Note this ignore is by advisory id, which is all cargo-deny supports here,
-    # so it would also mask a future h2 0.4 regression under the same id.
-    { id = "RUSTSEC-2026-0258", reason = "h2 0.3 via mixpanel-rs -> reqwest 0.11 -> hyper 0.14; no patched 0.3 release exists" },
+    # --- dotenv ---
+    { id = "RUSTSEC-2021-0141", reason = "dotenv unmaintained, a direct dependency of quilt-sync" },
 
     # --- zbus 5 helper crates via opener / tauri-plugin-single-instance (Linux only) ---
     # zbus 6 folded zbus_names, zvariant and zvariant_derive into itself, so the

@@ -1,17 +1,30 @@
-//! The one place that knows which Mixpanel client library sends our events.
+//! Our client for the Mixpanel ingest API.
 //!
 //! Everything else in telemetry uses [`WireEvent`], [`SendError`] and
-//! [`MixpanelClient`]. The tests in `client/tests.rs` pin the HTTP wire through
-//! this API alone, so they hold for whatever sits behind it.
+//! [`MixpanelClient`]. The tests in `client/tests.rs` pin the HTTP wire.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
-use mixpanel_rs::{Config, Event, Mixpanel, error::Error as Mp};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[cfg(test)]
 mod tests;
+
+const API: &str = "https://api.mixpanel.com";
+/// The API takes at most this many events in one request.
+const CHUNK: usize = 50;
+const MAX_RETRIES: u32 = 3;
+const BACKOFF_BASE: Duration = Duration::from_secs(1);
+const BACKOFF_CAP: Duration = Duration::from_secs(10);
+// The library properties the mixpanel-rs crate sent, kept so the events in
+// Mixpanel read the same.
+const LIB: &str = "rust";
+const LIB_VERSION: &str = "0.3.1";
 
 /// An event as the ingest API receives it: a name and its properties.
 ///
@@ -24,8 +37,6 @@ pub struct WireEvent {
 }
 
 /// Why a send failed, reduced to what the caller acts on.
-///
-/// The message is the client's own description of the failure.
 #[derive(Debug, thiserror::Error)]
 pub enum SendError {
     /// The ingest API answered and refused the events.
@@ -37,61 +48,47 @@ pub enum SendError {
     Unreachable(String),
 }
 
-impl From<Mp> for SendError {
-    fn from(err: Mp) -> Self {
-        let message = err.to_string();
-        match err {
-            // `ApiClientError` is also what a 2xx answer with a status other
-            // than 1 becomes.
-            Mp::ApiClientError(..)
-            | Mp::ApiUnexpectedResponse(_)
-            | Mp::ApiPayloadTooLarge
-            | Mp::JsonError(_)
-            | Mp::UrlError(_)
-            | Mp::TimeError => Self::Refused(message),
-
-            Mp::HttpError(_)
-            | Mp::ApiServerError(_)
-            | Mp::ApiRateLimitError(_)
-            | Mp::ApiHttpError(..)
-            | Mp::MaxRetriesReached(_) => Self::Unreachable(message),
-        }
-    }
+/// How one request failed.
+enum Failure {
+    /// Final: no retry.
+    Done(SendError),
+    /// Worth another try, after `wait` if the API named one.
+    Retry {
+        message: String,
+        wait: Option<Duration>,
+    },
 }
 
 /// Sends batches of events to the Mixpanel ingest API.
 pub struct MixpanelClient {
-    inner: Mixpanel,
+    http: reqwest::Client,
+    token: String,
+    authorization: Option<String>,
+    url: String,
 }
 
 impl MixpanelClient {
     pub fn new(token: &str, secret: Option<&str>) -> Self {
-        Self::with_config(token, secret, Config::default())
+        Self::sending_to(token, secret, API)
     }
 
     /// A client that sends to `base_url` (`http://host:port`) instead of
     /// the real API.
     #[cfg(test)]
     pub fn with_base_url(token: &str, secret: Option<&str>, base_url: &str) -> Self {
-        let (protocol, host) = base_url.split_once("://").expect("a scheme://host URL");
-        let config = Config {
-            protocol: protocol.to_owned(),
-            host: host.trim_end_matches('/').to_owned(),
-            ..Config::default()
-        };
-        Self::with_config(token, secret, config)
+        Self::sending_to(token, secret, base_url)
     }
 
-    fn with_config(token: &str, secret: Option<&str>, config: Config) -> Self {
-        let config = Config {
-            secret: secret.map(ToOwned::to_owned),
-            // Without this the API does not say whether it accepted an event,
-            // so a rejected event returns HTTP 200 and reads as a success.
-            verbose: true,
-            ..config
-        };
+    fn sending_to(token: &str, secret: Option<&str>, base_url: &str) -> Self {
         Self {
-            inner: Mixpanel::init(token, Some(config)),
+            // No timeout here: the caller bounds the whole send.
+            http: reqwest::Client::new(),
+            token: token.to_owned(),
+            authorization: secret
+                .map(|secret| format!("Basic {}", STANDARD.encode(format!("{secret}:")))),
+            // `verbose=1` makes the API say whether it accepted the events;
+            // without it a refusal is an HTTP 200 too.
+            url: format!("{}/track?ip=0&verbose=1", base_url.trim_end_matches('/')),
         }
     }
 
@@ -99,11 +96,125 @@ impl MixpanelClient {
     ///
     /// Stops at the first request that fails; requests before it stay
     /// delivered.
-    pub async fn send(&self, events: Vec<WireEvent>) -> Result<(), SendError> {
-        let events = events
-            .into_iter()
-            .map(|WireEvent { event, properties }| Event { event, properties })
-            .collect();
-        Ok(self.inner.track_batch(events).await?)
+    pub async fn send(&self, mut events: Vec<WireEvent>) -> Result<(), SendError> {
+        for event in &mut events {
+            let properties = &mut event.properties;
+            properties.insert("token".to_owned(), Value::from(self.token.as_str()));
+            properties.insert("mp_lib".to_owned(), Value::from(LIB));
+            properties.insert("$lib_version".to_owned(), Value::from(LIB_VERSION));
+        }
+        for chunk in events.chunks(CHUNK) {
+            let json = serde_json::to_string(chunk)
+                .map_err(|err| SendError::Refused(format!("JSON serialization error: {err}")))?;
+            self.post(format!("data={}", STANDARD.encode(json))).await?;
+        }
+        Ok(())
+    }
+
+    async fn post(&self, body: String) -> Result<(), SendError> {
+        let mut retries = 0;
+        loop {
+            let (message, wait) = match self.post_once(body.clone()).await {
+                Ok(()) => return Ok(()),
+                Err(Failure::Done(err)) if retries < MAX_RETRIES => return Err(err),
+                Err(Failure::Done(err)) => (err.to_string(), None),
+                Err(Failure::Retry { message, wait }) => (message, wait),
+            };
+            // Once the retries are spent, any failure ends the send this way.
+            if retries == MAX_RETRIES {
+                return Err(SendError::Unreachable(format!(
+                    "Max retries reached: Failed after {retries} retries. Last error: {message}"
+                )));
+            }
+            let backoff = (BACKOFF_BASE * 2u32.pow(retries)).min(BACKOFF_CAP);
+            tokio::time::sleep(wait.unwrap_or(backoff)).await;
+            retries += 1;
+        }
+    }
+
+    async fn post_once(&self, body: String) -> Result<(), Failure> {
+        let mut request = self
+            .http
+            .post(&self.url)
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body);
+        if let Some(authorization) = &self.authorization {
+            request = request.header("Authorization", authorization);
+        }
+
+        let response = request.send().await.map_err(|err| http_failure(&err))?;
+
+        let status = response.status();
+        let code = status.as_u16();
+        let refused = |message: String| Err(Failure::Done(SendError::Refused(message)));
+
+        if status.is_success() {
+            let body = response.text().await.map_err(|err| http_failure(&err))?;
+            let json: Value = match serde_json::from_str(&body) {
+                Ok(json) => json,
+                Err(err) => return refused(format!("JSON serialization error: {err}")),
+            };
+            return match json.get("status").and_then(Value::as_u64) {
+                Some(1) => Ok(()),
+                Some(_) => match json.get("error").and_then(Value::as_str) {
+                    Some(error) => {
+                        refused(format!("Mixpanel API client error (HTTP {code}): {error}"))
+                    }
+                    None => refused(format!(
+                        "Mixpanel API unexpected response: Response status was not 1: {body}"
+                    )),
+                },
+                None => refused(format!(
+                    "Mixpanel API unexpected response: Response missing status: {body}"
+                )),
+            };
+        }
+
+        match status {
+            StatusCode::PAYLOAD_TOO_LARGE => {
+                refused("Mixpanel API payload too large (HTTP 413)".to_owned())
+            }
+            StatusCode::TOO_MANY_REQUESTS => {
+                let seconds = response
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| value.parse::<u64>().ok());
+                Err(Failure::Retry {
+                    message: format!(
+                        "Mixpanel API rate limited (Retry after: {seconds:?} seconds)"
+                    ),
+                    wait: seconds.map(Duration::from_secs),
+                })
+            }
+            _ if code >= 500 => Err(Failure::Retry {
+                message: format!("Mixpanel API server error (HTTP {code})"),
+                wait: None,
+            }),
+            _ => {
+                let body = response.text().await.unwrap_or_else(|err| err.to_string());
+                if code >= 400 {
+                    refused(format!("Mixpanel API client error (HTTP {code}): {body}"))
+                } else {
+                    Err(Failure::Done(SendError::Unreachable(format!(
+                        "Mixpanel API HTTP error (HTTP {code}): {body}"
+                    ))))
+                }
+            }
+        }
+    }
+}
+
+/// A request that got no answer is retried only when it never connected or
+/// timed out.
+fn http_failure(err: &reqwest::Error) -> Failure {
+    let message = format!("HTTP request error: {err}");
+    if err.is_connect() || err.is_timeout() {
+        Failure::Retry {
+            message,
+            wait: None,
+        }
+    } else {
+        Failure::Done(SendError::Unreachable(message))
     }
 }
