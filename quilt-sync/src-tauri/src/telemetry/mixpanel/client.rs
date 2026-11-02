@@ -70,8 +70,8 @@ pub struct MixpanelClient {
     token: String,
     authorization: Option<String>,
     url: String,
-    /// Until when the API asked us to wait, after a wait no send could
-    /// afford. In memory only: a restart forgets it.
+    /// Until when the API asked us to wait, after a wait the client did not
+    /// take. In memory only: a restart forgets it.
     quiet_until: Mutex<Option<Instant>>,
 }
 
@@ -140,6 +140,14 @@ impl MixpanelClient {
                 Err(Failure::Done(err)) => (err.to_string(), None),
                 Err(Failure::Retry { message, wait }) => (message, wait),
             };
+            let left = deadline.saturating_duration_since(Instant::now());
+            // A wait the API named and we will not take holds later sends.
+            if let Some(wait) = wait
+                && (retries == MAX_RETRIES || wait > left)
+            {
+                *self.quiet_until.lock().expect("quiet_until lock") =
+                    Instant::now().checked_add(wait);
+            }
             // Once the retries are spent, any failure ends the send this way.
             if retries == MAX_RETRIES {
                 return Err(SendError::Unreachable(format!(
@@ -148,9 +156,7 @@ impl MixpanelClient {
             }
             let wait = match wait {
                 // Waiting would run past the send's time limit; end now.
-                Some(wait) if wait > deadline.saturating_duration_since(Instant::now()) => {
-                    *self.quiet_until.lock().expect("quiet_until lock") =
-                        Instant::now().checked_add(wait);
+                Some(wait) if wait > left => {
                     return Err(SendError::Unreachable(format!(
                         "{message}; longer than the send has left"
                     )));
