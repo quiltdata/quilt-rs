@@ -23,6 +23,7 @@
 
 ### Changed
 
+- Usage analytics report the QuiltSync version (<https://github.com/quiltdata/quilt-rs/pull/1286>)
 - QuiltSync makes all its HTTPS connections with one TLS library, and on Linux no longer uses OpenSSL (<https://github.com/quiltdata/quilt-rs/pull/1288>)
 
 ### Fixed
