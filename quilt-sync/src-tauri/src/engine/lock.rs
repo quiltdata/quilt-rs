@@ -91,7 +91,7 @@ pub fn acquire(data_dir: &Path) -> io::Result<Acquired> {
 }
 
 /// Like [`acquire`], but when another engine holds the lock, waits a few
-/// seconds for it to write its address: it writes it only once it serves.
+/// seconds for it to write its address: it writes it once its port is bound.
 ///
 /// # Errors
 ///
