@@ -205,6 +205,12 @@ pub struct CurrentRevisionData {
     pub hash: String,
     pub message: Option<String>,
     pub obtained_at: f64,
+    /// The user metadata as JSON text, read from the same manifest; `None`
+    /// when it has none, `{}` included. Text, as the commit page's is, so an
+    /// integer past JavaScript's safe range crosses the bridge unrounded.
+    pub meta: Option<String>,
+    /// The workflow's id, when the revision names one.
+    pub workflow: Option<String>,
 }
 
 /// `History`: the rows, and what removing every removable one
@@ -565,6 +571,8 @@ fn package_context_data(
             hash: revision.hash,
             message: revision.message,
             obtained_at: epoch_millis(revision.obtained),
+            meta: revision.meta.map(|meta| meta.to_string()),
+            workflow: revision.workflow,
         },
         bucket: lineage
             .remote_uri
@@ -811,19 +819,23 @@ fn revision_history_rows(
 pub async fn get_revision_history(
     m: tauri::State<'_, model::Model>,
     namespace: String,
+    measure: bool,
 ) -> Result<RevisionHistoryData, String> {
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    get_revision_history_from_model(&*m, &namespace)
+    get_revision_history_from_model(&*m, &namespace, measure)
         .await
         .map_err(|e| e.to_frontend_string())
 }
 
+/// `measure: false` skips what removal frees, which reads every installed
+/// package's manifests: the revision mode needs only publication.
 async fn get_revision_history_from_model(
     m: &impl model::QuiltModel,
     namespace: &quilt_uri::Namespace,
+    measure: bool,
 ) -> Result<RevisionHistoryData, Error> {
     let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -837,12 +849,16 @@ async fn get_revision_history_from_model(
         .await?;
     // A manifest anywhere that cannot be read stops the measure, as it would
     // stop the removal: the list still draws, offering nothing to remove.
-    let usage = match m.get_installed_package_revision_usage(&installed).await {
-        Ok(usage) => Some(usage),
-        Err(err) => {
-            warn!("Could not measure what removing revisions of {namespace} frees: {err}");
-            None
+    let usage = if measure {
+        match m.get_installed_package_revision_usage(&installed).await {
+            Ok(usage) => Some(usage),
+            Err(err) => {
+                warn!("Could not measure what removing revisions of {namespace} frees: {err}");
+                None
+            }
         }
+    } else {
+        None
     };
     let frees = usage
         .as_ref()
@@ -1102,6 +1118,8 @@ mod tests {
                     hash: "abcdef".to_string(),
                     obtained: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),
                     message: Some("Initial upload".to_string()),
+                    meta: None,
+                    workflow: None,
                 }))
             });
         // `.times(1)`: one count per page read, never a history parse.
@@ -1317,6 +1335,8 @@ mod tests {
             hash: "pending-hash".to_string(),
             obtained: DateTime::from_timestamp_millis(1_758_500_000_000).unwrap(),
             message: Some(message.to_string()),
+            meta: None,
+            workflow: None,
         }
     }
 
@@ -1327,6 +1347,8 @@ mod tests {
                 hash: "abc123".to_string(),
                 message: Some("Initial upload".to_string()),
                 obtained_at: 1_758_500_000_000.0,
+                meta: Some(r#"{"plate":7}"#.to_string()),
+                workflow: Some("alpha".to_string()),
             },
             bucket: Some("quilt-lab-plates".to_string()),
             revision_count: 4,
@@ -1337,7 +1359,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&context).unwrap(),
-            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","folders":[],"total":56,"outstanding":2,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000,"backlog":1500000},"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0,"meta":"{\"plate\":7}","workflow":"alpha"},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","folders":[],"total":56,"outstanding":2,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000,"backlog":1500000},"resolve":null}"#,
         );
     }
 
@@ -1787,6 +1809,8 @@ mod tests {
                     hash: "pending-hash".to_string(),
                     message: Some("Pending commit".to_string()),
                     obtained_at: 1_758_500_000_000.0,
+                    meta: None,
+                    workflow: None,
                 },
                 bucket: Some("test".to_string()),
                 revision_count: 1,
@@ -2208,6 +2232,8 @@ mod tests {
                 hash: hash.to_string(),
                 obtained: DateTime::from_timestamp_millis(at_millis).unwrap(),
                 message: message.map(ToString::to_string),
+                meta: None,
+                workflow: None,
             },
             published,
         }
@@ -2480,13 +2506,35 @@ mod tests {
         assert!(seen.lock().unwrap().is_empty());
     }
 
+    /// The revision mode reads publication only. The mock has no usage read,
+    /// so asking for one would fail the test.
+    #[tokio::test]
+    async fn an_unmeasured_history_skips_the_usage_scan() {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_get_installed_package_lineage()
+            .returning(|_| Ok(removal_lineage()));
+        m.expect_get_installed_package_revision_history()
+            .returning(|_, _| Ok(removal_entries()));
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        let history = get_revision_history_from_model(&m, &ns, false)
+            .await
+            .expect("the rows");
+
+        assert_eq!(history.rows.len(), 5);
+        assert!(history.rows.iter().all(|row| row.frees.is_none()));
+        assert_eq!(history.removable_frees, None);
+    }
+
     #[tokio::test]
     async fn a_missing_package_is_an_error_not_an_empty_history() {
         let mut m = crate::model::mocks::create();
         m.expect_get_installed_package().returning(|_| Ok(None));
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
 
-        let err = get_revision_history_from_model(&m, &ns)
+        let err = get_revision_history_from_model(&m, &ns, true)
             .await
             .expect_err("an absent package has no history to be empty");
 

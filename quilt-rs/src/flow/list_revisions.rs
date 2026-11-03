@@ -24,6 +24,7 @@ use quilt_uri::Namespace;
 use crate::Res;
 use crate::io::storage::Storage;
 use crate::manifest::Manifest;
+use crate::manifest::ManifestHeader;
 use crate::paths::DomainPaths;
 
 /// One revision this copy holds a manifest for.
@@ -37,6 +38,30 @@ pub struct Revision {
     pub obtained: DateTime<Utc>,
     /// The revision's commit message, absent if it was committed without one.
     pub message: Option<String>,
+    /// The revision's user metadata; `None` when it has none, `null` and `{}`
+    /// included.
+    pub meta: Option<serde_json::Value>,
+    /// The id of the workflow the revision was committed under, if any.
+    pub workflow: Option<String>,
+}
+
+impl Revision {
+    /// The facts `header` records about the revision at `hash`.
+    #[must_use]
+    pub fn from_header(hash: String, obtained: DateTime<Utc>, header: ManifestHeader) -> Self {
+        let meta = header.user_meta.filter(|meta| match meta {
+            serde_json::Value::Null => false,
+            serde_json::Value::Object(fields) => !fields.is_empty(),
+            _ => true,
+        });
+        Self {
+            hash,
+            obtained,
+            message: header.message,
+            meta,
+            workflow: header.workflow.and_then(|w| w.id).map(|id| id.id),
+        }
+    }
 }
 
 /// One revision this copy holds, and whether the package's registry lists it.
@@ -69,11 +94,11 @@ pub async fn list_revisions(
         let path = entry.path();
         let manifest = Manifest::from_path(storage, &path).await?;
 
-        revisions.push(Revision {
-            hash: entry.file_name().to_string_lossy().into_owned(),
-            obtained: entry.metadata().await?.modified()?.into(),
-            message: manifest.header.message,
-        });
+        revisions.push(Revision::from_header(
+            entry.file_name().to_string_lossy().into_owned(),
+            entry.metadata().await?.modified()?.into(),
+            manifest.header,
+        ));
     }
 
     revisions.sort_by(|left, right| {
@@ -148,5 +173,45 @@ mod tests {
         assert_eq!(listed[0].message.as_deref(), Some("initial import"));
 
         Ok(())
+    }
+
+    fn header(user_meta: Option<serde_json::Value>) -> ManifestHeader {
+        ManifestHeader {
+            user_meta,
+            ..ManifestHeader::default()
+        }
+    }
+
+    fn meta_of(header: ManifestHeader) -> Option<serde_json::Value> {
+        Revision::from_header("h".to_string(), DateTime::UNIX_EPOCH, header).meta
+    }
+
+    #[test]
+    fn empty_metadata_is_none() {
+        assert_eq!(meta_of(header(None)), None);
+        assert_eq!(meta_of(header(Some(serde_json::Value::Null))), None);
+        assert_eq!(meta_of(header(Some(serde_json::json!({})))), None);
+    }
+
+    #[test]
+    fn metadata_and_workflow_are_read() {
+        let json = serde_json::json!({
+            "version": "v0",
+            "message": "m",
+            "user_meta": {"plate": 7},
+            "workflow": {
+                "config": "s3://bucket/.quilt/workflows/config.yml",
+                "id": "alpha",
+                "schemas": {}
+            }
+        });
+        let stamped: ManifestHeader = serde_json::from_value(json).unwrap();
+        let revision = Revision::from_header("h".to_string(), DateTime::UNIX_EPOCH, stamped);
+        assert_eq!(revision.meta, Some(serde_json::json!({"plate": 7})));
+        assert_eq!(revision.workflow.as_deref(), Some("alpha"));
+        assert_eq!(
+            meta_of(header(Some(serde_json::json!([1])))),
+            Some(serde_json::json!([1]))
+        );
     }
 }

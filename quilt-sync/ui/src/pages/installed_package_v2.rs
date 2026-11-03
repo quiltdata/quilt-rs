@@ -50,6 +50,7 @@ mod mismatch_band;
 pub(crate) mod old_revisions;
 pub(crate) mod resolve;
 mod revision_history;
+mod revision_pane;
 mod role_dialog;
 
 use crate::kit::PageHeaderSkeleton;
@@ -64,6 +65,7 @@ pub(crate) use header::{
 pub use header::{MenuCommand, MenuItem, menu_items, remote_target};
 use incoming::{HoverCard, IncomingSummary};
 use resolve::{ResolveCommands, ResolvePane};
+use revision_pane::RevisionPane;
 
 stylance::import_crate_style!(style, "src/pages/installed_package_v2.module.css");
 
@@ -601,13 +603,28 @@ fn carrying(href: String) -> String {
 /// A deep link's outcome stays on the address, so its band does not end with the mode.
 fn normalized_address(
     asked: bool,
+    revision: Option<&str>,
     showing: &str,
     answered: &commands::PackagePageData,
     outcome: Option<&routes::DeepLinkOutcome>,
 ) -> Option<String> {
     let namespace = &answered.header.namespace;
-    (asked && namespace.to_string() == showing && answered.context.resolve.is_none())
-        .then(|| routes::keeping_outcome(routes::package_page_href(namespace), outcome))
+    let current = answered.context.revision.hash.as_str();
+    // Open Resolve wins, so its address stays whatever `revision` says.
+    let resolve_open = asked && answered.context.resolve.is_some();
+    let resolve_missing = asked && !resolve_open;
+    // A stale link, or a commit or pull that moved the revision.
+    let revision_missing = !resolve_open && revision.is_some_and(|hash| hash != current);
+    if namespace.to_string() != showing || !(resolve_missing || revision_missing) {
+        return None;
+    }
+    // Only the mode that cannot open is dropped.
+    let to = if revision == Some(current) {
+        routes::revision_href(namespace, current)
+    } else {
+        routes::package_page_href(namespace)
+    };
+    Some(routes::keeping_outcome(to, outcome))
 }
 
 /// Render one successful page payload. Kept pure so its atomic shape can be
@@ -615,11 +632,14 @@ fn normalized_address(
 ///
 /// `asked` is the address's `resolve=1`; the mode is open only when this
 /// payload also carries a comparison, so the header, the pane and the marks
-/// all read one `open`.
+/// all read one `open`. `revision` is the address's `revision=<hash>`; the
+/// revision mode is open only when it names this payload's revision, and
+/// Resolve, when open, wins.
 fn package_body(
     data: commands::PackagePageData,
     w: Wiring,
     asked: Signal<bool>,
+    revision: Signal<Option<String>>,
     resolving: ResolveCommands,
     files: Files,
     incoming: IncomingCheck,
@@ -675,9 +695,14 @@ fn package_body(
         on_command: row_runner(namespace.clone(), uri.clone(), w, files),
         copied: files.copies,
     };
+    let revision_to = carrying(routes::revision_href(&ns, &context.revision.hash));
     let context = StoredValue::new(context);
     let pane = move || {
         let context = context.get_value();
+        let asked_this = revision.with(|r| r.as_deref() == Some(context.revision.hash.as_str()));
+        if asked_this && !open.get() {
+            return revision_mode(&ns, context.revision, open_catalog, w);
+        }
         match context.resolve.clone().filter(|_| open.get()) {
             Some(resolve) => view! {
                 <ResolvePane
@@ -692,19 +717,14 @@ fn package_body(
                 />
             }
             .into_any(),
-            None => view! {
-                <CurrentRevisionPane
-                    data=context
-                    namespace=namespace.clone()
-                    fetch=context_pane::fetch_revision_history
-                    open_catalog=open_catalog
-                    w=w
-                    commands=keeping::KeepingCommands::app()
-                    remove=old_revisions::remove_revisions
-                    catalog=catalog.clone()
-                />
-            }
-            .into_any(),
+            None => ordinary_pane(
+                context,
+                namespace.clone(),
+                open_catalog,
+                w,
+                catalog.clone(),
+                revision_to.clone(),
+            ),
         }
     };
     view! {
@@ -726,6 +746,51 @@ fn package_body(
                 />
             </div>
         </div>
+    }
+    .into_any()
+}
+
+/// The pane's ordinary mode.
+fn ordinary_pane(
+    data: commands::PackageContextData,
+    namespace: String,
+    open_catalog: Callback<String>,
+    w: Wiring,
+    catalog: Option<String>,
+    revision_href: String,
+) -> AnyView {
+    view! {
+        <CurrentRevisionPane
+            data=data
+            namespace=namespace
+            fetch=context_pane::fetch_revision_history
+            open_catalog=open_catalog
+            w=w
+            commands=keeping::KeepingCommands::app()
+            remove=old_revisions::remove_revisions
+            catalog=catalog
+            revision_href=revision_href
+        />
+    }
+    .into_any()
+}
+
+/// The pane's revision mode, on the revision the page read.
+fn revision_mode(
+    ns: &quilt_uri::Namespace,
+    revision: commands::CurrentRevisionData,
+    open_catalog: Callback<String>,
+    w: Wiring,
+) -> AnyView {
+    view! {
+        <RevisionPane
+            namespace=ns.clone()
+            revision=revision
+            back_href=carrying(routes::package_page_href(ns))
+            fetch=context_pane::fetch_publication
+            open_catalog=open_catalog
+            w=w
+        />
     }
     .into_any()
 }
@@ -1274,6 +1339,7 @@ fn PackageScreen(
     // Memos, so only `namespace` re-runs the read: the mode opens with no loading state.
     let ns = Memo::new(move |_| query.read().get("namespace").unwrap_or_default());
     let asked = Memo::new(move |_| query.read().get("resolve").as_deref() == Some("1"));
+    let revision = Memo::new(move |_| query.read().get("revision"));
     // What a deep link found: another revision, or no remote to check it on.
     // Given to every address the page builds for this package; the other
     // revision is looked up here rather than by the band, which every re-read
@@ -1301,8 +1367,8 @@ fn PackageScreen(
     let shown = resolve::Shown::default();
     provide_context(shown);
     Effect::new(move || {
-        if !asked.get() {
-            shown.0.set_value(false);
+        if !asked.get() && revision.get().is_none() {
+            shown.0.set_value(None);
         }
     });
     // For the header's *Copied* and Keeping's folders dialog. Not on `Wiring`,
@@ -1405,6 +1471,7 @@ fn PackageScreen(
         };
         if let Some(to) = normalized_address(
             asked.get(),
+            revision.get().as_deref(),
             &ns.get(),
             &answered,
             link_outcome.get().as_ref(),
@@ -1448,7 +1515,7 @@ fn PackageScreen(
                 }
                 .into_any()
             }
-            body=move |d| package_body(d, w, asked.into(), resolving, files, incoming)
+            body=move |d| package_body(d, w, asked.into(), revision.into(), resolving, files, incoming)
             // The page keeps its frame and states the failure in place. A read
             // that failed for a reason the header could have worded — no
             // session, a refused role — never reaches here: the command resolves
@@ -1665,6 +1732,8 @@ mod tests {
                     hash: "0123456789abcdef".to_string(),
                     message: Some("Initial upload".to_string()),
                     obtained_at: 1_758_500_000_000.0,
+                    meta: None,
+                    workflow: None,
                 },
                 bucket: Some("quilt-lab-plates".to_string()),
                 revision_count: 1,
@@ -1939,7 +2008,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(data, w, Signal::stored(false), resolving, idle_files(), idle_incoming())}</Router>
+                <Router>{package_body(data, w, Signal::stored(false), Signal::stored(None), resolving, idle_files(), idle_incoming())}</Router>
             }
         })
     }
@@ -2174,7 +2243,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files(), idle_incoming())}</Router>
+                <Router>{package_body(page_data(), w, Signal::stored(false), Signal::stored(None), resolving, idle_files(), idle_incoming())}</Router>
             }
         });
         let aside = el
@@ -2207,7 +2276,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files(), idle_incoming())}</Router>
+                <Router>{package_body(page_data(), w, Signal::stored(false), Signal::stored(None), resolving, idle_files(), idle_incoming())}</Router>
             }
         });
         let context = el
@@ -2235,7 +2304,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files(), idle_incoming())}</Router>
+                <Router>{package_body(page_data(), w, Signal::stored(false), Signal::stored(None), resolving, idle_files(), idle_incoming())}</Router>
             }
         });
         let trigger = element_saying(&el, "History (1)")
@@ -2261,7 +2330,7 @@ mod tests {
             let w = Wiring::new();
             let resolving = ResolveCommands::app();
             view! {
-                <Router>{package_body(page_data(), w, Signal::stored(false), resolving, idle_files(), idle_incoming())}</Router>
+                <Router>{package_body(page_data(), w, Signal::stored(false), Signal::stored(None), resolving, idle_files(), idle_incoming())}</Router>
             }
         });
         let group = el
@@ -2309,7 +2378,7 @@ mod tests {
                 <Router>
                     {move || {
                         reads.track();
-                        package_body(page_data(), w, Signal::stored(false), ResolveCommands::app(), idle_files(), idle_incoming())
+                        package_body(page_data(), w, Signal::stored(false), Signal::stored(None), ResolveCommands::app(), idle_files(), idle_incoming())
                     }}
                 </Router>
             }
@@ -2564,19 +2633,55 @@ mod tests {
     #[test]
     fn only_an_answered_read_that_is_not_diverged_normalises() {
         assert_eq!(
-            normalized_address(true, "team/dataset", &page_data(), None).as_deref(),
+            normalized_address(true, None, "team/dataset", &page_data(), None).as_deref(),
             Some(PLAIN)
         );
         assert_eq!(
-            normalized_address(true, "team/dataset", &diverged(compared()), None),
+            normalized_address(true, None, "team/dataset", &diverged(compared()), None),
             None
         );
         assert_eq!(
-            normalized_address(true, "team/dataset", &diverged(refused()), None),
+            normalized_address(true, None, "team/dataset", &diverged(refused()), None),
             None
         );
         assert_eq!(
-            normalized_address(false, "team/dataset", &page_data(), None),
+            normalized_address(false, None, "team/dataset", &page_data(), None),
+            None
+        );
+    }
+
+    #[test]
+    fn only_a_revision_that_is_not_current_normalises() {
+        let current = page_data().context.revision.hash;
+        assert_eq!(
+            normalized_address(false, Some(&current), "team/dataset", &page_data(), None),
+            None
+        );
+        assert_eq!(
+            normalized_address(false, Some("older"), "team/dataset", &page_data(), None).as_deref(),
+            Some(PLAIN)
+        );
+    }
+
+    #[test]
+    fn a_resolve_that_cannot_open_keeps_the_current_revision() {
+        let current = page_data().context.revision.hash;
+        assert_eq!(
+            normalized_address(true, Some(&current), "team/dataset", &page_data(), None),
+            Some(format!("{PLAIN}&revision={current}"))
+        );
+    }
+
+    #[test]
+    fn open_resolve_keeps_its_address_whatever_revision_says() {
+        assert_eq!(
+            normalized_address(
+                true,
+                Some("older"),
+                "team/dataset",
+                &diverged(compared()),
+                None
+            ),
             None
         );
     }
@@ -2584,7 +2689,7 @@ mod tests {
     #[test]
     fn a_read_about_another_package_decides_nothing() {
         assert_eq!(
-            normalized_address(true, "other/pkg", &page_data(), None),
+            normalized_address(true, None, "other/pkg", &page_data(), None),
             None
         );
     }
@@ -2599,7 +2704,7 @@ mod tests {
             catalog: Some("https://quilt.test".to_string()),
         });
         assert_eq!(
-            normalized_address(true, "team/dataset", &page_data(), Some(&mismatch)),
+            normalized_address(true, None, "team/dataset", &page_data(), Some(&mismatch)),
             Some(format!(
                 "{PLAIN}&mismatch=c41d8f02&mrbucket=quilt-lab&mrcatalog=https%3A%2F%2Fquilt.test"
             ))
@@ -2612,6 +2717,7 @@ mod tests {
         assert_eq!(
             normalized_address(
                 true,
+                None,
                 "team/dataset",
                 &page_data(),
                 Some(&routes::DeepLinkOutcome::LocalOnly)
@@ -2856,6 +2962,53 @@ mod tests {
     async fn resolve_1_on_a_package_that_is_not_diverged_normalises_in_place() {
         let before = history_length();
         let el = screen_at(RESOLVE, settled_read).await;
+
+        assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
+        assert_eq!(history_length(), before, "replaced, not pushed");
+        element_saying(&el, "History (1)");
+    }
+
+    const REVISION: &str =
+        "/installed-package?namespace=team%2Fdataset&filter=unmodified&revision=0123456789abcdef";
+
+    #[wasm_bindgen_test]
+    async fn the_revision_summary_links_to_the_revision_mode() {
+        let el = screen_at(PLAIN, settled_read).await;
+        let link = el
+            .query_selector("a[title='Show this revision']")
+            .unwrap()
+            .expect("the summary is a link");
+        assert_eq!(link.get_attribute("href").as_deref(), Some(REVISION));
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_current_revision_opens_the_mode() {
+        let el = screen_at(REVISION, settled_read).await;
+
+        element_saying(&el, "Hash");
+        element_saying(&el, "Metadata");
+        assert!(
+            !el.text_content()
+                .unwrap_or_default()
+                .contains("History (1)"),
+            "the ordinary pane is swapped out; markup was {}",
+            el.inner_html()
+        );
+        assert!(
+            search().ends_with("&revision=0123456789abcdef"),
+            "search was {}",
+            search()
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn another_revision_normalises_in_place() {
+        let before = history_length();
+        let el = screen_at(
+            "/installed-package?namespace=team%2Fdataset&filter=unmodified&revision=older",
+            settled_read,
+        )
+        .await;
 
         assert_eq!(search(), "?namespace=team%2Fdataset&filter=unmodified");
         assert_eq!(history_length(), before, "replaced, not pushed");

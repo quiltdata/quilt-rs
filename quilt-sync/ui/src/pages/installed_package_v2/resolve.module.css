@@ -1,13 +1,35 @@
-/* The same column as the ordinary pane (`context_pane.module.css`), since
- * the mode swaps it whole. */
+/* Wider than the ordinary pane (`context_pane.module.css`), which it swaps
+ * whole: a mode holds more than the facts beside the files. At most half
+ * the width the two panes share, so the files keep room. It widens
+ * on opening only, not on the re-reads that rebuild it. */
 .root {
-  width: 320px;
+  width: min(640px, 50%);
   flex: none;
+}
+
+.opening {
+  animation: resolve-pane-widen 200ms ease-out;
+}
+
+@keyframes resolve-pane-widen {
+  from {
+    width: 320px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opening {
+    animation: none;
+  }
 }
 
 @container (max-width: 800px) {
   .root {
     width: 100%;
+  }
+
+  .opening {
+    animation: none;
   }
 }
 

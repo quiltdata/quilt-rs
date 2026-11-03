@@ -684,10 +684,25 @@ pub struct KeepingData {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentRevisionData {
-    /// Top hash of the revision's manifest: the mismatch band's hover text.
+    /// Top hash of the revision's manifest: the mismatch band's hover text and
+    /// the revision mode's address.
     pub hash: String,
     pub message: Option<String>,
     pub obtained_at: f64,
+    /// The user metadata as JSON text; `None` when it has none, `{}`
+    /// included. Text, so a large integer arrives unrounded: read it with
+    /// [`Self::metadata`].
+    pub meta: Option<String>,
+    /// The workflow's id, when the revision names one.
+    pub workflow: Option<String>,
+}
+
+impl CurrentRevisionData {
+    /// The user metadata, parsed in Rust rather than by the bridge.
+    #[must_use]
+    pub fn metadata(&self) -> Option<serde_json::Value> {
+        serde_json::from_str(self.meta.as_deref()?).ok()
+    }
 }
 
 /// `History`: the rows, and the footer's figure. Mirrors
@@ -817,14 +832,20 @@ pub async fn get_package_page_data(namespace: String) -> Result<PackagePageData,
 }
 
 /// The revisions this copy holds, newest obtained first. Called when the
-/// context pane's popover opens, never on page load.
-pub async fn get_revision_history(namespace: String) -> Result<RevisionHistoryData, String> {
+/// context pane's popover or the revision mode opens, never on page load.
+/// `measure: false` leaves out what removal frees, which the revision mode
+/// does not draw and which reads every installed package's manifests.
+pub async fn get_revision_history(
+    namespace: String,
+    measure: bool,
+) -> Result<RevisionHistoryData, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         namespace: String,
+        measure: bool,
     }
-    tauri::invoke("get_revision_history", &Args { namespace }).await
+    tauri::invoke("get_revision_history", &Args { namespace, measure }).await
 }
 
 /// Remove these old revisions of an installed package, and the objects only
@@ -2380,7 +2401,7 @@ mod tests {
     #[test]
     fn current_revision_context_wire_form_is_verbatim() {
         let context = serde_json::from_str::<PackageContextData>(
-            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","folders":[],"total":56,"outstanding":2,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000,"backlog":1500000},"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0,"meta":"{\"plate\":7}","workflow":"alpha"},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","folders":[],"total":56,"outstanding":2,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000,"backlog":1500000},"resolve":null}"#,
         )
         .unwrap();
 
@@ -2390,6 +2411,11 @@ mod tests {
             (context.revision.obtained_at - 1_758_500_000_000.0).abs() < f64::EPSILON,
             "the timestamp crosses unchanged"
         );
+        assert_eq!(
+            context.revision.metadata(),
+            Some(serde_json::json!({"plate": 7}))
+        );
+        assert_eq!(context.revision.workflow.as_deref(), Some("alpha"));
         assert_eq!(context.bucket.as_deref(), Some("quilt-lab-plates"));
         assert_eq!(context.revision_count, 4);
         assert_eq!(context.keeping.scope, KeepingScope::EntirePackage);
@@ -2406,6 +2432,23 @@ mod tests {
             })
         );
         assert_eq!(context.resolve, None);
+    }
+
+    /// Metadata crosses as text, so an integer past JavaScript's safe range
+    /// is read whole.
+    #[test]
+    fn a_large_integer_in_the_metadata_is_not_rounded() {
+        let revision = super::CurrentRevisionData {
+            hash: String::new(),
+            message: None,
+            obtained_at: 0.0,
+            meta: Some(r#"{"sample_id":9007199254740993}"#.to_string()),
+            workflow: None,
+        };
+        assert_eq!(
+            revision.metadata(),
+            Some(serde_json::json!({"sample_id": 9_007_199_254_740_993_u64}))
+        );
     }
 
     /// A size the backend could not read crosses as `null`, and the caption

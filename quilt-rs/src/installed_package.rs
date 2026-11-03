@@ -321,11 +321,11 @@ impl<S: Storage + Clone + Sync, R: Remote> InstalledPackage<S, R> {
         let installed_path = self.paths.installed_manifest(&self.namespace, &hash);
         let obtained = self.storage.modified_timestamp(&installed_path).await?;
 
-        Ok(Some(flow::Revision {
+        Ok(Some(flow::Revision::from_header(
             hash,
             obtained,
-            message: manifest.header.message,
-        }))
+            manifest.header,
+        )))
     }
 
     /// [`flow::compare_for_resolve`] over the manifest `lineage` selects and the
