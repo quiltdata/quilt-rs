@@ -1063,6 +1063,7 @@ mod tests {
                             page_data(),
                             w,
                             Signal::stored(false),
+                            Signal::stored(None),
                             super::super::ResolveCommands::app(),
                             super::super::tests::idle_files(),
                             super::super::tests::idle_incoming(),

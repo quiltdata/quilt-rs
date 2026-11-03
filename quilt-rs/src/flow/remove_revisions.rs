@@ -503,6 +503,8 @@ mod tests {
                 hash: hash.to_string(),
                 obtained: chrono::DateTime::UNIX_EPOCH,
                 message: None,
+                meta: None,
+                workflow: None,
             },
             published,
         }

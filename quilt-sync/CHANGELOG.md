@@ -26,6 +26,7 @@
 - The tray's *Open in browser* opens QuiltSync in a browser tab beside the window, with the same pages kept in step with the app (<https://github.com/quiltdata/quilt-rs/pull/1266>)
 - A browser tab names the page it shows, reconnects on its own after QuiltSync restarts, and finishes a login it started (<https://github.com/quiltdata/quilt-rs/pull/1272>)
 - `QuiltSync --headless` runs QuiltSync with no window or tray, serving it to a browser; folders are typed with completion, login is by code, and a new version shows a download link (<https://github.com/quiltdata/quilt-rs/pull/1279>)
+- The package page shows the current revision's metadata under its message, and clicking the revision shows all of it, with the revision's hash, whether it is published and its workflow (<https://github.com/quiltdata/quilt-rs/pull/1297>)
 - On Windows, when links from the Quilt catalog open another program, QuiltSync says so on its main page and how to fix it (<https://github.com/quiltdata/quilt-rs/pull/1293>)
 
 ### Changed
@@ -40,6 +41,10 @@
 ### Fixed
 
 - On Windows and Linux, opening QuiltSync while it runs in the tray shows its window (<https://github.com/quiltdata/quilt-rs/pull/1275>)
+
+### quilt-rs
+
+- Updated [from v0.51.0 to v0.52.0-dev](https://github.com/quiltdata/quilt-rs/compare/quilt-rs/v0.51.0...main) (see [quilt-rs/CHANGELOG.md](../quilt-rs/CHANGELOG.md))
 
 ## [v0.26.1] - 2026-10-29
 

@@ -1,0 +1,69 @@
+/* Wider than the ordinary pane (`context_pane.module.css`), which it swaps
+ * whole: a mode holds more than the facts beside the files. At most half
+ * the width the two panes share, so the files keep room. It widens
+ * on opening only, not on the re-reads that rebuild it. */
+.root {
+  width: min(640px, 50%);
+  flex: none;
+}
+
+.opening {
+  animation: revision-pane-widen 200ms ease-out;
+}
+
+@keyframes revision-pane-widen {
+  from {
+    width: 320px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .opening {
+    animation: none;
+  }
+}
+
+@container (max-width: 800px) {
+  .root {
+    width: 100%;
+  }
+
+  .opening {
+    animation: none;
+  }
+}
+
+.muted {
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+}
+
+/* Label column fits its words; the value takes the rest. */
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  column-gap: var(--q-space-3);
+  row-gap: var(--q-space-2);
+  align-self: stretch;
+  margin: 0;
+  font-size: var(--q-text-body);
+}
+
+.facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+}
+
+/* The whole hash, broken anywhere: it has no words to break at. */
+.hash {
+  min-width: 0;
+  font-family: var(--q-font-mono);
+  word-break: break-all;
+}

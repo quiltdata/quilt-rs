@@ -194,7 +194,7 @@ commands! {
         handle_remote_package(uri: String) -> RemotePackageResult;
         get_revision_message(bucket: String, namespace: String, hash: String, catalog: Option<String>) -> Option<String>;
         get_package_page_data(namespace: String) -> PackagePageData;
-        get_revision_history(namespace: String) -> RevisionHistoryData;
+        get_revision_history(namespace: String, measure: bool) -> RevisionHistoryData;
         remove_revisions(namespace: String, hashes: Vec<String>) -> String;
         package_download_backlog(namespace: String, paths: Vec<String>) -> NotDownloaded;
         get_settings_data() -> SettingsData;
