@@ -28,12 +28,10 @@ const FIRST_RETRY_MS: i32 = 500;
 const LAST_RETRY_MS: i32 = 5_000;
 
 /// What every request answers once the engine refused the token.
-pub(super) const REFUSED: &str =
-    "QuiltSync has a new link. Open it from the tray menu: Open in browser.";
+pub(super) const REFUSED: &str = "This link no longer works: QuiltSync made a new one. Choose Open in browser from QuiltSync's tray menu.";
 
 /// The same, from a headless engine, which has no tray.
-pub(super) const REFUSED_HEADLESS: &str =
-    "QuiltSync has a new link. Open the link it printed when it started.";
+pub(super) const REFUSED_HEADLESS: &str = "This link no longer works: QuiltSync made a new one. Open the link it printed when it started.";
 
 /// What a request answers when the page has no way to the engine at all: a
 /// test harness, the gallery, or a page opened without its link.
