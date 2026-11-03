@@ -23,7 +23,9 @@
 
 ### Added
 
-- The package page shows the current revision's metadata under its message, and clicking the revision shows all of it, with the revision's hash, whether it is published and its workflow (<https://github.com/quiltdata/quilt-rs/pull/1297>)
+- The package page shows the current revision's metadata under its message, and clicking the revision shows all of it, with the revision's hash, whether it is published and its workflow
+  - <https://github.com/quiltdata/quilt-rs/pull/1297>
+  - <https://github.com/quiltdata/quilt-rs/pull/1300>
 - On Windows, when links from the Quilt catalog open another program, QuiltSync says so on its main page and how to fix it (<https://github.com/quiltdata/quilt-rs/pull/1293>)
 
 ### Changed
