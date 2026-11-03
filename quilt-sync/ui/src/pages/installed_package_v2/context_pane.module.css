@@ -37,6 +37,41 @@
   align-self: stretch;
 }
 
+/* The *Revision* summary: one link into the revision mode, drawn as text
+ * that highlights on hover. */
+.summary,
+.summary_text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-1);
+  align-self: stretch;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.summary {
+  margin: calc(-1 * var(--q-space-1));
+  padding: var(--q-space-1);
+  border-radius: var(--q-radius);
+}
+
+.summary:hover {
+  background: var(--q-bgColor-muted);
+}
+
+.summary:focus-visible {
+  outline: var(--q-focus-outlineWidth) solid var(--q-focus-outlineColor);
+  outline-offset: var(--q-focus-outlineOffset);
+}
+
+.preview {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
 .value {
   font-size: var(--q-text-body);
   overflow: hidden;
