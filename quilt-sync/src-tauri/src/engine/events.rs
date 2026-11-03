@@ -5,7 +5,7 @@
 //! window under the same name.
 
 use std::future::Future;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 use serde::Serialize;
 use tokio::sync::broadcast;
@@ -59,12 +59,13 @@ impl EventSink {
     }
 }
 
-static RUNTIME: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+static RUNTIME: RwLock<Option<tokio::runtime::Handle>> = RwLock::new(None);
 
 /// Remember the runtime the services run on, for [`spawn`] calls from threads
-/// outside it (the file watcher's debouncer thread, for one).
+/// outside it (the file watcher's debouncer thread, for one). The latest
+/// services' runtime wins, for an engine started again in one process.
 pub fn set_runtime(handle: tokio::runtime::Handle) {
-    let _ = RUNTIME.set(handle);
+    *RUNTIME.write().expect("runtime lock") = Some(handle);
 }
 
 /// Spawn on the current runtime, or on the services' runtime from a plain
@@ -77,7 +78,9 @@ where
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => handle.spawn(future),
         Err(_) => RUNTIME
-            .get()
+            .read()
+            .expect("runtime lock")
+            .as_ref()
             .expect("services runtime is set before any spawn from a plain thread")
             .spawn(future),
     }
@@ -101,5 +104,17 @@ mod tests {
             rx.recv().await.unwrap(),
             ("autosync-changed".to_owned(), serde_json::Value::Null)
         );
+    }
+
+    #[test]
+    fn a_plain_thread_spawns_on_the_runtime_set_last() {
+        let first = tokio::runtime::Runtime::new().unwrap();
+        set_runtime(first.handle().clone());
+        drop(first);
+        let second = tokio::runtime::Runtime::new().unwrap();
+        set_runtime(second.handle().clone());
+
+        let task = std::thread::spawn(|| spawn(async { 42 })).join().unwrap();
+        assert_eq!(second.block_on(task).unwrap(), 42);
     }
 }

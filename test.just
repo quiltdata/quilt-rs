@@ -34,3 +34,12 @@ doc:
 # Run QuiltSync frontend tests in headless Firefox
 frontend:
     WASM_BINDGEN_TEST_TIMEOUT=180 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
+
+# The engine embeds the UI from `ui/dist`, so it is built first. The restart
+# tests each run alone (see `.config/nextest.toml`).
+#
+# Run the browser tests against headless QuiltSync in Chrome; arguments go to nextest
+[positional-arguments]
+e2e *args:
+    cd quilt-sync/ui && trunk build
+    cargo nextest run -p quilt-sync --features e2e -E 'test(/engine::e2e::/)' "$@"

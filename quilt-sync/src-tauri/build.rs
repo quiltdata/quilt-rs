@@ -17,5 +17,11 @@ fn main() {
         index.display()
     );
 
-    tauri_build::build();
+    // The window has no Tauri capabilities. Naming the pattern stops tauri-build
+    // from watching the missing `capabilities` folder, which cargo would count as
+    // changed on every build.
+    let attributes = tauri_build::Attributes::new().capabilities_path_pattern("capabilities/**/*");
+    if let Err(err) = tauri_build::try_build(attributes) {
+        panic!("{err:#}");
+    }
 }

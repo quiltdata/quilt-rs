@@ -64,6 +64,8 @@ tauri-plugin-deep-link = "2.6.3"
 # updater's reqwest gets rustls with aws-lc-rs from our own reqwest.
 tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["system-proxy", "zip"] }
 tempfile.workspace = true
+# Only for the browser tests, behind `e2e`.
+thirtyfour = { version = "0.38.1", default-features = false, features = ["manager", "rustls"], optional = true }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
@@ -82,6 +84,8 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 # this feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
+# The browser tests, which need Chrome: `just test e2e`.
+e2e = ["dep:thirtyfour"]
 
 [dev-dependencies]
 quilt-uri = { path = "../../quilt-uri", features = ["test-support"] }

@@ -545,6 +545,53 @@ jobs:
       - name: Build
         run: just release-build
 
+  e2e:
+    name: e2e
+    # The browser tests against headless QuiltSync, on the same changes as
+    # `quilt-sync`: they run the backend and the UI it serves.
+    needs: changes
+    if: needs.changes.outputs.sync == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # Same linker as `quilt-sync`, for the same reason.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # The engine links WebKitGTK even when it runs headless.
+      - name: Install Ubuntu dependencies
+        uses: ./.github/actions/install-ubuntu-deps
+
+      - name: Setup Rust for development
+        uses: ./.github/actions/setup-rust-dev
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Trunk's pre_build hook needs npm.
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: 'npm'
+          cache-dependency-path: quilt-sync/ui/package-lock.json
+
+      - name: Install trunk, cargo-nextest and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk,nextest,just
+
+      # Pinned for the reason given in `frontend build`.
+      - name: Install stylance
+        uses: taiki-e/install-action@v2
+        with:
+          tool: stylance-cli@0.8.4
+
+      # The runner's Chrome; the tests fetch the chromedriver that matches it.
+      - name: Test
+        run: just test e2e
+
   checks:
     name: all checks
     # The one check the branch rules require. A skipped matrix job reports
@@ -564,6 +611,7 @@ jobs:
       - frontend-lint
       - frontend-wasm-tests
       - frontend-build
+      - e2e
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

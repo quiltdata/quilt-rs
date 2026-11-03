@@ -10,7 +10,7 @@ mod app "quilt-sync/app.just"
 # The component gallery: `dev`, `build` and `preview`
 mod gallery "quilt-sync/ui/gallery.just"
 
-# The test suites: plain `just test`, `live`, `frontend` and `doc`
+# The test suites: plain `just test`, `live`, `frontend`, `doc` and `e2e`
 mod test "test.just"
 
 # Run test coverage for all packages
