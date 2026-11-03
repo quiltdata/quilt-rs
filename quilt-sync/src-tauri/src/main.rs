@@ -45,10 +45,13 @@ fn attach_console() {
 fn attach_console() {}
 
 /// Say why the app can't start, in a dialog since there is no window yet,
-/// and quit. The log may not be set up yet, so the terminal gets it too.
-fn cannot_start(err: &engine::Error) -> ! {
+/// then quit. The log may not be set up yet, so the terminal gets it too.
+///
+/// The dialog is shown once setup returns: on Linux it needs the event loop
+/// that setup runs on.
+fn cannot_start(err: &engine::Error) {
     eprintln!("QuiltSync couldn't start: {err}");
-    rfd::MessageDialog::new()
+    let shown = rfd::AsyncMessageDialog::new()
         .set_level(rfd::MessageLevel::Error)
         .set_title("QuiltSync couldn't start")
         .set_description(format!(
@@ -57,7 +60,10 @@ fn cannot_start(err: &engine::Error) -> ! {
         ))
         .set_buttons(rfd::MessageButtons::Ok)
         .show();
-    std::process::exit(1);
+    tauri::async_runtime::spawn(async move {
+        shown.await;
+        std::process::exit(1);
+    });
 }
 
 fn main() -> ExitCode {
@@ -107,7 +113,10 @@ fn main() -> ExitCode {
                 tauri::async_runtime::block_on(start::start(data_dir, version, Some(desktop)));
             let engine = match started {
                 Ok(Started::Engine(engine)) => engine,
-                Err(err) => cannot_start(&err),
+                Err(err) => {
+                    cannot_start(&err);
+                    return Ok(());
+                }
                 Ok(Started::Running(link)) => {
                     // Another process is the engine for this data folder; its
                     // page is this launch's window.
