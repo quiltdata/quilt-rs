@@ -92,6 +92,14 @@ pub fn RevisionPane(
             leptos::task::spawn_local(async move {
                 match commands::copy_to_clipboard(hash, None).await {
                     Ok(_) => {
+                        // A retry that worked takes back only the copy's own failure.
+                        let own = |o: &Option<Outcome>| {
+                            o.as_ref()
+                                .is_some_and(|o| o.namespace == ns && o.lead == COPY_FAILED)
+                        };
+                        if w.outcome.try_with_untracked(own) == Some(true) {
+                            w.outcome.try_set(None);
+                        }
                         copied.try_set(true);
                     }
                     Err(detail) => {
@@ -261,6 +269,15 @@ mod tests {
         workflow: Option<&str>,
         fetch: RevisionHistoryFetch,
     ) -> web_sys::Element {
+        pane_wired(meta, workflow, fetch, Wiring::new())
+    }
+
+    fn pane_wired(
+        meta: Option<serde_json::Value>,
+        workflow: Option<&str>,
+        fetch: RevisionHistoryFetch,
+        w: Wiring,
+    ) -> web_sys::Element {
         let revision = CurrentRevisionData {
             hash: HASH.to_string(),
             message: Some("Initial upload".to_string()),
@@ -276,7 +293,7 @@ mod tests {
                         back_href="/installed-package?namespace=team%2Fdataset"
                         fetch=fetch
                         open_catalog=Callback::new(|_: String| {})
-                        w=Wiring::new()
+                        w=w
                     />
             }
         })
@@ -331,5 +348,59 @@ mod tests {
             .unwrap()
             .expect("a live region");
         assert_eq!(live.get_attribute("aria-busy").as_deref(), Some("false"));
+    }
+    /// A host whose clipboard takes every copy. Without it the harness has no
+    /// Tauri bridge, so every copy fails.
+    fn clipboard_works(on: bool) {
+        let js = if on {
+            "window.__TAURI__ = { core: { invoke: () => Promise.resolve('') } };"
+        } else {
+            "delete window.__TAURI__;"
+        };
+        js_sys::Function::new_no_args(js)
+            .call0(&wasm_bindgen::JsValue::NULL)
+            .unwrap();
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_copy_that_works_after_a_failed_one_clears_the_error() {
+        let w = Wiring::new();
+        let el = pane_wired(None, None, published, w);
+        settle().await;
+        let copy = crate::test_support::button_saying(&el, "Copy");
+
+        copy.click();
+        settle().await;
+        let lead = w
+            .outcome
+            .with_untracked(|o| o.as_ref().map(|o| o.lead.clone()));
+        assert_eq!(lead.as_deref(), Some(COPY_FAILED));
+
+        clipboard_works(true);
+        copy.click();
+        settle().await;
+        clipboard_works(false);
+        assert_eq!(w.outcome.get_untracked(), None);
+        assert_eq!(copy.text_content().unwrap_or_default().trim(), "Copied");
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_copy_that_works_keeps_another_outcome() {
+        let w = Wiring::new();
+        let el = pane_wired(None, None, published, w);
+        settle().await;
+        let other = Outcome {
+            namespace: "team/dataset".to_string(),
+            variant: BannerVariant::Critical,
+            lead: "Could not pull.".to_string(),
+            detail: None,
+        };
+        w.outcome.set(Some(other.clone()));
+
+        clipboard_works(true);
+        crate::test_support::button_saying(&el, "Copy").click();
+        settle().await;
+        clipboard_works(false);
+        assert_eq!(w.outcome.get_untracked(), Some(other));
     }
 }
