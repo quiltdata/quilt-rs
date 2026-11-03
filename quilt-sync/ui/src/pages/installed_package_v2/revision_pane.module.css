@@ -1,6 +1,6 @@
 /* Wider than the ordinary pane (`context_pane.module.css`), which it swaps
  * whole: a mode holds more than the facts beside the files. At most half
- * the row, so the files keep room just above the narrow layout. It widens
+ * the width the two panes share, so the files keep room. It widens
  * on opening only, not on the re-reads that rebuild it. */
 .root {
   width: min(640px, 50%);
