@@ -1,7 +1,7 @@
-//! Browser tests: headless `QuiltSync` in Chrome over `WebDriver`, one engine
-//! per test on throwaway folders, started in this process.
+//! Browser tests: headless `QuiltSync` in Chrome, or Firefox, over `WebDriver`,
+//! one engine per test on throwaway folders, started in this process.
 //!
-//! Behind the `e2e` feature, since they need Chrome; `just test e2e` builds
+//! Behind the `e2e` feature, since they need a browser; `just test e2e` builds
 //! the UI the server embeds, then runs them. Each test runs in its own process
 //! (nextest), so a test may set `HOME` before it starts any threads.
 
@@ -11,6 +11,7 @@ use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use semver::Version;
@@ -27,6 +28,10 @@ use crate::engine::start::Engine;
 use crate::engine::start::Started;
 
 const NAMESPACE: &str = "e2e/first";
+
+/// Where fetched browser drivers are kept, found under the real `HOME` before
+/// a test replaces it, so a test reuses the driver the last one fetched.
+static DRIVERS: OnceLock<PathBuf> = OnceLock::new();
 
 /// An engine on throwaway folders, which it stops when dropped.
 struct QuiltSync {
@@ -164,17 +169,35 @@ fn off_runtime<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     std::thread::scope(|scope| scope.spawn(f).join().expect("the engine thread"))
 }
 
-/// Headless Chrome, with a chromedriver to match fetched on first use.
-/// `CHROME_BIN` names a browser that isn't where Chrome usually is.
+/// Headless Chrome, or Firefox when `E2E_BROWSER=firefox`, with a driver to
+/// match fetched on first use. `CHROME_BIN` or `FIREFOX_BIN` names a browser
+/// that isn't where it usually is.
 async fn browser() -> WebDriver {
-    let mut caps = DesiredCapabilities::chrome();
-    for arg in ["--headless=new", "--no-sandbox", "--window-size=1280,900"] {
-        caps.add_arg(arg).expect("a Chrome argument");
-    }
-    if let Ok(binary) = std::env::var("CHROME_BIN") {
-        caps.set_binary(&binary).expect("a Chrome binary");
-    }
+    let caps: Capabilities = match std::env::var("E2E_BROWSER").as_deref() {
+        Err(_) | Ok("chrome") => {
+            let mut caps = DesiredCapabilities::chrome();
+            for arg in ["--headless=new", "--no-sandbox", "--window-size=1280,900"] {
+                caps.add_arg(arg).expect("a Chrome argument");
+            }
+            if let Ok(binary) = std::env::var("CHROME_BIN") {
+                caps.set_binary(&binary).expect("a Chrome binary");
+            }
+            caps.into()
+        }
+        Ok("firefox") => {
+            let mut caps = DesiredCapabilities::firefox();
+            for arg in ["-headless", "-width=1280", "-height=900"] {
+                caps.add_arg(arg).expect("a Firefox argument");
+            }
+            if let Ok(binary) = std::env::var("FIREFOX_BIN") {
+                caps.set_firefox_binary(&binary).expect("a Firefox binary");
+            }
+            caps.into()
+        }
+        Ok(other) => panic!("E2E_BROWSER is chrome or firefox, not {other}"),
+    };
     WebDriver::managed(caps)
+        .cache_dir(DRIVERS.get().expect("the drivers' folder").clone())
         .poller(Arc::new(ElementPollerWithTimeout::new(
             Duration::from_secs(30),
             Duration::from_millis(100),
@@ -191,6 +214,12 @@ fn test<F: Future<Output = WebDriverResult<()>>>(body: impl FnOnce(PathBuf) -> F
     let base = std::fs::canonicalize(root.path()).expect("the temp folder");
     let user = base.join("user");
     std::fs::create_dir(&user).expect("a home for the user");
+    DRIVERS.get_or_init(|| {
+        dirs::cache_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("thirtyfour")
+            .join("drivers")
+    });
     // SAFETY: each test is its own process, and no thread is started yet.
     unsafe { std::env::set_var("HOME", &user) };
     tokio::runtime::Builder::new_multi_thread()
