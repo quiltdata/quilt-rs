@@ -9,6 +9,7 @@ use quilt_uri::S3PackageUri;
 
 use crate::engine::Error;
 use crate::engine::desktop::Desktop;
+use crate::engine::desktop::ForeignHandler;
 use crate::engine::error::DesktopError;
 use crate::engine::notify::Notify;
 use crate::engine::quilt;
@@ -119,4 +120,16 @@ pub async fn download_and_install_update(
 pub async fn quit_confirm(_s: &Services, desktop: &dyn Desktop) -> Result<(), String> {
     desktop.quit();
     Ok(())
+}
+
+/// The link types the OS opens with another program, for the main page's notice.
+#[allow(
+    clippy::unused_async,
+    reason = "every plain command is async, so the dispatch treats them alike"
+)]
+pub async fn get_main_page_link_handlers(
+    _s: &Services,
+    desktop: &dyn Desktop,
+) -> Result<Vec<ForeignHandler>, String> {
+    Ok(desktop.foreign_link_handlers())
 }

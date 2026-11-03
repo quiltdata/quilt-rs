@@ -1,5 +1,5 @@
 //! What the desktop gives the engine's commands: the folder picker, the
-//! clipboard, the updater and quitting.
+//! clipboard, the updater, quitting and the startup link check.
 
 use std::path::Path;
 use std::path::PathBuf;
@@ -14,6 +14,7 @@ use tauri_plugin_updater::UpdaterExt;
 
 use crate::engine::Error;
 use crate::engine::desktop::Desktop;
+use crate::engine::desktop::ForeignHandler;
 use crate::engine::error::DesktopError;
 
 impl From<tauri::Error> for Error {
@@ -64,6 +65,13 @@ impl<R: Runtime> Desktop for TauriDesktop<R> {
 
     fn quit(&self) {
         self.app.exit(0);
+    }
+
+    fn foreign_link_handlers(&self) -> Vec<ForeignHandler> {
+        self.app
+            .try_state::<super::link_handler::LinkHandlers>()
+            .map(|handlers| handlers.foreign())
+            .unwrap_or_default()
     }
 }
 

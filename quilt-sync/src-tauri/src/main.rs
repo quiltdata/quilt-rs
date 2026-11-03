@@ -113,6 +113,9 @@ fn main() -> ExitCode {
                 Some(dir) => dir,
                 None => app.path().app_local_data_dir()?,
             };
+            // After registering the schemes, and before the engine serves.
+            #[cfg(windows)]
+            app.manage(desktop::link_handler::lookup());
             let version = app.package_info().version.clone();
             let desktop = desktop::commands::desktop(app.handle());
             let started =
@@ -139,6 +142,11 @@ fn main() -> ExitCode {
             };
             let services = Arc::clone(&engine.services);
             app.manage(Arc::clone(&services));
+            #[cfg(windows)]
+            desktop::link_handler::report(
+                &app.state::<desktop::link_handler::LinkHandlers>(),
+                &services.telemetry,
+            );
             // The window is a client of the engine like any tab: it loads the
             // engine's page with its token.
             desktop::open_window(app.handle(), &engine.link)?;

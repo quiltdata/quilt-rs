@@ -1338,6 +1338,20 @@ pub async fn get_main_page_accounts() -> Result<MainPageAccountsData, String> {
     engine::invoke_unit("get_main_page_accounts").await
 }
 
+/// A link type that Windows opens with another program, or with none.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignHandler {
+    pub scheme: String,
+    pub program: Option<String>,
+}
+
+/// The link types Windows does not open with this copy of the app. Always
+/// empty off Windows.
+pub async fn get_main_page_link_handlers() -> Result<Vec<ForeignHandler>, String> {
+    engine::invoke_unit("get_main_page_link_handlers").await
+}
+
 /// v2's accounts list, heavy phase: fills in the given host's role.
 pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, String> {
     #[derive(Serialize)]

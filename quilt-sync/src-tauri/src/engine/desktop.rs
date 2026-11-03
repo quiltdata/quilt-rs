@@ -8,8 +8,18 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
+use serde::Serialize;
 
 use crate::engine::Result;
+
+/// A link type the OS opens with another program, or with none.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ForeignHandler {
+    pub scheme: String,
+    /// The program the OS opens these links with; `None` when there is none.
+    pub program: Option<String>,
+}
 
 /// What a command that needs the desktop app answers without one.
 pub const NOT_AVAILABLE: &str = "not available in the browser";
@@ -26,4 +36,8 @@ pub trait Desktop: Send + Sync {
     async fn install_update(&self) -> std::result::Result<(), String>;
 
     fn quit(&self);
+
+    /// The link types the OS opens with another program, found at startup.
+    /// Empty when every one opens this copy of the app.
+    fn foreign_link_handlers(&self) -> Vec<ForeignHandler>;
 }
