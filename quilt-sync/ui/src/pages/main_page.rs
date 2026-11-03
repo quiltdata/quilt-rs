@@ -36,6 +36,7 @@ use quilt_uri::S3PackageUri;
 
 use super::status_watch::StatusWatch;
 use crate::commands;
+use crate::commands::ForeignHandler;
 use crate::commands::MainPageAccountsData;
 use crate::commands::MainPageDownloadsData;
 use crate::commands::MainPagePackageData;
@@ -58,6 +59,8 @@ use toolbar_memory::remembered_choice;
 
 stylance::import_crate_style!(style, "src/pages/main_page.module.css");
 
+use crate::kit::Banner;
+use crate::kit::BannerVariant;
 use crate::kit::Blankslate;
 use crate::kit::Button;
 use crate::kit::ButtonVariant;
@@ -1497,11 +1500,15 @@ pub fn MainPage() -> impl IntoView {
         }
     });
 
+    let link_handlers = LocalResource::new(commands::get_main_page_link_handlers);
+
     view! {
         <PageLayout
             heading="QuiltSync"
             page_scroll=true
             actions=appbar_actions(move || reload.notify(), Signal::derive(move || outstanding.get() > 0))
+            banner=view! { {move || link_handlers.get().and_then(Result::ok).map(|handlers| link_handler_banner(&handlers))} }
+                .into_any()
         >
             <PackageStatusListener reload=reload />
             <MainPageRegions
@@ -1513,6 +1520,40 @@ pub fn MainPage() -> impl IntoView {
             />
         </PageLayout>
     }
+}
+
+/// Says that catalog links open another program, and how to fix it. Nothing when
+/// every link type opens this copy. No dismiss: closing it would not change where
+/// links go.
+fn link_handler_banner(handlers: &[ForeignHandler]) -> Option<AnyView> {
+    if handlers.is_empty() {
+        return None;
+    }
+    let message = link_handler_message(handlers);
+    Some(view! { <Banner variant=BannerVariant::Warning>{message}</Banner> }.into_any())
+}
+
+pub(crate) fn link_handler_message(handlers: &[ForeignHandler]) -> String {
+    let opens = handlers
+        .iter()
+        .map(|handler| {
+            let kind = if handler.scheme == "quilt" {
+                "Sign-in links"
+            } else {
+                "Package links"
+            };
+            match &handler.program {
+                Some(program) => format!("{kind} ({}) open {program}.", handler.scheme),
+                None => format!("{kind} ({}) open no program.", handler.scheme),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "Links from the Quilt catalog don't open this copy of QuiltSync. {opens} To fix it, \
+         remove other copies of QuiltSync, or choose QuiltSync for these link types in \
+         Windows Settings → Apps → Default apps."
+    )
 }
 
 /// Ask the backend again when the watcher reports a package's upstream state has
@@ -1549,6 +1590,37 @@ mod tests {
     use std::sync::atomic::Ordering;
     use wasm_bindgen::JsCast;
     use wasm_bindgen_test::*;
+
+    /// The notice names each link type's program and the fix, and has no dismiss.
+    #[wasm_bindgen_test]
+    fn a_foreign_link_handler_is_named_with_the_fix() {
+        let page = mount(|| {
+            link_handler_banner(&[
+                ForeignHandler {
+                    scheme: "quilt+s3".to_owned(),
+                    program: Some(r"C:\Users\a-user\Downloads\quilt-sync.exe".to_owned()),
+                },
+                ForeignHandler {
+                    scheme: "quilt".to_owned(),
+                    program: None,
+                },
+            ])
+        });
+        let text = page.text_content().unwrap_or_default();
+        for expected in [
+            r"Package links (quilt+s3) open C:\Users\a-user\Downloads\quilt-sync.exe.",
+            "Sign-in links (quilt) open no program.",
+            "Windows Settings → Apps → Default apps",
+        ] {
+            assert!(text.contains(expected), "{text}");
+        }
+        assert!(page.query_selector("button").unwrap().is_none());
+    }
+
+    #[wasm_bindgen_test]
+    fn links_this_copy_opens_draw_no_notice() {
+        assert!(link_handler_banner(&[]).is_none());
+    }
 
     /// The scenes name packages as text; the payloads carry the type.
     fn ns(text: &str) -> Namespace {
