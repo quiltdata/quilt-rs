@@ -550,6 +550,55 @@ async fn a_retry_after_longer_than_the_send_has_left_is_unreachable_at_once() {
     }
 }
 
+/// Later sends wait out a Retry-After that ended a send, without a request.
+#[tokio::test(start_paused = true)]
+async fn a_retry_after_that_ended_a_send_holds_the_next_sends() {
+    let server = Server::start(vec![rate_limited(Some(30)), accepted()]).await;
+    let client = server.client(None);
+
+    let err = client.send(vec![event("one")]).await.expect_err("too long");
+    assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
+
+    tokio::time::advance(Duration::from_secs(29)).await;
+    let err = client.send(vec![event("two")]).await.expect_err("held");
+    assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
+    assert_eq!(server.requests().len(), 1);
+
+    tokio::time::advance(Duration::from_secs(2)).await;
+    client
+        .send(vec![event("three")])
+        .await
+        .expect("delivered after the wait");
+    assert_eq!(server.requests().len(), 2);
+}
+
+/// The same holds when the wait comes with the last retry.
+#[tokio::test(start_paused = true)]
+async fn a_retry_after_on_the_last_retry_holds_the_next_sends() {
+    // 1 s, 2 s and 4 s of backoff leave 3 s, enough for a 2 s wait.
+    let mut replies: Vec<Reply> = (0..3).map(|_| reply(500, "")).collect();
+    replies.extend([rate_limited(Some(2)), accepted()]);
+    let server = Server::start(replies).await;
+    let client = server.client(None);
+
+    let err = client
+        .send(vec![event("one")])
+        .await
+        .expect_err("out of retries");
+    assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
+
+    let err = client.send(vec![event("two")]).await.expect_err("held");
+    assert!(matches!(err, SendError::Unreachable(_)), "{err:?}");
+    assert_eq!(server.requests().len(), 4);
+
+    tokio::time::advance(Duration::from_secs(3)).await;
+    client
+        .send(vec![event("three")])
+        .await
+        .expect("delivered after the wait");
+    assert_eq!(server.requests().len(), 5);
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_429_without_retry_after_backs_off() {
     let server = Server::start(vec![rate_limited(None)]).await;
