@@ -75,17 +75,25 @@ pub async fn start(
         warn!("failed to save the port: {err}");
     }
     let token = lock.web_token()?;
+    // Every step that can fail comes before the services spawn their tasks,
+    // so a failed start leaves none running. A launch that opens the link
+    // meanwhile waits on the bound port.
+    let url = format!("http://{addr}");
+    lock.write_info(&url, &version.to_string())?;
 
-    let services = Services::init(data_dir, version.clone()).await?;
+    let services = Services::init(data_dir, version).await?;
     // Early, so a page's hello can already say. Tests don't reach the network.
     if cfg!(not(test)) {
         let services = Arc::clone(&services);
         tokio::spawn(async move { services.updates.check().await });
     }
-    server::serve(listener, Arc::clone(&services), desktop, token.clone())?;
-
-    let url = format!("http://{addr}");
-    lock.write_info(&url, &version.to_string())?;
+    server::serve(
+        listener,
+        addr,
+        Arc::clone(&services),
+        desktop,
+        token.clone(),
+    );
     Ok(Started::Engine(Engine {
         services,
         link: lock::link(&url, &token),

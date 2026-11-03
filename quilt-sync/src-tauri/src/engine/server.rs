@@ -79,18 +79,14 @@ struct AppState {
     token: Arc<str>,
 }
 
-/// Serve on `listener` in a background task and answer its address.
-///
-/// # Errors
-///
-/// When the listener has no local address.
+/// Serve on `listener`, bound at `addr`, in a background task.
 pub fn serve(
     listener: TcpListener,
+    addr: SocketAddr,
     services: Arc<Services>,
     desktop: Option<Arc<dyn Desktop>>,
     token: String,
-) -> std::io::Result<SocketAddr> {
-    let addr = listener.local_addr()?;
+) {
     let app = router(&addr, services, desktop, token);
     tokio::spawn(async move {
         if let Err(err) = axum::serve(listener, app).await {
@@ -98,7 +94,6 @@ pub fn serve(
         }
     });
     info!("serving the UI on http://{addr}");
-    Ok(addr)
 }
 
 fn router(
@@ -473,7 +468,14 @@ mod tests {
             .await
             .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = serve(listener, Arc::clone(&services), None, TOKEN.to_owned()).unwrap();
+        let addr = listener.local_addr().unwrap();
+        serve(
+            listener,
+            addr,
+            Arc::clone(&services),
+            None,
+            TOKEN.to_owned(),
+        );
         Running {
             addr,
             services,

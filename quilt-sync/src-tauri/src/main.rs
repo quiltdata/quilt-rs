@@ -44,6 +44,29 @@ fn attach_console() {
 #[cfg(not(windows))]
 fn attach_console() {}
 
+/// Say why the app can't start, in a dialog since there is no window yet,
+/// then quit. The log may not be set up yet, so the terminal gets it too.
+///
+/// The dialog is shown once setup returns: on Linux it needs the event loop
+/// that setup runs on.
+fn cannot_start(err: &engine::Error) {
+    attach_console();
+    eprintln!("QuiltSync couldn't start: {err}");
+    let shown = rfd::AsyncMessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title("QuiltSync couldn't start")
+        .set_description(format!(
+            "Try starting it again. If this keeps happening, send this message \
+             to Quilt support:\n\n{err}"
+        ))
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
+    tauri::async_runtime::spawn(async move {
+        shown.await;
+        std::process::exit(1);
+    });
+}
+
 fn main() -> ExitCode {
     env::init();
 
@@ -61,6 +84,11 @@ fn main() -> ExitCode {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // Without services the engine didn't start: there is only the
+            // error dialog, no window or pages to show.
+            if app.try_state::<Arc<Services>>().is_none() {
+                return;
+            }
             if let Some(uri_str) = argv.get(1) {
                 info!("Single-instance deep link: {:?}", uri_str);
                 if let Err(err) = uri::handle_deep_link_url(app, uri_str) {
@@ -87,13 +115,15 @@ fn main() -> ExitCode {
             };
             let version = app.package_info().version.clone();
             let desktop = desktop::commands::desktop(app.handle());
-            let engine = match tauri::async_runtime::block_on(start::start(
-                data_dir,
-                version,
-                Some(desktop),
-            ))? {
-                Started::Engine(engine) => engine,
-                Started::Running(link) => {
+            let started =
+                tauri::async_runtime::block_on(start::start(data_dir, version, Some(desktop)));
+            let engine = match started {
+                Ok(Started::Engine(engine)) => engine,
+                Err(err) => {
+                    cannot_start(&err);
+                    return Ok(());
+                }
+                Ok(Started::Running(link)) => {
                     // Another process is the engine for this data folder; its
                     // page is this launch's window.
                     match link {
