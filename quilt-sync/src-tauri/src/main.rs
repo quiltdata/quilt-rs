@@ -129,7 +129,7 @@ fn main() -> ExitCode {
                 Ok(Started::Running(link)) => {
                     // Another process is the engine for this data folder; its
                     // page is this launch's window.
-                    match link {
+                    match link.map(|link| uri::launch_link(app.handle(), link)) {
                         Some(link) => {
                             if let Err(err) = opener::open_browser(&link) {
                                 eprintln!("QuiltSync is already running at {link}: {err}");

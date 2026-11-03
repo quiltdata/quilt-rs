@@ -30,6 +30,39 @@ fn package_path(uri_str: &str) -> Result<routes::Paths> {
     Ok(routes::Paths::RemotePackage(uri_str.parse()?))
 }
 
+/// The engine's `link` (`{url}/?t={token}`) turned to the page of a Quilt
+/// package URI. The page takes its token from `t` on any path.
+fn package_link(link: &str, uri_str: &str) -> Result<String> {
+    let url: Url = link.parse().map_err(Error::ParseUrl)?;
+    let token = url
+        .query_pairs()
+        .find(|(key, _)| key == "t")
+        .map(|(_, token)| token.into_owned())
+        .unwrap_or_default();
+    let mut url = routes::from_url(package_path(uri_str)?, url);
+    url.query_pairs_mut().append_pair("t", &token);
+    Ok(url.into())
+}
+
+/// The page to open on another process's engine: the package's, when this
+/// launch came with a package link, else `link`'s home page. A login link
+/// has nothing to finish there, since headless logs in by code.
+fn launch_page(link: String, launched: Option<&Url>) -> String {
+    let Some(uri) = launched.filter(|url| url.scheme() == "quilt+s3") else {
+        return link;
+    };
+    package_link(&link, uri.as_str()).unwrap_or_else(|err| {
+        eprintln!("Can't open {uri} in QuiltSync: {err}");
+        link
+    })
+}
+
+/// [`launch_page`] for the link this launch came with.
+pub fn launch_link(app_handle: &AppHandle, link: String) -> String {
+    let launched = app_handle.deep_link().get_current().ok().flatten();
+    launch_page(link, launched.as_ref().and_then(|urls| urls.first()))
+}
+
 /// Show a Quilt package URI's page, in the window brought to the front.
 fn navigate_to_package(app_handle: &AppHandle, uri_str: &str) -> Result {
     navigate(
@@ -259,6 +292,38 @@ mod tests {
             "a remote package page"
         );
         assert!(package_path("invalid-uri").is_err());
+    }
+
+    #[test]
+    fn a_package_link_keeps_the_engine_and_its_token() {
+        let uri = "quilt+s3://bucket#package=foo/bar@hash";
+        let link = package_link("http://127.0.0.1:7878/?t=abc", uri).unwrap();
+        let page = routes::page(package_path(uri).unwrap());
+        assert_eq!(link, format!("http://127.0.0.1:7878{page}&t=abc"));
+    }
+
+    const LINK: &str = "http://127.0.0.1:7878/?t=abc";
+
+    #[test]
+    fn a_package_launch_opens_its_page_with_the_token() {
+        let package: Url = "quilt+s3://bucket#package=foo/bar@hash".parse().unwrap();
+        assert_eq!(
+            launch_page(LINK.into(), Some(&package)),
+            package_link(LINK, package.as_str()).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_launch_without_a_link_opens_the_home_page() {
+        assert_eq!(launch_page(LINK.into(), None), LINK);
+    }
+
+    #[test]
+    fn a_login_launch_opens_the_home_page() {
+        let login: Url = "quilt://auth/callback?code=ABC123&host=quilt.test&state=xyz"
+            .parse()
+            .unwrap();
+        assert_eq!(launch_page(LINK.into(), Some(&login)), LINK);
     }
 
     #[tokio::test]
