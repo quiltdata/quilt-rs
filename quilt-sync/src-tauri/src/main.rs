@@ -26,6 +26,7 @@ mod env;
 mod error;
 mod experimental_settings;
 mod fswatcher;
+mod link_handler;
 mod log_settings;
 mod model;
 mod notify;
@@ -99,6 +100,12 @@ fn main() {
             let logging = telemetry::Telemetry::init_file_logging(&data_dir)?;
 
             telemetry.init();
+
+            // After registering, and after telemetry so a mismatch is reported.
+            #[cfg(windows)]
+            app.manage(link_handler::check(&telemetry));
+            #[cfg(not(windows))]
+            app.manage(link_handler::LinkHandlers::default());
 
             let publish_settings = tauri::async_runtime::block_on(publish_settings::init(
                 &data_dir,
@@ -256,6 +263,7 @@ fn main() {
             commands::get_main_page_packages,
             commands::get_main_page_recent_files,
             commands::get_main_page_accounts,
+            commands::get_main_page_link_handlers,
             commands::refresh_main_page_account,
             commands::refresh_main_page_package,
             commands::get_main_page_watcher,

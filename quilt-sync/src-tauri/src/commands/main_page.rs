@@ -699,6 +699,18 @@ pub async fn get_main_page_packages(
     result.map_err(|e| e.to_frontend_string())
 }
 
+/// The link types Windows opens with another program, found at startup.
+#[tauri::command]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "Tauri's command macro injects state by value"
+)]
+pub fn get_main_page_link_handlers(
+    handlers: tauri::State<'_, crate::link_handler::LinkHandlers>,
+) -> Vec<crate::link_handler::ForeignHandler> {
+    handlers.0.clone()
+}
+
 /// The Accounts card, light phase: one row per host, resolved from disk alone.
 ///
 /// No network. The role costs a `/me` per host and arrives via
