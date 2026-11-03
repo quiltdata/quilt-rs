@@ -2289,18 +2289,27 @@ pub async fn open_in_web_browser(url: String) -> Result<String, String> {
     struct Args {
         url: String,
     }
-    // Headless's machine is seldom the reader's, and may have no browser:
-    // web and mail links open from this tab instead. No opener, so the new
-    // page can't steer this one. A local folder still goes to the engine.
-    let web = ["http://", "https://", "mailto:"]
-        .iter()
-        .any(|scheme| url.starts_with(scheme));
-    if web && engine::headless().get_untracked() {
+    // Headless's machine is seldom the reader's and may have no browser, so
+    // web and mail links open from this tab. A local folder still goes to the
+    // engine.
+    if engine::headless().get_untracked() {
         let window = web_sys::window().ok_or("No window")?;
-        window
-            .open_with_url_and_target_and_features(&url, "_blank", "noopener")
-            .map_err(|_| "This browser didn't open the link.".to_owned())?;
-        return Ok("Opened in this browser".to_owned());
+        // The address bar hands a mail link to the mail app without leaving
+        // the page, and needs no fresh click: it may come after a wait.
+        if url.starts_with("mailto:") {
+            window
+                .location()
+                .set_href(&url)
+                .map_err(|_| "This browser didn't open the mail app.".to_owned())?;
+            return Ok("Opened in the mail app".to_owned());
+        }
+        // No opener, so the new page can't steer this one.
+        if url.starts_with("http://") || url.starts_with("https://") {
+            window
+                .open_with_url_and_target_and_features(&url, "_blank", "noopener")
+                .map_err(|_| "This browser didn't open the link.".to_owned())?;
+            return Ok("Opened in this browser".to_owned());
+        }
     }
     engine::invoke("open_in_web_browser", &Args { url }).await
 }
