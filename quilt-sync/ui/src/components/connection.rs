@@ -45,7 +45,7 @@ pub fn NoLink() -> impl IntoView {
     view! {
         <Blankslate
             heading="Open QuiltSync from its link"
-            description="This page needs the link QuiltSync gives it: Open in browser in its tray menu, or the link it printed if it runs with --headless."
+            description="For security, this page works only when opened from QuiltSync's own link, which carries a key. In the desktop app, choose Open in browser from QuiltSync's tray menu. If QuiltSync runs with --headless, open the link it printed when it started."
         />
     }
 }
@@ -169,7 +169,7 @@ mod tests {
         assert!(
             engine::invoke_unit::<()>("get_toasts")
                 .await
-                .is_err_and(|err| err.contains("new link")),
+                .is_err_and(|err| err.contains("no longer works")),
             "a later request fails at once and says why"
         );
         sleep_ms(0).await;
