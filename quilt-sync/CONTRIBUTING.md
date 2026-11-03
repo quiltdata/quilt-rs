@@ -52,11 +52,28 @@ link and exits.
 engine in the test process, on temporary folders, so your data is never
 touched. They need Google Chrome installed; the first run fetches the
 chromedriver that matches it. `CHROME_BIN` names a Chrome or Chromium that
-isn't where Chrome usually is.
+isn't where Chrome usually is: the executable itself, which on macOS is inside
+the `.app`.
 
 `just test e2e` builds the UI and runs them; arguments go to nextest. They sit
 behind the crate's `e2e` feature, so `just test` and `just ci` don't need
-Chrome; CI runs them in their own job.
+Chrome; CI runs them in their own job. A run takes about a minute once the
+crate is built.
+
+When no Chrome is found, every test fails at once with "could not detect
+installed Chrome". A Flatpak or Snap browser doesn't work even through
+`CHROME_BIN`: it gets its own private `/tmp`, and chromedriver can't read the
+file Chrome writes there to say where to connect. Without a usable Chrome,
+fetch Chrome for Testing into your home folder; it stays apart from the
+browser you use:
+
+```bash
+export CHROME_BIN="$(npx @puppeteer/browsers install chrome@stable \
+  --path ~/.cache/chrome-for-testing | cut -d' ' -f2-)"
+```
+
+The command prints the version and the executable's path; the `cut` keeps the
+path. Running it again reuses the copy already there.
 
 ### "Golden path" Testing
 
