@@ -10,37 +10,50 @@ pub use crate::engine::desktop::ForeignHandler;
 #[cfg(any(windows, test))]
 const SCHEMES: [&str; 2] = ["quilt+s3", "quilt"];
 
-/// What the startup check found. Empty when every link type opens this copy.
-/// Off Windows there is none.
-#[derive(Default)]
-pub struct LinkHandlers(pub Vec<ForeignHandler>);
+/// What the startup check found: the link types that don't open this copy,
+/// or why the check couldn't run. Off Windows there is none.
+pub struct LinkHandlers(pub Result<Vec<ForeignHandler>, String>);
 
-/// Ask Windows about each scheme, and report a mismatch once.
+impl LinkHandlers {
+    /// The link types to warn about; none when the check couldn't run.
+    pub fn foreign(&self) -> Vec<ForeignHandler> {
+        self.0.clone().unwrap_or_default()
+    }
+}
+
+/// Ask Windows about each scheme. It runs before the engine serves, so a
+/// page's first ask finds the answer, and before the log exists, so
+/// [`report`] logs it later.
+#[cfg(windows)]
+pub fn lookup() -> LinkHandlers {
+    LinkHandlers(match std::env::current_exe() {
+        Ok(path) => Ok(foreign_handlers(&path.to_string_lossy(), shell::handler_of)),
+        Err(err) => Err(err.to_string()),
+    })
+}
+
+/// Log what [`lookup`] found, and report a mismatch once.
 ///
 /// The paths go to the log file only: they carry the user's name, and `debug`
 /// never reaches the crash reporter.
 #[cfg(windows)]
-pub fn check(telemetry: &crate::engine::telemetry::Telemetry) -> LinkHandlers {
+pub fn report(found: &LinkHandlers, telemetry: &crate::engine::telemetry::Telemetry) {
     use crate::engine::telemetry::prelude::*;
 
-    let ours = match std::env::current_exe() {
-        Ok(path) => path.to_string_lossy().into_owned(),
-        Err(err) => {
-            warn!("Cannot find QuiltSync's own program to check its links: {err}");
-            return LinkHandlers::default();
+    match &found.0 {
+        Err(err) => warn!("Cannot find QuiltSync's own program to check its links: {err}"),
+        Ok(foreign) => {
+            for handler in foreign {
+                debug!(
+                    "Windows opens {} links with {:?}, not this copy",
+                    handler.scheme, handler.program
+                );
+            }
+            if !foreign.is_empty() {
+                telemetry.report_anomaly("Windows opens Quilt links with another program");
+            }
         }
-    };
-    let foreign = foreign_handlers(&ours, shell::handler_of);
-    for handler in &foreign {
-        debug!(
-            "Windows opens {} links with {:?}, not {ours}",
-            handler.scheme, handler.program
-        );
     }
-    if !foreign.is_empty() {
-        telemetry.report_anomaly("Windows opens Quilt links with another program");
-    }
-    LinkHandlers(foreign)
 }
 
 /// The schemes whose handler, as `handler_of` names it, is not `ours`.

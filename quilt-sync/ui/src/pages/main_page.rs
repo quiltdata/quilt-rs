@@ -1502,7 +1502,10 @@ pub fn MainPage() -> impl IntoView {
         }
     });
 
-    let link_handlers = LocalResource::new(commands::get_main_page_link_handlers);
+    let link_handlers = LocalResource::new(move || {
+        reload.track();
+        commands::get_main_page_link_handlers()
+    });
 
     view! {
         <PageLayout
