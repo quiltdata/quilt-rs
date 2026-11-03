@@ -244,16 +244,29 @@ fn button(name: &str) -> By {
     By::XPath(format!("//button[normalize-space(.)='{name}']"))
 }
 
-/// Click the element `by` finds, finding it again if the page drew it anew
-/// in between, as a list does when it refreshes.
+/// Click the element `by` finds once it can be clicked, finding it again if
+/// the page drew it anew in between, as a list does when it refreshes, or
+/// hadn't laid it out yet, which Firefox reports as not interactable.
 async fn click(driver: &WebDriver, by: By) -> WebDriverResult<()> {
     for _ in 0..20 {
-        match driver.query(by.clone()).first().await?.click().await {
-            Err(err) if matches!(*err, WebDriverErrorInner::StaleElementReference(_)) => {}
+        let clicked = match driver.query(by.clone()).and_clickable().first().await {
+            Ok(element) => element.click().await,
+            Err(err) => Err(err),
+        };
+        match clicked {
+            Err(err)
+                if matches!(
+                    *err,
+                    WebDriverErrorInner::StaleElementReference(_)
+                        | WebDriverErrorInner::ElementNotInteractable(_)
+                ) =>
+            {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
             done => return done,
         }
     }
-    panic!("{by:?} kept going stale");
+    panic!("{by:?} could not be clicked");
 }
 
 /// Wait until the page's title is `title`.
