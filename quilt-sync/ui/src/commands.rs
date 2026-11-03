@@ -2471,8 +2471,9 @@ mod tests {
     };
     use crate::kit::RowDownloads;
 
-    /// Headless draws v2 whatever design is saved; a desktop engine draws
-    /// the saved one.
+    /// Headless draws v2 whatever design is saved, also after a reconnect
+    /// to a desktop engine restarted as headless; a desktop engine draws the
+    /// saved one.
     #[wasm_bindgen_test::wasm_bindgen_test]
     async fn headless_draws_v2_over_a_saved_v1() {
         use crate::engine::fake::{FakeEngine, ask};
@@ -2485,15 +2486,12 @@ mod tests {
         sleep_ms(0).await;
         assert_eq!(super::Design::V1.drawn(), super::Design::V1);
 
-        let engine = FakeEngine::install();
-        engine.as_headless();
-        let _asked = ask("get_toasts");
+        engine.close();
         sleep_ms(0).await;
+        engine.as_headless();
         engine.hello();
         sleep_ms(0).await;
         assert_eq!(super::Design::V1.drawn(), super::Design::V2);
-        // Later tests start from an engine that has said nothing yet.
-        FakeEngine::install();
     }
 
     /// On headless a web link opens from the tab and never reaches the

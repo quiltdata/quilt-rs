@@ -2270,8 +2270,6 @@ mod tests {
         engine.hello();
         let el = page(vec![settings()]).await;
         let words = el.text_content().unwrap_or_default();
-        // Later tests start from an engine that has said nothing yet.
-        FakeEngine::install();
         assert!(words.contains("Agent tasks"), "{words}");
         assert!(!words.contains(PREVIEW), "{words}");
     }

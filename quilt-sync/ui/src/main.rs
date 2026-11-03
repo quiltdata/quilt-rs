@@ -260,15 +260,20 @@ fn ByDesign(
     loading: &'static str,
 ) -> impl IntoView {
     let settings = LocalResource::new(read);
+    let headless = Memo::new(move |_| quilt_sync_ui::engine::headless().get());
 
     view! {
         <Suspense fallback=move || design_loading(loading, skeleton)>
-            {move || Suspend::new(async move {
-                let settings = settings.await;
-                let on = design_preview(settings.as_ref().map_err(String::as_str));
-                quilt_sync_ui::theme::set_v2(on);
-                if on { v2() } else { v1() }
-            })}
+            {move || {
+                // Picks again when a reconnect finds the engine now headless.
+                headless.track();
+                Suspend::new(async move {
+                    let settings = settings.await;
+                    let on = design_preview(settings.as_ref().map_err(String::as_str));
+                    quilt_sync_ui::theme::set_v2(on);
+                    if on { v2() } else { v1() }
+                })
+            }}
         </Suspense>
     }
 }
