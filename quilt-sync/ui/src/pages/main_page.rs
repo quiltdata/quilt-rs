@@ -1507,7 +1507,7 @@ pub fn MainPage() -> impl IntoView {
             heading="QuiltSync"
             page_scroll=true
             actions=appbar_actions(move || reload.notify(), Signal::derive(move || outstanding.get() > 0))
-            banner=view! { {move || link_handlers.get().and_then(Result::ok).map(link_handler_banner)} }
+            banner=view! { {move || link_handlers.get().and_then(Result::ok).map(|handlers| link_handler_banner(&handlers))} }
                 .into_any()
         >
             <PackageStatusListener reload=reload />
@@ -1525,11 +1525,11 @@ pub fn MainPage() -> impl IntoView {
 /// Says that catalog links open another program, and how to fix it. Nothing when
 /// every link type opens this copy. No dismiss: closing it would not change where
 /// links go.
-fn link_handler_banner(handlers: Vec<ForeignHandler>) -> Option<AnyView> {
+fn link_handler_banner(handlers: &[ForeignHandler]) -> Option<AnyView> {
     if handlers.is_empty() {
         return None;
     }
-    let message = link_handler_message(&handlers);
+    let message = link_handler_message(handlers);
     Some(view! { <Banner variant=BannerVariant::Warning>{message}</Banner> }.into_any())
 }
 
@@ -1595,7 +1595,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn a_foreign_link_handler_is_named_with_the_fix() {
         let page = mount(|| {
-            link_handler_banner(vec![
+            link_handler_banner(&[
                 ForeignHandler {
                     scheme: "quilt+s3".to_owned(),
                     program: Some(r"C:\Users\a-user\Downloads\quilt-sync.exe".to_owned()),
@@ -1619,7 +1619,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn links_this_copy_opens_draw_no_notice() {
-        assert!(link_handler_banner(Vec::new()).is_none());
+        assert!(link_handler_banner(&[]).is_none());
     }
 
     /// The scenes name packages as text; the payloads carry the type.
