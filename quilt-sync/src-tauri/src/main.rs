@@ -84,6 +84,11 @@ fn main() -> ExitCode {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // Without services the engine didn't start: there is only the
+            // error dialog, no window or pages to show.
+            if app.try_state::<Arc<Services>>().is_none() {
+                return;
+            }
             if let Some(uri_str) = argv.get(1) {
                 info!("Single-instance deep link: {:?}", uri_str);
                 if let Err(err) = uri::handle_deep_link_url(app, uri_str) {
