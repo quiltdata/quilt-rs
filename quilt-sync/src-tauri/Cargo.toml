@@ -38,7 +38,20 @@ rfd = { version = "0.17.2", default-features = false, features = ["gtk3"] }
 rust-embed = { version = "8", features = ["mime-guess"] }
 rust-i18n = "4.2.4"
 semver = "1.0.28"
-sentry = { version = "0.49.5", features = ["tracing"] }
+# Without the default `transport`, which brings native-tls (OpenSSL on Linux).
+# Sentry sends through reqwest with rustls instead.
+sentry = { version = "0.49.5", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "debug-images",
+    "logs",
+    "metrics",
+    "panic",
+    "release-health",
+    "reqwest",
+    "rustls",
+    "tracing",
+] }
 notify = "8.2"
 notify-debouncer-full = "0.7"
 serde.workspace = true
@@ -47,7 +60,9 @@ serde_qs = "1.1.3"
 tauri = { version = "2.12.5", features = ["test", "devtools", "tray-icon", "image-png"] }
 tauri-plugin-clipboard-manager = "2.5.0"
 tauri-plugin-deep-link = "2.6.3"
-tauri-plugin-updater = "2.14.1"
+# Without the default `rustls-tls`, which builds rustls with ring. The
+# updater's reqwest gets rustls with aws-lc-rs from our own reqwest.
+tauri-plugin-updater = { version = "2.14.1", default-features = false, features = ["system-proxy", "zip"] }
 tempfile.workspace = true
 # Only for the browser tests, behind `e2e`.
 thirtyfour = { version = "0.38.1", default-features = false, features = ["manager", "rustls"], optional = true }
@@ -75,7 +90,7 @@ e2e = ["dep:thirtyfour"]
 [dev-dependencies]
 quilt-uri = { path = "../../quilt-uri", features = ["test-support"] }
 regex.workspace = true
-sentry = { version = "0.49.5", features = ["test"] }
+sentry = { version = "0.49.5", default-features = false, features = ["test"] }
 serde-saphyr.workspace = true
 serial_test = "4"
 # Paused time keeps the retry tests from sleeping for real.

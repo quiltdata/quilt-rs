@@ -294,4 +294,17 @@ mod tests {
         ));
         assert!(matches!(Faults::resolve(Sinks::Production), Faults::Live));
     }
+
+    /// The crash client needs an HTTPS transport from its features: with no
+    /// transport it is silently disabled, and with no TLS it panics at startup.
+    /// Building one the way `sentry::init` does builds that transport; nothing
+    /// is sent. Without the default integrations, so no panic hook is installed.
+    #[test]
+    fn the_crash_client_builds_its_https_transport() {
+        let options = sentry::apply_defaults(
+            sentry::ClientOptions::from("https://public@example.invalid/1")
+                .default_integrations(false),
+        );
+        assert!(sentry::Client::from_config(options).is_enabled());
+    }
 }
