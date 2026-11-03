@@ -641,7 +641,7 @@ fn live(bucket: Option<&str>, catalog: Option<&str>) -> AnyView {
                     hash: "b5e013".to_string(),
                     message: Some("Add intake folder-upload note".to_string()),
                     obtained_at: ago(2.0 * HOUR),
-                    meta: Some(serde_json::json!({"plate": 7, "assay": "ELISA", "operator": "a user", "run": 3})),
+                    meta: Some(serde_json::json!({"plate": 7, "assay": "ELISA", "operator": "a user", "run": 3}).to_string()),
                     workflow: None,
                 },
                 bucket: bucket.map(ToString::to_string),

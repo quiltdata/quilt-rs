@@ -226,7 +226,7 @@ fn revision_summary(
     revision: commands::CurrentRevisionData,
     href: Option<String>,
 ) -> impl IntoView + use<> {
-    let preview = match revision.meta.as_ref().map(MetadataLines::of) {
+    let preview = match revision.metadata().as_ref().map(MetadataLines::of) {
         None => view! { <span class=style::muted>"No metadata"</span> }.into_any(),
         Some(MetadataLines { lines, more }) => view! {
             <ul class=style::preview>
@@ -1244,7 +1244,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn the_summary_previews_the_metadata_and_says_when_there_is_none() {
         let mut data = data(Some("Initial upload"), Some("quilt-lab-plates"), 1);
-        data.revision.meta = Some(serde_json::json!({"a": 1, "b": 2, "c": 3, "d": 4}));
+        data.revision.meta = Some(r#"{"a": 1, "b": 2, "c": 3, "d": 4}"#.to_string());
         let el = mount(move || {
             view! {
                 <CurrentRevisionPane

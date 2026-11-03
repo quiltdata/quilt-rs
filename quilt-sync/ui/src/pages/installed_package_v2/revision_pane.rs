@@ -60,12 +60,13 @@ pub fn RevisionPane(
     open_catalog: Callback<String>,
     w: Wiring,
 ) -> impl IntoView {
+    let meta = revision.metadata();
     let commands::CurrentRevisionData {
         hash,
         message,
         obtained_at,
-        meta,
         workflow,
+        ..
     } = revision;
 
     let publication = RwSignal::new(Publication::Loading);
@@ -111,7 +112,7 @@ pub fn RevisionPane(
         None => view! { <span class=style::muted>"No metadata"</span> }.into_any(),
     };
 
-    let (pane, opening) = super::resolve::reveal_on_opening();
+    let (pane, opening) = super::resolve::reveal_on_opening("revision");
     let class = if opening {
         format!("{} {}", style::root, style::opening)
     } else {
@@ -264,7 +265,7 @@ mod tests {
             hash: HASH.to_string(),
             message: Some("Initial upload".to_string()),
             obtained_at: 1_758_500_000_000.0,
-            meta,
+            meta: meta.map(|meta| meta.to_string()),
             workflow: workflow.map(str::to_string),
         };
         mount(move || {

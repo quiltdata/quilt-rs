@@ -609,14 +609,22 @@ fn normalized_address(
     outcome: Option<&routes::DeepLinkOutcome>,
 ) -> Option<String> {
     let namespace = &answered.header.namespace;
-    let resolve_missing = asked && answered.context.resolve.is_none();
-    // A stale link, or a commit or pull that moved the revision. Open Resolve
-    // wins, so its address stays whatever `revision` says.
+    let current = answered.context.revision.hash.as_str();
+    // Open Resolve wins, so its address stays whatever `revision` says.
     let resolve_open = asked && answered.context.resolve.is_some();
-    let revision_missing =
-        !resolve_open && revision.is_some_and(|hash| hash != answered.context.revision.hash);
-    (namespace.to_string() == showing && (resolve_missing || revision_missing))
-        .then(|| routes::keeping_outcome(routes::package_page_href(namespace), outcome))
+    let resolve_missing = asked && !resolve_open;
+    // A stale link, or a commit or pull that moved the revision.
+    let revision_missing = !resolve_open && revision.is_some_and(|hash| hash != current);
+    if namespace.to_string() != showing || !(resolve_missing || revision_missing) {
+        return None;
+    }
+    // Only the mode that cannot open is dropped.
+    let to = if revision == Some(current) {
+        routes::revision_href(namespace, current)
+    } else {
+        routes::package_page_href(namespace)
+    };
+    Some(routes::keeping_outcome(to, outcome))
 }
 
 /// Render one successful page payload. Kept pure so its atomic shape can be
@@ -1360,7 +1368,7 @@ fn PackageScreen(
     provide_context(shown);
     Effect::new(move || {
         if !asked.get() && revision.get().is_none() {
-            shown.0.set_value(false);
+            shown.0.set_value(None);
         }
     });
     // For the header's *Copied* and Keeping's folders dialog. Not on `Wiring`,
@@ -2652,6 +2660,15 @@ mod tests {
         assert_eq!(
             normalized_address(false, Some("older"), "team/dataset", &page_data(), None).as_deref(),
             Some(PLAIN)
+        );
+    }
+
+    #[test]
+    fn a_resolve_that_cannot_open_keeps_the_current_revision() {
+        let current = page_data().context.revision.hash;
+        assert_eq!(
+            normalized_address(true, Some(&current), "team/dataset", &page_data(), None),
+            Some(format!("{PLAIN}&revision={current}"))
         );
     }
 

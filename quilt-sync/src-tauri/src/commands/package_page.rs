@@ -205,9 +205,10 @@ pub struct CurrentRevisionData {
     pub hash: String,
     pub message: Option<String>,
     pub obtained_at: f64,
-    /// The user metadata, read from the same manifest; `None` when it has
-    /// none, `{}` included.
-    pub meta: Option<serde_json::Value>,
+    /// The user metadata as JSON text, read from the same manifest; `None`
+    /// when it has none, `{}` included. Text, as the commit page's is, so an
+    /// integer past JavaScript's safe range crosses the bridge unrounded.
+    pub meta: Option<String>,
     /// The workflow's id, when the revision names one.
     pub workflow: Option<String>,
 }
@@ -570,7 +571,7 @@ fn package_context_data(
             hash: revision.hash,
             message: revision.message,
             obtained_at: epoch_millis(revision.obtained),
-            meta: revision.meta,
+            meta: revision.meta.map(|meta| meta.to_string()),
             workflow: revision.workflow,
         },
         bucket: lineage
@@ -1346,7 +1347,7 @@ mod tests {
                 hash: "abc123".to_string(),
                 message: Some("Initial upload".to_string()),
                 obtained_at: 1_758_500_000_000.0,
-                meta: Some(serde_json::json!({"plate": 7})),
+                meta: Some(r#"{"plate":7}"#.to_string()),
                 workflow: Some("alpha".to_string()),
             },
             bucket: Some("quilt-lab-plates".to_string()),
@@ -1358,7 +1359,7 @@ mod tests {
 
         assert_eq!(
             serde_json::to_string(&context).unwrap(),
-            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0,"meta":{"plate":7},"workflow":"alpha"},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","folders":[],"total":56,"outstanding":2,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000,"backlog":1500000},"resolve":null}"#,
+            r#"{"revision":{"hash":"abc123","message":"Initial upload","obtainedAt":1758500000000.0,"meta":"{\"plate\":7}","workflow":"alpha"},"bucket":"quilt-lab-plates","revisionCount":4,"keeping":{"scope":"entirePackage","folders":[],"total":56,"outstanding":2,"remoteOnly":["plate/b.csv","plate/c.csv"],"deletedHere":1},"size":{"total":3400000,"downloaded":1900000,"backlog":1500000},"resolve":null}"#,
         );
     }
 

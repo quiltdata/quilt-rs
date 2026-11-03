@@ -108,23 +108,23 @@ impl ResolveCommands {
     }
 }
 
-/// Whether a mode's pane is up, Resolve's or the revision's, so only the one
-/// the reader opens moves the page and widens. The page provides it; a pane
-/// without it counts as opening.
+/// Which mode's pane is up, Resolve's or the revision's, so only the one the
+/// reader opens, or switches to, moves the page and widens. The page provides
+/// it; a pane without it counts as opening.
 #[derive(Clone, Copy, Default)]
-pub(super) struct Shown(pub(super) StoredValue<bool>);
+pub(super) struct Shown(pub(super) StoredValue<Option<&'static str>>);
 
 /// The pane's `aside`, scrolled into view when the reader opens the mode.
 /// Narrow, the pane sits above the files, so a reader deep in the list who
 /// opens it from the held header would not see it. Only on opening: a pane
 /// the watcher's news rebuilds leaves the reader where they are. Also says
 /// whether this is the opening, for the pane's widening.
-pub(super) fn reveal_on_opening() -> (NodeRef<leptos::html::Aside>, bool) {
+pub(super) fn reveal_on_opening(mode: &'static str) -> (NodeRef<leptos::html::Aside>, bool) {
     let pane = NodeRef::<leptos::html::Aside>::new();
     let shown = use_context::<Shown>();
-    let opening = shown.is_none_or(|Shown(up)| !up.get_value());
+    let opening = shown.is_none_or(|Shown(up)| up.get_value() != Some(mode));
     if let Some(Shown(up)) = shown {
-        up.set_value(true);
+        up.set_value(Some(mode));
     }
     Effect::new(move || {
         if let Some(pane) = pane.get().filter(|_| opening) {
@@ -218,7 +218,7 @@ pub fn ResolvePane(
     let certify_hint = unique_id("resolve-hint");
     let replace_hint = unique_id("resolve-hint");
 
-    let (pane, opening) = reveal_on_opening();
+    let (pane, opening) = reveal_on_opening("resolve");
     let class = if opening {
         format!("{} {}", style::root, style::opening)
     } else {
@@ -579,7 +579,7 @@ mod tests {
         sleep_ms(50).await;
         assert_eq!(frame.scroll_top(), 2000, "a rebuilt pane stays put");
         // As the page does when the mode closes.
-        shown.0.set_value(false);
+        shown.0.set_value(None);
         rebuilt.update(|n| *n += 1);
         sleep_ms(50).await;
         let pane = el.query_selector("aside").unwrap().unwrap();
