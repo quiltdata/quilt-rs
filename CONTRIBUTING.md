@@ -63,6 +63,19 @@ cargo install trunk stylance-cli       # the page bundler and the CSS-module com
 `just app dev` additionally needs `cargo install tauri-cli` and Tauri's platform
 dependencies, listed at <https://tauri.app/start/prerequisites/>.
 
+`just test frontend` runs the frontend's tests in a headless browser, and needs
+the test runner and a browser driver:
+
+```bash
+# The runner works only with the wasm-bindgen version in Cargo.lock.
+cargo install wasm-bindgen-cli --version "$(grep -A1 '^name = "wasm-bindgen"$' \
+  Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')"
+cargo install geckodriver # or: brew install geckodriver
+```
+
+The runner takes the first driver it finds on your `PATH`: `geckodriver`, then
+`safaridriver`, then `chromedriver`. CI runs these tests in Firefox.
+
 The two can run at the same time. They build into separate directories, `ui/dist`
 for the app and `ui/dist-gallery` for the gallery, because Trunk writes every
 target it is given to `<dist>/index.html` and a shared directory would leave

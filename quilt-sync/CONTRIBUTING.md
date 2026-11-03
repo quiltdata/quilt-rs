@@ -65,19 +65,16 @@ Chrome; CI runs them in their own job. A run takes about a minute once the
 crate is built.
 
 When no Chrome is found, every test fails at once with "could not detect
-installed Chrome". A Flatpak or Snap browser doesn't work even through
-`CHROME_BIN` or `FIREFOX_BIN`: it gets its own private `/tmp`, and the driver
-can't read the file the browser writes there to say where to connect. Without
-a usable Chrome, fetch Chrome for Testing into your home folder; it stays apart
-from the browser you use:
+installed Chrome". A regular Firefox install works too:
+`E2E_BROWSER=firefox just test e2e`. A Flatpak or Snap browser doesn't work,
+even through `CHROME_BIN` or `FIREFOX_BIN`; Ubuntu's default Firefox is a Snap.
+To run in Chrome as CI does, or with no usable browser, fetch Chrome for
+Testing into your home folder:
 
 ```bash
 export CHROME_BIN="$(npx @puppeteer/browsers install chrome@stable \
   --path ~/.cache/chrome-for-testing | cut -d' ' -f2-)"
 ```
-
-The command prints the version and the executable's path; the `cut` keeps the
-path. Running it again reuses the copy already there.
 
 ### "Golden path" Testing
 
