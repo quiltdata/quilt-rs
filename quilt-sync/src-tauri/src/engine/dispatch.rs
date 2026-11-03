@@ -22,7 +22,7 @@ use crate::engine::commands::{
     SettingsData, SetupData, StopIgnoringPreview, StopIgnoringScope, StorageSize,
 };
 use crate::engine::design_settings::Design;
-use crate::engine::desktop::{Desktop, NOT_AVAILABLE};
+use crate::engine::desktop::{Desktop, ForeignHandler, NOT_AVAILABLE};
 use crate::engine::log_settings::LogLevel;
 use crate::engine::navigation::Navigation;
 use crate::engine::quilt::flow::PullPreview;
@@ -241,6 +241,7 @@ commands! {
         copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> String;
         download_and_install_update() -> ();
         quit_confirm() -> ();
+        get_main_page_link_handlers() -> Vec<ForeignHandler>;
     }
 }
 
@@ -343,6 +344,10 @@ mod tests {
 
         fn quit(&self) {
             self.quit.store(true, Ordering::SeqCst);
+        }
+
+        fn foreign_link_handlers(&self) -> Vec<ForeignHandler> {
+            Vec::new()
         }
     }
 

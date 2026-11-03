@@ -240,6 +240,8 @@ pub fn InstalledPackagesList() -> impl IntoView {
     });
     on_cleanup(move || drop(paused_listener));
 
+    show_link_handler_notice(notification);
+
     let data = LocalResource::new(move || {
         refetch.track();
         async { commands::get_installed_packages_list_data().await }
@@ -292,6 +294,20 @@ pub fn InstalledPackagesList() -> impl IntoView {
             })}
         </Suspense>
     }
+}
+
+/// The main page's notice about links Windows opens with another program, in
+/// this page's own slot.
+fn show_link_handler_notice(notification: RwSignal<Option<Notification>>) {
+    leptos::task::spawn_local(async move {
+        if let Ok(handlers) = commands::get_main_page_link_handlers().await
+            && !handlers.is_empty()
+        {
+            notification.set(Some(Notification::Warning(
+                super::main_page::link_handler_message(&handlers),
+            )));
+        }
+    });
 }
 
 // ── List content ──

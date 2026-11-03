@@ -109,6 +109,10 @@ fn main() -> ExitCode {
             };
             let services = Arc::clone(&engine.services);
             app.manage(Arc::clone(&services));
+            // After registering the schemes, and after telemetry so a mismatch
+            // is reported.
+            #[cfg(windows)]
+            app.manage(desktop::link_handler::check(&services.telemetry));
             // The window is a client of the engine like any tab: it loads the
             // engine's page with its token.
             desktop::open_window(app.handle(), &engine.link)?;
