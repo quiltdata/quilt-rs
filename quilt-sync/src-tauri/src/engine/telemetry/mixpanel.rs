@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use quilt_uri::Host;
 use serde_json::Value;
@@ -18,6 +18,7 @@ use crate::engine::telemetry::{InstallId, MixpanelEvent, Sinks};
 
 pub mod client;
 
+use client::SEND_TIMEOUT;
 pub use client::{MixpanelClient, SendError, WireEvent};
 
 /// How many events may wait to be sent before the queue starts refusing.
@@ -145,14 +146,6 @@ impl DeliveryFailure {
 /// A queue that has fallen behind should catch up in several requests rather than
 /// one enormous one, so a single failure loses less.
 const BATCH: usize = 25;
-
-/// How long one request may take before it is abandoned.
-///
-/// Wraps the send rather than configuring the client, because the analytics client
-/// builds its own HTTP client with no timeout and exposes no knob for one. Without
-/// this a hung socket holds a queued batch forever — which used to hold a *user's
-/// click* forever, before emission moved off the request path.
-const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// An event on its way out, stamped at the moment it happened.
 ///

@@ -4,6 +4,7 @@
 //! [`MixpanelClient`]. The tests in `client/tests.rs` pin the HTTP wire.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -11,6 +12,7 @@ use base64::engine::general_purpose::STANDARD;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::time::Instant;
 
 #[cfg(test)]
 mod tests;
@@ -20,11 +22,14 @@ const API: &str = "https://api.mixpanel.com";
 const CHUNK: usize = 50;
 const MAX_RETRIES: u32 = 3;
 const BACKOFF_BASE: Duration = Duration::from_secs(1);
-const BACKOFF_CAP: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long one send may take, retries included. The caller bounds the send
+/// with it; the client gives up early on a wait that would outlast it.
+pub const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 // Library properties every event carries; changing them splits reports in
 // Mixpanel.
-const LIB: &str = "rust";
-const LIB_VERSION: &str = "0.3.1";
+const LIB: &str = "quiltsync";
+const LIB_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// An event as the ingest API receives it: a name and its properties.
 ///
@@ -65,6 +70,9 @@ pub struct MixpanelClient {
     token: String,
     authorization: Option<String>,
     url: String,
+    /// Until when the API asked us to wait, after a wait the client did not
+    /// take. In memory only: a restart forgets it.
+    quiet_until: Mutex<Option<Instant>>,
 }
 
 impl MixpanelClient {
@@ -81,14 +89,17 @@ impl MixpanelClient {
 
     fn sending_to(token: &str, secret: Option<&str>, base_url: &str) -> Self {
         Self {
-            // No timeout here: the caller bounds the whole send.
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .expect("an HTTP client"),
             token: token.to_owned(),
             authorization: secret
                 .map(|secret| format!("Basic {}", STANDARD.encode(format!("{secret}:")))),
             // `verbose=1` makes the API say whether it accepted the events;
             // without it a refusal is an HTTP 200 too.
             url: format!("{}/track?ip=0&verbose=1", base_url.trim_end_matches('/')),
+            quiet_until: Mutex::new(None),
         }
     }
 
@@ -97,21 +108,30 @@ impl MixpanelClient {
     /// Stops at the first request that fails; requests before it stay
     /// delivered.
     pub async fn send(&self, mut events: Vec<WireEvent>) -> Result<(), SendError> {
+        if let Some(until) = *self.quiet_until.lock().expect("quiet_until lock")
+            && Instant::now() < until
+        {
+            return Err(SendError::Unreachable(
+                "Mixpanel API asked to wait before the next send".to_owned(),
+            ));
+        }
         for event in &mut events {
             let properties = &mut event.properties;
             properties.insert("token".to_owned(), Value::from(self.token.as_str()));
             properties.insert("mp_lib".to_owned(), Value::from(LIB));
             properties.insert("$lib_version".to_owned(), Value::from(LIB_VERSION));
         }
+        let deadline = Instant::now() + SEND_TIMEOUT;
         for chunk in events.chunks(CHUNK) {
             let json = serde_json::to_string(chunk)
                 .map_err(|err| SendError::Refused(format!("JSON serialization error: {err}")))?;
-            self.post(format!("data={}", STANDARD.encode(json))).await?;
+            self.post(format!("data={}", STANDARD.encode(json)), deadline)
+                .await?;
         }
         Ok(())
     }
 
-    async fn post(&self, body: String) -> Result<(), SendError> {
+    async fn post(&self, body: String, deadline: Instant) -> Result<(), SendError> {
         let mut retries = 0;
         loop {
             let (message, wait) = match self.post_once(body.clone()).await {
@@ -120,14 +140,31 @@ impl MixpanelClient {
                 Err(Failure::Done(err)) => (err.to_string(), None),
                 Err(Failure::Retry { message, wait }) => (message, wait),
             };
+            let left = deadline.saturating_duration_since(Instant::now());
+            // A wait the API named and we will not take holds later sends.
+            if let Some(wait) = wait
+                && (retries == MAX_RETRIES || wait > left)
+            {
+                *self.quiet_until.lock().expect("quiet_until lock") =
+                    Instant::now().checked_add(wait);
+            }
             // Once the retries are spent, any failure ends the send this way.
             if retries == MAX_RETRIES {
                 return Err(SendError::Unreachable(format!(
                     "Max retries reached: Failed after {retries} retries. Last error: {message}"
                 )));
             }
-            let backoff = (BACKOFF_BASE * 2u32.pow(retries)).min(BACKOFF_CAP);
-            tokio::time::sleep(wait.unwrap_or(backoff)).await;
+            let wait = match wait {
+                // Waiting would run past the send's time limit; end now.
+                Some(wait) if wait > left => {
+                    return Err(SendError::Unreachable(format!(
+                        "{message}; longer than the send has left"
+                    )));
+                }
+                Some(wait) => wait,
+                None => BACKOFF_BASE * 2u32.pow(retries),
+            };
+            tokio::time::sleep(wait).await;
             retries += 1;
         }
     }
@@ -205,16 +242,18 @@ impl MixpanelClient {
     }
 }
 
-/// A request that got no answer is retried only when it never connected or
-/// timed out.
+/// A request that got no answer is retried. A request we could not build is
+/// our bug; a redirect loop got answers. Neither is retried.
 fn http_failure(err: &reqwest::Error) -> Failure {
     let message = format!("HTTP request error: {err}");
-    if err.is_connect() || err.is_timeout() {
+    if err.is_builder() {
+        Failure::Done(SendError::Refused(message))
+    } else if err.is_redirect() {
+        Failure::Done(SendError::Unreachable(message))
+    } else {
         Failure::Retry {
             message,
             wait: None,
         }
-    } else {
-        Failure::Done(SendError::Unreachable(message))
     }
 }

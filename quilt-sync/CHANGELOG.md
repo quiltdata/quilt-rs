@@ -34,6 +34,8 @@
 - The update check reads the update feed directly, so a browser tab sees new versions too (<https://github.com/quiltdata/quilt-rs/pull/1279>)
 - `QUILT_DOMAIN` moves QuiltSync's data folder, as it moves the `quilt` CLI's domain (<https://github.com/quiltdata/quilt-rs/pull/1279>)
 - Under the hood, every command is listed once and the window reaches them all through one Tauri command; what only the desktop can do goes through one interface. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1265>)
+- Usage analytics report the QuiltSync version (<https://github.com/quiltdata/quilt-rs/pull/1286>)
+- QuiltSync makes all its HTTPS connections with one TLS library, and on Linux no longer uses OpenSSL (<https://github.com/quiltdata/quilt-rs/pull/1288>)
 
 ### Fixed
 
