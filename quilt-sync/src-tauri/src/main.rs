@@ -50,6 +50,7 @@ fn attach_console() {}
 /// The dialog is shown once setup returns: on Linux it needs the event loop
 /// that setup runs on.
 fn cannot_start(err: &engine::Error) {
+    attach_console();
     eprintln!("QuiltSync couldn't start: {err}");
     let shown = rfd::AsyncMessageDialog::new()
         .set_level(rfd::MessageLevel::Error)
