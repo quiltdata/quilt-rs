@@ -21,6 +21,10 @@
 
 ## [v0.26.2-dev]
 
+### Added
+
+- On Windows, when links from the Quilt catalog open another program, QuiltSync says so on its main page and how to fix it (<https://github.com/quiltdata/quilt-rs/pull/1293>)
+
 ### Changed
 
 - Usage analytics report the QuiltSync version (<https://github.com/quiltdata/quilt-rs/pull/1286>)
