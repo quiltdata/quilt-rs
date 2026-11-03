@@ -478,6 +478,8 @@ mod tests {
             hash: "abc123".to_string(),
             message: Some("Mine".into()),
             obtained_at: 1_758_500_000_000.0,
+            meta: None,
+            workflow: None,
         }
     }
 

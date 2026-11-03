@@ -3,7 +3,8 @@
 //! The bucket and its catalog, one current revision, the revisions this copy
 //! holds, loaded when their popover opens, and what this copy keeps. This is
 //! the pane's ordinary mode; the page swaps it whole for `resolve.rs`'s
-//! `ResolvePane` while the resolve mode is open.
+//! `ResolvePane` while the resolve mode is open, and for `revision_pane.rs`'s
+//! `RevisionPane` while the revision mode is.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -63,6 +64,10 @@ pub fn CurrentRevisionPane(
     /// computer's AWS credentials.
     #[prop(default = None)]
     catalog: Option<String>,
+    /// The revision mode's address, which the *Revision* summary links to.
+    /// `None` draws the summary as plain text.
+    #[prop(optional, into)]
+    revision_href: Option<String>,
 ) -> impl IntoView {
     let (keeping, size) = (data.keeping, data.size);
     let bucket = data.bucket.filter(|bucket| !bucket.is_empty());
@@ -156,10 +161,7 @@ pub fn CurrentRevisionPane(
                     }
                         .into_any()
                 >
-                    <RevisionRow
-                        message=data.revision.message.unwrap_or_default()
-                        at=data.revision.obtained_at
-                    />
+                    {revision_summary(data.revision, revision_href)}
                 </PaneSection>
                 <KeepingSection
                     namespace=namespace.get_value()
@@ -172,6 +174,83 @@ pub fn CurrentRevisionPane(
             // Beside the popover, not in it: see `old_revisions`.
             {remover.map(old_revisions::dialog)}
         </aside>
+    }
+}
+
+/// How many metadata lines the *Revision* section shows before *N more fields*.
+const PREVIEW_LINES: usize = 3;
+
+/// The *Revision* section's metadata preview: a line per top-level field, at
+/// most [`PREVIEW_LINES`], and how many fields are left. Metadata that is not
+/// an object is one line.
+#[derive(Debug, PartialEq)]
+pub struct MetadataLines {
+    pub lines: Vec<String>,
+    pub more: usize,
+}
+
+impl MetadataLines {
+    #[must_use]
+    pub fn of(meta: &serde_json::Value) -> Self {
+        let serde_json::Value::Object(fields) = meta else {
+            return Self {
+                lines: vec![meta.to_string()],
+                more: 0,
+            };
+        };
+        let lines = fields
+            .iter()
+            .take(PREVIEW_LINES)
+            .map(|(key, value)| match value {
+                serde_json::Value::String(text) => format!("{key}: {text}"),
+                other => format!("{key}: {other}"),
+            })
+            .collect();
+        Self {
+            lines,
+            more: fields.len().saturating_sub(PREVIEW_LINES),
+        }
+    }
+}
+
+/// The message, the time and the metadata preview, as one link into the
+/// revision mode when there is an address for it.
+fn revision_summary(
+    revision: commands::CurrentRevisionData,
+    href: Option<String>,
+) -> impl IntoView + use<> {
+    let preview = match revision.meta.as_ref().map(MetadataLines::of) {
+        None => view! { <span class=style::muted>"No metadata"</span> }.into_any(),
+        Some(MetadataLines { lines, more }) => view! {
+            <ul class=style::preview>
+                {lines
+                    .into_iter()
+                    .map(|line| {
+                        let title = line.clone();
+                        view! { <li class=style::value title=title>{line}</li> }
+                    })
+                    .collect_view()}
+                {(more > 0)
+                    .then(|| {
+                        let fields = if more == 1 { "field" } else { "fields" };
+                        view! { <li class=style::muted>{format!("{more} more {fields}")}</li> }
+                    })}
+            </ul>
+        }
+        .into_any(),
+    };
+    let body = view! {
+        <RevisionRow message=revision.message.unwrap_or_default() at=revision.obtained_at />
+        {preview}
+    };
+    match href {
+        Some(href) => view! {
+            <a class=style::summary href=href title="Show this revision">
+                {body}
+            </a>
+        }
+        .into_any(),
+        None => view! { <div class=style::summary_text>{body}</div> }.into_any(),
     }
 }
 
@@ -328,6 +407,8 @@ mod tests {
                 hash: "abc123".to_string(),
                 message: message.map(ToString::to_string),
                 obtained_at: 1_758_500_000_000.0,
+                meta: None,
+                workflow: None,
             },
             bucket: bucket.map(ToString::to_string),
             revision_count,
@@ -1132,6 +1213,67 @@ mod tests {
         button.click();
         leptos::task::tick().await;
         assert!(w.dialogs.bucket.get_untracked(), "the dialog opens");
+    }
+
+    #[test]
+    fn the_preview_shows_three_fields_then_counts_the_rest() {
+        let meta = serde_json::json!({"a": "x", "b": 2, "c": [1], "d": null, "e": true});
+        assert_eq!(
+            MetadataLines::of(&meta),
+            MetadataLines {
+                lines: vec!["a: x".to_string(), "b: 2".to_string(), "c: [1]".to_string()],
+                more: 2,
+            }
+        );
+        assert_eq!(
+            MetadataLines::of(&serde_json::json!([1, 2])),
+            MetadataLines {
+                lines: vec!["[1,2]".to_string()],
+                more: 0,
+            }
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn the_summary_previews_the_metadata_and_says_when_there_is_none() {
+        let mut data = data(Some("Initial upload"), Some("quilt-lab-plates"), 1);
+        data.revision.meta = Some(serde_json::json!({"a": 1, "b": 2, "c": 3, "d": 4}));
+        let el = mount(move || {
+            view! {
+                <CurrentRevisionPane
+                    data=data.clone()
+                    namespace="team/dataset"
+                    fetch=never
+                    open_catalog=ignore()
+                    w=Wiring::new()
+                    commands=idle_commands()
+                    revision_href="/revision"
+                />
+            }
+        });
+        let link = el
+            .query_selector("a[href='/revision']")
+            .unwrap()
+            .expect("a link");
+        let text = link.text_content().unwrap_or_default();
+        assert!(
+            text.contains("Initial upload") && text.contains("a: 1"),
+            "{text}"
+        );
+        assert!(
+            text.contains("1 more field") && !text.contains("d: 4"),
+            "{text}"
+        );
+
+        let plain = pane(1, never, ignore());
+        assert!(
+            plain
+                .text_content()
+                .unwrap_or_default()
+                .contains("No metadata"),
+            "{}",
+            plain.inner_html()
+        );
     }
 
     #[wasm_bindgen_test]

@@ -555,6 +555,8 @@ fn resolve(exit: &str, resolve: ResolveData) -> AnyView {
                 hash: "e7f2a9".to_string(),
                 message: Some("Re-run plate 7 with the corrected layout".to_string()),
                 obtained_at: ago(0.4 * HOUR),
+                meta: None,
+                workflow: None,
             }
             resolve=resolve
             marks=Signal::stored(Some(Arc::new(differing)))
@@ -639,6 +641,8 @@ fn live(bucket: Option<&str>, catalog: Option<&str>) -> AnyView {
                     hash: "b5e013".to_string(),
                     message: Some("Add intake folder-upload note".to_string()),
                     obtained_at: ago(2.0 * HOUR),
+                    meta: Some(serde_json::json!({"plate": 7, "assay": "ELISA", "operator": "a user", "run": 3})),
+                    workflow: None,
                 },
                 bucket: bucket.map(ToString::to_string),
                 revision_count: 4,

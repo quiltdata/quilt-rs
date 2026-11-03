@@ -684,10 +684,15 @@ pub struct KeepingData {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CurrentRevisionData {
-    /// Top hash of the revision's manifest: the mismatch band's hover text.
+    /// Top hash of the revision's manifest: the mismatch band's hover text and
+    /// the revision mode's address.
     pub hash: String,
     pub message: Option<String>,
     pub obtained_at: f64,
+    /// The user metadata; `None` when it has none, `{}` included.
+    pub meta: Option<serde_json::Value>,
+    /// The workflow's id, when the revision names one.
+    pub workflow: Option<String>,
 }
 
 /// `History`: the rows, and the footer's figure. Mirrors

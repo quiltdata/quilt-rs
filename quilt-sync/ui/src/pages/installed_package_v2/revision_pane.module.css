@@ -1,0 +1,47 @@
+/* The same column as the ordinary pane (`context_pane.module.css`), since
+ * the mode swaps it whole. */
+.root {
+  width: 320px;
+  flex: none;
+}
+
+@container (max-width: 800px) {
+  .root {
+    width: 100%;
+  }
+}
+
+.muted {
+  color: var(--q-fgColor-muted);
+  font-size: var(--q-text-body);
+}
+
+/* Label column fits its words; the value takes the rest. */
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  column-gap: var(--q-space-3);
+  row-gap: var(--q-space-2);
+  align-self: stretch;
+  margin: 0;
+  font-size: var(--q-text-body);
+}
+
+.facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.line {
+  display: flex;
+  align-items: center;
+  gap: var(--q-space-2);
+}
+
+/* The whole hash, broken anywhere: it has no words to break at. */
+.hash {
+  min-width: 0;
+  font-family: var(--q-font-mono);
+  word-break: break-all;
+}

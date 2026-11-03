@@ -19,6 +19,12 @@
 <!-- markdownlint-disable MD013 -->
 # Changelog
 
+## [v0.52.0-dev]
+
+### Added
+
+- **Breaking:** `flow::Revision` has two new fields, `meta` (the revision's user metadata, `None` when it has none) and `workflow` (its workflow's id), filled by `InstalledPackage::current_revision` and `list_revisions` (PR_LINK)
+
 ## [v0.51.0] - 2026-10-29
 
 ### Changed

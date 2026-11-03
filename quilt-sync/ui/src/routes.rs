@@ -36,6 +36,13 @@ pub fn resolve_href(namespace: &Namespace) -> String {
     format!("{}&resolve=1", package_page_href(namespace))
 }
 
+/// The package screen with the revision mode open on `hash`. The plain
+/// address plus `revision=<hash>`, so leaving is exactly dropping the parameter.
+pub fn revision_href(namespace: &Namespace, hash: &str) -> String {
+    let hash = urlencoding::encode(hash);
+    format!("{}&revision={hash}", package_page_href(namespace))
+}
+
 /// What a deep link found out about the package it landed on, when it found
 /// anything. `pages/remote_package.rs` writes it into the package address and
 /// the package page reads it back.
