@@ -9,5 +9,14 @@
     "customManagers:githubActionsVersions",
     "replacements:all",
     "workarounds:all"
+  ],
+  "packageRules": [
+    {
+      "description": "One weekly PR for minor and patch Rust crate updates. Majors stay separate, and security fixes still come right away.",
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "Rust crates (minor and patch)",
+      "schedule": ["before 6am on monday"]
+    }
   ]
 }
