@@ -2506,6 +2506,28 @@ mod tests {
         assert!(seen.lock().unwrap().is_empty());
     }
 
+    /// The revision mode reads publication only. The mock has no usage read,
+    /// so asking for one would fail the test.
+    #[tokio::test]
+    async fn an_unmeasured_history_skips_the_usage_scan() {
+        let mut m = crate::model::mocks::create();
+        m.expect_get_installed_package()
+            .returning(|ns| Ok(Some(make_installed_package(ns.clone()))));
+        m.expect_get_installed_package_lineage()
+            .returning(|_| Ok(removal_lineage()));
+        m.expect_get_installed_package_revision_history()
+            .returning(|_, _| Ok(removal_entries()));
+        let ns: quilt_uri::Namespace = NS.try_into().unwrap();
+
+        let history = get_revision_history_from_model(&m, &ns, false)
+            .await
+            .expect("the rows");
+
+        assert_eq!(history.rows.len(), 5);
+        assert!(history.rows.iter().all(|row| row.frees.is_none()));
+        assert_eq!(history.removable_frees, None);
+    }
+
     #[tokio::test]
     async fn a_missing_package_is_an_error_not_an_empty_history() {
         let mut m = crate::model::mocks::create();
