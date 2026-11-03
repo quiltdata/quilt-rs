@@ -420,6 +420,21 @@ pub enum Design {
     V2,
 }
 
+impl Design {
+    /// The design drawn for this saved one: headless always draws v2, whose
+    /// pages type a folder and sign in by code. v1's need the desktop's folder
+    /// picker and a browser sign-in that headless cannot finish.
+    #[must_use]
+    pub fn drawn(self) -> Self {
+        use leptos::prelude::GetUntracked;
+        if engine::headless().get_untracked() {
+            Self::V2
+        } else {
+            self
+        }
+    }
+}
+
 /// One built-in ignore rule, its place in the popup, and whether it is on.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -2455,6 +2470,31 @@ mod tests {
         ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
     use crate::kit::RowDownloads;
+
+    /// Headless draws v2 whatever design is saved; a desktop engine draws
+    /// the saved one.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn headless_draws_v2_over_a_saved_v1() {
+        use crate::engine::fake::{FakeEngine, ask};
+        use crate::test_support::sleep_ms;
+
+        let engine = FakeEngine::install();
+        let _asked = ask("get_toasts");
+        sleep_ms(0).await;
+        engine.hello();
+        sleep_ms(0).await;
+        assert_eq!(super::Design::V1.drawn(), super::Design::V1);
+
+        let engine = FakeEngine::install();
+        engine.as_headless();
+        let _asked = ask("get_toasts");
+        sleep_ms(0).await;
+        engine.hello();
+        sleep_ms(0).await;
+        assert_eq!(super::Design::V1.drawn(), super::Design::V2);
+        // Later tests start from an engine that has said nothing yet.
+        FakeEngine::install();
+    }
 
     /// On headless a web link opens from the tab and never reaches the
     /// engine, whose machine is seldom the reader's; a local folder still

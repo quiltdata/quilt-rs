@@ -333,11 +333,11 @@ fn loading_actions() -> AnyView {
 }
 
 /// Whether the app draws v2, given the settings fetch's outcome: yes unless the
-/// reader chose the classic design.
+/// reader chose the classic design on a desktop engine.
 ///
 /// `Err` — the fetch failed — is v2, the default.
 fn design_preview(settings: Result<&commands::SettingsData, &str>) -> bool {
-    settings.map_or(true, |data| data.design == commands::Design::V2)
+    settings.map_or(true, |data| data.design.drawn() == commands::Design::V2)
 }
 
 #[cfg(test)]

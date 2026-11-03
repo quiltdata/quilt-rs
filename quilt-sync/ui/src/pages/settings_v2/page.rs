@@ -58,6 +58,7 @@ use crate::commands::{
     self, AccountHostData, AutosyncPatch, ChangelogEntry, Design, FreedSpace, LogEnv,
     PublishSettingsData, SettingsData, TaskSettings, TaskSettingsData,
 };
+use crate::engine;
 use crate::kit::{
     Button, ButtonVariant, Card, Dialog, HostRowSkeleton, LoadFailure, PageLayout,
     ToggleRowSkeleton,
@@ -1366,6 +1367,7 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
                     <ExperimentalCard
                         design_preview=fields.design_preview
                         agent_tasks=fields.agent_tasks
+                        headless=engine::headless()
                         saved=just_saved
                         pending=pending
                     />
@@ -2254,6 +2256,24 @@ mod tests {
         toggle(&el, WATCH).click();
         sleep_ms(50).await;
         assert_eq!(alert(&el), None, "markup was {}", el.inner_html());
+    }
+
+    /// Headless always draws the new design, so it offers no choice.
+    #[wasm_bindgen_test]
+    async fn headless_has_no_design_choice() {
+        use crate::engine::fake::{FakeEngine, ask};
+
+        let engine = FakeEngine::install();
+        engine.as_headless();
+        let _asked = ask("get_toasts");
+        sleep_ms(0).await;
+        engine.hello();
+        let el = page(vec![settings()]).await;
+        let words = el.text_content().unwrap_or_default();
+        // Later tests start from an engine that has said nothing yet.
+        FakeEngine::install();
+        assert!(words.contains("Agent tasks"), "{words}");
+        assert!(!words.contains(PREVIEW), "{words}");
     }
 
     /// Turning *New design* off saves the classic design and leaves for `/`.
