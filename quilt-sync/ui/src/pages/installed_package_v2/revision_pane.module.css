@@ -1,13 +1,14 @@
 /* Wider than the ordinary pane (`context_pane.module.css`), which it swaps
- * whole: a mode holds more than the facts beside the files. It widens on
- * opening only, not on the re-reads that rebuild it. */
+ * whole: a mode holds more than the facts beside the files. At most half
+ * the row, so the files keep room just above the narrow layout. It widens
+ * on opening only, not on the re-reads that rebuild it. */
 .root {
-  width: 400px;
+  width: min(640px, 50%);
   flex: none;
 }
 
 .opening {
-  animation: revision-pane-widen 160ms ease-out;
+  animation: revision-pane-widen 200ms ease-out;
 }
 
 @keyframes revision-pane-widen {
