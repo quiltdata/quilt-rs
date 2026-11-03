@@ -1533,7 +1533,7 @@ fn link_handler_banner(handlers: &[ForeignHandler]) -> Option<AnyView> {
     Some(view! { <Banner variant=BannerVariant::Warning>{message}</Banner> }.into_any())
 }
 
-fn link_handler_message(handlers: &[ForeignHandler]) -> String {
+pub(crate) fn link_handler_message(handlers: &[ForeignHandler]) -> String {
     let opens = handlers
         .iter()
         .map(|handler| {
