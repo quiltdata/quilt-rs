@@ -610,8 +610,11 @@ fn normalized_address(
 ) -> Option<String> {
     let namespace = &answered.header.namespace;
     let resolve_missing = asked && answered.context.resolve.is_none();
-    // A stale link, or a commit or pull that moved the revision.
-    let revision_missing = revision.is_some_and(|hash| hash != answered.context.revision.hash);
+    // A stale link, or a commit or pull that moved the revision. Open Resolve
+    // wins, so its address stays whatever `revision` says.
+    let resolve_open = asked && answered.context.resolve.is_some();
+    let revision_missing =
+        !resolve_open && revision.is_some_and(|hash| hash != answered.context.revision.hash);
     (namespace.to_string() == showing && (resolve_missing || revision_missing))
         .then(|| routes::keeping_outcome(routes::package_page_href(namespace), outcome))
 }
@@ -776,7 +779,7 @@ fn revision_mode(
             namespace=ns.clone()
             revision=revision
             back_href=carrying(routes::package_page_href(ns))
-            fetch=context_pane::fetch_revision_history
+            fetch=context_pane::fetch_publication
             open_catalog=open_catalog
             w=w
         />
@@ -1356,7 +1359,7 @@ fn PackageScreen(
     let shown = resolve::Shown::default();
     provide_context(shown);
     Effect::new(move || {
-        if !asked.get() {
+        if !asked.get() && revision.get().is_none() {
             shown.0.set_value(false);
         }
     });
@@ -2649,6 +2652,20 @@ mod tests {
         assert_eq!(
             normalized_address(false, Some("older"), "team/dataset", &page_data(), None).as_deref(),
             Some(PLAIN)
+        );
+    }
+
+    #[test]
+    fn open_resolve_keeps_its_address_whatever_revision_says() {
+        assert_eq!(
+            normalized_address(
+                true,
+                Some("older"),
+                "team/dataset",
+                &diverged(compared()),
+                None
+            ),
+            None
         );
     }
 

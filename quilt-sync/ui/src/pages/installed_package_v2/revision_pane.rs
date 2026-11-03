@@ -106,6 +106,58 @@ pub fn RevisionPane(
         }
     };
 
+    let metadata = match meta {
+        Some(value) => view! { <JsonDisplay value=value /> }.into_any(),
+        None => view! { <span class=style::muted>"No metadata"</span> }.into_any(),
+    };
+
+    let (pane, opening) = super::resolve::reveal_on_opening();
+    let class = if opening {
+        format!("{} {}", style::root, style::opening)
+    } else {
+        style::root.to_string()
+    };
+    view! {
+        <aside aria-label="About this package" class=class node_ref=pane>
+            <Card label="About this package">
+                // Leaving replaces the mode's entry, so Back skips it.
+                <BackLink href=back_href label=namespace.to_string() replace=true />
+                <PaneSection label="Revision">
+                    <RevisionRow message=message.unwrap_or_default() at=obtained_at />
+                    <dl class=style::facts>
+                        <dt class=style::muted>"Hash"</dt>
+                        <dd>
+                            <div class=style::line>
+                                <code class=style::hash>{hash}</code>
+                                <Button on_click=on_copy>
+                                    {move || if copied.get() { "Copied" } else { "Copy" }}
+                                </Button>
+                            </div>
+                        </dd>
+                        <dt class=style::muted>"Published"</dt>
+                        {published_line(publication, open_catalog, retry)}
+                        {workflow
+                            .map(|workflow| {
+                                view! {
+                                    <dt class=style::muted>"Workflow"</dt>
+                                    <dd>{workflow}</dd>
+                                }
+                            })}
+                    </dl>
+                </PaneSection>
+                <PaneSection label="Metadata">{metadata}</PaneSection>
+            </Card>
+        </aside>
+    }
+}
+
+/// The *Published* value: a live region, so the answer and a retry's are
+/// announced, as the History popover's are.
+fn published_line(
+    publication: RwSignal<Publication>,
+    open_catalog: Callback<String>,
+    retry: Callback<()>,
+) -> impl IntoView {
     let published = move || match publication.get() {
         Publication::Loading => view! { <SkeletonText width="40%" /> }.into_any(),
         Publication::Published { catalog_url } => view! {
@@ -128,43 +180,15 @@ pub fn RevisionPane(
         }
         .into_any(),
     };
-
-    let metadata = match meta {
-        Some(value) => view! { <JsonDisplay value=value /> }.into_any(),
-        None => view! { <span class=style::muted>"No metadata"</span> }.into_any(),
-    };
-
     view! {
-        <aside aria-label="About this package" class=style::root>
-            <Card label="About this package">
-                // Leaving replaces the mode's entry, so Back skips it.
-                <BackLink href=back_href label=namespace.to_string() replace=true />
-                <PaneSection label="Revision">
-                    <RevisionRow message=message.unwrap_or_default() at=obtained_at />
-                    <dl class=style::facts>
-                        <dt class=style::muted>"Hash"</dt>
-                        <dd>
-                            <div class=style::line>
-                                <code class=style::hash>{hash}</code>
-                                <Button on_click=on_copy>
-                                    {move || if copied.get() { "Copied" } else { "Copy" }}
-                                </Button>
-                            </div>
-                        </dd>
-                        <dt class=style::muted>"Published"</dt>
-                        <dd>{published}</dd>
-                        {workflow
-                            .map(|workflow| {
-                                view! {
-                                    <dt class=style::muted>"Workflow"</dt>
-                                    <dd>{workflow}</dd>
-                                }
-                            })}
-                    </dl>
-                </PaneSection>
-                <PaneSection label="Metadata">{metadata}</PaneSection>
-            </Card>
-        </aside>
+        <dd
+            aria-live="polite"
+            aria-busy=move || {
+                if publication.with(|p| *p == Publication::Loading) { "true" } else { "false" }
+            }
+        >
+            {published}
+        </dd>
     }
 }
 
@@ -301,5 +325,10 @@ mod tests {
             text.contains("Could not check whether it is published."),
             "{text}"
         );
+        let live = el
+            .query_selector("[aria-live='polite']")
+            .unwrap()
+            .expect("a live region");
+        assert_eq!(live.get_attribute("aria-busy").as_deref(), Some("false"));
     }
 }

@@ -818,19 +818,23 @@ fn revision_history_rows(
 pub async fn get_revision_history(
     m: tauri::State<'_, model::Model>,
     namespace: String,
+    measure: bool,
 ) -> Result<RevisionHistoryData, String> {
     let namespace: quilt_uri::Namespace = namespace
         .try_into()
         .map_err(|e: quilt_uri::UriError| e.to_string())?;
 
-    get_revision_history_from_model(&*m, &namespace)
+    get_revision_history_from_model(&*m, &namespace, measure)
         .await
         .map_err(|e| e.to_frontend_string())
 }
 
+/// `measure: false` skips what removal frees, which reads every installed
+/// package's manifests: the revision mode needs only publication.
 async fn get_revision_history_from_model(
     m: &impl model::QuiltModel,
     namespace: &quilt_uri::Namespace,
+    measure: bool,
 ) -> Result<RevisionHistoryData, Error> {
     let installed = m.get_installed_package(namespace).await?.ok_or_else(|| {
         Error::from(quilt::InstallPackageError::NotInstalled(
@@ -844,12 +848,16 @@ async fn get_revision_history_from_model(
         .await?;
     // A manifest anywhere that cannot be read stops the measure, as it would
     // stop the removal: the list still draws, offering nothing to remove.
-    let usage = match m.get_installed_package_revision_usage(&installed).await {
-        Ok(usage) => Some(usage),
-        Err(err) => {
-            warn!("Could not measure what removing revisions of {namespace} frees: {err}");
-            None
+    let usage = if measure {
+        match m.get_installed_package_revision_usage(&installed).await {
+            Ok(usage) => Some(usage),
+            Err(err) => {
+                warn!("Could not measure what removing revisions of {namespace} frees: {err}");
+                None
+            }
         }
+    } else {
+        None
     };
     let frees = usage
         .as_ref()
@@ -2503,7 +2511,7 @@ mod tests {
         m.expect_get_installed_package().returning(|_| Ok(None));
         let ns: quilt_uri::Namespace = NS.try_into().unwrap();
 
-        let err = get_revision_history_from_model(&m, &ns)
+        let err = get_revision_history_from_model(&m, &ns, true)
             .await
             .expect_err("an absent package has no history to be empty");
 

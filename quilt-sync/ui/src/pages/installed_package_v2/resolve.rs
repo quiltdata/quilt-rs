@@ -108,16 +108,18 @@ impl ResolveCommands {
     }
 }
 
-/// Whether the resolve pane is up, so only the one the reader opens moves the
-/// page. The page provides it; a pane without it counts as opening.
+/// Whether a mode's pane is up, Resolve's or the revision's, so only the one
+/// the reader opens moves the page and widens. The page provides it; a pane
+/// without it counts as opening.
 #[derive(Clone, Copy, Default)]
 pub(super) struct Shown(pub(super) StoredValue<bool>);
 
 /// The pane's `aside`, scrolled into view when the reader opens the mode.
 /// Narrow, the pane sits above the files, so a reader deep in the list who
 /// opens it from the held header would not see it. Only on opening: a pane
-/// the watcher's news rebuilds leaves the reader where they are.
-fn reveal_on_opening() -> NodeRef<leptos::html::Aside> {
+/// the watcher's news rebuilds leaves the reader where they are. Also says
+/// whether this is the opening, for the pane's widening.
+pub(super) fn reveal_on_opening() -> (NodeRef<leptos::html::Aside>, bool) {
     let pane = NodeRef::<leptos::html::Aside>::new();
     let shown = use_context::<Shown>();
     let opening = shown.is_none_or(|Shown(up)| !up.get_value());
@@ -129,7 +131,7 @@ fn reveal_on_opening() -> NodeRef<leptos::html::Aside> {
             super::reveal(&pane);
         }
     });
-    pane
+    (pane, opening)
 }
 
 /// The pane's other mode: this copy's revision beside the published one, and
@@ -216,10 +218,15 @@ pub fn ResolvePane(
     let certify_hint = unique_id("resolve-hint");
     let replace_hint = unique_id("resolve-hint");
 
-    let pane = reveal_on_opening();
+    let (pane, opening) = reveal_on_opening();
+    let class = if opening {
+        format!("{} {}", style::root, style::opening)
+    } else {
+        style::root.to_string()
+    };
 
     view! {
-        <aside aria-label="About this package" class=style::root node_ref=pane>
+        <aside aria-label="About this package" class=class node_ref=pane>
             <Card label="About this package">
                 // Every way out of the mode replaces its entry, so Back skips it;
                 // checked by `the_back_link_leaves_the_mode_in_place`.

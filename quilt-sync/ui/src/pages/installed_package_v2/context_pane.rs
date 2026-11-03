@@ -35,7 +35,14 @@ pub type RevisionHistoryFetch =
 pub(super) fn fetch_revision_history(
     namespace: String,
 ) -> Pin<Box<dyn Future<Output = Result<commands::RevisionHistoryData, String>>>> {
-    Box::pin(commands::get_revision_history(namespace))
+    Box::pin(commands::get_revision_history(namespace, true))
+}
+
+/// The revision mode's fetch: the rows' publication, without the measure.
+pub(super) fn fetch_publication(
+    namespace: String,
+) -> Pin<Box<dyn Future<Output = Result<commands::RevisionHistoryData, String>>>> {
+    Box::pin(commands::get_revision_history(namespace, false))
 }
 
 /// The skeleton's bar widths, at the lengths messages actually have, so the

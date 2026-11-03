@@ -822,14 +822,20 @@ pub async fn get_package_page_data(namespace: String) -> Result<PackagePageData,
 }
 
 /// The revisions this copy holds, newest obtained first. Called when the
-/// context pane's popover opens, never on page load.
-pub async fn get_revision_history(namespace: String) -> Result<RevisionHistoryData, String> {
+/// context pane's popover or the revision mode opens, never on page load.
+/// `measure: false` leaves out what removal frees, which the revision mode
+/// does not draw and which reads every installed package's manifests.
+pub async fn get_revision_history(
+    namespace: String,
+    measure: bool,
+) -> Result<RevisionHistoryData, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         namespace: String,
+        measure: bool,
     }
-    tauri::invoke("get_revision_history", &Args { namespace }).await
+    tauri::invoke("get_revision_history", &Args { namespace, measure }).await
 }
 
 /// Remove these old revisions of an installed package, and the objects only
