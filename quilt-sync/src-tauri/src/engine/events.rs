@@ -105,4 +105,16 @@ mod tests {
             ("autosync-changed".to_owned(), serde_json::Value::Null)
         );
     }
+
+    #[test]
+    fn a_plain_thread_spawns_on_the_runtime_set_last() {
+        let first = tokio::runtime::Runtime::new().unwrap();
+        set_runtime(first.handle().clone());
+        drop(first);
+        let second = tokio::runtime::Runtime::new().unwrap();
+        set_runtime(second.handle().clone());
+
+        let task = std::thread::spawn(|| spawn(async { 42 })).join().unwrap();
+        assert_eq!(second.block_on(task).unwrap(), 42);
+    }
 }

@@ -351,6 +351,8 @@ fn setup_takes_a_typed_folder_and_opens_the_main_page() {
             ))
             .first()
             .await?;
+        // The field starts with the default folder.
+        field.clear().await?;
         field
             .send_keys(quiltsync.home.display().to_string())
             .await?;
@@ -362,6 +364,7 @@ fn setup_takes_a_typed_folder_and_opens_the_main_page() {
 
         driver.query(text("No packages yet")).first().await?;
         wait_for_title(&driver, "QuiltSync").await?;
+        assert!(quiltsync.home.is_dir(), "setup made the typed folder");
         driver.quit().await
     });
 }
