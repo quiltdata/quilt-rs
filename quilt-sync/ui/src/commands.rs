@@ -2283,35 +2283,58 @@ pub async fn open_in_file_browser(
     engine::invoke("open_in_file_browser", &Args { namespace, uri }).await
 }
 
+/// Where [`open_in_web_browser`] opens a link.
+#[derive(Debug, PartialEq, Eq)]
+enum Opener {
+    /// The address bar, which hands a mail link to the mail app without
+    /// leaving the page, and needs no fresh click: it may come after a wait.
+    MailApp,
+    /// A new tab of this browser.
+    NewTab,
+    /// The engine, on its own machine.
+    Engine,
+}
+
+/// Headless's machine is seldom the reader's and may have no browser, so web
+/// and mail links open from this tab. A local folder still goes to the
+/// engine, as does everything off headless.
+fn opener(url: &str, headless: bool) -> Opener {
+    if !headless {
+        Opener::Engine
+    } else if url.starts_with("mailto:") {
+        Opener::MailApp
+    } else if url.starts_with("http://") || url.starts_with("https://") {
+        Opener::NewTab
+    } else {
+        Opener::Engine
+    }
+}
+
 pub async fn open_in_web_browser(url: String) -> Result<String, String> {
     use leptos::prelude::GetUntracked;
     #[derive(Serialize)]
     struct Args {
         url: String,
     }
-    // Headless's machine is seldom the reader's and may have no browser, so
-    // web and mail links open from this tab. A local folder still goes to the
-    // engine.
-    if engine::headless().get_untracked() {
-        let window = web_sys::window().ok_or("No window")?;
-        // The address bar hands a mail link to the mail app without leaving
-        // the page, and needs no fresh click: it may come after a wait.
-        if url.starts_with("mailto:") {
-            window
+    match opener(&url, engine::headless().get_untracked()) {
+        Opener::MailApp => {
+            web_sys::window()
+                .ok_or("No window")?
                 .location()
                 .set_href(&url)
                 .map_err(|_| "This browser didn't open the mail app.".to_owned())?;
-            return Ok("Opened in the mail app".to_owned());
+            Ok("Opened in the mail app".to_owned())
         }
         // No opener, so the new page can't steer this one.
-        if url.starts_with("http://") || url.starts_with("https://") {
-            window
+        Opener::NewTab => {
+            web_sys::window()
+                .ok_or("No window")?
                 .open_with_url_and_target_and_features(&url, "_blank", "noopener")
                 .map_err(|_| "This browser didn't open the link.".to_owned())?;
-            return Ok("Opened in this browser".to_owned());
+            Ok("Opened in this browser".to_owned())
         }
+        Opener::Engine => engine::invoke("open_in_web_browser", &Args { url }).await,
     }
-    engine::invoke("open_in_web_browser", &Args { url }).await
 }
 
 pub async fn open_in_default_application(
@@ -2434,6 +2457,28 @@ mod tests {
         ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
     use crate::kit::RowDownloads;
+
+    #[test]
+    fn headless_opens_mail_and_web_links_here_and_the_rest_on_the_engine() {
+        use super::{Opener, opener};
+        let cases = [
+            ("mailto:support@quilt.bio?subject=Hi", true, Opener::MailApp),
+            ("https://quilt.test/b/bucket", true, Opener::NewTab),
+            ("http://quilt.test/b/bucket", true, Opener::NewTab),
+            ("/tmp/logs", true, Opener::Engine),
+            ("C:\\Users\\a\\logs", true, Opener::Engine),
+            ("mailto:support@quilt.bio", false, Opener::Engine),
+            ("https://quilt.test/b/bucket", false, Opener::Engine),
+            ("/tmp/logs", false, Opener::Engine),
+        ];
+        for (url, headless, expected) in cases {
+            assert_eq!(
+                opener(url, headless),
+                expected,
+                "{url}, headless: {headless}"
+            );
+        }
+    }
 
     /// On headless a web link opens from the tab and never reaches the
     /// engine, whose machine is seldom the reader's; a local folder still
