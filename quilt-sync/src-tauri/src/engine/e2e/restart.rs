@@ -1,15 +1,14 @@
 //! Tests that stop the engine and start it again on the same folder.
 //!
 //! A restart frees its port for a moment, and an engine another test starts
-//! then could take it, so `just test e2e` runs these after the others, one at
-//! a time.
+//! then could take it, so each runs alone (see `.config/nextest.toml`).
 
 use super::*;
 
 #[test]
 fn an_open_page_reconnects_after_quiltsync_restarts() {
-    test(async {
-        let mut quiltsync = QuiltSync::start(true).await;
+    test(|base| async move {
+        let mut quiltsync = QuiltSync::start(&base, true).await;
         quiltsync.create_package("e2e/before").await;
         let driver = browser().await;
         driver.goto(quiltsync.url("/")).await?;
@@ -48,8 +47,8 @@ fn an_open_page_reconnects_after_quiltsync_restarts() {
 
 #[test]
 fn a_page_with_the_old_link_says_to_open_the_printed_one() {
-    test(async {
-        let mut quiltsync = QuiltSync::start(true).await;
+    test(|base| async move {
+        let mut quiltsync = QuiltSync::start(&base, true).await;
         let driver = browser().await;
         driver.goto(quiltsync.url("/")).await?;
         driver.query(text("No packages yet")).first().await?;

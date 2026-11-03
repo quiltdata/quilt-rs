@@ -169,7 +169,8 @@ where
 }
 
 /// Install the subscriber, with a filter per sink. An engine started again in
-/// the same process, as the browser tests do, keeps the first one.
+/// the same process, as the browser tests do, keeps the first one, which writes
+/// nothing to the log file once the first engine stops.
 ///
 /// **Each layer filters for itself.** A filter attached to the registry instead
 /// would be *global*: it drops events before any layer sees them, so a level chosen

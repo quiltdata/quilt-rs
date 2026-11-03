@@ -3,7 +3,7 @@
 //!
 //! Behind the `e2e` feature, since they need Chrome; `just test e2e` builds
 //! the UI the server embeds, then runs them. Each test runs in its own process
-//! (nextest), so a test may set `HOME`.
+//! (nextest), so a test may set `HOME` before it starts any threads.
 
 mod restart;
 
@@ -30,7 +30,6 @@ const NAMESPACE: &str = "e2e/first";
 
 /// An engine on throwaway folders, which it stops when dropped.
 struct QuiltSync {
-    _root: tempfile::TempDir,
     /// The data folder.
     domain: PathBuf,
     /// The folder packages live in.
@@ -49,20 +48,13 @@ struct Running {
 }
 
 impl QuiltSync {
-    /// Start an engine; `set_up` sets the home folder first, past Setup.
-    async fn start(set_up: bool) -> Self {
-        let root = tempfile::tempdir().expect("a temp folder");
-        // The engine reports resolved paths, and macOS's temp folder is a link.
-        let base = std::fs::canonicalize(root.path()).expect("the temp folder");
-        let user = base.join("user");
-        std::fs::create_dir(&user).expect("a home for the user");
-        // SAFETY: each test is its own process, and nothing else runs yet.
-        unsafe { std::env::set_var("HOME", &user) };
+    /// Start an engine in `base`; `set_up` sets the home folder first, past
+    /// Setup.
+    async fn start(base: &Path, set_up: bool) -> Self {
         let domain = base.join("domain");
         let running = off_runtime(|| run(&domain));
         let (origin, token) = address(&running.engine);
         let quiltsync = Self {
-            _root: root,
             domain,
             home: base.join("home"),
             running: Some(running),
@@ -191,13 +183,21 @@ async fn browser() -> WebDriver {
         .expect("Chrome over WebDriver")
 }
 
-/// The test's body, on a runtime the browser sessions use.
-fn test(body: impl Future<Output = WebDriverResult<()>>) {
+/// The test's body, on a runtime the browser sessions use. `body` gets a
+/// throwaway folder to start the engine in; its `user` folder is `HOME`.
+fn test<F: Future<Output = WebDriverResult<()>>>(body: impl FnOnce(PathBuf) -> F) {
+    let root = tempfile::tempdir().expect("a temp folder");
+    // The engine reports resolved paths, and macOS's temp folder is a link.
+    let base = std::fs::canonicalize(root.path()).expect("the temp folder");
+    let user = base.join("user");
+    std::fs::create_dir(&user).expect("a home for the user");
+    // SAFETY: each test is its own process, and no thread is started yet.
+    unsafe { std::env::set_var("HOME", &user) };
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("a runtime")
-        .block_on(body)
+        .block_on(body(base))
         .expect("the test's browser calls");
 }
 
@@ -268,7 +268,13 @@ async fn write_until_listed(
         })
         .await
         .expect("the package's folder");
+    // The list is drawn before the write, so a row can only come from the
+    // watcher's event.
     for driver in drivers {
+        driver
+            .query(text("This package has no files yet."))
+            .first()
+            .await?;
         mark(driver).await?;
     }
     let file = text(name);
@@ -294,8 +300,8 @@ async fn write_until_listed(
 
 #[test]
 fn setup_takes_a_typed_folder_and_opens_the_main_page() {
-    test(async {
-        let quiltsync = QuiltSync::start(false).await;
+    test(|base| async move {
+        let quiltsync = QuiltSync::start(&base, false).await;
         let driver = browser().await;
         driver.goto(quiltsync.url("/")).await?;
         driver
@@ -333,8 +339,8 @@ fn setup_takes_a_typed_folder_and_opens_the_main_page() {
 
 #[test]
 fn a_package_made_in_the_dialog_opens_and_a_new_file_appears_on_its_page() {
-    test(async {
-        let quiltsync = QuiltSync::start(true).await;
+    test(|base| async move {
+        let quiltsync = QuiltSync::start(&base, true).await;
         let driver = browser().await;
         driver.goto(quiltsync.url("/")).await?;
         click(&driver, button("Create package")).await?;
@@ -367,8 +373,8 @@ fn a_package_made_in_the_dialog_opens_and_a_new_file_appears_on_its_page() {
 
 #[test]
 fn two_tabs_on_one_package_both_see_a_new_file() {
-    test(async {
-        let quiltsync = QuiltSync::start(true).await;
+    test(|base| async move {
+        let quiltsync = QuiltSync::start(&base, true).await;
         quiltsync.create_package(NAMESPACE).await;
         let page = quiltsync.url(&format!("/installed-package?namespace={NAMESPACE}"));
 

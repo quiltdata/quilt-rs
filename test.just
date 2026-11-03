@@ -35,13 +35,11 @@ doc:
 frontend:
     WASM_BINDGEN_TEST_TIMEOUT=180 CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner cargo test -p quilt-sync-ui --target wasm32-unknown-unknown
 
-# The engine embeds the UI from `ui/dist`, so it is built first. A restart
-# frees its port for a moment, and another test's engine could take it, so the
-# restart tests run after the others, one at a time.
+# The engine embeds the UI from `ui/dist`, so it is built first. The restart
+# tests each run alone (see `.config/nextest.toml`).
 #
 # Run the browser tests against headless QuiltSync in Chrome; arguments go to nextest
 [positional-arguments]
 e2e *args:
     cd quilt-sync/ui && trunk build
-    cargo nextest run -p quilt-sync --features e2e -E 'test(/engine::e2e::/) - test(/engine::e2e::restart::/)' "$@"
-    cargo nextest run -p quilt-sync --features e2e -E 'test(/engine::e2e::restart::/)' -j 1 "$@"
+    cargo nextest run -p quilt-sync --features e2e -E 'test(/engine::e2e::/)' "$@"
