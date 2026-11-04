@@ -1613,6 +1613,8 @@ mod tests {
     use crate::kit::StateTone;
     use crate::test_support::mount;
     use crate::test_support::sleep_ms;
+    use std::cell::Cell;
+    use std::rc::Rc;
     use std::sync::Arc;
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
@@ -4338,50 +4340,78 @@ mod tests {
         // the store that view reads must live until the next answer replaces
         // it. A store that died with the `Suspend` made this click read a
         // disposed signal, and the panic froze the page on Recent files.
+        //
+        // Each read waits until the test releases it, so the click lands in
+        // that window by construction, not by timing.
         forget_toolbar();
         let reload = Trigger::new();
-        let el = mount(move || {
-            let packages = LocalResource::new(move || {
-                reload.track();
-                async move {
-                    sleep_ms(100).await;
-                    // In a bucket: a bucket's group heading reads the store.
-                    let in_bucket = |namespace| MainPagePackageData {
-                        bucket: Some("a-bucket".to_string()),
-                        ..pkg(namespace, PackageState::Latest)
-                    };
-                    Ok(MainPagePackagesData {
-                        packages: vec![in_bucket("user/plate-07"), in_bucket("user/plate-08")],
-                    })
+        let started = Rc::new(Cell::new(0usize));
+        let released = Rc::new(Cell::new(0usize));
+        let el = mount({
+            let (started, released) = (started.clone(), released.clone());
+            move || {
+                let packages = LocalResource::new(move || {
+                    reload.track();
+                    started.set(started.get() + 1);
+                    let (read, released) = (started.get(), released.clone());
+                    async move {
+                        while released.get() < read {
+                            sleep_ms(5).await;
+                        }
+                        // In a bucket: a bucket's group heading reads the store.
+                        let in_bucket = |namespace| MainPagePackageData {
+                            bucket: Some("a-bucket".to_string()),
+                            ..pkg(namespace, PackageState::Latest)
+                        };
+                        Ok(MainPagePackagesData {
+                            packages: vec![in_bucket("user/plate-07"), in_bucket("user/plate-08")],
+                        })
+                    }
+                });
+                let accounts = LocalResource::new(move || {
+                    reload.track();
+                    async move { Ok(one_signed_out_host()) }
+                });
+                let fetch_files = Callback::new(|()| Ok(one_recent_file()));
+                view! {
+                    <leptos_router::components::Router>
+                        <MainPageRegions
+                            packages=packages
+                            accounts=accounts
+                            reload=reload
+                            fetch_files=Some(fetch_files)
+                        />
+                    </leptos_router::components::Router>
                 }
-            });
-            let accounts = LocalResource::new(move || {
-                reload.track();
-                async move { Ok(one_signed_out_host()) }
-            });
-            let fetch_files = Callback::new(|()| Ok(one_recent_file()));
-            view! {
-                <leptos_router::components::Router>
-                    <MainPageRegions
-                        packages=packages
-                        accounts=accounts
-                        reload=reload
-                        fetch_files=Some(fetch_files)
-                    />
-                </leptos_router::components::Router>
             }
         });
-        sleep_ms(200).await;
+        let reads_started = |n: usize| {
+            let started = started.clone();
+            async move {
+                for _ in 0..200 {
+                    if started.get() >= n {
+                        return;
+                    }
+                    sleep_ms(5).await;
+                }
+                panic!("read {n} never started; {} did", started.get());
+            }
+        };
+        released.set(1);
+        sleep_ms(50).await;
         toggle_option(&el, FILES_VIEW).click();
         sleep_ms(50).await;
 
-        // A second reload while the first read is out. When that read answers,
-        // the resolve is cleaned up and the second read starts, with the old
-        // view still on screen: the click lands in that window.
+        // A second reload while the first refetch is out queues a third read.
+        // When the refetch answers, its resolve is cleaned up and the third
+        // read starts, with the old view still on screen.
         reload.notify();
-        sleep_ms(10).await;
+        reads_started(2).await;
         reload.notify();
-        sleep_ms(140).await;
+        released.set(2);
+        reads_started(3).await;
+        sleep_ms(20).await;
+        assert_eq!(released.get(), 2, "the third read is still out");
         toggle_option(&el, PACKAGES_VIEW).click();
         sleep_ms(20).await;
         assert!(
@@ -4390,7 +4420,8 @@ mod tests {
             el.text_content().unwrap()
         );
 
-        sleep_ms(200).await;
+        released.set(3);
+        sleep_ms(50).await;
         toggle_option(&el, FILES_VIEW).click();
         sleep_ms(50).await;
         assert!(
