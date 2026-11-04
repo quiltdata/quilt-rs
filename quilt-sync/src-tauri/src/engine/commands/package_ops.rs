@@ -978,15 +978,28 @@ fn name_char(c: char) -> bool {
 async fn package_create_command(
     m: &impl QuiltModel,
     namespace: &str,
-    source: Option<String>,
+    source: Option<PathBuf>,
     message: Option<String>,
 ) -> Result<quilt::flow::LeftOut, Error> {
     check_new_name(namespace)?;
     let namespace = quilt_uri::Namespace::try_from(namespace)?;
-    // Typed on headless, so it may start with `~`, as the field allowed.
-    let source = source.map(|source| PathBuf::from(super::expand_home(&source)));
     let (_, left_out) = model::package_create(m, namespace, source, message).await?;
     Ok(left_out)
+}
+
+/// The folder to create a package from. Typed on headless, so it may start
+/// with `~`, as the field allowed; a relative one would be read from the
+/// engine's working folder, so it is refused, as Setup refuses one.
+fn source_folder(source: Option<String>) -> Result<Option<PathBuf>, String> {
+    let Some(source) = source else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(super::expand_home(&source));
+    if source.is_empty() || path.is_absolute() {
+        Ok(Some(path))
+    } else {
+        Err("Give the folder's full path, like ~/data".to_owned())
+    }
 }
 
 /// The toast saying what the ignore rules kept out of a package created from
@@ -1014,6 +1027,7 @@ pub async fn package_create(
     source: Option<String>,
     message: Option<String>,
 ) -> Result<String, String> {
+    let source = source_folder(source)?;
     let m = &*s.model;
     let tracing = &*s.telemetry;
     let toasts = &*s.toasts;
@@ -1522,6 +1536,31 @@ mod tests {
                 .expect_err("the mock stops it");
             assert!(matches!(err, Error::General(_)), "{name}: {err}");
         }
+    }
+
+    /// A relative folder would be read from the engine's working folder.
+    #[test]
+    fn create_refuses_a_relative_folder() {
+        for source in [".", "data", "./data", "../data", "~data"] {
+            let err = super::source_folder(Some(source.to_owned())).expect_err(source);
+            assert_eq!(err, "Give the folder's full path, like ~/data");
+        }
+    }
+
+    /// A full path, or one from the home folder, is taken as it is.
+    #[test]
+    fn create_takes_a_full_folder_path() {
+        let home = dirs::home_dir().expect("a home folder");
+        assert_eq!(super::source_folder(None), Ok(None));
+        assert_eq!(
+            super::source_folder(Some("~/data".to_owned())),
+            Ok(Some(home.join("data")))
+        );
+        let full = home.join("data").display().to_string();
+        assert_eq!(
+            super::source_folder(Some(full.clone())),
+            Ok(Some(std::path::PathBuf::from(full)))
+        );
     }
 
     /// The error S3 returns when the active role cannot write a bucket. The
@@ -2807,10 +2846,9 @@ mod tests {
         std::fs::write(source.path().join(".git/config"), "x")?;
         std::fs::write(source.path().join(".DS_Store"), "x")?;
         std::fs::write(source.path().join("data.csv"), "a,b")?;
-        let source = Some(source.path().display().to_string());
+        let source = Some(source.path().to_path_buf());
 
-        let left_out =
-            super::package_create_command(&model, "acme/demo", source.clone(), None).await?;
+        let left_out = super::package_create_command(&model, "acme/demo", source, None).await?;
         let toast = super::left_out_toast("acme/demo", &left_out).expect("a toast");
         assert_eq!(toast.kind, crate::engine::toast::ToastKind::Info);
         assert_eq!(toast.title.as_deref(), Some("acme/demo"));

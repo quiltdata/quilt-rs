@@ -29,6 +29,10 @@ pub fn PathField(
     #[prop(optional)]
     may_be_new: bool,
     #[prop(optional, into)] placeholder: String,
+    /// Set while the typed path is relative, for a caller that must not
+    /// submit it.
+    #[prop(optional)]
+    relative: Option<RwSignal<bool>>,
 ) -> impl IntoView {
     let checked = RwSignal::new(Checked::default());
     Effect::new(move |_| {
@@ -65,6 +69,9 @@ pub fn PathField(
         let now = value.get();
         checked.with(|c| (!now.is_empty() && c.path == now).then(|| c.clone()))
     };
+    if let Some(relative) = relative {
+        Effect::new(move |_| relative.set(current().is_some_and(|c| c.check.relative)));
+    }
     let next = move || current().and_then(|c| c.offered.into_iter().find(|offer| *offer != c.path));
     let error = Signal::derive(move || {
         let c = current()?;
@@ -303,8 +310,10 @@ mod tests {
         unmount_earlier();
         let engine = FakeEngine::install();
         let value = RwSignal::new(String::new());
-        let root =
-            mount(move || view! { <PathField label="Folder" value=value may_be_new=true /> });
+        let relative = RwSignal::new(false);
+        let root = mount(move || {
+            view! { <PathField label="Folder" value=value may_be_new=true relative=relative /> }
+        });
         sleep_ms(0).await;
         type_into(&input(&root), "my-packages");
         answer(
@@ -316,6 +325,16 @@ mod tests {
         let text = root.text_content().unwrap_or_default();
         assert!(text.contains("Give the folder's full path"), "{text}");
         assert!(!text.contains("QuiltSync will make this folder."), "{text}");
+        assert!(relative.get_untracked(), "the caller hears it");
+
+        type_into(&input(&root), "/home/a/my-packages");
+        answer(
+            &engine,
+            serde_json::json!({"exists": false, "isDir": false, "relative": false}),
+            serde_json::json!([]),
+        )
+        .await;
+        assert!(!relative.get_untracked(), "and hears a full path too");
         unmount_earlier();
     }
 }
