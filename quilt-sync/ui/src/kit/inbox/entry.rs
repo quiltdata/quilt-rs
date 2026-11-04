@@ -8,6 +8,7 @@
 use leptos::prelude::*;
 
 use super::EntryKind;
+use super::FileChange;
 use super::FileGroup;
 use super::FileReport;
 use super::InboxEntry;
@@ -28,12 +29,27 @@ fn files(n: usize) -> String {
 
 /// What happened, after the package's name.
 pub(super) fn what(entry: &InboxEntry) -> String {
-    let total = match &entry.report {
-        FileReport::Files(groups) => groups.iter().map(|g| g.count).sum(),
-        FileReport::None | FileReport::Differs(_) => 0,
+    let count = |counted: &[FileChange]| -> usize {
+        match &entry.report {
+            FileReport::Files(groups) => groups
+                .iter()
+                .filter(|g| counted.contains(&g.change))
+                .map(|g| g.count)
+                .sum(),
+            FileReport::None | FileReport::Differs(_) => 0,
+        }
     };
+    // A pull got only what reached the disk: not what it left to download,
+    // nor what it removed.
+    let got = count(&[FileChange::New, FileChange::Updated]);
+    let total = count(&[
+        FileChange::New,
+        FileChange::NewNotDownloaded,
+        FileChange::Updated,
+        FileChange::Removed,
+    ]);
     match &entry.kind {
-        EntryKind::Got if total > 0 => format!("got {}", files(total)),
+        EntryKind::Got if got > 0 => format!("got {}", files(got)),
         EntryKind::Got => "got a newer revision".to_string(),
         EntryKind::Published if total > 0 => format!("published {}", files(total)),
         EntryKind::Published => "published a revision".to_string(),
@@ -135,7 +151,6 @@ pub(super) fn EntryView(
 
 #[cfg(test)]
 mod tests {
-    use super::super::FileChange;
     use super::super::Revision;
     use super::*;
 
@@ -175,6 +190,18 @@ mod tests {
             what(&entry(EntryKind::Got, FileReport::None)),
             "got a newer revision"
         );
+    }
+
+    #[test]
+    fn a_pull_got_only_the_files_that_reached_the_disk() {
+        let report = FileReport::Files(vec![
+            group(FileChange::New, 2),
+            group(FileChange::NewNotDownloaded, 12),
+            group(FileChange::Removed, 1),
+        ]);
+        assert_eq!(what(&entry(EntryKind::Got, report)), "got 2 files");
+        let report = FileReport::Files(vec![group(FileChange::Removed, 1)]);
+        assert_eq!(what(&entry(EntryKind::Got, report)), "got a newer revision");
     }
 
     #[test]

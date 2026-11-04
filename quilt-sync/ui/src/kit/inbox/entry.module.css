@@ -83,8 +83,8 @@
   list-style: none;
 }
 
-/* Inside the panel's scrolling list, a ring drawn outside the entry is cut
- * off at the list's edges. */
+/* Inside the panel, which scrolls, a ring drawn outside the entry is cut off
+ * at its edges. */
 .entry:focus-visible {
   outline-offset: calc(-1 * var(--q-focus-outlineWidth));
 }

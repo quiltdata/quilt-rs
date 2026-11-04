@@ -56,13 +56,15 @@
   text-align: center;
 }
 
-/* Bounded by the overlay; the list scrolls under the lines that lead it. */
+/* Bounded by the overlay, and scrolls as one: however many lines lead it,
+ * every line and entry stays reachable. */
 .panel {
   display: flex;
   flex-direction: column;
   width: 340px;
   max-width: 100%;
   min-height: 0;
+  overflow-y: auto;
   /* Opened from the appbar, whose white ring would vanish on this surface. */
   --q-focus-outlineColor: var(--q-focus-outlineColor-surface);
 }
@@ -102,9 +104,6 @@
 }
 
 .entries {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
   margin: 0;
   padding: 0;
   list-style: none;
