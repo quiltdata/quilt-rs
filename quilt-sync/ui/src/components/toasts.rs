@@ -151,8 +151,12 @@ pub fn ToastStack() -> impl IntoView {
         },
         move || spawn_local(store.reconcile()),
     );
-    let dismissed =
-        engine::listen::<u64>(commands::TOAST_DISMISSED_EVENT, move |id| store.forget(id));
+    // Then re-read: forgetting invalidates a read in flight, whose other
+    // toasts would otherwise stay unseen.
+    let dismissed = engine::listen::<u64>(commands::TOAST_DISMISSED_EVENT, move |id| {
+        store.forget(id);
+        spawn_local(store.reconcile());
+    });
     on_cleanup(move || {
         drop(listener);
         drop(dismissed);
