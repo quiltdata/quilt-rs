@@ -29,6 +29,10 @@ pub fn PathField(
     #[prop(optional)]
     may_be_new: bool,
     #[prop(optional, into)] placeholder: String,
+    /// Set while the typed path isn't known to be a full path: it is
+    /// relative, or not checked yet. For a caller that must not submit it.
+    #[prop(optional)]
+    not_full: Option<RwSignal<bool>>,
 ) -> impl IntoView {
     let checked = RwSignal::new(Checked::default());
     Effect::new(move |_| {
@@ -65,6 +69,12 @@ pub fn PathField(
         let now = value.get();
         checked.with(|c| (!now.is_empty() && c.path == now).then(|| c.clone()))
     };
+    if let Some(not_full) = not_full {
+        Effect::new(move |_| {
+            let typed = !value.with(String::is_empty);
+            not_full.set(typed && current().is_none_or(|c| c.check.relative));
+        });
+    }
     let next = move || current().and_then(|c| c.offered.into_iter().find(|offer| *offer != c.path));
     let error = Signal::derive(move || {
         let c = current()?;
@@ -303,10 +313,14 @@ mod tests {
         unmount_earlier();
         let engine = FakeEngine::install();
         let value = RwSignal::new(String::new());
-        let root =
-            mount(move || view! { <PathField label="Folder" value=value may_be_new=true /> });
+        let not_full = RwSignal::new(false);
+        let root = mount(move || {
+            view! { <PathField label="Folder" value=value may_be_new=true not_full=not_full /> }
+        });
         sleep_ms(0).await;
         type_into(&input(&root), "my-packages");
+        leptos::task::tick().await;
+        assert!(not_full.get_untracked(), "not checked yet");
         answer(
             &engine,
             serde_json::json!({"exists": false, "isDir": false, "relative": true}),
@@ -316,6 +330,22 @@ mod tests {
         let text = root.text_content().unwrap_or_default();
         assert!(text.contains("Give the folder's full path"), "{text}");
         assert!(!text.contains("QuiltSync will make this folder."), "{text}");
+        assert!(not_full.get_untracked(), "the caller hears it");
+
+        type_into(&input(&root), "/home/a/my-packages");
+        leptos::task::tick().await;
+        assert!(not_full.get_untracked(), "not checked yet");
+        answer(
+            &engine,
+            serde_json::json!({"exists": false, "isDir": false, "relative": false}),
+            serde_json::json!([]),
+        )
+        .await;
+        assert!(!not_full.get_untracked(), "and hears a full path too");
+
+        type_into(&input(&root), "");
+        leptos::task::tick().await;
+        assert!(!not_full.get_untracked(), "an empty field names no folder");
         unmount_earlier();
     }
 }
