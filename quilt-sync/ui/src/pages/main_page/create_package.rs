@@ -7,6 +7,7 @@
 use leptos::prelude::*;
 
 use crate::commands;
+use crate::engine;
 use crate::kit::Banner;
 use crate::kit::BannerVariant;
 use crate::kit::Button;
@@ -15,12 +16,16 @@ use crate::kit::Dialog;
 use crate::kit::FormControl;
 use crate::kit::TextInput;
 
+use crate::pages::path_field::PathField;
+
 stylance::import_crate_style!(style, "src/pages/main_page/create_package.module.css");
 
 #[component]
 pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoView {
     let namespace = RwSignal::new(String::new());
     let source = RwSignal::new(String::new());
+    // The engine would read a relative folder from its own working folder.
+    let not_full = RwSignal::new(false);
     let submitting = RwSignal::new(false);
     // The backend's words about the last attempt, shown in the dialog rather than in
     // `PageLayout`'s banner slot: `Dialog` uses `show_modal()`, so anything in the page's
@@ -28,8 +33,9 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
     let failure = RwSignal::new(None::<String>);
     // Trimmed, as v1 does: a name of spaces is not a name, and the backend
     // would refuse it after a round trip.
-    let can_create =
-        Signal::derive(move || !namespace.get().trim().is_empty() && !submitting.get());
+    let can_create = Signal::derive(move || {
+        !namespace.get().trim().is_empty() && !not_full.get() && !submitting.get()
+    });
 
     // This dialog is mounted once, permanently, outside the page's `Transition`
     // (a refetch must not close it mid-typing) — unlike v1's `CreatePackagePopup`,
@@ -55,7 +61,7 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
 
     let on_create = move |_| {
         let ns = namespace.get_untracked().trim().to_string();
-        if ns.is_empty() || submitting.get_untracked() {
+        if ns.is_empty() || not_full.get_untracked() || submitting.get_untracked() {
             return;
         }
         submitting.set(true);
@@ -117,7 +123,7 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
                         }
                     })
             }}
-            <PackageFields namespace=namespace source=source />
+            <PackageFields namespace=namespace source=source not_full=not_full />
         </Dialog>
     }
 }
@@ -127,7 +133,11 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
 /// Split from the dialog around them: these own the fields, while the dialog owns
 /// what happens on submit and what it says when that fails.
 #[component]
-fn PackageFields(namespace: RwSignal<String>, source: RwSignal<String>) -> impl IntoView {
+fn PackageFields(
+    namespace: RwSignal<String>,
+    source: RwSignal<String>,
+    not_full: RwSignal<bool>,
+) -> impl IntoView {
     // v1's directory picker, unchanged: the chosen path becomes the (disabled)
     // field's text. A cancelled picker returns `Err`, and the field is left as
     // it was.
@@ -156,26 +166,41 @@ fn PackageFields(namespace: RwSignal<String>, source: RwSignal<String>) -> impl 
                     .into_any()
             }
         />
-        // A path the user picks with the OS dialog rather than types, so the
-        // text field is disabled and the Browse button is the control.
-        <FormControl
-            label="Folder to add"
-            caption="Optional. You can add files later."
-            control=move |id| {
+        // Where there is a desktop, a path the user picks with the OS dialog
+        // rather than types, so the text field is disabled and the Browse
+        // button is the control. Headless has no dialog: the path is typed.
+        <Show
+            when=move || !engine::headless().get()
+            fallback=move || {
                 view! {
-                    <div class=style::folder_row>
-                        <TextInput
-                            id=id
-                            value=source
-                            placeholder="No folder chosen"
-                            disabled=true
-                        />
-                        <Button on_click=on_browse>"Browse…"</Button>
-                    </div>
+                    <PathField
+                        label="Folder to add (optional)"
+                        value=source
+                        placeholder="/path/to/folder"
+                        not_full=not_full
+                    />
                 }
-                    .into_any()
             }
-        />
+        >
+            <FormControl
+                label="Folder to add"
+                caption="Optional. You can add files later."
+                control=move |id| {
+                    view! {
+                        <div class=style::folder_row>
+                            <TextInput
+                                id=id
+                                value=source
+                                placeholder="No folder chosen"
+                                disabled=true
+                            />
+                            <Button on_click=on_browse>"Browse…"</Button>
+                        </div>
+                    }
+                        .into_any()
+                }
+            />
+        </Show>
     }
 }
 
@@ -304,6 +329,59 @@ mod tests {
         assert!(create_button(&el).disabled(), "whitespace is not a name");
     }
 
+    /// Headless reads the source folder as typed, and a relative one would
+    /// be read from the engine's working folder.
+    #[wasm_bindgen_test]
+    async fn create_is_refused_while_the_folder_is_relative() {
+        use crate::engine::fake::{FakeEngine, ask};
+
+        crate::test_support::unmount_earlier();
+        let engine = FakeEngine::install();
+        engine.as_headless();
+        let _asked = ask("get_toasts");
+        sleep_ms(0).await;
+        engine.hello();
+        let open = RwSignal::new(true);
+        let el = mount_dialog(open);
+        leptos::task::tick().await;
+        type_into(&namespace_field(&el), "user/new-package");
+        let folder: web_sys::HtmlInputElement = el
+            .query_selector("input[placeholder='/path/to/folder']")
+            .unwrap()
+            .expect("the typed folder field")
+            .dyn_into()
+            .unwrap();
+
+        // Answers the field's check of what's typed, then its folders on offer.
+        let answer = async |relative: bool| {
+            sleep_ms(200).await;
+            for (cmd, ok) in [
+                (
+                    "check_path",
+                    serde_json::json!({"exists": false, "isDir": false, "relative": relative}),
+                ),
+                ("complete_path", serde_json::json!([])),
+            ] {
+                let requests = engine.requests();
+                let last = requests.last().expect("a request");
+                assert_eq!(last["cmd"], cmd);
+                engine.reply(&last["id"], &ok);
+                sleep_ms(0).await;
+            }
+        };
+
+        type_into(&folder, ".");
+        leptos::task::tick().await;
+        assert!(create_button(&el).disabled(), "a folder not checked yet");
+        answer(true).await;
+        assert!(create_button(&el).disabled(), "a relative folder");
+
+        type_into(&folder, "/home/a/data");
+        answer(false).await;
+        assert!(!create_button(&el).disabled(), "a full path");
+        crate::test_support::unmount_earlier();
+    }
+
     #[wasm_bindgen_test]
     async fn cancel_closes_the_dialog_and_creates_nothing() {
         let open = RwSignal::new(true);
@@ -322,7 +400,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_failed_create_leaves_the_dialog_open_and_the_button_usable() {
-        // There is no Tauri host here, so the invoke rejects — which is exactly the
+        // There is no engine here, so the invoke rejects — which is exactly the
         // failure path. The dialog stays open because the operation did not succeed
         // and the user did not dismiss it; what it says is asserted separately, in
         // `a_failed_create_says_why_inside_the_dialog`.
@@ -402,7 +480,7 @@ mod tests {
         //
         // The test calls the command directly first, so it checks that the
         // backend's own message arrives, not just some message. There is no
-        // Tauri host here, so both calls reject with the same message.
+        // engine here, so both calls reject with the same message.
         //
         // Its first line only: with no host the rejection is a thrown `TypeError`
         // whose text carries a JS stack, and the stack names the frame that called,
@@ -410,7 +488,7 @@ mod tests {
         // string and the whole of it lands in the banner.
         let err = commands::package_create("user/new-package".to_string(), None, None)
             .await
-            .expect_err("no Tauri host, so the invoke rejects");
+            .expect_err("no engine, so the invoke rejects");
         let expected = err.lines().next().expect("a message to compare");
 
         let open = RwSignal::new(true);

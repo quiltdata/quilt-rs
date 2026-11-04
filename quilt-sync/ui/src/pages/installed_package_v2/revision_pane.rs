@@ -205,6 +205,7 @@ fn published_line(
 mod tests {
     use super::*;
     use crate::commands::{CurrentRevisionData, RevisionHistoryData, RevisionHistoryRow};
+    use crate::engine::fake::FakeEngine;
     use crate::test_support::mount;
     use std::future::Future;
     use std::pin::Pin;
@@ -349,17 +350,18 @@ mod tests {
             .expect("a live region");
         assert_eq!(live.get_attribute("aria-busy").as_deref(), Some("false"));
     }
-    /// A host whose clipboard takes every copy. Without it the harness has no
-    /// Tauri bridge, so every copy fails.
-    fn clipboard_works(on: bool) {
-        let js = if on {
-            "window.__TAURI__ = { core: { invoke: () => Promise.resolve('') } };"
-        } else {
-            "delete window.__TAURI__;"
-        };
-        js_sys::Function::new_no_args(js)
-            .call0(&wasm_bindgen::JsValue::NULL)
-            .unwrap();
+
+    /// Lets the copy the pane asked for through, as a clipboard that takes it.
+    /// With no engine installed, as tests have by default, every copy fails.
+    async fn answer_copy(engine: &FakeEngine) {
+        engine.hello();
+        let requests = engine.requests();
+        let copy = requests
+            .iter()
+            .find(|r| r["cmd"] == "copy_to_clipboard")
+            .expect("the copy");
+        engine.reply(&copy["id"], &serde_json::json!(""));
+        settle().await;
     }
 
     #[wasm_bindgen_test]
@@ -376,10 +378,10 @@ mod tests {
             .with_untracked(|o| o.as_ref().map(|o| o.lead.clone()));
         assert_eq!(lead.as_deref(), Some(COPY_FAILED));
 
-        clipboard_works(true);
+        let engine = FakeEngine::install();
         copy.click();
         settle().await;
-        clipboard_works(false);
+        answer_copy(&engine).await;
         assert_eq!(w.outcome.get_untracked(), None);
         assert_eq!(copy.text_content().unwrap_or_default().trim(), "Copied");
     }
@@ -397,10 +399,10 @@ mod tests {
         };
         w.outcome.set(Some(other.clone()));
 
-        clipboard_works(true);
+        let engine = FakeEngine::install();
         crate::test_support::button_saying(&el, "Copy").click();
         settle().await;
-        clipboard_works(false);
+        answer_copy(&engine).await;
         assert_eq!(w.outcome.get_untracked(), Some(other));
     }
 }

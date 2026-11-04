@@ -88,7 +88,7 @@ fn initial_label(view: &WorkflowView) -> String {
 }
 
 /// The bucket's workflow read, as the dialog runs it. A parameter so a test
-/// can answer it without a Tauri host.
+/// can answer it without an engine.
 pub(super) type WorkflowRead =
     fn(String, String) -> Pin<Box<dyn Future<Output = Result<CommitWorkflows, String>>>>;
 
@@ -100,7 +100,7 @@ fn read_workflows(
 }
 
 /// The command that sets the remote: namespace, host, bucket and workflow in.
-/// A parameter so a test can answer it without a Tauri host.
+/// A parameter so a test can answer it without an engine.
 pub(crate) type SetRemote =
     fn(
         String,
@@ -119,7 +119,7 @@ fn set_remote(
 }
 
 /// The command that replaces a published package's catalog: namespace and
-/// host in. A parameter so a test can answer it without a Tauri host.
+/// host in. A parameter so a test can answer it without an engine.
 pub(crate) type ChangeCatalog =
     fn(String, String) -> Pin<Box<dyn Future<Output = Result<String, String>>>>;
 
@@ -873,7 +873,7 @@ mod tests {
         );
     }
 
-    /// There is no Tauri bridge under the runner, so the workflow fetch fails —
+    /// There is no engine under the runner, so the workflow fetch fails —
     /// which is `CommitWorkflows::Unavailable`, the state v1 degrades to, and the
     /// control says so rather than showing an empty list. Submit still carries
     /// `BucketDefault`, so the real default re-resolves on the backend.
@@ -907,7 +907,7 @@ mod tests {
     }
 
     /// A governed bucket — `None`, `Alpha (default)`, `Beta` — for whatever
-    /// target is asked about. The runner has no Tauri host to answer instead.
+    /// target is asked about. The runner has no engine to answer instead.
     fn governed(_host: String, _bucket: String) -> Answer {
         WORKFLOW_READS.set(WORKFLOW_READS.get() + 1);
         let workflow = |id: &str, name: &str| commands::WorkflowInfo {
@@ -1047,7 +1047,7 @@ mod tests {
     /// package's remote back over the draft.
     ///
     /// Host and bucket are what it checks. The page mounts the dialog with the
-    /// real workflow read, which has no Tauri host here, so the workflow is
+    /// real workflow read, which has no engine here, so the workflow is
     /// left to `a_rebuilt_dialog_keeps_the_reader_s_workflow`, which answers
     /// the read itself; this one asserts before the debounce would fire it.
     #[wasm_bindgen_test]

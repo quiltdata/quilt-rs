@@ -91,7 +91,7 @@ type Answer<T> = Pin<Box<dyn Future<Output = Result<T, String>>>>;
 pub type RevisionChoice = fn(String, Option<S3PackageUri>) -> Answer<String>;
 
 /// Resolve's two commands. Function pointers, so the DOM tests and the
-/// gallery answer without a Tauri host.
+/// gallery answer without an engine.
 #[derive(Clone, Copy)]
 pub struct ResolveCommands {
     pub certify: RevisionChoice,

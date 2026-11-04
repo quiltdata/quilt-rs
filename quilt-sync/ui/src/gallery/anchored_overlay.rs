@@ -79,7 +79,7 @@ pub fn AnchoredOverlayStories() -> impl IntoView {
                     </PaneSection>
                 </AnchoredOverlay>
             </Cell>
-            <Cell wide=true label="click it — a Tauri call that did not return">
+            <Cell wide=true label="click it — an engine call that did not return">
                 <AnchoredOverlay
                     trigger=trigger("History", failed)
                     open=failed

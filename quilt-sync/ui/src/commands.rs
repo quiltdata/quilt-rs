@@ -1,7 +1,7 @@
 use quilt_uri::{Host, Namespace, S3PackageUri};
 use serde::{Deserialize, Serialize};
 
-use crate::tauri;
+use crate::engine;
 
 // ── Response types ──────────────────────────────────────────
 
@@ -230,7 +230,7 @@ pub struct WorkflowInfo {
 /// The bucket's workflow-selection situation, as sent by the backend
 /// (`quilt_sync::commands::commit_data::CommitWorkflows`). The serde
 /// attributes MUST stay identical to the backend so the tagged JSON crosses
-/// the Tauri boundary unchanged. Splits the three cases the commit dialog
+/// the engine boundary unchanged. Splits the three cases the commit dialog
 /// renders distinctly:
 /// - `Available` — the bucket has a config; offer its workflow choices.
 /// - `NotConfigured` — the bucket is ungoverned; no choice to make.
@@ -267,7 +267,7 @@ pub enum CommitWorkflows {
 /// Which commit-dialog input a [`CommitViolation`] belongs under, so the UI can
 /// render each advisory violation beneath the field the user must fix. UI-side
 /// mirror of the backend `quilt_sync::commands::commit_data::ViolationField`;
-/// the serde attributes MUST match so the tagged JSON crosses the Tauri boundary
+/// the serde attributes MUST match so the tagged JSON crosses the engine boundary
 /// unchanged.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -290,7 +290,7 @@ pub struct CommitViolation {
 ///
 /// UI-side mirror of `quilt_rs::io::remote::WorkflowIntent`. The serde
 /// attributes MUST stay identical to the backend so the tagged JSON crosses
-/// the Tauri boundary unchanged:
+/// the engine boundary unchanged:
 /// - `{"kind":"bucket-default"}` — no opinion; honour the bucket default.
 /// - `{"kind":"no-workflow"}` — explicit opt-out.
 /// - `{"kind":"named","id":"x"}` — an exact workflow id.
@@ -420,6 +420,21 @@ pub enum Design {
     V2,
 }
 
+impl Design {
+    /// The design drawn for this saved one: headless always draws v2, whose
+    /// pages type a folder and sign in by code. v1's need the desktop's folder
+    /// picker and a browser sign-in that headless cannot finish.
+    #[must_use]
+    pub fn drawn(self) -> Self {
+        use leptos::prelude::GetUntracked;
+        if engine::headless().get_untracked() {
+            Self::V2
+        } else {
+            self
+        }
+    }
+}
+
 /// One built-in ignore rule, its place in the popup, and whether it is on.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -535,7 +550,7 @@ pub struct PackageItemData {
 /// A deep-link banner to surface on the installed-package page after
 /// resolving a `quilt+s3://` remote package URI. UI-side mirror of the
 /// backend `quilt_sync::commands::remote_package::RemoteBanner`; the serde
-/// attributes MUST match so the tagged JSON crosses the Tauri boundary
+/// attributes MUST match so the tagged JSON crosses the engine boundary
 /// unchanged:
 /// - `differentVersion` — the requested revision differs from what's
 ///   installed locally.
@@ -557,7 +572,7 @@ pub enum RemoteBanner {
 }
 
 /// The v2 package page's payload. Mirrors
-/// `src-tauri/src/commands/package_page.rs` field for field.
+/// `src-tauri/src/engine/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackagePageData {
@@ -615,7 +630,7 @@ pub struct PackageContextData {
 }
 
 /// The current revision's size, from its manifest rows: logical bytes, not
-/// disk usage. Mirrors `src-tauri/src/commands/package_page.rs`; the serde
+/// disk usage. Mirrors `src-tauri/src/engine/commands/package_page.rs`; the serde
 /// attributes MUST match.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -629,7 +644,7 @@ pub struct PackageSize {
 }
 
 /// What each resolve choice would cost, or why that cannot be read.
-/// Mirrors `src-tauri/src/commands/package_page.rs`; the serde attributes MUST match.
+/// Mirrors `src-tauri/src/engine/commands/package_page.rs`; the serde attributes MUST match.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(
     tag = "kind",
@@ -650,7 +665,7 @@ pub enum ResolveData {
 }
 
 /// Which files this copy keeps. Mirrors
-/// `src-tauri/src/commands/package_page.rs`; the serde attributes MUST match.
+/// `src-tauri/src/engine/commands/package_page.rs`; the serde attributes MUST match.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum KeepingScope {
@@ -661,7 +676,7 @@ pub enum KeepingScope {
 }
 
 /// The Keeping section: the standing rule, and what it has not yet fetched.
-/// Mirrors `src-tauri/src/commands/package_page.rs` field for field.
+/// Mirrors `src-tauri/src/engine/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct KeepingData {
@@ -706,7 +721,7 @@ impl CurrentRevisionData {
 }
 
 /// `History`: the rows, and the footer's figure. Mirrors
-/// `src-tauri/src/commands/package_page.rs` field for field.
+/// `src-tauri/src/engine/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RevisionHistoryData {
@@ -717,7 +732,7 @@ pub struct RevisionHistoryData {
 }
 
 /// Why a revision is kept. Mirrors `KeptReason` in
-/// `src-tauri/src/commands/package_page.rs`; the serde attributes MUST match.
+/// `src-tauri/src/engine/commands/package_page.rs`; the serde attributes MUST match.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum KeptReason {
@@ -729,7 +744,7 @@ pub enum KeptReason {
 }
 
 /// One row of `History`. Mirrors
-/// `src-tauri/src/commands/package_page.rs` field for field.
+/// `src-tauri/src/engine/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RevisionHistoryRow {
@@ -779,7 +794,7 @@ pub struct PackageHeaderData {
 
 /// The remedy a denial offers. UI-side mirror of
 /// `quilt_sync::commands::package_page::RoleSwitch`; the serde attributes MUST
-/// match so the payload crosses the Tauri boundary unchanged.
+/// match so the payload crosses the engine boundary unchanged.
 ///
 /// A sibling of `state` rather than a field of `PackageState::RoleDenied`: the
 /// kit's state enum is the vocabulary, and a host and a role list are transport.
@@ -801,6 +816,9 @@ pub struct RemotePackageResult {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     pub version: String,
+    /// The download for the engine's machine, for an engine that can't
+    /// install it itself.
+    pub url: String,
 }
 
 // ── Data-fetching commands ──────────────────────────────────
@@ -815,20 +833,20 @@ pub async fn get_installed_package_data(
         namespace: String,
         filter: Option<String>,
     }
-    tauri::invoke("get_installed_package_data", &Args { namespace, filter }).await
+    engine::invoke("get_installed_package_data", &Args { namespace, filter }).await
 }
 
 /// Read everything the v2 package page draws, for one package.
 ///
 /// One read for the page rather than one per region — see
-/// `src-tauri/src/commands/package_page.rs`.
+/// `src-tauri/src/engine/commands/package_page.rs`.
 pub async fn get_package_page_data(namespace: String) -> Result<PackagePageData, String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         namespace: String,
     }
-    tauri::invoke("get_package_page_data", &Args { namespace }).await
+    engine::invoke("get_package_page_data", &Args { namespace }).await
 }
 
 /// The revisions this copy holds, newest obtained first. Called when the
@@ -845,7 +863,7 @@ pub async fn get_revision_history(
         namespace: String,
         measure: bool,
     }
-    tauri::invoke("get_revision_history", &Args { namespace, measure }).await
+    engine::invoke("get_revision_history", &Args { namespace, measure }).await
 }
 
 /// Remove these old revisions of an installed package, and the objects only
@@ -858,11 +876,11 @@ pub async fn remove_revisions(namespace: String, hashes: Vec<String>) -> Result<
         namespace: String,
         hashes: Vec<String>,
     }
-    tauri::invoke("remove_revisions", &Args { namespace, hashes }).await
+    engine::invoke("remove_revisions", &Args { namespace, hashes }).await
 }
 
 /// The paths a download left out. Mirrors
-/// `src-tauri/src/commands/package_page.rs` field for field.
+/// `src-tauri/src/engine/commands/package_page.rs` field for field.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct NotDownloaded {
@@ -886,7 +904,7 @@ pub async fn package_download_backlog(
         namespace: String,
         paths: Vec<String>,
     }
-    tauri::invoke("package_download_backlog", &Args { namespace, paths }).await
+    engine::invoke("package_download_backlog", &Args { namespace, paths }).await
 }
 
 pub async fn get_commit_data(namespace: String) -> Result<CommitData, String> {
@@ -895,7 +913,7 @@ pub async fn get_commit_data(namespace: String) -> Result<CommitData, String> {
     struct Args {
         namespace: String,
     }
-    tauri::invoke("get_commit_data", &Args { namespace }).await
+    engine::invoke("get_commit_data", &Args { namespace }).await
 }
 
 /// Fetch and cache the selected workflow's rules for live commit-dialog
@@ -919,7 +937,7 @@ pub async fn load_workflow_rules(
         workflow_id: String,
         refresh: bool,
     }
-    tauri::invoke(
+    engine::invoke(
         "load_workflow_rules",
         &Args {
             namespace,
@@ -950,7 +968,7 @@ pub async fn validate_commit_candidate(
         user_meta: String,
         name: String,
     }
-    tauri::invoke(
+    engine::invoke(
         "validate_commit_candidate",
         &Args {
             namespace,
@@ -969,7 +987,7 @@ pub async fn get_merge_data(namespace: String) -> Result<MergeData, String> {
     struct Args {
         namespace: String,
     }
-    tauri::invoke("get_merge_data", &Args { namespace }).await
+    engine::invoke("get_merge_data", &Args { namespace }).await
 }
 
 pub async fn get_login_data(host: String, back: String) -> Result<LoginData, String> {
@@ -979,7 +997,7 @@ pub async fn get_login_data(host: String, back: String) -> Result<LoginData, Str
         host: String,
         back: String,
     }
-    tauri::invoke("get_login_data", &Args { host, back }).await
+    engine::invoke("get_login_data", &Args { host, back }).await
 }
 
 pub async fn get_login_error_data(
@@ -994,7 +1012,7 @@ pub async fn get_login_error_data(
         title: Option<String>,
         error: String,
     }
-    tauri::invoke("get_login_error_data", &Args { host, title, error }).await
+    engine::invoke("get_login_error_data", &Args { host, title, error }).await
 }
 /// Put `text` on the system clipboard.
 ///
@@ -1002,13 +1020,23 @@ pub async fn get_login_error_data(
 /// `commands.rs`'s own note on the `uri` argument several commands take and
 /// never use.
 pub async fn copy_to_clipboard(text: String, uri: Option<S3PackageUri>) -> Result<String, String> {
+    use leptos::prelude::GetUntracked;
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct Args {
         text: String,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke("copy_to_clipboard", &Args { text, uri }).await
+    // Headless has no desktop clipboard; the reader's browser has one.
+    if engine::headless().get_untracked() {
+        let window = web_sys::window().ok_or("No window")?;
+        let clipboard = window.navigator().clipboard();
+        wasm_bindgen_futures::JsFuture::from(clipboard.write_text(&text))
+            .await
+            .map_err(|_| format!("This browser didn't allow copying. Copy it by hand: {text}"))?;
+        return Ok("Copied to the clipboard".to_owned());
+    }
+    engine::invoke("copy_to_clipboard", &Args { text, uri }).await
 }
 
 /// Where one of a package's files is on disk, resolved as opening it resolves
@@ -1020,24 +1048,50 @@ pub async fn package_file_path(namespace: String, path: String) -> Result<String
         namespace: String,
         path: String,
     }
-    tauri::invoke("package_file_path", &Args { namespace, path }).await
+    engine::invoke("package_file_path", &Args { namespace, path }).await
 }
 
 pub async fn get_settings_data() -> Result<SettingsData, String> {
-    tauri::invoke_unit("get_settings_data").await
+    engine::invoke_unit("get_settings_data").await
+}
+
+/// Whether a typed path is a full path, is there, and is a folder.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathCheck {
+    pub exists: bool,
+    pub is_dir: bool,
+    pub relative: bool,
+}
+
+pub async fn check_path(path: String) -> Result<PathCheck, String> {
+    #[derive(Serialize)]
+    struct Args {
+        path: String,
+    }
+    engine::invoke("check_path", &Args { path }).await
+}
+
+/// The folders whose path starts with `prefix`, each ending in a separator.
+pub async fn complete_path(prefix: String) -> Result<Vec<String>, String> {
+    #[derive(Serialize)]
+    struct Args {
+        prefix: String,
+    }
+    engine::invoke("complete_path", &Args { prefix }).await
 }
 
 pub async fn get_setup_data() -> Result<SetupData, String> {
-    tauri::invoke_unit("get_setup_data").await
+    engine::invoke_unit("get_setup_data").await
 }
 
 pub async fn get_installed_packages_list_data() -> Result<InstalledPackagesListData, String> {
-    tauri::invoke_unit("get_installed_packages_list_data").await
+    engine::invoke_unit("get_installed_packages_list_data").await
 }
 
 /// v2's package list, light phase. Every row arrives `provisional`.
 pub async fn get_main_page_packages() -> Result<MainPagePackagesData, String> {
-    tauri::invoke_unit("get_main_page_packages").await
+    engine::invoke_unit("get_main_page_packages").await
 }
 
 /// v2's package list, heavy phase. One invocation per row, fired by the
@@ -1050,11 +1104,11 @@ pub async fn refresh_main_page_package(
     struct Args {
         namespace: String,
     }
-    tauri::invoke("refresh_main_page_package", &Args { namespace }).await
+    engine::invoke("refresh_main_page_package", &Args { namespace }).await
 }
 
 /// What the heavy phase corrects on a row. Mirrors `MainPagePackageRefresh` on
-/// the Tauri side; the fields the light phase already delivered are not resent.
+/// the engine's side; the fields the light phase already delivered are not resent.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPagePackageRefreshData {
@@ -1068,7 +1122,7 @@ pub struct MainPagePackageRefreshData {
 }
 
 /// What a copy holds of its current revision. Mirrors `MainPageDownloads` on
-/// the Tauri side.
+/// the engine's side.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MainPageDownloadsData {
@@ -1129,7 +1183,7 @@ pub struct MainPagePackageData {
     pub namespace: Namespace,
     pub state: crate::kit::PackageState,
     /// Epoch milliseconds, from the last commit or the last installed path — see
-    /// `last_changed` on the Tauri side. `None` only when nothing has ever been
+    /// `last_changed` on the engine's side. `None` only when nothing has ever been
     /// written to the package.
     pub changed_at: Option<f64>,
     /// The queue's group key for `RoleDenied` (§4.3, R2): one host can hold
@@ -1276,12 +1330,27 @@ pub struct MainPageWatcherData {
 /// v2's watcher state: both toggles and the pause list. Drawn by
 /// `pages::main_page::autosync::AutosyncCard`.
 pub async fn get_main_page_watcher() -> Result<MainPageWatcherData, String> {
-    tauri::invoke_unit("get_main_page_watcher").await
+    engine::invoke_unit("get_main_page_watcher").await
 }
 
 /// A package's autosync state may have changed: read the watcher's payload
 /// again. Carries nothing. Kept in lockstep with the backend.
 pub const AUTOSYNC_CHANGED_EVENT: &str = "autosync-changed";
+
+/// A package was created, installed or uninstalled, maybe from another window
+/// or tab: read the package list again. Carries nothing. Kept in lockstep with
+/// the backend.
+pub const PACKAGES_CHANGED_EVENT: &str = "packages-changed";
+
+/// An account signed in or out, or switched role, maybe in another window or
+/// tab: read the accounts again. Carries nothing. Kept in lockstep with the
+/// backend.
+pub const ACCOUNTS_CHANGED_EVENT: &str = "accounts-changed";
+
+/// The engine sent a page somewhere, after a login or a deep link: each page
+/// asks [`pending_navigation`] whether it was this one. Carries nothing. Kept in
+/// lockstep with the backend.
+pub const NAVIGATE_EVENT: &str = "navigate";
 
 /// One host in the Accounts card, as it arrives.
 ///
@@ -1307,7 +1376,7 @@ pub struct MainPageAccountsData {
 
 /// v2's accounts list, light phase: one row per host, `signedIn` only.
 pub async fn get_main_page_accounts() -> Result<MainPageAccountsData, String> {
-    tauri::invoke_unit("get_main_page_accounts").await
+    engine::invoke_unit("get_main_page_accounts").await
 }
 
 /// A link type that Windows opens with another program, or with none.
@@ -1321,7 +1390,7 @@ pub struct ForeignHandler {
 /// The link types Windows does not open with this copy of the app. Always
 /// empty off Windows.
 pub async fn get_main_page_link_handlers() -> Result<Vec<ForeignHandler>, String> {
-    tauri::invoke_unit("get_main_page_link_handlers").await
+    engine::invoke_unit("get_main_page_link_handlers").await
 }
 
 /// v2's accounts list, heavy phase: fills in the given host's role.
@@ -1331,7 +1400,7 @@ pub async fn refresh_main_page_account(host: String) -> Result<AccountHostData, 
     struct Args {
         host: String,
     }
-    tauri::invoke("refresh_main_page_account", &Args { host }).await
+    engine::invoke("refresh_main_page_account", &Args { host }).await
 }
 
 /// One installed or published file, flat across every package. Mirrors the
@@ -1363,7 +1432,7 @@ pub struct MainPageRecentFilesData {
 /// `pages::main_page::recent_files::RecentFilesRegion`, and read by the main
 /// page's own resource only once the reader asks for that view.
 pub async fn get_main_page_recent_files() -> Result<MainPageRecentFilesData, String> {
-    tauri::invoke_unit("get_main_page_recent_files").await
+    engine::invoke_unit("get_main_page_recent_files").await
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1379,7 +1448,7 @@ pub struct RefreshedPackageStatus {
     pub role_switch_host: Option<String>,
 }
 
-/// Payload of the `package-status-changed` Tauri event. Same shape as
+/// Payload of the `package-status-changed` engine event. Same shape as
 /// [`RefreshedPackageStatus`] plus the namespace it applies to, so the
 /// list/detail pages can match a row by namespace.
 #[derive(Clone, Debug, Deserialize)]
@@ -1397,7 +1466,7 @@ pub struct PackageStatusEvent {
 
 pub const PACKAGE_STATUS_EVENT: &str = "package-status-changed";
 
-/// Payload of the `autosync-published` Tauri event — emitted after a
+/// Payload of the `autosync-published` engine event — emitted after a
 /// background autosync tick successfully publishes a package. UI listens
 /// for this on the installed-packages list page and surfaces it as a
 /// toast, mirroring the manual Commit & Push success notification.
@@ -1410,7 +1479,7 @@ pub struct PublishedEvent {
 
 pub const AUTOSYNC_PUBLISHED_EVENT: &str = "autosync-published";
 
-/// Payload of the `autosync-paused` Tauri event — emitted when the
+/// Payload of the `autosync-paused` engine event — emitted when the
 /// background watcher pauses a namespace. The `reason` field is a stable
 /// string discriminant; `message` is populated only for `reason = "other"`
 /// (workflow rejection, hash mismatch, JSON parse failure, etc.) and is
@@ -1439,7 +1508,7 @@ pub struct WatcherSnapshot {
 pub async fn get_autosync_snapshot() -> Result<WatcherSnapshot, String> {
     #[derive(Serialize)]
     struct Args {}
-    tauri::invoke("get_autosync_snapshot", &Args {}).await
+    engine::invoke("get_autosync_snapshot", &Args {}).await
 }
 
 pub async fn refresh_package_status(namespace: String) -> Result<RefreshedPackageStatus, String> {
@@ -1447,7 +1516,7 @@ pub async fn refresh_package_status(namespace: String) -> Result<RefreshedPackag
     struct Args {
         namespace: String,
     }
-    tauri::invoke("refresh_package_status", &Args { namespace }).await
+    engine::invoke("refresh_package_status", &Args { namespace }).await
 }
 
 pub async fn handle_remote_package(uri: String) -> Result<RemotePackageResult, String> {
@@ -1456,7 +1525,7 @@ pub async fn handle_remote_package(uri: String) -> Result<RemotePackageResult, S
     struct Args {
         uri: String,
     }
-    tauri::invoke("handle_remote_package", &Args { uri }).await
+    engine::invoke("handle_remote_package", &Args { uri }).await
 }
 
 /// Fetch the commit message for a specific revision of a package, so the
@@ -1476,7 +1545,7 @@ pub async fn get_revision_message(
         hash: String,
         catalog: Option<String>,
     }
-    tauri::invoke(
+    engine::invoke(
         "get_revision_message",
         &Args {
             bucket,
@@ -1491,11 +1560,11 @@ pub async fn get_revision_message(
 // ── Auto-update ────────────────────────────────────────────
 
 pub async fn check_for_update() -> Result<Option<UpdateInfo>, String> {
-    tauri::invoke_unit("check_for_update").await
+    engine::invoke_unit("check_for_update").await
 }
 
 pub async fn download_and_install_update() -> Result<(), String> {
-    tauri::invoke_unit("download_and_install_update").await
+    engine::invoke_unit("download_and_install_update").await
 }
 
 // ── Package actions ─────────────────────────────────────────
@@ -1516,7 +1585,7 @@ pub async fn package_commit(
         workflow: WorkflowIntent,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke(
+    engine::invoke(
         "package_commit",
         &Args {
             namespace,
@@ -1535,7 +1604,7 @@ pub async fn package_push(namespace: String, uri: Option<S3PackageUri>) -> Resul
         namespace: String,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke("package_push", &Args { namespace, uri }).await
+    engine::invoke("package_push", &Args { namespace, uri }).await
 }
 
 pub async fn package_publish(
@@ -1547,7 +1616,7 @@ pub async fn package_publish(
         namespace: String,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke("package_publish", &Args { namespace, uri }).await
+    engine::invoke("package_publish", &Args { namespace, uri }).await
 }
 
 pub async fn package_commit_and_push(
@@ -1566,7 +1635,7 @@ pub async fn package_commit_and_push(
         workflow: WorkflowIntent,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke(
+    engine::invoke(
         "package_commit_and_push",
         &Args {
             namespace,
@@ -1591,7 +1660,7 @@ pub async fn update_publish_settings(
         default_workflow: String,
         default_metadata: String,
     }
-    tauri::invoke(
+    engine::invoke(
         "update_publish_settings",
         &Args {
             message_template,
@@ -1608,7 +1677,7 @@ pub async fn update_autosync_settings(settings: AutosyncSettingsData) -> Result<
     struct Args {
         settings: AutosyncSettingsData,
     }
-    tauri::invoke("update_autosync_settings", &Args { settings }).await
+    engine::invoke("update_autosync_settings", &Args { settings }).await
 }
 
 /// Some of autosync's settings; every `None` stays as stored. The pull
@@ -1629,7 +1698,7 @@ pub async fn patch_autosync_settings(patch: AutosyncPatch) -> Result<(), String>
     struct Args {
         patch: AutosyncPatch,
     }
-    tauri::invoke("patch_autosync_settings", &Args { patch }).await
+    engine::invoke("patch_autosync_settings", &Args { patch }).await
 }
 
 /// Flip one direction of autosync. `None` leaves a direction alone — the v2 main
@@ -1643,7 +1712,7 @@ pub async fn set_autosync_direction(pull: Option<bool>, push: Option<bool>) -> R
         pull: Option<bool>,
         push: Option<bool>,
     }
-    tauri::invoke("set_autosync_direction", &Args { pull, push }).await
+    engine::invoke("set_autosync_direction", &Args { pull, push }).await
 }
 
 pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
@@ -1652,7 +1721,7 @@ pub async fn update_fswatcher_settings(enabled: bool) -> Result<(), String> {
     struct Args {
         enabled: bool,
     }
-    tauri::invoke("update_fswatcher_settings", &Args { enabled }).await
+    engine::invoke("update_fswatcher_settings", &Args { enabled }).await
 }
 
 /// Turn off exactly the built-in ignore rules in `off`, for every package.
@@ -1661,12 +1730,12 @@ pub async fn set_default_ignore_rules(off: Vec<String>) -> Result<(), String> {
     struct Args {
         off: Vec<String>,
     }
-    tauri::invoke("set_default_ignore_rules", &Args { off }).await
+    engine::invoke("set_default_ignore_rules", &Args { off }).await
 }
 
 /// Open the user-wide ignore rules file, creating it if missing.
 pub async fn open_user_ignore_rules() -> Result<(), String> {
-    tauri::invoke_unit("open_user_ignore_rules").await
+    engine::invoke_unit("open_user_ignore_rules").await
 }
 
 /// Save the log level (`default`, `trace`, …); it applies after a restart.
@@ -1675,7 +1744,7 @@ pub async fn update_log_settings(level: String) -> Result<(), String> {
     struct Args {
         level: String,
     }
-    tauri::invoke("update_log_settings", &Args { level }).await
+    engine::invoke("update_log_settings", &Args { level }).await
 }
 
 /// Turn an experiment on or off. `None` leaves a flag as it is — a caller that
@@ -1690,7 +1759,7 @@ pub async fn update_experimental_settings(
         entire_package_sync: Option<bool>,
         agent_tasks: Option<bool>,
     }
-    tauri::invoke(
+    engine::invoke(
         "update_experimental_settings",
         &Args {
             entire_package_sync,
@@ -1706,7 +1775,7 @@ pub async fn update_task_settings(settings: TaskSettings) -> Result<(), String> 
     struct Args {
         settings: TaskSettings,
     }
-    tauri::invoke("update_task_settings", &Args { settings }).await
+    engine::invoke("update_task_settings", &Args { settings }).await
 }
 
 /// Choose the design generation. The next page that asks draws it.
@@ -1715,7 +1784,7 @@ pub async fn update_design_settings(design: Design) -> Result<(), String> {
     struct Args {
         design: Design,
     }
-    tauri::invoke("update_design_settings", &Args { design }).await
+    engine::invoke("update_design_settings", &Args { design }).await
 }
 
 /// Record which files a package keeps; `folders` is read only for a folders
@@ -1733,7 +1802,7 @@ pub async fn package_set_sync_scope(
         scope: KeepingScope,
         folders: Vec<String>,
     }
-    tauri::invoke(
+    engine::invoke(
         "package_set_sync_scope",
         &Args {
             namespace,
@@ -1744,7 +1813,7 @@ pub async fn package_set_sync_scope(
     .await
 }
 
-/// Payload of the `fswatcher-subscriber-error` Tauri event. Surfaced as a
+/// Payload of the `fswatcher-subscriber-error` engine event. Surfaced as a
 /// one-shot toast (e.g. for `kind == "inotify_limit"` on Linux).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1762,14 +1831,14 @@ pub async fn package_pull(namespace: String, uri: Option<S3PackageUri>) -> Resul
         namespace: String,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke("package_pull", &Args { namespace, uri }).await
+    engine::invoke("package_pull", &Args { namespace, uri }).await
 }
 
 /// The dry-run verdict of what a Pull would do right now. UI-side mirror of the
 /// engine's `quilt_rs::flow::PullOutcome` (the UI crate cannot depend on the
 /// engine crate). The serde shape is the engine enum's default externally
 /// tagged form with no field renaming; it MUST stay identical so the tagged
-/// JSON crosses the Tauri boundary unchanged. Paths arrive as strings (the
+/// JSON crosses the engine boundary unchanged. Paths arrive as strings (the
 /// engine's `PathBuf`s serialize as such); the UI only displays them.
 ///
 /// The literals are anchored identically in the backend's
@@ -1864,7 +1933,7 @@ pub async fn package_pull_outcome(namespace: String) -> Result<PullPreview, Stri
     struct Args {
         namespace: String,
     }
-    tauri::invoke("package_pull_outcome", &Args { namespace }).await
+    engine::invoke("package_pull_outcome", &Args { namespace }).await
 }
 
 /// Remove a package; with `prune`, also delete its downloaded files that no
@@ -1880,7 +1949,7 @@ pub async fn package_uninstall(
         uri: Option<S3PackageUri>,
         prune: bool,
     }
-    tauri::invoke(
+    engine::invoke(
         "package_uninstall",
         &Args {
             namespace,
@@ -1897,7 +1966,7 @@ pub async fn package_install_paths(uri: String, paths: Vec<String>) -> Result<St
         uri: String,
         paths: Vec<String>,
     }
-    tauri::invoke("package_install_paths", &Args { uri, paths }).await
+    engine::invoke("package_install_paths", &Args { uri, paths }).await
 }
 
 pub async fn package_create(
@@ -1911,7 +1980,7 @@ pub async fn package_create(
         source: Option<String>,
         message: Option<String>,
     }
-    tauri::invoke(
+    engine::invoke(
         "package_create",
         &Args {
             namespace,
@@ -1933,7 +2002,7 @@ pub async fn certify_latest(
         namespace: String,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke("certify_latest", &Args { namespace, uri }).await
+    engine::invoke("certify_latest", &Args { namespace, uri }).await
 }
 
 /// Step the package back one revision along its pending commit chain.
@@ -1947,7 +2016,7 @@ pub async fn undo_commit(namespace: String) -> Result<String, String> {
     struct Args {
         namespace: String,
     }
-    tauri::invoke("undo_commit", &Args { namespace }).await
+    engine::invoke("undo_commit", &Args { namespace }).await
 }
 
 pub async fn reset_local(namespace: String, uri: Option<S3PackageUri>) -> Result<String, String> {
@@ -1956,14 +2025,14 @@ pub async fn reset_local(namespace: String, uri: Option<S3PackageUri>) -> Result
         namespace: String,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke("reset_local", &Args { namespace, uri }).await
+    engine::invoke("reset_local", &Args { namespace, uri }).await
 }
 
 // ── Remote ──────────────────────────────────────────────────
 
 /// Response from the `set_remote` command. UI-side mirror of the backend
 /// `quilt_sync::commands::package_ops::SetRemoteResponse`; the serde attributes
-/// MUST match so the typed payload crosses the Tauri boundary unchanged.
+/// MUST match so the typed payload crosses the engine boundary unchanged.
 /// `resolution_warning` is `Some(reason)` when the remote was set but the
 /// bucket's default workflow could not be resolved — the popup raises a warning
 /// notice instead of a plain success.
@@ -1987,7 +2056,7 @@ pub async fn set_remote(
         bucket: String,
         workflow: WorkflowIntent,
     }
-    tauri::invoke(
+    engine::invoke(
         "set_remote",
         &Args {
             namespace,
@@ -2007,7 +2076,7 @@ pub async fn change_catalog(namespace: String, origin: String) -> Result<String,
         namespace: String,
         origin: String,
     }
-    tauri::invoke("change_catalog", &Args { namespace, origin }).await
+    engine::invoke("change_catalog", &Args { namespace, origin }).await
 }
 
 /// Fetch a bucket's declared workflows before its remote is set, so the
@@ -2022,7 +2091,7 @@ pub async fn get_bucket_workflows(host: String, bucket: String) -> Result<Commit
         bucket: String,
     }
     let host = Some(host).filter(|host| !host.trim().is_empty());
-    tauri::invoke("get_bucket_workflows", &Args { host, bucket }).await
+    engine::invoke("get_bucket_workflows", &Args { host, bucket }).await
 }
 
 // ── Auth ────────────────────────────────────────────────────
@@ -2033,16 +2102,48 @@ pub async fn login(host: String, code: String) -> Result<String, String> {
         host: String,
         code: String,
     }
-    tauri::invoke("login", &Args { host, code }).await
+    engine::invoke("login", &Args { host, code }).await
 }
 
+/// Start a browser login. It lands on `back` in this page, the one that asked.
 pub async fn login_oauth(host: String, back: Option<String>) -> Result<String, String> {
     #[derive(Serialize)]
     struct Args {
         host: String,
         back: Option<String>,
+        page: Option<String>,
     }
-    tauri::invoke("login_oauth", &Args { host, back }).await
+    let page = Some(engine::page_id());
+    engine::invoke("login_oauth", &Args { host, back, page }).await
+}
+
+/// Somewhere the engine sent this page.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Navigation {
+    pub id: String,
+    /// The address, without the host.
+    pub page: String,
+}
+
+/// Where the engine sent this page, if anywhere, until it says it went.
+pub async fn pending_navigation() -> Result<Option<Navigation>, String> {
+    #[derive(Serialize)]
+    struct Args {
+        page: String,
+    }
+    let page = engine::page_id();
+    engine::invoke("pending_navigation", &Args { page }).await
+}
+
+/// This page followed navigation `id`.
+pub async fn navigation_done(id: String) -> Result<(), String> {
+    #[derive(Serialize)]
+    struct Args {
+        page: String,
+        id: String,
+    }
+    let page = engine::page_id();
+    engine::invoke("navigation_done", &Args { page, id }).await
 }
 
 pub async fn erase_auth(host: String) -> Result<String, String> {
@@ -2050,12 +2151,12 @@ pub async fn erase_auth(host: String) -> Result<String, String> {
     struct Args {
         host: String,
     }
-    tauri::invoke("erase_auth", &Args { host }).await
+    engine::invoke("erase_auth", &Args { host }).await
 }
 
 /// The roles a host's stack grants the logged-in user. UI-side mirror of the
 /// backend `quilt_sync::commands::auth::RolesData`; the serde attributes MUST
-/// match so the payload crosses the Tauri boundary unchanged. `available`
+/// match so the payload crosses the engine boundary unchanged. `available`
 /// includes `current`, so a single-element list means there is nothing to
 /// switch to.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -2072,7 +2173,7 @@ pub async fn get_roles(host: String) -> Result<RolesData, String> {
     struct Args {
         host: String,
     }
-    tauri::invoke("get_roles", &Args { host }).await
+    engine::invoke("get_roles", &Args { host }).await
 }
 
 /// Switch the host's primary role. The backend expires the stored credentials
@@ -2086,7 +2187,7 @@ pub async fn switch_role(host: String, role: String) -> Result<RolesData, String
         host: String,
         role: String,
     }
-    tauri::invoke("switch_role", &Args { host, role }).await
+    engine::invoke("switch_role", &Args { host, role }).await
 }
 
 // ── Setup ───────────────────────────────────────────────────
@@ -2096,7 +2197,7 @@ pub async fn setup(directory: String) -> Result<String, String> {
     struct Args {
         directory: String,
     }
-    tauri::invoke("setup", &Args { directory }).await
+    engine::invoke("setup", &Args { directory }).await
 }
 
 // ── Quiltignore ─────────────────────────────────────────────
@@ -2112,7 +2213,7 @@ pub async fn add_to_quiltignore(
         pattern: String,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke(
+    engine::invoke(
         "add_to_quiltignore",
         &Args {
             namespace,
@@ -2161,7 +2262,7 @@ pub async fn stop_ignoring_preview(
         path: String,
         folder: bool,
     }
-    tauri::invoke(
+    engine::invoke(
         "stop_ignoring_preview",
         &Args {
             namespace,
@@ -2187,7 +2288,7 @@ pub async fn stop_ignoring(
         scope: StopIgnoringScope,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke(
+    engine::invoke(
         "stop_ignoring",
         &Args {
             namespace,
@@ -2206,7 +2307,7 @@ pub async fn test_quiltignore_pattern(pattern: String, path: String) -> Result<b
         pattern: String,
         path: String,
     }
-    tauri::invoke("test_quiltignore_pattern", &Args { pattern, path }).await
+    engine::invoke("test_quiltignore_pattern", &Args { pattern, path }).await
 }
 
 // ── File/browser ────────────────────────────────────────────
@@ -2220,15 +2321,38 @@ pub async fn open_in_file_browser(
         namespace: String,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke("open_in_file_browser", &Args { namespace, uri }).await
+    engine::invoke("open_in_file_browser", &Args { namespace, uri }).await
 }
 
 pub async fn open_in_web_browser(url: String) -> Result<String, String> {
+    use leptos::prelude::GetUntracked;
     #[derive(Serialize)]
     struct Args {
         url: String,
     }
-    tauri::invoke("open_in_web_browser", &Args { url }).await
+    // Headless's machine is seldom the reader's and may have no browser, so
+    // web and mail links open from this tab. A local folder still goes to the
+    // engine.
+    if engine::headless().get_untracked() {
+        let window = web_sys::window().ok_or("No window")?;
+        // The address bar hands a mail link to the mail app without leaving
+        // the page, and needs no fresh click: it may come after a wait.
+        if url.starts_with("mailto:") {
+            window
+                .location()
+                .set_href(&url)
+                .map_err(|_| "This browser didn't open the mail app.".to_owned())?;
+            return Ok("Opened in the mail app".to_owned());
+        }
+        // No opener, so the new page can't steer this one.
+        if url.starts_with("http://") || url.starts_with("https://") {
+            window
+                .open_with_url_and_target_and_features(&url, "_blank", "noopener")
+                .map_err(|_| "This browser didn't open the link.".to_owned())?;
+            return Ok("Opened in this browser".to_owned());
+        }
+    }
+    engine::invoke("open_in_web_browser", &Args { url }).await
 }
 
 pub async fn open_in_default_application(
@@ -2242,7 +2366,7 @@ pub async fn open_in_default_application(
         path: String,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke(
+    engine::invoke(
         "open_in_default_application",
         &Args {
             namespace,
@@ -2264,7 +2388,7 @@ pub async fn reveal_in_file_browser(
         path: String,
         uri: Option<S3PackageUri>,
     }
-    tauri::invoke(
+    engine::invoke(
         "reveal_in_file_browser",
         &Args {
             namespace,
@@ -2276,25 +2400,25 @@ pub async fn reveal_in_file_browser(
 }
 
 pub async fn open_directory_picker() -> Result<String, String> {
-    tauri::invoke_unit("open_directory_picker").await
+    engine::invoke_unit("open_directory_picker").await
 }
 
 // ── Debug/diagnostics ───────────────────────────────────────
 
 pub async fn debug_dot_quilt() -> Result<String, String> {
-    tauri::invoke_unit("debug_dot_quilt").await
+    engine::invoke_unit("debug_dot_quilt").await
 }
 
 pub async fn debug_logs() -> Result<String, String> {
-    tauri::invoke_unit("debug_logs").await
+    engine::invoke_unit("debug_logs").await
 }
 
 pub async fn open_home_dir() -> Result<String, String> {
-    tauri::invoke_unit("open_home_dir").await
+    engine::invoke_unit("open_home_dir").await
 }
 
 pub async fn open_data_dir() -> Result<String, String> {
-    tauri::invoke_unit("open_data_dir").await
+    engine::invoke_unit("open_data_dir").await
 }
 
 /// What Free up space freed: the sentence, and its bytes.
@@ -2307,7 +2431,7 @@ pub struct FreedSpace {
 
 /// Delete what local storage holds for nothing, and say what was freed.
 pub async fn run_gc() -> Result<FreedSpace, String> {
-    tauri::invoke_unit("run_gc").await
+    engine::invoke_unit("run_gc").await
 }
 
 /// How much local storage holds, and how much Free up space would free.
@@ -2321,11 +2445,11 @@ pub struct StorageSize {
 
 /// Measure local storage, deleting nothing; run only when the user asks.
 pub async fn measure_storage() -> Result<StorageSize, String> {
-    tauri::invoke_unit("measure_storage").await
+    engine::invoke_unit("measure_storage").await
 }
 
 pub async fn collect_diagnostic_logs() -> Result<String, String> {
-    tauri::invoke_unit("collect_diagnostic_logs").await
+    engine::invoke_unit("collect_diagnostic_logs").await
 }
 
 /// Send the diagnostic zip to Quilt; `message` is what the user wrote about the
@@ -2340,7 +2464,7 @@ pub async fn send_crash_report(
         zip_path: String,
         message: Option<String>,
     }
-    tauri::invoke("send_crash_report", &Args { zip_path, message }).await
+    engine::invoke("send_crash_report", &Args { zip_path, message }).await
 }
 
 #[cfg(test)]
@@ -2351,6 +2475,71 @@ mod tests {
         ResolveData, RevisionHistoryData, RolesData, ViolationField, WorkflowInfo, WorkflowIntent,
     };
     use crate::kit::RowDownloads;
+
+    /// Headless draws v2 whatever design is saved, also after a reconnect
+    /// to a desktop engine restarted as headless; a desktop engine draws the
+    /// saved one.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn headless_draws_v2_over_a_saved_v1() {
+        use crate::engine::fake::{FakeEngine, ask};
+        use crate::test_support::sleep_ms;
+
+        let engine = FakeEngine::install();
+        let _asked = ask("get_toasts");
+        sleep_ms(0).await;
+        engine.hello();
+        sleep_ms(0).await;
+        assert_eq!(super::Design::V1.drawn(), super::Design::V1);
+
+        engine.close();
+        sleep_ms(0).await;
+        engine.as_headless();
+        engine.hello();
+        sleep_ms(0).await;
+        assert_eq!(super::Design::V1.drawn(), super::Design::V2);
+    }
+
+    /// On headless a web link opens from the tab and never reaches the
+    /// engine, whose machine is seldom the reader's; a local folder still
+    /// does.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn headless_opens_web_links_here_and_folders_on_the_engine() {
+        use crate::engine::fake::{FakeEngine, ask};
+        use crate::test_support::sleep_ms;
+
+        let engine = FakeEngine::install();
+        engine.as_headless();
+        let _asked = ask("get_toasts");
+        sleep_ms(0).await;
+        engine.hello();
+        sleep_ms(0).await;
+
+        // A stand-in records the link instead of opening a tab, which would
+        // take focus from the tests that run after this one.
+        let window = web_sys::window().unwrap();
+        let open = js_sys::Reflect::get(&window, &"open".into()).unwrap();
+        let record = js_sys::Function::new_with_args("url", "window.openedUrl = url; return null;");
+        js_sys::Reflect::set(&window, &"open".into(), &record).unwrap();
+        let opened = super::open_in_web_browser("https://quilt.test/b/bucket".to_owned()).await;
+        let recorded = js_sys::Reflect::get(&window, &"openedUrl".into()).unwrap();
+        js_sys::Reflect::set(&window, &"open".into(), &open).unwrap();
+        assert!(opened.is_ok(), "{opened:?}");
+        assert_eq!(
+            recorded.as_string().as_deref(),
+            Some("https://quilt.test/b/bucket")
+        );
+        wasm_bindgen_futures::spawn_local(async {
+            let _ = super::open_in_web_browser("/tmp/logs".to_owned()).await;
+        });
+        sleep_ms(0).await;
+        let asked: Vec<_> = engine
+            .requests()
+            .iter()
+            .filter(|request| request["cmd"] == "open_in_web_browser")
+            .map(|request| request["args"]["url"].clone())
+            .collect();
+        assert_eq!(asked, vec![serde_json::json!("/tmp/logs")]);
+    }
 
     /// Anchored identically in the backend's `files_data_wire_form_is_verbatim`.
     #[test]
@@ -2544,7 +2733,7 @@ mod tests {
     /// serializes. This literal is anchored identically in the backend's
     /// `package_item_data_wire_form_is_verbatim`; if the two drift, the
     /// list silently drops the pause reason (or a whole field) at the
-    /// Tauri boundary — the exact class of bug this data-driven design
+    /// engine boundary — the exact class of bug this data-driven design
     /// exists to prevent.
     #[test]
     fn package_item_data_wire_form_is_verbatim() {
@@ -2651,7 +2840,7 @@ mod tests {
     /// backend (`quilt_rs::flow::PullOutcome`) serializes. These literals are
     /// anchored identically in the backend's `pull_outcome_wire_form_is_verbatim`;
     /// if the two drift, the two-phase Pull affordance silently misreads the
-    /// dry-run outcome at the Tauri boundary.
+    /// dry-run outcome at the engine boundary.
     #[test]
     fn pull_outcome_wire_form_is_verbatim() {
         assert_eq!(
@@ -2754,7 +2943,7 @@ mod tests {
     /// wire-shape test
     /// (`quilt_sync::commands::main_page::get_main_page_packages_from_model_serializes_the_wire_shape`)
     /// pins for one row. If the two drift, a light-phase row silently fails to
-    /// deserialize at the Tauri boundary.
+    /// deserialize at the engine boundary.
     #[test]
     fn main_page_packages_data_wire_form_is_verbatim() {
         let data = serde_json::from_str::<super::MainPagePackagesData>(
@@ -2774,7 +2963,7 @@ mod tests {
     /// The mirror struct must deserialize the exact camelCase JSON the
     /// backend's `MainPageFile`/`MainPageRecentFiles`
     /// (`#[serde(rename_all = "camelCase")]`, both plain `Serialize`) produce.
-    /// If the two drift, the feed silently fails to deserialize at the Tauri
+    /// If the two drift, the feed silently fails to deserialize at the engine
     /// boundary.
     #[test]
     fn main_page_recent_files_data_wire_form_is_verbatim() {
@@ -2917,7 +3106,7 @@ mod tests {
 
     /// The mirror enum must serialize to the exact tagged JSON the backend
     /// (`quilt_rs::io::remote::WorkflowIntent`) deserializes, and round-trip
-    /// back. If these strings drift, the Tauri commit boundary breaks silently.
+    /// back. If these strings drift, the engine boundary for commits breaks silently.
     #[test]
     fn workflow_intent_wire_form_is_verbatim() {
         let cases = [
@@ -3118,6 +3307,10 @@ mod tests {
 /// `toast::TOAST_EVENT`.
 pub const TOAST_EVENT: &str = "toast";
 
+/// A toast was dismissed, maybe in another window or tab. Carries its id. Kept
+/// in lockstep with the backend's `toast::TOAST_DISMISSED_EVENT`.
+pub const TOAST_DISMISSED_EVENT: &str = "toast-dismissed";
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ToastKind {
@@ -3158,7 +3351,7 @@ pub struct Toast {
 pub async fn get_toasts() -> Result<Vec<Toast>, String> {
     #[derive(Serialize)]
     struct Args {}
-    tauri::invoke("get_toasts", &Args {}).await
+    engine::invoke("get_toasts", &Args {}).await
 }
 
 pub async fn dismiss_toast(id: u64) -> Result<(), String> {
@@ -3166,7 +3359,7 @@ pub async fn dismiss_toast(id: u64) -> Result<(), String> {
     struct Args {
         id: u64,
     }
-    tauri::invoke("dismiss_toast", &Args { id }).await
+    engine::invoke("dismiss_toast", &Args { id }).await
 }
 
 // ── Autopull activity (what autopull is doing right now) ──
@@ -3194,7 +3387,7 @@ pub struct AutopullActivity {
 pub async fn get_autopull_activity() -> Result<Option<AutopullActivity>, String> {
     #[derive(Serialize)]
     struct Args {}
-    tauri::invoke("get_autopull_activity", &Args {}).await
+    engine::invoke("get_autopull_activity", &Args {}).await
 }
 
 #[cfg(test)]
@@ -3228,7 +3421,7 @@ mod activity_tests {
 }
 
 pub async fn quit_prompt_shown(generation: u64) -> Result<(), String> {
-    tauri::invoke("quit_prompt_shown", &QuitPromptShownArgs { generation }).await
+    engine::invoke("quit_prompt_shown", &QuitPromptShownArgs { generation }).await
 }
 
 #[derive(serde::Serialize)]
@@ -3238,9 +3431,9 @@ struct QuitPromptShownArgs {
 }
 
 pub async fn quit_confirm() -> Result<(), String> {
-    tauri::invoke_unit("quit_confirm").await
+    engine::invoke_unit("quit_confirm").await
 }
 
 pub async fn quit_cancel() -> Result<(), String> {
-    tauri::invoke_unit("quit_cancel").await
+    engine::invoke_unit("quit_cancel").await
 }

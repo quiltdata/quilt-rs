@@ -23,6 +23,19 @@
 
 ### Added
 
+- The tray's *Open in browser* opens QuiltSync in a browser tab beside the window, with the same pages kept in step with the app
+  - <https://github.com/quiltdata/quilt-rs/pull/1266>
+  - <https://github.com/quiltdata/quilt-rs/pull/1304>
+  - <https://github.com/quiltdata/quilt-rs/pull/1307>
+- A browser tab names the page it shows, reconnects on its own after QuiltSync restarts, saying so in its top bar, and finishes a login it started
+  - <https://github.com/quiltdata/quilt-rs/pull/1272>
+  - <https://github.com/quiltdata/quilt-rs/pull/1309>
+- `QuiltSync --headless` runs QuiltSync with no window or tray, serving it to a browser in the new design; folders are typed with completion, login is by code, and a new version shows a download link
+  - <https://github.com/quiltdata/quilt-rs/pull/1279>
+  - <https://github.com/quiltdata/quilt-rs/pull/1301>
+  - <https://github.com/quiltdata/quilt-rs/pull/1303>
+  - <https://github.com/quiltdata/quilt-rs/pull/1304>
+  - <https://github.com/quiltdata/quilt-rs/pull/1306>
 - The package page shows the current revision's metadata under its message, and clicking the revision shows all of it, with the revision's hash, whether it is published and its workflow
   - <https://github.com/quiltdata/quilt-rs/pull/1297>
   - <https://github.com/quiltdata/quilt-rs/pull/1300>
@@ -30,9 +43,13 @@
 
 ### Changed
 
+- Under the hood, everything but the window, tray and deep links moves into an engine with no Tauri in it; every command is listed once, and the window reaches the engine over the same connection as a browser tab. No behaviour changes (<https://github.com/quiltdata/quilt-rs/pull/1262>, <https://github.com/quiltdata/quilt-rs/pull/1265>, <https://github.com/quiltdata/quilt-rs/pull/1272>)
+- The update check reads the update feed directly, so a browser tab sees new versions too (<https://github.com/quiltdata/quilt-rs/pull/1279>)
+- `QUILT_DOMAIN` moves QuiltSync's data folder, as it moves the `quilt` CLI's domain (<https://github.com/quiltdata/quilt-rs/pull/1279>)
 - Usage analytics report the QuiltSync version (<https://github.com/quiltdata/quilt-rs/pull/1286>)
 - QuiltSync makes all its HTTPS connections with one TLS library, and on Linux no longer uses OpenSSL (<https://github.com/quiltdata/quilt-rs/pull/1288>)
 - The settings page's *Saved* shows for 1.5 seconds, as long as *Copied* does (<https://github.com/quiltdata/quilt-rs/pull/1310>)
+- Under the hood, browser tests drive headless QuiltSync in Chrome from Rust, and CI runs them on every PR (<https://github.com/quiltdata/quilt-rs/pull/1287>)
 
 ### Fixed
 

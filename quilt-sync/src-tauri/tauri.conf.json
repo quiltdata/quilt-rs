@@ -37,37 +37,8 @@
     }
   },
   "app": {
-    "withGlobalTauri": true,
     "security": {
-      "capabilities": [
-        {
-          "identifier": "main-capability",
-          "description": "Capability for the main window",
-          "windows": ["main"],
-          "permissions": [
-            "core:default",
-            "shell:default",
-            "deep-link:default",
-            "process:default",
-            "process:allow-restart",
-            "updater:default",
-            "updater:allow-check"
-          ]
-        }
-      ]
-    },
-    "windows": [
-      {
-        "label": "main",
-        "fullscreen": false,
-        "resizable": true,
-        "title": "QuiltSync",
-        "width": 1280,
-        "height": 900,
-        "minWidth": 640,
-        "minHeight": 560,
-        "useHttpsScheme": true
-      }
-    ]
+      "capabilities": []
+    }
   }
 }

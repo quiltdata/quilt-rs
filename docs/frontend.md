@@ -1,16 +1,17 @@
 # QuiltSync Frontend Architecture
 
 > **Audience**: Contributors who need to understand how the desktop UI
-> works end-to-end, from the Tauri webview to the Leptos components.
+> works end-to-end, from the engine's socket to the Leptos components.
 
 ## Overview
 
 QuiltSync is a Tauri v2 desktop application. The UI is a
-**client-side rendered Leptos WASM app** running inside the webview.
+**client-side rendered Leptos WASM app** that the engine serves over HTTP:
+the desktop window loads it from the engine like any browser tab does.
 Rust compiles to WebAssembly via Trunk, and Leptos handles routing,
-reactivity, and DOM rendering entirely in the browser. The Tauri
-backend exposes data through `#[tauri::command]` handlers that return
-serializable structs -- the frontend owns all rendering.
+reactivity, and DOM rendering entirely in the browser. The backend
+exposes data through commands that return serializable structs -- the
+frontend owns all rendering.
 
 ## Stack
 
@@ -18,10 +19,10 @@ serializable structs -- the frontend owns all rendering.
 |---|---|---|
 | Framework | Leptos 0.8 (CSR mode) | `quilt-sync/ui/src/` |
 | Routing | leptos\_router 0.8 | `ui/src/main.rs` |
-| WASM bridge | wasm-bindgen + serde-wasm-bindgen | `ui/src/tauri.rs` |
+| Engine client | wasm-bindgen + web-sys `WebSocket` | `ui/src/engine.rs` |
 | Styles | Plain CSS (global, no scoping) | `ui/assets/css/` |
 | Build tool | Trunk | `ui/Trunk.toml` |
-| IPC | Tauri commands (`#[tauri::command]`) | `src-tauri/src/commands.rs` |
+| Transport | The engine's WebSocket, for the window and every tab, over the engine's command table | `src-tauri/src/engine/dispatch.rs`, `src-tauri/src/engine/server.rs` |
 
 ## Directory Structure
 
@@ -64,8 +65,8 @@ quilt-sync/ui/
     │   ├── setup.rs
     │   ├── error.rs
     │   └── remote_package.rs
-    ├── commands.rs             # Typed Tauri command wrappers + response DTOs
-    ├── tauri.rs                # Low-level WASM-to-JS invoke bridge
+    ├── commands.rs             # Typed command wrappers + response DTOs
+    ├── engine.rs               # invoke/listen over the engine's socket
     └── error_handler.rs        # Error parsing and redirect logic
 ```
 
@@ -89,15 +90,15 @@ Suspense renders <Layout> + <Spinner /> while loading
     |
     v
 LocalResource calls commands::get_page_data() [typed wrapper]
-    |                                              (Tauri IPC)
+    |                                              (the engine's socket)
     v
-tauri::invoke() → wasm-bindgen → window.__TAURI__.core.invoke()
+engine::invoke() → {"id", "cmd", "args"} on /ws
     |
     v
-Rust #[tauri::command] handler returns serializable struct
+dispatch runs the command, which returns a serializable struct
     |
     v
-serde-wasm-bindgen deserializes response into Rust DTO
+serde_json deserializes the reply's `ok` into Rust DTO
     |
     v
 Suspend::new resolves, Leptos renders the page reactively
@@ -129,7 +130,7 @@ Phase 2 — Heavy (per-package, async)
     For each PackageItem, spawn_local calls refresh_package_status()
         |
         v
-    Tauri command fetches latest hash from S3 (network)
+    The engine command fetches latest hash from S3 (network)
     and walks local files to detect changes (hashing)
         |
         v
@@ -156,7 +157,7 @@ ui_locked.set(true) — disables UI via reactive signal
     |
     v
 spawn_local(async { commands::action(...).await })
-    |                                        (Tauri IPC)
+    |                                        (the engine's socket)
     v
 Rust command executes the operation (e.g. push_package)
     |
@@ -201,7 +202,7 @@ show_popup.set(true) — signal drives conditional rendering
 Popup renders over overlay, user fills form
     |
     v
-On submit: spawn_local calls Tauri command,
+On submit: spawn_local calls the engine command,
            show_popup.set(false), page reloads
 ```
 
@@ -305,22 +306,60 @@ Key conventions:
 - **Derived state**: `Memo::new` for filtered/computed views
 - **Async actions**: `leptos::task::spawn_local` for button handlers
 
-## IPC Bridge
+## Engine client
 
-Two layers connect Leptos components to Tauri commands:
+Two layers connect Leptos components to the engine's commands:
 
-### Low-level (`tauri.rs`)
+### Low-level (`engine.rs`)
 
 ```rust
 pub async fn invoke<A, R>(cmd: &str, args: &A) -> Result<R, String>
+pub fn listen<T>(event: &str, callback: impl FnMut(T)) -> EventListener
 ```
 
-Calls `window.__TAURI__.core.invoke()` via wasm-bindgen, serializing
-args with serde-wasm-bindgen and deserializing the response.
+The engine serves the UI over HTTP (`src-tauri/src/engine/server.rs`). The
+desktop window opens it with `?t=<token>`, and so does a browser tab from the
+tray's *Open in browser*. The page keeps the token in its origin's
+`localStorage` (a cookie would reach every port on the host) and drops it from
+the address; a browser with site storage turned off gets a message instead, and
+a page opened with no link says how to get one.
+
+Under `--headless` (`src-tauri/src/engine/headless.rs`) there is no window or
+tray: the engine prints the link. The hello's `desktop` tells the page what it
+can offer (`engine::headless()`): a typed folder path instead of the picker,
+the browser's clipboard, code login only, and a download link instead of
+installing an update.
+
+`invoke` and `listen` go over one WebSocket, `/ws?t=<token>`. The engine
+speaks first with a hello; each request is `{"id", "cmd", "args"}` and its
+reply `{"id", "ok"}` or `{"id", "err"}`; every event goes to every window and
+tab as `{"event", "payload"}`. The engine's command table
+(`src-tauri/src/engine/dispatch.rs`) lists every command once.
+
+After a login or a deep link the engine sends one page somewhere, not every
+page: the page a link lands on may run its operation as it opens. Each page has
+an id (the desktop window's is `window`); the engine keeps the address for that
+id and nudges every page with `navigate`, and the page it is for asks with
+`pending_navigation`, at the nudge or when it next connects. The engine keeps
+the address until the page says it went (`navigation_done`), so a reply lost to
+a dropped socket is asked for again; the page skips an id it already followed.
+
+The connection (`engine/link.rs`) knows nothing of the socket
+(`engine/browser.rs`), so another transport or a test's fake
+(`engine/fake.rs`) plugs in beside it. A closed socket fails every request
+still waiting and none is sent again; the page reconnects with back-off and
+says so in a bar. A refused token stops the retries for good, with one bar
+saying to open the new link. An engine of another version reloads the page.
+
+Events sent while the socket was down are lost, so after a reconnect every v2
+page reads again (`engine::reread_on_reconnect`, used by
+`PageHandle::read` and the main page), and listeners that hydrate a state read
+again through `listen_then`. v1 pages don't. A relay page whose read is its
+operation uses `PageHandle::run`, which never runs again on its own.
 
 ### Typed wrappers (`commands.rs`)
 
-Each Tauri command has a corresponding async function with proper
+Each command has a corresponding async function with proper
 arg/return types:
 
 ```rust

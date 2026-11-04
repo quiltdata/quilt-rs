@@ -14,6 +14,7 @@ pub mod login_v2;
 mod main_page;
 mod merge;
 mod not_found;
+mod path_field;
 mod remote_package;
 mod remote_package_v2;
 pub mod row_menu;

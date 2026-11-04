@@ -6,8 +6,9 @@
 //! `Suspense` (§6): the Autosync card refetches on every autosync change,
 //! publish and pause, and a `Suspense` boundary re-shows its fallback each time,
 //! so the page would strobe.
-//! Today `reload` fires from the Refresh button and from a role switch, which
-//! moves the package rows as surely as it moves the Accounts card.
+//! Today `reload` fires from the Refresh button, from a role switch, which
+//! moves the package rows as surely as it moves the Accounts card, and when
+//! another window or tab changes the packages or the accounts.
 //!
 //! # One read of each payload, held here
 //!
@@ -122,8 +123,8 @@ const GROUP_PACKAGE: &str = "Package";
 const SORT_CHANGED: &str = "Changed";
 const SORT_NAME: &str = "Name";
 
-/// The failure branch, split out from `MainPage` so it can be tested without a
-/// Tauri host. Renders only the fixed sentence for the user — logging the
+/// The failure branch, split out from `MainPage` so it can be tested without an
+/// engine. Renders only the fixed sentence for the user — logging the
 /// backend's error for a developer happens once, where the fetch result is
 /// handled (`MainPage`'s `Err` arm below), not here: this is a view function,
 /// and view functions can re-run on every re-render, which would re-log the
@@ -451,8 +452,8 @@ fn PackageListRow(
 /// card's own `.body > * + *` rule (`kit/card.module.css`) spaces them; a
 /// wrapping `div` would defeat that direct-child selector, and gallery
 /// chrome's `.g-rows` is not shipped to the app at all (`index.html` does
-/// not link it). Split out from `MainPage` so it can be tested without a
-/// Tauri host.
+/// not link it). Split out from `MainPage` so it can be tested without an
+/// engine.
 /// The class a run of rows carries, for the feed's list as well as this one — it has
 /// no stylesheet of its own and the rule is the page's.
 ///
@@ -983,7 +984,7 @@ type WatcherRead = fn() -> std::pin::Pin<
 ///
 /// So the boundaries live **inside** this component rather than around it, and
 /// what it takes is the page's two resources. A test supplies its own —
-/// `LocalResource::new(|| async { Ok(fixture()) })` resolves with no Tauri host —
+/// `LocalResource::new(|| async { Ok(fixture()) })` resolves with no engine —
 /// which is what makes all three regions visible to an assertion at once.
 ///
 /// # Three boundaries, and where the lines fall
@@ -1027,7 +1028,7 @@ fn MainPageRegions(
     /// drive a settle the way the heavy phase would. Read-only and one-shot: the
     /// page still owns the store and still seeds it from its own payload, so a
     /// caller cannot make the test's page differ from the app's. The app passes
-    /// nothing; there is no Tauri host in a test, so every row's real refresh
+    /// nothing; there is no engine in a test, so every row's real refresh
     /// fails and nothing would ever settle without this.
     ///
     /// `optional_no_strip` rather than `optional`: the plain form makes the
@@ -1037,7 +1038,7 @@ fn MainPageRegions(
     on_store: Option<Callback<PackageStore>>,
     /// Stands in for `commands::get_main_page_recent_files`. The app passes
     /// nothing and the feed's own resource calls the command; a test passes a
-    /// closure, because there is no Tauri host to answer that call and because
+    /// closure, because there is no engine to answer that call and because
     /// counting the calls is the only way to pin R3's "fetched on the first
     /// switch, and kept thereafter".
     ///
@@ -1047,7 +1048,7 @@ fn MainPageRegions(
     #[prop(optional_no_strip)]
     fetch_files: Option<Callback<(), Result<MainPageRecentFilesData, String>>>,
     /// Stands in for `commands::get_main_page_watcher`, the same kind of seam:
-    /// with no Tauri host the real read fails at once, so a test that wants the
+    /// with no engine the real read fails at once, so a test that wants the
     /// Autosync card still loading has to supply a read that has not answered.
     #[prop(optional_no_strip)]
     fetch_watcher: Option<WatcherRead>,
@@ -1491,6 +1492,8 @@ fn MainPageRegions(
 #[component]
 pub fn MainPage() -> impl IntoView {
     let reload = Trigger::new();
+    // Events were lost while the socket was down.
+    crate::engine::reread_on_reconnect(reload);
     // Light-phase reads still out, counted as the heavy phase counts its own
     // (`PackageStore::in_flight`). The heavy phase reports itself by rows settling,
     // so the spin covers the light phase alone.
@@ -1514,7 +1517,7 @@ pub fn MainPage() -> impl IntoView {
     //
     // Tested only by `the_queue_is_drawn_from_the_same_payloads_as_the_cards`. A
     // card that built its own resource would call the real command, which has no
-    // Tauri host under test, so the card would be empty and that test would fail.
+    // engine under test, so the card would be empty and that test would fail.
     // Counting this fetcher's calls would not catch it: a card with its own
     // resource does not call the test's fetcher at all.
     let accounts = LocalResource::new(move || {
@@ -1528,7 +1531,10 @@ pub fn MainPage() -> impl IntoView {
         }
     });
 
-    let link_handlers = LocalResource::new(commands::get_main_page_link_handlers);
+    let link_handlers = LocalResource::new(move || {
+        reload.track();
+        commands::get_main_page_link_handlers()
+    });
 
     view! {
         <PageLayout
@@ -1539,6 +1545,8 @@ pub fn MainPage() -> impl IntoView {
                 .into_any()
         >
             <PackageStatusListener reload=reload />
+            <ReloadOn event=commands::PACKAGES_CHANGED_EVENT reload=reload />
+            <ReloadOn event=commands::ACCOUNTS_CHANGED_EVENT reload=reload />
             <MainPageRegions
                 packages=packages
                 accounts=accounts
@@ -1597,10 +1605,19 @@ pub(crate) fn link_handler_message(handlers: &[ForeignHandler]) -> String {
 #[component]
 fn PackageStatusListener(reload: Trigger) -> impl IntoView {
     let watch = StatusWatch::new(reload);
-    let listener = crate::tauri::listen::<commands::PackageStatusEvent>(
+    let listener = crate::engine::listen::<commands::PackageStatusEvent>(
         commands::PACKAGE_STATUS_EVENT,
         move |event| watch.observe(&event),
     );
+    on_cleanup(move || drop(listener));
+}
+
+/// Ask the backend again on `event`: a package created, installed or
+/// uninstalled, or an account signed in, out or switched, here or in another
+/// window or tab.
+#[component]
+fn ReloadOn(event: &'static str, reload: Trigger) -> impl IntoView {
+    let listener = crate::engine::listen::<serde::de::IgnoredAny>(event, move |_| reload.notify());
     on_cleanup(move || drop(listener));
 }
 
@@ -2012,7 +2029,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     async fn a_failed_refresh_ends_the_waiting_too() {
-        // R3 on the failure path. There is no Tauri host here, so every call the
+        // R3 on the failure path. There is no engine here, so every call the
         // resolve fires rejects and drives `record_refresh`'s `Err` arm — which is
         // what makes this a real test of that arm's decrement rather than of the
         // `Ok` one's. A counter only the success path decrements would leave the
@@ -2108,7 +2125,7 @@ mod tests {
 
     /// The host the fixture above points at, signed out, for the Accounts card.
     /// Settled (`provisional: false`), because a provisional row spawns an
-    /// invoke that can only fail without a Tauri host.
+    /// invoke that can only fail without an engine.
     fn one_signed_out_host() -> MainPageAccountsData {
         MainPageAccountsData {
             hosts: vec![AccountHostData {
@@ -2127,7 +2144,7 @@ mod tests {
     /// `MainPageRegions` takes the page's resources rather than their payloads —
     /// the strip has to be constructed exactly once, so the boundaries live inside
     /// it — so a test hands it resources of its own. A `LocalResource` over a ready
-    /// future resolves with no Tauri host, which is what puts all three regions on
+    /// future resolves with no engine, which is what puts all three regions on
     /// screen at once.
     fn mount_regions(
         packages: Result<MainPagePackagesData, String>,
@@ -2241,7 +2258,7 @@ mod tests {
             });
             // Pending too, so the strip is on its skeletons as the app's is
             // before its reads answer, rather than on the failure a read with
-            // no Tauri host gives at once.
+            // no engine gives at once.
             let watcher: WatcherRead = || Box::pin(std::future::pending());
             view! {
                 <leptos_router::components::Router>
@@ -3294,7 +3311,7 @@ mod tests {
     }
 
     /// The heavy phase's answer for one row, as [`record_refresh`] would apply it
-    /// if there were a Tauri host to answer the call.
+    /// if there were an engine to answer the call.
     fn settle(store: PackageStore, namespace: &Namespace, state: PackageState) {
         store
             .row(namespace)
@@ -3309,7 +3326,7 @@ mod tests {
 
     /// Every row confirmed with exactly what the light phase guessed — the heavy
     /// phase agreeing. The queue draws only confirmed rows (R2) and no row can
-    /// confirm itself without a Tauri host, so a page test whose subject is not
+    /// confirm itself without an engine, so a page test whose subject is not
     /// the settle still has to play that part or assert against an empty queue.
     fn settle_all(store: PackageStore, packages: &MainPagePackagesData) {
         for package in &packages.packages {
@@ -3365,7 +3382,7 @@ mod tests {
         //
         // The word asserted for the strip is `Accounts` rather than `Autosync`:
         // `Autosync` lives inside `AutosyncBody`, behind that card's own resource,
-        // which has no Tauri host to answer it here.
+        // which has no engine to answer it here.
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
             Ok(a_package_needing_attention()),
@@ -3414,7 +3431,7 @@ mod tests {
         // Of the package half, the page still owns the `namespace`: `settled`
         // carries it through from its own `light` payload with `..p.clone()`. Only
         // the `state` is written here by `settle_all`, standing in for a heavy
-        // phase that has no Tauri host to answer it.
+        // phase that has no engine to answer it.
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
             Ok(a_package_needing_attention()),
@@ -3468,7 +3485,7 @@ mod tests {
         );
         sleep_ms(50).await;
         // Every row is still provisional — the refreshes this mount fired have
-        // no Tauri host to answer them — so `settled` is empty and the region
+        // no engine to answer them — so `settled` is empty and the region
         // takes its `packages.is_empty()` early return. Silence for that reason,
         // not for R3's in-flight guard, which `queue.rs`'s own tests pin: by now
         // every one of those failed calls has decremented the counter.
@@ -3558,7 +3575,7 @@ mod tests {
         );
         sleep_ms(50).await;
 
-        // No Tauri host, so the calls have failed; put them back in flight.
+        // No engine, so the calls have failed; put them back in flight.
         let store = seeded_store(slot);
         store.outstanding.set(2);
         leptos::task::tick().await;
@@ -4172,7 +4189,7 @@ mod tests {
         // files would be the opposite of an attention queue.
         //
         // Settled first, because the queue draws only what the heavy phase
-        // confirmed (R2) and there is no Tauri host here to confirm anything.
+        // confirmed (R2) and there is no engine here to confirm anything.
         let (slot, on_store) = store_slot();
         let el = mount_regions_reloading(
             Ok(a_package_needing_attention()),
@@ -4565,7 +4582,7 @@ mod tests {
         sleep_ms(50).await;
         reload.notify();
         // Long enough for the new resolve's calls to be fired and to fail: there
-        // is no Tauri host, so each one drives `record_refresh`'s `Err` arm.
+        // is no engine, so each one drives `record_refresh`'s `Err` arm.
         sleep_ms(50).await;
         // The heavy phase's part, which a test has to play for the new store the
         // refetch seeded exactly as it does for the first one.
@@ -4693,7 +4710,7 @@ mod tests {
         // `use_navigate`. Mounting it bare passed only while nothing in it needed router
         // context — a false premise that happened to hold.
         //
-        // Awaited, because there is no Tauri host here: both of the page's reads
+        // Awaited, because there is no engine here: both of the page's reads
         // reject, and the list region is drawn by the seam on the far side of that.
         // So this is the whole failure path end to end — the page still draws the
         // region, carrying the fixed sentence rather than the backend's error.
@@ -5630,7 +5647,7 @@ mod tests {
         let (packages_before, accounts_before) =
             (package_reads.get_untracked(), account_reads.get_untracked());
 
-        // By card, not position: both strip reads fail without a Tauri host.
+        // By card, not position: both strip reads fail without an engine.
         let cards = strip_of(&el).query_selector_all("section").unwrap();
         let accounts_card: web_sys::Element = (0..cards.length())
             .filter_map(|i| cards.get(i))

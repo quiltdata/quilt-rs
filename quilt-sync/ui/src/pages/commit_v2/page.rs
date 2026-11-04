@@ -49,7 +49,7 @@ use super::{
     WorkflowField,
 };
 
-/// The page's one read. A parameter so a test can answer without a Tauri host.
+/// The page's one read. A parameter so a test can answer without an engine.
 pub(crate) type CommitRead = super::super::v2_page::PageRead<CommitData>;
 
 fn read_commit(namespace: String) -> Pin<Box<dyn Future<Output = Result<CommitData, String>>>> {
@@ -560,7 +560,7 @@ type LiveKey = (String, String, Option<String>, Remote);
 
 /// The live check's backend: namespace, workflow id, whether to drop the
 /// package's cached rules first, message and metadata in, the violations out.
-/// A parameter so a test can answer without a Tauri host.
+/// A parameter so a test can answer without an engine.
 pub(crate) type RulesCheck =
     fn(String, String, bool, String, String) -> Pin<Box<dyn Future<Output = Vec<CommitViolation>>>>;
 

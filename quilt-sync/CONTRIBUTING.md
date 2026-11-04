@@ -4,11 +4,11 @@
 
 ### A disposable app run
 
-QuiltSync does not read `QUILT_DOMAIN`; only the `quilt` CLI does. The app
-keeps one data folder, `com.quiltdata.quilt-sync` under the platform
-local-data directory, with more than the Quilt domain in it: auth, the home
-folder path and the package state, but also the app's settings, logs,
-telemetry identity and webview storage.
+The app keeps one data folder, `com.quiltdata.quilt-sync` under the platform
+local-data directory, which is also the `quilt` CLI's default domain. It holds
+more than the Quilt domain: auth, the home folder path and the package state,
+but also the app's settings, logs and telemetry identity. The window's
+webview storage stays where Tauri keeps it.
 
 On Linux that folder is under `XDG_DATA_HOME`, so an empty directory there
 gives a run with none of your state, which is the quick way to see the
@@ -24,9 +24,62 @@ just app dev
 directory to start over. Package files live in the home folder, not in the
 data folder, so pick a temporary home at setup instead of `~/QuiltSync`.
 
-On macOS and Windows the location does not follow an environment variable;
-move the folder aside instead (see [docs/telemetry.md](../docs/telemetry.md)
-for where it is).
+On any platform, `QUILT_DOMAIN` replaces the data folder for both the app and
+`quilt` (see [docs/telemetry.md](../docs/telemetry.md) for where the folder
+normally is).
+
+While the desktop app is running, starting it again only brings back the
+running window, whatever `QUILT_DOMAIN` says: the other data folder's engine
+never starts. For a second data folder, run it with `--headless`, or quit the
+desktop app first.
+
+### Headless
+
+`just app headless` runs QuiltSync with no window and no tray, rebuilding on
+save, and prints a link to open in a browser. It takes the app's arguments:
+
+```sh
+just app headless --domain /tmp/quiltsync-headless
+```
+
+* `--domain <path>`, or `QUILT_DOMAIN`: the data folder.
+
+It listens on localhost only: the data folder's last port, else 7878, else the
+next free one.
+
+Ctrl-C stops it. A second one on the same data folder prints the first one's
+link and exits.
+
+### Browser tests
+
+`engine/e2e.rs` drives headless QuiltSync in Chrome over WebDriver, with
+[thirtyfour](https://crates.io/crates/thirtyfour). Each test starts its own
+engine in the test process, on temporary folders, so your data is never
+touched. They need Google Chrome installed; the first run fetches the
+chromedriver that matches it. `CHROME_BIN` names a Chrome or Chromium that
+isn't where Chrome usually is: the executable itself, which on macOS is inside
+the `.app`.
+
+`E2E_BROWSER=firefox` runs them in Firefox instead, with a geckodriver fetched
+the same way; `FIREFOX_BIN` names a Firefox that isn't where it usually is. CI
+runs them in Chrome only.
+
+`just test e2e` builds the UI and runs them; arguments go to nextest. They sit
+behind the crate's `e2e` feature, so `just test` and `just ci` don't need
+Chrome; CI runs them in their own job. A run takes about a minute once the
+crate is built.
+
+When no Chrome is found, every test fails at once with "could not detect
+installed Chrome". A regular Firefox install works too:
+`E2E_BROWSER=firefox just test e2e`. A Flatpak or Snap browser doesn't work,
+even through `CHROME_BIN` or `FIREFOX_BIN`; Ubuntu's default Firefox is a Snap.
+To run in Chrome as CI does, or with no usable browser, fetch Chrome for
+Testing into your home folder:
+
+```bash
+export CHROME_BIN="$(npx @puppeteer/browsers install chrome@stable \
+  --path ~/.cache/chrome-for-testing | cut -d' ' -f2-)"
+```
 
 ### "Golden path" Testing
 
