@@ -68,6 +68,9 @@ pub fn PathField(
     let next = move || current().and_then(|c| c.offered.into_iter().find(|offer| *offer != c.path));
     let error = Signal::derive(move || {
         let c = current()?;
+        if c.check.relative {
+            return Some("Give the folder's full path, like ~/QuiltSync.".to_owned());
+        }
         match (c.check.exists, c.check.is_dir) {
             (true, true) => None,
             (true, false) => Some("This is a file, not a folder.".to_owned()),
@@ -80,7 +83,7 @@ pub fn PathField(
             return format!("Tab: {next}");
         }
         match current() {
-            Some(c) if may_be_new && !c.check.exists => {
+            Some(c) if may_be_new && !c.check.exists && !c.check.relative => {
                 "QuiltSync will make this folder.".to_owned()
             }
             _ => String::new(),
@@ -195,7 +198,7 @@ mod tests {
         type_into(&field, "/mnt/da");
         answer(
             &engine,
-            serde_json::json!({"exists": false, "isDir": false}),
+            serde_json::json!({"exists": false, "isDir": false, "relative": false}),
             serde_json::json!(["/mnt/data/"]),
         )
         .await;
@@ -217,7 +220,7 @@ mod tests {
 
         answer(
             &engine,
-            serde_json::json!({"exists": true, "isDir": true}),
+            serde_json::json!({"exists": true, "isDir": true, "relative": false}),
             serde_json::json!([]),
         )
         .await;
@@ -227,7 +230,7 @@ mod tests {
         type_into(&field, "/mnt/data/notes.txt");
         answer(
             &engine,
-            serde_json::json!({"exists": true, "isDir": false}),
+            serde_json::json!({"exists": true, "isDir": false, "relative": false}),
             serde_json::json!([]),
         )
         .await;
@@ -285,13 +288,34 @@ mod tests {
         type_into(&input(&root), "/home/a/QuiltSync");
         answer(
             &engine,
-            serde_json::json!({"exists": false, "isDir": false}),
+            serde_json::json!({"exists": false, "isDir": false, "relative": false}),
             serde_json::json!([]),
         )
         .await;
         let text = root.text_content().unwrap_or_default();
         assert!(text.contains("QuiltSync will make this folder."), "{text}");
         assert!(!text.contains("There is no folder here."), "{text}");
+        unmount_earlier();
+    }
+
+    #[wasm_bindgen_test]
+    async fn a_relative_path_asks_for_the_full_path() {
+        unmount_earlier();
+        let engine = FakeEngine::install();
+        let value = RwSignal::new(String::new());
+        let root =
+            mount(move || view! { <PathField label="Folder" value=value may_be_new=true /> });
+        sleep_ms(0).await;
+        type_into(&input(&root), "my-packages");
+        answer(
+            &engine,
+            serde_json::json!({"exists": false, "isDir": false, "relative": true}),
+            serde_json::json!([]),
+        )
+        .await;
+        let text = root.text_content().unwrap_or_default();
+        assert!(text.contains("Give the folder's full path"), "{text}");
+        assert!(!text.contains("QuiltSync will make this folder."), "{text}");
         unmount_earlier();
     }
 }

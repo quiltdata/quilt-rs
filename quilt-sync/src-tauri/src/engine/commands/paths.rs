@@ -16,9 +16,12 @@ const MAX_OFFERED: usize = 50;
 pub struct PathCheck {
     pub exists: bool,
     pub is_dir: bool,
+    /// Not a full path: it would depend on the engine's working folder, so
+    /// it isn't checked.
+    pub relative: bool,
 }
 
-/// Whether `path` exists and is a folder.
+/// Whether `path` is a full path, exists and is a folder.
 pub async fn check_path(_s: &Services, path: String) -> Result<PathCheck, String> {
     Ok(check(Path::new(&expand_home(&path))).await)
 }
@@ -36,14 +39,23 @@ pub fn expand_home(path: &str) -> String {
 }
 
 async fn check(path: &Path) -> PathCheck {
+    if !path.is_absolute() {
+        return PathCheck {
+            exists: false,
+            is_dir: false,
+            relative: true,
+        };
+    }
     match tokio::fs::metadata(path).await {
         Ok(meta) => PathCheck {
             exists: true,
             is_dir: meta.is_dir(),
+            relative: false,
         },
         Err(_) => PathCheck {
             exists: false,
             is_dir: false,
+            relative: false,
         },
     }
 }
@@ -147,9 +159,25 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let file = root.path().join("f.txt");
         std::fs::write(&file, b"").unwrap();
-        let at = |exists, is_dir| PathCheck { exists, is_dir };
+        let at = |exists, is_dir| PathCheck {
+            exists,
+            is_dir,
+            relative: false,
+        };
         assert_eq!(check(root.path()).await, at(true, true));
         assert_eq!(check(&file).await, at(true, false));
         assert_eq!(check(&root.path().join("nope")).await, at(false, false));
+    }
+
+    #[tokio::test]
+    async fn a_relative_path_is_not_checked() {
+        assert_eq!(
+            check(Path::new("my-packages")).await,
+            PathCheck {
+                exists: false,
+                is_dir: false,
+                relative: true,
+            }
+        );
     }
 }

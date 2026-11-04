@@ -1055,12 +1055,13 @@ pub async fn get_settings_data() -> Result<SettingsData, String> {
     engine::invoke_unit("get_settings_data").await
 }
 
-/// Whether a typed path is there, and a folder.
+/// Whether a typed path is a full path, is there, and is a folder.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathCheck {
     pub exists: bool,
     pub is_dir: bool,
+    pub relative: bool,
 }
 
 pub async fn check_path(path: String) -> Result<PathCheck, String> {
