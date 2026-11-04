@@ -188,8 +188,8 @@ fn scene_payload() -> commands::PackageHeaderData {
     }
 }
 
-/// The page's menu, with its handlers dropped. The scene has no Tauri
-/// runtime and nothing to run against; what it is for is the arrangement,
+/// The page's menu, with its handlers dropped. The scene has no engine
+/// and nothing to run against; what it is for is the arrangement,
 /// which is the part `menu_items` decides.
 fn scene_menu() -> Vec<MenuItem> {
     menu_items(&scene_payload(), false)

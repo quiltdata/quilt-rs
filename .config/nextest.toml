@@ -14,3 +14,9 @@ live-write = { max-threads = 1 }
 [[profile.default.overrides]]
 filter = 'test(/::live_write_/)'
 test-group = 'live-write'
+
+# A browser test that restarts QuiltSync gives up its port and takes it back;
+# an engine starting beside it could take it first. Each runs alone.
+[[profile.default.overrides]]
+filter = 'test(/engine::e2e::restart::/)'
+threads-required = 'num-test-threads'

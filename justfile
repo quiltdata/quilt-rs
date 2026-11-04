@@ -10,7 +10,7 @@ mod app "quilt-sync/app.just"
 # The component gallery: `dev`, `build` and `preview`
 mod gallery "quilt-sync/ui/gallery.just"
 
-# The test suites: plain `just test`, `live`, `frontend` and `doc`
+# The test suites: plain `just test`, `live`, `frontend`, `doc` and `e2e`
 mod test "test.just"
 
 # Run test coverage for all packages
@@ -72,4 +72,22 @@ release-build:
 # the run early.
 #
 # Run everything CI checks, live AWS tests included; use before a push
-ci: lint deny test::no-aws test::live test::doc test::frontend release-build
+ci: lint check-engine deny test::no-aws test::live test::doc test::frontend release-build
+
+# Fail when QuiltSync's engine names Tauri or reaches outside its folder. The
+# compiler can't enforce this inside one crate; the folder is meant to become
+# a crate of its own by moving it.
+check-engine:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd quilt-sync/src-tauri/src
+    failed=0
+    if grep -rnE '\btauri[_:]' engine.rs engine; then
+        echo "error: the engine names Tauri (above)" >&2
+        failed=1
+    fi
+    if grep -rnoE '(^|[^$[:alnum:]_])crate::[[:alnum:]_]+' engine.rs engine | grep -vE 'crate::engine$'; then
+        echo "error: the engine reaches outside crate::engine (above)" >&2
+        failed=1
+    fi
+    exit "$failed"

@@ -27,7 +27,13 @@ fn main() {
     // The launch marker comes off before anything is drawn: it darkens the bare
     // canvas, which only an empty frame may have.
     quilt_sync_ui::theme::stop_booting();
-    mount_to_body(App);
+    // Before the router reads the address: a link's token leaves it here.
+    quilt_sync_ui::engine::start();
+    if quilt_sync_ui::engine::linked() {
+        mount_to_body(App);
+    } else {
+        mount_to_body(components::NoLink);
+    }
 }
 
 #[component]
@@ -36,11 +42,14 @@ fn App() -> impl IntoView {
     // below both find it. Without it the line draws nothing.
     provide_context(kit::Activities::new());
     view! {
+        <components::ConnectionBanner />
         <components::UpdateChecker />
         <components::ToastStack />
         <components::AutopullActivityFeed />
         <components::QuitPrompt />
         <Router>
+            <components::FollowEngine />
+            <DocumentTitle />
             <Routes fallback=|| view! { <NotFoundPage read=read_settings /> }>
                 <Route path=path!("/") view=|| view! { <Home /> } />
                 <Route path=path!("/commit") view=|| view! { <CommitPage read=read_settings /> } />
@@ -56,6 +65,19 @@ fn App() -> impl IntoView {
             </Routes>
         </Router>
     }
+}
+
+/// The browser tab names the page; see [`quilt_sync_ui::routes::page_title`].
+#[component]
+fn DocumentTitle() -> impl IntoView {
+    let location = leptos_router::hooks::use_location();
+    Effect::new(move |_| {
+        let query = quilt_sync_ui::routes::Query::parse(&location.search.get());
+        document().set_title(&quilt_sync_ui::routes::page_title(
+            &location.pathname.get(),
+            &query,
+        ));
+    });
 }
 
 /// `/` is the main page, and the design setting decides which one it is.
@@ -86,8 +108,8 @@ fn Home() -> impl IntoView {
 /// return) lands on the page the reader has switched on rather than on whichever
 /// one the link was written against. There is no second address for either page.
 ///
-/// `read` is a parameter so a test can answer the settings read without a Tauri
-/// host; the route passes [`read_settings`].
+/// `read` is a parameter so a test can answer the settings read without an
+/// engine; the route passes [`read_settings`].
 #[component]
 fn PackagePage(read: SettingsRead) -> impl IntoView {
     view! {
@@ -238,15 +260,20 @@ fn ByDesign(
     loading: &'static str,
 ) -> impl IntoView {
     let settings = LocalResource::new(read);
+    let headless = Memo::new(move |_| quilt_sync_ui::engine::headless().get());
 
     view! {
         <Suspense fallback=move || design_loading(loading, skeleton)>
-            {move || Suspend::new(async move {
-                let settings = settings.await;
-                let on = design_preview(settings.as_ref().map_err(String::as_str));
-                quilt_sync_ui::theme::set_v2(on);
-                if on { v2() } else { v1() }
-            })}
+            {move || {
+                // Picks again when a reconnect finds the engine now headless.
+                headless.get();
+                Suspend::new(async move {
+                    let settings = settings.await;
+                    let on = design_preview(settings.as_ref().map_err(String::as_str));
+                    quilt_sync_ui::theme::set_v2(on);
+                    if on { v2() } else { v1() }
+                })
+            }}
         </Suspense>
     }
 }
@@ -311,11 +338,11 @@ fn loading_actions() -> AnyView {
 }
 
 /// Whether the app draws v2, given the settings fetch's outcome: yes unless the
-/// reader chose the classic design.
+/// reader chose the classic design on a desktop engine.
 ///
 /// `Err` — the fetch failed — is v2, the default.
 fn design_preview(settings: Result<&commands::SettingsData, &str>) -> bool {
-    settings.map_or(true, |data| data.design == commands::Design::V2)
+    settings.map_or(true, |data| data.design.drawn() == commands::Design::V2)
 }
 
 #[cfg(test)]
@@ -533,7 +560,7 @@ mod tests {
 
     /// `/installed-package` as the router draws it, over a stubbed settings read.
     ///
-    /// Neither page has a Tauri host here, so each draws its own failure — inside
+    /// Neither page has an engine here, so each draws its own failure — inside
     /// its own frame, which is what tells them apart: v2's `PageLayout` carries
     /// `data-v2-page`, v1's `Layout` is `#layout`. The route sets the marker;
     /// [`Mounted`]'s drop puts it back.

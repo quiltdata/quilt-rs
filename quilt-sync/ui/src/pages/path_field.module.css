@@ -1,0 +1,9 @@
+/* The next part on offer, set like FormControl's caption. */
+.hint {
+  margin: var(--q-space-1) 0 0;
+  min-height: var(--q-line-body);
+  font-size: var(--q-text-body);
+  line-height: var(--q-line-body);
+  color: var(--q-fgColor-muted);
+  overflow-wrap: anywhere;
+}

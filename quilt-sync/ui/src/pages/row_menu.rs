@@ -181,7 +181,7 @@ pub(crate) async fn carry_out(
 }
 
 /// Where a package's file is on disk: `(namespace, path)` to the full path.
-/// A seam, so a test can answer without a Tauri host.
+/// A seam, so a test can answer without an engine.
 pub(crate) type LocalPath =
     fn(String, String) -> Pin<Box<dyn Future<Output = Result<String, String>>>>;
 
@@ -299,7 +299,7 @@ mod tests {
     }
 
     /// A command with nothing to act on is done without asking the host; one
-    /// the host refuses fails in the page-facing words. There is no Tauri host
+    /// the host refuses fails in the page-facing words. There is no engine
     /// in this harness, so every call it makes is refused.
     #[wasm_bindgen_test]
     async fn carry_out_says_how_a_command_went() {

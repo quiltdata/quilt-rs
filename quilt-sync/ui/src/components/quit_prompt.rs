@@ -8,7 +8,7 @@ use leptos::prelude::*;
 
 use crate::commands;
 use crate::components::buttons;
-use crate::tauri as tauri_bridge;
+use crate::engine;
 
 /// Event the backend raises when a quit would interrupt an apply. Kept in
 /// lockstep with `tray.rs`.
@@ -85,11 +85,17 @@ pub fn QuitPromptCard(
 
 /// App-level listener. Mounted once beside the other app-level surfaces, so a
 /// quit is answerable from whatever screen is open.
+///
+/// The desktop window's alone: quitting is the desktop app's, and one prompt
+/// can't be answered in one tab and left standing in another.
 #[component]
 pub fn QuitPrompt() -> impl IntoView {
     let visible = RwSignal::new(false);
+    if !engine::is_window() {
+        return None;
+    }
 
-    let listener = tauri_bridge::listen::<u64>(QUIT_PROMPT_EVENT, move |generation| {
+    let listener = engine::listen::<u64>(QUIT_PROMPT_EVENT, move |generation| {
         visible.set(true);
         // Report the prompt on screen at once. Until this lands the backend
         // treats the quit as unanswerable and lets it through after a short
@@ -115,15 +121,18 @@ pub fn QuitPrompt() -> impl IntoView {
         leptos::task::spawn_local(async move {
             if let Err(err) = commands::quit_cancel().await {
                 leptos::logging::error!("quit cancel failed: {err}");
+                // The engine still waits for an answer; ask again rather than
+                // leave every later quit waiting on this one.
+                visible.try_set(true);
             }
         });
     };
 
-    move || {
+    Some(move || {
         visible
             .get()
             .then(|| view! { <QuitPromptCard on_quit=on_quit on_stay=on_stay /> })
-    }
+    })
 }
 
 #[cfg(test)]

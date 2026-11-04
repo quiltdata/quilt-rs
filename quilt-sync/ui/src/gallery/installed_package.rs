@@ -13,8 +13,8 @@
 //! the layout was first drawn, four rows of list survived, which is what v1
 //! manages. Nothing has re-measured it since the regions were built.
 //!
-//! The first two cells are that measurement, at 1024×560, `tauri.conf.json`'s
-//! `minWidth`/`minHeight` when it was taken (the minimum width is now 640, which
+//! The first two cells are that measurement, at 1024×560, the window's minimum
+//! size when it was taken (the minimum width is now 640, which
 //! the last three cells measure), with and without the footer — because the
 //! footer is the difference between the resting page and the page you are
 //! actually picking files on.
