@@ -27,7 +27,6 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1297>
   - <https://github.com/quiltdata/quilt-rs/pull/1300>
 - On Windows, when links from the Quilt catalog open another program, QuiltSync says so on its main page and how to fix it (<https://github.com/quiltdata/quilt-rs/pull/1293>)
-- Under the hood, the parts of QuiltSync's new notifications: an inbox behind a bell in the appbar, the update notice as a band and the quit prompt as a confirmation (<https://github.com/quiltdata/quilt-rs/pull/1310>)
 
 ### Changed
 
