@@ -17,6 +17,8 @@
 use std::collections::VecDeque;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 use tokio::sync::RwLock;
@@ -136,9 +138,15 @@ pub struct ToastCenter {
 impl ToastCenter {
     #[must_use]
     pub fn new(emitter: Box<dyn ToastEmitter>) -> Self {
+        // Ids start at the current time in milliseconds, not at 1: a tab that
+        // reconnects after a restart still shows the old run's toasts, and a
+        // reused id would make the new toast look like an old one.
+        let start = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(1, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
         Self {
             live: RwLock::new(VecDeque::new()),
-            next_id: AtomicU64::new(1),
+            next_id: AtomicU64::new(start),
             emitter,
         }
     }
@@ -240,7 +248,20 @@ mod tests {
         let bodies: Vec<_> = live.iter().map(|t| t.body.as_str()).collect();
         assert_eq!(bodies, vec!["one", "two", "three"]);
         let ids: Vec<_> = live.iter().map(|t| t.id).collect();
-        assert_eq!(ids, vec![1, 2, 3]);
+        assert_eq!(ids, vec![ids[0], ids[0] + 1, ids[0] + 2]);
+    }
+
+    /// A restarted engine must not hand out the ids of the run before it,
+    /// which a reconnecting tab may still be showing.
+    #[tokio::test]
+    async fn ids_start_from_the_time_the_center_was_made() {
+        let before = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let (center, _) = center();
+        let id = center.post(draft("one")).await;
+        assert!(u128::from(id) >= before);
     }
 
     #[tokio::test]
