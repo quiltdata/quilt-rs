@@ -277,10 +277,10 @@ mod tests {
                         heading="Page"
                         banner=view! {
                             <Show when=move || shown.get()>
-                                <p style="margin:0; height:20px">"One"</p>
+                                <div style="height:20px">"One"</div>
                             </Show>
                             <Show when=move || shown.get()>
-                                <p style="margin:0; height:20px">"Two"</p>
+                                <div style="height:20px">"Two"</div>
                             </Show>
                         }
                             .into_any()

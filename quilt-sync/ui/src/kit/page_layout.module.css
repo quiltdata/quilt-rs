@@ -55,18 +55,19 @@
  * the row's — the bottom gap belongs to whatever follows, and `.main`'s padding already
  * provides it. */
 .notice {
-  padding-block: var(--q-space-4) 0;
   flex: none;
   /* Several bands stack here as siblings, so none needs a wrapper of its own:
-   * a wrapper left empty would still count as a banner below. */
+   * a wrapper left empty would still hold the space below. */
   display: flex;
   flex-direction: column;
   gap: var(--q-space-2);
 }
 
-/* A row whose bands are all hidden takes no room. */
-.notice:not(:has(*)) {
-  padding-top: 0;
+/* The space above the bands is the first band's, so a row whose bands are all
+ * hidden takes no room. A margin and not `:has()`, which not every engine
+ * re-evaluates when the bands go. */
+.notice > :first-child {
+  margin-top: var(--q-space-4);
 }
 
 /* A page that scrolls holds the banner row under the appbar, so a bar shows
