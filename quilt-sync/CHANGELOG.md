@@ -35,6 +35,7 @@
 
 ### Fixed
 
+- On the main page, switching from **Recent files** back to **Packages** works while the page reloads, for example when a new revision arrives; before, the page could get stuck (<https://github.com/quiltdata/quilt-rs/pull/1308>)
 - On Windows and Linux, opening QuiltSync while it runs in the tray shows its window (<https://github.com/quiltdata/quilt-rs/pull/1275>)
 
 ### quilt-rs
