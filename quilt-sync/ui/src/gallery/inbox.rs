@@ -174,6 +174,12 @@ fn needs_you_everywhere() -> NeedsYou {
         elsewhere: vec![
             Cause::watcher_stopped("#/settings"),
             Cause::publish_failing("user/plate-07", now - 2.5 * HOUR, now, "#"),
+            Cause::publish_failing(
+                "a-team-with-a-long-name/an-analysis-package-whose-name-goes-on",
+                now - 30.0 * HOUR,
+                now,
+                "#",
+            ),
         ],
     }
 }
@@ -242,7 +248,7 @@ fn Bells() -> impl IntoView {
             <Cell full=true label="needs you — Inbox, 1 needs you">
                 {bell(Vec::new(), needs_you_in_queue(1))}
             </Cell>
-            <Cell full=true label="both hold: the count wins — Inbox, 4 need you">
+            <Cell full=true label="both hold: the count wins — Inbox, 5 need you">
                 {bell(every_kind(), needs_you_everywhere())}
             </Cell>
             <Cell full=true label="two digits — Inbox, 12 need you">

@@ -103,6 +103,12 @@
   background: var(--q-overlay-hover);
 }
 
+/* A package name has no spaces to break at. */
+.needs span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .needs svg {
   flex: none;
   width: 12px;
