@@ -309,14 +309,25 @@ mod tests {
         unmount_earlier();
     }
 
-    /// While the page reconnects the activity line says so, and stops saying
-    /// so once back; the classic design, with no line, shows a bar.
+    /// While the page reconnects the activity line says so, over a stale
+    /// autopull entry, and stops saying so once back; the classic design, with
+    /// no line, shows a bar.
     #[wasm_bindgen_test]
     async fn a_lost_connection_shows_in_the_activity_line_until_the_engine_is_back() {
         crate::theme::set_v2(true);
         let engine = FakeEngine::install();
-        let root = mount(|| {
-            provide_context(kit::Activities::new());
+        let activities = kit::Activities::new();
+        let pulling = "Getting latest for team/pkg\u{2026}";
+        activities.set(
+            ActivityKind::Autopull,
+            vec![Activity {
+                kind: ActivityKind::Autopull,
+                label: pulling.to_owned(),
+                package: Some("team/pkg".to_owned()),
+            }],
+        );
+        let root = mount(move || {
+            provide_context(activities);
             view! {
                 <ConnectionBanner />
                 <kit::ActivityLine />
@@ -336,7 +347,7 @@ mod tests {
 
         engine.hello();
         sleep_ms(0).await;
-        assert_eq!(line.text_content().unwrap_or_default(), "");
+        assert_eq!(line.text_content().unwrap_or_default(), pulling);
 
         crate::theme::set_v2(false);
         engine.close();
