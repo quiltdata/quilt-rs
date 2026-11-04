@@ -266,7 +266,7 @@ fn ByDesign(
         <Suspense fallback=move || design_loading(loading, skeleton)>
             {move || {
                 // Picks again when a reconnect finds the engine now headless.
-                headless.track();
+                headless.get();
                 Suspend::new(async move {
                     let settings = settings.await;
                     let on = design_preview(settings.as_ref().map_err(String::as_str));
