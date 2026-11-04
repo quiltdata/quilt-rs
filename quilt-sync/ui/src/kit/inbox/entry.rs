@@ -93,6 +93,9 @@ fn group_view(group: FileGroup) -> impl IntoView {
 pub(super) fn EntryView(
     entry: InboxEntry,
     #[prop(into)] highlighted: Signal<bool>,
+    /// Changes on each opening of the panel, which redraws the age.
+    #[prop(into)]
+    openings: Signal<u64>,
 ) -> impl IntoView {
     let what = what(&entry);
     let InboxEntry {
@@ -138,7 +141,10 @@ pub(super) fn EntryView(
                     {what}
                 </span>
                 <span class=style::time>
-                    <RelativeTime at=at />
+                    {move || {
+                        openings.track();
+                        view! { <RelativeTime at=at /> }
+                    }}
                 </span>
             </span>
             {revision.map(|r| view! { <span class=style::note>{r}</span> })}

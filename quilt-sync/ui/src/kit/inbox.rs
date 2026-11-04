@@ -307,6 +307,15 @@ pub fn InboxPanel(
     let open = open.unwrap_or_else(|| Signal::stored(true));
     // Every entry seen unread since the panel opened.
     let marked = RwSignal::new(BTreeSet::<u64>::new());
+    // Counts openings, so each one redraws the entries' ages.
+    let openings = RwSignal::new(0_u64);
+    Effect::new(move |was_open: Option<bool>| {
+        let now = open.get();
+        if now && was_open == Some(false) {
+            openings.update(|n| *n += 1);
+        }
+        now
+    });
     Effect::new(move |_| {
         if open.get() {
             let unread: Vec<u64> =
@@ -371,7 +380,7 @@ pub fn InboxPanel(
                             });
                             view! {
                                 <li>
-                                    <EntryView entry=entry highlighted=highlighted />
+                                    <EntryView entry=entry highlighted=highlighted openings=openings />
                                 </li>
                             }
                         }
@@ -579,6 +588,39 @@ mod tests {
         sleep_ms(0).await;
         let after = el.query_selector("ol a").unwrap().expect("the entry");
         assert!(before.is_same_node(Some(&after)), "the link was replaced");
+    }
+
+    /// The panel keeps its entries between openings; their ages are redrawn.
+    #[wasm_bindgen_test]
+    async fn each_opening_redraws_the_ages() {
+        let open = RwSignal::new(true);
+        // Just short of where *just now* becomes *1 min ago*.
+        let at = js_sys::Date::now() - 44_800.0;
+        let el = mount(move || {
+            view! {
+                <InboxPanel
+                    entries=vec![entry(1, at, false)]
+                    needs_you=NeedsYou::default()
+                    open=open
+                />
+            }
+        });
+        sleep_ms(0).await;
+        let age = || {
+            el.query_selector("ol time")
+                .unwrap()
+                .and_then(|t| t.text_content())
+                .unwrap_or_default()
+        };
+        let link = el.query_selector("ol a").unwrap().expect("the entry");
+        assert_eq!(age(), "just now");
+        open.set(false);
+        sleep_ms(400).await;
+        open.set(true);
+        sleep_ms(0).await;
+        assert_eq!(age(), "1 min ago", "the age was redrawn");
+        let after = el.query_selector("ol a").unwrap().expect("the entry");
+        assert!(link.is_same_node(Some(&after)), "inside the same link");
     }
 
     #[wasm_bindgen_test]
