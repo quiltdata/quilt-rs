@@ -240,6 +240,10 @@ fn is_token(text: &str) -> bool {
 }
 
 /// Write `path` whole and owner-only: a temp file, then a rename.
+///
+/// On Windows the file takes the data folder's permissions, as the Quilt
+/// credentials in its `.auth` do, so it is private exactly when the data
+/// folder is.
 fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");

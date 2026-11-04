@@ -28,6 +28,11 @@ On any platform, `QUILT_DOMAIN` replaces the data folder for both the app and
 `quilt` (see [docs/telemetry.md](../docs/telemetry.md) for where the folder
 normally is).
 
+While the desktop app is running, starting it again only brings back the
+running window, whatever `QUILT_DOMAIN` says: the other data folder's engine
+never starts. For a second data folder, run it with `--headless`, or quit the
+desktop app first.
+
 ### Headless
 
 `just app headless` runs QuiltSync with no window and no tray, rebuilding on

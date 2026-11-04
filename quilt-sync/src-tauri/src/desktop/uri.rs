@@ -10,6 +10,7 @@ use url::Url;
 use super::show_window;
 use crate::engine::Error;
 use crate::engine::Result;
+use crate::engine::commands::ACCOUNTS_CHANGED_EVENT;
 use crate::engine::model;
 use crate::engine::navigation;
 use crate::engine::routes;
@@ -205,6 +206,7 @@ fn login_with_code(app_handle: &AppHandle, url: &Url) -> Result {
                     host,
                     flow: LoginFlow::OAuth,
                 }));
+                s.events.emit(ACCOUNTS_CHANGED_EVENT, ());
                 navigate(&s, landing.page.as_deref(), final_path);
             }
             Err(err) => {

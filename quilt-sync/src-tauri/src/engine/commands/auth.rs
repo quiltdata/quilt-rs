@@ -25,6 +25,10 @@ use crate::engine::services::Services;
 use crate::engine::telemetry::event::{AuthEvent, LoginEvent, LoginFlow};
 use crate::engine::telemetry::{MixpanelEvent, Telemetry};
 
+/// Tells every client an account signed in or out, or switched role, so
+/// account views read again. No payload.
+pub const ACCOUNTS_CHANGED_EVENT: &str = "accounts-changed";
+
 // ── Login data for Leptos UI ──
 
 #[derive(Serialize)]
@@ -175,6 +179,9 @@ pub async fn erase_auth(s: &Services, host: String) -> Result<String, String> {
     let msg_err = |err: &Error| format!("Failed to erase auth: {err}");
 
     let result = erase_auth_command(&s.data_dir, m, roles, tracing, &host).await;
+    if result.is_ok() {
+        s.events.emit(ACCOUNTS_CHANGED_EVENT, ());
+    }
 
     Notify::new(msg_init).map(result, msg_ok, msg_err)
 }
@@ -400,9 +407,11 @@ pub async fn switch_role(s: &Services, host: String, role: String) -> Result<Rol
     let roles = &*s.roles;
     let watcher = &s.watcher;
     let tracing = &*s.telemetry;
-    switch_role_command(m, roles, watcher, tracing, &host, &role)
-        .await
-        .map_err(|e| e.to_string())
+    let switched = switch_role_command(m, roles, watcher, tracing, &host, &role).await;
+    if switched.is_ok() {
+        s.events.emit(ACCOUNTS_CHANGED_EVENT, ());
+    }
+    switched.map_err(|e| e.to_string())
 }
 
 /// Code-based login for legacy stacks that don't support Connect/OAuth.
@@ -430,11 +439,11 @@ pub async fn login(s: &Services, host: String, code: String) -> Result<String, S
     let msg_ok = format!("Successfully logged in to {host}");
     let msg_err = |err: &Error| format!("Failed to login: {err}");
 
-    Notify::new(msg_init).map(
-        login_command(m, tracing, &host, code).await,
-        msg_ok,
-        msg_err,
-    )
+    let result = login_command(m, tracing, &host, code).await;
+    if result.is_ok() {
+        s.events.emit(ACCOUNTS_CHANGED_EVENT, ());
+    }
+    Notify::new(msg_init).map(result, msg_ok, msg_err)
 }
 
 /// Initiate OAuth 2.1 login: register client via DCR if needed,
@@ -1054,5 +1063,24 @@ mod tests {
         assert_eq!(data.back, "");
         assert_eq!(data.catalog_url, "https://quilt.test/code");
         Ok(())
+    }
+
+    /// A logout in one client reaches the others, so their account views
+    /// read again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_logout_reaches_every_client() {
+        let data_dir = TempDir::new().unwrap();
+        let s = Services::init(data_dir.path().to_path_buf(), semver::Version::new(0, 0, 0))
+            .await
+            .unwrap();
+        let mut events = s.events.subscribe();
+
+        erase_auth(&s, "example.com".to_owned()).await.unwrap();
+
+        loop {
+            if events.recv().await.unwrap().0 == ACCOUNTS_CHANGED_EVENT {
+                break;
+            }
+        }
     }
 }

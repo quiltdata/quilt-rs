@@ -1041,6 +1041,12 @@ pub(crate) fn SettingsScreen(io: SettingsIo) -> impl IntoView {
             }
         });
     });
+    // A sign-in, sign-out or role switch in another window or tab.
+    let accounts_changed =
+        engine::listen::<serde::de::IgnoredAny>(commands::ACCOUNTS_CHANGED_EVENT, move |_| {
+            accounts_reload.notify();
+        });
+    on_cleanup(move || drop(accounts_changed));
     let asked_sign_out = RwSignal::new(None::<String>);
     let navigate_sign_in = use_navigate();
     let on_sign_in = Callback::new(move |host: String| {
@@ -2272,6 +2278,22 @@ mod tests {
         let words = el.text_content().unwrap_or_default();
         assert!(words.contains("Agent tasks"), "{words}");
         assert!(!words.contains(PREVIEW), "{words}");
+    }
+
+    /// A sign-out or role switch in another tab reads the accounts again.
+    #[wasm_bindgen_test]
+    async fn an_account_change_elsewhere_reads_the_accounts_again() {
+        use crate::engine::fake::{FakeEngine, ask};
+
+        let engine = FakeEngine::install();
+        let _asked = ask("get_toasts");
+        sleep_ms(0).await;
+        engine.hello();
+        let _el = page(vec![settings()]).await;
+        let before = ACCOUNT_READS.with(Cell::get);
+        engine.event(commands::ACCOUNTS_CHANGED_EVENT, &serde_json::Value::Null);
+        sleep_ms(50).await;
+        assert_eq!(ACCOUNT_READS.with(Cell::get), before + 1);
     }
 
     /// Turning *New design* off saves the classic design and leaves for `/`.

@@ -6,8 +6,9 @@
 //! `Suspense` (§6): the Autosync card refetches on every autosync change,
 //! publish and pause, and a `Suspense` boundary re-shows its fallback each time,
 //! so the page would strobe.
-//! Today `reload` fires from the Refresh button and from a role switch, which
-//! moves the package rows as surely as it moves the Accounts card.
+//! Today `reload` fires from the Refresh button, from a role switch, which
+//! moves the package rows as surely as it moves the Accounts card, and when
+//! another window or tab changes the packages or the accounts.
 //!
 //! # One read of each payload, held here
 //!
@@ -1516,7 +1517,8 @@ pub fn MainPage() -> impl IntoView {
                 .into_any()
         >
             <PackageStatusListener reload=reload />
-            <PackagesChangedListener reload=reload />
+            <ReloadOn event=commands::PACKAGES_CHANGED_EVENT reload=reload />
+            <ReloadOn event=commands::ACCOUNTS_CHANGED_EVENT reload=reload />
             <MainPageRegions
                 packages=packages
                 accounts=accounts
@@ -1582,14 +1584,12 @@ fn PackageStatusListener(reload: Trigger) -> impl IntoView {
     on_cleanup(move || drop(listener));
 }
 
-/// Ask the backend again when a package is created, installed or uninstalled,
-/// here or in another window or tab.
+/// Ask the backend again on `event`: a package created, installed or
+/// uninstalled, or an account signed in, out or switched, here or in another
+/// window or tab.
 #[component]
-fn PackagesChangedListener(reload: Trigger) -> impl IntoView {
-    let listener = crate::engine::listen::<serde::de::IgnoredAny>(
-        commands::PACKAGES_CHANGED_EVENT,
-        move |_| reload.notify(),
-    );
+fn ReloadOn(event: &'static str, reload: Trigger) -> impl IntoView {
+    let listener = crate::engine::listen::<serde::de::IgnoredAny>(event, move |_| reload.notify());
     on_cleanup(move || drop(listener));
 }
 

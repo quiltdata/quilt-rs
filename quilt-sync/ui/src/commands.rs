@@ -818,8 +818,7 @@ pub struct UpdateInfo {
     pub version: String,
     /// The download for the engine's machine, for an engine that can't
     /// install it itself.
-    #[serde(default)]
-    pub url: Option<String>,
+    pub url: String,
 }
 
 // ── Data-fetching commands ──────────────────────────────────
@@ -1056,12 +1055,13 @@ pub async fn get_settings_data() -> Result<SettingsData, String> {
     engine::invoke_unit("get_settings_data").await
 }
 
-/// Whether a typed path is there, and a folder.
+/// Whether a typed path is a full path, is there, and is a folder.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PathCheck {
     pub exists: bool,
     pub is_dir: bool,
+    pub relative: bool,
 }
 
 pub async fn check_path(path: String) -> Result<PathCheck, String> {
@@ -1341,6 +1341,11 @@ pub const AUTOSYNC_CHANGED_EVENT: &str = "autosync-changed";
 /// or tab: read the package list again. Carries nothing. Kept in lockstep with
 /// the backend.
 pub const PACKAGES_CHANGED_EVENT: &str = "packages-changed";
+
+/// An account signed in or out, or switched role, maybe in another window or
+/// tab: read the accounts again. Carries nothing. Kept in lockstep with the
+/// backend.
+pub const ACCOUNTS_CHANGED_EVENT: &str = "accounts-changed";
 
 /// The engine sent a page somewhere, after a login or a deep link: each page
 /// asks [`pending_navigation`] whether it was this one. Carries nothing. Kept in
@@ -3301,6 +3306,10 @@ mod tests {
 /// Event name for a newly posted toast. Kept in lockstep with the backend's
 /// `toast::TOAST_EVENT`.
 pub const TOAST_EVENT: &str = "toast";
+
+/// A toast was dismissed, maybe in another window or tab. Carries its id. Kept
+/// in lockstep with the backend's `toast::TOAST_DISMISSED_EVENT`.
+pub const TOAST_DISMISSED_EVENT: &str = "toast-dismissed";
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
