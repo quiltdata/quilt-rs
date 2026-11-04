@@ -13,6 +13,7 @@
 //! everything downstream.
 
 use quilt_uri::Namespace;
+use quilt_uri::S3PackageUri;
 
 /// The installed-package screen for one package.
 ///
@@ -217,7 +218,11 @@ pub fn use_query() -> leptos::prelude::Memo<Query> {
 #[must_use]
 pub fn page_title(path: &str, query: &Query) -> String {
     let package = match path {
-        "/remote-package" => query.get("uri").and_then(|uri| package_in_uri(&uri)),
+        "/remote-package" => query.get("uri").and_then(|uri| {
+            S3PackageUri::try_from(uri.as_str())
+                .ok()
+                .map(|uri| uri.namespace.to_string())
+        }),
         _ => query.get("namespace"),
     };
     let page = match path {
@@ -234,13 +239,6 @@ pub fn page_title(path: &str, query: &Query) -> String {
         .flatten()
         .collect::<Vec<_>>()
         .join(" · ")
-}
-
-/// The package a `quilt+s3` URI names, without its revision or path.
-fn package_in_uri(uri: &str) -> Option<String> {
-    let (_, rest) = uri.split_once("package=")?;
-    let end = rest.find(['@', ':', '&']).unwrap_or(rest.len());
-    Some(rest[..end].to_owned()).filter(|name| !name.is_empty())
 }
 
 #[cfg(test)]
@@ -263,11 +261,25 @@ mod tests {
             page_title("/settings", &Query::default()),
             "Settings · QuiltSync"
         );
-        let uri = Query(vec![(
-            "uri".into(),
-            "quilt+s3://bucket#package=org/pkg@abc123&path=a.csv".into(),
-        )]);
-        assert_eq!(page_title("/remote-package", &uri), "org/pkg · QuiltSync");
+        let uri = |uri: &str| Query(vec![("uri".into(), uri.into())]);
+        assert_eq!(
+            page_title(
+                "/remote-package",
+                &uri("quilt+s3://bucket#package=org/pkg@abc123&path=a.csv")
+            ),
+            "org/pkg · QuiltSync"
+        );
+        assert_eq!(
+            page_title(
+                "/remote-package",
+                &uri("quilt+s3://bucket#package=org%2Fpkg%40abc123")
+            ),
+            "org/pkg · QuiltSync"
+        );
+        assert_eq!(
+            page_title("/remote-package", &uri("not a package uri")),
+            "QuiltSync"
+        );
     }
 
     /// A `back` that is itself an encoded address keeps its encoding.
