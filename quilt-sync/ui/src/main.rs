@@ -260,15 +260,20 @@ fn ByDesign(
     loading: &'static str,
 ) -> impl IntoView {
     let settings = LocalResource::new(read);
+    let headless = Memo::new(move |_| quilt_sync_ui::engine::headless().get());
 
     view! {
         <Suspense fallback=move || design_loading(loading, skeleton)>
-            {move || Suspend::new(async move {
-                let settings = settings.await;
-                let on = design_preview(settings.as_ref().map_err(String::as_str));
-                quilt_sync_ui::theme::set_v2(on);
-                if on { v2() } else { v1() }
-            })}
+            {move || {
+                // Picks again when a reconnect finds the engine now headless.
+                headless.get();
+                Suspend::new(async move {
+                    let settings = settings.await;
+                    let on = design_preview(settings.as_ref().map_err(String::as_str));
+                    quilt_sync_ui::theme::set_v2(on);
+                    if on { v2() } else { v1() }
+                })
+            }}
         </Suspense>
     }
 }
@@ -333,11 +338,11 @@ fn loading_actions() -> AnyView {
 }
 
 /// Whether the app draws v2, given the settings fetch's outcome: yes unless the
-/// reader chose the classic design.
+/// reader chose the classic design on a desktop engine.
 ///
 /// `Err` — the fetch failed — is v2, the default.
 fn design_preview(settings: Result<&commands::SettingsData, &str>) -> bool {
-    settings.map_or(true, |data| data.design == commands::Design::V2)
+    settings.map_or(true, |data| data.design.drawn() == commands::Design::V2)
 }
 
 #[cfg(test)]

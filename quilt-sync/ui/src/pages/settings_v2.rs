@@ -1409,18 +1409,23 @@ pub const AGENT_TASKS_SUBLABEL: &str = "Shows the Agent tasks card, where you ch
 pub fn ExperimentalCard(
     design_preview: RwSignal<bool>,
     agent_tasks: RwSignal<bool>,
+    /// No design choice: headless always draws the new design.
+    #[prop(optional, into)]
+    headless: Signal<bool>,
     #[prop(optional, into)] saved: Signal<Option<Saved>>,
     #[prop(optional, into)] pending: Signal<Vec<Saved>>,
 ) -> impl IntoView {
     view! {
         <Card title="Experimental">
-            <ToggleRow
-                label="New design"
-                sublabel=DESIGN_PREVIEW_SUBLABEL
-                checked=design_preview
-                disabled=saving(pending, Saved::DesignPreview)
-                trailing=saved_note(saved, Saved::DesignPreview)
-            />
+            <Show when=move || !headless.get()>
+                <ToggleRow
+                    label="New design"
+                    sublabel=DESIGN_PREVIEW_SUBLABEL
+                    checked=design_preview
+                    disabled=saving(pending, Saved::DesignPreview)
+                    trailing=saved_note(saved, Saved::DesignPreview)
+                />
+            </Show>
             <ToggleRow
                 label="Agent tasks"
                 sublabel=AGENT_TASKS_SUBLABEL
