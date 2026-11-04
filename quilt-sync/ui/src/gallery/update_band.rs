@@ -21,7 +21,8 @@ pub fn UpdateBandStories() -> impl IntoView {
         live.set(Some(UpdateState::Installing));
         leptos::task::spawn_local(async move {
             after_a_beat(1_500).await;
-            live.set(Some(UpdateState::Failed {
+            // The story may be gone by now.
+            live.try_set(Some(UpdateState::Failed {
                 version: "0.42.0".to_string(),
                 error: "the download was cut short".to_string(),
             }));

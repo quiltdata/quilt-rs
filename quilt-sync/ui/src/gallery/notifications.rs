@@ -218,14 +218,24 @@ fn OutcomeBands() -> impl IntoView {
 fn Acknowledge() -> impl IntoView {
     let said = RwSignal::new(false);
     let pending: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
-    let press = move |_| {
-        said.set(true);
+    let clear = move || {
         if let Some(Some(earlier)) = pending.try_update_value(Option::take) {
             earlier.clear();
         }
-        let later = set_timeout_with_handle(move || said.set(false), ACKNOWLEDGE_FOR).ok();
+    };
+    let press = move |_| {
+        said.set(true);
+        clear();
+        let later = set_timeout_with_handle(
+            move || {
+                said.try_set(false);
+            },
+            ACKNOWLEDGE_FOR,
+        )
+        .ok();
         pending.set_value(later);
     };
+    on_cleanup(clear);
     view! {
         <Story
             title="Acknowledgment"
