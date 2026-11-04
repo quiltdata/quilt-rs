@@ -27,7 +27,9 @@
   - <https://github.com/quiltdata/quilt-rs/pull/1266>
   - <https://github.com/quiltdata/quilt-rs/pull/1304>
   - <https://github.com/quiltdata/quilt-rs/pull/1307>
-- A browser tab names the page it shows, reconnects on its own after QuiltSync restarts, and finishes a login it started (<https://github.com/quiltdata/quilt-rs/pull/1272>)
+- A browser tab names the page it shows, reconnects on its own after QuiltSync restarts, saying so in its top bar, and finishes a login it started
+  - <https://github.com/quiltdata/quilt-rs/pull/1272>
+  - <https://github.com/quiltdata/quilt-rs/pull/1309>
 - `QuiltSync --headless` runs QuiltSync with no window or tray, serving it to a browser in the new design; folders are typed with completion, login is by code, and a new version shows a download link
   - <https://github.com/quiltdata/quilt-rs/pull/1279>
   - <https://github.com/quiltdata/quilt-rs/pull/1301>

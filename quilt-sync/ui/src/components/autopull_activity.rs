@@ -2,7 +2,7 @@
 //! publishes a package, the line says so.
 //!
 //! What it reports is autopull's transfers and nothing else, in autopull's own
-//! slot of the line: the page's removal of old revisions is the other producer. Mounted once in `App`, beside the notification
+//! slot of the line: the page's removal of old revisions and the reconnect notice are the others. Mounted once in `App`, beside the notification
 //! stack, and drawing nothing itself: it writes the [`kit::Activities`] that
 //! `App` provides, and the kit's [`ActivityLine`](kit::ActivityLine) draws them.
 //!
