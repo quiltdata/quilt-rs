@@ -42,4 +42,4 @@ frontend:
 [positional-arguments]
 e2e *args:
     cd quilt-sync/ui && trunk build
-    cargo nextest run -p quilt-sync --features e2e -E 'test(/engine::e2e::/)' "$@"
+    cargo nextest run $SCOPE --features quilt-sync/e2e -E 'test(/engine::e2e::/)' "$@"
