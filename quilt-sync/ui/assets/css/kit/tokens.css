@@ -466,8 +466,10 @@
   --q-borderColor-accent-muted: var(--blue-7);
 
   /* Focus ring: the first accent step over 3:1 on page, card and muted surfaces —
-   * 11 in light, 9 in dark (below); 8 measured 2.2 to 2.9. The brand bar overrides it. */
-  --q-focus-outlineColor: var(--blue-11);
+   * 11 in light, 9 in dark (below); 8 measured 2.2 to 2.9. The brand bar overrides it;
+   * a surface that opens from the bar, such as the inbox, sets it back to `-surface`. */
+  --q-focus-outlineColor-surface: var(--blue-11);
+  --q-focus-outlineColor: var(--q-focus-outlineColor-surface);
   --q-focus-outlineWidth: 2px;
   --q-focus-outlineOffset: 2px;
 
@@ -638,7 +640,8 @@
   --q-bgColor-muted: var(--gray-3);
   --q-bgColor-inset: var(--gray-4);
   /* Dark's 11 is the pale text step; 9 reads as a ring. */
-  --q-focus-outlineColor: var(--blue-9);
+  --q-focus-outlineColor-surface: var(--blue-9);
+  --q-focus-outlineColor: var(--q-focus-outlineColor-surface);
   /* Vivid, not the brand navy: see ACCENT. */
   --q-bgColor-accent-emphasis: var(--blue-9);
 }

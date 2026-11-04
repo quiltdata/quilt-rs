@@ -63,6 +63,8 @@
   width: 340px;
   max-width: 100%;
   min-height: 0;
+  /* Opened from the appbar, whose white ring would vanish on this surface. */
+  --q-focus-outlineColor: var(--q-focus-outlineColor-surface);
 }
 
 .lead {
@@ -81,6 +83,10 @@
   border-radius: calc(var(--q-radius) - 2px);
   color: var(--q-fgColor-default);
   text-decoration: none;
+}
+
+.needs:focus-visible {
+  outline-offset: calc(-1 * var(--q-focus-outlineWidth));
 }
 
 .needs:hover {

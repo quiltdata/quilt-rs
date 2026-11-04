@@ -363,11 +363,13 @@ pub fn InboxPanel(
                 fallback=|| view! { <p class=style::empty>"Nothing new"</p> }
             >
                 <ol class=style::entries>
-                    <For each=ordered key=|entry| (entry.id, entry.unread) let:entry>
+                    // Keyed by id alone, so a row read while focused keeps its link.
+                    <For each=ordered key=|entry| entry.id let:entry>
                         {
-                            let (id, unread) = (entry.id, entry.unread);
+                            let id = entry.id;
                             let highlighted = Signal::derive(move || {
-                                unread || marked.with(|m| m.contains(&id))
+                                marked.with(|m| m.contains(&id))
+                                    || entries.with(|all| all.iter().any(|e| e.id == id && e.unread))
                             });
                             view! {
                                 <li>
@@ -550,6 +552,21 @@ mod tests {
         open.set(true);
         sleep_ms(0).await;
         assert_eq!(marked(), [false, false], "and read on the next opening");
+    }
+
+    /// A reader focused on an entry keeps their place when it is read.
+    #[wasm_bindgen_test]
+    async fn reading_an_entry_keeps_its_link() {
+        let entries = RwSignal::new(vec![entry(1, 10.0, true)]);
+        let el = mount(move || {
+            view! { <InboxPanel entries=entries needs_you=NeedsYou::default() /> }
+        });
+        sleep_ms(0).await;
+        let before = el.query_selector("ol a").unwrap().expect("the entry");
+        entries.update(|all| all.iter_mut().for_each(|e| e.unread = false));
+        sleep_ms(0).await;
+        let after = el.query_selector("ol a").unwrap().expect("the entry");
+        assert!(before.is_same_node(Some(&after)), "the link was replaced");
     }
 
     #[wasm_bindgen_test]
