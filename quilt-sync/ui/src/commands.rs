@@ -1342,6 +1342,11 @@ pub const AUTOSYNC_CHANGED_EVENT: &str = "autosync-changed";
 /// the backend.
 pub const PACKAGES_CHANGED_EVENT: &str = "packages-changed";
 
+/// An account signed in or out, or switched role, maybe in another window or
+/// tab: read the accounts again. Carries nothing. Kept in lockstep with the
+/// backend.
+pub const ACCOUNTS_CHANGED_EVENT: &str = "accounts-changed";
+
 /// The engine sent a page somewhere, after a login or a deep link: each page
 /// asks [`pending_navigation`] whether it was this one. Carries nothing. Kept in
 /// lockstep with the backend.
