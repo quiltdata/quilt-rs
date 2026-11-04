@@ -647,6 +647,26 @@ white pill is right on a page-coloured surface and reads as a white blob on this
 one. The bar overrides the focus ring to white, since both themes' accent rings
 fail against the brand ground at 1.9:1 and 2.3:1 while white measures 11.9:1.
 
+### Notifications
+
+Each message goes to one surface, chosen by how long it matters, not by which
+code raised it:
+
+- **Acknowledge** (*Copied*, *Saved*): in place, for one kit duration,
+  `ACKNOWLEDGE_FOR`.
+- **Now** (*Publishing…*): the appbar's activity line.
+- **The result of what you just did**, while its page shows: the page's
+  Banner.
+- **What is true until it changes** (a newer release, a pause): a standing
+  band under the appbar, such as `UpdateBand`.
+- **What happened while you were away**, or outlived its page: the inbox.
+
+The inbox is a bell leading the appbar's controls and a panel on the
+platform's popover. Its badge has two levels: an amber count of what needs you,
+which only a cause clearing drops, and otherwise a quiet dot while anything is
+unread. Entries are one link each, newest first, never merged, with no dismiss.
+Nothing pops up on its own.
+
 ### Named Rules
 
 **The Never Move Geometry Rule.** Transitions animate colour only. A control

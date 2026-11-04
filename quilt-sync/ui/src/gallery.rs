@@ -67,6 +67,7 @@ mod gallery {
     pub mod file_toolbar;
     pub mod forms;
     pub mod host_row;
+    pub mod inbox;
     pub mod incoming_files;
     pub mod installed_package;
     pub mod json_display;
@@ -74,6 +75,7 @@ mod gallery {
     pub mod list_toolbar;
     pub mod load_failure;
     pub mod name_tooltip;
+    pub mod notifications;
     pub mod old_revisions_inline;
     pub mod package_autosync;
     pub mod package_header;
@@ -83,6 +85,7 @@ mod gallery {
     pub mod pane_section;
     pub mod queue;
     pub mod queue_parts;
+    pub mod quit_confirm;
     pub mod recent_files;
     pub mod recent_files_parts;
     pub mod revision_row;
@@ -100,6 +103,7 @@ mod gallery {
     pub mod tooltip;
     pub mod two_columns;
     pub mod unchecked;
+    pub mod update_band;
 }
 
 use leptos::prelude::*;
@@ -188,6 +192,7 @@ const ENTRIES: &[Entry] = &[
     entry!(CORE, "Feedback", feedback::FeedbackStories),
     entry!(CORE, "Forms", forms::FormsStories),
     entry!(CORE, "HostRow", host_row::HostRowStories),
+    entry!(CORE, "Inbox", inbox::InboxStories),
     entry!(CORE, "JsonDisplay", json_display::JsonDisplayStories),
     entry!(CORE, "Label", label::LabelStories),
     entry!(CORE, "LoadFailure", load_failure::LoadFailureStories),
@@ -209,6 +214,7 @@ const ENTRIES: &[Entry] = &[
     entry!(CORE, "ToggleRow", toggle_row::ToggleRowStories),
     entry!(CORE, "Tooltip", tooltip::TooltipStories),
     entry!(CORE, "TwoColumns", two_columns::TwoColumnsStories),
+    entry!(CORE, "UpdateBand", update_band::UpdateBandStories),
     entry!(COMBINED, "File list", file_list::FileListStories),
     entry!(
         COMBINED,
@@ -297,6 +303,16 @@ const ENTRIES: &[Entry] = &[
         SCENES / "Dialogs",
         "A confirmation",
         confirm_dialog::ConfirmScene
+    ),
+    entry!(
+        SCENES / "Dialogs",
+        "The quit prompt",
+        quit_confirm::QuitScene
+    ),
+    entry!(
+        SCENES / "Notifications",
+        "Every notification",
+        notifications::NotificationsScene
     ),
     entry!(PAGES, "Main page", page::PageScene),
     entry!(

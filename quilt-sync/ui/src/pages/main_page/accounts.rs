@@ -12,7 +12,6 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 use leptos::prelude::*;
 use leptos_router::NavigateOptions;
@@ -21,6 +20,7 @@ use leptos_router::hooks::use_navigate;
 use crate::commands;
 use crate::commands::AccountHostData;
 use crate::commands::MainPageAccountsData;
+use crate::kit::ACKNOWLEDGE_FOR;
 use crate::kit::Blankslate;
 use crate::kit::Card;
 use crate::kit::HostRow;
@@ -97,10 +97,6 @@ pub(super) fn accounts_skeleton() -> AnyView {
     .into_any()
 }
 
-/// Taken back after this, so a reader browsing the card later is not told the
-/// rows' own sub-lines a second time.
-const ANNOUNCE_FOR: Duration = Duration::from_millis(1_500);
-
 /// The card's live region, written once — when the last row that had something
 /// to ask has answered. One utterance rather than one per row: a polite region
 /// rewritten twice inside a tick loses the first message. The shape
@@ -158,7 +154,7 @@ impl RoleWatch {
             return;
         }
         self.said.set(words);
-        set_timeout(move || self.said.set(String::new()), ANNOUNCE_FOR);
+        set_timeout(move || self.said.set(String::new()), ACKNOWLEDGE_FOR);
     }
 }
 
@@ -717,7 +713,7 @@ mod tests {
         watch.answered(0, Some("Role at quilt.test: ReadOnly".to_string()));
         assert_eq!(watch.said.get_untracked(), "Role at quilt.test: ReadOnly");
 
-        let window = i32::try_from(ANNOUNCE_FOR.as_millis()).expect("a timeout's own window");
+        let window = i32::try_from(ACKNOWLEDGE_FOR.as_millis()).expect("a timeout's own window");
         sleep_ms(window + 100).await;
         assert_eq!(watch.said.get_untracked(), "");
     }

@@ -1,0 +1,84 @@
+/*
+ * One inbox entry, a link the width of the panel. Its report is structure,
+ * not indentation: a wrapped path stays inside its item.
+ */
+
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--q-space-1);
+  padding: var(--q-space-2) var(--q-space-3);
+  /* Every entry has the edge, so marking one unread moves nothing. */
+  border-left: 3px solid transparent;
+  border-radius: calc(var(--q-radius) - 2px);
+  color: var(--q-fgColor-default);
+  text-decoration: none;
+}
+
+.entry:hover {
+  background: var(--q-overlay-hover);
+}
+
+/* Two channels: the fill, and the leading edge, which survives greyscale. */
+.unread {
+  border-left-color: var(--q-fgColor-accent);
+  background: var(--q-bgColor-accent-muted);
+}
+
+.unread:hover {
+  background: var(--q-overlay-accent-hover);
+}
+
+.line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--q-space-2);
+}
+
+.what {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.package {
+  font-weight: 600;
+}
+
+.time {
+  flex: none;
+  color: var(--q-fgColor-muted);
+}
+
+.note,
+.outcome {
+  color: var(--q-fgColor-muted);
+  overflow-wrap: anywhere;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+}
+
+.heading {
+  color: var(--q-fgColor-muted);
+}
+
+.items {
+  margin: 0;
+  padding-left: var(--q-space-4);
+  list-style: disc outside;
+}
+
+/* Paths have no spaces to break at. */
+.items li {
+  overflow-wrap: anywhere;
+}
+
+/* The remainder counts the items above rather than joining them. */
+.more {
+  margin-left: calc(var(--q-space-4) * -1);
+  color: var(--q-fgColor-muted);
+  list-style: none;
+}
