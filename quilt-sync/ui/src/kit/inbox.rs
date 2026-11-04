@@ -235,8 +235,8 @@ impl Badge {
 /// The lead line about the queue.
 fn queue_line(count: usize) -> String {
     match count {
-        1 => "1 needs your attention on the main page".to_string(),
-        n => format!("{n} need your attention on the main page"),
+        1 => "1 thing needs your attention".to_string(),
+        n => format!("{n} things need your attention"),
     }
 }
 
@@ -501,9 +501,21 @@ mod tests {
         let el = mount(|| view! { <InboxPanel entries=Vec::new() needs_you=queue(2) /> });
         let text = el.text_content().unwrap_or_default();
         assert!(text.contains("Nothing new"), "{text}");
-        assert!(
-            text.contains("2 need your attention on the main page"),
-            "{text}"
+        assert!(text.contains("2 things need your attention"), "{text}");
+    }
+
+    /// The whole line is the link, not only a word in it.
+    #[wasm_bindgen_test]
+    fn the_queue_line_is_one_link_to_the_main_page() {
+        let el = mount(|| view! { <InboxPanel entries=Vec::new() needs_you=queue(1) /> });
+        let link = el
+            .query_selector("ul[aria-label='Needs you'] a")
+            .unwrap()
+            .expect("the line");
+        assert_eq!(link.get_attribute("href").as_deref(), Some("/"));
+        assert_eq!(
+            link.text_content().as_deref(),
+            Some("1 thing needs your attention")
         );
     }
 

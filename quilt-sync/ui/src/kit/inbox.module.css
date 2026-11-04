@@ -70,11 +70,19 @@
 }
 
 .lead {
+  /* A box of its own in the attention tone, so it reads as a separate
+   * callout and not as a heading over the entries below it. */
   flex: none;
-  margin: 0;
-  padding: var(--q-space-1) 0;
+  margin: 0 0 var(--q-space-1);
+  padding: 0;
   list-style: none;
-  border-bottom: 1px solid var(--q-borderColor-muted);
+  border: 1px solid var(--q-borderColor-attention-muted);
+  border-radius: var(--q-radius);
+  background: var(--q-bgColor-attention-muted);
+}
+
+.lead > li + li {
+  border-top: 1px solid var(--q-borderColor-attention-muted);
 }
 
 .needs {
@@ -82,8 +90,8 @@
   align-items: flex-start;
   gap: var(--q-space-2);
   padding: var(--q-space-2) var(--q-space-3);
-  border-radius: calc(var(--q-radius) - 2px);
-  color: var(--q-fgColor-default);
+  border-radius: calc(var(--q-radius) - 1px);
+  color: var(--q-fgColor-attention-onMuted);
   text-decoration: none;
 }
 
