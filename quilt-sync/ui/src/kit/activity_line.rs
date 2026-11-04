@@ -16,12 +16,13 @@
 //! [`ActivityKind`] is one producer with a slot of its own: a producer sets its
 //! slot and no other, so autopull's feed, which says the whole of its state on
 //! every event, never wipes the removal of old revisions the page started. The
-//! list runs in the kinds' order, so autopull's entry ranks first: it is the one
-//! the user did not start. One colour and one place still serve both; giving
+//! list runs in the kinds' order: a reconnect first, since what else it says
+//! may be stale until the page is back, then autopull's, the one the user did
+//! not start. One colour and one place still serve all; giving
 //! each kind its own colour and stacking several are left for later.
 //!
-//! The words come from whoever sets [`Activities`]; the kit composes none. Each
-//! activity also names the package it is about, which is how a page tells that
+//! The words come from whoever sets [`Activities`]; the kit composes none. An
+//! activity may also name the package it is about, which is how a page tells that
 //! autopull is busy with the package on screen.
 //!
 //! # Why a context
@@ -46,6 +47,8 @@ stylance::import_crate_style!(style, "src/kit/activity_line.module.css");
 /// Who is doing the work, in the order the line ranks them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ActivityKind {
+    /// The page, reconnecting to the engine.
+    Reconnect,
     /// The autopull tick, pulling or publishing.
     Autopull,
     /// The package page, removing old revisions.

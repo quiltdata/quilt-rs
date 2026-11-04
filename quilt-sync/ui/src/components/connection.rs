@@ -11,29 +11,32 @@ use leptos_router::hooks::use_navigate;
 use crate::commands;
 use crate::engine;
 use crate::engine::Connection;
-use crate::kit::{Banner, BannerVariant, Blankslate};
+use crate::kit;
+use crate::kit::{Activity, ActivityKind, Banner, BannerVariant, Blankslate};
 
-/// A bar while the page is reconnecting, and one that stays once the engine
-/// refused it.
+/// A bar once the engine refused the page; while it reconnects, the activity
+/// line says so instead.
 ///
 /// Over the top of the page rather than above it: every page fills the window
 /// exactly, so a bar that pushed it down would cut off its bottom.
 #[component]
 pub fn ConnectionBanner() -> impl IntoView {
     let connection = engine::connection();
+    if let Some(activities) = use_context::<kit::Activities>() {
+        Effect::new(move |_| {
+            let reconnecting = (connection.get() == Connection::Lost).then(|| Activity {
+                kind: ActivityKind::Reconnect,
+                label: "Reconnecting to QuiltSync\u{2026}".to_owned(),
+                package: None,
+            });
+            activities.set(ActivityKind::Reconnect, reconnecting.into_iter().collect());
+        });
+    }
     let bar = move || match connection.get() {
         Connection::Rejected(message) => {
-            Some(view! { <Banner variant=BannerVariant::Critical>{message}</Banner> }.into_any())
+            Some(view! { <Banner variant=BannerVariant::Critical>{message}</Banner> })
         }
-        Connection::Lost => Some(
-            view! {
-                <Banner variant=BannerVariant::Warning>
-                    "Lost the connection to QuiltSync. Reconnecting…"
-                </Banner>
-            }
-            .into_any(),
-        ),
-        Connection::Connecting | Connection::Open(_) => None,
+        Connection::Connecting | Connection::Open(_) | Connection::Lost => None,
     };
     view! { <div style="position:fixed;top:0;left:0;right:0;z-index:1000">{bar}</div> }
 }
@@ -296,23 +299,32 @@ mod tests {
         unmount_earlier();
     }
 
-    /// While the page reconnects it says so, and stops saying so once back.
+    /// While the page reconnects the activity line says so, and stops saying
+    /// so once back.
     #[wasm_bindgen_test]
-    async fn a_lost_connection_shows_until_the_engine_is_back() {
+    async fn a_lost_connection_shows_in_the_activity_line_until_the_engine_is_back() {
         let engine = FakeEngine::install();
-        let root = mount(ConnectionBanner);
+        let root = mount(|| {
+            provide_context(kit::Activities::new());
+            view! {
+                <ConnectionBanner />
+                <kit::ActivityLine />
+            }
+        });
+        let line = root.query_selector("[role=status]").unwrap().unwrap();
         let _listener = engine::listen::<serde_json::Value>("toast", |_| ());
         engine.hello();
         engine.close();
         sleep_ms(0).await;
-        assert!(
-            root.text_content()
-                .unwrap_or_default()
-                .contains("Reconnecting")
+        assert_eq!(
+            line.text_content().unwrap_or_default(),
+            "Reconnecting to QuiltSync\u{2026}"
         );
+        let regions = root.query_selector_all("[role=status]").unwrap().length();
+        assert_eq!(regions, 1, "the line, and no bar");
 
         engine.hello();
         sleep_ms(0).await;
-        assert_eq!(root.text_content().unwrap_or_default().trim(), "");
+        assert_eq!(line.text_content().unwrap_or_default(), "");
     }
 }
