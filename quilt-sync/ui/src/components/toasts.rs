@@ -13,6 +13,7 @@
 //! on the next mount.
 
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use leptos::prelude::*;
@@ -50,10 +51,15 @@ fn apply_snapshot(toasts: RwSignal<Toasts>, snapshot: Vec<Toast>) {
 /// dismissal and landing after it, carries a snapshot the backend took before
 /// the dismissal — and would put the toast back. So a write invalidates reads,
 /// not just a newer read.
+///
+/// A read can still land between this window's own dismissals, as *Dismiss
+/// all* sends them one by one, so a snapshot leaves out the ids this window
+/// is still dismissing.
 #[derive(Clone, Copy)]
 struct Store {
     toasts: RwSignal<Toasts>,
     stamp: StoredValue<u64>,
+    dismissing: StoredValue<BTreeSet<u64>>,
 }
 
 impl Store {
@@ -61,6 +67,7 @@ impl Store {
         Self {
             toasts: RwSignal::new(BTreeMap::new()),
             stamp: StoredValue::new(0),
+            dismissing: StoredValue::new(BTreeSet::new()),
         }
     }
 
@@ -76,9 +83,15 @@ impl Store {
 
     /// Adopt a snapshot only if nothing has happened since it was asked for.
     fn apply_if_current(self, stamp: u64, snapshot: Vec<Toast>) {
-        if self.stamp.try_get_value().unwrap_or_default() == stamp {
-            apply_snapshot(self.toasts, snapshot);
+        if self.stamp.try_get_value().unwrap_or_default() != stamp {
+            return;
         }
+        let dismissing = self.dismissing.try_get_value().unwrap_or_default();
+        let snapshot = snapshot
+            .into_iter()
+            .filter(|t| !dismissing.contains(&t.id))
+            .collect();
+        apply_snapshot(self.toasts, snapshot);
     }
 
     /// Read the backend's list and adopt it if it is still the newest word.
@@ -97,7 +110,7 @@ impl Store {
         });
     }
 
-    /// Drop one toast here only: another window dismissed it.
+    /// Drop one toast here only: a window, maybe this one, dismissed it.
     fn forget(self, id: u64) {
         self.bump();
         self.toasts.update(|map| {
@@ -111,8 +124,12 @@ impl Store {
     /// adopts is one the dismissal is already in.
     fn dismiss(self, id: u64) {
         self.forget(id);
+        self.dismissing.update_value(|ids| {
+            ids.insert(id);
+        });
         spawn_local(async move {
             let _ = commands::dismiss_toast(id).await;
+            self.dismissing.try_update_value(|ids| ids.remove(&id));
             self.reconcile().await;
         });
     }
@@ -123,9 +140,12 @@ impl Store {
             .toasts
             .with_untracked(|map| map.keys().copied().collect());
         self.toasts.update(BTreeMap::clear);
+        self.dismissing
+            .update_value(|dismissing| dismissing.extend(ids.iter().copied()));
         spawn_local(async move {
             for id in ids {
                 let _ = commands::dismiss_toast(id).await;
+                self.dismissing.try_update_value(|ids| ids.remove(&id));
             }
             self.reconcile().await;
         });
@@ -374,6 +394,34 @@ mod tests {
             store.toasts.with_untracked(BTreeMap::is_empty),
             "a stale snapshot resurrected a dismissed toast"
         );
+    }
+
+    /// *Dismiss all* sends one dismissal at a time; a read landing between
+    /// them must not bring back the toasts not yet sent.
+    #[test]
+    fn a_snapshot_leaves_out_toasts_still_being_dismissed() {
+        let store = store_of(BTreeMap::new());
+        store.dismissing.update_value(|ids| {
+            ids.insert(1);
+        });
+        let stamp = store.bump();
+        store.apply_if_current(
+            stamp,
+            vec![
+                Toast {
+                    id: 1,
+                    ..toast(ToastKind::Info, None, "being dismissed")
+                },
+                Toast {
+                    id: 2,
+                    ..toast(ToastKind::Info, None, "kept")
+                },
+            ],
+        );
+        let ids: Vec<u64> = store
+            .toasts
+            .with_untracked(|map| map.keys().copied().collect());
+        assert_eq!(ids, vec![2]);
     }
 
     #[test]
