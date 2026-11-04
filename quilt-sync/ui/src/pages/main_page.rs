@@ -1052,6 +1052,9 @@ fn MainPageRegions(
     fetch_watcher: Option<WatcherRead>,
 ) -> impl IntoView {
     let first_load = FirstLoad::new();
+    // Owns each package-list answer's view and signals — see the resolve below.
+    let page_owner = StoredValue::new(Owner::current().expect("a component runs under an owner"));
+    let shown: StoredValue<Option<Owner>> = StoredValue::new(None);
     // In the component body, NOT inside the `Suspend` closure below. A refetch
     // rebuilds that subtree deliberately — it is what re-collapses the queue's
     // expanders (R6) — so a view signal created inside it would reset on every
@@ -1161,267 +1164,279 @@ fn MainPageRegions(
             {move || Suspend::new(async move {
                 match packages.await {
                     Ok(data) => {
-                        first_load.answered();
-                        // The light phase's payload, held for the life of this
-                        // resolve: it is the base the store's projection writes
-                        // the heavy phase's answers over, and both the store and
-                        // the list's rows are built from it. Moved rather than
-                        // cloned — the page is the only owner and `rows` is taken
-                        // before the projection captures it.
-                        let light = data.packages;
-                        // Seeded here rather than inside the list: the heavy
-                        // phase's answers belong to the page, so the queue can
-                        // read them too.
-                        let store = PackageStore::seed(&light);
-                        if let Some(on_store) = on_store {
-                            on_store.run(store);
+                        // The answer's own owner, not the `Suspend`'s. A refetch
+                        // cleans the `Suspend` up at once, but the `Transition`
+                        // keeps this view on screen until the next read answers;
+                        // a click in that window would read a disposed store and
+                        // the panic would freeze the page.
+                        let answer = page_owner.with_value(Owner::child);
+                        if let Some(previous) = shown.get_value() {
+                            previous.cleanup();
                         }
-                        // One heavy-phase call per light-phase package, fired by
-                        // the resolve that seeded the store. `seed` sets
-                        // `outstanding` to the roster's size, so the number of
-                        // calls has to be a property of the payload and not of
-                        // whichever subtree happens to be mounted: a resolve taken
-                        // while the reader is on Recent files builds no rows at
-                        // all, and a row that fired its own call left every one of
-                        // them unmade.
-                        //
-                        // Concurrent, not serial. The two shared resources behind
-                        // the call — credential vending and the `/me` role query —
-                        // are already serialised in the backend, and a serial walk
-                        // would make the list as slow as its slowest package while
-                        // clearing every row at once, the spinner §7 rejected.
-                        for package in &light {
-                            let Some(row) = store.row(&package.namespace) else {
-                                // Unreachable from one payload, the store having
-                                // been seeded from this very list — but a package
-                                // with no row fires no call, so the count it was
-                                // seeded with still has to be given back (R3).
-                                store.answered();
-                                continue;
-                            };
-                            let namespace = package.namespace.clone();
-                            leptos::task::spawn_local(async move {
-                                let result =
-                                    commands::refresh_main_page_package(namespace.to_string())
-                                        .await;
-                                record_refresh(row, store, result);
-                            });
-                        }
-                        let rows: Vec<ListRowData> = light
-                            .iter()
-                            .map(|p| ListRowData {
-                                namespace: p.namespace.clone(),
-                                changed_at: p.changed_at,
-                                bucket: p.bucket.clone(),
-                                host: p.host.clone(),
-                            })
-                            .collect();
-                        // The feed's Copy action addresses a package, and only
-                        // this payload carries the bucket. A package without one
-                        // is absent here, and its rows draw no Copy button.
-                        let addresses: HashMap<Namespace, S3PackageUri> = light
-                            .iter()
-                            .filter_map(|p| {
-                                let uri = util::package_uri(
-                                    p.bucket.as_deref()?,
-                                    &p.namespace,
-                                    p.host.as_deref(),
-                                );
-                                Some((p.namespace.clone(), uri))
-                            })
-                            .collect();
-                        let unchanged: HashMap<Namespace, Signal<bool>> = light
-                            .iter()
-                            .filter_map(|p| {
-                                let row = store.row(&p.namespace)?;
-                                let clean =
-                                    Signal::derive(move || row.changed_files.get() == Some(0));
-                                Some((p.namespace.clone(), clean))
-                            })
-                            .collect();
-                        // How many packages the page holds, confirmed or not. The
-                        // zero line speaks for all of them, and `settled` drops
-                        // the ones no answer confirmed (R2) — including the ones
-                        // whose call failed, which stop being outstanding without
-                        // ever being accounted for.
-                        let total = Signal::stored(light.len());
-                        // The queue reads what the heavy phase confirmed, not the
-                        // light phase's guess. The light phase never looks at the
-                        // working tree, so a package with local edits would sit
-                        // under "All packages are up to date". Reactive, so a row
-                        // settling re-renders the queue and nothing else: the list
-                        // below reads its own per-row signals.
-                        let unchecked_light = light.clone();
-                        let settled = Signal::derive(move || store.settled(&light));
-                        let unchecked = Signal::derive(move || store.unchecked(&unchecked_light));
-                        let in_flight = Signal::derive(move || store.in_flight());
-                        let retry =
-                            Callback::new(move |namespaces: Vec<Namespace>| {
-                                recheck(store, &namespaces);
-                            });
-                        view! {
-                            // No wrapper and no margin: `PageLayout`'s column owns
-                            // the gap between regions, and the queue is a direct
-                            // child of it like the other two.
+                        shown.set_value(Some(answer.clone()));
+                        answer.with(move || {
+                            first_load.answered();
+                            // The light phase's payload, held for the life of this
+                            // resolve: it is the base the store's projection writes
+                            // the heavy phase's answers over, and both the store and
+                            // the list's rows are built from it. Moved rather than
+                            // cloned — the page is the only owner and `rows` is taken
+                            // before the projection captures it.
+                            let light = data.packages;
+                            // Seeded here rather than inside the list: the heavy
+                            // phase's answers belong to the page, so the queue can
+                            // read them too.
+                            let store = PackageStore::seed(&light);
+                            if let Some(on_store) = on_store {
+                                on_store.run(store);
+                            }
+                            // One heavy-phase call per light-phase package, fired by
+                            // the resolve that seeded the store. `seed` sets
+                            // `outstanding` to the roster's size, so the number of
+                            // calls has to be a property of the payload and not of
+                            // whichever subtree happens to be mounted: a resolve taken
+                            // while the reader is on Recent files builds no rows at
+                            // all, and a row that fired its own call left every one of
+                            // them unmade.
                             //
-                            // The queue sits above both views and is untouched by
-                            // the toggle below it: a queue that vanished when you
-                            // looked at your files would be the opposite of an
-                            // attention queue.
-                            <queue::QueueRegion
-                                packages=settled
-                                in_flight=in_flight
-                                total=total
-                                unchecked=unchecked
-                                retry=retry
-                                pause_messages=pause_messages
-                            />
-                            <div class=style::list_region>
-                            {list_toolbar(controls)}
-                            // Neither card carries a title: the toggle immediately
-                            // above names the view, and a card titled `Packages`
-                            // over a Packages / Recent files switch says it twice
-                            // (`Card::title`'s own doc).
-                            <Show
-                                when=move || view_selected.get() == FILES_VIEW
-                                fallback=move || {
-                                    // Cloned in the fallback's own body, not inside
-                                    // the `view!`: `Card`'s children are a `move`
-                                    // closure, so a clone written in there would
-                                    // take `rows` out of this one and leave it
-                                    // `FnOnce`, and this fallback is rebuilt every
-                                    // time the reader comes back to the view.
-                                    let rows = rows.clone();
-                                    // The empty roster is a property of the
-                                    // payload, not of what a search left standing.
-                                    let roster_empty = rows.is_empty();
-                                    // Filter, then group, then sort within each
-                                    // group, in one place. Reads `query`,
-                                    // `group_packages_by` and `sort_by` and no
-                                    // store signal, so a settle never re-runs it.
-                                    //
-                                    // A `Memo`: the lists below read a value that
-                                    // is diffed rather than a subtree that is
-                                    // rebuilt (see [`ListShape`]).
-                                    let arranged = Memo::new(move |_| {
-                                        let text = query.get();
-                                        let filtered = grouping::filter_packages(
-                                            rows.clone(),
-                                            &text,
-                                        );
-                                        let group_by = group_packages_by.get();
-                                        let sort_by = sort_by.get();
-                                        let mut groups = grouping::group_packages(
-                                            filtered,
-                                            &group_by,
-                                        );
-                                        for group in &mut groups {
-                                            grouping::sort_within(&mut group.rows, &sort_by);
-                                        }
-                                        groups
-                                    });
-                                    // `group_packages` answers the `None` axis
-                                    // with one empty group, so "nothing matched"
-                                    // is every group empty rather than no group.
-                                    let shape = Memo::new(move |_| {
-                                        if roster_empty
-                                            && query.with(|text| text.trim().is_empty())
-                                        {
-                                            ListShape::EmptyRoster
-                                        } else if arranged
-                                            .with(|groups| {
-                                                groups.iter().all(|group| group.rows.is_empty())
-                                            })
-                                        {
-                                            ListShape::NoMatch
-                                        } else {
-                                            ListShape::Groups
-                                        }
-                                    });
-                                    view! {
-                                        <Card label="Packages" bare=true>
-                                            // A heading and its rows are flat siblings
-                                            // here, never wrapped in a `div` per group
-                                            // — `Card`'s own `.body > * + *` rule
-                                            // (`kit/card.module.css`) spaces any two
-                                            // direct children, and a wrapper would
-                                            // defeat that.
-                                            {move || match shape.get() {
-                                                ListShape::EmptyRoster => {
-                                                    // The empty roster, not the empty search
-                                                    // below — different words, and the only
-                                                    // one of the two with an action. A reader
-                                                    // who has typed something is answered
-                                                    // about what they typed, which is why
-                                                    // this wants an empty query and not
-                                                    // merely no rows.
-                                                    view! {
-                                                        <Blankslate
-                                                            heading="No packages yet"
-                                                            description="A package is a folder of files that QuiltSync keeps in step with an S3 bucket. Create one from a folder you already have, or install an existing package from the catalog."
-                                                            primary_action=view! {
-                                                                <Button
-                                                                    variant=ButtonVariant::Primary
-                                                                    on_click=move |_| create_open.set(true)
-                                                                >
-                                                                    "Create package"
-                                                                </Button>
-                                                            }
-                                                                .into_any()
-                                                        />
+                            // Concurrent, not serial. The two shared resources behind
+                            // the call — credential vending and the `/me` role query —
+                            // are already serialised in the backend, and a serial walk
+                            // would make the list as slow as its slowest package while
+                            // clearing every row at once, the spinner §7 rejected.
+                            for package in &light {
+                                let Some(row) = store.row(&package.namespace) else {
+                                    // Unreachable from one payload, the store having
+                                    // been seeded from this very list — but a package
+                                    // with no row fires no call, so the count it was
+                                    // seeded with still has to be given back (R3).
+                                    store.answered();
+                                    continue;
+                                };
+                                let namespace = package.namespace.clone();
+                                leptos::task::spawn_local(async move {
+                                    let result =
+                                        commands::refresh_main_page_package(namespace.to_string())
+                                            .await;
+                                    record_refresh(row, store, result);
+                                });
+                            }
+                            let rows: Vec<ListRowData> = light
+                                .iter()
+                                .map(|p| ListRowData {
+                                    namespace: p.namespace.clone(),
+                                    changed_at: p.changed_at,
+                                    bucket: p.bucket.clone(),
+                                    host: p.host.clone(),
+                                })
+                                .collect();
+                            // The feed's Copy action addresses a package, and only
+                            // this payload carries the bucket. A package without one
+                            // is absent here, and its rows draw no Copy button.
+                            let addresses: HashMap<Namespace, S3PackageUri> = light
+                                .iter()
+                                .filter_map(|p| {
+                                    let uri = util::package_uri(
+                                        p.bucket.as_deref()?,
+                                        &p.namespace,
+                                        p.host.as_deref(),
+                                    );
+                                    Some((p.namespace.clone(), uri))
+                                })
+                                .collect();
+                            let unchanged: HashMap<Namespace, Signal<bool>> = light
+                                .iter()
+                                .filter_map(|p| {
+                                    let row = store.row(&p.namespace)?;
+                                    let clean =
+                                        Signal::derive(move || row.changed_files.get() == Some(0));
+                                    Some((p.namespace.clone(), clean))
+                                })
+                                .collect();
+                            // How many packages the page holds, confirmed or not. The
+                            // zero line speaks for all of them, and `settled` drops
+                            // the ones no answer confirmed (R2) — including the ones
+                            // whose call failed, which stop being outstanding without
+                            // ever being accounted for.
+                            let total = Signal::stored(light.len());
+                            // The queue reads what the heavy phase confirmed, not the
+                            // light phase's guess. The light phase never looks at the
+                            // working tree, so a package with local edits would sit
+                            // under "All packages are up to date". Reactive, so a row
+                            // settling re-renders the queue and nothing else: the list
+                            // below reads its own per-row signals.
+                            let unchecked_light = light.clone();
+                            let settled = Signal::derive(move || store.settled(&light));
+                            let unchecked = Signal::derive(move || store.unchecked(&unchecked_light));
+                            let in_flight = Signal::derive(move || store.in_flight());
+                            let retry =
+                                Callback::new(move |namespaces: Vec<Namespace>| {
+                                    recheck(store, &namespaces);
+                                });
+                            view! {
+                                // No wrapper and no margin: `PageLayout`'s column owns
+                                // the gap between regions, and the queue is a direct
+                                // child of it like the other two.
+                                //
+                                // The queue sits above both views and is untouched by
+                                // the toggle below it: a queue that vanished when you
+                                // looked at your files would be the opposite of an
+                                // attention queue.
+                                <queue::QueueRegion
+                                    packages=settled
+                                    in_flight=in_flight
+                                    total=total
+                                    unchecked=unchecked
+                                    retry=retry
+                                    pause_messages=pause_messages
+                                />
+                                <div class=style::list_region>
+                                {list_toolbar(controls)}
+                                // Neither card carries a title: the toggle immediately
+                                // above names the view, and a card titled `Packages`
+                                // over a Packages / Recent files switch says it twice
+                                // (`Card::title`'s own doc).
+                                <Show
+                                    when=move || view_selected.get() == FILES_VIEW
+                                    fallback=move || {
+                                        // Cloned in the fallback's own body, not inside
+                                        // the `view!`: `Card`'s children are a `move`
+                                        // closure, so a clone written in there would
+                                        // take `rows` out of this one and leave it
+                                        // `FnOnce`, and this fallback is rebuilt every
+                                        // time the reader comes back to the view.
+                                        let rows = rows.clone();
+                                        // The empty roster is a property of the
+                                        // payload, not of what a search left standing.
+                                        let roster_empty = rows.is_empty();
+                                        // Filter, then group, then sort within each
+                                        // group, in one place. Reads `query`,
+                                        // `group_packages_by` and `sort_by` and no
+                                        // store signal, so a settle never re-runs it.
+                                        //
+                                        // A `Memo`: the lists below read a value that
+                                        // is diffed rather than a subtree that is
+                                        // rebuilt (see [`ListShape`]).
+                                        let arranged = Memo::new(move |_| {
+                                            let text = query.get();
+                                            let filtered = grouping::filter_packages(
+                                                rows.clone(),
+                                                &text,
+                                            );
+                                            let group_by = group_packages_by.get();
+                                            let sort_by = sort_by.get();
+                                            let mut groups = grouping::group_packages(
+                                                filtered,
+                                                &group_by,
+                                            );
+                                            for group in &mut groups {
+                                                grouping::sort_within(&mut group.rows, &sort_by);
+                                            }
+                                            groups
+                                        });
+                                        // `group_packages` answers the `None` axis
+                                        // with one empty group, so "nothing matched"
+                                        // is every group empty rather than no group.
+                                        let shape = Memo::new(move |_| {
+                                            if roster_empty
+                                                && query.with(|text| text.trim().is_empty())
+                                            {
+                                                ListShape::EmptyRoster
+                                            } else if arranged
+                                                .with(|groups| {
+                                                    groups.iter().all(|group| group.rows.is_empty())
+                                                })
+                                            {
+                                                ListShape::NoMatch
+                                            } else {
+                                                ListShape::Groups
+                                            }
+                                        });
+                                        view! {
+                                            <Card label="Packages" bare=true>
+                                                // A heading and its rows are flat siblings
+                                                // here, never wrapped in a `div` per group
+                                                // — `Card`'s own `.body > * + *` rule
+                                                // (`kit/card.module.css`) spaces any two
+                                                // direct children, and a wrapper would
+                                                // defeat that.
+                                                {move || match shape.get() {
+                                                    ListShape::EmptyRoster => {
+                                                        // The empty roster, not the empty search
+                                                        // below — different words, and the only
+                                                        // one of the two with an action. A reader
+                                                        // who has typed something is answered
+                                                        // about what they typed, which is why
+                                                        // this wants an empty query and not
+                                                        // merely no rows.
+                                                        view! {
+                                                            <Blankslate
+                                                                heading="No packages yet"
+                                                                description="A package is a folder of files that QuiltSync keeps in step with an S3 bucket. Create one from a folder you already have, or install an existing package from the catalog."
+                                                                primary_action=view! {
+                                                                    <Button
+                                                                        variant=ButtonVariant::Primary
+                                                                        on_click=move |_| create_open.set(true)
+                                                                    >
+                                                                        "Create package"
+                                                                    </Button>
+                                                                }
+                                                                    .into_any()
+                                                            />
+                                                        }
+                                                            .into_any()
                                                     }
-                                                        .into_any()
-                                                }
-                                                ListShape::NoMatch => {
-                                                    // Its own closure: the words carry the
-                                                    // query, so they follow every keystroke
-                                                    // while the shape stands still.
-                                                    view! {
-                                                        {move || {
-                                                            let text = query.get();
-                                                            view! {
-                                                                <Blankslate
-                                                                    heading=format!(
-                                                                        "No packages match \u{201c}{}\u{201d}",
-                                                                        text.trim(),
+                                                    ListShape::NoMatch => {
+                                                        // Its own closure: the words carry the
+                                                        // query, so they follow every keystroke
+                                                        // while the shape stands still.
+                                                        view! {
+                                                            {move || {
+                                                                let text = query.get();
+                                                                view! {
+                                                                    <Blankslate
+                                                                        heading=format!(
+                                                                            "No packages match \u{201c}{}\u{201d}",
+                                                                            text.trim(),
+                                                                        )
+                                                                        description="Search covers the names of packages installed on this machine."
+                                                                    />
+                                                                }
+                                                            }}
+                                                        }
+                                                            .into_any()
+                                                    }
+                                                    ListShape::Groups => {
+                                                        // Keyed on the title: a re-arrangement
+                                                        // reorders the groups, and a search
+                                                        // empties some out of existence.
+                                                        view! {
+                                                            <For
+                                                                each=move || arranged.get()
+                                                                key=|group: &PackageGroup| group.title.clone()
+                                                                children=move |group| {
+                                                                    package_group(
+                                                                        group.title,
+                                                                        arranged,
+                                                                        group_packages_by.into(),
+                                                                        store,
                                                                     )
-                                                                    description="Search covers the names of packages installed on this machine."
-                                                                />
-                                                            }
-                                                        }}
+                                                                }
+                                                            />
+                                                        }
+                                                            .into_any()
                                                     }
-                                                        .into_any()
-                                                }
-                                                ListShape::Groups => {
-                                                    // Keyed on the title: a re-arrangement
-                                                    // reorders the groups, and a search
-                                                    // empties some out of existence.
-                                                    view! {
-                                                        <For
-                                                            each=move || arranged.get()
-                                                            key=|group: &PackageGroup| group.title.clone()
-                                                            children=move |group| {
-                                                                package_group(
-                                                                    group.title,
-                                                                    arranged,
-                                                                    group_packages_by.into(),
-                                                                    store,
-                                                                )
-                                                            }
-                                                        />
-                                                    }
-                                                        .into_any()
-                                                }
-                                            }}
-                                        </Card>
+                                                }}
+                                            </Card>
+                                        }
                                     }
-                                }
-                            >
-                                {files_view(recent_files, query, group_files_by, files_retry, addresses.clone(), unchanged.clone(), first_load)}
-                            </Show>
-                            </div>
-                        }
-                            .into_any()
+                                >
+                                    {files_view(recent_files, query, group_files_by, files_retry, addresses.clone(), unchanged.clone(), first_load)}
+                                </Show>
+                                </div>
+                            }
+                                .into_any()
+                        })
                     }
                     // A missing session or setup goes where v1 sends it.
                     Err(err) if first_load.redirect(&err) => ().into_any(),
@@ -4301,6 +4316,74 @@ mod tests {
         assert!(
             el.text_content().unwrap().contains("No files yet"),
             "and it is the feed that is drawn, not the packages view"
+        );
+    }
+
+    #[wasm_bindgen_test]
+    async fn the_toggle_works_while_a_refetch_is_out() {
+        // The `Transition` keeps the old view on screen while a read is out, so
+        // the store that view reads must live until the next answer replaces
+        // it. A store that died with the `Suspend` made this click read a
+        // disposed signal, and the panic froze the page on Recent files.
+        forget_toolbar();
+        let reload = Trigger::new();
+        let el = mount(move || {
+            let packages = LocalResource::new(move || {
+                reload.track();
+                async move {
+                    sleep_ms(100).await;
+                    // In a bucket: a bucket's group heading reads the store.
+                    let in_bucket = |namespace| MainPagePackageData {
+                        bucket: Some("a-bucket".to_string()),
+                        ..pkg(namespace, PackageState::Latest)
+                    };
+                    Ok(MainPagePackagesData {
+                        packages: vec![in_bucket("user/plate-07"), in_bucket("user/plate-08")],
+                    })
+                }
+            });
+            let accounts = LocalResource::new(move || {
+                reload.track();
+                async move { Ok(one_signed_out_host()) }
+            });
+            let fetch_files = Callback::new(|()| Ok(one_recent_file()));
+            view! {
+                <leptos_router::components::Router>
+                    <MainPageRegions
+                        packages=packages
+                        accounts=accounts
+                        reload=reload
+                        fetch_files=Some(fetch_files)
+                    />
+                </leptos_router::components::Router>
+            }
+        });
+        sleep_ms(200).await;
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+
+        // A second reload while the first read is out. When that read answers,
+        // the resolve is cleaned up and the second read starts, with the old
+        // view still on screen: the click lands in that window.
+        reload.notify();
+        sleep_ms(10).await;
+        reload.notify();
+        sleep_ms(140).await;
+        toggle_option(&el, PACKAGES_VIEW).click();
+        sleep_ms(20).await;
+        assert!(
+            el.text_content().unwrap().contains("plate-08"),
+            "the packages view, drawn during the refetch: {}",
+            el.text_content().unwrap()
+        );
+
+        sleep_ms(200).await;
+        toggle_option(&el, FILES_VIEW).click();
+        sleep_ms(50).await;
+        assert!(
+            el.text_content().unwrap().contains("plate-07.csv"),
+            "and the page still answers once the read is back: {}",
+            el.text_content().unwrap()
         );
     }
 
