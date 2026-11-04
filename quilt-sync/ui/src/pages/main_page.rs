@@ -30,6 +30,7 @@ mod toolbar_memory;
 use std::collections::HashMap;
 
 use leptos::prelude::*;
+use leptos::reactive::owner::WeakOwner;
 
 use quilt_uri::Namespace;
 use quilt_uri::S3PackageUri;
@@ -1053,7 +1054,13 @@ fn MainPageRegions(
 ) -> impl IntoView {
     let first_load = FirstLoad::new();
     // Owns each package-list answer's view and signals — see the resolve below.
-    let page_owner = StoredValue::new(Owner::current().expect("a component runs under an owner"));
+    // Weak: the page's owner holds this value, so a strong reference would keep
+    // the page alive after it is left.
+    let page_owner = StoredValue::new(
+        Owner::current()
+            .expect("a component runs under an owner")
+            .downgrade(),
+    );
     let shown: StoredValue<Option<Owner>> = StoredValue::new(None);
     // In the component body, NOT inside the `Suspend` closure below. A refetch
     // rebuilds that subtree deliberately — it is what re-collapses the queue's
@@ -1169,7 +1176,13 @@ fn MainPageRegions(
                         // keeps this view on screen until the next read answers;
                         // a click in that window would read a disposed store and
                         // the panic would freeze the page.
-                        let answer = page_owner.with_value(Owner::child);
+                        let Some(answer) = page_owner
+                            .with_value(WeakOwner::upgrade)
+                            .map(|page| page.child())
+                        else {
+                            // The page has been left.
+                            return ().into_any();
+                        };
                         if let Some(previous) = shown.get_value() {
                             previous.cleanup();
                         }
