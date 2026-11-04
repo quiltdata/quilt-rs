@@ -292,19 +292,28 @@ fn Live() -> impl IntoView {
     let entries = RwSignal::new(every_kind());
     let needs_you = RwSignal::new(needs_you_in_queue(0));
     let open = RwSignal::new(false);
-    // The backend's dwell: read once the panel has stayed open for 2 s.
+    // The backend's dwell: read once the panel has stayed open for 2 s. One
+    // timer per opening, dropped when the panel closes or the story goes.
+    let dwell: StoredValue<Option<TimeoutHandle>> = StoredValue::new(None);
+    let drop_dwell = move || {
+        if let Some(Some(handle)) = dwell.try_update_value(Option::take) {
+            handle.clear();
+        }
+    };
     Effect::new(move |_| {
+        drop_dwell();
         if open.get() {
-            set_timeout(
+            let handle = set_timeout_with_handle(
                 move || {
-                    if open.get_untracked() {
-                        entries.update(|all| all.iter_mut().for_each(|e| e.unread = false));
-                    }
+                    entries.try_update(|all| all.iter_mut().for_each(|e| e.unread = false));
                 },
                 std::time::Duration::from_secs(2),
-            );
+            )
+            .ok();
+            dwell.set_value(handle);
         }
     });
+    on_cleanup(drop_dwell);
     let arrive = move |_| {
         entries.update(|all| {
             let id = all.iter().map(|e| e.id).max().unwrap_or(0) + 1;

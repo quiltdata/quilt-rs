@@ -88,8 +88,8 @@ pub fn NotificationsScene() -> impl IntoView {
 fn WholeSystem() -> impl IntoView {
     let outcome = RwSignal::new(true);
     let update = RwSignal::new(true);
+    // Siblings, not wrapped: a row of hidden bands then takes no room.
     let bands = view! {
-        <div class="g-bars">
             <Show when=move || update.get()>
                 <UpdateBand
                     state=UpdateState::Available {
@@ -104,7 +104,6 @@ fn WholeSystem() -> impl IntoView {
                     "Published user/plate-07."
                 </Banner>
             </Show>
-        </div>
     }
     .into_any();
 
@@ -235,7 +234,7 @@ fn Acknowledge() -> impl IntoView {
                   to time it."
         >
             <Cell label="Saved, for the shared duration">
-                <div class="g-inline">
+                <div class="g-inline" style="align-items:center">
                     <Button on_click=press>"Save"</Button>
                     <span role="status">{move || said.get().then_some("Saved")}</span>
                 </div>

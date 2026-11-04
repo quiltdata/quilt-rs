@@ -26,7 +26,7 @@
 //!
 //! An unread entry is highlighted, and one the backend marks read while the
 //! panel is open keeps its highlight until the panel closes: the panel
-//! remembers which were unread when it opened.
+//! remembers every entry it has seen unread since it opened.
 //!
 //! Presentation only. The record, reading and the needs-you set are the
 //! caller's.
@@ -305,18 +305,16 @@ pub fn InboxPanel(
     open: Option<Signal<bool>>,
 ) -> impl IntoView {
     let open = open.unwrap_or_else(|| Signal::stored(true));
-    // The entries that were unread when the panel opened.
+    // Every entry seen unread since the panel opened.
     let marked = RwSignal::new(BTreeSet::<u64>::new());
-    Effect::new(move |was_open: Option<bool>| {
-        let now = open.get();
-        if now && was_open != Some(true) {
-            let unread = entries
-                .with_untracked(|all| all.iter().filter(|e| e.unread).map(|e| e.id).collect());
-            marked.set(unread);
-        } else if !now {
+    Effect::new(move |_| {
+        if open.get() {
+            let unread: Vec<u64> =
+                entries.with(|all| all.iter().filter(|e| e.unread).map(|e| e.id).collect());
+            marked.update(|m| m.extend(unread));
+        } else if !marked.with_untracked(BTreeSet::is_empty) {
             marked.set(BTreeSet::new());
         }
-        now
     });
 
     // Newest first, whatever order they arrive in.
@@ -547,11 +545,25 @@ mod tests {
         sleep_ms(0).await;
         assert_eq!(marked(), [true, false], "still marked while open");
 
+        entries.update(|all| all.push(entry(3, 20.0, true)));
+        sleep_ms(0).await;
+        entries.update(|all| all.iter_mut().for_each(|e| e.unread = false));
+        sleep_ms(0).await;
+        assert_eq!(
+            marked(),
+            [true, true, false],
+            "and so is one that arrived while it was open"
+        );
+
         open.set(false);
         sleep_ms(0).await;
         open.set(true);
         sleep_ms(0).await;
-        assert_eq!(marked(), [false, false], "and read on the next opening");
+        assert_eq!(
+            marked(),
+            [false, false, false],
+            "and read on the next opening"
+        );
     }
 
     /// A reader focused on an entry keeps their place when it is read.
