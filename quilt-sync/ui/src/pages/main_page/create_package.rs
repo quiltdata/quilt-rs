@@ -25,7 +25,7 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
     let namespace = RwSignal::new(String::new());
     let source = RwSignal::new(String::new());
     // The engine would read a relative folder from its own working folder.
-    let relative = RwSignal::new(false);
+    let not_full = RwSignal::new(false);
     let submitting = RwSignal::new(false);
     // The backend's words about the last attempt, shown in the dialog rather than in
     // `PageLayout`'s banner slot: `Dialog` uses `show_modal()`, so anything in the page's
@@ -34,7 +34,7 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
     // Trimmed, as v1 does: a name of spaces is not a name, and the backend
     // would refuse it after a round trip.
     let can_create = Signal::derive(move || {
-        !namespace.get().trim().is_empty() && !relative.get() && !submitting.get()
+        !namespace.get().trim().is_empty() && !not_full.get() && !submitting.get()
     });
 
     // This dialog is mounted once, permanently, outside the page's `Transition`
@@ -61,7 +61,7 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
 
     let on_create = move |_| {
         let ns = namespace.get_untracked().trim().to_string();
-        if ns.is_empty() || relative.get_untracked() || submitting.get_untracked() {
+        if ns.is_empty() || not_full.get_untracked() || submitting.get_untracked() {
             return;
         }
         submitting.set(true);
@@ -123,7 +123,7 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
                         }
                     })
             }}
-            <PackageFields namespace=namespace source=source relative=relative />
+            <PackageFields namespace=namespace source=source not_full=not_full />
         </Dialog>
     }
 }
@@ -136,7 +136,7 @@ pub fn CreatePackageDialog(open: RwSignal<bool>, reload: Trigger) -> impl IntoVi
 fn PackageFields(
     namespace: RwSignal<String>,
     source: RwSignal<String>,
-    relative: RwSignal<bool>,
+    not_full: RwSignal<bool>,
 ) -> impl IntoView {
     // v1's directory picker, unchanged: the chosen path becomes the (disabled)
     // field's text. A cancelled picker returns `Err`, and the field is left as
@@ -177,7 +177,7 @@ fn PackageFields(
                         label="Folder to add (optional)"
                         value=source
                         placeholder="/path/to/folder"
-                        relative=relative
+                        not_full=not_full
                     />
                 }
             }
@@ -371,6 +371,8 @@ mod tests {
         };
 
         type_into(&folder, ".");
+        leptos::task::tick().await;
+        assert!(create_button(&el).disabled(), "a folder not checked yet");
         answer(true).await;
         assert!(create_button(&el).disabled(), "a relative folder");
 
