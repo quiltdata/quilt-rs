@@ -3302,6 +3302,10 @@ mod tests {
 /// `toast::TOAST_EVENT`.
 pub const TOAST_EVENT: &str = "toast";
 
+/// A toast was dismissed, maybe in another window or tab. Carries its id. Kept
+/// in lockstep with the backend's `toast::TOAST_DISMISSED_EVENT`.
+pub const TOAST_DISMISSED_EVENT: &str = "toast-dismissed";
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ToastKind {

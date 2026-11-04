@@ -26,6 +26,10 @@ use crate::engine::telemetry::prelude::*;
 /// Event name. Kept in lockstep with the UI's `listen(...)` call.
 pub const TOAST_EVENT: &str = "toast";
 
+/// A toast was dismissed, maybe in another window or tab: drop it. Carries
+/// its id. Kept in lockstep with the UI.
+pub const TOAST_DISMISSED_EVENT: &str = "toast-dismissed";
+
 /// How many undismissed toasts the centre holds before the oldest is dropped.
 ///
 /// A bound rather than a queue that grows forever: an app left in the tray over

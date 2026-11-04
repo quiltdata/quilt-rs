@@ -97,15 +97,20 @@ impl Store {
         });
     }
 
+    /// Drop one toast here only: another window dismissed it.
+    fn forget(self, id: u64) {
+        self.bump();
+        self.toasts.update(|map| {
+            map.remove(&id);
+        });
+    }
+
     /// Drop one toast here and at the backend, then re-read.
     ///
     /// The re-read is sequenced *after* the backend call so the snapshot it
     /// adopts is one the dismissal is already in.
     fn dismiss(self, id: u64) {
-        self.bump();
-        self.toasts.update(|map| {
-            map.remove(&id);
-        });
+        self.forget(id);
         spawn_local(async move {
             let _ = commands::dismiss_toast(id).await;
             self.reconcile().await;
@@ -146,7 +151,12 @@ pub fn ToastStack() -> impl IntoView {
         },
         move || spawn_local(store.reconcile()),
     );
-    on_cleanup(move || drop(listener));
+    let dismissed =
+        engine::listen::<u64>(commands::TOAST_DISMISSED_EVENT, move |id| store.forget(id));
+    on_cleanup(move || {
+        drop(listener);
+        drop(dismissed);
+    });
 
     view! { <ToastLayer store=store /> }
 }
@@ -363,6 +373,19 @@ mod tests {
     }
 
     #[test]
+    fn a_toast_dismissed_elsewhere_goes() {
+        let store = store_of(BTreeMap::from([
+            (1, toast(ToastKind::Info, None, "one")),
+            (2, toast(ToastKind::Info, None, "two")),
+        ]));
+        store.forget(1);
+        let ids: Vec<u64> = store
+            .toasts
+            .with_untracked(|map| map.keys().copied().collect());
+        assert_eq!(ids, vec![2]);
+    }
+
+    #[test]
     fn a_snapshot_that_is_still_the_newest_word_is_adopted() {
         let store = store_of(BTreeMap::new());
         let stamp = store.bump();
@@ -408,6 +431,7 @@ mod tests {
     #[test]
     fn the_event_name_is_the_one_the_backend_emits() {
         assert_eq!(commands::TOAST_EVENT, "toast");
+        assert_eq!(commands::TOAST_DISMISSED_EVENT, "toast-dismissed");
     }
 
     #[wasm_bindgen_test]
