@@ -40,7 +40,7 @@ enum UpdateState {
     Hidden,
     /// An update is available; display version and action buttons, or for
     /// an engine with no desktop, where to download it.
-    Available(String, Option<String>),
+    Available(String, String),
     /// Download and install in progress.
     Installing,
     /// Download or install failed; show error and allow retry.
@@ -150,27 +150,23 @@ pub fn UpdateChecker() -> impl IntoView {
 /// user downloads it and restarts QuiltSync.
 #[component]
 fn UpdateAction(
-    url: Option<String>,
+    url: String,
     on_install: impl Fn(leptos::ev::MouseEvent) + Clone + Send + Sync + 'static,
 ) -> impl IntoView {
     move || {
         if engine::headless().get() {
-            url.clone().map(|url| {
-                view! {
-                    <a href=url target="_blank" rel="noopener">
-                        "Download"
-                    </a>
-                }
-                .into_any()
-            })
+            view! {
+                <a href=url.clone() target="_blank" rel="noopener">
+                    "Download"
+                </a>
+            }
+            .into_any()
         } else {
             let on_install = on_install.clone();
-            Some(
-                view! {
-                    <buttons::FormPrimary on_click=on_install>"Download & Install"</buttons::FormPrimary>
-                }
-                .into_any(),
-            )
+            view! {
+                <buttons::FormPrimary on_click=on_install>"Download & Install"</buttons::FormPrimary>
+            }
+            .into_any()
         }
     }
 }

@@ -30,8 +30,9 @@ const RETRY: Duration = Duration::from_secs(10 * 60);
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     pub version: String,
-    /// `None` when the feed has no build for this machine.
-    pub url: Option<String>,
+    /// The installer to download by hand, or the release page when the feed
+    /// has no build for this machine.
+    pub url: String,
 }
 
 #[derive(Deserialize)]
@@ -119,14 +120,21 @@ fn newer(current: &Version, feed: &Feed) -> Option<UpdateInfo> {
     if offered <= *current {
         return None;
     }
-    let url = feed
-        .platforms
-        .get(&platform_key())
-        .map(|platform| platform.url.clone());
+    let url = feed.platforms.get(&platform_key()).map_or_else(
+        || format!("https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v{offered}"),
+        |platform| installer(&platform.url),
+    );
     Some(UpdateInfo {
         version: offered.to_string(),
         url,
     })
+}
+
+/// The installer for an updater download: on macOS the feed gives the
+/// updater's `.app.tar.gz`, and each release puts the `.dmg` beside it.
+fn installer(url: &str) -> String {
+    url.strip_suffix(".app.tar.gz")
+        .map_or_else(|| url.to_owned(), |stem| format!("{stem}.dmg"))
 }
 
 /// This machine as the feed names it, e.g. `darwin-aarch64`.
@@ -164,17 +172,33 @@ mod tests {
             newer(&current, &feed("v0.27.0")),
             Some(UpdateInfo {
                 version: "0.27.0".to_owned(),
-                url: Some("https://example.test/QuiltSync.pkg".to_owned()),
+                url: "https://example.test/QuiltSync.pkg".to_owned(),
             })
         );
     }
 
     #[test]
-    fn a_feed_without_this_machine_has_no_download() {
+    fn a_feed_without_this_machine_points_to_the_release_page() {
         let mut feed = feed("1.0.0");
         feed.platforms.clear();
         let found = newer(&Version::new(0, 1, 0), &feed).unwrap();
-        assert_eq!(found.url, None);
+        assert_eq!(
+            found.url,
+            "https://github.com/quiltdata/quilt-rs/releases/tag/QuiltSync/v1.0.0"
+        );
+    }
+
+    #[test]
+    fn a_macos_updater_download_becomes_the_dmg() {
+        let base = "https://www.quilt.bio/hubfs/quiltsync/QuiltSync/v0.26.1/QuiltSync_0.26.1";
+        assert_eq!(
+            installer(&format!("{base}_aarch64.app.tar.gz")),
+            format!("{base}_aarch64.dmg")
+        );
+        assert_eq!(
+            installer(&format!("{base}_x64_en-US.msi")),
+            format!("{base}_x64_en-US.msi")
+        );
     }
 
     #[tokio::test]

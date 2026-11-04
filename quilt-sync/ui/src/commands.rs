@@ -818,8 +818,7 @@ pub struct UpdateInfo {
     pub version: String,
     /// The download for the engine's machine, for an engine that can't
     /// install it itself.
-    #[serde(default)]
-    pub url: Option<String>,
+    pub url: String,
 }
 
 // ── Data-fetching commands ──────────────────────────────────
